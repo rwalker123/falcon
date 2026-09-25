@@ -246,11 +246,18 @@ something a pool can be staffed with.
 
 ## 5. On screen
 
-- **Pool card.** The warning triangle shows on any shortfall — people, tools or both — with the
-  reason in the tooltip (in flight on `worktree-pool-card-triangle`). The tooltip's tool reason
-  becomes the pool's **short TOE lines**, in the client's existing `N of M` phrasing:
-  **`4 of 6 hoes · 0 of 2 ploughs`**. A pool whose tools are all filled shows no tool line. This
-  replaces `2 of 6 Tillage kits available` on pool cards only; take rows keep that sentence.
+- **Pool card.** The shortfall is stated in **work units**, and the tool is named only as a
+  **cause**, never counted or listed (issue #716). A tool count under a keeper stepper read as a
+  head count (`0 of 1 hoe` → *"with a hoe I need 1 worker"*), and a list of tool names grows with
+  every tier the roster adds. Two marks:
+  - **⚠ — the work falls short.** The hover's work-units sentence, followed by `Short of tools.`
+    when the pool's TOE is also short.
+  - **ⓘ — the work is covered but the TOE is short:** `Tools would get more done per worker —
+    short of tools.` Every pool tool is productivity, not a requirement, so a tool shortfall alone
+    loses no work; it is shown anyway because bare hands stop being viable early in a game.
+
+  A pool whose tools are all filled shows no tool line. This replaces `2 of 6 Tillage kits
+  available` on pool cards only; take rows keep that sentence.
 - **Work Inspector.** The Upkeep kit picker is removed.
 - **Build queue.** The per-entry kit picker is removed.
 

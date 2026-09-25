@@ -728,11 +728,14 @@ static func upkeep_pool_is_short(cover: Dictionary) -> bool:
 ## of a mark saying a worker is free, and which is cream on cream against `INK` on the `ember`
 ## `DEFAULT_THEME`.
 ##
-## ⛔ **THE NAME ROW HOLDS EXACTLY ONE GLYPH AND SHORTFALL WINS IT.** Three placements for a second
-## mark were built and measured on the drawn card, and each took the four-card row past the left
-## dock's 356px box (`BandPanelController._build_pool_card`, where the figures are). So the one slot
-## carries three states — `⚠`, this, or nothing — and a pool that is BOTH short and idle flies the
-## triangle, because the loss is the news and the spare hand can wait.
+## **IT ALSO FLIES FOR A POOL SHORT OF TOOLS WHOSE WORK IS COVERED** (issue #716): every pool tool is
+## productivity, so nothing is being lost — the tools would only get more done per worker.
+##
+## ⛔ **THE NAME ROW HOLDS EXACTLY ONE GLYPH AND A WORK SHORTFALL WINS IT.** Three placements for a
+## second mark were built and measured on the drawn card, and each took the four-card row past the
+## left dock's 356px box (`BandPanelController._build_pool_card`, where the figures are). So the one
+## slot carries three states — `⚠`, this, or nothing — and a pool that is work-short flies the
+## triangle whatever else holds, because the loss is the news and the rest can wait.
 const UPKEEP_POOL_IDLE_MARK := "ⓘ"
 
 ## **THE MARK'S PROMISE IS *YOU CAN STEP THIS POOL DOWN BY ONE*, SO THE THRESHOLD IS A WHOLE
@@ -1262,15 +1265,15 @@ const KIT_SHORT_MARK := "◆"
 ## flown* and a claim about *which Label flew it* are the same read.
 const WORK_ROW_MARKS_META := &"work_row_marks"
 
-## **A POOL CARD'S TOOL-SHORTFALL LINE, ON THE CARD AS META** — `pool_toe_short_line`'s answer, or
-## `""` for a pool with nothing to be short of. The card draws no gear glyph of its own — a tool
-## shortfall flies the same `⚠` a hands shortfall does — and the line is on its hover, so this is what
-## a harness asks *is the triangle flying for the TOOLS, and what does it say* without re-composing
+## **A POOL CARD'S TOOL-SHORTFALL LINE, ON THE CARD AS META** — `pool_tools_short_line`'s answer
+## (`POOL_TOOLS_SHORT_WARN_LINE` or `POOL_TOOLS_SHORT_INFO_LINE`), or `""` for a pool with nothing to
+## be short of. The card draws no gear glyph of its own and the line is on its hover, so this is what a
+## harness asks *is this card short of TOOLS, and which form does it say it in* without re-composing
 ## the wording it is checking.
 ##
 ## It is a second meta rather than a value on `BandPanelController.POOL_CARD_SHORT_META` because that
-## one is the BOOLEAN *is the triangle flying*, true for either reason; this one is the tool reason
-## alone. The hands reason has no meta — it is the hover's coverage line.
+## one is the BOOLEAN *is the `⚠` flying*, which is the WORK shortfall alone; this one is the tool
+## reason alone, whichever mark it rides under.
 ##
 ## ⛔ **IT WAS `POOL_CARD_KIT_SHORT_META` AND THE KIT IS WHAT WENT.** A pool resolved ONE kit until
 ## `docs/plan_pool_toe.md`, and the sentence this meta carried was `KitRoster.shortfall_sentence`'s —
@@ -1292,57 +1295,43 @@ const POOL_CARD_TOOL_SHORT_META := &"pool_card_tool_short"
 ## checking.
 const POOL_CARD_IDLE_META := &"pool_card_idle"
 
-## **ONE TERM OF A POOL'S TOOL LINE** — `4 of 6 hoes`, `0 of 1 hoe`.
-##
-## ⛔ **IT IS `HudComposeVocab.KIT_SHORTFALL_FORMAT` WITHOUT THE TRAILING WORD, and the omission is
-## the only thing that differs.** That sentence states ONE shortfall and closes with ` available`; a
-## pool states a TOE, which is a LIST — `4 of 6 hoes · 0 of 2 dressing hammers` — and repeating the
-## word on every term reads as a run of sentences rather than as one line. The `N of M <thing>`
-## phrasing itself is the client's existing one, which is the whole point of not inventing a second.
-const POOL_TOE_TERM_FORMAT := "%d of %d %s"
+## **A POOL SHORT OF WORK AND OF TOOLS** — the tool line under the `⚠`, on its own line after the
+## coverage sentence. The coverage sentence already carries the numbers; this only adds the second
+## reason.
+const POOL_TOOLS_SHORT_WARN_LINE := "Short of tools."
 
-## ⛔ **RETIRED — `POOL_TOE_MIN_UNITS`, THE FLOOR THAT ROUNDED A SHORTFALL AWAY.** It read: *"a line
-## exists only where `required > 0`, so its DENOMINATOR may never read zero … a real requirement can
-## round down to nothing; the floor is what keeps `0 of 0 hoes` off the card."* The goal was right and
-## the mechanism produced the defect: at `required 0.7906 / filled 0.5666` — a live playtest reading,
-## Teasel's Agriculture pool at 72% coverage — `round(0.7906)` floored UP to a denominator of 1 and
-## the apportion then drove the numerator to 1 as well, so a 28% shortfall printed `1 of 1 hoe` and
-## the card produced NO line and flew NO triangle.
-##
-## **THE FLOOR IS STRUCTURAL NOW.** A term is emitted only for a row the raw floats call SHORT, so
-## `required > POOL_TOE_SHORT_MIN` holds and `ceil` of it is at least one — a denominator can no
-## longer reach zero without a shortfall test having already declined to print anything.
+## **A POOL THAT COVERS ITS WORK BUT IS SHORT OF TOOLS** — the reason the info mark flies. Nothing is
+## being lost, so it is said as an opportunity: the tools would stretch each worker further.
+const POOL_TOOLS_SHORT_INFO_LINE := "Tools would get more done per worker — short of tools."
 
-## **THE SMALLEST GAP IN TOOL UNITS THAT IS A SHORTFALL** — the ONE test the triangle, the line and
-## the work row's remedy all fork on, made against the WIRE'S OWN FLOATS rather than against the
-## rounded pair the card prints.
+## ⛔ **RETIRED — THE COUNTED TOOL LINE (`4 of 6 hoes · 0 of 2 dressing hammers`)**, with
+## `POOL_TOE_TERM_FORMAT`, `POOL_TOE_SHORT_UNIT_GAP` and its ceil/floor + `kit_item_count_word` term
+## assembly (issue #716). It sat under a WORKER stepper, so players read `0 of 1 hoe` as a head count
+## (*"with a hoe I only need one worker"*), and a list of tool names cannot scale as the roster grows
+## from hoes to ploughs to tractors. The card never names or counts tools; the work-unit coverage
+## sentence carries the numbers.
+
+## **THE SMALLEST GAP IN TOOL UNITS THAT IS A SHORTFALL** — the ONE test the card's tool line and the
+## work row's remedy both fork on, made against the WIRE'S OWN FLOATS.
 ##
-## ⛔ **THE SHORT TEST AND THE DISPLAY PAIR ARE DIFFERENT QUESTIONS, and conflating them is what let a
-## sub-unit shortfall read as covered.** *Is this pool short* is answered by `required − filled`, which
-## the sim settled and published; *what does the card say* is a rounding of that pair for a line with
-## no room for decimals. The old code asked the second and inferred the first from it.
+## ⛔ **A SUB-UNIT SHORTFALL IS A SHORTFALL.** Teasel's Agriculture pool at `0.5666 of 0.7906` — a live
+## playtest reading — once rounded to `1 of 1` and read as covered; the test is `required − filled`,
+## never a comparison of rounded figures.
 ##
 ## The value is this client's family floor for a rate that is nothing to state
 ## (`SourceForecast.UPKEEP_WORK_MIN`, `MATERIAL_FLOW_MIN`), one account over: a gap under it is float
 ## noise in the sim's own `f32` sums over a pool's sites rather than a tool anybody is missing.
 const POOL_TOE_SHORT_MIN := 0.005
 
-## **A SHORT ROW'S DENOMINATOR EXCEEDS ITS NUMERATOR BY AT LEAST THIS MANY WHOLE UNITS.** The
-## structural guarantee that `N of N` can never be printed beside a shortfall the floats affirm —
-## which is the exact reading the retired apportion produced. The ceil/floor pair below almost always
-## satisfies it on its own; the clamp is what makes *almost* into *never*, at every tolerance.
-const POOL_TOE_SHORT_UNIT_GAP := 1
-
 ## **IS THIS TOE ROW SHORT — asked of the wire's floats.** `required` and `filled` are what the sim's
-## `settle_scarce_store` settled for this `(pool, item)`; the card's whole-number pair is downstream of
-## this answer and may never be the basis for it.
+## `settle_scarce_store` settled for this `(pool, item)`.
 static func pool_toe_row_is_short(row: Dictionary) -> bool:
     var required := maxf(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)), 0.0)
     var filled := clampf(float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)), 0.0, required)
     return required - filled > POOL_TOE_SHORT_MIN
 
 ## **AND IS THIS POOL SHORT OF ANY OF ITS TOOLS** — `lines` is `HudBandLaborState.pool_toe_for`'s
-## answer for ONE pool. The boolean the work row's remedy forks on, so the pool card's triangle and
+## answer for ONE pool. The boolean the work row's remedy forks on, so the pool card's tool line and
 ## that remedy provably answer to the same test rather than to two readings of one vector.
 static func pool_toe_is_short(lines: Array) -> bool:
     for row_variant in lines:
@@ -1350,59 +1339,14 @@ static func pool_toe_is_short(lines: Array) -> bool:
             return true
     return false
 
-## **A POOL'S SHORT TOE LINES, AS ONE SENTENCE — `4 of 6 hoes · 0 of 2 dressing hammers`, or `""`.**
-## `lines` is `HudBandLaborState.pool_toe_for`'s answer for THIS pool, in wire order.
-##
-## ⛔ **A POOL WHOSE TOOLS ARE ALL FILLED SHOWS NO LINE AT ALL — not a satisfied one, not a zero.** A
-## filled line is present in the vector precisely so a reader can tell *satisfied* from *not
-## applicable*; both render nothing here, and only one of them is a line. Collapsing them at the
-## DECODER would destroy that distinction — which is why the filter is here and not there.
-##
-## ⛔ **THE SHORT TEST IS `pool_toe_row_is_short`, ON THE RAW FLOATS — never a comparison of the two
-## rounded numbers this function then prints.** A pool short by less than a whole unit is short, and
-## the card must say so; what the rounding may decide is how the numbers READ, never whether the
-## shortfall exists.
-##
-## ⛔ **THE DENOMINATOR CEILS AND THE NUMERATOR FLOORS — they are NOT apportioned.**
-##
-## > **RETIRED — *BOTH HALVES ARE APPORTIONED, NOT ROUNDED APART*.** The dead rule: *"`filled` and the
-## > shortfall behind it PARTITION `required`, so rounding each on its own gives a `4 of 6` whose
-## > remainder is 3; `HudFormat.apportion_people_to` is that one arithmetic, and the target it sums to
-## > is the rounded requirement."* **`apportion_people_to`'s premise does not hold here.** It divides
-## > WHOLE PEOPLE by a share the player chose — the target is a real count and the parts must sum to
-## > it exactly — whereas the target here is itself a rounding of a float, and the card prints `N of
-## > M` rather than `N + S`, so nothing is partitioned on screen. What the apportion actually does to
-## > a sub-unit row is round the numerator UP to the denominator, which is the defect.
-##
-## **CEIL AND FLOOR ARE EACH THE CONSERVATIVE ANSWER TO THEIR OWN QUESTION.** *How many whole tools
-## does this pool want* — you cannot buy 0.4 of a hoe, so `0.79` wants one. *How many whole tools are
-## in its hands* — `0.5666` of a hoe's service is no whole hoe, so it holds none. Together they read
-## `0 of 1 hoe` for the playtest row: still a rounding, and one that can only ever OVERSTATE the gap
-## by less than a unit, where the retired pair understated it to nothing. Both are taken with the
-## short floor's tolerance so an `f32` sum landing a hair either side of a whole unit cannot invent a
-## denominator (`6.0000005 → 7`) or lose a held one.
-static func pool_toe_short_line(lines: Array) -> String:
-    var terms: Array[String] = []
-    for row_variant in lines:
-        if not (row_variant is Dictionary):
-            continue
-        var row: Dictionary = row_variant
-        if not pool_toe_row_is_short(row):
-            continue
-        var required := maxf(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)), 0.0)
-        var filled := clampf(float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)),
-            0.0, required)
-        var held := int(floor(filled + POOL_TOE_SHORT_MIN))
-        var units: int = maxi(int(ceil(required - POOL_TOE_SHORT_MIN)),
-            held + POOL_TOE_SHORT_UNIT_GAP)
-        # ⛔ **THE NOUN AGREES WITH THE DENOMINATOR, NOT WITH WHAT IS HELD.** `N of M <item>` names
-        # the M — *four of six earthmoving tools*, *one of two crooks* — so a term whose noun followed
-        # `held` would read `1 of 2 crook`, and one that never inflected would read `0 of 1 hoes`.
-        # `DetailFormat.kit_item_count_word` is the one place an item label is inflected.
-        terms.append(POOL_TOE_TERM_FORMAT % [held, units,
-            DetailFormat.kit_item_count_word(
-                String(row.get(HudBandLaborState.POOL_TOE_ITEM_KEY, "")), units)])
-    return RUNG_TRACK_PRICE_SEPARATOR.join(terms)
+## **A POOL CARD'S TOOL LINE — `""` unless `pool_toe_is_short(lines)`, else the form its mark takes.**
+## `work_short` is `upkeep_pool_is_short` for the same card: under the `⚠` the tools are a second
+## reason (`POOL_TOOLS_SHORT_WARN_LINE`); under the info mark they are the only one
+## (`POOL_TOOLS_SHORT_INFO_LINE`). A pool whose tools are all filled says nothing.
+static func pool_tools_short_line(lines: Array, work_short: bool) -> String:
+    if not pool_toe_is_short(lines):
+        return ""
+    return POOL_TOOLS_SHORT_WARN_LINE if work_short else POOL_TOOLS_SHORT_INFO_LINE
 
 const WORK_ROW_MARKS_WIDTH := 20.0
 
