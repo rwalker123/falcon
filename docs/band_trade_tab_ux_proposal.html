@@ -1189,10 +1189,6 @@
 
   var LINK_WORD  = { local: "⇄ Local exchange", route: "⇄ Trade route" };
   var LINK_SHORT = { local: "local", route: "route" };
-  var LINK_GLOSS = {
-    local: "nobody carries this — camps within reach even up every turn",
-    route: "a party walked it here, or is walking it away"
-  };
 
   // How much of the pot the distance eats, illustrative — the real figure is
   // `friction × component_friction(roads…)`, resolved per component per turn.
@@ -1642,8 +1638,7 @@
     }, {})).length;
     h += '<div class="grp"><div class="grp-head">' + LINK_WORD.local +
       '<span class="cnt">' + (loc.length ? locCount + (locCount === 1 ? " good" : " goods") : "nothing") +
-      "</span></div>" +
-      '<div class="row"><span class="sub">' + LINK_GLOSS.local + "</span></div>";
+      "</span></div>";
     if (!loc.length) {
       h += '<div class="quiet" style="padding:6px 2px">Every camp is within a tenth of its fair ' +
         "share — nothing needed to move.</div>";
@@ -1923,11 +1918,11 @@
         '<span class="fill"></span>' +
         '<span class="amt" style="color:var(--g-dim)">' + count + "</span>" +
         '<span class="caret" style="margin-left:6px">\u203a</span></div>' +
-        '<div class="row"><span class="sub">' + gloss + "</span></div>";
+        (gloss ? '<div class="row"><span class="sub">' + gloss + "</span></div>" : "");
     }
 
     var goodsMoved = byGood(loc.filter(function (x) { return !x.peer; })).length;
-    h += opener(LINK_WORD.local, LINK_GLOSS.local,
+    h += opener(LINK_WORD.local, "",
                 goodsMoved + (goodsMoved === 1 ? " good" : " goods"), "piles");
     h += opener(LINK_WORD.route,
                 landed + (landed === 1 ? " import" : " imports") + " \u00b7 " +
