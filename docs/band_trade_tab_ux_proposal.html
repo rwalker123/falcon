@@ -844,8 +844,8 @@
     <thead><tr><th>Cause</th><th>Link</th><th>Direction</th><th>Counterparty</th><th>Writer</th></tr></thead>
     <tbody>
       <tr><td><b>Pooled with neighbours</b></td><td>Local</td><td>both</td><td class="fix">None — anonymous pot</td><td><code>supply.rs:687</code></td></tr>
-      <tr><td><b>Dowry to a splinter</b></td><td>Local</td><td>out</td><td class="fix">The new band, by name</td><td><code>fission.rs:411</code></td></tr>
-      <tr><td><b>Dowry from a parent</b></td><td>Local</td><td>in</td><td class="fix">The parent, by name</td><td><code>fission.rs:483</code></td></tr>
+      <tr><td><b>Dowry to a splinter</b></td><td>Local</td><td>out</td><td class="fix">The new band, by name — <b>not trade</b>; see below</td><td><code>fission.rs:411</code></td></tr>
+      <tr><td><b>Dowry from a parent</b></td><td>Local</td><td>in</td><td class="fix">The parent, by name — <b>not trade</b></td><td><code>fission.rs:483</code></td></tr>
       <tr><td><b>Shipment loaded</b></td><td>Route</td><td>out</td><td class="fix">Destination, by name</td><td><code>server.rs:6619</code></td></tr>
       <tr><td><b>Shipment landed</b></td><td>Route</td><td>in</td><td class="fix">Sender, by name</td><td><code>expeditions.rs:895</code></td></tr>
       <tr><td><b>Party dropped off / came home</b></td><td>Route</td><td>in</td><td class="fix">Own party — <b>not trade</b>; see below</td><td><code>expeditions.rs:1449, 989</code></td></tr>
@@ -868,6 +868,16 @@
       books it as <em>"neither income nor consumption"</em>. The cause split is what fixes both:
       with a cause key on each crossing, the homecoming moves out of <code>⇄ Trade route</code> and
       into the Food popover beside the hunts and forages it came from.
+    </p>
+  </div>
+
+  <div class="callout">
+    <span class="nk">Nor is a split's dowry</span>
+    <p>
+      When a band splits, the parent hands the splinter a share of its stores. It books on the
+      <code>Local</code> arm because the splinter starts in its parent's camp — but it is a one-off the
+      player chose by splitting, not an exchange, so the Trade tab leaves it out too. Its place is the
+      split's own announcement and the new band's panel.
     </p>
   </div>
 
@@ -949,7 +959,7 @@
         <td><b>The cause</b></td>
         <td class="fix">Six writers, one <code>TransferLink</code> each</td>
         <td class="fix">A cause key per crossing (§05), and the <code>cargo + provisions</code> debit split.
-          The client reads the key twice: the Trade tab drops <em>party home</em>, and the Band
+          The client reads the key twice: the Trade tab drops <em>party home</em> and the dowry, and the Band
           panel's Food popover moves it from <code>⇄ Trade route</code> to the hunt and forage rows</td>
       </tr>
       <tr>
@@ -1242,18 +1252,23 @@
   function members() { return world().members; }
   /** The turn's crossings, with the dense route set swapped in for the sparse one when
       the `Routes` control asks for it. Only the busy turn has both. */
+  var NOT_TRADE = ["party_home", "dowry_out", "dowry_in"];
+
   function crossings() {
     var t = world().turns;
     var list = t[state.turn];
     if (state.turn === "busy" && state.routes === "many" && t.routesMany) {
       list = list.filter(function (x) { return x.link === "local"; }).concat(t.routesMany);
     }
-    // ⛔ A BAND'S OWN PARTY COMING HOME IS NOT TRADE. The sim books a hunt's drop-off and
-    // a party's fold-back on the Route arm, for the ledger's consistency — a party
-    // carried it — but to the player it is the band's own hunting and foraging, and it
-    // belongs with those on the Band panel. The Trade tab states crossings with SOMEBODY
-    // ELSE, so this cause never reaches it.
-    return list.filter(function (x) { return x.cause !== "party_home"; });
+    // ⛔ TWO CAUSES THE LEDGER BOOKS AS TRANSFERS ARE NOT TRADE, AND NEVER REACH THIS TAB.
+    //  * A band's own party coming home — a hunt's drop-off, a party's fold-back — books
+    //    on the Route arm because a party carried it; to the player it is the band's own
+    //    hunting and foraging, and belongs with those on the Band panel.
+    //  * A split's dowry books on the Local arm because the splinter starts in its
+    //    parent's camp; to the player it is the split, a one-off the player chose, and
+    //    belongs with the split's own announcement.
+    // The Trade tab states what crossed with SOMEBODY ELSE, turn on turn.
+    return list.filter(function (x) { return NOT_TRADE.indexOf(x.cause) < 0; });
   }
   function big() { return state.net === "large"; }
 
