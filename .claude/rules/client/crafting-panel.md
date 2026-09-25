@@ -248,11 +248,13 @@ column can never do. The two can disagree, and that disagreement is the readout 
 - **The `kit` group SPLITS by `outputTierName`**, one head per distinct tier, ordered by
   **`outputTierRank` DESCENDING** — newest first. The rank is the sim's, and it is the client's only
   honest ordering: alphabetical would put Iron above Bronze. **The shipped roster already needs more
-  than one head**: every item opens at `plain`, and `spears`, `clubs` and `hoes` carry `flint` above
-  it (knapped stone and wood — harder-hitting and brittle, 26 attack / 70 durability on a spear), so
-  a faction that knows how to knap renders a `Flint` head over those three and a `Plain` head over
-  everything else, while one that does not renders the single `Plain` head alone. A recipe makes
-  the best tier the faction knows, so a row MOVES between heads rather than splitting.
+  than one head, from turn one**: every item opens at `plain`, and `spears`, `clubs` and `hoes`
+  carry `flint` above it (knapped stone and wood — harder-hitting and brittle, 26 attack / 70
+  durability on a spear). **A row's head is its own RECIPE's tier**, never what the faction knows, so
+  `Spears (flint)`, `Clubs (stone)` and `Hoes (flint)` sit under `Flint` and every other kit row —
+  the bone originals and the wood substitutes alike — under `Plain`. A row never moves between
+  heads, an item with two recipes has a row under each, and nothing gates the `Flint` head: stone in
+  the store is what makes its rows buildable.
 - **`tool` heads `Bench tools` and `stock` heads `Materials`**, after the tier heads, and all three are
   built by ONE head builder so they read as one family. Both carried a trailing explanation
   (`Bench tools — each stretches one material`) until the heads became foldable: a caret invites a

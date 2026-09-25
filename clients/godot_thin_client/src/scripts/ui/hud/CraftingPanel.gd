@@ -866,12 +866,12 @@ func _build_ledger(payload: Dictionary) -> void:
 
 ## **THE SECTIONS, IN THE ORDER THEY RENDER: the TIER heads first, then `Bench tools`, then
 ## `Materials`.** The kit group SPLITS by the published `outputTierName` — one head per distinct tier,
-## ordered by `outputTierRank` DESCENDING, newest first — because a recipe makes the best tier the
-## faction knows and a row therefore MOVES between heads rather than splitting. **The shipped roster
-## already needs more than one head**: every item opens at `plain`, and `spears`, `clubs` and `hoes`
-## carry a second tier, `flint`, so a faction that knows how to knap renders a `Flint` head over those
-## three and a `Plain` head over everything else. A faction that does not renders the single `Plain`
-## head alone.
+## ordered by `outputTierRank` DESCENDING, newest first. **A row's head is its own RECIPE's tier**, not
+## what the faction knows: a recipe names the tier it makes, so a row never moves between heads, and an
+## item with two recipes has a row under each. **The shipped roster needs two heads from turn one**:
+## `Spears (flint)`, `Clubs (stone)` and `Hoes (flint)` make the `flint` tier and sit under `Flint`;
+## every other kit row — the bone originals and the wood substitutes alike — sits under `Plain`.
+## Nothing gates the `Flint` head; stone in the store is what makes its rows buildable.
 ##
 ## The rank ordering is the sim's own and is not re-derived: alphabetical would put Iron above Bronze,
 ## and the client has no other honest way to say which tier is newer.
