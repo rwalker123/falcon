@@ -833,12 +833,12 @@
 </section>
 
 <section>
-  <div class="sec-head"><span class="sec-num">05</span><h2>The producer split has six causes, not three</h2></div>
+  <div class="sec-head"><span class="sec-num">05</span><h2>The producer split has seven causes, not three</h2></div>
 
   <p>
     The issue scopes a producer split — <em>local pooling, an arriving shipment, an expedition's
     launch draw</em> — because one counter covers several different events. Grepping every writer of
-    the ledger turns up <b>six</b>, and they do not collapse to three:
+    the ledger turns up <b>seven</b>, and they do not collapse to three:
   </p>
 
   <div class="table-scroll">
@@ -851,6 +851,7 @@
       <tr><td><b>Shipment loaded</b></td><td>Route</td><td>out</td><td class="fix">Destination, by name</td><td><code>server.rs:6619</code></td></tr>
       <tr><td><b>Shipment landed</b></td><td>Route</td><td>in</td><td class="fix">Sender, by name</td><td><code>expeditions.rs:895</code></td></tr>
       <tr><td><b>Party dropped off / came home</b></td><td>Route</td><td>in</td><td class="fix">Own party — <b>not trade</b>; see below</td><td><code>expeditions.rs:1449, 989</code></td></tr>
+      <tr><td><b>Party's launch larder</b></td><td>Route</td><td>out</td><td class="fix">Own party's rations — <b>not trade</b></td><td><code>server.rs:5183</code>; the provisions half of <code>server.rs:6619</code></td></tr>
     </tbody>
   </table>
   </div>
@@ -987,43 +988,44 @@
 </section>
 
 <section class="ask">
-  <div class="sec-head"><span class="sec-num">08</span><h2>Decisions I need from you</h2></div>
+  <div class="sec-head"><span class="sec-num">08</span><h2>Decisions</h2></div>
 
-  <div class="q">
-    <h3>Which layout</h3>
-    <p>A, B or C. I recommend <b>C</b> for the reason in §03 — it is the only one that survives a route
-      crossing knowing its counterparty and a local crossing not.</p>
-  </div>
+  <p class="lede">Settled through review of the prototype, 2026-09-20 → 25. The prototype is the
+    spec for the tab's shape; this list is what it cannot show on its own.</p>
 
-  <div class="q">
-    <h3>Route crossings name the band at the other end — yes or no</h3>
-    <p>This is the substantive departure from the issue, which bars per-peer attribution flat. It is
-      exact for the Local arm and too strong for Route (§02). If you want the blanket rule kept
-      anyway, say so and C loses most of its advantage — then I would build A.</p>
-  </div>
-
-  <div class="q">
-    <h3>The wide shell</h3>
-    <p>(i) a real fourth flank and the 1190 → 1569 threshold move, or (iii) tab-only with the content
-      appended under Parties on a wide dock. I recommend <b>(iii)</b>.</p>
-  </div>
-
-  <div class="q">
-    <h3>The SHORT tier on a horizontal dock</h3>
-    <p>At its busiest the full tab is <b>475px against 418 — 57px over</b>. It was 246px over before
-      the hunts coming home, the dowry and the per-row dates left the tab. Two shipments a direction
-      instead of three saves about 40px of it — close, not closed; a shorter network line would have
-      to find the rest. Failing that, a height-starved dock either gets the
-      <b>SHORT tier</b> (two rows stating what happened per arm, each opening the full list) or the
-      Trade tab is simply not offered on a bottom dock. I recommend the <b>tier</b> — it is the band
-      zone's existing idiom — but it is a second authored layout to build and keep working, so it is
-      worth saying no to if you would rather the tab were vertical-dock only.</p>
-  </div>
-
-
-  <div class="q">
-    <h3>The <code>cargo + provisions</code> debit</h3>
-    <p>Split it (my default), or leave it and have the shipment row overstate by the party's rations.</p>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Question</th><th>Settled as</th></tr></thead>
+    <tbody>
+      <tr><td><b>Layout</b></td><td class="fix"><b>C — by link.</b> Local exchange, then Trade route.</td></tr>
+      <tr><td><b>Route crossings name the other band</b></td><td class="fix"><b>Yes</b>, with a faction mark;
+        a Local crossing never names one (§02).</td></tr>
+      <tr><td><b>A good's row</b></td><td class="fix"><b>One line per good, stating its NET</b> this turn
+        (<em>bone ▲ 0.8 · 6 ratings</em>). The ratings — each pile with its own amount and direction —
+        are the hover card. Summed within a material, never across two.</td></tr>
+      <tr><td><b>The camps</b></td><td class="fix"><b>Behind the network line.</b> <em>15 camps ›</em> opens
+        them with each link's rung (path / trail / dirt road / paved road — an icon, hovering to what it
+        buys) and distance; clicking a good opens the same list as each camp's net of it.</td></tr>
+      <tr><td><b>Long lists</b></td><td class="fix"><b>Never grow the zone.</b> A fold row opens a panel over
+        it — the <code>WorkInspectorDialog</code> idiom, on the map-facing side, with its own scroll.</td></tr>
+      <tr><td><b>Route wording</b></td><td class="fix"><b>Imports / Exports</b> as the two directions, counted in
+        <b>shipments</b> (<em>4 more shipments</em>). No date on a shipment: every row crossed this turn.</td></tr>
+      <tr><td><b>Not trade — never on this tab</b></td><td class="fix">A party coming home, a party's launch larder,
+        and a split's dowry. The first two belong with the band's own hunting and foraging on the Band
+        panel; the dowry with the split's announcement.</td></tr>
+      <tr><td><b>Faction mark</b></td><td class="fix">On every counterparty, ours and theirs. Fallback until #647's
+        flags: a flag glyph in the faction's map colour. #647 records the slot.</td></tr>
+      <tr><td><b>Captions</b></td><td class="fix"><b>None.</b> Both section glosses and the network box's
+        <em>"… sits at 3 of 6"</em> line are gone.</td></tr>
+      <tr><td><b>A horizontal dock</b></td><td class="fix"><b>The SHORT tier</b> — the network line and one row
+        per arm, each opening its list. The full tab is 475px against 418 at its busiest, and the panel must
+        not grow taller.</td></tr>
+      <tr><td><b>Where it lives on a wide shell</b></td><td class="fix"><b>(iii)</b> — under Parties, no fourth
+        flank, the 1190 threshold unchanged (§06). The recommendation, adopted with the SHORT tier.</td></tr>
+      <tr><td><b>The <code>cargo + provisions</code> debit</b></td><td class="fix"><b>Split</b> — the rations are
+        the party's own launch larder, the same not-trade class as a party coming home.</td></tr>
+    </tbody>
+  </table>
   </div>
 </section>
 
@@ -1260,7 +1262,7 @@
   function members() { return world().members; }
   /** The turn's crossings, with the dense route set swapped in for the sparse one when
       the `Routes` control asks for it. Only the busy turn has both. */
-  var NOT_TRADE = ["party_home", "dowry_out", "dowry_in"];
+  var NOT_TRADE = ["party_home", "party_provisions", "dowry_out", "dowry_in"];
 
   function crossings() {
     var t = world().turns;
