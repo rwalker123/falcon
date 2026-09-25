@@ -347,6 +347,8 @@
   .row.rt-goods { padding-left: 38px; }
   .row.rt-goods .lab { color: var(--g-faint); font-size: 10.5px; }
   .row.opens.rt-more { padding-left: 24px; }
+  .rt-cargo { font-size: 10.5px; color: var(--g-faint); white-space: nowrap; }
+  .rt-cargo .amt { font-size: 11px; }
   .row.more { padding-left: 0; }
 
   .quiet { color: var(--g-faint); font-size: 11px; padding: 10px 2px; }
@@ -564,10 +566,10 @@
         <button type="button" data-net="small" aria-pressed="true">3 camps</button>
         <button type="button" data-net="large" aria-pressed="false">15 camps</button>
       </div>
-      <span class="ctl-label">Routes</span>
+      <span class="ctl-label">Shipments</span>
       <div class="seg" role="group" aria-label="Route traffic">
-        <button type="button" data-routes="few" aria-pressed="true">3 parties</button>
-        <button type="button" data-routes="many" aria-pressed="false">20 parties</button>
+        <button type="button" data-routes="few" aria-pressed="true">2</button>
+        <button type="button" data-routes="many" aria-pressed="false">15</button>
       </div>
       <span class="ctl-label">Dock</span>
       <div class="seg" role="group" aria-label="Dock">
@@ -616,9 +618,9 @@
       </div>
       <div class="note">
         <span class="nk">Try it — 15 camps</span>
-        <p><b>Network</b> swaps in a fifteen-camp pool; <b>Routes</b> puts 20 parties on the turn.
+        <p><b>Network</b> swaps in a fifteen-camp pool; <b>Shipments</b> puts 15 on the turn.
           The goods list does not grow — it is bounded by the materials catalog. Click
-          <em>"5 more parties"</em> or <em>15 camps ›</em>: each opens a panel beside the card rather
+          <em>"5 more shipments"</em> or <em>15 camps ›</em>: each opens a panel beside the card rather
           than growing the zone. Then flip <b>Dock</b> to a horizontal one and watch the tab drop to
           its SHORT tier. §04 has the reasoning.</p>
       </div>
@@ -694,7 +696,7 @@
   <div class="sec-head"><span class="sec-num">04</span><h2>At fifteen camps</h2></div>
 
   <p class="lede">
-    Switch the prototype to <b>15 camps</b> and <b>20 parties</b>. Two of the three things on the
+    Switch the prototype to <b>15 camps</b> and <b>15 shipments</b>. Two of the three things on the
     tab do not grow with the network at all — but they have their own axes, the tab has a fixed
     height budget, and the line under the stage measures what is rendered against it on every
     setting.
@@ -728,9 +730,9 @@
       <tr>
         <td><b>Route section</b></td>
         <td class="fix">Parties landing or leaving this turn — <b>not</b> the pool's size</td>
-        <td class="fix">Independent of the network, but <b>not bounded</b>. The <b>Routes</b> control
-          puts 20 parties on the turn: 16 journeys, 12 counterparties, several of them shipping both
-          ways. At that size a flat list of every party is the problem.</td>
+        <td class="fix">Independent of the network, but <b>not bounded</b>. The <b>Shipments</b> control
+          puts 15 on the turn, from 12 counterparties, several of them shipping both ways. At that
+          size a flat list of every shipment is the problem.</td>
       </tr>
       <tr>
         <td><b>Roster</b></td>
@@ -753,9 +755,9 @@
   <div class="verdict">
     <span class="nk">The answer to "how does C scale" — measured in the prototype, not argued</span>
     <p>
-      <b>C's top-level split survives.</b> Set <b>15 camps</b> + <b>20 parties</b> and the tab
-      renders <b>664px</b> of content: the local arm as one line per good (8), the route arm split
-      into <em>Imports</em> and <em>Exports</em> with each folded to three parties, and the camps behind
+      <b>C's top-level split survives.</b> Set <b>15 camps</b> + <b>15 shipments</b> and the tab
+      renders <b>475px</b> of content: the local arm as one line per good (8), the route arm split
+      into <em>Imports</em> and <em>Exports</em> with each folded to three shipments, and the camps behind
       the network line.
     </p>
     <p>
@@ -767,12 +769,11 @@
       whole reason the tab can have a fixed budget at all.
     </p>
     <p>
-      <b>At 15 camps and 20 parties the tab is 664px, and that fits a side dock.</b> A 380px side
+      <b>At 15 camps and 15 shipments the tab is 475px, and that fits a side dock.</b> A 380px side
       dock's zone has about 1030px to give. A horizontal dock's body is
       <code>PANEL_HEIGHT_WIDE</code> — <b>418px</b>, whatever the window height, because the cross
-      axis is the reserved one — so the same content would run <b>246px past the end</b>. And no
-      cap fixes that: the network line and two arms do not fit 418 however hard their lists are
-      trimmed.
+      axis is the reserved one — so the same content would run <b>57px past the end</b>. That is
+      close enough that a tighter cap might close it, which is now a real choice — see §08.
     </p>
   </div>
 
@@ -784,17 +785,18 @@
       are the hover card, beside the row and never under the pointer. The row states what a player
       scans for; the card states what they check.</li>
     <li><b>The route half splits into Imports and Exports before it folds.</b> <em>What came in</em>
-      and <em>what went out</em> are two different questions and a player asks one at a time, so 16 journeys
-      become two ranked lists of three plus two fold rows. Each party is <b>two lines</b> — the
-      counterparty and the turn, then its goods as a clause — rather than a heading and a row per
-      good, which is the parties strip's own trade at seven lines.</li>
+      and <em>what went out</em> are two different questions and a player asks one at a time, so 15
+      shipments become two ranked lists of three plus two fold rows. Each shipment is <b>one line</b> —
+      the counterparty and its faction mark, then its cargo on the right where every amount on the
+      tab sits — with no date: every row on the tab crossed this turn. Its goods' ratings are its
+      hover.</li>
     <li><b>The camps are a click, not a block.</b> The network line already says <em>15 camps</em>;
       that count opens the list, and clicking a good opens the same list scoped to it — each camp's
       in and out, the ones that moved first, the ones that sat even last, and the friction.</li>
     <li><b>A height-starved dock re-authors the zone rather than trimming it.</b> Under ~600px the
       tab drops to a SHORT tier: the network line, then one row per arm stating what happened —
-      <em>8 goods · 16 parties (8 imports · 8 exports)</em> — each opening the full list over the map.
-      <b>152px</b>, and it fits 418 with room to spare. This is the band zone's own idiom:
+      <em>8 goods · 15 shipments (7 imports · 8 exports)</em> — each opening the full list over the map.
+      <b>115px</b>, and it fits 418 with room to spare. This is the band zone's own idiom:
       when the height is not there the blocks are re-authored, never generically reflowed.</li>
   </ul>
 
@@ -819,8 +821,8 @@
       and the overflow panel brings its own scroll on its own layer, where a real viewport ceiling
       makes one legitimate — exactly the exemption <code>BandComposeFloat</code> already holds.
       <br><br>
-      What the horizontal dock needs instead is the <b>SHORT tier</b>: 664px does not fit 418 and no
-      cap makes it, so the zone becomes three rows and a way in. That is a second authored tier to
+      What the horizontal dock needs instead is the <b>SHORT tier</b>: 475px does not fit 418, so the
+      zone becomes two rows and a way in. That is a second authored tier to
       build and keep working, which is the real cost of this answer.
       <br><br>
       The 418 and 1030 are the shipped <code>PANEL_HEIGHT_WIDE</code> and a side dock at a 1200px
@@ -1008,8 +1010,11 @@
 
   <div class="q">
     <h3>The SHORT tier on a horizontal dock</h3>
-    <p>664px does not fit 418px and no cap makes it, so a height-starved dock either gets the
-      <b>SHORT tier</b> (three rows stating what happened per arm, each opening the full list) or the
+    <p>At its busiest the full tab is <b>475px against 418 — 57px over</b>. It was 246px over before
+      the hunts coming home, the dowry and the per-row dates left the tab. Two shipments a direction
+      instead of three saves about 40px of it — close, not closed; a shorter network line would have
+      to find the rest. Failing that, a height-starved dock either gets the
+      <b>SHORT tier</b> (two rows stating what happened per arm, each opening the full list) or the
       Trade tab is simply not offered on a bottom dock. I recommend the <b>tier</b> — it is the band
       zone's existing idiom — but it is a second authored layout to build and keep working, so it is
       worth saying no to if you would rather the tab were vertical-dock only.</p>
@@ -1111,7 +1116,10 @@
             chips: [["density","fair"],["length","poor"]] }
         ],
         empty: [],
-        // The small world has no dense route set — the control is disabled there.
+        // No set of its own: the dense route set is the LARGE world's, and it applies
+        // here unchanged — a trading partner is not a network member, so how many camps
+        // pool and how many shipments cross are independent. (It was `null` for a slice,
+        // and the Routes control then did nothing at all on a three-camp network.)
         routesMany: null
       }
     },
@@ -1257,8 +1265,9 @@
   function crossings() {
     var t = world().turns;
     var list = t[state.turn];
-    if (state.turn === "busy" && state.routes === "many" && t.routesMany) {
-      list = list.filter(function (x) { return x.link === "local"; }).concat(t.routesMany);
+    var many = t.routesMany || WORLD.large.turns.routesMany;
+    if (state.turn === "busy" && state.routes === "many") {
+      list = list.filter(function (x) { return x.link === "local"; }).concat(many);
     }
     // ⛔ TWO CAUSES THE LEDGER BOOKS AS TRANSFERS ARE NOT TRADE, AND NEVER REACH THIS TAB.
     //  * A band's own party coming home — a hunt's drop-off, a party's fold-back — books
@@ -1522,8 +1531,7 @@
       return '<div class="tr"><span>' + esc(x.good) + "</span>" + (x.chips ? chips(x) : "") +
         '<span class="fill"></span>' + amtCell(x.dir, x.amt) + "</div>";
     }).join("");
-    return '<div class="th">' + head + '<span class="n">' +
-      esc(g.own ? "came home" : g.when || "") + "</span></div>" + rows;
+    return '<div class="th">' + head + "</div>" + rows;
   }
 
   /** What the hover card says: the good's piles, largest first, each with its
@@ -1708,7 +1716,7 @@
       acc[(x.peer || "\u0000own") + "\u0001" + x.dir] = 1; return acc;
     }, {})).length;
     h += '<div class="grp"><div class="grp-head">' + LINK_WORD.route +
-      '<span class="cnt">' + (rt.length ? partyCount + (partyCount === 1 ? " party" : " parties") : "no parties") +
+      '<span class="cnt">' + (rt.length ? partyCount + (partyCount === 1 ? " shipment" : " shipments") : "none") +
       "</span></div>";
     if (!rt.length) {
       h += '<div class="quiet" style="padding:6px 2px">No party landed here and none left carrying.</div>';
@@ -1741,12 +1749,15 @@
         }).join(" · ");
         var partyTip = "party:" + g.key;
         TIPS[partyTip] = partyTipHtml(g);
+        // ⛔ NO DATE. Every row on this tab crossed THIS TURN — the ledger books an export
+        // on the turn it leaves and an import on the turn it lands — so a `left t204` on
+        // turn 206 contradicted the window it sat in. With the date gone, the cargo takes
+        // its place on the right, where every amount on the tab already is: one line per
+        // shipment.
         h += '<div class="row rt-party" data-tip="' + esc(partyTip) + '">' +
           '<span class="lab' + (g.own ? " dim" : "") + '">' + head + "</span>" +
           '<span class="fill"></span>' +
-          '<span class="amt" style="color:var(--g-faint)">' + esc(g.own ? "came home" : g.when || "") +
-          "</span></div>" +
-          '<div class="row rt-goods"><span class="lab">' + goods + "</span></div>";
+          '<span class="rt-cargo">' + goods + "</span></div>";
         return;
       }
       h += row({ cls: "sub-row", label: head, sub: g.own ? "came home" : esc(g.when || ""),
@@ -1774,10 +1785,10 @@
         '<span class="' + cls(dir) + '">' + mark(dir) + "</span> " + pair[1] +
         "</span>" + '<span class="fill"></span>' +
         '<span class="amt" style="color:var(--g-faint)">' +
-        half.length + (half.length === 1 ? " party" : " parties") + "</span></div>";
+        half.length + (half.length === 1 ? " shipment" : " shipments") + "</span></div>";
       half.slice(0, cap).forEach(function (g) { writeGroup(g, true); });
       if (half.length > cap) {
-        h += opensRow(half.length - cap, "rt" + dir, ["party", "parties"], "rt-more");
+        h += opensRow(half.length - cap, "rt" + dir, ["shipment", "shipments"], "rt-more");
       }
     });
     h += "</div>";
@@ -1825,13 +1836,13 @@
           out += '<div class="row sub-head"><span class="lab"><span class="' + cls(dir) + '">' +
             mark(dir) + "</span> " + (dir === "in" ? "Imports" : "Exports") + "</span>" +
             '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
-            groups.length + (groups.length === 1 ? " party" : " parties") + "</span></div>";
+            groups.length + (groups.length === 1 ? " shipment" : " shipments") + "</span></div>";
         }
         groups.forEach(function (g) {
           out += row({ cls: "rt-party",
                        label: g.own ? "our own party"
                                     : (dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer) + factionMark(g.items[0]),
-                       sub: g.own ? "came home" : esc(g.when || ""), dimLabel: g.own });
+                       dimLabel: g.own });
           g.items.forEach(function (x) {
             out += row({ cls: "rt-goods",
                          label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
@@ -1840,8 +1851,8 @@
       });
       return {
         title: kind === "rt" ? "Trade this turn" : kind === "rtin" ? "Imports this turn" : "Exports this turn",
-        count: total + (total === 1 ? " party" : " parties"),
-        sub: "one party per journey, largest first, with everything it carried.",
+        count: total + (total === 1 ? " shipment" : " shipments"),
+        sub: "one line per shipment, largest first. Hover one for its goods' ratings.",
         body: out
       };
     }
@@ -1930,7 +1941,7 @@
   }
 
   // Under this much room the zone cannot hold three sections at any cap, so it drops
-  // to the SHORT tier below. Measured, not chosen: the full tab is ~664px and a
+  // to the SHORT tier below. Measured, not chosen: the full tab is ~475px and a
   // horizontal dock's body is 418.
   var TIER_FULL = 600;
 
@@ -1969,7 +1980,7 @@
     h += opener(LINK_WORD.route,
                 landed + (landed === 1 ? " import" : " imports") + " \u00b7 " +
                 left + (left === 1 ? " export" : " exports"),
-                (landed + left) + " parties", "rt");
+                (landed + left) + ((landed + left) === 1 ? " shipment" : " shipments"), "rt");
     return h;
   }
 
