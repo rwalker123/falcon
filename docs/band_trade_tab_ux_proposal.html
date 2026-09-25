@@ -847,10 +847,28 @@
       <tr><td><b>Dowry to a splinter</b></td><td>Local</td><td>out</td><td class="fix">The new band, by name</td><td><code>fission.rs:411</code></td></tr>
       <tr><td><b>Dowry from a parent</b></td><td>Local</td><td>in</td><td class="fix">The parent, by name</td><td><code>fission.rs:483</code></td></tr>
       <tr><td><b>Shipment loaded</b></td><td>Route</td><td>out</td><td class="fix">Destination, by name</td><td><code>server.rs:6619</code></td></tr>
-      <tr><td><b>Shipment landed</b></td><td>Route</td><td>in</td><td class="fix">Sender, by name</td><td><code>expeditions.rs:1449</code></td></tr>
-      <tr><td><b>Party dropped off / came home</b></td><td>Route</td><td>in</td><td class="fix">Own party — no peer</td><td><code>expeditions.rs:895, 989</code></td></tr>
+      <tr><td><b>Shipment landed</b></td><td>Route</td><td>in</td><td class="fix">Sender, by name</td><td><code>expeditions.rs:895</code></td></tr>
+      <tr><td><b>Party dropped off / came home</b></td><td>Route</td><td>in</td><td class="fix">Own party — <b>not trade</b>; see below</td><td><code>expeditions.rs:1449, 989</code></td></tr>
     </tbody>
   </table>
+  </div>
+
+  <div class="callout warn">
+    <span class="nk">A band's own party coming home is not trade — and the Band panel says it is</span>
+    <p>
+      The drop-off and the fold-back book on the <code>Route</code> arm because a party carried the
+      goods, which keeps the ledger consistent. But to a player they are the band's <b>own hunting and
+      foraging</b>, not a trade route, so <b>the Trade tab never shows them</b>: it states crossings
+      with somebody else.
+    </p>
+    <p>
+      <b>The Band panel has the same problem today.</b> Its Food popover renders the whole Route arm
+      as <code>⇄ Trade route</code> (<code>DisclosureController.gd:245</code>), so a hunt's haul
+      coming home is labelled as trade — and it is not in the hunting income either, since the sim
+      books it as <em>"neither income nor consumption"</em>. The cause split is what fixes both:
+      with a cause key on each crossing, the homecoming moves out of <code>⇄ Trade route</code> and
+      into the Food popover beside the hunts and forages it came from.
+    </p>
   </div>
 
   <div class="callout warn">
@@ -930,7 +948,9 @@
       <tr>
         <td><b>The cause</b></td>
         <td class="fix">Six writers, one <code>TransferLink</code> each</td>
-        <td class="fix">A cause key per crossing (§04), and the <code>cargo + provisions</code> debit split</td>
+        <td class="fix">A cause key per crossing (§05), and the <code>cargo + provisions</code> debit split.
+          The client reads the key twice: the Trade tab drops <em>party home</em>, and the Band
+          panel's Food popover moves it from <code>⇄ Trade route</code> to the hunt and forage rows</td>
       </tr>
       <tr>
         <td><b>The counterparty</b></td>
@@ -1225,8 +1245,15 @@
   function crossings() {
     var t = world().turns;
     var list = t[state.turn];
-    if (state.turn !== "busy" || state.routes !== "many" || !t.routesMany) { return list; }
-    return list.filter(function (x) { return x.link === "local"; }).concat(t.routesMany);
+    if (state.turn === "busy" && state.routes === "many" && t.routesMany) {
+      list = list.filter(function (x) { return x.link === "local"; }).concat(t.routesMany);
+    }
+    // ⛔ A BAND'S OWN PARTY COMING HOME IS NOT TRADE. The sim books a hunt's drop-off and
+    // a party's fold-back on the Route arm, for the ledger's consistency — a party
+    // carried it — but to the player it is the band's own hunting and foraging, and it
+    // belongs with those on the Band panel. The Trade tab states crossings with SOMEBODY
+    // ELSE, so this cause never reaches it.
+    return list.filter(function (x) { return x.cause !== "party_home"; });
   }
   function big() { return state.net === "large"; }
 
