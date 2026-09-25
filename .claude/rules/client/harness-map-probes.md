@@ -720,6 +720,27 @@ camera, and it reproduces the report exactly. `BANK_v1/v2/v3` are the ladder (**
 SHIPS**; v1 still traces the hexagon, v3 dissolves the bank) and `BANK_shipped` is config's.
 `scripts/preview.sh res://tools/blend_probe.tscn` (or `-- --only=SURF` / `-- --only=BANK`)
 
+**One more state (22, ECO): ALLUVIAL ↔ PRAIRIE, every edge orientation in one frame** → `ECO_*.png`,
+the live report of a prairie hex between two alluvial hexes whose seams (the vertical E/W ones worst)
+read as razor hexagon edges. At r ≈ 75, **grid overlay OFF** (restored after), a prairie field (west)
+meets an alluvial field (east) along a column split — in odd-r that boundary alternates a vertical
+E/W edge with a diagonal NE/SE pair, so it zigzags through both orientations — plus an ISOLATED
+alluvial hex in the prairie and an ISOLATED prairie hex in the alluvial (the screenshot's own
+configuration, and the mandatory shred checks; an isolated hex also meets its field across all six
+edges, so vertical and diagonal edges of ONE hex compare directly). Each rung saves the full frame
+and `_iso_alluvial` / `_iso_prairie` / `_split` crops; `ECO_sheet_iso_prairie` puts every rung's
+isolated-prairie crop side by side. **`ECO_off` is the neutral profile, i.e. the global levers — the
+BEFORE**; `ECO_v1/v2/v3` sweep alluvial's `blend_profile` (1.6/1.4/1.8, **2.2/1.9/2.2 ships**,
+2.6/2.2/2.6) and `ECO_shipped` is config's, byte-identical to `ECO_v2`.
+
+**This state is where the symmetric seam WOBBLE was caught** (`terrain-blend-shader.md` → the
+invariant). The measurement that caught it is worth reusing on any "hard edges" report: for each edge,
+compare the mean `|ΔL|` of adjacent pixel pairs that STRADDLE the edge line against pairs lying wholly
+2–8 px beside it. A continuous blend gives a ratio near 1 (0.7–1.4 here, texture noise); a step at the
+edge gives 2–3 — and it was 1.3–3.0 on EVERY orientation, so the "vertical edges are worse" read was the
+pixel grid, not the math. Repeat it with `blend_noise_amount = 0` and `blend_height_influence = 0`
+before blaming a term.
+
 ## Worked-source mark states (issue #412)
 
 **`map_preview`** — `map_worked_ready` (the ⌃ CONTRAST: a tended patch offers Sow, a tamed

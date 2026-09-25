@@ -115,9 +115,24 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
   ```glsl
   float env = 4.0 * p * (1.0 - p);                          // dies at both ends of the band
   float h   = (luma(own) - mean_luma(own_layer)) - (luma(nb) - mean_luma(nb_layer));
-  float pw  = clamp(p + ((noise - 0.5) * blend_noise_amount - h * blend_height_influence) * env, 0.0, 1.0);
+  float s   = own_layer < nb_layer ? 1.0 : -1.0;            // ANTISYMMETRIC wobble sign — see below
+  float pw  = clamp(p + (s * (noise - 0.5) * blend_noise_amount - h * blend_height_influence) * env, 0.0, 1.0);
   result    = mix(own, nb, smoothstep(0.5 - blend_soft, 0.5 + blend_soft, pw));
   ```
+  **Continuity needs `pw_nb = 1 − pw_own` at every shared point**, because each hex weighs its OWN neighbour
+  and the hex across the edge measures `p` in the mirrored frame. The height term satisfies that for free (`h`
+  flips sign with the frame). **The wobble does not** — the noise VALUE is identical from both sides, so it must
+  enter with OPPOSITE signs, signed by the terrain LAYER index (a total order both sides agree on, and never a
+  tie since a seam only exists between different layers) — the peak pass's `PEAK_BLEND_WOBBLE` discipline.
+  It shipped with the SAME sign from both sides, which pushed both hexes toward (or away from) each other: at
+  the edge, where `p = 0.5` and the envelope peaks, the two mixes disagreed by up to `2·(t − 0.5)` — **a genuine
+  step drawn exactly along the hex polyline**, its sign flickering with the noise. That step is what made
+  high-contrast pairs read as razor hexagon edges (the alluvial↔prairie report), and it read worst on the
+  **E/W edges only because a vertical line sits on the pixel grid** with no staircase to soften it — the step
+  itself was orientation-blind. Measured on `blend_probe` state **22 (ECO)**: adjacent-pixel `|ΔL|` across the
+  edge ÷ `|ΔL|` 2–8px beside it was **1.3–3.0 on every orientation** with the bug, **0.7–1.4** with
+  `blend_noise_amount = 0` (control) and with the fix — `blend_height_influence = 0` left it at 1.3–2.7, which
+  exonerated the height term. It moved every frame carrying a land↔land seam and **no shoreline pixel**.
   The **wobble** (world `vnoise`, cell `blend_noise_cell`) gives an organic, meandering boundary instead
   of the straight hex line, and carries **low-variance pairs** (smooth sand ↔ smooth soil) where there is
   little detail to follow. The **height term** is a *detail-following NUDGE*: with no height maps each
@@ -211,14 +226,23 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
       bound once by MapView as the `layer_blend_map` uniform and fetched in-shader by layer index
       (`blend_profile(layer)` → `vec3`; `edge_blend_profile()` is the `max` over the pair).
       `rebuild_layer_blend_map()` is public and updates the ImageTexture **in place** (so the binding
-      survives) — that is how `blend_probe` state **17 (BANK)** sweeps it. Fallbacks are the
+      survives) — that is how `blend_probe` states **17 (BANK)** and **22 (ECO)** sweep it. Fallbacks are the
       `BLEND_PROFILE_DEFAULT_*` consts; `BLEND_PROFILE_MAX_SCALE` (4.0) guard-rails the reach, since the
       apothem is only 0.866·r and a wider band would collide with the opposite seam.
-    * **Shipped:** only `navigable_river` (2.6 / 2.2 / 2.6) — chosen on `blend_probe` state 17, which renders
+    * **Shipped:** `navigable_river` (2.6 / 2.2 / 2.6) — chosen on `blend_probe` state 17, which renders
       the corridor against a **dark** field and a **bright** one in ONE frame. `1.8/1.6/2.0` still traced the
       hexagon; `3.4/2.8/3.2` started dissolving the bank's identity as a distinct silty corridor. Judge any
       new profile there, **including the isolated-hex shred crops** — a corridor seam cannot show a torn
-      interior.
+      interior. That choice was made while the wobble was still symmetric (see the invariant above); the
+      `BANK_*` frames moved with the fix and read softer, with the hex-edge cut gone.
+    * **Shipped:** `alluvial_plain` (id 10) **(2.2 / 1.9 / 2.2)** — the dark outlier (mean luma ~55) that is
+      high-contrast against most of its neighbours, prairie (~112) above all. Chosen on `blend_probe` state
+      **22 (ECO)**, AFTER the antisymmetric-wobble fix (with the step gone, the global ecotone still left an
+      isolated alluvial hex a soft-rimmed hexagon). `1.6/1.4/1.8` still read as a hexagon; `2.6/2.2/2.6` (the
+      bank's) hazed the isolated alluvial hex into a smear. Both isolated-hex crops keep solid interiors at
+      2.2. Blast radius: only frames containing an alluvial hex moved (`ECO_shipped*`, `G_*`,
+      `blend_bands_full` / `H_gate_bands_full`, `X_dark_water`, `map_riverine_split`,
+      `map_overlay_legend_terrain`); `blend_isolated_*`, `V6_*`, `V7_*`, `V10_*` are byte-identical.
   - The blend look is **zoom-invariant** (band + wobble are both radius-relative), so a preview frame is an
     honest proxy for the game *only if it is rendered at the game's on-screen hex radius* (**r ≈ 75px**;
     hexes read ~150px across on the user's screen). `tools/blend_probe.tscn` pins that, and — critically —

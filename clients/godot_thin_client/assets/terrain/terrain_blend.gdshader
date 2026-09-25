@@ -916,10 +916,23 @@ void fragment() {
 				// its cell — the wavelength — by noise_cell_scale (bp.b). Both are max()-derived, so the hex
 				// across that edge samples the identical noise field at the identical amplitude; the world-space
 				// sample already reads the same value from both sides at a shared point.
+				// …but an identical VALUE is not an identical DISPLACEMENT. `pw` is each hex's weight for its
+				// OWN neighbour, so the hex across the edge measures it in the mirrored frame (its p is 1 − ours
+				// at every shared point). Continuity needs pw_theirs = 1 − pw_ours, i.e. the wobble must enter
+				// with OPPOSITE signs in the two frames — ANTISYMMETRICALLY, exactly like the peak pass's seam
+				// wobble (PEAK_BLEND_WOBBLE). Added with the same sign from both sides, it pushed BOTH hexes
+				// toward their neighbour (or both away) by the same amount, so at the shared edge — where p is
+				// 0.5 from both frames and the envelope peaks — the two mixes disagreed by up to 2·(t − 0.5): a
+				// genuine STEP drawn exactly along the hex polyline, whose sign flickered with the noise. That
+				// step is what made high-contrast pairs (alluvial ↔ prairie) read as razor hexagon edges; it is
+				// sharpest on the E/W edges only because a vertical line sits on the pixel grid with no
+				// staircase to soften it. The terrain LAYER index is a total order both sides agree on and never
+				// ties (a seam only exists between different layers), so it signs the wobble.
 				float seam_noise_amount = blend_noise_amount * best_bp.g;
 				float seam_noise_cell = max(blend_noise_cell * best_bp.b, BLEND_SOFT_MIN);
 				float n = vnoise(v_map / seam_noise_cell);
-				float wobble = (n - 0.5) * seam_noise_amount;
+				float wob_sign = own_layer < best_layer ? 1.0 : -1.0;
+				float wobble = wob_sign * (n - 0.5) * seam_noise_amount;
 				// positive when OWN is the taller/brighter texture here → push the boundary toward the
 				// neighbour (own keeps the pixel), i.e. SUBTRACT from the neighbour's weight.
 				float h = (luma(own_rgb) - mean_luma(own_layer)) - (luma(nb_rgb) - mean_luma(best_layer));

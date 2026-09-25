@@ -701,6 +701,43 @@ const BANK_VARIANTS := [
 	{"name": "BANK_v3", "width_scale": 3.4, "noise_scale": 2.8, "noise_cell_scale": 3.2},
 ]
 
+# --- state 22 (ECO): ALLUVIAL ↔ PRAIRIE — the dark/bright flat pair tracing the hexagon, at r ≈ 75 ---------
+# The report (live play): a prairie_steppe hex sitting between two alluvial_plain hexes, the seams reading as
+# razor-straight hexagon edges — the two VERTICAL (E/W) ones worst. Both are `flat`, neither carried a
+# blend_profile, so the seam ran on the GLOBAL ecotone only: the same failure class as the bank (state 17) —
+# a pair far apart in tone (alluvial mean luma ~55, prairie ~112) where a ~0.35·r ramp wobbled by a fraction
+# of itself still traces the hex polyline. One frame carries:
+#   · an ISOLATED alluvial hex in a prairie field and an ISOLATED prairie hex in an alluvial field — the
+#     mandatory SHRED checks, and (since an isolated hex meets its field across all SIX edges) the frame where
+#     the two vertical E/W edges sit beside the four diagonals of the same hex, so orientations compare
+#     directly. The isolated prairie hex IS the screenshot's configuration (alluvial on its E and W).
+#   · the field SPLIT at ECO_FIELD_SPLIT_COL — in odd-r a column split alternates a vertical E/W edge (every
+#     row) with a diagonal NE/SE pair (odd rows), so the long boundary zigzags through both orientations.
+# Isolated hexes sit in the TOP rows, clear of the bottom-right minimap (see BANK_ISO_*).
+const ECO_GRID_W := ISO_GRID_W
+const ECO_GRID_H := ISO_GRID_H
+const ECO_HEX_RADIUS := ISO_HEX_RADIUS
+const ECO_ALLUVIAL_ID := 10          # alluvial_plain — dark soil, the high-contrast outlier being profiled
+const ECO_PRAIRIE_ID := 11           # prairie_steppe — bright golden grass (no profile of its own)
+const ECO_FIELD_SPLIT_COL := 7       # cols < this are the prairie field, the rest alluvial
+const ECO_ISO_ALLUVIAL := Vector2i(2, 1)   # alluvial hex, all six neighbours prairie
+const ECO_ISO_PRAIRIE := Vector2i(11, 1)   # prairie hex, all six neighbours alluvial (the screenshot)
+# An ODD-row hex on the split: its E, NE and SE neighbours are all across it, so one crop holds a vertical
+# edge and both diagonals of the long boundary.
+const ECO_SPLIT_CROP := Vector2i(6, 5)
+const ECO_CROP_RADII := 1.7
+const ECO_SHEET_NAME := "ECO_sheet_iso_prairie"
+# The sweep — the same three axes and the same kind of ladder the bank was chosen on (see BANK_VARIANTS).
+# ECO_off is the NEUTRAL profile: the global levers exactly, i.e. the BEFORE frame in the same camera.
+# v2 SHIPS on alluvial_plain: v1 still leaves the isolated alluvial hex a soft-rimmed hexagon, v3 hazes the
+# alluvial hex into a smear and starts dissolving its identity.
+const ECO_VARIANTS := [
+	{"name": "ECO_off", "width_scale": 1.0, "noise_scale": 1.0, "noise_cell_scale": 1.0},
+	{"name": "ECO_v1", "width_scale": 1.6, "noise_scale": 1.4, "noise_cell_scale": 1.8},
+	{"name": "ECO_v2", "width_scale": 2.2, "noise_scale": 1.9, "noise_cell_scale": 2.2},
+	{"name": "ECO_v3", "width_scale": 2.6, "noise_scale": 2.2, "noise_cell_scale": 2.6},
+]
+
 # --- states 18–21: THE ROADS IN THE GROUND (arc #532) ---------------------------------------------
 # ⛔ **EVERY ROAD FRAME IS RENDERED AT `ISO_HEX_RADIUS`, ON THE ISOLATED-HEXES GRID's DIMENSIONS.** This
 # file's header states the rule and it applies here with force: the road pass's widths and its softness
@@ -1112,6 +1149,10 @@ func _ready() -> void:
 	if _want("21/ATRISK"):
 		# --- state 21 (ATRISK): paved GEOMETRY, own SURFACE, DANGER tint (see the ROAD_RISK_* consts) ---
 		await _render_road_at_risk_state()
+
+	if _want("22/ECO"):
+		# --- state 22 (ECO): alluvial ↔ prairie, every edge orientation + both shred checks (see ECO_*) ---
+		await _render_ecotone_state()
 
 	_finish()
 
@@ -1839,6 +1880,65 @@ func _bank_neighbor(hex: Vector2i, dir: int) -> Vector2i:
 	var off: Array = BANK_DIR_OFFSETS[dir]
 	var dx: int = int(off[1] if (hex.y % 2) != 0 else off[0])
 	return Vector2i(hex.x + dx, hex.y + int(off[2]))
+
+
+func _render_ecotone_state() -> void:
+	## State 22 (ECO): alluvial ↔ prairie at the game's r ≈ 75. One camera across the sweep, so ECO_off (the
+	## neutral profile — the BEFORE) and every rung compare directly; config's own profile renders last. The
+	## sheet puts the isolated-prairie crop (the screenshot's hex) of every rung side by side. Grid OFF: the
+	## report is from a map with no grid drawn, and a drawn hexagon would answer the very question under test.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_ecotone())
+	await _refit(ECO_HEX_RADIUS)
+	var sheet_names: Array[String] = []
+	var sheet_labels: Array[String] = []
+	for variant: Dictionary in ECO_VARIANTS:
+		var name: String = String(variant["name"])
+		_set_blend_profile(ECO_ALLUVIAL_ID, {
+			"width_scale": float(variant["width_scale"]),
+			"noise_scale": float(variant["noise_scale"]),
+			"noise_cell_scale": float(variant["noise_cell_scale"]),
+		})
+		await _render_ecotone_frame(name)
+		sheet_names.append("%s_iso_prairie" % name)
+		sheet_labels.append("%s — width ×%.1f · noise ×%.1f · cell ×%.1f" % [
+			name, float(variant["width_scale"]), float(variant["noise_scale"]),
+			float(variant["noise_cell_scale"]),
+		])
+	_restore_blend_profiles()
+	await _render_ecotone_frame("ECO_shipped")
+	sheet_names.append("ECO_shipped_iso_prairie")
+	sheet_labels.append("ECO_shipped — terrain_config.json")
+	await _save_contact_sheet(sheet_names, sheet_labels, ECO_SHEET_NAME)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _render_ecotone_frame(name: String) -> void:
+	## The full frame + the three native-res crops: each isolated hex (shred check, all six orientations) and
+	## the zigzag split (vertical + diagonal edges of a long boundary).
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save(name)
+	for crop: Array in [
+		["iso_alluvial", ECO_ISO_ALLUVIAL], ["iso_prairie", ECO_ISO_PRAIRIE], ["split", ECO_SPLIT_CROP],
+	]:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop[1]
+		await _save_crop("%s_%s" % [name, String(crop[0])], hex.x, hex.y, ECO_CROP_RADII)
+
+
+func _snapshot_ecotone() -> Dictionary:
+	## A prairie field (west) meeting an alluvial field (east) along a column split, with one ISOLATED hex of
+	## the other biome dropped into each field.
+	var arr: Array = []
+	arr.resize(ECO_GRID_W * ECO_GRID_H)
+	for y in range(ECO_GRID_H):
+		for x in range(ECO_GRID_W):
+			arr[y * ECO_GRID_W + x] = ECO_PRAIRIE_ID if x < ECO_FIELD_SPLIT_COL else ECO_ALLUVIAL_ID
+	arr[ECO_ISO_ALLUVIAL.y * ECO_GRID_W + ECO_ISO_ALLUVIAL.x] = ECO_ALLUVIAL_ID
+	arr[ECO_ISO_PRAIRIE.y * ECO_GRID_W + ECO_ISO_PRAIRIE.x] = ECO_PRAIRIE_ID
+	return _snapshot(arr, ECO_GRID_W, ECO_GRID_H)
 
 
 func _shore_profile_of(variant: Dictionary) -> Dictionary:

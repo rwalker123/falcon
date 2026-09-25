@@ -87,7 +87,7 @@
     { "id": 7, "name": "mangrove_swamp", "label": "Mangrove Swamp", "category": "wetland", "blend_class": "rugged", "color": [79, 124, 56] },
     { "id": 8, "name": "freshwater_marsh", "label": "Freshwater Marsh", "category": "wetland", "blend_class": "flat", "color": [92, 140, 99] },
     { "id": 9, "name": "floodplain", "label": "Floodplain", "category": "wetland", "blend_class": "flat", "color": [136, 182, 90] },
-    { "id": 10, "name": "alluvial_plain", "label": "Alluvial Plain", "category": "land", "blend_class": "flat", "color": [201, 176, 120] },
+    { "id": 10, "name": "alluvial_plain", "label": "Alluvial Plain", "category": "land", "blend_class": "flat", "color": [201, 176, 120], "blend_profile": { "width_scale": 2.2, "noise_scale": 1.9, "noise_cell_scale": 2.2 } },
     { "id": 11, "name": "prairie_steppe", "label": "Prairie Steppe", "category": "land", "blend_class": "flat", "color": [211, 165, 77] },
     { "id": 12, "name": "mixed_woodland", "label": "Mixed Woodland", "category": "land", "blend_class": "flat", "color": [91, 127, 67] },
     { "id": 13, "name": "boreal_taiga", "label": "Boreal Taiga", "category": "land", "blend_class": "rugged", "color": [59, 79, 49] },
