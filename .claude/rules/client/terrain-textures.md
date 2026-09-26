@@ -3,6 +3,8 @@ paths:
   - "clients/godot_thin_client/assets/terrain/{TerrainTextureManager,TerrainDefinitions}.gd"
   - "clients/godot_thin_client/assets/terrain/terrain_config.json"
   - "clients/godot_thin_client/src/scripts/ui/TerrainRenderer.gd"
+  - "clients/godot_thin_client/assets/terrain/make_seamless.py"
+  - "clients/godot_thin_client/assets/terrain/textures/base/**"
 ---
 
 <!-- Extracted verbatim from lines 220-221;396-501 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -18,6 +20,29 @@ paths:
 |--------|---------|
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
 | `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
+| `assets/terrain/make_seamless.py` | The base-texture SEAMLESSNESS gate and fix. `--check` measures every texture `biome_array` loads (terrain_config.json's roster) and exits 1 if any is over `SEAM_RATIO_MAX`; without it, rewrites in place only those over the bar (idempotent). See "Base textures must tile seamlessly" |
+
+## Base textures must tile seamlessly
+
+The shader samples every base biome in continuous world space with `repeat_enable`, so one texture
+repeats every `1 / base_texture_scale` hex-rows (8·r at the shipped 0.25) across the whole map. A texture
+whose right edge does not continue its left (or bottom its top) draws a **straight line at every repeat**,
+through the middle of hexes — independent of any biome seam and of the edge blend, so no blend lever can
+hide it. It read live as a vertical line through a prairie field.
+
+**`python3 assets/terrain/make_seamless.py --check` is the gate** — run it after dropping in any base art.
+The measure is the WRAP RATIO per axis: mean |ΔL| between the last and first column (the pair a repeat puts
+side by side) over the mean |ΔL| between adjacent interior columns, rows likewise; seamless scores ~1 and
+the bar is `SEAM_RATIO_MAX` = 1.3. The fix mode cross-fades each wrap edge with the image rolled by half its
+size over a smooth `BLEND_BAND_FRACTION` (1/8) band, horizontal pass then vertical, with a
+variance-preserving blend so the band keeps the texture's contrast.
+
+**The blend removes the line, not a low-frequency cast.** A texture with a vignette or a large-scale
+colour gradient (darker edges, lighter middle) still repeats as a visible grid of tiles once the join
+itself is clean — that texture needs regenerating with even lighting, not the script. And cross-fading
+strongly linear structure (dune ripples, crack networks) can leave faint doubled lines inside the band;
+regeneration with a true tiling tool is the better fix there too. First pass: 23 of 38 textures were over
+the bar (worst `23_seasonal_snowfield` 5.48, `21_periglacial_steppe` 3.18); all measure 0.73–1.12 after.
 ## Terrain Texture System
 
 Optional terrain texture graphics for the 2D map view.
