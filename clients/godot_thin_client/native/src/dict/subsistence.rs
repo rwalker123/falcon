@@ -1616,6 +1616,9 @@ pub(crate) fn recipes_to_array(
             .map(recipe_outputs_to_array)
             .unwrap_or_default();
         let _ = dict.insert("outputs", &outputs);
+        // The recipe's short name among the recipes making the same output ("Bone", "Flint"); `""`
+        // on a recipe that is the only one making its output.
+        let _ = dict.insert("label", recipe.label().unwrap_or(""));
         array.push(&dict.to_variant());
     }
     array

@@ -21,12 +21,19 @@ class_name CraftingPanel
 ## Owned · Rebuild costs · action, and `EquipmentBatchState.life` is not among them: a second copy of
 ## condition here would be the same fact stated twice, in two places free to disagree.
 ##
-## **TIER IS A FOLDABLE GROUP HEAD, NOT A COLUMN, AND THE CELL IS WHAT THE BAND HAS.** The head is the
-## tier a row would be MADE at (`outputTierName`, rank-descending); the Owned cell is what the band
-## actually carries. The two can disagree, and that disagreement is the readout — a Clubs row under
-## **Flint** whose cell reads *carrying plain · poor*. **The tier word reaches the cell ONLY through
-## the published `ownedNote`**, and only when it is news: nothing here composes one, re-derives one, or
-## renders a row's `tier_id`.
+## **ONE SHORT ROW PER ITEM, AND ITS RECIPES LIVE BEHIND A LINK.** The ledger groups the published
+## `CraftOffer`s by `outputItemId` (a material recipe is its own row), so Spears is ONE row whether it
+## is pointed with bone or knapped from stone. The row's cells describe the SUGGESTED offer — the one
+## the sim marked, which is exactly one per row — and an item with more than one recipe carries an
+## `N recipes` link under its name that opens a read-only popup comparing them. **Make on such a row
+## opens a picker under it** rather than starting a build, because the recipe cannot be changed once
+## the build starts; Make on a single-recipe row starts it straight away, as it always did. The
+## sections are the three groups — `Kit` · `Bench tools` · `Materials` — and nothing sorts a row under
+## a tier any more: a row carrying both a plain and a flint recipe has no one tier to be sorted under.
+##
+## **THE TIER WORD REACHES THE OWNED CELL ONLY THROUGH THE PUBLISHED `ownedNote`**, read off the
+## suggested offer and only when it is news: nothing here composes one, re-derives one, or renders a
+## row's `tier_id`. A recipe's own tier is named by its `recipeLabel`, in the popup and the picker.
 ##
 ## **OWNERSHIP IS `count`, NEVER `remaining == 0`.** A batch that runs out of units is removed, so a
 ## worn-out item and one the band never made both read `remaining 0` — which is why the Owned cell is
@@ -123,10 +130,36 @@ var _pending_scroll: int = SCROLL_UNSET
 ## **WHICH GROUP HEADS ARE FOLDED, keyed by head name.** It is VIEW state and not snapshot state, so
 ## it does not breach `render(payload)`-is-the-whole-input: it has exactly the standing of the scroll
 ## offset above, which the panel already carries across a rebuild. Held by NAME rather than by index
-## so it survives a band switch, whose ledger may hold a different set of tier heads in a different
-## order — and so folding `Plain` on one band leaves it folded on the next, which is what a reader who
-## has stopped looking at a group meant.
+## so it survives a band switch, whose ledger may hold a different set of heads — and so folding `Kit`
+## on one band leaves it folded on the next, which is what a reader who has stopped looking at a group
+## meant.
 var _folded: Dictionary = {}
+
+## "No row." A row key is an item id or a stock recipe's own key, never empty, so `""` is free.
+const NO_ROW := ""
+
+## **WHICH ROW'S RECIPE POPUP IS OPEN**, by row key — VIEW state with `_folded`'s standing, carried
+## across the per-snapshot rebuild so a turn tick does not close a comparison the player is reading.
+## The popup itself is ONE persistent `PopupPanel`: a Window cannot change the ledger's height, and it
+## closes itself on a click outside it and on `Esc`, which is the whole of that behaviour for free.
+var _popup_row: String = NO_ROW
+var _recipes_popup: PopupPanel = null
+var _recipes_popup_body: VBoxContainer = null
+## The link the open popup hangs under. Rebuilt on every render, so it is re-captured by the row that
+## draws it and the popup is re-anchored once the fit has settled.
+var _popup_anchor: Control = null
+## **THE CLICK THAT CLOSED THE POPUP MUST NOT REOPEN IT.** A press outside a popup closes it before the
+## GUI pass sees the press — and if that press landed on the popup's own link, the link would then see
+## an empty `_popup_row` and open it again, so a second click of the link could never close it. The
+## frame and the row the popup last closed on are what tell that press apart from a fresh one.
+var _popup_closed_frame: int = -1
+var _popup_closed_row: String = NO_ROW
+
+## **WHICH ROW'S MAKE PICKER IS OPEN, AND WHICH RECIPE IS CHOSEN IN IT.** One picker at a time. Dropped
+## on a render whose row has disappeared or gone on the bench, and a chosen recipe that is no longer
+## available falls back to the default rule (`_default_choice`).
+var _picker_row: String = NO_ROW
+var _picker_choice: String = ""
 
 ## **IS THE BENCH'S RANK PICKER SHOWING?** VIEW state with exactly the standing of `_folded` above and
 ## of the scroll offset: it is not on the wire, it survives the per-snapshot rebuild, and `render` is
@@ -235,6 +268,8 @@ func render(payload: Dictionary) -> void:
 	HudWidgets.clear_children(_header)
 	HudWidgets.clear_children(_rail)
 	HudWidgets.clear_children(_main)
+	_popup_anchor = null
+	_reconcile_recipe_view(payload)
 	_build_header(payload)
 	_build_rail(payload)
 	_build_bench(payload)
@@ -263,6 +298,10 @@ func dismiss() -> void:
 	# deliberately unlike `_folded`, which survives a dismissal because a reader who has stopped looking
 	# at a ledger group means it.
 	_priority_open = false
+	# …and so are an item's popup and its picker: both are transient readings of one ledger.
+	_picker_row = NO_ROW
+	_picker_choice = ""
+	_close_recipes_popup()
 	if _scroll != null:
 		_scroll.scroll_vertical = 0
 	HudWidgets.clear_children(_header)
@@ -276,6 +315,11 @@ func is_open() -> bool:
 ## measure of whether the card is holding its content or quietly growing out of itself.
 func card() -> PanelContainer:
 	return _card
+
+## The recipes popup, or `null` before any link was ever pressed. It is a Window, so a search of the
+## card's tree does not reach its content through `card()`.
+func recipes_popup() -> PopupPanel:
+	return _recipes_popup
 
 ## Re-fit to content and re-place. Coalesced across one frame: the content's height is a function of
 ## the card's width, so a measurement taken in the same frame the body was rebuilt reports the
@@ -311,6 +355,8 @@ func refit() -> void:
 			_scroll.scroll_vertical = _pending_scroll
 		_pending_scroll = SCROLL_UNSET
 	_place()
+	# The popup hangs under a link this render rebuilt, so it is re-anchored now the card has settled.
+	_sync_recipes_popup()
 
 # ---- header -----------------------------------------------------------------
 
@@ -826,10 +872,11 @@ func _build_crew_stepper(bench: Dictionary, payload: Dictionary, running: bool) 
 
 # ---- the ledger -------------------------------------------------------------
 
-## **ONE TABLE IN FOLDABLE SECTIONS, AND EVERY ROW IS A JOIN.** `CraftOffer.outputItemId` is the key:
-## the offer supplies the name, the group, the cost, the refusal and the tier head; `equipment_batches`
-## grouped by `itemId` supplies the grades and the counts. Neither half can answer alone — which is why
-## the ledger is built here rather than off either array on its own.
+## **ONE TABLE IN FOLDABLE SECTIONS, ONE ROW PER ITEM, AND EVERY ROW IS A JOIN.** `CraftOffer.
+## outputItemId` is the key twice over: it groups an item's offers into ONE row, and it joins that row
+## onto `equipment_batches` for the grades and the counts. The suggested offer supplies the row's
+## cost, refusal and note. Neither the offers nor the batches can answer alone — which is why the
+## ledger is built here rather than off either array on its own.
 func _build_ledger(payload: Dictionary) -> void:
 	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
 	var batches_by_item := _equipment_by_item(band)
@@ -854,59 +901,132 @@ func _build_ledger(payload: Dictionary) -> void:
 		# **SORTED BY URGENCY — worn first, untouched last.** The player's real question is "what am I
 		# about to lose?", so the ledger opens on the answer; a full-life row is DIMMED to the bottom
 		# rather than hidden, because a kit you own and never use is information too.
-		var offers: Array = section["offers"]
-		offers.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			return _urgency_key(a, batches_by_item) < _urgency_key(b, batches_by_item))
-		for offer in offers:
-			table.add_child(_build_ledger_row(offer, batches_by_item, batches_by_material, payload))
+		var rows: Array = section["rows"]
+		rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return _urgency_key(a["offer"], batches_by_item) < _urgency_key(b["offer"], batches_by_item))
+		for row in rows:
+			table.add_child(_build_ledger_row(row, batches_by_item, batches_by_material, payload))
+			# **THE PICKER OPENS DIRECTLY UNDER ITS ROW, INSIDE THE LEDGER**, spanning the table's width —
+			# the choice sits beside the thing being chosen for, and it pushes the rows below it down
+			# rather than floating over them.
+			if String(row["key"]) == _picker_row:
+				table.add_child(_build_make_picker(row, payload))
 			# A hairline UNDER each row rather than separation between them: the rule is what makes a
 			# four-column row read across, and separation alone leaves four stacks side by side.
 			table.add_child(_rule(HudStyle.LINE_SOFT))
 	_main.add_child(table)
 
-## **THE SECTIONS, IN THE ORDER THEY RENDER: the TIER heads first, then `Bench tools`, then
-## `Materials`.** The kit group SPLITS by the published `outputTierName` — one head per distinct tier,
-## ordered by `outputTierRank` DESCENDING, newest first. **A row's head is its own RECIPE's tier**, not
-## what the faction knows: a recipe names the tier it makes, so a row never moves between heads, and an
-## item with two recipes has a row under each. **The shipped roster needs two heads from turn one**:
-## `Spears (flint)`, `Clubs (stone)` and `Hoes (flint)` make the `flint` tier and sit under `Flint`;
-## every other kit row — the bone originals and the wood substitutes alike — sits under `Plain`.
-## Nothing gates the `Flint` head; stone in the store is what makes its rows buildable.
-##
-## The rank ordering is the sim's own and is not re-derived: alphabetical would put Iron above Bronze,
-## and the client has no other honest way to say which tier is newer.
+## **THE SECTIONS, IN THE ORDER THEY RENDER: `Kit`, `Bench tools`, `Materials`** — the three
+## published groups, one head each. Each section holds ROWS, not offers (`_ledger_rows`).
 func _ledger_sections(band: Dictionary) -> Array:
-	var kit_offers := {}
-	var kit_ranks := {}
-	var other_offers := {}
+	var by_group := {}
+	for row in _ledger_rows(band):
+		var group := String(row["group"])
+		if not by_group.has(group):
+			by_group[group] = []
+		by_group[group].append(row)
+	var sections: Array = []
+	for group in HudCraftingVocab.GROUP_ORDER:
+		var rows: Array = by_group.get(group, [])
+		if rows.is_empty():
+			continue
+		sections.append({"head": String(HudCraftingVocab.GROUP_HEADS[group]), "rows": rows})
+	return sections
+
+## **ONE ROW PER ITEM.** The band's offers grouped by `outputItemId` — a spear pointed with bone and a
+## spear knapped from stone are one row — and a MATERIAL recipe (empty `outputItemId`) is a row of its
+## own keyed by its recipe. Rows come out in the order each item's FIRST offer appears on the wire.
+##
+## Each row is `{key, group, name, offers, offer}`: `offer` is the SUGGESTED one — the sim marks exactly
+## one per row — and it is what the row's cost, refusal and owned note are read off. The row's name is
+## that offer's `displayName`, which the sim publishes as the ITEM's name on every one of its offers.
+func _ledger_rows(band: Dictionary) -> Array:
+	var rows: Array = []
+	var by_key := {}
 	for offer_variant in band.get(HudCraftingVocab.BAND_CRAFT_OFFERS_KEY, []):
 		if not (offer_variant is Dictionary):
 			continue
 		var offer: Dictionary = offer_variant
-		var group := String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, ""))
-		if group == HudCraftingVocab.GROUP_KIT:
-			var tier := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_TIER_NAME_KEY, ""))
-			if not kit_offers.has(tier):
-				kit_offers[tier] = []
-				kit_ranks[tier] = int(offer.get(HudCraftingVocab.OFFER_OUTPUT_TIER_RANK_KEY, 0))
-			kit_offers[tier].append(offer)
-			continue
-		if not other_offers.has(group):
-			other_offers[group] = []
-		other_offers[group].append(offer)
+		var key := _row_key_of(offer)
+		if not by_key.has(key):
+			var row := {
+				"key": key,
+				"group": String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, "")),
+				"offers": [],
+				"offer": offer,
+			}
+			by_key[key] = row
+			rows.append(row)
+		var held: Dictionary = by_key[key]
+		held["offers"].append(offer)
+		if bool(offer.get(HudCraftingVocab.OFFER_SUGGESTED_KEY, false)):
+			held["offer"] = offer
+	return rows
 
-	var tiers: Array = kit_offers.keys()
-	tiers.sort_custom(func(a: String, b: String) -> bool:
-		return int(kit_ranks[a]) > int(kit_ranks[b]))
-	var sections: Array = []
-	for tier in tiers:
-		sections.append({"head": String(tier).capitalize(), "offers": kit_offers[tier]})
-	for group in HudCraftingVocab.GROUP_ORDER:
-		var offers: Array = other_offers.get(group, [])
-		if offers.is_empty():
-			continue
-		sections.append({"head": String(HudCraftingVocab.GROUP_HEADS[group]), "offers": offers})
-	return sections
+## The row an offer belongs to: its item, or — for a recipe that makes a material — its own recipe.
+func _row_key_of(offer: Dictionary) -> String:
+	var item_id := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, ""))
+	if item_id != "":
+		return item_id
+	return HudCraftingVocab.LEDGER_STOCK_ROW_KEY_FORMAT % String(
+		offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+
+## The row named `key` in the payload's band, `{}` when it is gone.
+func _row_in(payload: Dictionary, key: String) -> Dictionary:
+	if key == NO_ROW:
+		return {}
+	for row in _ledger_rows(payload.get(PAYLOAD_BAND, {})):
+		if String(row["key"]) == key:
+			return row
+	return {}
+
+func _row_on_bench(row: Dictionary) -> bool:
+	for offer in row["offers"]:
+		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_ON_BENCH_KEY, false)):
+			return true
+	return false
+
+func _row_available(row: Dictionary) -> bool:
+	for offer in row["offers"]:
+		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false)):
+			return true
+	return false
+
+## **THE RECIPE THE PICKER OPENS ON**: the suggested one when it can be made now, else the first that
+## can, else nothing. The sim's own pick already prefers an available recipe, so the fallback matters
+## only when the suggestion and the store disagree.
+func _default_choice(row: Dictionary) -> String:
+	var suggested: Dictionary = row["offer"]
+	if bool(suggested.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false)):
+		return String(suggested.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+	for offer in row["offers"]:
+		if bool((offer as Dictionary).get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false)):
+			return String((offer as Dictionary).get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+	return ""
+
+func _choice_is_available(row: Dictionary, recipe_id: String) -> bool:
+	for offer in row["offers"]:
+		var candidate: Dictionary = offer
+		if String(candidate.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, "")) == recipe_id:
+			return bool(candidate.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false))
+	return false
+
+## **THE VIEW STATE IS CHECKED AGAINST EVERY NEW PAYLOAD BEFORE IT IS DRAWN.** A picker whose row has
+## gone, or whose item has gone on the bench, closes — there is nothing left to choose; a chosen
+## recipe that is no longer available falls back to the default rule rather than leaving Start
+## pointed at a build the sim would refuse; a popup whose row is gone or has one recipe left closes.
+func _reconcile_recipe_view(payload: Dictionary) -> void:
+	if _picker_row != NO_ROW:
+		var row := _row_in(payload, _picker_row)
+		if row.is_empty() or (row["offers"] as Array).size() < 2 or _row_on_bench(row):
+			_picker_row = NO_ROW
+			_picker_choice = ""
+		elif not _choice_is_available(row, _picker_choice):
+			_picker_choice = _default_choice(row)
+	if _popup_row != NO_ROW:
+		var popped := _row_in(payload, _popup_row)
+		if popped.is_empty() or (popped["offers"] as Array).size() < 2:
+			_close_recipes_popup()
 
 func _is_folded(head_name: String) -> bool:
 	return bool(_folded.get(head_name, false))
@@ -944,8 +1064,8 @@ func _build_column_heads() -> Control:
 		row.add_child(_column_cell(label, float(widths[i]), i == 0))
 	return row
 
-## **ONE HEAD BUILDER FOR ALL THREE KINDS — a tier, `Bench tools`, `Materials` — so they read as one
-## family rather than as a tier head and two labels.** A caret leads it and the whole head is the
+## **ONE HEAD BUILDER FOR ALL THREE SECTIONS — `Kit`, `Bench tools`, `Materials` — so they read as
+## one family.** A caret leads it and the whole head is the
 ## click target, which is why it is a `Button` stripped of its chrome rather than a Label with a
 ## button beside it: a head that only responded on its glyph would be a head you have to aim at.
 ##
@@ -986,24 +1106,28 @@ func _toggle_fold(head_name: String) -> void:
 	if not _payload.is_empty():
 		render(_payload)
 
-func _build_ledger_row(offer: Dictionary, batches_by_item: Dictionary,
+## One ledger row, for one ITEM. **Its cells describe the SUGGESTED offer** — the recipe the sim
+## would start and the picker opens on — while the Owned cell reads every batch of the item, whatever
+## recipe made it.
+func _build_ledger_row(ledger_row: Dictionary, batches_by_item: Dictionary,
 		batches_by_material: Dictionary, payload: Dictionary) -> Control:
+	var offer: Dictionary = ledger_row["offer"]
 	var row := _ledger_row_container()
 	var group := String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, ""))
 	var batch := _batch_for(offer, batches_by_item)
-	row.add_child(_column_cell(_build_item_cell(offer, payload), 0.0, true))
+	row.add_child(_column_cell(_build_item_cell(ledger_row, payload), 0.0, true))
 	var owned := _build_owned_cell(offer, _batches_for(offer, batches_by_item), group, payload,
 		batches_by_material)
 	owned.set_meta(HudCraftingVocab.OWNED_CELL_META,
 		String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, "")))
 	row.add_child(_column_cell(owned, HudCraftingVocab.COLUMN_OWNED_WIDTH, false))
 	row.add_child(_column_cell(_build_cost_cell(offer, payload), HudCraftingVocab.COLUMN_COST_WIDTH, false))
-	row.add_child(_column_cell(_build_action_cell(offer), HudCraftingVocab.COLUMN_ACTION_WIDTH, false))
+	row.add_child(_column_cell(_build_action_cell(ledger_row), HudCraftingVocab.COLUMN_ACTION_WIDTH, false))
 
 	# **THE SHRUG IS DIMMED, NOT HIDDEN.** "Not needed yet" arrives with its own severity precisely so
 	# it can read as the shrug it is — a neutral offer on a kit that is not worn is nothing to do, and
 	# styling it like a shortage would make a problem out of a non-problem.
-	if _is_shrug(offer, batch):
+	if _is_shrug(ledger_row, batch):
 		row.modulate = Color(1.0, 1.0, 1.0, HudCraftingVocab.DIMMED_ROW_ALPHA)
 	return row
 
@@ -1018,9 +1142,10 @@ func _build_ledger_row(offer: Dictionary, batches_by_item: Dictionary,
 ## matching its WORDING, which is a resolved string this panel may render and must not parse. A tier
 ## shipping a lower `starting_durability` simply never dims, which is the conservative direction:
 ## nothing is hidden, one row merely reads at full strength.
-func _is_shrug(offer: Dictionary, batch: Dictionary) -> bool:
-	if bool(offer.get(HudCraftingVocab.OFFER_ON_BENCH_KEY, false)):
+func _is_shrug(ledger_row: Dictionary, batch: Dictionary) -> bool:
+	if _row_on_bench(ledger_row):
 		return false
+	var offer: Dictionary = ledger_row["offer"]
 	if String(offer.get(HudCraftingVocab.OFFER_SEVERITY_KEY, "")) != HudCraftingVocab.SEVERITY_NEUTRAL:
 		return false
 	if batch.is_empty() or int(batch.get(HudCraftingVocab.EQUIPMENT_COUNT_KEY, 0)) <= 0:
@@ -1028,7 +1153,13 @@ func _is_shrug(offer: Dictionary, batch: Dictionary) -> bool:
 	return float(batch.get(HudCraftingVocab.EQUIPMENT_REMAINING_KEY, 0.0)) \
 		>= HudConst.PROGRESS_PERCENT_SCALE
 
-func _build_item_cell(offer: Dictionary, payload: Dictionary) -> Control:
+## The item's name, then ONE second line: the `N recipes` link on an item with more than one recipe,
+## else the role line a single-recipe row has always carried. **The link REPLACES the role line rather
+## than stacking under it**, which is what keeps every row two lines tall: a kit row's role line names
+## the craft that makes it, and an item with several recipes has several crafts, so the row cannot
+## name one of them honestly — the popup is where the recipes are told apart.
+func _build_item_cell(ledger_row: Dictionary, payload: Dictionary) -> Control:
+	var offer: Dictionary = ledger_row["offer"]
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 0)
 	var name_label := Label.new()
@@ -1036,6 +1167,10 @@ func _build_item_cell(offer: Dictionary, payload: Dictionary) -> Control:
 	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.ITEM_NAME_FONT_SIZE)
 	name_label.add_theme_color_override("font_color", HudStyle.INK)
 	column.add_child(name_label)
+	var recipe_count := (ledger_row["offers"] as Array).size()
+	if recipe_count > 1:
+		column.add_child(_build_recipes_link(String(ledger_row["key"]), recipe_count))
+		return column
 	var role := _role_line(offer, payload)
 	if role != "":
 		var role_label := Label.new()
@@ -1333,25 +1468,35 @@ func _build_cost_cell(offer: Dictionary, payload: Dictionary) -> Control:
 		cell.add_child(made)
 	return cell
 
-## **MAKE STAGES THE JOB, AND A REFUSAL NAMES ITS NUMBER.** The button puts the recipe on the bench
-## and leaves the crew to the stepper; the running row's button is spent and reads *On the bench*.
-## Under it, `CraftOffer.reason`
-## VERBATIM in the tint its published `severity` picked — *"Short 4.9 bone"*, never *"cannot craft"*,
-## and never a sentence composed here.
-func _build_action_cell(offer: Dictionary) -> Control:
+## **MAKE STAGES THE JOB, AND A REFUSAL NAMES ITS NUMBER.** On a single-recipe row the button puts that
+## recipe on the bench at once and leaves the crew to the stepper; on a row with several it opens the
+## picker under the row instead (`_toggle_picker`), because the recipe cannot be changed once the
+## build starts. The button is LIVE when ANY of the row's recipes can be made — the suggested one may
+## be the one that cannot — and a row with a recipe on the bench is spent and reads *On the bench*.
+## Under it, the suggested offer's `reason` VERBATIM in the tint its published `severity` picked —
+## *"Short 4.9 bone"*, never *"cannot craft"*, and never a sentence composed here.
+func _build_action_cell(ledger_row: Dictionary) -> Control:
+	var offer: Dictionary = ledger_row["offer"]
+	var offers: Array = ledger_row["offers"]
+	var key := String(ledger_row["key"])
 	var column := VBoxContainer.new()
 	column.alignment = BoxContainer.ALIGNMENT_BEGIN
 	column.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
-	var running := bool(offer.get(HudCraftingVocab.OFFER_ON_BENCH_KEY, false))
+	var running := _row_on_bench(ledger_row)
 	var button := Button.new()
 	button.text = HudCraftingVocab.ON_BENCH_LABEL if running else HudCraftingVocab.MAKE_LABEL
 	button.focus_mode = Control.FOCUS_NONE
 	button.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
 	HudStyle.apply_button(button, "primary")
-	button.disabled = running or not bool(offer.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false))
+	button.disabled = running or not _row_available(ledger_row)
+	# Found by IDENTITY, valued the row key — every row's button wears the same face.
+	button.set_meta(HudCraftingVocab.MAKE_BUTTON_META, key)
 	if not button.disabled:
-		var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
-		button.pressed.connect(func() -> void: make_requested.emit(recipe_id))
+		if offers.size() == 1:
+			var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+			button.pressed.connect(func() -> void: make_requested.emit(recipe_id))
+		else:
+			button.pressed.connect(func() -> void: _toggle_picker(key))
 	column.add_child(button)
 
 	var reason := String(offer.get(HudCraftingVocab.OFFER_REASON_KEY, ""))
@@ -1366,6 +1511,317 @@ func _build_action_cell(offer: Dictionary) -> Control:
 		why.custom_minimum_size = Vector2(HudCraftingVocab.COLUMN_ACTION_WIDTH, 0.0)
 		column.add_child(why)
 	return column
+
+# ---- an item's recipes: the link, the popup, the Make picker ----------------
+
+## **THE `N recipes` LINK** — flat, underlined, in the signal ink, under the item's name. It fires on
+## the PRESS rather than the release so that a press which has just closed the popup can be recognised
+## as the same click (`_on_recipes_link`).
+func _build_recipes_link(key: String, recipe_count: int) -> LinkButton:
+	var link := LinkButton.new()
+	link.text = HudCraftingVocab.RECIPES_LINK_FORMAT % recipe_count
+	link.underline = LinkButton.UNDERLINE_MODE_ALWAYS
+	link.focus_mode = Control.FOCUS_NONE
+	link.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	link.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	link.add_theme_font_size_override("font_size", HudCraftingVocab.RECIPES_LINK_FONT_SIZE)
+	link.add_theme_color_override("font_color", HudStyle.SIGNAL)
+	link.add_theme_color_override("font_hover_color", HudStyle.INK)
+	link.add_theme_color_override("font_pressed_color", HudStyle.INK)
+	link.set_meta(HudCraftingVocab.RECIPES_LINK_META, key)
+	link.pressed.connect(func() -> void: _on_recipes_link(key, link))
+	if key == _popup_row:
+		_popup_anchor = link
+	return link
+
+## Open the row's popup, or close it when it is already the open one. **One popup at a time**, so
+## opening another row's simply moves it.
+func _on_recipes_link(key: String, link: Control) -> void:
+	if _popup_row == key:
+		_close_recipes_popup()
+		return
+	# The press that closed this very popup a moment ago, arriving at its own link: a toggle, not a
+	# request to open it again.
+	if _popup_closed_row == key and _popup_closed_frame == Engine.get_process_frames():
+		return
+	_popup_row = key
+	_popup_anchor = link
+	_sync_recipes_popup()
+
+func _close_recipes_popup() -> void:
+	if _popup_row == NO_ROW:
+		return
+	_popup_closed_row = _popup_row
+	_popup_closed_frame = Engine.get_process_frames()
+	_popup_row = NO_ROW
+	_popup_anchor = null
+	if _recipes_popup != null and _recipes_popup.visible:
+		_recipes_popup.hide()
+	if _recipes_popup_body != null:
+		# Emptied rather than left behind a hidden Window, so nothing a closed popup said can be found
+		# by a search of this panel.
+		HudWidgets.clear_children(_recipes_popup_body)
+
+## A click outside the popup or `Esc` closed it — the Window's own behaviour, converging on the same
+## teardown as the link's second click.
+func _on_recipes_popup_hidden() -> void:
+	_close_recipes_popup()
+
+## Fill the popup from the payload and hang it under its link. Called on open and after every refit, so
+## a turn tick restates the numbers under a popup the player is reading and the popup follows its link.
+func _sync_recipes_popup() -> void:
+	if _popup_row == NO_ROW:
+		return
+	var row := _row_in(_payload, _popup_row)
+	if row.is_empty() or _popup_anchor == null or not is_instance_valid(_popup_anchor):
+		_close_recipes_popup()
+		return
+	var popup := _ensure_recipes_popup()
+	HudWidgets.clear_children(_recipes_popup_body)
+	_fill_recipes_popup(row, _payload)
+	var xform := _popup_anchor.get_screen_transform()
+	var below := Vector2i(xform * Vector2(0.0, _popup_anchor.size.y + HudCraftingVocab.RECIPES_POPUP_GAP))
+	if popup.visible:
+		# Already up: restated in place, so a refit does not hide and re-show it.
+		popup.position = below
+		popup.reset_size()
+	else:
+		popup.popup(Rect2i(below, Vector2i.ZERO))
+
+## The popup itself: ONE `PopupPanel`, built on first use and kept. A Window, so it cannot change the
+## ledger's height — the reason a comparison table can open over the rows without pushing them.
+func _ensure_recipes_popup() -> PopupPanel:
+	if _recipes_popup != null and is_instance_valid(_recipes_popup):
+		return _recipes_popup
+	var popup := PopupPanel.new()
+	popup.name = "RecipesPopup"
+	popup.add_theme_stylebox_override("panel", HudStyle.popup_panel_stylebox())
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", HudCraftingVocab.RECIPES_POPUP_ROW_SEPARATION)
+	body.set_meta(HudCraftingVocab.RECIPES_POPUP_META, true)
+	popup.add_child(body)
+	popup.popup_hide.connect(_on_recipes_popup_hidden)
+	add_child(popup)
+	_recipes_popup = popup
+	_recipes_popup_body = body
+	return popup
+
+## **ONE LINE PER RECIPE, AND AN OWNED COLUMN ONLY WHERE A COUNT PER RECIPE EXISTS.** The columns are
+## Recipe · Costs · Makes · Lasts, plus Owned when some offer in the row carries a real `ownedAtTier`.
+## When every offer carries `OWNED_AT_TIER_UNATTRIBUTED` — the substitutes, which make one item at one
+## tier — the column is left out rather than filled with dashes: the row's own Owned cell already says
+## how many the band holds, and restating that total per recipe would claim the recipes made them.
+func _fill_recipes_popup(row: Dictionary, payload: Dictionary) -> void:
+	var offers: Array = row["offers"]
+	var title := Label.new()
+	title.text = (HudCraftingVocab.RECIPES_POPUP_TITLE_FORMAT % [
+		String((row["offer"] as Dictionary).get(HudCraftingVocab.OFFER_DISPLAY_NAME_KEY, "")),
+		offers.size()]).to_upper()
+	title.add_theme_font_size_override("font_size", HudCraftingVocab.RECIPES_POPUP_TITLE_FONT_SIZE)
+	title.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	_recipes_popup_body.add_child(title)
+
+	var show_owned := false
+	for offer in offers:
+		if int((offer as Dictionary).get(HudCraftingVocab.OFFER_OWNED_AT_TIER_KEY,
+				HudCraftingVocab.OWNED_AT_TIER_UNATTRIBUTED)) != HudCraftingVocab.OWNED_AT_TIER_UNATTRIBUTED:
+			show_owned = true
+	var heads: Array[String] = [HudCraftingVocab.RECIPES_COLUMN_RECIPE,
+		HudCraftingVocab.RECIPES_COLUMN_COST, HudCraftingVocab.RECIPES_COLUMN_MAKES,
+		HudCraftingVocab.RECIPES_COLUMN_LASTS]
+	if show_owned:
+		heads.append(HudCraftingVocab.RECIPES_COLUMN_OWNED)
+
+	var grid := GridContainer.new()
+	grid.columns = heads.size()
+	grid.add_theme_constant_override("h_separation", HudCraftingVocab.RECIPES_POPUP_COLUMN_SEPARATION)
+	grid.add_theme_constant_override("v_separation", HudCraftingVocab.RECIPES_POPUP_ROW_SEPARATION)
+	for head in heads:
+		var head_label := _popup_text(head.to_upper(), HudStyle.INK_FAINT,
+			HudCraftingVocab.RECIPES_POPUP_HEAD_FONT_SIZE)
+		head_label.set_meta(HudCraftingVocab.RECIPES_POPUP_COLUMN_META, head)
+		grid.add_child(head_label)
+	for offer_variant in offers:
+		var offer: Dictionary = offer_variant
+		var cost := _build_cost_cell(offer, payload)
+		cost.custom_minimum_size = Vector2(HudCraftingVocab.RECIPE_COST_WIDTH, 0.0)
+		var cells: Array[Control] = [
+			_popup_text(String(offer.get(HudCraftingVocab.OFFER_RECIPE_LABEL_KEY, "")), HudStyle.INK,
+				HudCraftingVocab.RECIPES_POPUP_CELL_FONT_SIZE),
+			cost,
+			_popup_makes_cell(offer, payload),
+			_popup_text(String(offer.get(HudCraftingVocab.OFFER_LASTS_KEY, "")), HudStyle.INK_DIM,
+				HudCraftingVocab.RECIPES_POPUP_CELL_FONT_SIZE),
+		]
+		if show_owned:
+			var owned := int(offer.get(HudCraftingVocab.OFFER_OWNED_AT_TIER_KEY,
+				HudCraftingVocab.OWNED_AT_TIER_UNATTRIBUTED))
+			cells.append(_popup_text(HudCraftingVocab.OWNED_COUNT_FORMAT % owned if owned > 0
+					else HudCraftingVocab.RECIPES_OWNED_NONE, HudStyle.INK,
+				HudCraftingVocab.RECIPES_POPUP_CELL_FONT_SIZE))
+		for i in range(cells.size()):
+			cells[i].set_meta(HudCraftingVocab.RECIPES_POPUP_COLUMN_META, heads[i])
+			grid.add_child(cells[i])
+	_recipes_popup_body.add_child(grid)
+
+## A recipe's Makes cell: the grade chip — the SAME chip the Owned cell draws, tinted by the grade's
+## place in the published legend — and then what it makes. A grade the legend does not carry draws no
+## chip, exactly as in the Owned cell.
+func _popup_makes_cell(offer: Dictionary, payload: Dictionary) -> Control:
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", HudCraftingVocab.ROW_SEPARATION)
+	var grade := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_GRADE_KEY, ""))
+	if _grade_rung(grade, payload) >= 0:
+		line.add_child(_chip(grade, _grade_color(grade, payload), HudCraftingVocab.OWNED_CHIP_FONT_SIZE))
+	line.add_child(_popup_text(String(offer.get(HudCraftingVocab.OFFER_MAKES_KEY, "")), HudStyle.INK_DIM,
+		HudCraftingVocab.RECIPES_POPUP_CELL_FONT_SIZE))
+	return line
+
+func _popup_text(text: String, ink: Color, font_size: int) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", ink)
+	return label
+
+## Open the picker under a row, or close it when it is the open one — Make pressed twice is a change of
+## mind. **One picker at a time**, and opening one closes the popup: the picker is where the choice is
+## made, so a comparison table left hanging over it would only cover it.
+func _toggle_picker(key: String) -> void:
+	if _picker_row == key:
+		_picker_row = NO_ROW
+		_picker_choice = ""
+	else:
+		_picker_row = key
+		_picker_choice = _default_choice(_row_in(_payload, key))
+		_close_recipes_popup()
+	if not _payload.is_empty():
+		render(_payload)
+
+## **THE MAKE PICKER**, spanning the ledger under its row. One radio line per recipe — its label, its
+## cost, and either what it makes or, when it cannot be made now, the sim's own reason with the radio
+## DISABLED. The footer says the recipe is fixed once the build starts, and Start sends the CHOSEN
+## recipe, which is the only way a row's non-suggested recipe ever reaches the bench.
+func _build_make_picker(row: Dictionary, payload: Dictionary) -> Control:
+	var key := String(row["key"])
+	var host := MarginContainer.new()
+	host.add_theme_constant_override("margin_bottom", HudCraftingVocab.PICKER_MARGIN_BOTTOM)
+	host.set_meta(HudCraftingVocab.PICKER_META, key)
+	var box := PanelContainer.new()
+	var style := HudStyle.readout_stylebox()
+	style.border_color = HudStyle.SIGNAL_DEEP
+	style.set_border_width_all(HudCraftingVocab.PICKER_BORDER_WIDTH)
+	style.content_margin_left = HudCraftingVocab.PICKER_PADDING_H
+	style.content_margin_right = HudCraftingVocab.PICKER_PADDING_H
+	style.content_margin_top = HudCraftingVocab.PICKER_PADDING_V
+	style.content_margin_bottom = HudCraftingVocab.PICKER_PADDING_V
+	box.add_theme_stylebox_override("panel", style)
+	host.add_child(box)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", HudCraftingVocab.PICKER_LINE_SEPARATION)
+	box.add_child(column)
+
+	var heading := _popup_text(HudCraftingVocab.PICKER_HEADING_FORMAT % String(
+		(row["offer"] as Dictionary).get(HudCraftingVocab.OFFER_DISPLAY_NAME_KEY, "")), HudStyle.INK,
+		HudCraftingVocab.PICKER_HEADING_FONT_SIZE)
+	column.add_child(heading)
+
+	var group := ButtonGroup.new()
+	for offer in row["offers"]:
+		column.add_child(_build_picker_option(offer, group, payload))
+
+	column.add_child(_rule(HudStyle.LINE_SOFT))
+	var footer := HBoxContainer.new()
+	footer.add_theme_constant_override("separation", HudCraftingVocab.COLUMN_SEPARATION)
+	var note := _popup_text(HudCraftingVocab.PICKER_LOCK_NOTE, HudStyle.INK_FAINT,
+		HudCraftingVocab.PICKER_NOTE_FONT_SIZE)
+	note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	footer.add_child(note)
+	var cancel := Button.new()
+	cancel.text = HudCraftingVocab.PICKER_CANCEL
+	cancel.focus_mode = Control.FOCUS_NONE
+	cancel.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
+	HudStyle.apply_button(cancel, "ghost")
+	cancel.set_meta(HudCraftingVocab.PICKER_CANCEL_META, key)
+	cancel.pressed.connect(func() -> void: _toggle_picker(key))
+	footer.add_child(cancel)
+	var start := Button.new()
+	start.text = HudCraftingVocab.PICKER_START
+	start.focus_mode = Control.FOCUS_NONE
+	start.add_theme_font_size_override("font_size", HudCraftingVocab.ACTION_FONT_SIZE)
+	HudStyle.apply_button(start, "primary")
+	start.disabled = _picker_choice == ""
+	start.set_meta(HudCraftingVocab.PICKER_START_META, key)
+	start.pressed.connect(func() -> void: _start_chosen_recipe())
+	footer.add_child(start)
+	column.add_child(footer)
+	return host
+
+## One recipe as a radio line. The radio is DISABLED when the recipe cannot be made now, and its line
+## then states the sim's reason where a buildable one states what it would make.
+func _build_picker_option(offer: Dictionary, group: ButtonGroup, payload: Dictionary) -> Control:
+	var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+	var available := bool(offer.get(HudCraftingVocab.OFFER_AVAILABLE_KEY, false))
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", HudCraftingVocab.COLUMN_SEPARATION)
+	var radio := CheckBox.new()
+	radio.text = String(offer.get(HudCraftingVocab.OFFER_RECIPE_LABEL_KEY, ""))
+	radio.button_group = group
+	radio.focus_mode = Control.FOCUS_NONE
+	radio.custom_minimum_size = Vector2(HudCraftingVocab.PICKER_LABEL_WIDTH, 0.0)
+	radio.add_theme_font_size_override("font_size", HudCraftingVocab.PICKER_OPTION_FONT_SIZE)
+	HudStyle.apply_radio(radio)
+	# Set BEFORE the handler is connected, so restating the choice on a rebuild is not a pick.
+	radio.button_pressed = recipe_id == _picker_choice
+	radio.disabled = not available
+	radio.set_meta(HudCraftingVocab.PICKER_OPTION_META, recipe_id)
+	radio.toggled.connect(func(on: bool) -> void:
+		if on:
+			_picker_choice = recipe_id)
+	line.add_child(radio)
+
+	var cost := _build_cost_cell(offer, payload)
+	cost.custom_minimum_size = Vector2(HudCraftingVocab.RECIPE_COST_WIDTH, 0.0)
+	line.add_child(cost)
+
+	var summary: Label
+	if available:
+		summary = _popup_text(_picker_summary(offer), HudStyle.INK_FAINT,
+			HudCraftingVocab.PICKER_OPTION_FONT_SIZE)
+	else:
+		summary = _popup_text(String(offer.get(HudCraftingVocab.OFFER_REASON_KEY, "")),
+			HudCraftingVocab.REASON_COLORS.get(String(offer.get(HudCraftingVocab.OFFER_SEVERITY_KEY, "")),
+				HudCraftingVocab.REASON_COLOR_QUIET), HudCraftingVocab.PICKER_OPTION_FONT_SIZE)
+	summary.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	line.add_child(summary)
+	return line
+
+## `<grade> · <makes> · lasts <lasts>`, each clause present only when the sim published it — a recipe
+## resolving no grade leads with what it makes.
+func _picker_summary(offer: Dictionary) -> String:
+	var parts: Array[String] = []
+	var grade := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_GRADE_KEY, ""))
+	if grade != "":
+		parts.append(grade)
+	var makes := String(offer.get(HudCraftingVocab.OFFER_MAKES_KEY, ""))
+	if makes != "":
+		parts.append(makes)
+	var lasts := String(offer.get(HudCraftingVocab.OFFER_LASTS_KEY, ""))
+	if lasts != "":
+		parts.append(HudCraftingVocab.PICKER_LASTS_FORMAT % lasts)
+	return HudCraftingVocab.PICKER_SUMMARY_SEPARATOR.join(parts)
+
+## **START SENDS THE CHOSEN RECIPE AND CLOSES THE PICKER.** `set_bench` with the recipe the radio names,
+## which is the same command a single-recipe row's Make sends — the picker only decides which one.
+func _start_chosen_recipe() -> void:
+	var chosen := _picker_choice
+	_picker_row = NO_ROW
+	_picker_choice = ""
+	if chosen != "":
+		make_requested.emit(chosen)
+	if not _payload.is_empty():
+		render(_payload)
 
 # ---- the joins --------------------------------------------------------------
 

@@ -246,6 +246,7 @@ fn create_recipes<'a>(
         let display_name = builder.create_string(&state.display_name);
         let craft = builder.create_string(&state.craft);
         let group = builder.create_string(&state.group);
+        let label = builder.create_string(&state.label);
         let requires_knowledge: Vec<_> = state
             .requires_knowledge
             .iter()
@@ -297,6 +298,7 @@ fn create_recipes<'a>(
                 requiresKnowledge: Some(requires_knowledge),
                 inputs: Some(inputs),
                 outputs: Some(outputs),
+                label: Some(label),
             },
         ));
     }
@@ -1360,6 +1362,7 @@ fn decode_recipe(state: fb::RecipeDefState<'_>) -> RecipeDefState {
             material_id: text(output.materialId()),
             amount: output.amount(),
         }),
+        label: text(state.label()),
     }
 }
 

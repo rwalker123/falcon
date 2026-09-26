@@ -105,15 +105,42 @@ const OFFER_REASON_KEY := "reason"
 const OFFER_SEVERITY_KEY := "severity"
 const OFFER_SHORTFALLS_KEY := "shortfalls"
 const OFFER_ON_BENCH_KEY := "on_bench"
-## **THE GROUP HEAD** — the tier this recipe would be MADE at right now, and its rank in the item's
-## own tier list. The kit group splits by the name and orders its heads by the rank DESCENDING, which
-## is the only honest ordering a client has: alphabetical would put Iron above Bronze.
-const OFFER_OUTPUT_TIER_NAME_KEY := "output_tier_name"
-const OFFER_OUTPUT_TIER_RANK_KEY := "output_tier_rank"
+## The grade the draw would select right now, a `characteristic_bands` name, `""` on a recipe that
+## resolves none. The recipe popup and the Make picker show it beside what the recipe `makes`.
+const OFFER_OUTPUT_GRADE_KEY := "output_grade"
 ## **WHAT THE BAND CARRIES, SAID ONLY WHEN IT IS NEWS** — `carrying plain · poor`, `last plain set
 ## wore out`, `""` the rest of the time. It is the ONE route by which a tier word reaches the Owned
-## cell: resolved sim-side, rendered verbatim, never composed and never re-derived here.
+## cell: resolved sim-side, rendered verbatim, never composed and never re-derived here. The row reads
+## it off its SUGGESTED offer, the recipe its other cells describe.
 const OFFER_OWNED_NOTE_KEY := "owned_note"
+## **ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK.** Several offers share one `output_item_id`
+## (a spear pointed with bone, a spear knapped from stone); the ledger groups them into ONE row, and
+## these five are what that row's recipe popup and its Make picker read. Every one is RESOLVED
+## SIM-SIDE — the client never picks, never spells a stat, never divides a durability.
+##
+## The recipe's own short name among its siblings — `Bone`, `Flint`, `Withy` — and `""` on a recipe
+## that is the only one making its output.
+const OFFER_RECIPE_LABEL_KEY := "recipe_label"
+## What this recipe would make from the band's store right now, as one resolved headline — `26
+## attack`, `8 carry`, `+0.7 build work`. `""` for a bench tool and for a material output.
+const OFFER_MAKES_KEY := "makes"
+## How long one fresh unit at this recipe's tier lasts, in the item's own wear quantum — `175 blows`.
+## `""` on a material output.
+const OFFER_LASTS_KEY := "lasts"
+## **EXACTLY ONE offer per row is `true`, and the SIM picks it**: the recipe this band last started
+## for the item if it is available now, else the first available, else the last started, else the
+## first in book order. The row's Costs cell, its refusal line and its owned note all come from it,
+## and the picker opens on it.
+const OFFER_SUGGESTED_KEY := "suggested"
+## Units owned at THIS recipe's tier, or `OWNED_AT_TIER_UNATTRIBUTED` when every recipe for the item
+## makes the same tier — a reed basket and a withy basket are one item at one tier, and nothing ever
+## recorded which recipe made a unit. **`-1` is not "none"**: `0` is a real count.
+const OFFER_OWNED_AT_TIER_KEY := "owned_at_tier"
+## `sim_schema`'s `OWNED_AT_TIER_UNATTRIBUTED`. When EVERY offer in a row carries it, the recipe popup
+## drops its Owned column outright: the row's own Owned cell already states the item total, and
+## repeating it on each recipe line would make two identical baskets look like they came from
+## different recipes.
+const OWNED_AT_TIER_UNATTRIBUTED := -1
 
 ## `MaterialShortfall` — the number a refusal names. `required` is already net of the bench tool's
 ## material efficiency, which is why the cost cell prefers it over the recipe's own input amount.
@@ -130,11 +157,11 @@ const SHORTFALL_SHORT_KEY := "short"
 ## rebuild costs, so `life`, `quanta_left` and `quantum_noun` have no key here. The two condition
 ## numbers below are read as a RANKING and as a threshold, never printed.
 ##
-## **`tier_id` HAS NO KEY HERE EITHER.** The tier a row would be MADE at is the ledger's group head
-## (`OFFER_OUTPUT_TIER_NAME_KEY`), and the tier the band CARRIES reaches the Owned cell only through
-## the sim's resolved `ownedNote` — and only when the two disagree. A cell rendering this field would
-## say `plain` on almost every row of the early game — eleven of the fourteen shipped items have no
-## second tier at all — which is exactly the column the head replaced.
+## **`tier_id` HAS NO KEY HERE EITHER.** The tier a recipe makes is named by its `recipe_label` in
+## the row's recipe popup, and the tier the band CARRIES reaches the Owned cell only through the sim's
+## resolved `ownedNote` — and only when the two disagree. A cell rendering this field would say
+## `plain` on almost every row of the early game — eleven of the fourteen shipped items have no second
+## tier at all.
 const BAND_EQUIPMENT_BATCHES_KEY := "equipment_batches"
 const EQUIPMENT_ITEM_ID_KEY := "item_id"
 const EQUIPMENT_GRADE_KEY := "grade"
@@ -166,6 +193,9 @@ const RECIPE_INPUT_AMOUNT_KEY := "amount"
 const RECIPE_OUTPUT_MATERIAL_ID_KEY := "material_id"
 const RECIPE_OUTPUT_EQUIPMENT_ID_KEY := "equipment_id"
 const RECIPE_OUTPUT_AMOUNT_KEY := "amount"
+## `RecipeDefState.label` — the recipe's short name among the recipes making the same output, `""` on
+## a sole recipe. The same word the offer's `recipe_label` carries.
+const RECIPE_LABEL_KEY := "label"
 const CRAFT_KNOWLEDGE_FACTION_KEY := "faction"
 const CRAFT_KNOWLEDGE_CRAFT_ID_KEY := "craft_id"
 ## "Bone-working" — the id, hyphenated and capitalized, RESOLVED SIM-SIDE. The client never maps a
@@ -178,20 +208,22 @@ const CRAFT_KNOWLEDGE_PROGRESS_KEY := "progress"
 const CRAFT_KNOWLEDGE_THRESHOLD_KEY := "completion_threshold"
 
 # ---- the ledger's groups, and the heads they fold under -------------------------------------------
-## `CraftOffer.group`. The KIT group SPLITS by `output_tier_name` — one head per tier, ordered by
-## `output_tier_rank` descending — and the other two take one head each; all three kinds are built by
-## the same head builder so they read as one family.
+## `CraftOffer.group` — and the ledger's THREE sections, one head each. **The kit group does not split
+## by tier**: with ONE ROW PER ITEM a Spears row carries both its bone and its flint recipe, so there
+## is no tier to sort it under. All three heads are built by the same head builder so they read as
+## one family.
 const GROUP_KIT := "kit"
 const GROUP_TOOL := "tool"
 const GROUP_STOCK := "stock"
-## The order the two NON-tier groups follow the tier heads in: the bench TOOLS, then the recipes that
-## make STOCK rather than kit.
-const GROUP_ORDER: Array[String] = [GROUP_TOOL, GROUP_STOCK]
+## The sections, in the order they render: the kit a party carries, then the bench TOOLS, then the
+## recipes that make STOCK rather than kit.
+const GROUP_ORDER: Array[String] = [GROUP_KIT, GROUP_TOOL, GROUP_STOCK]
 ## **A HEAD IS A NAME AND A CARET, AND NOTHING ELSE.** These carried a trailing explanation
 ## (`Bench tools — each stretches one material`) until the heads became foldable: a caret invites a
 ## click, and a clause after the name reads as part of what is being folded away. The rationale it
 ## carried belongs in `.claude/rules/client/crafting-panel.md`, not on screen.
 const GROUP_HEADS := {
+	GROUP_KIT: "Kit",
 	GROUP_TOOL: "Bench tools",
 	GROUP_STOCK: "Materials",
 }
@@ -310,11 +342,11 @@ const BENCH_TEACH_NONE := ""
 
 ## **FOUR COLUMNS: Item · Owned · Rebuild costs · action.** There is no condition column — the role
 ## cards on the Band panel state how worn each kit's item is, and this table states what replacing it
-## costs. **Tier is not a column either**: eleven of the fourteen shipped items have exactly one tier,
-## so a column would spend its width repeating `plain` down almost every row, and the three that do
-## carry a second (`spears`, `clubs`, `hoes` at `flint`) group together rather than scattering — a
-## head states the tier ONCE for its rows and can FOLD AWAY, which is the thing a column can never do.
-## What the column says instead is what the band actually owns.
+## costs. **Neither tier nor recipe is a column**: eleven of the fourteen shipped items have exactly
+## one tier and one recipe, so either column would spend its width repeating one word down almost every
+## row. An item with several recipes carries an `N recipes` link under its name instead, and the popup
+## it opens is where the recipes are told apart. What the columns say is what the band owns and what
+## the suggested recipe costs.
 const LEDGER_COLUMN_ITEM := "Item"
 const LEDGER_COLUMN_OWNED := "Owned"
 const LEDGER_COLUMN_COST := "Rebuild costs"
@@ -329,6 +361,59 @@ const ON_BENCH_LABEL := "On the bench"
 ## The empty cell. A recipe with no inputs has no cost to report, and a dash is the honest reading of
 ## that — never a zero.
 const EMPTY_CELL := "—"
+
+# ---- an item's recipes: the link, the popup and the Make picker ----------------------------------
+## **THE LINK UNDER AN ITEM WITH MORE THAN ONE RECIPE** — `2 recipes`. A single-recipe row carries
+## none, so the link's presence is itself the news that there is a choice to make.
+const RECIPES_LINK_FORMAT := "%d recipes"
+## How the link is found by IDENTITY — valued the row's key, since every link on the ledger wears the
+## same shape of face.
+const RECIPES_LINK_META := "crafting_recipes_link"
+## **THE POPUP IS READ-ONLY**, a small table anchored under the link: its title names the item and how
+## many recipes it has, and its columns compare them. The Owned column is conditional — see
+## `OWNED_AT_TIER_UNATTRIBUTED`.
+const RECIPES_POPUP_TITLE_FORMAT := "%s · %d recipes"
+const RECIPES_COLUMN_RECIPE := "Recipe"
+const RECIPES_COLUMN_COST := "Costs"
+const RECIPES_COLUMN_MAKES := "Makes"
+const RECIPES_COLUMN_LASTS := "Lasts"
+const RECIPES_COLUMN_OWNED := "Owned"
+## A recipe's Owned cell when the band holds none at that tier. A dash, like the ledger's own empty
+## cell, because `0` is a real count and the column is otherwise a column of `×n`.
+const RECIPES_OWNED_NONE := "—"
+## How the popup's own content is found by IDENTITY — it lives in a `PopupPanel`, a Window, which a
+## search of the card's tree does not descend into.
+const RECIPES_POPUP_META := "crafting_recipes_popup"
+## Every cell of the popup's grid carries its COLUMN head as a meta, so a claim about "the Owned
+## column" is asked of that column's cells rather than of whatever text happens to line up.
+const RECIPES_POPUP_COLUMN_META := "crafting_recipes_popup_column"
+
+## **THE MAKE PICKER** — opened by Make on a row with more than one recipe, inside the ledger and
+## directly under that row. The heading names the item; each line is one recipe as a radio, its cost,
+## and either what it makes or why it cannot be made.
+const PICKER_HEADING_FORMAT := "Make %s with which recipe?"
+## A buildable recipe's summary: the grade chip's word (omitted when the recipe resolves none), what
+## it makes, and how long it lasts.
+const PICKER_SUMMARY_SEPARATOR := " · "
+const PICKER_LASTS_FORMAT := "lasts %s"
+## **THE RECIPE IS LOCKED ONCE THE BUILD STARTS**, and the picker says so before it starts it. To
+## change the recipe afterwards the player clears the bench with its ✕ and starts again.
+const PICKER_LOCK_NOTE := "The recipe can't be changed once the build starts."
+const PICKER_CANCEL := "Cancel"
+const PICKER_START := "Start"
+## How the picker and its parts are found by IDENTITY: the panel itself (valued the row key), each
+## radio (valued its recipe id), and the two footer buttons.
+const PICKER_META := "crafting_make_picker"
+const PICKER_OPTION_META := "crafting_make_picker_option"
+const PICKER_START_META := "crafting_make_picker_start"
+const PICKER_CANCEL_META := "crafting_make_picker_cancel"
+## The ledger key of a row made by a MATERIAL recipe. An equipment row is keyed by its item id; a
+## material recipe has no item, so it is its own row, and the prefix keeps its key out of the item
+## ids' namespace.
+const LEDGER_STOCK_ROW_KEY_FORMAT := "recipe:%s"
+## How a row's Make button is found by IDENTITY, valued the row key — a face search finds every Make
+## on the ledger, and the picker's claims are about ONE row's button.
+const MAKE_BUTTON_META := "crafting_make_button"
 
 ## **WHEN THE BAND OWNS NO UNITS, ONE WORDING FOR EVERY ROW**, keyed off `count` — never off
 ## `remaining == 0`, since a spent batch is REMOVED and worn-out and never-made both read zero
@@ -376,7 +461,8 @@ const OWNED_NONE := "Not made"
 const OWNED_COUNT_FORMAT := "×%d"
 ## How the Owned cell is found by IDENTITY. It carries the row's own item id, so a claim about what
 ## reaches the CELL (a tier word, an owned note) can be scoped to the cell rather than to the ledger —
-## the group HEAD is a tier word by design, and a panel-wide text scan cannot tell the two apart.
+## the recipe popup and the Make picker name tiers by design, and a panel-wide text scan cannot tell
+## them apart from a cell.
 const OWNED_CELL_META := "crafting_owned_cell"
 
 ## `CraftOffer.severity` and `EquipmentBatchState.lifeSeverity` — two vocabularies on purpose (an
@@ -538,6 +624,39 @@ const COST_FONT_SIZE := 12
 const ACTION_FONT_SIZE := 12
 const REASON_FONT_SIZE := 11
 const GROUP_HEAD_FONT_SIZE := 10
+## The `N recipes` link, at the item's second-line size so a multi-recipe row is no taller than a
+## single-recipe one with its role line.
+const RECIPES_LINK_FONT_SIZE := 11
+const RECIPES_POPUP_TITLE_FONT_SIZE := 10
+const RECIPES_POPUP_HEAD_FONT_SIZE := 10
+const RECIPES_POPUP_CELL_FONT_SIZE := 12
+const PICKER_HEADING_FONT_SIZE := 13
+const PICKER_OPTION_FONT_SIZE := 12
+const PICKER_NOTE_FONT_SIZE := 11
+
+## The popup's inner padding, the gap between its grid's columns and between its rows, and how far
+## below the link it hangs.
+const RECIPES_POPUP_PADDING := 10
+const RECIPES_POPUP_COLUMN_SEPARATION := 14
+const RECIPES_POPUP_ROW_SEPARATION := 6
+const RECIPES_POPUP_GAP := 4.0
+## The picker's inner padding, the vertical gap between its lines, and the width of its recipe-name
+## column (the radio's own face) — fixed, so the summaries line up down the picker.
+const PICKER_PADDING_H := 14
+const PICKER_PADDING_V := 12
+const PICKER_LINE_SEPARATION := 6
+const PICKER_LABEL_WIDTH := 110.0
+## **A RECIPE'S COST CELL IN THE POPUP AND THE PICKER, WIDE ENOUGH NOT TO WRAP.** The ledger's cost
+## column is 140 and wraps a three-input recipe onto two lines on purpose (`COLUMN_COST_WIDTH`); in a
+## comparison of two recipes a wrapped cost breaks the line-per-recipe reading, and in the popup's grid
+## the flow otherwise shrinks to one clause per line. The shipped three-input knapped spear —
+## `1 stone · 2 wood · 1 fibre` — fits on one.
+const RECIPE_COST_WIDTH := 180.0
+## The picker's border width. It wears `SIGNAL_DEEP`, the prototype's "this is a choice being made"
+## edge, over the bench well's own readout fill.
+const PICKER_BORDER_WIDTH := 1
+## The space below the picker before the next row's hairline — the prototype's own 12.
+const PICKER_MARGIN_BOTTOM := 12
 
 ## The letter-spacing effect the prototype's uppercase eyebrows carry is not expressible in Godot's
 ## Label, so the heads are simply uppercased — the same treatment `HudWidgets.alloc_section_label`

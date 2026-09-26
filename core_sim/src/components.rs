@@ -3759,9 +3759,41 @@ pub struct BandBench {
     /// `bench_crew`) is addressed `<faction> <band>` with no source, and squeezing the bench into
     /// `work_priority`'s source grammar would make the bare token `bench` ambiguous with a herd id.
     pub priority: SourcePriority,
+    /// **WHICH RECIPE THIS BAND LAST STARTED, PER THING IT MAKES** — row key
+    /// ([`crate::recipes_config::RecipeDef::row_key`], the item or material id) → recipe id.
+    ///
+    /// It is what the crafting ledger **suggests** on an item's row when the item has more than one
+    /// recipe: the one this band chose last time, if it can still be made
+    /// (`snapshot::crafting`'s suggestion rule). A band that knaps its spears keeps being offered the
+    /// knapped recipe, and one that points them with bone keeps being offered bone, without the
+    /// player re-choosing every time.
+    ///
+    /// ⛔ **Written ONLY when a job starts** ([`Self::record_started`], called by `set_bench`) and
+    /// **never by a readout** — the capture reads it and must not decide it, or the panel would be
+    /// choosing on the player's behalf. It **outlives the job**: clearing the bench does not clear it
+    /// ([`Self::clear_job`]), because *"what did I last make spears from"* is a standing fact about the
+    /// band rather than about the thing on the bench now.
+    ///
+    /// **Persisted** with the rest of the bench (`BandRecord::bench`), so a save or a rollback does
+    /// not forget a band's habits — and that changed the bench's encoded shape, which is why
+    /// `SAVE_FORMAT_VERSION` moved. `BTreeMap` so the checkpoint and any readout iterate in a stable
+    /// order.
+    pub last_started: BTreeMap<String, String>,
 }
 
 impl BandBench {
+    /// **Remember that this band started `recipe_id` for `row`** — see [`Self::last_started`].
+    /// Overwrites the previous choice for that row; every other row is untouched.
+    pub fn record_started(&mut self, row: &str, recipe_id: &str) {
+        self.last_started
+            .insert(row.to_string(), recipe_id.to_string());
+    }
+
+    /// The recipe this band last started for `row`, if it has started one.
+    pub fn last_started_for(&self, row: &str) -> Option<&str> {
+        self.last_started.get(row).map(String::as_str)
+    }
+
     /// **Put a recipe on the bench**, discarding whatever was there. Progress and the drawn pile go
     /// with it: a job swapped out mid-pass has to draw again, because the materials it drew were for
     /// the thing it is no longer making.
@@ -3780,8 +3812,16 @@ impl BandBench {
     /// default()` drops [`Self::drawn`] on the floor rather than returning it to the store, so a
     /// band that lost people would silently lose the materials it had already cut. The shed uses
     /// [`Self::shed_one_worker`] instead.
+    ///
+    /// **[`Self::last_started`] survives it**, deliberately: which recipe a band last chose for an item
+    /// is a fact about the band, not about the job being taken off the bench, and a bench cleared
+    /// between two batches of spears must still suggest the recipe it was making them from.
     pub fn clear_job(&mut self) {
-        *self = Self::default();
+        let last_started = std::mem::take(&mut self.last_started);
+        *self = Self {
+            last_started,
+            ..Self::default()
+        };
     }
 
     /// **TAKE ONE HAND OFF THE BENCH AND LEAVE EVERYTHING ELSE STANDING** — what the shedding order

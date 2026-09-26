@@ -669,7 +669,6 @@ const FIXTURE_RECIPES: &str = r#"{
   "crafting": { "progress_per_worker_turn": 1.0 },
   "recipes": {
     "ingot": {
-      "display_name": "Ingot",
       "craft": "tanning",
       "work": 4.0,
       "inputs": [{ "material": "ore", "amount": 4.0, "reads": "hardness" }],
@@ -682,6 +681,7 @@ const FIXTURE_RECIPES: &str = r#"{
 const FIXTURE_EQUIPMENT: &str = r#"{
   "items": {
     "spears": {
+      "display_name": "Spears",
       "wear": [{ "per": "strike", "amount": 0.4 }],
       "tiers": [
         {
@@ -692,6 +692,7 @@ const FIXTURE_EQUIPMENT: &str = r#"{
       ]
     },
     "crucible": {
+      "display_name": "Crucible",
       "wear": [{ "per": "item_crafted", "amount": 4.0 }],
       "bounds_material": "ore",
       "tiers": [

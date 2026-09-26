@@ -326,14 +326,16 @@ fn give_spears_two_metal_tiers(app: &mut App, edit: impl FnOnce(&mut serde_json:
     let recipes = book["recipes"]
         .as_object_mut()
         .expect("the recipe block is an object");
-    for (id, name, tier) in [
-        (SPEARS_BRONZE_RECIPE, "Spears (bronze)", BRONZE_TIER),
-        (SPEARS_IRON_RECIPE, "Spears (iron)", IRON_TIER),
+    // Each carries a `label` because spears now has four recipes, and a recipe with siblings must be
+    // told apart from them.
+    for (id, label, tier) in [
+        (SPEARS_BRONZE_RECIPE, "Bronze", BRONZE_TIER),
+        (SPEARS_IRON_RECIPE, "Iron", IRON_TIER),
     ] {
         recipes.insert(
             id.to_string(),
             serde_json::json!({
-                "display_name": name,
+                "label": label,
                 "craft": "bone_working",
                 "work": 6.0,
                 "inputs": [{ "material": "bone", "amount": 1.0, "reads": "density" }],
@@ -430,8 +432,9 @@ type PublishedReading = (String, f32, String);
 type PublishedBatch = (String, Vec<PublishedReading>);
 /// `(recipe id, amount, the axis this row is judged by — `""` on every row but one)`.
 type PublishedRecipeInput = (String, f32, String);
-/// `(display name, group, work, inputs)` — the static half of a recipe, off the world catalogue.
-type PublishedRecipe = (String, String, f32, Vec<PublishedRecipeInput>);
+/// `(display name, group, work, inputs, label)` — the static half of a recipe, off the world
+/// catalogue. The display name is the OUTPUT's; the label is the recipe's own word.
+type PublishedRecipe = (String, String, f32, Vec<PublishedRecipeInput>, String);
 /// `(id, craft, axes, hand-workable, the tool that bounds it)`.
 type PublishedMaterial = (String, String, Vec<String>, bool, String);
 /// The bench row as it comes off the wire. `blocked_reason` and `shortfalls` ride together because
@@ -496,6 +499,12 @@ struct PublishedOffer {
     output_tier_name: String,
     output_tier_rank: u32,
     owned_note: String,
+    /// The five fields the one-row-per-item ledger reads, decoded off the envelope like the rest.
+    recipe_label: String,
+    makes: String,
+    lasts: String,
+    suggested: bool,
+    owned_at_tier: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -636,6 +645,11 @@ fn publish(app: &mut App, band: Entity) -> Published {
                     output_tier_name: offer.outputTierName().unwrap_or_default().to_string(),
                     output_tier_rank: offer.outputTierRank(),
                     owned_note: offer.ownedNote().unwrap_or_default().to_string(),
+                    recipe_label: offer.recipeLabel().unwrap_or_default().to_string(),
+                    makes: offer.makes().unwrap_or_default().to_string(),
+                    lasts: offer.lasts().unwrap_or_default().to_string(),
+                    suggested: offer.suggested(),
+                    owned_at_tier: offer.ownedAtTier(),
                 },
             )
         })
@@ -715,6 +729,7 @@ fn publish(app: &mut App, band: Entity) -> Published {
                                 .collect()
                         })
                         .unwrap_or_default(),
+                    recipe.label().unwrap_or_default().to_string(),
                 ),
             )
         })
@@ -2154,12 +2169,36 @@ fn the_per_world_catalogues_round_trip() {
     assert_eq!(published.bands[0].1, 0.0, "the first band opens at 0.0");
 
     // --- recipes -----------------------------------------------------------------------------
-    let (display_name, group, work, inputs) = published
+    let (display_name, group, work, inputs, label) = published
         .recipes
         .get(SLED_RECIPE)
         .expect("the shipped book carries the sled")
         .clone();
     assert_eq!(display_name, "Sled");
+    assert_eq!(
+        label, "Hide",
+        "the sled has a framed sibling, so its catalogue row carries its own label"
+    );
+    // **The catalogue names the OUTPUT, and a sibling recipe shares it** — the label is what differs.
+    let (framed_name, _, _, _, framed_label) = published
+        .recipes
+        .get("sled_framed")
+        .expect("the shipped book carries the framed sled")
+        .clone();
+    assert_eq!(
+        framed_name, display_name,
+        "two recipes for one item carry one name"
+    );
+    assert_eq!(framed_label, "Framed");
+    let (_, _, _, _, loom_label) = published
+        .recipes
+        .get("loom")
+        .expect("the shipped book carries the loom")
+        .clone();
+    assert_eq!(
+        loom_label, "",
+        "a recipe that is the only one making its output carries no label"
+    );
     assert_eq!(group, "kit");
     assert!(work > 0.0);
     let read_rows: Vec<_> = inputs
@@ -2785,5 +2824,299 @@ fn a_material_only_recipe_publishes_no_grade_while_an_equipment_one_still_does()
         sled.reason, "Hide, no tanning frame \u{2192} poor",
         "and its note still carries the arrow - without this arm the claim above passes on a build \
          that stopped publishing grades altogether"
+    );
+}
+
+// --- one ledger row per item, its recipes behind a link -----------------------------------------
+//
+// Several offers now share one `outputItemId` (a spear pointed with bone, a spear knapped from
+// stone). The ledger shows ONE row per item, and five appended `CraftOffer` fields carry what its
+// recipe popup and Make-picker show. Every assertion below reads them off the encoded envelope.
+
+/// The knapped spear recipe and its sibling pair of baskets — the two shapes an item with several
+/// recipes comes in: two TIERS of one item, and two SUBSTITUTES at one tier.
+const SPEARS_FLINT_RECIPE: &str = "spears_flint";
+const BASKETS_RECIPE: &str = "baskets";
+const BASKETS_WITHY_RECIPE: &str = "baskets_withy";
+const BASKETS_ITEM: &str = "baskets";
+const STONE: &str = "stone";
+const FIBRE: &str = "fibre";
+/// A reading inside `good` — the band a bare-handed craft reaches (every hand-workable material's
+/// `quality_ceiling` is `0.60`), so a draw off it stamps the tier's own anchor number.
+const A_GOOD_READING: f32 = 0.6;
+/// A reading inside `poor` — what makes a flint spear hit exactly as hard as a good bone one.
+const A_POOR_READING: f32 = 0.1;
+
+/// **Every pile both spear recipes and both basket recipes draw from, at one reading** — so the only
+/// thing that differs between two sibling offers is the recipe itself.
+fn stock_every_pile(app: &mut App, band: Entity, reading: f32) {
+    for (material, axes) in [
+        (BONE, ["density", "length"]),
+        (HIDE, [TOUGHNESS, SUPPLENESS]),
+        (FIBRE, ["fineness", "strength"]),
+        (WOOD, ["hardness", "pliancy"]),
+        (STONE, ["hardness", "workability"]),
+    ] {
+        strip(app, band, material);
+        deposit(
+            app,
+            band,
+            material,
+            PLENTY,
+            &[(axes[0], reading), (axes[1], reading)],
+        );
+    }
+}
+
+/// **The recipe this band last started for `row`**, set on the bench directly: the one writer in the
+/// game is `set_bench` (pinned in `server::tests`), and these fixtures are about what the READOUT does
+/// with the choice, not about how it was made.
+fn last_started(app: &mut App, band: Entity, row: &str, recipe: &str) {
+    app.world
+        .get_mut::<BandBench>(band)
+        .expect("a spawned band carries a bench")
+        .record_started(row, recipe);
+}
+
+/// **AN ITEM NAMES ITS ROW; EACH RECIPE CARRIES ONLY ITS LABEL.** Both spear offers publish the
+/// item's own `display_name`, the two recipes are told apart by `recipeLabel`, and a lone recipe
+/// publishes no label. The rename at the end is what proves WHERE the name is read from: renaming
+/// the item in `equipment.json` renames both offers, with the recipe book untouched.
+#[test]
+fn an_item_names_its_row_and_each_recipe_carries_only_its_label() {
+    let (mut app, band) = world();
+    let published = publish(&mut app, band);
+    let bone = offer(&published, SPEARS_RECIPE);
+    let flint = offer(&published, SPEARS_FLINT_RECIPE);
+    assert_eq!(bone.display_name, "Spears");
+    assert_eq!(
+        flint.display_name, bone.display_name,
+        "two recipes for one item carry the item's one name"
+    );
+    assert_eq!(
+        (bone.recipe_label.as_str(), flint.recipe_label.as_str()),
+        ("Bone", "Flint")
+    );
+    assert_eq!(
+        offer(&published, "loom").recipe_label,
+        "",
+        "the only recipe making its output carries no label"
+    );
+
+    let mut json: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("the TOE is json");
+    json["items"][SPEARS_ITEM]["display_name"] = serde_json::json!("Pointed sticks");
+    let renamed = EquipmentConfig::from_json_str(&json.to_string()).expect("a legal item table");
+    app.world
+        .resource_mut::<EquipmentConfigHandle>()
+        .replace(std::sync::Arc::new(renamed));
+    let republished = publish(&mut app, band);
+    assert_eq!(
+        offer(&republished, SPEARS_RECIPE).display_name,
+        "Pointed sticks"
+    );
+    assert_eq!(
+        offer(&republished, SPEARS_FLINT_RECIPE).display_name,
+        "Pointed sticks",
+        "the row's name is the ITEM's — renaming the item renamed both offers"
+    );
+}
+
+/// **`makes` AND `lasts` QUOTE THE TIER EACH RECIPE MAKES — and a substitute pair agrees.**
+///
+/// Off one store read at `good`, the bone spear makes its tier's `20 attack` and lasts `250 blows`,
+/// the knapped one makes `26 attack` and lasts `175` — harder-hitting and brittle, which is the
+/// whole point of the second tier. A poor stone then makes a flint spear exactly as hard-hitting as
+/// a good bone one (`makes` is the GRADE's value, not the tier's), while its `lasts` does not move
+/// (life is the tier's, not the grade's). The two baskets are one item at one tier, so they must
+/// publish the same two strings off stock of equal quality.
+#[test]
+fn makes_and_lasts_quote_each_recipes_tier_and_a_substitute_pair_agrees() {
+    let (mut app, band) = world();
+    stock_every_pile(&mut app, band, A_GOOD_READING);
+    let published = publish(&mut app, band);
+    let bone = offer(&published, SPEARS_RECIPE);
+    let flint = offer(&published, SPEARS_FLINT_RECIPE);
+    assert_eq!(
+        (bone.output_grade.as_str(), flint.output_grade.as_str()),
+        ("good", "good"),
+        "the premise: both draws land in the anchor band"
+    );
+    assert_eq!(bone.makes, "20 attack");
+    assert_eq!(flint.makes, "26 attack");
+    assert_eq!(bone.lasts, "250 blows");
+    assert_eq!(flint.lasts, "175 blows");
+
+    // A poor stone buys a poor flint spear: the value is the GRADE's, and its life is the TIER's.
+    strip(&mut app, band, STONE);
+    deposit(
+        &mut app,
+        band,
+        STONE,
+        PLENTY,
+        &[
+            ("hardness", A_POOR_READING),
+            ("workability", A_POOR_READING),
+        ],
+    );
+    let poor = publish(&mut app, band);
+    let poor_flint = offer(&poor, SPEARS_FLINT_RECIPE);
+    assert_eq!(poor_flint.output_grade, "poor");
+    assert_eq!(
+        poor_flint.makes, bone.makes,
+        "a poor flint spear hits exactly as hard as a good bone one - craftsmanship and material \
+         trade against each other"
+    );
+    assert_eq!(
+        poor_flint.lasts, flint.lasts,
+        "and it is exactly as brittle as a good one"
+    );
+
+    // The substitute pair: same item, same tier, same grades - the same two strings.
+    let fibre = offer(&published, BASKETS_RECIPE);
+    let withy = offer(&published, BASKETS_WITHY_RECIPE);
+    assert_eq!(fibre.makes, "8 carry");
+    assert_eq!(
+        (withy.makes.as_str(), withy.lasts.as_str()),
+        (fibre.makes.as_str(), fibre.lasts.as_str()),
+        "a withy basket and a fibre basket are one item at one tier"
+    );
+    assert_eq!(fibre.lasts, "2500 biomass gathered");
+    // A bench tool quotes no headline — its three craft stats are not one number.
+    assert_eq!(offer(&published, "loom").makes, "");
+}
+
+/// **`ownedAtTier` COUNTS PER TIER WHERE THE TIERS DIFFER, AND IS `-1` WHERE THEY DO NOT.**
+///
+/// Spears are two tiers, so each recipe's offer counts the units at its own tier. The baskets'
+/// recipes make one tier between them, and the ledger never recorded which recipe made a unit, so
+/// both publish `-1` — on a band that genuinely owns baskets, or the `-1` would be about nothing.
+#[test]
+fn owned_at_tier_counts_per_tier_on_spears_and_is_unattributed_on_both_baskets() {
+    let (mut app, band) = world();
+    restock(
+        &mut app,
+        band,
+        SPEARS_ITEM,
+        &[
+            (PLAIN_TIER, "good"),
+            (PLAIN_TIER, "fair"),
+            (FLINT_TIER, "good"),
+        ],
+    );
+    restock(&mut app, band, BASKETS_ITEM, &[(PLAIN_TIER, "good")]);
+    let published = publish(&mut app, band);
+    assert_eq!(offer(&published, SPEARS_RECIPE).owned_at_tier, 2);
+    assert_eq!(offer(&published, SPEARS_FLINT_RECIPE).owned_at_tier, 1);
+    assert!(
+        rows_for(&published, BASKETS_ITEM)
+            .iter()
+            .any(|row| row.count > 0),
+        "LIVENESS: the band owns baskets, so the -1 below is not a zero in disguise"
+    );
+    assert_eq!(offer(&published, BASKETS_RECIPE).owned_at_tier, -1);
+    assert_eq!(offer(&published, BASKETS_WITHY_RECIPE).owned_at_tier, -1);
+}
+
+/// **EXACTLY ONE OFFER PER ROW IS SUGGESTED**, over every row the shipped book publishes — with a
+/// liveness assertion that some row really does hold several offers, or *"exactly one"* would be
+/// true of a book with one recipe per item.
+#[test]
+fn exactly_one_offer_per_row_is_suggested() {
+    let (mut app, band) = world();
+    let published = publish(&mut app, band);
+    let mut per_row: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for (recipe, offer) in &published.offers {
+        let row = if offer.output_item_id.is_empty() {
+            recipe.clone()
+        } else {
+            offer.output_item_id.clone()
+        };
+        let entry = per_row.entry(row).or_default();
+        entry.0 += 1;
+        entry.1 += usize::from(offer.suggested);
+    }
+    for (row, (offers, suggested)) in &per_row {
+        assert_eq!(
+            *suggested, 1,
+            "row '{row}' ({offers} offers) suggests exactly one"
+        );
+    }
+    assert!(
+        per_row.values().any(|(offers, _)| *offers > 1),
+        "LIVENESS: some row carries several recipes"
+    );
+}
+
+/// **CASE 1 — the recipe last started, while it can still be made.** Paired against the same band
+/// with no choice on record, which suggests the first in book order: a readout that ignored the
+/// choice would pass the first half and fail the second.
+#[test]
+fn a_row_suggests_the_recipe_last_started_while_it_can_be_made() {
+    let (mut app, band) = world();
+    stock_every_pile(&mut app, band, A_GOOD_READING);
+    let fresh = publish(&mut app, band);
+    assert!(
+        offer(&fresh, SPEARS_RECIPE).suggested && !offer(&fresh, SPEARS_FLINT_RECIPE).suggested,
+        "with nothing on record, the first available recipe in book order"
+    );
+
+    last_started(&mut app, band, SPEARS_ITEM, SPEARS_FLINT_RECIPE);
+    let chosen = publish(&mut app, band);
+    assert!(
+        offer(&chosen, SPEARS_FLINT_RECIPE).available,
+        "the premise: it can be made"
+    );
+    assert!(
+        offer(&chosen, SPEARS_FLINT_RECIPE).suggested && !offer(&chosen, SPEARS_RECIPE).suggested,
+        "the band knapped its spears last time, so the row offers knapping again"
+    );
+}
+
+/// **CASE 2 — last started but now unaffordable falls through to the first AVAILABLE.** The band
+/// knapped its spears last time and has run out of stone; the row offers what it can actually make.
+#[test]
+fn a_last_started_recipe_that_cannot_be_made_falls_through_to_the_first_available() {
+    let (mut app, band) = world();
+    stock_every_pile(&mut app, band, A_GOOD_READING);
+    strip(&mut app, band, STONE);
+    last_started(&mut app, band, SPEARS_ITEM, SPEARS_FLINT_RECIPE);
+    let published = publish(&mut app, band);
+    assert!(
+        !offer(&published, SPEARS_FLINT_RECIPE).available
+            && offer(&published, SPEARS_RECIPE).available,
+        "the premise: no stone, bone to hand"
+    );
+    assert!(
+        offer(&published, SPEARS_RECIPE).suggested
+            && !offer(&published, SPEARS_FLINT_RECIPE).suggested,
+        "the knapped recipe cannot be made, so the row offers the bone one"
+    );
+}
+
+/// **CASES 3 AND 4 — nothing can be made.** With a choice on record the row keeps it rather than
+/// jumping to an arbitrary recipe; with none, it falls back to the first in book order.
+#[test]
+fn with_nothing_makeable_a_row_keeps_the_last_started_recipe_else_the_first() {
+    let (mut app, band) = world();
+    stock_every_pile(&mut app, band, A_GOOD_READING);
+    // Fibre is on both spear recipes, so without it neither can be made.
+    strip(&mut app, band, FIBRE);
+    let nothing = publish(&mut app, band);
+    assert!(
+        !offer(&nothing, SPEARS_RECIPE).available
+            && !offer(&nothing, SPEARS_FLINT_RECIPE).available,
+        "the premise: neither spear recipe can be made"
+    );
+    assert!(
+        offer(&nothing, SPEARS_RECIPE).suggested,
+        "no choice on record: the first in book order"
+    );
+
+    last_started(&mut app, band, SPEARS_ITEM, SPEARS_FLINT_RECIPE);
+    let kept = publish(&mut app, band);
+    assert!(
+        offer(&kept, SPEARS_FLINT_RECIPE).suggested && !offer(&kept, SPEARS_RECIPE).suggested,
+        "a choice on record is kept when nothing can be made"
     );
 }

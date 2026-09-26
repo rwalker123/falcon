@@ -2348,6 +2348,49 @@ the control are independent, so a defect in one must leave the other's claims st
 None passed vacuously: each restoration was named by at least one assertion that reads the RENDER and
 one that reads the table.
 
+## One ledger row per item, its recipes behind a link (`chapters/crafting_bench.gd`)
+
+Two frames and thirty-three claims, appended LAST in the chapter (`_recipe_states`) so no earlier
+frame moves in count, plus one on state 1: *no TIER heads a section*, over a fixture carrying two. The behaviour is `crafting-panel.md`'s — "ONE SHORT ROW PER ITEM"; what belongs here
+is the shape of the drive. **MEASURED, BEFORE AND AFTER, ON THIS TREE: `453 / 2220` → `455 / 2254`**,
+exit 0 both. `EXPECTED_CHECKPOINTS` 149 → **185**, RE-MEASURED by raising the const to an impossible
+number and reading `reached 185` back.
+
+| frame | what only IT can say |
+|---|---|
+| `crafting_panel` (existing) | the ledger at rest: `Kit` · `Bench tools` · `Materials`, and `2 recipes` under Baskets and Spears only |
+| `crafting_recipes_popup` | the popup under Spears' link, `Bone` / `Flint` with an Owned column of `×6` / `—` |
+| `crafting_make_picker` | the picker under the Spears row: the short bone recipe's radio disabled with its reason, the flint one lit |
+
+**The fixtures are the new wire shape**: one offer per recipe, one `suggested` per row, and two items
+chosen as the two popup cases — Spears (bone makes `plain`, knapping makes `flint`, so each offer states
+its own `owned_at_tier`) and Baskets (reed and withy make ONE tier, so both publish `-1`). The store
+gained wood and stone, because the flint offer is published AVAILABLE and a band holding no stone
+could not make it. The two-tier fixture moved off the invented `bronze` onto the shipped `flint`, and
+both spear recipes can be made there, which is what makes Start's claim about the CHOICE: it presses
+the non-suggested radio, so "sends the chosen one" and "sends the suggested one" answer differently.
+
+**Every claim is a pair and every press is real pointer input** (`_press_control`, which now FAILS a
+claim on a null control instead of raising — a raise aborts the chapter and surfaces only as the
+checkpoint guard's short count). `Esc` is a real `InputEventKey` pushed through the viewport, and the
+outside click lands on the card's own chrome. **The block opens by CLOSING the card**: the rank picker
+the state above it leaves open is VIEW state the card carries until dismissal, and it sat over both
+new frames on the first run.
+
+⛔ **ONE STATE IS A SHAPE THE SHIPPED SIM DOES NOT SEND.** *Make is live when only the non-suggested
+recipe can be made* stages a suggested recipe that cannot be made beside one that can; the sim's own
+pick prefers an available recipe, so that never arrives. It is staged because the client's rule is
+"any offer available" and nothing else can tell that from "the suggested one available" — paired with
+the clubs row, whose only recipe is short and whose Make must stay disabled.
+
+**Sabotage-verified in two runs.** Three disjoint mutations together — the popup's Owned column shown
+unconditionally, Start sending the suggested recipe, Make gated on the suggested offer alone — fail
+**exactly three** claims, one each, naming `["spears_flint"]` for the Start one. Then Make on a
+two-recipe row sending its suggested recipe directly, plus the link drawn on every row: **fifteen** —
+the whole picker chain (with three *the control to press was rendered* guards where the picker's
+controls were never built) and the single-recipe link claim with the two role-line claims it took
+down, while *Make on a single-recipe row sends that recipe* and *…opens no picker* correctly stay green.
+
 ## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
 
 Four frames and twenty-five `PASS`, appended to the event-dock chapter before it frees its panel —

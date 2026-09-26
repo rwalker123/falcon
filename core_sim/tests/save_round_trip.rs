@@ -693,6 +693,48 @@ fn a_two_faction_start_location_survives_the_round_trip() {
     );
 }
 
+/// **WHICH RECIPE A BAND LAST STARTED SURVIVES A SAVE AND A LOAD** (`BandBench::last_started`) —
+/// the fact the crafting ledger suggests from when an item has several recipes, so a load that
+/// dropped it would quietly move every row's suggestion back to book order.
+///
+/// `a_saved_world_loads_into_a_fresh_app` compares whole checkpoints, but a fresh band has started
+/// nothing, so there it compares two empty maps. This fixture records a choice on EVERY band first,
+/// so the map has entries to lose, and finds each band again by its durable `BandId`.
+#[test]
+fn a_bands_last_started_recipes_survive_the_round_trip() {
+    const ROW: &str = "spears";
+    const KNAPPED: &str = "spears_flint";
+    let mut original = spawn_world();
+    let mut marked = 0;
+    let mut benches = original
+        .world
+        .query::<(&core_sim::BandId, &mut core_sim::BandBench)>();
+    for (_, mut bench) in benches.iter_mut(&mut original.world) {
+        bench.record_started(ROW, KNAPPED);
+        marked += 1;
+    }
+    assert!(
+        marked > 0,
+        "LIVENESS: the world has a band whose choice there is to lose"
+    );
+
+    let blob = encode_save(&original.world).expect("the world encodes");
+    let (mut loaded, _) = load_save(&blob).expect("the save loads");
+    let mut restored = loaded
+        .world
+        .query::<(&core_sim::BandId, &core_sim::BandBench)>();
+    let mut seen = 0;
+    for (band, bench) in restored.iter(&loaded.world) {
+        assert_eq!(
+            bench.last_started_for(ROW),
+            Some(KNAPPED),
+            "band {band:?} must come back remembering it knaps its spears"
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, marked, "every band that made a choice came back");
+}
+
 /// ⛔ **A LOADED WORLD AWAITS THE ROSTER IN THE SAVE, not the one the boot profile named.**
 ///
 /// `load_save` builds its app with `build_headless_app`, whose `TurnQueue` is seeded from whatever

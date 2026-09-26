@@ -1398,6 +1398,25 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // when there is no news — what the band carries is said only when it disagrees with
             // what the band could now make.
             let _ = row.insert("owned_note", offer.ownedNote().unwrap_or(""));
+            // **ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK.** Several offers share one
+            // `output_item_id`; the client groups them into one row and these five are what that
+            // row's recipe popup and its Make picker read. All RESOLVED SIM-SIDE — the client never
+            // picks the suggested recipe, never spells a stat and never divides a durability.
+            //
+            // The recipe's short name among its siblings ("Bone", "Flint"); `""` on a sole recipe.
+            let _ = row.insert("recipe_label", offer.recipeLabel().unwrap_or(""));
+            // What this recipe would make from this band's store ("26 attack"); `""` for a bench
+            // tool and for a material output.
+            let _ = row.insert("makes", offer.makes().unwrap_or(""));
+            // How long one fresh unit at this recipe's tier lasts ("175 blows"); `""` on a material.
+            let _ = row.insert("lasts", offer.lasts().unwrap_or(""));
+            // EXACTLY ONE offer per row is true: the recipe the row's cells show and the picker
+            // opens on.
+            let _ = row.insert("suggested", offer.suggested());
+            // Units owned at THIS recipe's tier, or `-1` when every recipe for the item makes the
+            // same tier and no count per recipe exists (`OWNED_AT_TIER_UNATTRIBUTED`). `-1` is not
+            // "none": `0` is a real count.
+            let _ = row.insert("owned_at_tier", offer.ownedAtTier() as i64);
             craft_offers.push(&row.to_variant());
         }
     }

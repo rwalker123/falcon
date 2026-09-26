@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 149
+const EXPECTED_CHECKPOINTS := 185
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -36,32 +36,57 @@ const CRAFTING_BAND_ENTITY := 971
 ## `completion_threshold`, which is what stops the client inventing a scale of its own.
 const CRAFT_THRESHOLD := 100.0
 
-## **THE TIERS, AND THE RANKS THE HEADS ARE ORDERED BY.** Every item's OPENING tier is `plain` at
-## rank 0 — bone, hide and fibre work — so every ledger below rank 1 renders under a single `Plain`
-## head. The shipped roster does carry a real second tier, `flint` (knapped stone and wood), but only
-## on `spears`, `clubs` and `hoes`; this chapter's fixtures deliberately do not use it, because a
-## partial second tier would mix the one-tier and two-tier shapes in the same ledger. `bronze` at
-## rank 1 is invented here instead, and appears only in the second-tier fixture — the one shape that
-## can stage a head disagreeing with a cell and therefore the only one that can produce an
-## `ownedNote` at all.
+## **THE TWO SHIPPED TIERS.** Every item opens at `plain` — bone, hide and fibre work — and `spears`,
+## `clubs` and `hoes` carry a second, `flint` (knapped stone and wood). The ledger no longer heads a
+## section with a tier: one row per ITEM carries both of an item's recipes, so the tier a recipe makes
+## is named by its `recipeLabel`, in the popup and the picker.
 const TIER_PLAIN := "plain"
-const TIER_PLAIN_RANK := 0
-const TIER_BRONZE := "bronze"
-const TIER_BRONZE_RANK := 1
+const TIER_FLINT := "flint"
 
-## The heads as the ledger names them — the tier ids capitalized, which is how the panel keys its fold
-## state and what the harness looks a head up by.
-const HEAD_PLAIN := "Plain"
-const HEAD_BRONZE := "Bronze"
+## The ledger's three section heads, as the panel names them and keys their fold state.
+const HEAD_KIT := "Kit"
+const HEAD_TOOLS := "Bench tools"
+const HEAD_MATERIALS := "Materials"
 
-## **THE TIER WORDS THAT MAY NOT REACH AN OWNED CELL EXCEPT INSIDE `ownedNote`.** The head IS a tier
-## word by design, so this claim is scoped to the CELLS; the second-tier fixture publishes a `tier_id`
-## on every batch it owns, which is what stops the negative being vacuous.
-const TIER_WORDS: Array[String] = [TIER_PLAIN, TIER_BRONZE]
+## **THE TIER WORDS THAT MAY NOT REACH AN OWNED CELL EXCEPT INSIDE `ownedNote`.** The popup and the
+## picker name tiers by design, so this claim is scoped to the CELLS; the second-tier fixture publishes
+## a `tier_id` on every batch it owns, which is what stops the negative being vacuous.
+const TIER_WORDS: Array[String] = [TIER_PLAIN, TIER_FLINT]
 
-## The band's two-tier stock, batch by batch. Spears sit at two GRADES — and the `good` pair at
-## different wear, which the cell must sum into one line rather than list twice — while the clubs are
-## a single grade at the older tier, which is what the note is about.
+## **THE RECIPES OF A TWO-RECIPE ITEM, spelled as the sim publishes them.** Spears are pointed with
+## bone at the `plain` tier or knapped at `flint`; baskets are woven of reed or withy at ONE tier,
+## which is what makes them the substitute case — the popup's Owned column is absent there. The ids
+## are the recipe book's own, and the labels are what the popup and the picker must render verbatim.
+const SPEARS_BONE_RECIPE := "spears"
+const SPEARS_FLINT_RECIPE := "spears_flint"
+const SPEARS_BONE_LABEL := "Bone"
+const SPEARS_FLINT_LABEL := "Flint"
+const BASKETS_REED_RECIPE := "baskets"
+const BASKETS_WITHY_RECIPE := "baskets_withy"
+const BASKETS_REED_LABEL := "Reed"
+const BASKETS_WITHY_LABEL := "Withy"
+const CLUBS_BONE_RECIPE := "clubs"
+const CLUBS_STONE_RECIPE := "clubs_stone"
+const CLUBS_BONE_LABEL := "Bone"
+const CLUBS_STONE_LABEL := "Stone"
+## What each spear recipe makes and how long a fresh one lasts — resolved sim-side, rendered verbatim.
+## The flint spear hits harder and breaks sooner, which is the whole of why it is a choice.
+const SPEARS_BONE_MAKES := "20 attack"
+const SPEARS_FLINT_MAKES := "26 attack"
+const SPEARS_BONE_LASTS := "250 blows"
+const SPEARS_FLINT_LASTS := "175 blows"
+## The reference band's spears, all at the `plain` tier — six, which is the popup's Owned figure on the
+## Bone line and the zero on the Flint one.
+const SPEARS_PLAIN_OWNED := 6
+## **THE BENCH'S FULL NAME, as the sim publishes it for a job on a two-recipe item.** Rendered VERBATIM;
+## the client composes no `item · recipe` of its own.
+const BENCH_TWO_RECIPE_NAME := "Baskets (Reed)"
+## …and what a client composing the recipe label onto the bench title itself would print instead.
+const BENCH_COMPOSED_NAME := "Baskets · Reed"
+
+## The band's two-tier stock, batch by batch. Spears sit at two GRADES of `flint` — and the `good`
+## pair at different wear, which the cell must sum into one line rather than list twice — while the
+## clubs are a single grade at the older `plain` tier, which is what the note is about.
 const TWO_TIER_SPEARS_GOOD_A := 3
 const TWO_TIER_SPEARS_GOOD_B := 2
 const TWO_TIER_SPEARS_EXCELLENT := 1
@@ -713,6 +738,7 @@ func _crafting_states() -> void:
 	await _clear_bench_command_state()
 	await _map_gesture_state()
 	await _bench_priority_states()
+	await _recipe_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -722,13 +748,11 @@ func _crafting_states() -> void:
 
 # ---- states 12-13: TWO TIERS, which is the only shape the readout can be judged on ---------------
 
-## **THE HEAD IS WHAT A ROW WOULD BE MADE AT; THE CELL IS WHAT THE BAND HAS.** Every state above sits
-## on the opening `plain` tier alone, so its head and its cells can never disagree and none of them
-## can show the readout the Owned column exists for — a Clubs row under **Bronze** whose cell says
-## *carrying plain · poor* — nor can a sim publish an `ownedNote` there. This fixture is the second
-## tier, and everything downstream of the disagreement is asserted against it. (The shipped roster's
-## own second tier is `flint`, on `spears`, `clubs` and `hoes`; it is deliberately not used here — see
-## the tier constants above.)
+## **THE SUGGESTED RECIPE IS WHAT A ROW WOULD BE MADE AT; THE CELL IS WHAT THE BAND HAS.** A band that
+## can knap flint but still carries plain clubs is the shape in which the two disagree — the Clubs row
+## suggests its `Stone` recipe (flint) while its cell says *carrying plain · poor* — and it is the only
+## shape in which the sim publishes an `ownedNote` at all. Everything downstream of the disagreement is
+## asserted against this fixture.
 func _two_tier_states() -> void:
 	h._hud.update_band_alerts([_two_tier_band()])
 	h._hud.open_crafting_panel(_two_tier_band())
@@ -949,8 +973,8 @@ func _assert_owned_cell_reads_what_the_band_has() -> void:
 		_non_grade_texts(spears).is_empty())
 
 ## **NO TIER WORD REACHES A CELL EXCEPT THROUGH `ownedNote`.** Scoped to the Owned CELLS rather than to
-## the ledger, because the group head is a tier word by design and a panel-wide scan cannot tell the
-## two apart. Non-vacuous by construction: every batch this band owns publishes a `tier_id`, so there
+## the ledger, because the popup and the picker name a recipe's tier by design and a panel-wide scan
+## cannot tell those apart from a cell. Non-vacuous by construction: every batch this band owns publishes a `tier_id`, so there
 ## is a tier word sitting one field away from every cell asserted about.
 func _assert_no_tier_word_reaches_a_cell() -> void:
 	var panel: CraftingPanel = h._hud.crafting_panel().panel()
@@ -978,26 +1002,26 @@ func _assert_no_tier_word_reaches_a_cell() -> void:
 ## restored the rows satisfies the pair on the way down.
 func _assert_folding_a_head_hides_only_its_own_rows() -> void:
 	var panel: CraftingPanel = h._hud.crafting_panel().panel()
-	var head := _group_head(panel, HEAD_BRONZE) if panel != null else null
+	var head := _group_head(panel, HEAD_KIT) if panel != null else null
 	if panel == null or head == null:
-		h._assert_hud("crafting — the two-tier panel offers a %s head" % HEAD_BRONZE, false)
+		h._assert_hud("crafting — the two-tier panel offers a %s head" % HEAD_KIT, false)
 		return
-	h._assert_hud("crafting — precondition: both tier groups render their rows open",
-		_label_texts(panel).has("Clubs") and _label_texts(panel).has("Traps"))
+	h._assert_hud("crafting — precondition: both groups render their rows open",
+		_label_texts(panel).has("Clubs") and _label_texts(panel).has("Loom"))
 
 	head.pressed.emit()
 	await h._settle()
 	var folded := _label_texts(panel)
-	h._assert_hud("crafting — folding a head hides ITS rows (%s under %s)" % ["Clubs", HEAD_BRONZE],
-		not folded.has("Clubs") and not folded.has("Spears"))
+	h._assert_hud("crafting — folding a head hides ITS rows (%s under %s)" % ["Clubs", HEAD_KIT],
+		not folded.has("Clubs") and not folded.has("Spears") and not folded.has("Traps"))
 	h._assert_hud("crafting — …while another group's rows stay visible (%s under %s)"
-			% ["Traps", HEAD_PLAIN],
-		folded.has("Traps"))
+			% ["Loom", HEAD_TOOLS],
+		folded.has("Loom"))
 	h._assert_hud("crafting — …and the folded head itself remains, dimmed and carrying its caret",
-		folded.has(_head_face(HEAD_BRONZE, true)))
+		folded.has(_head_face(HEAD_KIT, true)))
 	await h._save("crafting_panel_group_folded")
 
-	var reopen := _group_head(panel, HEAD_BRONZE)
+	var reopen := _group_head(panel, HEAD_KIT)
 	if reopen == null:
 		h._assert_hud("crafting — the folded head is still pressable", false)
 		return
@@ -1120,9 +1144,9 @@ func _assert_panel_renders() -> void:
 	if panel == null:
 		return
 	var texts := _label_texts(panel)
-	# The refusal is rendered VERBATIM, with its number. "Short 4.9 bone", never "cannot craft".
+	# The refusal is rendered VERBATIM, with its number. "Short 6.9 bone", never "cannot craft".
 	h._assert_hud("crafting — a refusal names its number",
-		texts.has("Short 4.9 bone") and not texts.has("cannot craft"))
+		texts.has("Short 6.9 bone") and not texts.has("cannot craft"))
 	# …and the shrug reads differently from the shortage, which is the whole reason the reason is
 	# published rather than derived from `available`.
 	h._assert_hud("crafting — the shrug is its own string", texts.has("Not needed yet"))
@@ -1146,12 +1170,15 @@ func _assert_panel_renders() -> void:
 		texts.has(HudCraftingVocab.LEDGER_COLUMN_ITEM.to_upper())
 			and texts.has(HudCraftingVocab.LEDGER_COLUMN_OWNED.to_upper())
 			and texts.has(HudCraftingVocab.LEDGER_COLUMN_COST.to_upper()))
-	# **TIER IS A HEAD, NOT A COLUMN** — one `Plain` head over every kit row in this fixture,
-	# with the two other groups joining it as the same kind of head. All three carry the open caret.
+	# **THE THREE SECTIONS ARE THE THREE GROUPS** — `Kit`, `Bench tools`, `Materials`, all carrying the
+	# open caret — and NO tier heads a section: this fixture carries both a plain and a flint spear
+	# recipe, and a panel still splitting the kit by tier would draw a `Plain` and a `Flint` head.
 	h._assert_hud("crafting — the three group heads read as one foldable family",
-		texts.has(_head_face(HEAD_PLAIN, false))
-			and texts.has(_head_face(String(HudCraftingVocab.GROUP_HEADS[HudCraftingVocab.GROUP_TOOL]), false))
-			and texts.has(_head_face(String(HudCraftingVocab.GROUP_HEADS[HudCraftingVocab.GROUP_STOCK]), false)))
+		texts.has(_head_face(HEAD_KIT, false)) and texts.has(_head_face(HEAD_TOOLS, false))
+			and texts.has(_head_face(HEAD_MATERIALS, false)))
+	h._assert_hud("crafting — …and no TIER heads a section, over a fixture carrying two tiers",
+		not texts.has(_head_face(TIER_PLAIN.capitalize(), false))
+			and not texts.has(_head_face(TIER_FLINT.capitalize(), false)))
 	# The running row's button is SPENT — one job at a time, so it has nothing left to ask for.
 	h._assert_hud("crafting — the running row reads On the bench",
 		texts.has(HudCraftingVocab.ON_BENCH_LABEL))
@@ -1623,6 +1650,13 @@ func _materials() -> Array:
 		# wrongly for every real material.
 		{"id": "cordage", "craft": "weaving", "axes": ["stoutness", "span"],
 			"hand_workable": true, "tool_item_id": ""},
+		# **WOOD AND STONE, BECAUSE A FLINT RECIPE IS MADE OF THEM.** The spear's knapped recipe is
+		# published AVAILABLE, and a band holding no stone could not make it — so the store holds both,
+		# and the offer's availability is one a server could send.
+		{"id": "wood", "craft": "shaping", "axes": ["hard", "pliant"],
+			"hand_workable": true, "tool_item_id": ""},
+		{"id": "stone", "craft": "knapping", "axes": ["hard", "workable"],
+			"hand_workable": true, "tool_item_id": ""},
 	]
 
 ## The shared rating vocabulary, ascending — the panel reads only its two ENDS, to decide which chips
@@ -1652,8 +1686,18 @@ func _craft_knowledge() -> Array:
 func _recipes() -> Array:
 	return [
 		_kit_recipe("wayfinding", "Wayfinding gear", "weaving", [["fibre", 6.0, ""]]),
-		_kit_recipe("baskets", "Baskets", "weaving", [["fibre", 20.0, "strong"]]),
-		_kit_recipe("spears", "Spears", "bone_working", [["fibre", 12.0, ""], ["bone", 8.0, "dense"]]),
+		# **TWO RECIPES FOR ONE ITEM** carry the item as their output and a `label` apiece — the
+		# recipe's own short name among its siblings, `""` on a sole recipe.
+		_kit_recipe(BASKETS_REED_RECIPE, "Baskets", "weaving", [["fibre", 20.0, "strong"]],
+			"baskets", BASKETS_REED_LABEL),
+		_kit_recipe(BASKETS_WITHY_RECIPE, "Baskets", "weaving", [["wood", 3.0, ""], ["fibre", 2.0, ""]],
+			"baskets", BASKETS_WITHY_LABEL),
+		_kit_recipe(SPEARS_BONE_RECIPE, "Spears", "bone_working",
+			[["fibre", 12.0, ""], ["bone", 8.0, "dense"]], "spears", SPEARS_BONE_LABEL),
+		_kit_recipe(SPEARS_FLINT_RECIPE, "Spears", "knapping",
+			[["stone", 1.0, ""], ["wood", 2.0, ""], ["fibre", 1.0, ""]], "spears", SPEARS_FLINT_LABEL),
+		_kit_recipe(CLUBS_STONE_RECIPE, "Clubs", "knapping", [["stone", 1.0, ""], ["wood", 2.0, ""]],
+			"clubs", CLUBS_STONE_LABEL),
 		# **THE ANIMAL WEB'S KIT ITEM IS THE CROOK** (`recipes.json`) — a long bone hafted with fibre,
 		# so it reads bone's LENGTH where the spears above read its density. It stands where `hurdles`
 		# used to: hurdles are a crafted MATERIAL now (`docs/plan_standing_upkeep.md` §4.9 item 12) and
@@ -1662,7 +1706,8 @@ func _recipes() -> Array:
 		_kit_recipe("crook", "Crook", "bone_working",
 			[["bone", 1.0, "long"], ["fibre", 2.0, ""]]),
 		_kit_recipe("sled", "Sled", "tanning", [["hide", 18.0, "tough"], ["fibre", 10.0, ""]]),
-		_kit_recipe("clubs", "Clubs", "bone_working", [["bone", 10.0, "dense"]]),
+		_kit_recipe(CLUBS_BONE_RECIPE, "Clubs", "bone_working", [["bone", 10.0, "dense"]], "clubs",
+			CLUBS_BONE_LABEL),
 		_kit_recipe("traps", "Traps", "weaving", [["fibre", 14.0, ""], ["hide", 6.0, ""]]),
 		_tool_recipe("loom", "Loom", "tanning", [["hide", 14.0, ""]]),
 		_tool_recipe("bone_awl", "Bone awl", "weaving", [["fibre", 12.0, ""], ["hide", 6.0, ""]]),
@@ -1683,14 +1728,18 @@ func _recipes() -> Array:
 		},
 	]
 
-func _kit_recipe(id: String, display_name: String, craft: String, inputs: Array) -> Dictionary:
-	return _equipment_recipe(id, display_name, craft, HudCraftingVocab.GROUP_KIT, inputs)
+## A kit recipe. `item_id` is the equipment it makes — its own id unless it is one of several recipes
+## for one item — and `label` its short name among those, `""` on a sole recipe.
+func _kit_recipe(id: String, display_name: String, craft: String, inputs: Array,
+		item_id: String = "", label: String = "") -> Dictionary:
+	return _equipment_recipe(id, display_name, craft, HudCraftingVocab.GROUP_KIT, inputs, item_id,
+		label)
 
 func _tool_recipe(id: String, display_name: String, craft: String, inputs: Array) -> Dictionary:
 	return _equipment_recipe(id, display_name, craft, HudCraftingVocab.GROUP_TOOL, inputs)
 
 func _equipment_recipe(id: String, display_name: String, craft: String, group: String,
-		inputs: Array) -> Dictionary:
+		inputs: Array, item_id: String = "", label: String = "") -> Dictionary:
 	var rows: Array = []
 	for input in inputs:
 		rows.append({
@@ -1699,8 +1748,9 @@ func _equipment_recipe(id: String, display_name: String, craft: String, group: S
 		})
 	return {
 		"id": id, "display_name": display_name, "craft": craft, "group": group,
-		"work": 5.0, "requires_knowledge": [], "inputs": rows,
-		"outputs": [{"equipment_id": id, "material_id": "", "amount": 1.0}],
+		"work": 5.0, "requires_knowledge": [], "inputs": rows, "label": label,
+		"outputs": [{"equipment_id": item_id if item_id != "" else id, "material_id": "",
+			"amount": 1.0}],
 	}
 
 ## The band the panel is composed for — the prototype's own, carrying every state the ledger has to
@@ -1845,6 +1895,8 @@ func _material_batches() -> Array:
 		# shape is chosen to expose.
 		_batch("cordage", STOCK_CORDAGE_STOUT, [["stoutness", 0.62, "good"], ["span", 0.20, "poor"]]),
 		_batch("cordage", STOCK_CORDAGE_SLACK, [["stoutness", 0.28, "poor"], ["span", 0.71, "good"]]),
+		_batch("wood", 11.0, [["hard", 0.40, "fair"], ["pliant", 0.62, "good"]]),
+		_batch("stone", 6.0, [["hard", 0.70, "good"], ["workable", 0.40, "fair"]]),
 	]
 
 func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
@@ -1860,7 +1912,7 @@ func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
 ## a pile exists and cannot say what is in it.
 func _bench() -> Dictionary:
 	return {
-		"recipe_id": "baskets", "display_name": "Baskets", "workers": BENCH_CREW,
+		"recipe_id": BASKETS_REED_RECIPE, "display_name": BENCH_TWO_RECIPE_NAME, "workers": BENCH_CREW,
 		"progress": BENCH_PROGRESS, "work": BENCH_WORK, "teaches": "weaving", "blocked_reason": "",
 		"shortfalls": [], "items_completed": 1, "drawn": true, "output_grade": "good",
 		"rate_per_turn": BENCH_RATE, "drawn_inputs": _drawn_inputs(),
@@ -1886,11 +1938,30 @@ func _craft_offers() -> Array:
 	return [
 		_offer("wayfinding", "Wayfinding gear", HudCraftingVocab.GROUP_KIT, "wayfinding", true,
 			"Scouts see 1 tile, not 2", HudCraftingVocab.SEVERITY_DANGER),
-		_offer("baskets", "Baskets", HudCraftingVocab.GROUP_KIT, "baskets", true,
-			"Reed, no loom → fair", HudCraftingVocab.SEVERITY_NEUTRAL, [], true),
-		_offer("spears", "Spears", HudCraftingVocab.GROUP_KIT, "spears", false,
+		# **BASKETS ARE THE SUBSTITUTE CASE** — two recipes, ONE tier — so both publish
+		# `owned_at_tier` -1 and the popup has no Owned column. The reed recipe is the running job and
+		# the suggested one: the sim suggests the recipe last started while it can still be made.
+		_offer(BASKETS_REED_RECIPE, "Baskets", HudCraftingVocab.GROUP_KIT, "baskets", true,
+			"Reed, no loom → fair", HudCraftingVocab.SEVERITY_NEUTRAL, [], true,
+			{"recipe_label": BASKETS_REED_LABEL, "output_grade": "fair", "makes": "6.8 carry",
+				"lasts": "2500 gathered"}),
+		_offer(BASKETS_WITHY_RECIPE, "Baskets", HudCraftingVocab.GROUP_KIT, "baskets", true,
+			"Withy → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+			{"recipe_label": BASKETS_WITHY_LABEL, "output_grade": "good", "makes": "8.0 carry",
+				"lasts": "2500 gathered", "suggested": false}),
+		# **SPEARS ARE THE TIER-DISTINCT CASE** — bone makes `plain`, knapping makes `flint` — so each
+		# recipe states a count of its own. The bone recipe is SHORT and the flint one can be made, so
+		# the sim suggests flint, and the note says the band still carries plain.
+		_offer(SPEARS_BONE_RECIPE, "Spears", HudCraftingVocab.GROUP_KIT, "spears", false,
 			"Short 4.9 bone", HudCraftingVocab.SEVERITY_DANGER,
-			[{"material_id": "bone", "required": 8.0, "held": 3.1, "short": 4.9}]),
+			[{"material_id": "bone", "required": 8.0, "held": 3.1, "short": 4.9}], false,
+			{"recipe_label": SPEARS_BONE_LABEL, "makes": SPEARS_BONE_MAKES,
+				"lasts": SPEARS_BONE_LASTS, "suggested": false, "owned_at_tier": SPEARS_PLAIN_OWNED}),
+		_offer(SPEARS_FLINT_RECIPE, "Spears", HudCraftingVocab.GROUP_KIT, "spears", true,
+			"Flint → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+			{"recipe_label": SPEARS_FLINT_LABEL, "output_grade": "good", "makes": SPEARS_FLINT_MAKES,
+				"lasts": SPEARS_FLINT_LASTS, "owned_at_tier": 0, "owned_note": "carrying plain · good",
+				"output_tier_name": TIER_FLINT, "output_tier_rank": 1}),
 		_offer("crook", "Crook", HudCraftingVocab.GROUP_KIT, "crook", true,
 			"Long bone → good", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("sled", "Sled", HudCraftingVocab.GROUP_KIT, "sled", true,
@@ -1914,22 +1985,25 @@ func _craft_offers() -> Array:
 			"Reed, no loom", HudCraftingVocab.SEVERITY_NEUTRAL),
 	]
 
-## **EVERY OFFER CARRIES ITS GROUP HEAD AND ITS OWNED NOTE**, both resolved sim-side. The default here
-## is the opening tier — `plain` at rank 0 — for every equipment recipe, with the note `""` on every
-## one of them: a note is published only when what the band carries disagrees with what it could now
-## make, which a single tier can never produce. The second-tier fixture below is what stages the
-## disagreement.
+## **ONE OFFER PER RECIPE, IN THE WIRE'S OWN SHAPE.** The defaults are a SOLE recipe's: suggested (the
+## only one in its row), no label, nothing it `makes` or `lasts` worth stating, `owned_at_tier` -1, the
+## opening `plain` tier and no note. `recipe` overrides any of those for a recipe that is one of
+## several — the label, the headline stats, the count at its own tier and, where the band carries an
+## older tier than this recipe makes, the sim's resolved note.
 func _offer(recipe_id: String, display_name: String, group: String, output_item_id: String,
 		available: bool, reason: String, severity: String, shortfalls: Array = [],
-		on_bench: bool = false, tier_name: String = TIER_PLAIN, tier_rank: int = TIER_PLAIN_RANK,
-		owned_note: String = "") -> Dictionary:
-	return {
+		on_bench: bool = false, recipe: Dictionary = {}) -> Dictionary:
+	var offer := {
 		"recipe_id": recipe_id, "display_name": display_name, "group": group,
 		"output_item_id": output_item_id, "available": available, "reason": reason,
 		"severity": severity, "shortfalls": shortfalls, "output_grade": "", "on_bench": on_bench,
-		"output_tier_name": tier_name if output_item_id != "" else "",
-		"output_tier_rank": tier_rank, "owned_note": owned_note,
+		"output_tier_name": TIER_PLAIN if output_item_id != "" else "",
+		"output_tier_rank": 0, "owned_note": "",
+		"recipe_label": "", "makes": "", "lasts": "", "suggested": true,
+		"owned_at_tier": HudCraftingVocab.OWNED_AT_TIER_UNATTRIBUTED,
 	}
+	offer.merge(recipe, true)
+	return offer
 
 ## What the band OWNS, and how much life is in it. **`count == 0` means it owns none**, and `life` is
 ## what tells a worn-out item from one that was never made.
@@ -1938,7 +2012,7 @@ func _equipment_batches() -> Array:
 		_batch_row("wayfinding", "", "", 0, 0.0, "Worn out", HudCraftingVocab.LIFE_SEVERITY_DANGER),
 		_batch_row("baskets", TIER_PLAIN, "good", 4, 8.0, "~1 turn left",
 			HudCraftingVocab.LIFE_SEVERITY_DANGER),
-		_batch_row("spears", TIER_PLAIN, "good", 6, 34.0, "~15 turns left",
+		_batch_row("spears", TIER_PLAIN, "good", SPEARS_PLAIN_OWNED, 34.0, "~15 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_WARN),
 		_batch_row("crook", TIER_PLAIN, "good", 2, 62.0, "~28 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
@@ -1955,46 +2029,60 @@ func _equipment_batches() -> Array:
 
 # ---- the SECOND-TIER fixture --------------------------------------------------------------------
 
-## **A BAND THAT KNOWS BRONZE AND IS STILL CARRYING THE PLAIN TIER.** The one shape in which the head
-## and the cell can disagree, which is the readout the Owned column exists for — and the only one in
-## which the sim publishes an `ownedNote` at all. Everything in it is what the sim would have resolved: the note
-## verbatim, the tier ranks its own, the grades the shared `characteristic_bands` words.
+## **A BAND THAT CAN KNAP FLINT AND IS STILL CARRYING PLAIN CLUBS.** The one shape in which the
+## suggested recipe and the cell disagree, which is the readout the Owned column exists for — and the
+## only one in which the sim publishes an `ownedNote` at all. Everything in it is what the sim would
+## have resolved: the note verbatim, the tier words its own, the grades the shared
+## `characteristic_bands` words. **Both spear recipes can be made here**, which is what lets the picker
+## choose the NON-suggested one — the only way Start's claim can be a claim about the choice.
 func _two_tier_band() -> Dictionary:
 	var band := _crafting_band()
 	band["craft_offers"] = _two_tier_offers()
 	band["equipment_batches"] = _two_tier_equipment_batches()
 	return band
 
-## Two heads over the kit group — `Bronze` above `Plain`, rank descending — plus the bench tools' own.
-## Traps sit at the plain tier because their recipe has no bronze rung, which is what makes the fold
-## claim a statement about ONE group rather than about the table.
+## Spears and clubs carry a bone and a knapped recipe each, the knapped one suggested; traps and the
+## loom are single-recipe rows, the loom under `Bench tools`, which is what makes the fold claim a
+## statement about ONE group rather than about the table.
 func _two_tier_offers() -> Array:
 	return [
-		_offer("spears", "Spears", HudCraftingVocab.GROUP_KIT, "spears", true,
+		_offer(SPEARS_BONE_RECIPE, "Spears", HudCraftingVocab.GROUP_KIT, "spears", true,
 			"Bone + bone awl → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
-			TIER_BRONZE, TIER_BRONZE_RANK),
-		_offer("clubs", "Clubs", HudCraftingVocab.GROUP_KIT, "clubs", true,
+			{"recipe_label": SPEARS_BONE_LABEL, "output_grade": "good", "makes": SPEARS_BONE_MAKES,
+				"lasts": SPEARS_BONE_LASTS, "suggested": false, "owned_at_tier": 0}),
+		_offer(SPEARS_FLINT_RECIPE, "Spears", HudCraftingVocab.GROUP_KIT, "spears", true,
+			"Flint → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+			{"recipe_label": SPEARS_FLINT_LABEL, "output_grade": "good", "makes": SPEARS_FLINT_MAKES,
+				"lasts": SPEARS_FLINT_LASTS,
+				"owned_at_tier": TWO_TIER_SPEARS_GOOD_A + TWO_TIER_SPEARS_GOOD_B + TWO_TIER_SPEARS_EXCELLENT,
+				"output_tier_name": TIER_FLINT, "output_tier_rank": 1}),
+		_offer(CLUBS_BONE_RECIPE, "Clubs", HudCraftingVocab.GROUP_KIT, "clubs", true,
 			"Bone → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
-			TIER_BRONZE, TIER_BRONZE_RANK, TWO_TIER_CLUBS_NOTE),
+			{"recipe_label": CLUBS_BONE_LABEL, "output_grade": "good", "makes": "6.0 attack",
+				"lasts": "50 blows", "suggested": false, "owned_at_tier": TWO_TIER_CLUBS_POOR}),
+		_offer(CLUBS_STONE_RECIPE, "Clubs", HudCraftingVocab.GROUP_KIT, "clubs", true,
+			"Stone → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+			{"recipe_label": CLUBS_STONE_LABEL, "output_grade": "good", "makes": "9.0 attack",
+				"lasts": "35 blows", "owned_at_tier": 0, "owned_note": TWO_TIER_CLUBS_NOTE,
+				"output_tier_name": TIER_FLINT, "output_tier_rank": 1}),
 		_offer("traps", "Traps", HudCraftingVocab.GROUP_KIT, "traps", true,
-			"Reed → fair", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
-			TIER_PLAIN, TIER_PLAIN_RANK),
+			"Reed → fair", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("loom", "Loom", HudCraftingVocab.GROUP_TOOL, "loom", true,
-			"Unlocks excellent fibre work", HudCraftingVocab.SEVERITY_GOOD, [], false,
-			TIER_PLAIN, TIER_PLAIN_RANK),
+			"Unlocks excellent fibre work", HudCraftingVocab.SEVERITY_GOOD),
 	]
 
-## **THE SPEARS ARE THREE BATCHES AND TWO LINES.** Two of them are `good` at different wear and merge
-## into one `×5`; the third is `excellent` and gets its own. The clubs are one batch at the OLDER tier,
+## **THE SPEARS ARE THREE FLINT BATCHES AND TWO LINES.** Two of them are `good` at different wear and
+## merge into one `×5`; the third is `excellent` and gets its own. The clubs are one batch at the OLDER
+## `plain` tier,
 ## which is what the note is reporting. Every owned batch states its `tier_id`, so the negative that no
 ## tier word reaches a cell is asked over data that could leak one.
 func _two_tier_equipment_batches() -> Array:
 	return [
-		_batch_row("spears", TIER_BRONZE, "good", TWO_TIER_SPEARS_GOOD_A, 71.0, "~42 turns left",
+		_batch_row("spears", TIER_FLINT, "good", TWO_TIER_SPEARS_GOOD_A, 71.0, "~42 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
-		_batch_row("spears", TIER_BRONZE, "good", TWO_TIER_SPEARS_GOOD_B, 34.0, "~15 turns left",
+		_batch_row("spears", TIER_FLINT, "good", TWO_TIER_SPEARS_GOOD_B, 34.0, "~15 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_WARN),
-		_batch_row("spears", TIER_BRONZE, "excellent", TWO_TIER_SPEARS_EXCELLENT, 96.0,
+		_batch_row("spears", TIER_FLINT, "excellent", TWO_TIER_SPEARS_EXCELLENT, 96.0,
 			"48 raids left", HudCraftingVocab.LIFE_SEVERITY_HEALTHY),
 		_batch_row("clubs", TIER_PLAIN, "poor", TWO_TIER_CLUBS_POOR, 47.0, "~19 turns left",
 			HudCraftingVocab.LIFE_SEVERITY_WARN),
@@ -2350,6 +2438,11 @@ func _press_priority_link() -> void:
 ## control, so no caller may touch it afterwards; `_settle` is what lets the freed generation leave the
 ## tree before anything is counted.
 func _press_control(control: Control) -> void:
+	# A control that did not render is a FAILED claim, not a script error: a null here would abort the
+	# chapter and surface only as the checkpoint guard's short count.
+	if control == null:
+		h._assert_hud("crafting — the control to press was rendered", false)
+		return
 	var viewport: Viewport = h.get_viewport()
 	var point := InputProbe.canvas_to_window(viewport, h.get_window(),
 		control.get_global_rect().get_center())
@@ -2469,3 +2562,348 @@ const OPEN_MAP_PARK_FRACTION := 0.5
 ## "The frame offered no open map." A real answer is a point inside the canvas, so the sentinel sits
 ## outside every canvas this harness renders at.
 const NO_OPEN_MAP_POINT := Vector2(-1.0, -1.0)
+
+# ---- the last states: ONE ROW PER ITEM, ITS RECIPES BEHIND A LINK --------------------------------
+
+## The Make picker's heading on the Spears row, spelled out rather than composed through
+## `PICKER_HEADING_FORMAT` — an expectation built from the format under test only agrees with itself.
+const SPEARS_PICKER_HEADING := "Make Spears with which recipe?"
+## The bench title for a job on a two-recipe item: the sim's full name VERBATIM, then the craft.
+const BENCH_TWO_RECIPE_TITLE := "Baskets (Reed) · Weaving"
+## …and for a job on a single-recipe item, where the sim's name is the item's alone.
+const BENCH_ONE_RECIPE_TITLE := "Crook · Bone-working"
+## The first clause of each spear recipe's cost, as the cost cell renders it — the suggested flint
+## recipe opens on stone, the bone one on fibre, so the Costs cell names which recipe it describes.
+const SPEARS_FLINT_COST_LEAD := "1 stone · "
+const SPEARS_BONE_COST_LEAD := "12 fibre · "
+
+## **THE LAST STATES, APPENDED so no frame before them moves.** One short row per ITEM, an `N recipes`
+## link on an item with a choice, a read-only popup comparing its recipes, and a picker under the row
+## when Make has a choice to offer. Two frames — the popup open on Spears and the picker open on
+## Spears — beside `crafting_panel`, which is the ledger at rest.
+##
+## **EVERY CLAIM IS A PAIR**, the chapter's discipline: a one-sided assertion passes on a panel that
+## lost the feature. And every press is REAL POINTER INPUT through `_press_control`, the chapter's own
+## idiom, because an emitted signal passes on a control that is covered or zero-size.
+func _recipe_states() -> void:
+	# Closed first, so the card opens as a fresh reading: the rank picker the state above left open is
+	# VIEW state the card carries until it is dismissed, and it would sit over these frames.
+	h._hud.close_crafting_panel()
+	await h._settle()
+	var band := _crafting_band()
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the recipes panel is open", false)
+		return
+	_assert_the_link_marks_a_choice(panel)
+	_assert_the_row_describes_its_suggested_recipe(panel)
+	_assert_the_bench_names_the_recipe_verbatim(panel)
+	await _popup_states(panel)
+	await _make_states(panel)
+	await _start_sends_the_chosen_recipe()
+	await _make_is_live_when_any_recipe_is()
+	await _assert_a_single_recipe_bench_names_no_recipe()
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+## **THE LINK IS THE NEWS THAT THERE IS A CHOICE.** On the two-recipe Spears row it reads `2 recipes`;
+## on the single-recipe Crook row there is none — and that row keeps the role line the link replaces,
+## which is what says the single-recipe row was left exactly as it was.
+func _assert_the_link_marks_a_choice(panel: CraftingPanel) -> void:
+	var spears_link := _recipes_link(_ledger_row(panel, "Spears"))
+	h._assert_hud("crafting/recipes — a two-recipe row carries a `2 recipes` link (%s)"
+			% [spears_link.text if spears_link != null else "no link"],
+		spears_link != null and spears_link.text == "2 recipes")
+	var crook_row := _ledger_row(panel, "Crook")
+	h._assert_hud("crafting/recipes — …and a single-recipe row carries none, keeping its role line",
+		crook_row != null and _recipes_link(crook_row) == null
+			and _label_texts(crook_row).has("Bone-working"))
+
+## **THE ROW DESCRIBES ITS SUGGESTED RECIPE.** Spears' bone recipe is short of bone and its flint one can
+## be made, so the sim suggested flint — the Costs cell opens on stone, the refusal under Make is the
+## flint recipe's, and the bone recipe's `Short 4.9 bone` is nowhere on the row. A row that described
+## its FIRST offer instead would open on fibre and carry the shortage.
+func _assert_the_row_describes_its_suggested_recipe(panel: CraftingPanel) -> void:
+	var row := _ledger_row(panel, "Spears")
+	var texts := _label_texts(row) if row != null else []
+	h._assert_hud("crafting/recipes — the Spears row's Costs cell is the SUGGESTED flint recipe's (%s)"
+			% [texts],
+		texts.has(SPEARS_FLINT_COST_LEAD) and not texts.has(SPEARS_BONE_COST_LEAD))
+	h._assert_hud("crafting/recipes — …and so is its refusal line, with the bone recipe's nowhere",
+		texts.has("Flint → good") and not texts.has("Short 4.9 bone"))
+
+## **THE BENCH NAMES THE RECIPE BY RENDERING THE SIM'S NAME, NOT BY COMPOSING ONE.** The running job is
+## the reed basket, published as `Baskets (Reed)`; the title is that name and the craft, and the
+## client-composed `Baskets · Reed` the prototype sketched is nowhere.
+func _assert_the_bench_names_the_recipe_verbatim(panel: CraftingPanel) -> void:
+	var texts := _label_texts(panel)
+	h._assert_hud("crafting/recipes — a two-recipe job's bench title is the sim's name verbatim (%s)"
+			% BENCH_TWO_RECIPE_TITLE,
+		texts.has(BENCH_TWO_RECIPE_TITLE))
+	h._assert_hud("crafting/recipes — …and the client composes no `%s` of its own" % BENCH_COMPOSED_NAME,
+		_count_containing_ci(texts, BENCH_COMPOSED_NAME) == 0)
+
+## **THE POPUP: one line per recipe, its labels verbatim, and an Owned column only where a count per
+## recipe exists.** Spears' recipes make two tiers, so each carries its own count — `×6` on bone and
+## `—` on flint; baskets' make one tier, so their popup has NO Owned column rather than a column of
+## dashes. Then its three ways out: a second click of its own link, `Esc`, and a click outside it.
+func _popup_states(panel: CraftingPanel) -> void:
+	await _press_control(_recipes_link(_ledger_row(panel, "Spears")))
+	var popup := panel.recipes_popup()
+	h._assert_hud("crafting/recipes — pressing the link opens the popup",
+		popup != null and popup.visible)
+	if popup == null:
+		return
+	h._assert_hud("crafting/recipes — the popup lists one line per recipe, labels verbatim (%s)"
+			% [_popup_column(popup, HudCraftingVocab.RECIPES_COLUMN_RECIPE)],
+		_popup_column(popup, HudCraftingVocab.RECIPES_COLUMN_RECIPE)
+			== [SPEARS_BONE_LABEL, SPEARS_FLINT_LABEL])
+	h._assert_hud("crafting/recipes — a tier-distinct item's popup carries an Owned column (%s)"
+			% [_popup_column(popup, HudCraftingVocab.RECIPES_COLUMN_OWNED)],
+		_popup_column(popup, HudCraftingVocab.RECIPES_COLUMN_OWNED)
+			== [HudCraftingVocab.OWNED_COUNT_FORMAT % SPEARS_PLAIN_OWNED, HudCraftingVocab.RECIPES_OWNED_NONE])
+	h._assert_hud("crafting/recipes — …and each recipe's Makes and Lasts, verbatim",
+		_label_texts(popup).has(SPEARS_FLINT_MAKES) and _label_texts(popup).has(SPEARS_BONE_LASTS))
+	await h._save("crafting_recipes_popup")
+
+	await _press_control(_recipes_link(_ledger_row(panel, "Spears")))
+	h._assert_hud("crafting/recipes — a second click of its link closes the popup",
+		not popup.visible)
+
+	await _press_control(_recipes_link(_ledger_row(panel, "Baskets")))
+	h._assert_hud("crafting/recipes — the substitute item's popup lists its recipes (%s)"
+			% [_popup_column(popup, HudCraftingVocab.RECIPES_COLUMN_RECIPE)],
+		popup.visible and _popup_column(popup, HudCraftingVocab.RECIPES_COLUMN_RECIPE)
+			== [BASKETS_REED_LABEL, BASKETS_WITHY_LABEL])
+	h._assert_hud("crafting/recipes — …and carries NO Owned column, where every count is unattributed",
+		not _popup_has_column(popup, HudCraftingVocab.RECIPES_COLUMN_OWNED))
+	await _press_escape()
+	h._assert_hud("crafting/recipes — Esc closes the popup", not popup.visible)
+
+	await _press_control(_recipes_link(_ledger_row(panel, "Spears")))
+	h._assert_hud("crafting/recipes — precondition: the popup is open again", popup.visible)
+	await _press_card_chrome(panel)
+	h._assert_hud("crafting/recipes — a click outside the popup closes it", not popup.visible)
+
+## **MAKE ON ONE RECIPE STARTS IT; MAKE ON SEVERAL OPENS THE PICKER.** Each half is a pair — the single
+## recipe is SENT and opens no picker, the two-recipe row opens the picker and sends NOTHING — because
+## a Make that always picked, or never did, satisfies either half alone. In the picker the short bone
+## recipe's radio is disabled and the flint one live, preselected because it is the suggestion.
+func _make_states(panel: CraftingPanel) -> void:
+	var sent: Array = []
+	var on_bench := func(payload: Dictionary) -> void: sent.append(String(payload.get("recipe_id", "")))
+	h._hud.set_bench_requested.connect(on_bench)
+	await _press_control(_make_button(panel, "crook"))
+	h._assert_hud("crafting/recipes — Make on a single-recipe row sends that recipe (%s)" % [sent],
+		sent == ["crook"])
+	h._assert_hud("crafting/recipes — …and opens no picker", _picker(panel) == null)
+
+	sent.clear()
+	await _press_control(_make_button(panel, "spears"))
+	var picker := _picker(panel)
+	h._assert_hud("crafting/recipes — Make on a two-recipe row opens the picker under it",
+		picker != null and String(picker.get_meta(HudCraftingVocab.PICKER_META)) == "spears")
+	h._assert_hud("crafting/recipes — …and sends nothing (%s)" % [sent], sent.is_empty())
+	h._assert_hud("crafting/recipes — the picker asks which recipe, naming the item",
+		picker != null and _label_texts(picker).has(SPEARS_PICKER_HEADING))
+	var bone := _picker_option(panel, SPEARS_BONE_RECIPE)
+	var flint := _picker_option(panel, SPEARS_FLINT_RECIPE)
+	h._assert_hud("crafting/recipes — the recipe that cannot be made has its radio DISABLED",
+		bone != null and bone.disabled)
+	h._assert_hud("crafting/recipes — …while the one that can is live and chosen, being the suggestion",
+		flint != null and not flint.disabled and flint.button_pressed)
+	h._assert_hud("crafting/recipes — the disabled line states the sim's reason",
+		picker != null and _label_texts(picker).has("Short 4.9 bone"))
+	await h._save("crafting_make_picker")
+
+	await _press_control(_make_button(panel, "spears"))
+	h._assert_hud("crafting/recipes — pressing Make again closes the picker", _picker(panel) == null)
+	h._hud.set_bench_requested.disconnect(on_bench)
+
+## **START SENDS THE CHOSEN RECIPE, AND NOT THE OTHER.** Staged where BOTH spear recipes can be made and
+## the sim suggests flint, so choosing bone is a choice against the default — the only shape in which
+## "sends the chosen one" and "sends the suggested one" answer differently. Cancel is the other way out,
+## and sends nothing.
+func _start_sends_the_chosen_recipe() -> void:
+	var band := _two_tier_band()
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/recipes — the choice panel is open", false)
+		return
+	var sent: Array = []
+	var on_bench := func(payload: Dictionary) -> void: sent.append(String(payload.get("recipe_id", "")))
+	h._hud.set_bench_requested.connect(on_bench)
+	await _press_control(_make_button(panel, "spears"))
+	var flint := _picker_option(panel, SPEARS_FLINT_RECIPE)
+	h._assert_hud("crafting/recipes — precondition: the picker opens on the suggested flint recipe",
+		flint != null and flint.button_pressed)
+	await _press_control(_picker_option(panel, SPEARS_BONE_RECIPE))
+	await _press_control(_picker_control(panel, HudCraftingVocab.PICKER_START_META))
+	h._assert_hud("crafting/recipes — Start sends the CHOSEN recipe and not the suggested one (%s)"
+			% [sent],
+		sent == [SPEARS_BONE_RECIPE])
+	h._assert_hud("crafting/recipes — …and closes the picker", _picker(panel) == null)
+
+	sent.clear()
+	await _press_control(_make_button(panel, "spears"))
+	await _press_control(_picker_control(panel, HudCraftingVocab.PICKER_CANCEL_META))
+	h._assert_hud("crafting/recipes — Cancel closes the picker and sends nothing (%s)" % [sent],
+		_picker(panel) == null and sent.is_empty())
+	h._hud.set_bench_requested.disconnect(on_bench)
+
+## **MAKE IS LIVE WHEN ANY RECIPE CAN BE MADE**, and the Costs cell still describes the suggestion. The
+## fixture suggests the bone recipe while only the flint one can be made — a shape the shipped sim's
+## own rule does not produce (it suggests an available recipe whenever one exists), staged because the
+## client's rule is "any", not "the suggested one", and nothing else can tell the two apart. Paired with
+## the clubs row in the same ledger, whose only recipe is short: its Make stays disabled.
+func _make_is_live_when_any_recipe_is() -> void:
+	var band := _crafting_band()
+	var offers: Array = band["craft_offers"]
+	for offer in offers:
+		var candidate: Dictionary = offer
+		if String(candidate.get("output_item_id", "")) == "spears":
+			candidate["suggested"] = String(candidate.get("recipe_id", "")) == SPEARS_BONE_RECIPE
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/recipes — the any-recipe panel is open", false)
+		return
+	var make := _make_button(panel, "spears")
+	h._assert_hud("crafting/recipes — Make is LIVE when only the non-suggested recipe can be made",
+		make != null and not make.disabled)
+	var texts := _label_texts(_ledger_row(panel, "Spears"))
+	h._assert_hud("crafting/recipes — …while the Costs cell still describes the suggested one (%s)"
+			% [texts],
+		texts.has(SPEARS_BONE_COST_LEAD))
+	var clubs := _make_button(panel, "clubs")
+	h._assert_hud("crafting/recipes — …and a row whose every recipe is short keeps Make disabled",
+		clubs != null and clubs.disabled)
+
+## **A SINGLE-RECIPE JOB'S BENCH NAMES THE ITEM ALONE**, the other half of the verbatim pair: the sim
+## publishes `Crook`, and the title is that and the craft, with nothing appended.
+func _assert_a_single_recipe_bench_names_no_recipe() -> void:
+	var band := _crafting_band()
+	var bench: Dictionary = band["bench"]
+	bench["recipe_id"] = "crook"
+	bench["display_name"] = "Crook"
+	bench["teaches"] = "bone_working"
+	band["bench"] = bench
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	h._assert_hud("crafting/recipes — a single-recipe job's bench title is the item and the craft (%s)"
+			% BENCH_ONE_RECIPE_TITLE,
+		panel != null and _label_texts(panel).has(BENCH_ONE_RECIPE_TITLE))
+
+## The `N recipes` link under ONE row, found by the meta the panel stamps — `null` on a row without one.
+func _recipes_link(node: Node) -> LinkButton:
+	if node == null:
+		return null
+	if node is LinkButton and node.has_meta(HudCraftingVocab.RECIPES_LINK_META):
+		return node as LinkButton
+	for child in node.get_children():
+		var found := _recipes_link(child)
+		if found != null:
+			return found
+	return null
+
+## A row's Make button, by the row key the panel stamps on it.
+func _make_button(node: Node, key: String) -> Button:
+	if node is Button and String(node.get_meta(HudCraftingVocab.MAKE_BUTTON_META, "")) == key:
+		return node as Button
+	for child in node.get_children():
+		var found := _make_button(child, key)
+		if found != null:
+			return found
+	return null
+
+## The open Make picker — `null` when none is open, which is half of several claims.
+func _picker(node: Node) -> Control:
+	if node is Control and node.has_meta(HudCraftingVocab.PICKER_META):
+		return node as Control
+	for child in node.get_children():
+		var found := _picker(child)
+		if found != null:
+			return found
+	return null
+
+## One recipe's radio in the open picker, by the recipe id it would send.
+func _picker_option(node: Node, recipe_id: String) -> CheckBox:
+	if node is CheckBox and String(node.get_meta(HudCraftingVocab.PICKER_OPTION_META, "")) == recipe_id:
+		return node as CheckBox
+	for child in node.get_children():
+		var found := _picker_option(child, recipe_id)
+		if found != null:
+			return found
+	return null
+
+## One of the picker's footer buttons, by its meta.
+func _picker_control(node: Node, meta: String) -> Button:
+	if node is Button and node.has_meta(meta):
+		return node as Button
+	for child in node.get_children():
+		var found := _picker_control(child, meta)
+		if found != null:
+			return found
+	return null
+
+## The texts of ONE popup column's cells, in order — the column's own head excluded. Each cell carries
+## its column head as a meta, so a column is read by what it IS rather than by where its text lines up.
+func _popup_column(popup: Node, head: String) -> Array:
+	var texts: Array = []
+	_collect_popup_column(popup, head, texts)
+	return texts
+
+func _collect_popup_column(node: Node, head: String, into: Array) -> void:
+	if String(node.get_meta(HudCraftingVocab.RECIPES_POPUP_COLUMN_META, "")) == head:
+		var cell_text := " ".join(_label_texts(node))
+		if cell_text != head.to_upper():
+			into.append(cell_text)
+		return
+	for child in node.get_children():
+		_collect_popup_column(child, head, into)
+
+func _popup_has_column(popup: Node, head: String) -> bool:
+	if String(popup.get_meta(HudCraftingVocab.RECIPES_POPUP_COLUMN_META, "")) == head:
+		return true
+	for child in popup.get_children():
+		if _popup_has_column(child, head):
+			return true
+	return false
+
+## `Esc`, as a real key event through the real dispatch — the popup is a Window, and a Window closes
+## itself on the cancel action; this is what says the panel's view state follows it.
+func _press_escape() -> void:
+	var viewport: Viewport = h.get_viewport()
+	var down := InputEventKey.new()
+	down.keycode = KEY_ESCAPE
+	down.physical_keycode = KEY_ESCAPE
+	down.pressed = true
+	viewport.push_input(down)
+	await h.get_tree().process_frame
+	var up := down.duplicate() as InputEventKey
+	up.pressed = false
+	viewport.push_input(up)
+	await h._settle()
+
+## A press on the card's own chrome, just inside its top-left corner — outside the popup, and on a
+## surface with nothing to fire.
+func _press_card_chrome(panel: CraftingPanel) -> void:
+	var viewport: Viewport = h.get_viewport()
+	var point := InputProbe.canvas_to_window(viewport, h.get_window(),
+		panel.card().get_global_rect().position + Vector2(CARD_CHROME_PROBE_INSET, CARD_CHROME_PROBE_INSET))
+	InputProbe.hover(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.press_left(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.release_left(viewport, point)
+	await h._settle()

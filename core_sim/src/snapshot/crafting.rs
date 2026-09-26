@@ -23,19 +23,21 @@
 //! never a re-walk of the item table or the recipe book. `equipment.md` records capture going from
 //! 49.51 ms to 3.15 ms when the estimate tables were retired; this must not give that back.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sim_runtime::{
     BenchState, CharacteristicBandState, CharacteristicReadingState, CraftKnowledgeState,
     CraftOfferState, DrawnInputState, EquipmentBatchState, MaterialBatchState, MaterialDefState,
     MaterialShortfallState, RecipeDefState, RecipeInputState, RecipeOutputState,
-    SourcePriorityState,
+    SourcePriorityState, OWNED_AT_TIER_UNATTRIBUTED,
 };
 
 use crate::{
     components::{BandBench, BandEquipment, EquipmentBatch, LocalStore, SourcePriority},
     crafting::{craft_discovery_id, title_from_id},
-    equipment_config::{EquipmentConfig, EquipmentStat, EquipmentTier, WearQuantum},
+    equipment_config::{
+        EffectTier, EquipmentConfig, EquipmentStat, EquipmentTier, ItemDefinition, WearQuantum,
+    },
     intensification::knows,
     materials_config::MaterialsConfig,
     orders::FactionId,
@@ -115,13 +117,40 @@ pub(crate) struct CraftOfferPlan<'a> {
     bounds_material: Option<&'a str>,
     /// The material's own word, capitalized — *Hide*, *Fibre*, *Bone*.
     material_label: String,
+    /// **The ledger row this recipe belongs to** ([`RecipeDef::row_key`]) — every recipe making the
+    /// same thing shares it, and it is what `suggested` picks one recipe per.
+    row_key: Option<&'a str>,
+    /// **The row's name** ([`RecipeDef::row_name`]) — the item's own, shared by all its recipes.
+    row_name: String,
+    /// The recipe's own [`RecipeDef::label`], `""` when it has none.
+    label: String,
+    /// **Whether a per-recipe owned count means anything for this row** — true exactly when the
+    /// recipes making this item make MORE THAN ONE tier between them (spears: `plain` and `flint`).
+    /// When every recipe makes the same tier (a fibre basket and a withy basket), the ledger never
+    /// recorded which recipe made a unit, so `ownedAtTier` publishes
+    /// [`OWNED_AT_TIER_UNATTRIBUTED`] rather than a number it would have to invent.
+    counts_by_tier: bool,
 }
+
+/// **How many distinct tiers an item's recipes make when a per-recipe count would be invented.**
+/// Above this, each recipe's tier holds units a count can be attributed to.
+const ONE_TIER: usize = 1;
 
 /// Resolve the recipe-only half of every offer, in book order. One pass per capture.
 pub(crate) fn plan_craft_offers<'a>(
     recipes: &'a RecipesConfig,
     equipment: &'a EquipmentConfig,
 ) -> Vec<CraftOfferPlan<'a>> {
+    // **Which tiers each item's recipes declare, across the whole book** — a recipe-only fact, so it
+    // is struck here once rather than per band. A recipe naming no tier is on a single-tier item
+    // (`validate_against` makes the declaration mandatory on any other), so it adds nothing a count
+    // could be split by.
+    let mut declared_tiers: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (_, recipe) in recipes.recipes() {
+        if let (Some(item), Some(tier)) = (recipe.output_equipment_id(), recipe.output_tier_id()) {
+            declared_tiers.entry(item).or_default().insert(tier);
+        }
+    }
     recipes
         .recipes()
         .map(|(id, recipe)| {
@@ -133,15 +162,23 @@ pub(crate) fn plan_craft_offers<'a>(
                 group: group_of(recipe, equipment),
                 output_item,
                 bench_material,
+                // **The tool is named by its ITEM**, which owns its name — never by a recipe that
+                // happens to make it.
                 tool: bench_material.and_then(|material| {
                     equipment
                         .bench_tool_for(material)
-                        .map(|(tool_id, _)| (tool_id, recipes.item_display_name(tool_id)))
+                        .map(|(tool_id, _)| (tool_id, equipment.item_display_name(tool_id)))
                 }),
                 bounds_material: output_item
                     .and_then(|item| equipment.item(item))
                     .and_then(|def| def.bounds_material()),
                 material_label: bench_material.map(title_from_id).unwrap_or_default(),
+                row_key: recipe.row_key(),
+                row_name: recipe.row_name(equipment),
+                label: recipe.label.clone().unwrap_or_default(),
+                counts_by_tier: output_item
+                    .and_then(|item| declared_tiers.get(item))
+                    .is_some_and(|tiers| tiers.len() > ONE_TIER),
             }
         })
         .collect()
@@ -180,6 +217,47 @@ pub(crate) struct BandCraftInputs<'a> {
     /// [`crate::intensification::REFERENCE_BUILD_RUNG`] `work_cost`, resolved once per capture. See
     /// [`quantum_units_per_noun`] for why a build's wear cannot be counted in its own units.
     pub(crate) reference_build_cost: f32,
+    /// **The equipped values that live OUTSIDE `equipment.json`**, for the `makes` line of an item
+    /// that declares only its *unequipped* side (the wayfinding gear). See [`EquippedElsewhere`].
+    pub(crate) equipped_elsewhere: EquippedElsewhere,
+}
+
+/// **The equipped side of each stat whose home is another config** — one home per fact
+/// (`equipment.md` → "Which SIDE an effect declares"): `wayfinding` declares the *bare* vantage and
+/// the bare party sight, and the equipped values are `labor_config.scout.vantage_range` and
+/// `expedition_config.observe_sight_range`.
+///
+/// Carried here so the crafting ledger's `makes` line resolves them **the way the role cards
+/// already do** — `EquipmentConfig::equipped_reference(stat, baseline)`, the arm `rate_tier` takes
+/// for an item-declared unequipped side — rather than publishing a blank for the one item whose
+/// equipped value the item table does not hold. Filled from `BandKitLevers`, which already carries
+/// both for the role cards.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct EquippedElsewhere {
+    /// `labor_config.scout.vantage_range` — a posted vantage's equipped reach.
+    pub(crate) scout_vantage_range: f32,
+    /// `expedition_config.observe_sight_range` — a detached party's equipped observation radius.
+    pub(crate) expedition_sight_range: f32,
+}
+
+impl EquippedElsewhere {
+    /// The equipped baseline for `stat` when its home is another config, `None` for every stat the
+    /// item table itself owns the equipped side of. Exhaustive, so a new stat has to say which it is.
+    fn baseline_for(&self, stat: EquipmentStat) -> Option<f32> {
+        match stat {
+            EquipmentStat::ScoutVantageRange => Some(self.scout_vantage_range),
+            EquipmentStat::ExpeditionSightRange => Some(self.expedition_sight_range),
+            EquipmentStat::Attack
+            | EquipmentStat::HuntCarry
+            | EquipmentStat::ForageCarry
+            | EquipmentStat::BuildWork
+            | EquipmentStat::Dispersion
+            | EquipmentStat::Exposure
+            | EquipmentStat::CraftSpeed
+            | EquipmentStat::CraftQualityCeiling
+            | EquipmentStat::CraftMaterialEfficiency => None,
+        }
+    }
 }
 
 /// **The whole crafting half of one cohort's row**, resolved together because the four readouts
@@ -218,7 +296,7 @@ pub(crate) fn band_craft_state(
         }
     }
     let running = bench.and_then(|bench| bench.recipe_id.as_deref());
-    let craft_offers = inputs
+    let mut craft_offers: Vec<CraftOfferState> = inputs
         .plans
         .iter()
         .map(|plan| {
@@ -229,6 +307,7 @@ pub(crate) fn band_craft_state(
             craft_offer(plan, &tiers, store, wear, inputs, running)
         })
         .collect();
+    mark_suggested(&mut craft_offers, inputs.plans, bench);
     let bench_row = bench_state(bench, store, inputs, &tiers_by_material);
     let bench_material_rate = crate::systems::bench_material_rate(
         bench,
@@ -395,7 +474,9 @@ fn bench_state(
         // Appended last, and read live off the bench — see [`published_bench_priority`].
         priority: published_priority,
         recipe_id: recipe_id.to_string(),
-        display_name: plan.recipe.display_name.clone(),
+        // **The row's name with the recipe's label** — *Spears (Flint)* — because the running job is
+        // one recipe of the item, and the row's name alone would not say which.
+        display_name: plan.recipe.full_name(inputs.equipment),
         workers: bench.workers,
         progress: bench.progress.to_f32(),
         work: plan.recipe.work,
@@ -512,7 +593,8 @@ fn craft_offer(
     // **The head and the cell are resolved together**, because the note is only news relative to the
     // head — the two disagreeing is the whole readout. The head is resolved *first* because the
     // invitation quotes what the tier being made would unlock.
-    let craftable = craftable_tier(plan, inputs);
+    let made = made_tier(plan, inputs);
+    let craftable = made.map(|(_, tier, rank)| (tier.id.as_str(), rank));
     let (output_tier_name, output_tier_rank) = craftable
         .map(|(id, rank)| (id.to_string(), rank))
         .unwrap_or_default();
@@ -528,9 +610,22 @@ fn craft_offer(
     } else {
         (refusals.join(REASON_JOIN), SEVERITY_DANGER)
     };
+    // **The popup's three per-recipe readings**, each off the SAME tier the head names, so a row that
+    // says *flint* makes a flint spear's number and lasts a flint spear's life.
+    let makes = made
+        .map(|(def, tier, _)| makes(plan, def, tier, &output_grade, inputs))
+        .unwrap_or_default();
+    let lasts = made
+        .map(|(def, tier, _)| one_fresh_unit_lasts(def, tier, inputs.reference_build_cost))
+        .unwrap_or_default();
+    let owned_at_tier = match (plan.counts_by_tier, plan.output_item, made) {
+        (true, Some(item), Some((_, tier, _))) => units_at_tier(wear, item, &tier.id),
+        _ => OWNED_AT_TIER_UNATTRIBUTED,
+    };
     CraftOfferState {
         recipe_id: plan.id.to_string(),
-        display_name: plan.recipe.display_name.clone(),
+        // **The ROW's name** — the item owns it, so every recipe making one item publishes the same.
+        display_name: plan.row_name.clone(),
         group: plan.group.to_string(),
         output_item_id: plan.output_item.unwrap_or_default().to_string(),
         available,
@@ -544,7 +639,167 @@ fn craft_offer(
         owned_note: craftable
             .map(|(_, rank)| owned_note(plan, wear, rank, inputs))
             .unwrap_or_default(),
+        recipe_label: plan.label.clone(),
+        makes,
+        lasts,
+        // Decided across the whole row, once every offer is built — see [`mark_suggested`].
+        suggested: false,
+        owned_at_tier,
     }
+}
+
+/// **Units of `item` this band owns at `tier`** — summed over its batches of that tier, clamped
+/// into the wire's `int` rather than wrapping on an impossible count.
+fn units_at_tier(wear: &BandEquipment, item: &str, tier: &str) -> i32 {
+    let units: u32 = wear
+        .batches_of(item)
+        .iter()
+        .filter(|batch| batch.tier == tier)
+        .map(|batch| batch.count)
+        .sum();
+    i32::try_from(units).unwrap_or(i32::MAX)
+}
+
+/// **WHICH RECIPE EACH LEDGER ROW SUGGESTS — exactly one per row, and the sim decides it.**
+///
+/// A row is every offer sharing a [`CraftOfferPlan::row_key`] (one item, several recipes); a recipe
+/// with no key is its own row. Per row, in order:
+///
+/// 1. the recipe this band **last started** for it ([`BandBench::last_started`]), if it is
+///    `available` right now — a band that knaps its spears keeps being offered the knapped recipe;
+/// 2. else the **first available** recipe in book order — last time's choice has run short, so the
+///    row offers what the band can actually make;
+/// 3. else the last-started one, even unavailable — nothing can be made, so keep the choice the
+///    player made rather than jump to an arbitrary one;
+/// 4. else the **first in book order**.
+///
+/// **Available is the offer's own `available`**, the one reading of *"could a pass make progress
+/// now"*; a second test here would be a second authority over that question. It reads the bench's
+/// map and never writes it — a readout deciding what the player picked would be the panel choosing
+/// on their behalf.
+fn mark_suggested(
+    offers: &mut [CraftOfferState],
+    plans: &[CraftOfferPlan<'_>],
+    bench: Option<&BandBench>,
+) {
+    // Row key → the offer indices on that row, each list in book order.
+    let mut rows: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (index, plan) in plans.iter().enumerate() {
+        rows.entry(plan.row_key.unwrap_or(plan.id))
+            .or_default()
+            .push(index);
+    }
+    for (row, indices) in &rows {
+        let last_started = bench.and_then(|bench| bench.last_started_for(row));
+        let is_last_started =
+            |index: &&usize| Some(offers[**index].recipe_id.as_str()) == last_started;
+        let is_available = |index: &&usize| offers[**index].available;
+        let pick = indices
+            .iter()
+            .find(|index| is_last_started(index) && is_available(index))
+            .or_else(|| indices.iter().find(is_available))
+            .or_else(|| indices.iter().find(is_last_started))
+            .or_else(|| indices.first())
+            .copied();
+        if let Some(index) = pick {
+            offers[index].suggested = true;
+        }
+    }
+}
+
+/// **WHAT THIS RECIPE WOULD MAKE, AS ONE LINE** — `26 attack`, `8 carry`, `+0.7 build work`,
+/// `2 tile vantage` — the value [`headline_effect`] resolves, worded by the stat's own
+/// [`EquipmentStat::readout_noun`].
+///
+/// `""` for a **bench tool** (its three craft stats are not one headline, and a single-recipe row
+/// never opens the popup that shows this) and for a **stock** recipe (a material batch carries its
+/// own characteristics rather than a stat).
+fn makes(
+    plan: &CraftOfferPlan<'_>,
+    def: &ItemDefinition,
+    tier: &EquipmentTier,
+    output_grade: &str,
+    inputs: &BandCraftInputs<'_>,
+) -> String {
+    if plan.group != GROUP_KIT {
+        return String::new();
+    }
+    let Some((stat, value)) = headline_effect(plan.recipe, def, tier, output_grade, inputs) else {
+        return String::new();
+    };
+    let sign = if stat.reads_as_addition() { "+" } else { "" };
+    format!("{sign}{} {}", stat_value_word(value), stat.readout_noun())
+}
+
+/// **The one effect a recipe's output is known by, and the value it takes** — resolved in the order
+/// the value is actually decided in:
+///
+/// 1. **the grade at `output_grade`** for a graded recipe — what a draw off this band's store would
+///    stamp on the batch, so a poor flint spear reads `20 attack` and an excellent one `30`;
+/// 2. **the output tier's own equipped effect** otherwise — what the material bought;
+/// 3. **the item's own shared effect whose EQUIPPED side lives in another config** — the wayfinding
+///    gear declares only its bare vantage, and the equipped reach is `labor_config`'s, resolved
+///    through `EquipmentConfig::equipped_reference` exactly as the role cards resolve it.
+///
+/// `None` only for an item that declares nothing a readout could quote.
+fn headline_effect(
+    recipe: &RecipeDef,
+    def: &ItemDefinition,
+    tier: &EquipmentTier,
+    output_grade: &str,
+    inputs: &BandCraftInputs<'_>,
+) -> Option<(EquipmentStat, f32)> {
+    if !output_grade.is_empty() {
+        if let Some(effect) = recipe
+            .grade_effects_for(output_grade, inputs.materials)
+            .first()
+        {
+            return Some((effect.stat, effect.tier.value()));
+        }
+    }
+    if let Some(effect) = tier
+        .effects
+        .iter()
+        .find(|effect| matches!(effect.tier, EffectTier::Equipped(_)))
+    {
+        return Some((effect.stat, effect.tier.value()));
+    }
+    def.effects.iter().find_map(|effect| {
+        let baseline = inputs.equipped_elsewhere.baseline_for(effect.stat)?;
+        matches!(effect.tier, EffectTier::Unequipped(_)).then(|| {
+            (
+                effect.stat,
+                inputs.equipment.equipped_reference(effect.stat, baseline),
+            )
+        })
+    })
+}
+
+/// **A stat's value as a word** — a whole number reads as one (`26`, `2`), a fraction to one place
+/// (`0.7`, `6.8`). One decimal is the precision every shipped effect is authored at; a whole number
+/// printed as `26.0` would read as a measurement rather than a rating.
+fn stat_value_word(value: f32) -> String {
+    if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+/// **How long ONE FRESH UNIT at `tier` lasts**, in the item's headline quantum — `175 blows`,
+/// `2500 biomass gathered` — through the SAME divisor and the SAME wording the band's own life gauge
+/// uses ([`quanta_per_noun`], [`quanta_phrase`]), so the popup and the ledger cannot count one life
+/// two ways. `""` when the wear table gives no divisor to count by.
+fn one_fresh_unit_lasts(
+    def: &ItemDefinition,
+    tier: &EquipmentTier,
+    reference_build_cost: f32,
+) -> String {
+    let per_noun = quanta_per_noun(def, reference_build_cost);
+    if per_noun <= 0.0 {
+        return String::new();
+    }
+    quanta_phrase(tier.starting_durability / per_noun, def.headline_wear().per)
 }
 
 /// **The tier a craft would produce right now, and its rank in the item's own list** — the ledger's
@@ -560,10 +815,10 @@ fn craft_offer(
 /// tier. It is resolved **per band** rather than in the [`CraftOfferPlan`] because it reads what the
 /// *faction* knows, and the plan is a per-capture constant. The walk is over one item's tiers — at
 /// most two on the shipped roster — so it costs nothing.
-fn craftable_tier<'a>(
+fn made_tier<'a>(
     plan: &CraftOfferPlan<'a>,
     inputs: &BandCraftInputs<'a>,
-) -> Option<(&'a str, u32)> {
+) -> Option<(&'a ItemDefinition, &'a EquipmentTier, u32)> {
     let def = inputs.equipment.item(plan.output_item?)?;
     let known = |craft: &str| inputs.known_crafts.get(craft).copied().unwrap_or(false);
     let tier = plan
@@ -572,7 +827,7 @@ fn craftable_tier<'a>(
         .and_then(|id| def.tier(id))
         .unwrap_or_else(|| def.craftable_tier(known));
     let rank = def.tiers.iter().position(|row| row.id == tier.id)?;
-    Some((tier.id.as_str(), rank as u32))
+    Some((def, tier, rank as u32))
 }
 
 /// **WHAT THE BAND CARRIES, SAID ONLY WHEN IT IS NEWS** — `""` whenever nothing the band holds is
@@ -810,11 +1065,7 @@ fn equipment_batches(
                     // spear.
                     let condition_left =
                         (tier.starting_durability * batch.count as f32 - batch.wear).max(0.0);
-                    // **The wear rate is per QUANTUM UNIT; the readout counts NOUNS**, so the
-                    // divisor carries both (`quantum_units_per_noun` — `1` for every quantum but
-                    // the build's, whose unit is a work unit and whose noun is a whole garden).
-                    let per_noun = def.headline_wear().amount
-                        * quantum_units_per_noun(def.headline_wear().per, reference_build_cost);
+                    let per_noun = quanta_per_noun(def, reference_build_cost);
                     let quanta_left = if per_noun > 0.0 {
                         condition_left / per_noun
                     } else {
@@ -855,10 +1106,31 @@ fn life_wording(worn: f32, quanta_left: f32, quantum: WearQuantum) -> String {
     if worn <= 0.0 {
         return LIFE_UNTOUCHED.to_string();
     }
-    if quanta_left < APPROXIMATELY_ONE {
-        return format!("~1 {} left", quantum.singular_noun());
+    format!("{} left", quanta_phrase(quanta_left, quantum))
+}
+
+/// **A count of an item's use quanta, in words** — `48 blows`, `~1 blow`, `2500 biomass gathered`.
+///
+/// The ONE formatter for a life counted in quanta: the batch gauge appends *left* to it
+/// ([`life_wording`]) and a craft offer's `lasts` quotes a fresh unit through it, so the two can
+/// never word one life two ways. Below [`APPROXIMATELY_ONE`] it reads `~1 <singular>` rather than
+/// `0 <plural>` — a life with any use left in it is not zero.
+fn quanta_phrase(quanta: f32, quantum: WearQuantum) -> String {
+    if quanta < APPROXIMATELY_ONE {
+        return format!("~1 {}", quantum.singular_noun());
     }
-    format!("{:.0} {} left", quanta_left, quantum.noun())
+    format!("{:.0} {}", quanta, quantum.noun())
+}
+
+/// **Condition one of an item's NOUNS costs** — the headline wear's `amount` per quantum unit, times
+/// how many quantum units one noun is.
+///
+/// **The wear rate is per QUANTUM UNIT; the readout counts NOUNS**, so the divisor carries both
+/// ([`quantum_units_per_noun`] — `1` for every quantum but the build's, whose unit is a work unit
+/// and whose noun is a whole garden). One producer for the batch gauge and a craft offer's `lasts`.
+fn quanta_per_noun(def: &ItemDefinition, reference_build_cost: f32) -> f32 {
+    def.headline_wear().amount
+        * quantum_units_per_noun(def.headline_wear().per, reference_build_cost)
 }
 
 /// **THE LIFE LEFT IN ONE BATCH, AS A FRACTION OF ONE FRESH UNIT** — `(count × starting_durability
@@ -965,7 +1237,9 @@ pub(crate) fn recipe_catalogue(
         .recipes()
         .map(|(id, recipe)| RecipeDefState {
             id: id.to_string(),
-            display_name: recipe.display_name.clone(),
+            // The OUTPUT's name, shared by every recipe making it; the recipe's own word is `label`.
+            display_name: recipe.row_name(equipment),
+            label: recipe.label.clone().unwrap_or_default(),
             craft: recipe.craft.clone(),
             group: group_of(recipe, equipment).to_string(),
             work: recipe.work,
@@ -1059,8 +1333,22 @@ pub(crate) fn builtin_craft_inputs() -> &'static BandCraftInputs<'static> {
             reference_build_cost: LADDER
                 .get_or_init(crate::intensification::LadderConfig::builtin)
                 .reference_build_cost(),
+            equipped_elsewhere: builtin_equipped_elsewhere(),
         }
     })
+}
+
+#[cfg(test)]
+/// **The shipped equipped-elsewhere baselines** — what the capture fills [`EquippedElsewhere`] from,
+/// read off the two builtin configs that own them.
+pub(crate) fn builtin_equipped_elsewhere() -> EquippedElsewhere {
+    EquippedElsewhere {
+        scout_vantage_range: crate::labor_config::LaborConfig::builtin()
+            .scout
+            .vantage_range as f32,
+        expedition_sight_range: crate::expedition_config::ExpeditionConfig::builtin()
+            .observe_sight_range as f32,
+    }
 }
 
 #[cfg(test)]

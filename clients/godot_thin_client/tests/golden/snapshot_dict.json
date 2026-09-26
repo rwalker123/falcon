@@ -4268,14 +4268,18 @@
           "available": true,
           "display_name": "populations[0].craft_offers[0].display_name",
           "group": "populations[0].craft_offers[0].group",
+          "lasts": "populations[0].craft_offers[0].lasts",
+          "makes": "populations[0].craft_offers[0].makes",
           "on_bench": false,
           "output_grade": "populations[0].craft_offers[0].output_grade",
           "output_item_id": "populations[0].craft_offers[0].output_item_id",
           "output_tier_name": "populations[0].craft_offers[0].output_tier_name",
           "output_tier_rank": 199,
+          "owned_at_tier": 98,
           "owned_note": "populations[0].craft_offers[0].owned_note",
           "reason": "populations[0].craft_offers[0].reason",
           "recipe_id": "sled",
+          "recipe_label": "populations[0].craft_offers[0].recipe_label",
           "severity": "populations[0].craft_offers[0].severity",
           "shortfalls": [
             {
@@ -4296,20 +4300,25 @@
               "required": 66.620003,
               "short": 77.43
             }
-          ]
+          ],
+          "suggested": false
         },
         {
           "available": false,
           "display_name": "populations[0].craft_offers[1].display_name",
           "group": "populations[0].craft_offers[1].group",
+          "lasts": "populations[0].craft_offers[1].lasts",
+          "makes": "populations[0].craft_offers[1].makes",
           "on_bench": true,
           "output_grade": "populations[0].craft_offers[1].output_grade",
           "output_item_id": "populations[0].craft_offers[1].output_item_id",
           "output_tier_name": "populations[0].craft_offers[1].output_tier_name",
           "output_tier_rank": 154,
+          "owned_at_tier": 93,
           "owned_note": "populations[0].craft_offers[1].owned_note",
           "reason": "populations[0].craft_offers[1].reason",
           "recipe_id": "baskets",
+          "recipe_label": "populations[0].craft_offers[1].recipe_label",
           "severity": "populations[0].craft_offers[1].severity",
           "shortfalls": [
             {
@@ -4330,20 +4339,25 @@
               "required": 62.189999,
               "short": 112.089996
             }
-          ]
+          ],
+          "suggested": true
         },
         {
           "available": false,
           "display_name": "populations[0].craft_offers[2].display_name",
           "group": "populations[0].craft_offers[2].group",
+          "lasts": "populations[0].craft_offers[2].lasts",
+          "makes": "populations[0].craft_offers[2].makes",
           "on_bench": true,
           "output_grade": "populations[0].craft_offers[2].output_grade",
           "output_item_id": "populations[0].craft_offers[2].output_item_id",
           "output_tier_name": "populations[0].craft_offers[2].output_tier_name",
           "output_tier_rank": 141,
+          "owned_at_tier": 192,
           "owned_note": "populations[0].craft_offers[2].owned_note",
           "reason": "populations[0].craft_offers[2].reason",
           "recipe_id": "spears",
+          "recipe_label": "populations[0].craft_offers[2].recipe_label",
           "severity": "populations[0].craft_offers[2].severity",
           "shortfalls": [
             {
@@ -4364,20 +4378,25 @@
               "required": 35.450001,
               "short": 49.970001
             }
-          ]
+          ],
+          "suggested": false
         },
         {
           "available": true,
           "display_name": "populations[0].craft_offers[3].display_name",
           "group": "populations[0].craft_offers[3].group",
+          "lasts": "populations[0].craft_offers[3].lasts",
+          "makes": "populations[0].craft_offers[3].makes",
           "on_bench": false,
           "output_grade": "populations[0].craft_offers[3].output_grade",
           "output_item_id": "populations[0].craft_offers[3].output_item_id",
           "output_tier_name": "populations[0].craft_offers[3].output_tier_name",
           "output_tier_rank": 24,
+          "owned_at_tier": 27,
           "owned_note": "populations[0].craft_offers[3].owned_note",
           "reason": "populations[0].craft_offers[3].reason",
           "recipe_id": "loom",
+          "recipe_label": "populations[0].craft_offers[3].recipe_label",
           "severity": "populations[0].craft_offers[3].severity",
           "shortfalls": [
             {
@@ -4398,7 +4417,8 @@
               "required": 85.75,
               "short": 15.29
             }
-          ]
+          ],
+          "suggested": false
         }
       ],
       "current_x": 0,
@@ -5207,14 +5227,18 @@
           "available": true,
           "display_name": "populations[1].craft_offers[0].display_name",
           "group": "populations[1].craft_offers[0].group",
+          "lasts": "populations[1].craft_offers[0].lasts",
+          "makes": "populations[1].craft_offers[0].makes",
           "on_bench": false,
           "output_grade": "populations[1].craft_offers[0].output_grade",
           "output_item_id": "populations[1].craft_offers[0].output_item_id",
           "output_tier_name": "populations[1].craft_offers[0].output_tier_name",
           "output_tier_rank": 154,
+          "owned_at_tier": 85,
           "owned_note": "populations[1].craft_offers[0].owned_note",
           "reason": "populations[1].craft_offers[0].reason",
           "recipe_id": "sled",
+          "recipe_label": "populations[1].craft_offers[0].recipe_label",
           "severity": "populations[1].craft_offers[0].severity",
           "shortfalls": [
             {
@@ -5235,20 +5259,25 @@
               "required": 37.07,
               "short": 27.77
             }
-          ]
+          ],
+          "suggested": false
         },
         {
           "available": false,
           "display_name": "populations[1].craft_offers[1].display_name",
           "group": "populations[1].craft_offers[1].group",
+          "lasts": "populations[1].craft_offers[1].lasts",
+          "makes": "populations[1].craft_offers[1].makes",
           "on_bench": true,
           "output_grade": "populations[1].craft_offers[1].output_grade",
           "output_item_id": "populations[1].craft_offers[1].output_item_id",
           "output_tier_name": "populations[1].craft_offers[1].output_tier_name",
           "output_tier_rank": 143,
+          "owned_at_tier": 178,
           "owned_note": "populations[1].craft_offers[1].owned_note",
           "reason": "populations[1].craft_offers[1].reason",
           "recipe_id": "baskets",
+          "recipe_label": "populations[1].craft_offers[1].recipe_label",
           "severity": "populations[1].craft_offers[1].severity",
           "shortfalls": [
             {
@@ -5269,20 +5298,25 @@
               "required": 103.68,
               "short": 71.510002
             }
-          ]
+          ],
+          "suggested": true
         },
         {
           "available": false,
           "display_name": "populations[1].craft_offers[2].display_name",
           "group": "populations[1].craft_offers[2].group",
+          "lasts": "populations[1].craft_offers[2].lasts",
+          "makes": "populations[1].craft_offers[2].makes",
           "on_bench": true,
           "output_grade": "populations[1].craft_offers[2].output_grade",
           "output_item_id": "populations[1].craft_offers[2].output_item_id",
           "output_tier_name": "populations[1].craft_offers[2].output_tier_name",
           "output_tier_rank": 200,
+          "owned_at_tier": 35,
           "owned_note": "populations[1].craft_offers[2].owned_note",
           "reason": "populations[1].craft_offers[2].reason",
           "recipe_id": "spears",
+          "recipe_label": "populations[1].craft_offers[2].recipe_label",
           "severity": "populations[1].craft_offers[2].severity",
           "shortfalls": [
             {
@@ -5303,20 +5337,25 @@
               "required": 4.11,
               "short": 74.529999
             }
-          ]
+          ],
+          "suggested": false
         },
         {
           "available": true,
           "display_name": "populations[1].craft_offers[3].display_name",
           "group": "populations[1].craft_offers[3].group",
+          "lasts": "populations[1].craft_offers[3].lasts",
+          "makes": "populations[1].craft_offers[3].makes",
           "on_bench": false,
           "output_grade": "populations[1].craft_offers[3].output_grade",
           "output_item_id": "populations[1].craft_offers[3].output_item_id",
           "output_tier_name": "populations[1].craft_offers[3].output_tier_name",
           "output_tier_rank": 189,
+          "owned_at_tier": 64,
           "owned_note": "populations[1].craft_offers[3].owned_note",
           "reason": "populations[1].craft_offers[3].reason",
           "recipe_id": "loom",
+          "recipe_label": "populations[1].craft_offers[3].recipe_label",
           "severity": "populations[1].craft_offers[3].severity",
           "shortfalls": [
             {
@@ -5337,7 +5376,8 @@
               "required": 59.529999,
               "short": 9.99
             }
-          ]
+          ],
+          "suggested": false
         }
       ],
       "current_x": 1,
@@ -6085,14 +6125,18 @@
           "available": true,
           "display_name": "populations[2].craft_offers[0].display_name",
           "group": "populations[2].craft_offers[0].group",
+          "lasts": "populations[2].craft_offers[0].lasts",
+          "makes": "populations[2].craft_offers[0].makes",
           "on_bench": false,
           "output_grade": "populations[2].craft_offers[0].output_grade",
           "output_item_id": "populations[2].craft_offers[0].output_item_id",
           "output_tier_name": "populations[2].craft_offers[0].output_tier_name",
           "output_tier_rank": 49,
+          "owned_at_tier": 188,
           "owned_note": "populations[2].craft_offers[0].owned_note",
           "reason": "populations[2].craft_offers[0].reason",
           "recipe_id": "sled",
+          "recipe_label": "populations[2].craft_offers[0].recipe_label",
           "severity": "populations[2].craft_offers[0].severity",
           "shortfalls": [
             {
@@ -6113,20 +6157,25 @@
               "required": 77.839996,
               "short": 82.199997
             }
-          ]
+          ],
+          "suggested": false
         },
         {
           "available": false,
           "display_name": "populations[2].craft_offers[1].display_name",
           "group": "populations[2].craft_offers[1].group",
+          "lasts": "populations[2].craft_offers[1].lasts",
+          "makes": "populations[2].craft_offers[1].makes",
           "on_bench": true,
           "output_grade": "populations[2].craft_offers[1].output_grade",
           "output_item_id": "populations[2].craft_offers[1].output_item_id",
           "output_tier_name": "populations[2].craft_offers[1].output_tier_name",
           "output_tier_rank": 36,
+          "owned_at_tier": 47,
           "owned_note": "populations[2].craft_offers[1].owned_note",
           "reason": "populations[2].craft_offers[1].reason",
           "recipe_id": "baskets",
+          "recipe_label": "populations[2].craft_offers[1].recipe_label",
           "severity": "populations[2].craft_offers[1].severity",
           "shortfalls": [
             {
@@ -6147,20 +6196,25 @@
               "required": 71.400002,
               "short": 43.310001
             }
-          ]
+          ],
+          "suggested": true
         },
         {
           "available": false,
           "display_name": "populations[2].craft_offers[2].display_name",
           "group": "populations[2].craft_offers[2].group",
+          "lasts": "populations[2].craft_offers[2].lasts",
+          "makes": "populations[2].craft_offers[2].makes",
           "on_bench": true,
           "output_grade": "populations[2].craft_offers[2].output_grade",
           "output_item_id": "populations[2].craft_offers[2].output_item_id",
           "output_tier_name": "populations[2].craft_offers[2].output_tier_name",
           "output_tier_rank": 83,
+          "owned_at_tier": 86,
           "owned_note": "populations[2].craft_offers[2].owned_note",
           "reason": "populations[2].craft_offers[2].reason",
           "recipe_id": "spears",
+          "recipe_label": "populations[2].craft_offers[2].recipe_label",
           "severity": "populations[2].craft_offers[2].severity",
           "shortfalls": [
             {
@@ -6181,20 +6235,25 @@
               "required": 44.490002,
               "short": 49.02
             }
-          ]
+          ],
+          "suggested": false
         },
         {
           "available": true,
           "display_name": "populations[2].craft_offers[3].display_name",
           "group": "populations[2].craft_offers[3].group",
+          "lasts": "populations[2].craft_offers[3].lasts",
+          "makes": "populations[2].craft_offers[3].makes",
           "on_bench": false,
           "output_grade": "populations[2].craft_offers[3].output_grade",
           "output_item_id": "populations[2].craft_offers[3].output_item_id",
           "output_tier_name": "populations[2].craft_offers[3].output_tier_name",
           "output_tier_rank": 158,
+          "owned_at_tier": 185,
           "owned_note": "populations[2].craft_offers[3].owned_note",
           "reason": "populations[2].craft_offers[3].reason",
           "recipe_id": "loom",
+          "recipe_label": "populations[2].craft_offers[3].recipe_label",
           "severity": "populations[2].craft_offers[3].severity",
           "shortfalls": [
             {
@@ -6215,7 +6274,8 @@
               "required": 65.669998,
               "short": 76.989998
             }
-          ]
+          ],
+          "suggested": false
         }
       ],
       "current_x": 2,
@@ -7062,6 +7122,7 @@
           "reads_axis": "recipes[0].inputs[1].reads_axis"
         }
       ],
+      "label": "recipes[0].label",
       "outputs": [
         {
           "amount": 35.5,
@@ -7092,6 +7153,7 @@
           "reads_axis": "recipes[1].inputs[1].reads_axis"
         }
       ],
+      "label": "recipes[1].label",
       "outputs": [
         {
           "amount": 46.0,
@@ -7122,6 +7184,7 @@
           "reads_axis": "recipes[2].inputs[1].reads_axis"
         }
       ],
+      "label": "recipes[2].label",
       "outputs": [
         {
           "amount": 89.919998,
@@ -7152,6 +7215,7 @@
           "reads_axis": "recipes[3].inputs[1].reads_axis"
         }
       ],
+      "label": "recipes[3].label",
       "outputs": [
         {
           "amount": 112.370003,

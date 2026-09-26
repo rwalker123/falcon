@@ -2832,6 +2832,8 @@ pub struct RecipeOutputState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RecipeDefState {
     pub id: String,
+    /// **The output's name** — the item's own `display_name`, or the material's title — shared by
+    /// every recipe making that output. [`Self::label`] is the recipe's own word.
     pub display_name: String,
     pub craft: String,
     /// `kit` | `tool` | `stock` — the same three groups the ledger is drawn in.
@@ -2843,6 +2845,9 @@ pub struct RecipeDefState {
     pub requires_knowledge: Vec<String>,
     pub inputs: Vec<RecipeInputState>,
     pub outputs: Vec<RecipeOutputState>,
+    /// **The recipe's short name among the recipes making the same output** — *Bone*, *Flint*. `""`
+    /// on a recipe that is the only one making its output.
+    pub label: String,
 }
 
 /// **One faction's standing in one craft.** The lesson is charged **per item completed**, so this

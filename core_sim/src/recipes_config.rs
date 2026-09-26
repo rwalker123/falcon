@@ -42,7 +42,7 @@ use thiserror::Error;
 
 use crate::{
     config_load::{load_config_from_env, ConfigLoadError},
-    crafting::crafts_declared_by,
+    crafting::{crafts_declared_by, title_from_id},
     equipment_config::{EquipmentConfig, EquipmentEffect},
     materials_config::{MaterialsConfig, READING_MAX, READING_MIN},
 };
@@ -55,6 +55,10 @@ pub const BUILTIN_RECIPES_CONFIG: &str = include_str!("data/recipes.json");
 /// leave the bottom of the range with no effects to inherit, which is the exact twin of
 /// `materials_config`'s first-band rule and is checked for the same reason.
 const FIRST_GRADE_BAND_INDEX: usize = 0;
+
+/// **How many recipes make a thing that has no siblings.** Above this, a recipe must carry a
+/// [`RecipeDef::label`]; at it, a label is rejected — see `RecipesConfig::validate_labels`.
+const SOLE_RECIPE: usize = 1;
 
 /// Bench dials shared by every recipe.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -184,8 +188,22 @@ pub struct RecipeGrade {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecipeDef {
-    /// Player-facing label. The sim never branches on it.
-    pub display_name: String,
+    /// **The recipe's own short name among its siblings** — *Bone*, *Flint*, *Withy* — the word a
+    /// player picks between when one item has several recipes. The sim never branches on it.
+    ///
+    /// **REQUIRED on a recipe whose output another recipe also makes, and REJECTED on one that is
+    /// the only recipe making its output** (`validate`). A label exists to tell two routes to one
+    /// thing apart; on a lone recipe there is nothing to tell it from, so nothing can show it and it
+    /// would be dead config.
+    ///
+    /// **It is NOT the thing's name.** An item names itself
+    /// ([`crate::equipment_config::ItemDefinition::display_name`]) and a material output is named by
+    /// its material ([`crate::crafting::title_from_id`]), so a row reads *Spears* whichever recipe
+    /// made it; see [`Self::row_name`]. This field was `display_name` and carried the whole name
+    /// (`Spears (flint)`) until an item could have two recipes, at which point two recipes claimed to
+    /// name one item and which one won was book order.
+    #[serde(default)]
+    pub label: Option<String>,
     /// **The craft this recipe practises — and therefore TEACHES.** Validated to be the craft of the
     /// material the recipe [`reads`](RecipeInput::reads), so it cannot drift from the material the
     /// bench is actually working: one home per fact, stated in the file because that is where it is
@@ -242,6 +260,42 @@ impl RecipeDef {
     /// join key from a published craft offer to the band's own batches of the thing it would make.
     pub fn output_equipment_id(&self) -> Option<&str> {
         self.outputs.iter().find_map(|output| output.equipment_id())
+    }
+
+    /// **The thing this recipe's row is about** — its equipment output if it has one, else its first
+    /// material output. Two recipes with the same key make the same thing, and are two rows of one
+    /// ledger line: the key is what the [`Self::label`] rule counts siblings by and what the crafting
+    /// ledger groups offers by.
+    ///
+    /// An item id and a material id share one namespace here, which is safe because the two tables
+    /// never share an id (`hurdles` left the item table when it became a material) and harmless if
+    /// they did: the worst case is two recipes being asked for labels they do not strictly need.
+    pub fn row_key(&self) -> Option<&str> {
+        self.output_equipment_id()
+            .or_else(|| self.outputs.iter().find_map(|output| output.material_id()))
+    }
+
+    /// **What the ledger calls this recipe's row** — the output item's own
+    /// [`crate::equipment_config::ItemDefinition::display_name`], or the material's title for a
+    /// material recipe (`hurdles` → *Hurdles*). Two recipes making one item give the same answer, by
+    /// construction: the name belongs to the thing, never to a route to it.
+    pub fn row_name(&self, equipment: &EquipmentConfig) -> String {
+        match self.output_equipment_id() {
+            Some(item) => equipment.item_display_name(item).to_string(),
+            None => self.row_key().map(title_from_id).unwrap_or_default(),
+        }
+    }
+
+    /// **What a single sentence calls this recipe** — the row's name, with the recipe's
+    /// [`Self::label`] in brackets when it has one: *Spears (Flint)*, *Hurdles*. For the places that
+    /// name one recipe in prose (the running bench, a command's feed line), where the row's name
+    /// alone would not say which of an item's recipes is meant.
+    pub fn full_name(&self, equipment: &EquipmentConfig) -> String {
+        let row = self.row_name(equipment);
+        match self.label.as_deref() {
+            Some(label) => format!("{row} ({label})"),
+            None => row,
+        }
     }
 
     /// **The tier this recipe makes its equipment at**, or `None` for one that names none (a
@@ -387,21 +441,6 @@ impl RecipesConfig {
         self.recipes.iter().map(|(id, def)| (id.as_str(), def))
     }
 
-    /// **What a readout calls an equipment item** — the display name of the recipe that makes it,
-    /// or the item's own id when no recipe does.
-    ///
-    /// **The book is the item's name because `equipment.json` carries none.** An item id is a key
-    /// (`bone_awl`, `tanning_frame`); the recipe that makes it is where a human already wrote the
-    /// player-facing words, so a refusal that has to say *"No bone awl"* asks here rather than
-    /// growing a second name table beside the first. The fallback is the id, which is the honest
-    /// answer for a thing the book cannot make.
-    pub fn item_display_name<'a>(&'a self, item: &'a str) -> &'a str {
-        self.recipes()
-            .find(|(_, recipe)| recipe.output_equipment_id() == Some(item))
-            .map(|(_, recipe)| recipe.display_name.as_str())
-            .unwrap_or(item)
-    }
-
     /// **The grade a bare-handed craft of `item` comes out at** — its recipe's [`anchor_band`], the
     /// band the bench material's own `hand_working.quality_ceiling` falls in. `None` for an item the
     /// book cannot make, or whose bench material cannot be worked bare-handed at all.
@@ -412,8 +451,9 @@ impl RecipesConfig {
     /// stocks the item's **default** tier — so a shipped spear already performs exactly as an
     /// anchor-grade craft does, and this is the wire finally saying so.
     ///
-    /// The join is `item_display_name`'s, for the same reason: the book is where an item's crafted
-    /// facts are written. **Several recipes making one item resolve the first in book order**, which
+    /// The join is item → the recipe that makes it, because the book is where an item's *crafted*
+    /// facts are written (its name is not one of them — that is the item's own `display_name`).
+    /// **Several recipes making one item resolve the first in book order**, which
     /// the shipped book now genuinely has — a spear can be pointed with bone or knapped from stone,
     /// and each row names the tier it makes. The choice between them is not observable here: the
     /// anchor is the band the *bench material's* bare-handed ceiling falls in, every material that
@@ -461,6 +501,53 @@ impl RecipesConfig {
         }
         for (id, recipe) in &self.recipes {
             self.validate_recipe(id, recipe)?;
+        }
+        self.validate_labels()
+    }
+
+    /// **A LABEL EXISTS TO TELL SIBLINGS APART, so it is required exactly where there are siblings.**
+    ///
+    /// Two recipes that make the same thing ([`RecipeDef::row_key`]) are two routes to one ledger row,
+    /// and the player picks between them by label — an unlabelled one would be a radio button with no
+    /// word beside it. A recipe that is the **only** one making its output has nothing to be told
+    /// apart from, so nothing can ever show its label, and a label there is dead config that reads as
+    /// if it did something.
+    ///
+    /// A blank label is a missing one: it would render as the same empty button.
+    fn validate_labels(&self) -> Result<(), RecipesConfigError> {
+        let mut makers: BTreeMap<&str, usize> = BTreeMap::new();
+        for recipe in self.recipes.values() {
+            if let Some(key) = recipe.row_key() {
+                *makers.entry(key).or_default() += 1;
+            }
+        }
+        for (id, recipe) in &self.recipes {
+            let Some(key) = recipe.row_key() else {
+                continue;
+            };
+            let has_siblings = makers.get(key).is_some_and(|count| *count > SOLE_RECIPE);
+            let label = recipe.label.as_deref().map(str::trim);
+            match (has_siblings, label) {
+                (true, None) | (true, Some("")) => {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                            "recipe '{id}' makes '{key}', which another recipe also makes, but \
+                             declares no label - two routes to one thing are told apart by label, \
+                             and an unlabelled one would be a choice with no word beside it"
+                        ),
+                    })
+                }
+                (false, Some(_)) => {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                        "recipe '{id}' is the only recipe making '{key}' but declares a label - \
+                             a label tells sibling recipes apart, so on a lone recipe nothing can \
+                             show it"
+                    ),
+                    })
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -1312,7 +1399,6 @@ mod tests {
                 "crafting": { "progress_per_worker_turn": 1.0 },
                 "recipes": {
                     "spears": {
-                        "display_name": "Spears",
                         "craft": "bone_working",
                         "work": 6.0,
                         "inputs": [ { "material": "bone", "amount": 1.0, "reads": "density" } ],
@@ -1509,6 +1595,16 @@ mod tests {
 
         let unknown_item = rebuilt(&|json| {
             json["recipes"]["sled"]["outputs"][0]["equipment"] = serde_json::json!("spearz");
+            // Renaming the output leaves `sled` the only recipe making `spearz` and `sled_framed`
+            // the only one still making `sled`, and a lone recipe may not carry a label — drop
+            // both, so the book is still self-consistent and the check this arm is about (the
+            // unknown item) is the one that fires.
+            for lone in ["sled", "sled_framed"] {
+                json["recipes"][lone]
+                    .as_object_mut()
+                    .expect("a recipe row")
+                    .remove("label");
+            }
         });
         assert!(
             matches!(unknown_item, RecipesConfigError::UnknownItem { .. }),
@@ -1706,6 +1802,105 @@ mod tests {
         );
     }
 
+    /// **A RECIPE WITH SIBLINGS MUST CARRY A LABEL** — two routes to one item are told apart by it,
+    /// and an unlabelled one would be a choice in the Make-picker with no word beside it.
+    #[test]
+    fn validate_rejects_a_recipe_with_siblings_and_no_label() {
+        let err = mutated(|json| {
+            json["recipes"]["spears_flint"]
+                .as_object_mut()
+                .expect("a recipe row")
+                .remove("label");
+        });
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("declares no label")),
+            "got {err}"
+        );
+    }
+
+    /// **…AND A LONE RECIPE MAY NOT CARRY ONE** — the loom is the only recipe making a loom, so
+    /// nothing could ever show its label, and a label there is dead config. The pair is the claim:
+    /// *"labels are required"* alone would pass on a rule that demanded one everywhere.
+    #[test]
+    fn validate_rejects_a_label_on_the_only_recipe_making_its_output() {
+        let err = mutated(|json| {
+            json["recipes"]["loom"]["label"] = serde_json::json!("Bone");
+        });
+        assert!(
+            matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("only recipe")),
+            "got {err}"
+        );
+    }
+
+    /// **The shipped book labels exactly the recipes that have siblings.** Liveness for the two
+    /// rejections above: both halves of the rule are exercised by real rows, not only by mutations.
+    #[test]
+    fn the_shipped_book_labels_exactly_the_recipes_with_siblings() {
+        let book = builtin();
+        let mut makers: BTreeMap<&str, usize> = BTreeMap::new();
+        for (_, recipe) in book.recipes() {
+            *makers
+                .entry(
+                    recipe
+                        .row_key()
+                        .expect("every shipped recipe makes something"),
+                )
+                .or_default() += 1;
+        }
+        let (mut labelled, mut lone) = (0, 0);
+        for (id, recipe) in book.recipes() {
+            let siblings = makers[recipe.row_key().expect("a row key")] > SOLE_RECIPE;
+            assert_eq!(
+                recipe.label.is_some(),
+                siblings,
+                "recipe '{id}': a label exactly where there are siblings"
+            );
+            if siblings {
+                labelled += 1;
+            } else {
+                lone += 1;
+            }
+        }
+        assert!(
+            labelled > 0 && lone > 0,
+            "the shipped book must carry both kinds of row, or one half of the rule is vacuous"
+        );
+    }
+
+    /// **THE ROW'S NAME IS THE ITEM'S, and every recipe making the item gives the same one.** The
+    /// name moved off the recipe book — `Spears` and `Spears (flint)` used to both claim to name one
+    /// item. A mutated item name is what reaches the row, which is what proves where it is read from.
+    #[test]
+    fn a_rows_name_is_the_items_own_and_its_recipes_share_it() {
+        let book = builtin();
+        let equipment = EquipmentConfig::builtin();
+        let bone = book.recipe("spears").expect("the bone spear recipe");
+        let flint = book
+            .recipe("spears_flint")
+            .expect("the knapped spear recipe");
+        assert_eq!(bone.row_name(&equipment), "Spears");
+        assert_eq!(flint.row_name(&equipment), bone.row_name(&equipment));
+        assert_eq!(flint.full_name(&equipment), "Spears (Flint)");
+        assert_eq!(
+            book.recipe("hurdles")
+                .expect("the material recipe")
+                .row_name(&equipment),
+            "Hurdles",
+            "a material recipe is named by its material"
+        );
+
+        let mut json: serde_json::Value =
+            serde_json::from_str(crate::equipment_config::BUILTIN_EQUIPMENT_CONFIG)
+                .expect("the TOE is json");
+        json["items"]["spears"]["display_name"] = serde_json::json!("Pointed sticks");
+        let renamed = EquipmentConfig::from_json_str(&json.to_string()).expect("a legal table");
+        assert_eq!(
+            flint.row_name(&renamed),
+            "Pointed sticks",
+            "the row reads the ITEM's name — renaming the item renames the row, the recipe untouched"
+        );
+    }
+
     /// **THE ANCHOR IS THE RECIPE'S OWN OUTPUT TIER — the load-bearing one.** Two recipes make
     /// `spears`, at two tiers with two different `attack` numbers, and each must reproduce **its
     /// own** tier at the anchor band. Asserted as a pairing: the shipped flint row validates against
@@ -1836,7 +2031,6 @@ mod tests {
                 "crafting": { "progress_per_worker_turn": 1.0 },
                 "recipes": {
                     "bronze": {
-                        "display_name": "Bronze",
                         "craft": "smithing",
                         "work": 4.0,
                         "inputs": [

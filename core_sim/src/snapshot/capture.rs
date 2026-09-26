@@ -3069,6 +3069,13 @@ pub fn capture_snapshot(
                             // life gauge quotes a build's wear in *gardens' worth*, not in bare work
                             // units, and the garden is the `plant:tended` rung's own `work_cost`.
                             reference_build_cost: ladder_config.reference_build_cost(),
+                            // **The two equipped values the item table does not hold**, off the same
+                            // levers the role cards resolve the wayfinding gear's reach from — so a
+                            // craft offer's `makes` and a Scout card quote one number.
+                            equipped_elsewhere: crate::snapshot::crafting::EquippedElsewhere {
+                                scout_vantage_range: kit_levers.equipped_vantage_range,
+                                expedition_sight_range: kit_levers.equipped_expedition_sight_range,
+                            },
                         },
                         build_sources: &crate::snapshot::population::BuildSourceInputs {
                             forage: &forage_registry,

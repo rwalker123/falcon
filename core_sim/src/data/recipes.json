@@ -10,7 +10,7 @@
   },
   "recipes": {
     "sled": {
-      "display_name": "Sled",
+      "label": "Hide",
       "craft": "tanning",
       "work": 8.0,
       "inputs": [
@@ -66,7 +66,7 @@
       }
     },
     "sled_framed": {
-      "display_name": "Sled (framed)",
+      "label": "Framed",
       "craft": "tanning",
       "work": 8.0,
       "inputs": [
@@ -126,7 +126,6 @@
       }
     },
     "hurdles": {
-      "display_name": "Hurdles",
       "craft": "tanning",
       "work": 7.0,
       "inputs": [
@@ -152,7 +151,7 @@
       ]
     },
     "crook": {
-      "display_name": "Crook",
+      "label": "Bone",
       "craft": "bone_working",
       "work": 5.0,
       "inputs": [
@@ -174,7 +173,7 @@
       ]
     },
     "crook_wood": {
-      "display_name": "Crook (wood)",
+      "label": "Wood",
       "craft": "weaving",
       "work": 5.0,
       "inputs": [
@@ -196,7 +195,7 @@
       ]
     },
     "hoes": {
-      "display_name": "Hoes",
+      "label": "Bone",
       "craft": "bone_working",
       "work": 5.0,
       "inputs": [
@@ -219,7 +218,7 @@
       ]
     },
     "hoes_flint": {
-      "display_name": "Hoes (flint)",
+      "label": "Flint",
       "craft": "knapping",
       "work": 6.0,
       "inputs": [
@@ -246,7 +245,7 @@
       ]
     },
     "baskets": {
-      "display_name": "Baskets",
+      "label": "Fibre",
       "craft": "weaving",
       "work": 6.0,
       "inputs": [
@@ -302,7 +301,7 @@
       }
     },
     "baskets_withy": {
-      "display_name": "Baskets (withy)",
+      "label": "Withy",
       "craft": "weaving",
       "work": 6.0,
       "inputs": [
@@ -358,7 +357,7 @@
       }
     },
     "traps": {
-      "display_name": "Traps",
+      "label": "Bone",
       "craft": "weaving",
       "work": 6.0,
       "inputs": [
@@ -418,7 +417,7 @@
       }
     },
     "traps_wood": {
-      "display_name": "Traps (wood)",
+      "label": "Wood",
       "craft": "weaving",
       "work": 6.0,
       "inputs": [
@@ -478,7 +477,7 @@
       }
     },
     "spears": {
-      "display_name": "Spears",
+      "label": "Bone",
       "craft": "bone_working",
       "work": 6.0,
       "inputs": [
@@ -539,7 +538,7 @@
       }
     },
     "spears_flint": {
-      "display_name": "Spears (flint)",
+      "label": "Flint",
       "craft": "knapping",
       "work": 7.0,
       "inputs": [
@@ -600,7 +599,7 @@
       }
     },
     "clubs": {
-      "display_name": "Clubs",
+      "label": "Bone",
       "craft": "bone_working",
       "work": 4.0,
       "inputs": [
@@ -657,7 +656,7 @@
       }
     },
     "clubs_flint": {
-      "display_name": "Clubs (stone)",
+      "label": "Stone",
       "craft": "knapping",
       "work": 5.0,
       "inputs": [
@@ -714,7 +713,6 @@
       }
     },
     "earthmoving": {
-      "display_name": "Earthmoving tools",
       "craft": "weaving",
       "work": 8.0,
       "inputs": [
@@ -736,7 +734,6 @@
       ]
     },
     "stone_dressing": {
-      "display_name": "Stone-dressing tools",
       "craft": "weaving",
       "work": 8.0,
       "inputs": [
@@ -758,7 +755,7 @@
       ]
     },
     "wayfinding": {
-      "display_name": "Wayfinding gear",
+      "label": "Bone",
       "craft": "bone_working",
       "work": 4.0,
       "inputs": [
@@ -784,7 +781,7 @@
       ]
     },
     "wayfinding_wood": {
-      "display_name": "Wayfinding gear (wood)",
+      "label": "Wood",
       "craft": "weaving",
       "work": 4.0,
       "inputs": [
@@ -810,7 +807,6 @@
       ]
     },
     "tanning_frame": {
-      "display_name": "Tanning frame",
       "craft": "weaving",
       "work": 12.0,
       "requires_knowledge": [
@@ -840,7 +836,6 @@
       ]
     },
     "loom": {
-      "display_name": "Loom",
       "craft": "bone_working",
       "work": 14.0,
       "requires_knowledge": [
@@ -866,7 +861,6 @@
       ]
     },
     "bone_awl": {
-      "display_name": "Bone awl",
       "craft": "tanning",
       "work": 10.0,
       "requires_knowledge": [
@@ -892,7 +886,6 @@
       ]
     },
     "billet": {
-      "display_name": "Antler billet",
       "craft": "bone_working",
       "work": 9.0,
       "requires_knowledge": [

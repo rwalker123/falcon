@@ -222,6 +222,36 @@ pub enum EquipmentStat {
 }
 
 impl EquipmentStat {
+    /// **The word a readout counts this stat in** — *26 **attack***, *8 **carry***, *+0.7 **build
+    /// work***, *2 **tile vantage***. The crafting ledger's `makes` line reads it.
+    ///
+    /// **Resolved sim-side, deliberately**, for [`WearQuantum::noun`]'s reason: a client that mapped
+    /// the enum to English would be a second copy of this table that a new stat would not update.
+    /// Exhaustive with no `_` arm, so a new stat cannot compile until it says how it reads.
+    pub fn readout_noun(self) -> &'static str {
+        match self {
+            Self::Attack => "attack",
+            Self::HuntCarry => "haul",
+            Self::ForageCarry => "carry",
+            Self::BuildWork => "build work",
+            Self::ScoutVantageRange => "tile vantage",
+            Self::ExpeditionSightRange => "tile sight",
+            Self::Dispersion => "dispersion",
+            Self::Exposure => "exposure",
+            Self::CraftSpeed => "craft speed",
+            Self::CraftQualityCeiling => "quality ceiling",
+            Self::CraftMaterialEfficiency => "material use",
+        }
+    }
+
+    /// **Whether a readout states this stat as an ADDITION** — `+0.7 build work` rather than
+    /// `0.7 build work`. True exactly for [`Self::BuildWork`], the one stat that is added to what a
+    /// worker already does rather than naming the value the stat takes (see its neutral of `0.0` in
+    /// [`Self::neutral`]); every other value is the whole number the stat reads.
+    pub fn reads_as_addition(self) -> bool {
+        matches!(self, Self::BuildWork)
+    }
+
     /// The neutral value — what the stat reads when **no** item declares it. Only the stats resolved
     /// through [`KitChoice::best_declared`] have one; the tiered stats resolve against a rate the
     /// caller already holds, so asking for their neutral value is a category error the type refuses
@@ -696,6 +726,17 @@ pub struct EquipmentTier {
 /// gains an axis, which is the failure `equipmentConfigJson` exists to make impossible.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemDefinition {
+    /// **What a player calls this item** — *Spears*, *Antler billet*. Required and non-blank
+    /// (`validate`), and the ONE home of the item's name: every readout that names an item reads it
+    /// here through [`EquipmentConfig::item_display_name`].
+    ///
+    /// **It used to be borrowed from the recipe book** — the display name of the first recipe that
+    /// made the item — on the argument that the book was the one place a human had written the
+    /// words. That premise ended the day an item got two recipes: `Spears` and `Spears (flint)` both
+    /// claimed to name one item, and which one won was book order. A recipe now carries only a short
+    /// `label` (*Bone*, *Flint*) that distinguishes it from its siblings, and the item owns the name
+    /// they share.
+    pub display_name: String,
     /// **Every quantum this item is worn by, and what one use of each costs it.** Non-empty, and no
     /// quantum may appear twice. **Shared across tiers** — how fast a thing is used up is a property
     /// of the job, not of what it is made from; how long it survives that use is the tier's
@@ -2294,6 +2335,19 @@ impl EquipmentConfig {
         self.items.get(id)
     }
 
+    /// **What a readout calls an equipment item** — its own [`ItemDefinition::display_name`], or the
+    /// id when the table does not carry the item (the honest answer for a thing nothing defines).
+    ///
+    /// The one lookup every readout that names an item goes through: a refusal that has to say
+    /// *"No bone awl"*, the crafting ledger's row, the bench's running job. It lived on the recipe
+    /// book as `RecipesConfig::item_display_name`, borrowing the first recipe's name, until an item
+    /// could have two recipes — see [`ItemDefinition::display_name`].
+    pub fn item_display_name<'a>(&'a self, id: &'a str) -> &'a str {
+        self.item(id)
+            .map(|def| def.display_name.as_str())
+            .unwrap_or(id)
+    }
+
     /// **The bench tool for a material, whether or not this band has one** — the item whose
     /// `bounds_material` names it. Unique by `validate`, so there is one answer.
     ///
@@ -3176,6 +3230,17 @@ impl EquipmentConfig {
             });
         }
         for (id, item) in &self.items {
+            // **An item's name is required, so a blank one is a missing one.** Every readout that
+            // names the item reads this field and nothing else, so an empty string would put a
+            // nameless row on the panel and an empty noun into *"No bone awl"*.
+            if item.display_name.trim().is_empty() {
+                return Err(EquipmentConfigError::InvalidRoster {
+                    reason: format!(
+                        "item '{id}' has a blank display_name - it is the item's only name, and \
+                         every readout that names the item reads it"
+                    ),
+                });
+            }
             Self::validate_wear(id, item)?;
             Self::validate_effect_layer(&format!("items.{id}.effects"), id, &item.effects)?;
             Self::validate_tiers(id, item)?;
@@ -5172,6 +5237,45 @@ mod tests {
         );
     }
 
+    /// **EVERY ITEM NAMES ITSELF**, and the lookup reads that name rather than borrowing one — the
+    /// words are today's exactly, so the move off the recipe book changed where the name lives and
+    /// not what a player reads. An id the table does not carry answers with the id.
+    #[test]
+    fn every_shipped_item_owns_its_name() {
+        let config = EquipmentConfig::builtin();
+        for (id, def) in config.items() {
+            assert!(
+                !def.display_name.trim().is_empty(),
+                "item '{id}' carries no name"
+            );
+            assert_eq!(config.item_display_name(id), def.display_name);
+        }
+        assert_eq!(config.item_display_name("billet"), "Antler billet");
+        assert_eq!(
+            config.item_display_name("stone_dressing"),
+            "Stone-dressing tools"
+        );
+        assert_eq!(
+            config.item_display_name("no_such_item"),
+            "no_such_item",
+            "a thing the table does not define is named by its id"
+        );
+    }
+
+    /// **A blank name is a missing one** — every readout that names the item reads this field.
+    #[test]
+    fn validate_rejects_an_item_with_a_blank_name() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
+        json["items"]["spears"]["display_name"] = serde_json::json!("  ");
+        let err = EquipmentConfig::from_json_str(&json.to_string())
+            .expect_err("a blank item name must be rejected");
+        assert!(
+            matches!(&err, EquipmentConfigError::InvalidRoster { reason } if reason.contains("blank display_name")),
+            "got {err}"
+        );
+    }
+
     #[test]
     fn validate_rejects_a_kit_born_dry() {
         let err = EquipmentConfig::from_json_str(&kit_json("2.0", "0.02", "0.0"))
@@ -5195,8 +5299,8 @@ mod tests {
         let json = format!(
             r#"{{
             "items": {{
-                "spears": {{ "wear": [{{ "per": "strike", "amount": 0.4 }}], "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
-                "sled": {{ "wear": [{{ "per": "biomass_hauled", "amount": 0.02 }}], "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
+                "spears": {{ "display_name": "spears", "wear": [{{ "per": "strike", "amount": 0.4 }}], "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
+                "sled": {{ "display_name": "sled", "wear": [{{ "per": "biomass_hauled", "amount": 0.02 }}], "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
             }},
             {ROSTER_JSON}
         }}"#
@@ -5215,9 +5319,9 @@ mod tests {
         format!(
             r#"{{
             "items": {{
-                "spears": {{ "wear": [{{ "per": "strike", "amount": {spear_wear} }}], "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }}] }},
-                "sled": {{ "wear": [{{ "per": "biomass_hauled", "amount": {sled_wear} }}], "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [] }}] }},
-                "baskets": {{ "wear": [{{ "per": "biomass_gathered", "amount": 0.04 }}], "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": {basket_durability}, "effects": []}}] }}
+                "spears": {{ "display_name": "spears", "wear": [{{ "per": "strike", "amount": {spear_wear} }}], "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}] }}] }},
+                "sled": {{ "display_name": "sled", "wear": [{{ "per": "biomass_hauled", "amount": {sled_wear} }}], "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{ "id": "flint", "starting_durability": 100.0, "effects": [] }}] }},
+                "baskets": {{ "display_name": "baskets", "wear": [{{ "per": "biomass_gathered", "amount": 0.04 }}], "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": {basket_durability}, "effects": []}}] }}
             }},
             {ROSTER_JSON}
         }}"#
@@ -5453,9 +5557,9 @@ mod tests {
         format!(
             r#"{{
             "items": {{
-                "spears": {{ "wear": [{{ "per": "strike", "amount": 0.4 }}], "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
-                "sled": {{ "wear": [{{ "per": "biomass_hauled", "amount": 0.02 }}], "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }},
-                "baskets": {{ "wear": [{{ "per": "biomass_gathered", "amount": 0.04 }}], "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
+                "spears": {{ "display_name": "spears", "wear": [{{ "per": "strike", "amount": 0.4 }}], "effects": [], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": [{{ "stat": "attack", "equipped": 20.0 }}]}}] }},
+                "sled": {{ "display_name": "sled", "wear": [{{ "per": "biomass_hauled", "amount": 0.02 }}], "effects": [{{ "stat": "hunt_carry", "unequipped": 12.0 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }},
+                "baskets": {{ "display_name": "baskets", "wear": [{{ "per": "biomass_gathered", "amount": 0.04 }}], "effects": [{{ "stat": "forage_carry", "unequipped": 1.6 }}], "tiers": [{{"id": "flint", "starting_durability": 100.0, "effects": []}}] }}
             }},
             {roster}
         }}"#
@@ -5479,8 +5583,8 @@ mod tests {
         // first, which is a different check.
         let json = r#"{
             "items": {
-                "spears": { "wear": [{ "per": "strike", "amount": 0.4 }], "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0 }]}] },
-                "snares": { "wear": [{ "per": "strike", "amount": 0.2 }], "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 }]}] }
+                "spears": { "display_name": "spears", "wear": [{ "per": "strike", "amount": 0.4 }], "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0 }]}] },
+                "snares": { "display_name": "snares", "wear": [{ "per": "strike", "amount": 0.2 }], "effects": [], "tiers": [{"id": "flint", "starting_durability": 100.0, "effects": [{ "stat": "attack", "equipped": 20.0, "max_body_mass": 1.0 }]}] }
             },
             "kits": [
                 { "id": "big_game", "display_name": "A", "jobs": ["hunt", "forage"], "uses": ["spears"] },
