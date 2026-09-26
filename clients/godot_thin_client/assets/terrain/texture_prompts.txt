@@ -74,7 +74,7 @@
 
 22_glacier: Seamless tileable glacier ice texture, top-down view, blue-white ice with a network of fine crevasses that run continuously off all four edges, no single large crack, evenly distributed detail, uniform brightness, no vignette, even flat overhead lighting, painterly hand-painted game-art style, cold muted blues and whites, 512x512 game asset
 
-23_seasonal_snowfield: Seamless tileable seasonal snowfield texture, top-down view, patchy melting snow over brown earth and dead grass, snow patches evenly distributed across the whole image, uniform colour and brightness everywhere, no gradient, no vignette, no colour cast, even flat overhead lighting, painterly hand-painted game-art style, cool white and muted brown, 512x512 game asset
+23_seasonal_snowfield: Seamless tileable seasonal snowfield texture, top-down view, mostly snow-covered ground with about one quarter showing through as small soft patches of brown earth and dead grass, large smooth snow areas, soft low-contrast edges between snow and earth, patches evenly distributed across the whole image, uniform brightness, no gradient, no vignette, even flat overhead lighting, painterly hand-painted game-art style, not photorealistic, cool white with muted brown, 512x512 game asset
 
 # Highland (24-28)
 24_rolling_hills: Seamless tileable grassy meadow ground texture, top-down view, short pastoral grass with small clover and tufts, flat ground with no hills, no slopes and no shading, even flat overhead lighting, no vignette, no darker edges, uniform tone across the whole image, painterly hand-painted game-art style, muted soft greens, 512x512 game asset
