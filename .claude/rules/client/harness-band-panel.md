@@ -171,8 +171,11 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 192 frames / 1440 `PASS` / 556 `assert OK`, exit 0 — RE-MEASURED, and this line is
-the harness's ONLY tally.**
+**A clean run is 193 frames / 1456 `PASS` / 557 `assert OK`, exit 0 — RE-MEASURED, and this line is
+the harness's ONLY tally.** Measured on the work-party branch rebased onto `main` at `192 / 1440 /
+556`; the difference is exactly the two work-party deltas below (`+2 / +14 / +6` and `−1 / +2 / −5`),
+which is the check that no assertion went missing in the rebase rather than an arithmetic that
+produced the figure.
 
 **THE POINTER-CUSTODY GUARD MOVED IT 1438 → 1440 `PASS`**, frames and `assert OK` unchanged: the
 pushed-event liveness claim and the *nothing foreign reached the viewport* claim, asked once at

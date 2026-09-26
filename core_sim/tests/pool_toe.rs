@@ -2212,6 +2212,7 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                     .get_mut::<LaborAllocation>(band)
                     .expect("the fixture band holds an allocation");
                 allocation.assignments.push(core_sim::LaborAssignment {
+                    party: None,
                     target: role,
                     workers: keepers,
                     kit: None,
