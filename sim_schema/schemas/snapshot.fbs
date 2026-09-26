@@ -6740,7 +6740,11 @@ table TransferCrossingState {
   //   4 = shipment_in       a trade shipment landing          route  in      the sender
   //   5 = party_home        own party's drop-off / fold-back  route  in      none
   //   6 = party_provisions  own party's launch larder         route  out     none
-  // 1, 2, 5 and 6 are not trade: the band's own split and the band's own people.
+  //   7 = shipment_returned a shipment's UNDELIVERED cargo    route  in      the destination
+  //                         coming home (turned back, or cancelled in camp) - it answers the
+  //                         launch's shipment_out: same counterparty, same partyId
+  // 1, 2, 5 and 6 are not trade: the band's own split and the band's own people. 5 is the party's
+  // own PACK only; a trade party's cargo coming home is 7, never 5.
   // *** A POOLED ROW NEVER NAMES A COUNTERPARTY *** - an invariant, not an omission: pooling pays a
   // band out of one per-capita pot every surplus member put into, so there is no "who" to name.
   cause:ubyte;

@@ -1586,7 +1586,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //   direction  0 in, 1 out
     //   link       0 local, 1 route
     //   cause      0 pooled, 1 dowry_out, 2 dowry_in, 3 shipment_out, 4 shipment_in, 5 party_home,
-    //              6 party_provisions
+    //              6 party_provisions, 7 shipment_returned (undelivered cargo coming home, naming
+    //              the destination its shipment_out named)
     // ⛔ A POOLED ROW NEVER NAMES A COUNTERPARTY (`counterparty_band_id == 0`) — the invariant, not a
     // gap. `party_id` is the carrying party's `band_id` (0 = none), the key one shipment groups by.
     // Always inserted (empty array when absent) so the band dict has a stable shape.

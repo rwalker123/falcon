@@ -791,8 +791,9 @@ impl TransferDirection {
 /// | `DowryOut` / `DowryIn` | local | `systems::fission` — the parent's share handed to a splinter |
 /// | `ShipmentOut` | route | `send_trade_expedition` — the **cargo** only |
 /// | `ShipmentIn` | route | `advance_expeditions` — a shipment landing |
-/// | `PartyHome` | route | a hunting party's drop-off, the `Returning` fold-back, a cancel in camp |
+/// | `PartyHome` | route | a party's **own pack** coming home — a hunting party's drop-off, the `Returning` fold-back, a cancel in camp |
 /// | `PartyProvisions` | route | a party's **launch larder** — a scout's, and a shipment party's |
+/// | `ShipmentReturned` | route | a trade party's **undelivered cargo** coming home — the `Returning` fold-back, a cancel in camp |
 ///
 /// **`PartyHome`, `PartyProvisions` and the dowry are not trade**: they are the band's own people
 /// and the band's own split. The ledger still books them (they cross the larder through neither
@@ -812,9 +813,15 @@ pub enum TransferCause {
     /// A trade shipment's cargo, landing in the destination's store.
     ShipmentIn,
     /// A band's own party handing its take or its unspent pack back — a drop-off or a fold-back.
+    /// **The pack only**: a trade party's undelivered cargo is [`Self::ShipmentReturned`].
     PartyHome,
     /// The walking larder a party is outfitted with at launch — its own rations, not a shipment.
     PartyProvisions,
+    /// **A shipment's cargo coming back undelivered** — the destination could not be resolved, or
+    /// the party was cancelled in camp. It answers the launch's [`Self::ShipmentOut`]: the same
+    /// counterparty (the destination it was bound for) and the same party, so a reader can net the
+    /// two. Never [`Self::PartyHome`], which is the band's own pack and not a shipment at all.
+    ShipmentReturned,
 }
 
 impl TransferCause {
@@ -828,7 +835,8 @@ impl TransferCause {
             TransferCause::ShipmentOut
             | TransferCause::ShipmentIn
             | TransferCause::PartyHome
-            | TransferCause::PartyProvisions => TransferLink::Route,
+            | TransferCause::PartyProvisions
+            | TransferCause::ShipmentReturned => TransferLink::Route,
         }
     }
 
@@ -843,6 +851,7 @@ impl TransferCause {
             TransferCause::ShipmentIn => 4,
             TransferCause::PartyHome => 5,
             TransferCause::PartyProvisions => 6,
+            TransferCause::ShipmentReturned => 7,
         }
     }
 }
@@ -888,7 +897,8 @@ pub struct TransferCrossing {
     pub link: TransferLink,
     pub cause: TransferCause,
     /// **The other band, where there is one.** `Some` on a shipment (the destination on
-    /// `ShipmentOut`, the sender on `ShipmentIn`) and on a dowry (the other half of the split).
+    /// `ShipmentOut` and `ShipmentReturned`, the sender on `ShipmentIn`) and on a dowry (the other
+    /// half of the split).
     ///
     /// ⛔ **NEVER on [`TransferCause::Pooled`] — an invariant, not an omission.** A pooling pass
     /// moves a commodity toward one per-capita balance across the whole component, so what a band
@@ -1655,14 +1665,21 @@ pub enum ExpeditionMission {
     /// **It is one-way.** The party carries goods out, deposits them, and walks home empty; a priced
     /// return flow is a later slice, not an omission here.
     ///
-    /// **There is no faction on it, and no same-faction branch anywhere it is read.** Faction is a
-    /// property of the endpoint (`.claude/rules/core_sim/connections.md`), so a shipment to another
-    /// people works by construction rather than by a clause.
+    /// **There is no same-faction branch anywhere it is read.** Faction is a property of the
+    /// endpoint (`.claude/rules/core_sim/connections.md`), so a shipment to another people works by
+    /// construction rather than by a clause. The destination's faction rides here only as half of
+    /// the shipment's ledger identity — see [`Self::consignee`].
     Trade {
         /// **The destination band's durable id** — the key, never rendered. A [`BandId`] rather than
         /// an `Entity` for the reason every other durable handle in this file is one: the band
         /// outlives any entity index, and the party must still name it after a rollback.
         destination_band: BandId,
+        /// **The destination's faction, fixed at launch** — the other half of the
+        /// [`TransferCounterparty`] the launch's `ShipmentOut` names. Carried rather than re-read
+        /// because the cargo can come home *because* the destination is gone
+        /// ([`TransferCause::ShipmentReturned`]), and a dead band has no component left to read it
+        /// off. **Never branched on.**
+        destination_faction: FactionId,
         /// **The destination's display name, resolved ONCE at launch — and EMPTY today, because
         /// bands have no names in this game.**
         ///
@@ -1710,15 +1727,16 @@ impl ExpeditionMission {
     /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
     /// `Hunt { fauna_id, target_species, floor }` from `target_herd` + `target_species` + `floor`;
     /// `"deny"` reconstructs `Deny { fauna_id, target_species }` from the two strings alone — it
-    /// carries no number; `"trade"` reconstructs `Trade { destination_band, destination_name }` from
-    /// the destination pair, which shares nothing with the herd pair (a shipment names a *people*);
-    /// anything else is `Scout`.
+    /// carries no number; `"trade"` reconstructs `Trade { destination_band, destination_faction,
+    /// destination_name }` from the destination triple, which shares nothing with the herd pair (a
+    /// shipment names a *people*); anything else is `Scout`.
     pub fn from_wire(
         kind: &str,
         target_herd: &str,
         target_species: &str,
         floor: f32,
         destination_band: u64,
+        destination_faction: u32,
         destination_name: &str,
     ) -> Self {
         match kind {
@@ -1733,6 +1751,7 @@ impl ExpeditionMission {
             },
             "trade" => ExpeditionMission::Trade {
                 destination_band: BandId(destination_band),
+                destination_faction: FactionId(destination_faction),
                 destination_name: destination_name.to_string(),
             },
             _ => ExpeditionMission::Scout,
@@ -1747,6 +1766,23 @@ impl ExpeditionMission {
             ExpeditionMission::Trade {
                 destination_band, ..
             } => Some(*destination_band),
+            _ => None,
+        }
+    }
+
+    /// **Who a shipment's cargo is addressed to** — the [`TransferCounterparty`] its launch books
+    /// `ShipmentOut` against and an undelivered homecoming books `ShipmentReturned` against, read
+    /// from this one place so the two rows cannot name different bands. `None` for every other verb.
+    pub fn consignee(&self) -> Option<TransferCounterparty> {
+        match self {
+            ExpeditionMission::Trade {
+                destination_band,
+                destination_faction,
+                ..
+            } => Some(TransferCounterparty {
+                band: *destination_band,
+                faction: *destination_faction,
+            }),
             _ => None,
         }
     }
@@ -1782,6 +1818,7 @@ impl ExpeditionMission {
             ExpeditionMission::Trade {
                 destination_band,
                 destination_name,
+                ..
             } => {
                 if destination_name.is_empty() {
                     format!("band {}", destination_band.0)

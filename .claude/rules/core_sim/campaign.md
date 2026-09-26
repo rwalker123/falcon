@@ -792,12 +792,15 @@ transferSent` ledger identity.
 > | `DowryOut` / `DowryIn` | local | the other half of the split | `systems::fission` (`fission.md`) |
 > | `ShipmentOut` | route | the destination | the trade launch — **the cargo only** (`expeditions.md`) |
 > | `ShipmentIn` | route | the sender (the party's home band) | a shipment landing |
-> | `PartyHome` | route | none — names the party | a hunt's drop-off, the `Returning` fold-back, a cancel in camp |
+> | `PartyHome` | route | none — names the party | a party's **own pack**: a hunt's drop-off, the `Returning` fold-back, a cancel in camp |
 > | `PartyProvisions` | route | none — names the party | a party's launch larder (a scout's, a shipment party's) |
+> | `ShipmentReturned` | route | the destination — names the party | a trade party's **undelivered cargo**: the `Returning` fold-back, a cancel in camp |
 >
-> **Eight writer sites, seven causes.** The cancel-in-camp fold-back (`cancel_party_standing_in_camp`
-> in `bin/server.rs`) is the eighth site and books the same `PartyHome` as the `Returning` arm,
-> through the same `FoldBack::book_home`.
+> **Eight writer sites, eight causes.** The cancel-in-camp fold-back (`cancel_party_standing_in_camp`
+> in `bin/server.rs`) is the eighth site and books the same causes as the `Returning` arm, through the
+> same `FoldBack::book_home`: the pack as `PartyHome`, the cargo as `ShipmentReturned`. A returned
+> shipment names the counterparty and party its launch's `ShipmentOut` named, both read off
+> `ExpeditionMission::consignee`, so the two rows net against each other.
 >
 > **The ledger is unchanged and remains the ledger; the cause detail is ADDITIVE.** Each crossing is a
 > `TransferCrossing` row on `LaborAllocation::last_transfer_crossings` — `{commodity, rating, readings,
@@ -839,7 +842,7 @@ transferSent` ledger identity.
 > On the wire as `PopulationCohortState.transferCrossings` (`TransferCrossingState`; the direction,
 > link and cause codes are documented in `snapshot.fbs`). Food's `commodity` is the store key,
 > `"provisions"`. Serialized with the allocation and the cohort, so a save round-trips
-> (`SAVE_FORMAT_VERSION` 10).
+> (`SAVE_FORMAT_VERSION` 12).
 
 > #### A band's own pooling links, and the span its network formed at
 >

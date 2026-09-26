@@ -244,6 +244,16 @@ fn spawn_hay_shipment(
     destination_pos: bevy::math::UVec2,
     fodder: f32,
 ) -> Entity {
+    // The destination's faction, fixed at launch the way the launch command fixes it — the other
+    // half of the counterparty the shipment's rows name.
+    let destination_faction = {
+        let mut query = app.world.query::<(&BandId, &PopulationCohort)>();
+        query
+            .iter(&app.world)
+            .find(|(id, _)| **id == destination)
+            .map(|(_, cohort)| cohort.faction)
+            .expect("a shipment is launched at a live band")
+    };
     let mut cohort = app
         .world
         .get::<PopulationCohort>(home)
@@ -280,6 +290,7 @@ fn spawn_hay_shipment(
                 home_band: home,
                 mission: ExpeditionMission::Trade {
                     destination_band: destination,
+                    destination_faction,
                     destination_name: "the neighbours".to_string(),
                 },
                 phase: ExpeditionPhase::Outbound,
@@ -541,10 +552,11 @@ const LINK_ROUTE: u8 = 1;
 const DIRECTION_IN: u8 = 0;
 const CAUSE_SHIPMENT_IN: u8 = 4;
 const CAUSE_PARTY_HOME: u8 = 5;
+const CAUSE_SHIPMENT_RETURNED: u8 = 7;
 
-/// `(link, direction, cause, counterpartyBandId, partyId, amount)` for every **fodder** crossing a
-/// band published, off the encoded envelope.
-fn hay_crossings(app: &bevy::prelude::App, band: BandId) -> Vec<(u8, u8, u8, u64, u64, f32)> {
+/// `(link, direction, cause, counterpartyBandId, partyId, amount, counterpartyFaction)` for every
+/// **fodder** crossing a band published, off the encoded envelope.
+fn hay_crossings(app: &bevy::prelude::App, band: BandId) -> Vec<(u8, u8, u8, u64, u64, f32, u32)> {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
     let snapshot = app
@@ -577,6 +589,7 @@ fn hay_crossings(app: &bevy::prelude::App, band: BandId) -> Vec<(u8, u8, u8, u64
                         crossing.counterpartyBandId(),
                         crossing.partyId(),
                         crossing.amount(),
+                        crossing.counterpartyFaction(),
                     )
                 })
                 .collect()
@@ -610,7 +623,7 @@ fn a_landed_hay_shipment_is_a_shipment_in_row_naming_its_sender_and_party() {
         1,
         "one shipment of hay lands as one row: {rows:?}"
     );
-    let (link, direction, cause, counterparty, carried_by, amount) = rows[0];
+    let (link, direction, cause, counterparty, carried_by, amount, _) = rows[0];
     assert_eq!(
         (link, direction, cause, counterparty, carried_by),
         (
@@ -628,10 +641,16 @@ fn a_landed_hay_shipment_is_a_shipment_in_row_naming_its_sender_and_party() {
     );
 }
 
-/// **An undelivered shipment's hay coming home is `PartyHome`, not trade** — a route arrival booked
-/// against the band's own party, naming no counterparty, and summing to the route arm it credits.
+/// ⛔ **An undelivered shipment's hay coming home is `ShipmentReturned`, never `PartyHome`** — a
+/// route arrival naming the destination it never reached and the party that carried it, exactly as
+/// the launch's `ShipmentOut` named them, and summing to the route arm it credits. `PartyHome` is the
+/// party's own pack, and a pack never holds hay, so there is no `PartyHome` hay row at all.
+///
+/// This is the `Returning` fold-back — the destination is erased mid-walk — which is precisely the
+/// case a counterparty read off the live destination could not name, so it is the one that proves
+/// the faction rides the mission rather than being re-resolved.
 #[test]
-fn undelivered_hay_coming_home_is_a_party_home_row_not_a_shipment() {
+fn undelivered_hay_coming_home_is_a_shipment_returned_row_naming_the_destination() {
     let mut app = world();
     let (sender, host) = a_sender_and_a_foreign_destination(&mut app);
     let (sender_id, host_id) = (band_id(&app, sender), band_id(&app, host));
@@ -661,7 +680,14 @@ fn undelivered_hay_coming_home_is_a_party_home_row_not_a_shipment() {
             (rows_in - arm).abs() < EPSILON,
             "every turn, the route-in rows are the route-in arm: {rows_in} vs {arm} ({rows:?})"
         );
-        homecoming.extend(rows.into_iter().filter(|row| row.2 == CAUSE_PARTY_HOME));
+        assert!(
+            rows.iter().all(|row| row.2 != CAUSE_PARTY_HOME),
+            "undelivered cargo is never the band's own haul: {rows:?}"
+        );
+        homecoming.extend(
+            rows.into_iter()
+                .filter(|row| row.2 == CAUSE_SHIPMENT_RETURNED),
+        );
     }
     assert!(
         app.world.get::<Expedition>(party).is_none(),
@@ -672,11 +698,24 @@ fn undelivered_hay_coming_home_is_a_party_home_row_not_a_shipment() {
         1,
         "the homecoming is one row: {homecoming:?}"
     );
-    let (_, _, _, counterparty, carried_by, amount) = homecoming[0];
+    let (link, direction, _, counterparty, carried_by, amount, counterparty_faction) =
+        homecoming[0];
     assert_eq!(
-        (counterparty, carried_by),
-        (0, party_id.0),
-        "the band's own party brought it home — no counterparty, the party named"
+        (
+            link,
+            direction,
+            counterparty,
+            counterparty_faction,
+            carried_by
+        ),
+        (
+            LINK_ROUTE,
+            DIRECTION_IN,
+            host_id.0,
+            FOREIGN_FACTION.0,
+            party_id.0
+        ),
+        "a route arrival naming the destination it never reached and the party that carried it"
     );
     assert!(
         (amount - CARGO_FODDER).abs() < EPSILON,

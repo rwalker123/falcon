@@ -39,8 +39,8 @@ use core_sim::{
     LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialDraw,
     MaterialsConfigHandle, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SourcePriority,
     SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection, TransferCause,
-    TransferCounterparty, TransferCrossing, TransferDirection, UpkeepFundMode,
-    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    TransferCrossing, TransferDirection, UpkeepFundMode, WellbeingConfigHandle,
+    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, denial_forecast, expedition_returned_event,
@@ -6622,8 +6622,12 @@ fn handle_send_trade_expedition(
     let band_label = outfit.band.label.clone();
     let mission = ExpeditionMission::Trade {
         destination_band: shipment.destination_band,
+        destination_faction: shipment.destination_faction,
         destination_name: shipment.destination_name,
     };
+    // Read BEFORE the mission moves into the launch: the counterparty every cargo row names, from
+    // the one place an undelivered homecoming will read it too.
+    let destination = mission.consignee();
     // **The launch line names the destination through `destination_display`**, which falls back to
     // the band's id — the sim has to be able to write this sentence on its own, and today there is
     // no name to write. The `destination=<id>` detail token beside it is the key a client uses if it
@@ -6680,10 +6684,6 @@ fn handle_send_trade_expedition(
     //
     // Booked after the launch so every row names the party that carries it.
     let party_band = app.world.get::<BandId>(expedition_entity).copied();
-    let destination = Some(TransferCounterparty {
-        band: shipment.destination_band,
-        faction: shipment.destination_faction,
-    });
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(home_entity) {
         for (commodity, amount) in [(FOOD, carried_food), (FODDER, carried_fodder)] {
             allocation.book_crossing(
@@ -6959,12 +6959,14 @@ fn cancel_party_standing_in_camp(
     };
     // The pack and any undelivered cargo landing back in the band's larder is a transfer, exactly as
     // the `Returning` arm's fold-back is — a cancel differs only in *when* it fires, not in what
-    // carried the food, so it takes the same `TransferLink::Route` arm and the same
-    // [`TransferCause::PartyHome`] cause, through the same routine. The hay rides it too, so a
-    // cancelled shipment does not leave the sent-at-launch debit standing with nothing against it.
+    // carried the food, so it takes the same `TransferLink::Route` arm and the same causes, through
+    // the same routine: the pack is [`TransferCause::PartyHome`], the cargo
+    // [`TransferCause::ShipmentReturned`] naming the destination its launch's `ShipmentOut` named.
+    // The hay rides it too, so a cancelled shipment does not leave the sent-at-launch debit standing
+    // with nothing against it.
     let party_band = app.world.get::<BandId>(entity).copied();
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(expedition.home_band) {
-        fold.book_home(&mut allocation, party_band);
+        fold.book_home(&mut allocation, party_band, expedition.mission.consignee());
     }
     Some(CancelledInCamp {
         position,
@@ -12596,6 +12598,7 @@ mod tests {
         ForagePatch, SourcePriority, CULTIVATION_DISCOVERY_ID, FABRICATED_BUILD_COST,
         HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
     };
+    use core_sim::{TransferCounterparty, TransferLink};
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
     /// more; progress must be earned with the Cultivate improvement in flight).
@@ -21491,6 +21494,178 @@ mod tests {
                 "the cargo names the destination and the larder names nobody: {crossing:?}"
             );
         }
+    }
+
+    /// ⛔ **A SHIPMENT CANCELLED IN CAMP COMES HOME AS `ShipmentReturned`, NOT AS THE BAND'S OWN
+    /// HAUL** (issue #731).
+    ///
+    /// The fold-back booked everything a trade party brought back as `PartyHome`, cargo included, so
+    /// a shipment launched and cancelled in one window published *"Shipment to X"* out and *"party
+    /// home"* in — the launch's row left standing with nothing answering it. The cargo now comes home
+    /// under its own cause, naming the destination and the party its `ShipmentOut` named, for food
+    /// and hay alike; the party's walking larder is the only `PartyHome` row. The destination stands
+    /// a few tiles off so that larder is non-zero — the liveness half of "the pack is still
+    /// `PartyHome`". The ledger's route arms still carry both, and the food identity closes: the
+    /// launch and the cancel move the larder by exactly the route arms' difference, which is zero.
+    #[test]
+    fn a_shipment_cancelled_in_camp_comes_home_as_shipment_returned() {
+        let mut app = build_world_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        stock_trade_band_hay(&mut app, sender, TRADE_FIXTURE_HAYLOFT);
+        let destination_entity = {
+            let mut query = app.world.query::<(Entity, &core_sim::BandId)>();
+            query
+                .iter(&app.world)
+                .find(|(_, id)| **id == destination)
+                .map(|(entity, _)| entity)
+                .expect("the destination band exists")
+        };
+        let destination_faction = app
+            .world
+            .get::<PopulationCohort>(destination_entity)
+            .expect("the destination")
+            .faction;
+        let far_tile = {
+            let from = {
+                let tile = app
+                    .world
+                    .get::<PopulationCohort>(destination_entity)
+                    .expect("the destination")
+                    .current_tile;
+                app.world.get::<Tile>(tile).expect("a real tile").position
+            };
+            let registry = app.world.resource::<TileRegistry>();
+            let x = (from.x + TRADE_WALK_TILES) % registry.width.max(1);
+            registry.index(x, from.y).expect("the tile is on the map")
+        };
+        {
+            let mut cohort = app
+                .world
+                .get_mut::<PopulationCohort>(destination_entity)
+                .expect("the destination");
+            cohort.current_tile = far_tile;
+            cohort.home = far_tile;
+        }
+        let larder_before = band_food(&app, sender);
+        let hay_before = band_fodder(&app, sender);
+
+        let mut manifest = food_cargo(TRADE_CARGO_FOOD);
+        manifest.extend(fodder_cargo(TRADE_CARGO_FODDER));
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            manifest,
+            None,
+        );
+        let party = launched_party(&mut app).expect("the shipment left");
+        let party_id = *app
+            .world
+            .get::<core_sim::BandId>(party)
+            .expect("a party id");
+        let walking_larder = app
+            .world
+            .get::<PopulationCohort>(party)
+            .expect("the party")
+            .stores
+            .get(FOOD)
+            .to_f32();
+        assert!(
+            walking_larder > TRADE_EPSILON,
+            "liveness: a walk of {TRADE_WALK_TILES} tiles must draw a larder, got {walking_larder}"
+        );
+
+        handle_recall_expedition(&mut app, faction, party_id.0);
+        assert!(
+            !app.world.entities().contains(party),
+            "the party was standing in camp, so the recall cancelled it on the spot"
+        );
+
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(sender)
+            .expect("the sending band has an allocation");
+        let by = |commodity: &str, cause: TransferCause| -> Vec<&TransferCrossing> {
+            allocation
+                .last_transfer_crossings
+                .iter()
+                .filter(|crossing| crossing.commodity == commodity && crossing.cause == cause)
+                .collect()
+        };
+        let consignee = Some(TransferCounterparty {
+            band: destination,
+            faction: destination_faction,
+        });
+        for (commodity, cargo) in [(FOOD, TRADE_CARGO_FOOD), (FODDER, TRADE_CARGO_FODDER)] {
+            let out = by(commodity, TransferCause::ShipmentOut);
+            let returned = by(commodity, TransferCause::ShipmentReturned);
+            assert_eq!(
+                (out.len(), returned.len()),
+                (1, 1),
+                "one {commodity} shipment out, one back: {:?}",
+                allocation.last_transfer_crossings
+            );
+            let (out, returned) = (out[0], returned[0]);
+            assert!(
+                (out.amount - cargo).abs() < TRADE_EPSILON
+                    && (returned.amount - out.amount).abs() < TRADE_EPSILON,
+                "the whole {commodity} cargo came back: out {} vs back {} vs {cargo}",
+                out.amount,
+                returned.amount
+            );
+            assert_eq!(
+                (returned.counterparty, returned.party, returned.link),
+                (out.counterparty, out.party, TransferLink::Route),
+                "the return names the launch's destination and party, on the route arm"
+            );
+            assert_eq!(
+                (returned.counterparty, returned.party),
+                (consignee, Some(party_id)),
+                "and those are the real destination and the real party"
+            );
+            assert_eq!(returned.direction, TransferDirection::In);
+        }
+        let party_home = by(FOOD, TransferCause::PartyHome);
+        assert_eq!(
+            party_home.len(),
+            1,
+            "the walking larder is the one PartyHome row: {:?}",
+            allocation.last_transfer_crossings
+        );
+        assert!(
+            (party_home[0].amount - walking_larder).abs() < TRADE_EPSILON,
+            "PartyHome is the pack alone, never the cargo: {} vs larder {walking_larder}",
+            party_home[0].amount
+        );
+        assert!(
+            by(FODDER, TransferCause::PartyHome).is_empty(),
+            "no hay comes home as the band's own haul: {:?}",
+            allocation.last_transfer_crossings
+        );
+        assert_eq!(
+            party_home[0].counterparty, None,
+            "the band's own pack names nobody"
+        );
+
+        // The food identity over the launch and the cancel: nothing was produced or eaten, so the
+        // larder moved by exactly received − sent on the ledger — and both are zero net.
+        let ledger = &allocation.last_food_transfers;
+        let larder_delta = band_food(&app, sender) - larder_before;
+        assert!(
+            (larder_delta - (ledger.received() - ledger.sent())).abs() < TRADE_EPSILON,
+            "the food identity holds: larder moved {larder_delta}, ledger says {}",
+            ledger.received() - ledger.sent()
+        );
+        assert!(
+            larder_delta.abs() < TRADE_EPSILON
+                && (band_fodder(&app, sender) - hay_before).abs() < TRADE_EPSILON,
+            "a cancelled shipment leaves the band's stores exactly as they were"
+        );
     }
 
     /// **A band cannot ship hay it does not have**, and the hay account answers for itself: a full

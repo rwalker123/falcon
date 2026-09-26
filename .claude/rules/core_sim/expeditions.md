@@ -1370,9 +1370,10 @@ with nothing to notice.
   state — the goods have already left the sender's store — so a rollback that zeroed it would destroy
   them.
 - **An undeliverable shipment comes home in it.** `fold_party_into_band` settles the cargo beside the
-  party's own pack and returns a `FoldBack { food, fodder, materials, moved_materials }`, so the feed
-  line and the ledger cannot disagree about one arrival — `moved_materials` is every batch that came
-  home at the reading it carried, what `FoldBack::book_home` books per rating.
+  party's own pack and returns a `FoldBack` that keeps the two stores apart — `pack_food` /
+  `pack_materials` from the party's `stores`, `cargo_food` / `cargo_fodder` / `cargo_materials` from
+  `Expedition::cargo` — so the feed line and the ledger cannot disagree about one arrival, and
+  `FoldBack::book_home` can book each store under its own cause, per rating for the batches.
 
 ### The launch books TWO causes: the cargo is the shipment, the walking larder is the party's own
 
@@ -1401,7 +1402,17 @@ The other route writers, by cause:
 | a scout's launch larder (`handle_send_expedition`) | `PartyProvisions` | none / the scout party |
 | a shipment landing (`advance_expeditions`, `Outbound`) | `ShipmentIn` — food, hay, and each drained batch at the rating it moved at | the sender (the party's `home_band`) / the party |
 | a hunt's drop-off (`Delivering`) | `PartyHome` — food and each batch | none / the party |
-| the `Returning` fold-back, and a cancel in camp | `PartyHome`, through the one `FoldBack::book_home` | none / the party |
+| the `Returning` fold-back, and a cancel in camp — **the pack** | `PartyHome`, through the one `FoldBack::book_home` | none / the party |
+| the `Returning` fold-back, and a cancel in camp — **the undelivered cargo** | `ShipmentReturned` — food, hay, and each batch at its rating, through the same `FoldBack::book_home` | the destination (`ExpeditionMission::consignee`, the counterparty its `ShipmentOut` named) / the party |
+
+**The destination's faction rides `ExpeditionMission::Trade::destination_faction`**, fixed at launch,
+because the cargo comes home *because* the destination is gone often enough that re-reading it off
+the live band would leave the returned rows unable to name it. It is never branched on. Pinned by
+`server::tests::a_shipment_cancelled_in_camp_comes_home_as_shipment_returned` (food and hay, a cancel
+in camp),
+`transfer_fodder_ledger::undelivered_hay_coming_home_is_a_shipment_returned_row_naming_the_destination`
+and `trade_expedition::a_destination_that_vanishes_sends_the_party_home_with_its_cargo` (hay and
+material batches, the `Returning` fold-back after the destination died).
 
 **`PartyHome` and `PartyProvisions` are not trade.** They ride the route arm because a party carried
 the goods, which keeps the ledger whole, but the other end is the band's own people. The cause is what

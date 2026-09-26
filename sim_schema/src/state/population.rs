@@ -1638,7 +1638,8 @@ pub struct TransferCrossingState {
     /// `0` = local, `1` = route — always the cause's own link.
     pub link: u8,
     /// `0` pooled, `1` dowry_out, `2` dowry_in, `3` shipment_out, `4` shipment_in, `5` party_home,
-    /// `6` party_provisions. ⛔ A pooled row never names a counterparty.
+    /// `6` party_provisions, `7` shipment_returned (a shipment's undelivered cargo coming home,
+    /// naming the destination its `shipment_out` named). ⛔ A pooled row never names a counterparty.
     pub cause: u8,
     /// The other band's `band_id`, `0` = none.
     pub counterparty_band_id: u64,

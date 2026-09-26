@@ -417,6 +417,16 @@ fn spawn_shipment(
     destination_pos: bevy::math::UVec2,
     food: f32,
 ) -> Entity {
+    // The destination's faction, fixed at launch the way the launch command fixes it — the other
+    // half of the counterparty the shipment's rows name.
+    let destination_faction = {
+        let mut query = app.world.query::<(&BandId, &PopulationCohort)>();
+        query
+            .iter(&app.world)
+            .find(|(id, _)| **id == destination)
+            .map(|(_, cohort)| cohort.faction)
+            .expect("a shipment is launched at a live band")
+    };
     let mut cohort = app
         .world
         .get::<PopulationCohort>(home)
@@ -443,6 +453,7 @@ fn spawn_shipment(
                 home_band: home,
                 mission: ExpeditionMission::Trade {
                     destination_band: destination,
+                    destination_faction,
                     destination_name: "the neighbours".to_string(),
                 },
                 phase: ExpeditionPhase::Outbound,
