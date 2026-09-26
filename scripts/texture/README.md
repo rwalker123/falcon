@@ -98,4 +98,11 @@ which are fully opaque.
   streak visibly rotates at the seams. Swirls, not arrows.
 - Base terrain is RGB 512×512 in `textures/base/`, named `%02d_%s.png` by terrain id. The
   filename *is* the registration — `TerrainTextureManager` derives it from the id and name in
-  `terrain_config.json` and loads via `Image.load_from_file`, bypassing Godot's import cache.
+  `terrain_config.json`.
+- **New art does not appear until the project is RE-IMPORTED.** `TerrainTextureManager._load_asset_image`
+  tries `ResourceLoader` first (so exported builds, where the PNG is a `.ctex` in the `.pck`, work), and
+  in the editor tree that serves the IMPORTED copy in `.godot/imported/` — which a client launch does
+  not refresh. `Image.load_from_file` is only the fallback for a path the loader does not know. After
+  replacing a PNG run `godot --headless --path clients/godot_thin_client --import`, then restart the
+  client. Symptom of skipping it: the build stamp is current and the map still draws the old art. A
+  replaced texture's `.godot/imported/<name>.png-*.md5` carries a `source_md5` that must equal the PNG's.

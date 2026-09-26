@@ -44,6 +44,14 @@ strongly linear structure (dune ripples, crack networks) can leave faint doubled
 regeneration with a true tiling tool is the better fix there too. First pass: 23 of 38 textures were over
 the bar (worst `23_seasonal_snowfield` 5.48, `21_periglacial_steppe` 3.18); all measure 0.73–1.12 after.
 
+**A replaced PNG is invisible until the project is re-imported.** `_load_asset_image` asks
+`ResourceLoader` first — so an exported build, where the PNG is a `.ctex` inside the `.pck`, still
+loads — and in the editor tree that serves `.godot/imported/`, which launching the client does not
+refresh. `Image.load_from_file` is only the fallback for a path the loader does not know. So run
+`godot --headless --path clients/godot_thin_client --import` after dropping in art: without it the
+build stamp is current and the map draws the OLD texture (it did, live, for the regenerated glacier).
+The check is the import's `.md5` sidecar, whose `source_md5` must equal the PNG's.
+
 **Regenerated art arrives too bright, and is graded, not re-rolled.** The Leonardo generations that
 replaced `12_mixed_woodland`, `22_glacier`, `23_seasonal_snowfield` and `24_rolling_hills` came back
 1024² JPEGs; each was resized to 512² and compared against the tile it replaced for mean RGB. The
