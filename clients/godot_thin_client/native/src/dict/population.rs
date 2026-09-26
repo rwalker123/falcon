@@ -930,37 +930,34 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `map_or`), so no fallback is invented here; `travel_tiles == 0` is NOT that test, it
             // is the identity case of a source inside `band_work_range`.
             //
-            // All nine are always inserted so the entry shape is stable, the rule every key above
+            // All ten are always inserted so the entry shape is stable, the rule every key above
             // follows. The ones whose zero carries a second meaning are called out where they are
             // READ (`SourceForecast.party_readout`), which is the one place that decides what a
             // party's absence renders as.
             let _ = entry.insert("party_x", i64::from(assignment.partyX()));
             let _ = entry.insert("party_y", i64::from(assignment.partyY()));
-            // Every hand the posting holds (`== workers`), and how many of them are CARRYING rather
-            // than working — distance is paid in workers out of the party itself, so
-            // `party_workers - porters` is the crew that actually worked the source and is what
-            // every yield figure on this row is priced at.
+            // Every hand the posting holds (`== workers`), and how many of them are ON THE ROAD
+            // this turn — out with a pack or walking back to rejoin. **LIVE, and it moves turn to
+            // turn** (`0, 1, 1, 0, 2…`): distance is paid in walking, one hunter at a time as the
+            // take fills a pack, so the share away falls out of carry, take rate and distance.
             let _ = entry.insert("party_workers", i64::from(assignment.partyWorkers()));
-            let _ = entry.insert("porters", i64::from(assignment.porters()));
-            // The modelled distance, MEASURED TO THE APRON (`hex_distance − band_work_range`), and
-            // the walk that distance took in turns. **`transit_turns` is the walk's fixed LENGTH
-            // and never a countdown** — it states how far out the posting is, and it does not move
-            // for the life of the posting.
-            let _ = entry.insert("travel_tiles", i64::from(assignment.travelTiles()));
-            let _ = entry.insert("transit_turns", i64::from(assignment.transitTurns()));
-            // …and WHAT IS LEFT OF THAT WALK, which is the one a client renders. It is
-            // `WorkParty::turns_to_first_arrival` read straight off the party, never re-derived
-            // from the distance: the walk happens once, so a herd drifting further out must not
-            // restart a walk that is already over.
-            //
-            // ⛔ **`0` MEANS THE LINE IS OPEN, AND IT STAYS `0`** — goods arrive every turn from
-            // then on, so that zero is the instruction to DROP the walking-out line entirely rather
-            // than to draw a countdown reading zero. A local row publishes `0` too, which is the
-            // same instruction for the same reason: there is nothing in transit.
             let _ = entry.insert(
-                "party_transit_remaining",
-                i64::from(assignment.partyTransitRemaining()),
+                "hunters_on_the_road",
+                i64::from(assignment.huntersOnTheRoad()),
             );
+            // The one-way walk MEASURED FROM THE APRON (`hex_distance − band_work_range`, shortened
+            // by any road). A fact about where the posting is; it does not count down.
+            let _ = entry.insert("walk_tiles", i64::from(assignment.walkTiles()));
+            // ⛔ **`walk_out_remaining > 0` ONLY WHILE THE WHOLE PARTY IS STILL WALKING OUT**, and
+            // `0` for the rest of the posting's life — the walk out happens once and is never
+            // re-raised, so that zero is the instruction to DROP the walking-out line entirely.
+            let _ = entry.insert(
+                "walk_out_remaining",
+                i64::from(assignment.walkOutRemaining()),
+            );
+            // Turns until the soonest pack on the road lands home. ⛔ **`0` MEANS NOBODY IS
+            // CARRYING A LOAD HOME** — never "lands this turn" — so it too drops its line.
+            let _ = entry.insert("next_load_home_in", i64::from(assignment.nextLoadHomeIn()));
             // What the party ate out of its own take this turn — **not a second meal**: the band's
             // population consumption already feeds these people wherever they stand, so this
             // records that the food was eaten AT THE SOURCE and never had to be carried.

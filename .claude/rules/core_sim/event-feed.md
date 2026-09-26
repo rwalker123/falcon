@@ -253,7 +253,7 @@ with that sentence rather than mutely breaking the arithmetic.
 | `hunt_report` | `engaged= fled= killed= carried_biomass= wasted_biomass= hunters_killed= hunters_wounded= bound={engagement\|floor\|carry\|fight} species=` |
 | a shed crew | `status={trimmed\|lapsed} reason=too_few_workers kind={forage\|hunt\|scout\|warrior\|agriculture\|husbandry\|builders} [x= y=\|herd=] workers= lost= band=` |
 | a lapsed source row | `status=lapsed reason={out_of_range\|herd_gone} …source terms… band=` — `out_of_range` is the **deposit** arm's alone now; `out_of_leash` is retired with the hunt leash |
-| a recalled work party | `status=recalled reason=unsupplied {x= y=\|fauna=} travel= deficit= band=` — the posting ended because the band could not get food out to it (`.claude/rules/core_sim/work-party.md`). **Notable, not Alert**: nothing was destroyed and the pack came home |
+| a recalled work party | `status=recalled reason=unsupplied {x= y=\|fauna=} walk= deficit= band=` — the posting ended because the home larder could not cover the party's deficit (`.claude/rules/core_sim/work-party.md`). **Notable, not Alert**: nothing was destroyed and the pack came home |
 | a narrowed take | `status=pruned reason=not_here role= band= dropped=` |
 
 ## The `band=` token is what makes a loss line clickable

@@ -1345,7 +1345,8 @@ fn abandon_drops_the_row_and_its_entry_and_leaves_the_meter_to_rot() {
                 floor: FOOD_PEAK,
                 species: None,
                 take_species: TakeSelection::EVERYTHING,
-            }),
+            })
+            .is_some(),
         "the band held the source"
     );
 

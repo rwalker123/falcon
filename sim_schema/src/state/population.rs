@@ -375,8 +375,8 @@ pub struct LaborAssignmentState {
     #[serde(default)]
     pub kit_workers_holding: f32,
     /// **THE TILE THIS ROW'S WORKERS ARE STANDING ON** — the source's own position, when the source
-    /// is past the distance the band's own hands reach. See [`Self::party_workers`], which is the
-    /// field that says whether there is a party at all.
+    /// is past the band's work range. See [`Self::party_workers`], which is the field that says
+    /// whether there is a party at all.
     #[serde(default)]
     pub party_x: u32,
     /// The `y` half of [`Self::party_x`].
@@ -385,65 +385,44 @@ pub struct LaborAssignmentState {
     /// **EVERY HAND THIS POSTING HOLDS**, and the field that says a posting exists: `0` is the
     /// ordinary local row, where every party field beside it reads `0` too.
     ///
-    /// A Hunt or Forage row whose source drifts out of reach no longer lapses — it posts a **work
-    /// party** (`docs/plan_civilization_steps.md` §One work party). The party is not an entity and
-    /// not a second band: the workers never stopped being the band's, so the row that staffed it is
-    /// the row that reports it.
+    /// A Hunt or Forage row whose source is past the band's work range posts a **work party**
+    /// (`docs/plan_civilization_steps.md` §One work party) that walks its take home a pack at a
+    /// time. It is not an entity and not a second band: the row that staffed it reports it.
     #[serde(default)]
     pub party_workers: u32,
-    /// **HOW MANY OF THE PARTY ARE CARRYING RATHER THAN WORKING.** Distance is paid in workers out
-    /// of the party itself, so `party_workers − porters` is the crew that actually worked the
-    /// source and is what every yield figure on this row is priced at. At enough distance it is the
-    /// whole party and the posting produces nothing — a range cap that falls out of the clamp.
+    /// **HUNTERS ON THE ROAD, THIS TURN — LIVE.** Out with a pack or walking back without one; it
+    /// moves `0, 1, 1, 0, 2…` as packs fill and hunters rejoin, which is the honest reading.
+    /// `party_workers − hunters_on_the_road` is who is working the source (nobody while walking
+    /// out).
     #[serde(default)]
-    pub porters: u32,
-    /// **THE MODELLED DISTANCE, MEASURED TO THE APRON** — `max(0, hex_distance − band_work_range)`.
-    /// A source inside the band's work range costs no travel at all, which is what makes a local
-    /// row and a far row one model rather than two.
+    pub hunters_on_the_road: u32,
+    /// **THE ONE-WAY WALK, IN TILES** — `max(0, hex_distance − band_work_range − road_bonus)`,
+    /// measured from the apron. A road between band and source shortens it; one covering the whole
+    /// run takes it to `0`.
     #[serde(default)]
-    pub travel_tiles: u32,
-    /// **HOW LONG THE WALK OUT TOOK**, in turns. Nothing lands at home until it has elapsed; after
-    /// that the line is open and goods flow every turn — a pipeline, not a trip.
-    ///
-    /// ⛔ **It is the walk's LENGTH and it never moves** — a property of the posting, fixed when the
-    /// party set out. A countdown rendered off this field reads *"5 turns' walk out"* for the life
-    /// of the posting, including on one that has been delivering steadily for twenty turns. What is
-    /// left to walk is [`Self::party_transit_remaining`].
+    pub walk_tiles: u32,
+    /// **TURNS OF THE WALK OUT STILL TO GO** — `> 0` while the whole party has not reached the
+    /// source, `0` for the rest of the posting's life. Never re-raised.
     #[serde(default)]
-    pub transit_turns: u32,
-    /// **WHAT THE PARTY ATE OUT OF ITS OWN TAKE THIS TURN.** Not a second meal: the band's
-    /// population consumption already feeds these people wherever they stand, so this records that
-    /// the food was eaten *at the source* and never had to be carried.
+    pub walk_out_remaining: u32,
+    /// **TURNS UNTIL THE SOONEST PACK ON THE ROAD REACHES HOME.** `0` means nobody is carrying a
+    /// load home — a hunter walking back empty does not count — and is the signal to drop the line
+    /// rather than render a countdown at zero.
+    #[serde(default)]
+    pub next_load_home_in: u32,
+    /// **WHAT THE PARTY ATE OUT OF ITS OWN TAKE THIS TURN** — credited home, and not a second meal:
+    /// the band's population consumption already feeds these people wherever they stand.
     #[serde(default)]
     pub party_ate: f32,
-    /// **WHAT THE PARTY'S UPKEEP STILL WANTS AFTER ITS OWN TAKE** — the food the band has to carry
-    /// out. `0` on a posting that feeds itself; the whole of the upkeep on one whose take is not
-    /// edible, which is the case the rule produces with no per-job exemption anywhere.
+    /// **WHAT THE PARTY'S UPKEEP STILL WANTS AFTER ITS OWN TAKE** — the food the home band has to
+    /// supply. A party the band cannot supply folds back.
     #[serde(default)]
     pub party_deficit: f32,
-    /// **THE STEADY PER-TURN RATE ARRIVING AT THE HOME BAND** — the amortized number the work row
-    /// prints, so a near row and a far row are comparable figures on one board and a far posting
-    /// never reads *"0.0 · in transit"*. Amortized-over-the-cycle and steady-state coincide
-    /// deliberately: one number, not two.
+    /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the caravan stepped forward over
+    /// `yield_average_horizon_turns` from this state: the eaten share plus every pack that lands.
+    /// The number the work row prints.
     #[serde(default)]
     pub net_rate_home: f32,
-    /// **WHAT IS LEFT OF THE WALK OUT, IN TURNS** — the live countdown, and the one a client
-    /// renders.
-    ///
-    /// It opens at [`Self::transit_turns`] and is counted down once per turn by the sim. It is
-    /// published straight off the party's own state and is **never re-derived from the distance**,
-    /// so it says where the party actually is rather than where a recomputation thinks it should
-    /// be — a herd that drifts further out does not restart a walk that is already over.
-    ///
-    /// ⛔ **`0` means the line is open, and it stays `0`.** Goods arrive every turn from then on,
-    /// and that zero is the signal to **drop** the *walking out* line rather than render a
-    /// countdown reading zero. A local row (no party at all) publishes `0` for the same reason:
-    /// there is nothing in transit.
-    ///
-    /// [`Self::net_rate_home`] is the steady figure the row prints either way, so this says *when*
-    /// and never *how much*. Appended last (append-only).
-    #[serde(default)]
-    pub party_transit_remaining: u32,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and

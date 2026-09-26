@@ -1116,10 +1116,10 @@ func run(harness) -> void:
 	# an event-log line — which from the player's seat reads as *no range limit* right up until the
 	# crew vanishes. A refusal is strictly kinder than a silent lapse.
 	#
-	# ⛔ **AND IT IS A PLAIN REFUSAL, NOT THE HUNT SHEET'S OFFER.** A herd beyond reach is offered a
-	# detached party (`"…Detach a party to follow it."`); the expedition missions are
-	# `scout` / `hunt` / `deny` / `trade`, none of which works ground, so a seam has no such
-	# alternative and the forage sheet's plain *no* is the honest answer.
+	# ⛔ **AND IT IS STILL A REFUSAL, THOUGH THE FORAGE SHEET'S IS GONE.** A far herd or patch posts a
+	# work party now (`docs/plan_civilization_steps.md` §One work party) — the lapse the refusal
+	# warned about was removed for those two webs — but a working still lapses past range, so on a
+	# seam the plain *no* is still the honest answer.
 	h._hud.update_band_alerts([_band_beyond_reach()])
 	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
 	await h._settle()
@@ -1132,9 +1132,10 @@ func run(harness) -> void:
 	h._assert_hud("a forester sheet on ground beyond the band's reach states the refusal (%s)"
 			% BEYOND_REACH_SENTENCE,
 		Q.has_label_containing(far_sheet, BEYOND_REACH_SENTENCE))
-	# ⛔ **THE SENTENCE IS THE FORAGE SHEET'S OWN, ONE STRING FOR ONE NUMBER.** Both webs are judged
-	# against `band_work_range`, so a second spelling would describe one limit as two.
-	h._assert_hud("…in the very words the forage sheet refuses in",
+	# ⛔ **THE SENTENCE IS THE ONE THE FORAGE SHEET USED TO REFUSE IN, ONE STRING FOR ONE NUMBER** —
+	# both sheets are judged against `band_work_range`, so a second spelling would describe one limit
+	# as two.
+	h._assert_hud("…in the shared range-refusal sentence",
 		BEYOND_REACH_SENTENCE == HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT % [
 			WORKING_TILE_X, WORKING_TILE_Y, BEYOND_REACH_DISTANCE, BandFx.band_fixture()["work_range"]])
 	# **AND THE COMMIT IS DEAD, which is the half that stops the order.** The sentence alone would be

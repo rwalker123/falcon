@@ -393,8 +393,6 @@ func _ready() -> void:
             hud.connect("move_band_requested", Callable(self, "_on_hud_move_band"))
         if hud.has_signal("send_expedition_requested") and not hud.is_connected("send_expedition_requested", Callable(self, "_on_hud_send_expedition")):
             hud.connect("send_expedition_requested", Callable(self, "_on_hud_send_expedition"))
-        if hud.has_signal("send_hunt_expedition_requested") and not hud.is_connected("send_hunt_expedition_requested", Callable(self, "_on_hud_send_hunt_expedition")):
-            hud.connect("send_hunt_expedition_requested", Callable(self, "_on_hud_send_hunt_expedition"))
         if hud.has_signal("send_denial_raid_requested") and not hud.is_connected("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid")):
             hud.connect("send_denial_raid_requested", Callable(self, "_on_hud_send_denial_raid"))
         if hud.has_signal("send_trade_expedition_requested") and not hud.is_connected("send_trade_expedition_requested", Callable(self, "_on_hud_send_trade_expedition")):
@@ -1456,8 +1454,7 @@ static func format_move_band(payload: Dictionary) -> Dictionary:
 
 ## `send_expedition <faction_id> <band_id> <party_workers> <x> <y> [kit <id>]`
 ##
-## **THE KIT IS THE ONE OPTIONAL TAIL**, and it is `send_hunt_expedition`'s named pair rather than a
-## sixth positional: the grammar is otherwise CLOSED at five tokens, so a stray positional is an
+## **THE KIT IS THE ONE OPTIONAL TAIL**, and it is a named pair rather than a sixth positional: the grammar is otherwise CLOSED at five tokens, so a stray positional is an
 ## `UnexpectedArgument` parse error. It is omitted when the pick equals the `expedition` job's default
 ## (`_kit_token`), which is what lets the sim resolve its own default and keeps a composition that
 ## never touched the picker byte-identical to the pre-picker line.
@@ -1480,49 +1477,12 @@ static func format_send_expedition(payload: Dictionary) -> Dictionary:
         "message": "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y],
     }
 
-## `send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor]`
-## The trailing floor is optional and is a NUMBER in `0.0..=1.0` — the four stance words are rejected
-## by name at parse. The server defaults the food peak when it is omitted; the client always sends it.
-##
-## **THE GRAMMAR IS CLOSED AFTER THE FLOOR**, like `send_denial_raid`'s. A second positional (the
-## retired fill target, issue #491) is now an `UnexpectedArgument` parse error rather than an ignored
-## token, so a token appended here fails the command outright instead of degrading quietly.
-static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
-    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
-    if band_id == HudConst.NO_BAND_ID:
-        return {}
-    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
-    var party_workers := int(payload.get("party_workers", 0))
-    var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
-    if party_workers <= 0 or fauna_id == "":
-        return {}
-    var line := "send_hunt_expedition %d %d %d %s %s" % [
-        faction, band_id, party_workers, fauna_id, _format_floor(payload)]
-    # …and the kit LAST, as a named pair. It has to come after the positionals: the parser lifts it
-    # out of the tail before reading them, but a human reading the log should see the positional
-    # grammar unbroken.
-    line += _kit_token(payload)
-    # The COMMAND addresses the herd by its id; the FEED NOTE names the species. `game_deer_07` is a
-    # database key — meaningless to a player — so it must never reach the feed. Hud sends the display
-    # name alongside the key; fall back to the key only if it somehow didn't (better than an empty
-    # subject, and it is never the normal path).
-    var fauna_label := String(payload.get("fauna_label", "")).strip_edges()
-    if fauna_label == "":
-        fauna_label = fauna_id
-    # The receipt names the one order a raid carries — how deep to draw the herd.
-    var orders := "leaving %s standing" % _floor_percent_text(payload)
-    return {
-        "line": line,
-        "message": "Send hunting expedition (%d, %s) after %s." % [
-            party_workers, orders, fauna_label],
-    }
-
 ## `send_denial_raid <faction_id> <band_id> <party_workers> <fauna_id>` (`docs/plan_denial_raid.md`).
 ##
 ## **THE GRAMMAR IS CLOSED AT FOUR TOKENS AND A FIFTH IS A HARD PARSE ERROR** — which is the command
 ## layer saying what the mission says: denial carries no floor and no fill target, so there is no
 ## optional trailing token to append and none may be invented. That is also why this is a builder of
-## its own rather than a branch of `format_send_hunt_expedition`, whose two optional tails would be
+## its own rather than a branch of the retired hunting-expedition builder, whose optional tails would be
 ## rejected here.
 static func format_send_denial_raid(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
@@ -1534,7 +1494,7 @@ static func format_send_denial_raid(payload: Dictionary) -> Dictionary:
     if party_workers <= 0 or fauna_id == "":
         return {}
     # The COMMAND addresses the herd by its database key; the FEED NOTE names the species, the
-    # `format_send_hunt_expedition` rule — `game_deer_07` must never reach a player-facing line.
+    # retired hunting-expedition builder's rule — `game_deer_07` must never reach a player-facing line.
     var fauna_label := String(payload.get("fauna_label", "")).strip_edges()
     if fauna_label == "":
         fauna_label = fauna_id
@@ -1626,7 +1586,7 @@ static func format_send_trade_expedition(payload: Dictionary) -> Dictionary:
     fodder_total = cargo_wire_amount(fodder_total)
     if fodder_total > 0.0:
         line += " fodder %s" % cargo_wire_text(fodder_total)
-    # …and the kit LAST, as a named pair, the `format_send_hunt_expedition` convention: the parser
+    # …and the kit LAST, as a named pair, the `format_send_expedition` convention: the parser
     # lifts it out of the tail, but a human reading the log sees the positional grammar unbroken.
     line += _kit_token(payload)
     # The COMMAND addresses the destination by its `BandId`; the FEED NOTE names the people. A raw id
@@ -2279,11 +2239,6 @@ func _on_hud_move_band(payload: Dictionary) -> void:
 ## detached party (rejects an over-cap party with a feed message).
 func _on_hud_send_expedition(payload: Dictionary) -> void:
     _send_formatted_command(format_send_expedition(payload))
-
-## Hunting expedition (docs/plan_exploration_and_sites.md §2b): outfit a party off a resident band
-## and send it to follow a herd. The 4th arg is a herd id string, not tile coords.
-func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
-    _send_formatted_command(format_send_hunt_expedition(payload))
 
 ## Denial raid (`docs/plan_denial_raid.md`): outfit a party off a resident band and send it to break a
 ## herd. Its own handler because its own command — see `format_send_denial_raid`.

@@ -296,7 +296,7 @@ const SHED_BENCH_TRIMMED_DETAIL := "status=trimmed reason=too_few_workers kind=b
 ## under test.
 const SHED_RECALLED_LABEL := "the hunters on the aurochs-4 came home — the band could not keep them supplied"
 
-const SHED_RECALLED_DETAIL := "status=recalled reason=unsupplied fauna=aurochs-4 band=4 travel=5 deficit=1.20"
+const SHED_RECALLED_DETAIL := "status=recalled reason=unsupplied fauna=aurochs-4 walk=5 deficit=1.20 band=4"
 
 const SHED_RECALLED_BAND := 4
 

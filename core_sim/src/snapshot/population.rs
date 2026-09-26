@@ -133,21 +133,23 @@ pub(crate) fn labor_assignment_to_state(
         party_x: assignment.party.as_ref().map_or(0, |p| p.position.x),
         party_y: assignment.party.as_ref().map_or(0, |p| p.position.y),
         party_workers: assignment.party.as_ref().map_or(0, |p| p.workers),
-        porters: assignment.party.as_ref().map_or(0, |p| p.porters),
-        travel_tiles: assignment.party.as_ref().map_or(0, |p| p.travel_tiles),
-        transit_turns: assignment.party.as_ref().map_or(0, |p| p.transit_turns),
+        // **LIVE, off the party the turn left** — never derived from distance or crew.
+        hunters_on_the_road: assignment
+            .party
+            .as_ref()
+            .map_or(0, |p| p.hunters_on_the_road()),
+        walk_tiles: assignment.party.as_ref().map_or(0, |p| p.walk_tiles),
+        walk_out_remaining: assignment
+            .party
+            .as_ref()
+            .map_or(0, |p| p.walk_out_remaining),
+        next_load_home_in: assignment
+            .party
+            .as_ref()
+            .map_or(0, |p| p.next_load_home_in()),
         party_ate: assignment.party.as_ref().map_or(0.0, |p| p.ate),
         party_deficit: assignment.party.as_ref().map_or(0.0, |p| p.deficit),
         net_rate_home: assignment.party.as_ref().map_or(0.0, |p| p.net_rate_home),
-        // **THE LIVE COUNTDOWN, READ OFF THE PARTY** — `turns_to_first_arrival`, which the turn
-        // counts down, and never a recomputation from the distance: the walk happens once, so a
-        // herd drifting further out must not restart a walk that is already over. A party whose
-        // line has opened publishes `0` and goes on publishing `0`, which is the same reading a
-        // local row's absent party gives — in both cases there is nothing in transit.
-        party_transit_remaining: assignment
-            .party
-            .as_ref()
-            .map_or(0, |p| p.turns_to_first_arrival),
         ..Default::default()
     };
     match &assignment.target {

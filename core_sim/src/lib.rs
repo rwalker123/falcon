@@ -390,7 +390,7 @@ pub use wellbeing_config::{
     load_wellbeing_config_from_env, DiscontentConfig, MigrationConfig, ProductivityConfig,
     WellbeingConfig, WellbeingConfigHandle, WellbeingConfigMetadata, BUILTIN_WELLBEING_CONFIG,
 };
-pub use work_party::{FoodSettlement, PartyFlow, WorkParty};
+pub use work_party::{CaravanForecast, SourceTake, Walker, WorkParty};
 
 pub use biome_palette::{BiomePalette, PALETTE_SEED_SALT};
 pub use climate::{climate_band_for_temperature, ClimateBand};
@@ -426,13 +426,14 @@ pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_crafting, advance_expeditions, advance_labor_allocation,
     advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
-    denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
-    hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
-    output_multiplier, party_owes_a_report, publish_turn_transfers, settle_bands_extraction,
-    settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
-    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
-    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
-    PoolToolPlan, PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    bring_the_dropped_party_home, denial_forecast, expedition_returned_event,
+    expedition_take_provisions, fold_party_into_band, hunt_per_worker_provisions,
+    hunt_report_event, hunt_take, hunt_trip_forecast, output_multiplier, party_owes_a_report,
+    publish_turn_transfers, settle_bands_extraction, settle_bands_roadwork, settle_scarce_tools,
+    simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
+    split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound,
+    HuntTripForecast, MigrationKnowledgeEvent, PoolToolPlan, PowerSimParams, SplitBand,
+    SplitRefusal, SplitRefusals, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

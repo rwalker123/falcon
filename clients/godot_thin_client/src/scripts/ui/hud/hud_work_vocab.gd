@@ -1257,8 +1257,8 @@ const WORK_ROW_ACCOUNTS_META := &"work_row_accounts"
 # that one tie every turn, so assigning workers stays the only command. Nothing in this block is
 # pressable.
 
-## Line one of the block: the crew, where it is standing, and what the distance costs.
-## `4 hunters · at (31, 12) · 5 tiles`. The noun comes through the board's existing resolver
+## Line one of the block: the crew, where it is standing, and how far it walks.
+## `4 hunters · at (31, 12) · 6-tile walk`. The noun comes through the board's existing resolver
 ## (`BandPanelController._work_inspector_take_key`) and is lower-cased into the sentence, the
 ## compose sheet's own eyebrow treatment — no crew noun is minted here.
 ##
@@ -1266,19 +1266,22 @@ const WORK_ROW_ACCOUNTS_META := &"work_row_accounts"
 ## names its patch's coordinates, but a HUNT row's head names the quarry — and the party stands
 ## wherever the herd is *this turn*, which is the whole reason it needs no follow order. So the
 ## coordinates here are the workers' position and never a restatement of the source's name.
-const WORK_ROW_PARTY_CREW_FORMAT := "%d %s · at (%d, %d) · %d tiles"
+##
+## **THE WALK IS ONE WAY AND MEASURED FROM THE APRON** (`walkTiles`), hyphenated as a noun phrase
+## because it is a property of the posting rather than a trip being taken.
+const WORK_ROW_PARTY_CREW_FORMAT := "%d %s · at (%d, %d) · %d-tile walk"
 
-## …and the porters, appended only when distance is actually being paid in hands. Distance comes out
-## of the party itself, so `party_workers − porters` is the crew that worked the source and is what
-## every yield figure on the row is priced at; at enough distance every hand is carrying and the
-## posting produces nothing, which is a range cap nobody had to pick a number for.
-const WORK_ROW_PARTY_PORTERS_FORMAT := " · %d carrying"
+## …and the hunters ON THE ROAD, appended only when somebody is: out with a pack or walking back.
+## **IT IS THIS TURN'S LIVE COUNT AND IT MOVES** (`0, 1, 1, 0, 2…`) — the caravan sends one hunter
+## home each time the take fills a pack, so the share away falls out of carry, take rate and distance
+## rather than out of a number anybody picked.
+const WORK_ROW_PARTY_ON_ROAD_FORMAT := " · %d on the road"
 
 ## What the party ate out of its own take this turn.
 ##
 ## **IT IS NOT A SECOND MEAL, which is why the line states it as a fact and not as a cost.** The
 ## band's population consumption already feeds these people wherever they stand; what this records is
-## that the food was eaten AT THE SOURCE, so it never had to be carried and paid no friction.
+## that the food was eaten AT THE SOURCE and credited home, so it never had to be walked.
 ##
 ## ⛔ **AND IT IS DRAWN ONLY WHERE THE PARTY ATE SOMETHING**, the shortfall line's own rule one line
 ## up the block. `Party ate 0.00` is a line that says nothing: on an inedible posting it sat directly
@@ -1286,31 +1289,38 @@ const WORK_ROW_PARTY_PORTERS_FORMAT := " · %d carrying"
 ## not food, so there was nothing to eat and the deficit line is the whole story.
 const WORK_ROW_PARTY_ATE_FORMAT := "Party ate %s"
 
-## **WHAT IS LEFT OF THE WALK OUT** — the pipeline priming once. **A PIPELINE, NOT A TRIP**: nothing
-## lands at home until it has elapsed, and every turn after that the line flows; a herd drifting
-## further costs porters and friction rather than a second walk.
+## **THE WALK OUT, WHILE THE WHOLE PARTY IS STILL ON IT** (`walkOutRemaining`). It happens once: a
+## posting walks out, and from then on the source is worked every turn and only the loads travel.
 ##
-## ⛔ **IT IS THE LIVE COUNTDOWN (`partyTransitRemaining`), NEVER `transitTurns`.** That one is the
-## walk's fixed LENGTH and does not move for the life of the posting, so a line drawn off it would go
-## on promising a first load every turn after the load had started arriving. The countdown is read
-## straight off the party's own `turns_to_first_arrival`, so it reports where the party actually is.
+## ⛔ **AT `0` THERE IS NO LINE AT ALL**, and `0` is what the field reads for the rest of the
+## posting's life. A countdown rendered as `0` would be a promise about a walk that is over.
 ##
-## ⛔ **AND AT `0` THERE IS NO LINE AT ALL.** Zero means the line is OPEN — goods arrive every turn
-## from then on — so the row drops the clause and its rate line alone carries the posting, which is
-## the whole point of that rate being amortized. A countdown rendered as `0` would be the stale
-## promise in its most confusing form. A local row publishes `0` for the same reason.
-const WORK_ROW_PARTY_TRANSIT_FORMAT := "First load arrives in %d turns"
+## The `%s` is the SOURCE noun (`WORK_ROW_PARTY_WALK_TARGET_HERD` / `_PATCH`): a party walks to the
+## herd it hunts or the patch it gathers, and the row's own kind says which.
+const WORK_ROW_PARTY_WALKING_OUT_FORMAT := "Walking out — reaches the %s in %d turns"
 
-## …and its SINGULAR, the fork `DetailFormat.build_countdown_value` already makes at
-## `BUILD_TURNS_SINGULAR` for the same reason: the last turn of a walk is the commonest one this line
-## renders on — the countdown passes through it on every posting — and `in 1 turns` is a sentence the
-## player reads once and stops trusting the rest of the block.
-const WORK_ROW_PARTY_TRANSIT_ONE_FORMAT := "First load arrives next turn"
+## …and its SINGULAR, the fork `DetailFormat.build_countdown_value` makes at `BUILD_TURNS_SINGULAR`:
+## the countdown passes through `1` on every posting, and `in 1 turns` is a sentence the player reads
+## once and stops trusting the rest of the block.
+const WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT := "Walking out — reaches the %s in 1 turn"
 
-## The count at which that fork is taken. Its own const rather than a bare `1`, and deliberately NOT
-## a read of `DetailFormat.BUILD_TURNS_SINGULAR`: a vocab leaf reaching for a `class_name`d module at
-## class load is the cycle `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` already states the rule for.
-const WORK_ROW_PARTY_TRANSIT_SINGULAR := 1
+## The two source nouns the walking-out line names.
+const WORK_ROW_PARTY_WALK_TARGET_HERD := "herd"
+const WORK_ROW_PARTY_WALK_TARGET_PATCH := "patch"
+
+## **WHEN THE SOONEST PACK ON THE ROAD LANDS HOME** (`nextLoadHomeIn`). ⛔ **`0` IS "NOBODY IS
+## CARRYING A LOAD HOME"**, never "lands this turn", so it drops the line exactly as the walk-out's
+## zero does. It moves as packs fill and land, which is the caravan working, not the row flickering.
+const WORK_ROW_PARTY_NEXT_LOAD_FORMAT := "Next load home in %d turns"
+
+## …and its singular, for the walk-out line's reason.
+const WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT := "Next load home in 1 turn"
+
+## The count at which both singular forks are taken. Its own const rather than a bare `1`, and
+## deliberately NOT a read of `DetailFormat.BUILD_TURNS_SINGULAR`: a vocab leaf reaching for a
+## `class_name`d module at class load is the cycle `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` already
+## states the rule for.
+const WORK_ROW_PARTY_TURNS_SINGULAR := 1
 
 ## **THE ONE WARNING ON THE BLOCK** — what the party's upkeep still wants after its own take, which
 ## the band has to carry out to it. `0` on a posting that feeds itself; the WHOLE upkeep on one whose

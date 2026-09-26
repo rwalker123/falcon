@@ -10,7 +10,7 @@ extends Node
 ## band by its durable `BandId`, the client kept sending ECS `entity` bits, and **both are `u64`**.
 ## Nothing failed to compile, nothing failed to parse, nothing failed a test — the server looked up
 ## a band that did not exist and no-op'd. Every band-addressed order (`assign_labor`, `move_band`,
-## `cancel_order`, `send_expedition`, `send_hunt_expedition`, `recall_expedition`) silently stopped
+## `cancel_order`, `send_expedition`, the retired `send_hunt_expedition`, `recall_expedition`) silently stopped
 ## working, and a human found it by playing.
 ##
 ## A grep would not have caught it: `int(band.get("entity", -1))` is perfectly valid GDScript that
@@ -253,8 +253,7 @@ func _ready() -> void:
 	await _drive_send_expedition()
 	await _drive_recall_expedition()
 	await _drive_split_band()
-	await _drive_send_hunt_expedition_from_band_panel()
-	await _drive_send_hunt_expedition_from_herd_drawer()
+	await _drive_far_herd_assign_labor()
 	await _drive_send_denial_raid()
 	await _drive_assign_labor_kits()
 	await _drive_build_kit()
@@ -274,9 +273,9 @@ func _ready() -> void:
 # ---- Drivers ------------------------------------------------------------------------------------
 #
 # Each drives the path a player's click actually takes, as far up as the harness can reach without a
-# real mouse. Where a payload is built inside an inline `pressed` lambda (both hunting-expedition
-# sites) the REAL button is pressed, found by its `HudWidgets.SEND_HUNT_CONFIRM_META` — its face is
-# the raid verdict, so text is the one thing that cannot identify it.
+# real mouse. Where a payload is built inside an inline `pressed` lambda (the compose sheets' commits)
+# the REAL button is pressed, found by its meta — a face is live copy, so text is the one thing that
+# cannot identify it.
 
 ## ⛔ **`set_starting_loadout` NAMES A BAND NOW, WHICH IS WHY IT IS HERE AT ALL.** It used to address a
 ## faction and default to its band; every band has an outfitting window of its own since the per-band
@@ -395,25 +394,6 @@ func _drive_split_band() -> void:
 	_hud._bandpanel._on_split_band_pressed(_band_fixture(), SPLIT_WORKERS)
 	await _settle()
 
-## `send_hunt_expedition`, site 1 of 2 — the Band panel's parties compose sheet.
-func _drive_send_hunt_expedition_from_band_panel() -> void:
-	_hud._selection.clear()
-	_panel.set_active_tab(&"parties")
-	_hud._bandpanel._party_compose_open = true
-	_hud._bandpanel._party_compose_mission = "hunt"
-	_hud._compose.set_party_quarry(FAR_HERD_ID)
-	# **A NON-DEFAULT KIT, so the line carries the tail rather than omitting it.** `Main._kit_token`
-	# omits `kit <id>` when the selection equals the job default — which is the shipped case and is
-	# byte-identical to the pre-roster line — so composing the default here would test nothing new.
-	_hud._compose.set_party_kit_id(BandFx.KIT_ID_NONE)
-	_hud._bandpanel.rerender()
-	await _settle()
-	_press_send_hunt_confirm(_panel, "band panel parties compose")
-	await _settle()
-	_hud._bandpanel._party_compose_open = false
-	_hud._bandpanel._party_compose_mission = ""
-	_hud._compose.clear_party_quarry()
-
 ## `send_denial_raid` (`docs/plan_denial_raid.md`) — the parties compose sheet's THIRD mission. Its
 ## own driver and its own confirm meta, because it is its own command: the grammar is CLOSED at four
 ## tokens (`send_denial_raid <faction> <band> <party> <fauna_id>`) and a fifth is a hard parse error,
@@ -436,29 +416,24 @@ func _drive_send_denial_raid() -> void:
 	_hud._bandpanel._party_compose_mission = ""
 	_hud._compose.clear_party_quarry()
 
-## `send_hunt_expedition`, site 2 of 2 — the herd drawer's assign control, which flips to the
-## expedition branch because the quarry lies beyond the band's `hunt_reach`.
-func _drive_send_hunt_expedition_from_herd_drawer() -> void:
+## **A HERD PAST THE APRON COMMITS `assign_labor`, NOT `send_hunt_expedition`** — the herd drawer's
+## sheet, pressed on a herd beyond the band's `band_work_range` (`docs/plan_civilization_steps.md` §One
+## work party). That sheet branched into a hunting EXPEDITION here and sent the retired verb; the gate
+## is what proves the far sheet now emits the ordinary hunt line the real parser takes.
+##
+## **TWO OPENS**, for the reason the kit drives state: the first is the source change (which drops the
+## composed kit so the herd's own default stands), the second re-renders so the commit's `pressed`
+## closure carries the kit written between them.
+func _drive_far_herd_assign_labor() -> void:
 	var herd := _far_herd_fixture()
 	_hud.show_herd_selection(herd)
 	await _settle()
-	# `open_herd_compose` takes the herd it is composing for — it gates on `_herd_compose_available`
-	# and keys the compose state off `herd.id`, so the drawer's own selection is not enough.
-	#
-	# **TWO OPENS, and the order is forced from both ends.** The FIRST open is the source change, which
-	# drops the composed kit (`ComposeState.reset_hunt_kit`) so the sheet takes THIS herd's own default
-	# — so a selection written before it does not survive to be composed. The SECOND names the same
-	# herd, so it is not a source change and the pick stands; it also re-renders, which matters because
-	# the commit button's payload is captured in a `pressed` closure built during the render, so a
-	# selection written after the LAST render is not the one the button carries. Either half alone
-	# emits the untailed line and the drive silently asserts nothing about the kit — which is exactly
-	# what `_record`'s job-default check refuses.
 	_hud._drawercompose.open_herd_compose(herd)
 	await _settle()
 	_hud._compose.set_hunt_kit_id(BandFx.KIT_ID_NONE)
 	_hud._drawercompose.open_herd_compose(herd)
 	await _settle()
-	_press_send_hunt_confirm(_hud, "herd drawer compose")
+	_press_meta_button(_hud, HudWidgets.COMPOSE_COMMIT_META, "far herd compose")
 	await _settle()
 
 ## `assign_labor` with the KIT TAIL, on ALL THREE grammars (`docs/plan_denial_raid.md`). The drive
@@ -732,10 +707,6 @@ func _select_band_marker_from_map() -> void:
 	view.unit_selected.disconnect(_hud.show_unit_selection)
 	view.queue_free()
 
-## Press the meta-tagged "send hunting expedition" confirm somewhere under `root`.
-func _press_send_hunt_confirm(root: Node, where: String) -> void:
-	_press_meta_button(root, HudWidgets.SEND_HUNT_CONFIRM_META, where)
-
 ## Press a confirm found BY META, never by face — every launch button in this client wears its own
 ## verdict as its text. **Each mission has its OWN meta**, and that is not tidiness: a search for
 ## "the send button" on a parties compose sheet could not tell which MISSION it had just launched,
@@ -801,8 +772,6 @@ func _connect_recorders() -> void:
 		_record("move_band", p, MAIN_SCRIPT.format_move_band(p)))
 	_hud.send_expedition_requested.connect(func(p: Dictionary) -> void:
 		_record("send_expedition", p, MAIN_SCRIPT.format_send_expedition(p)))
-	_hud.send_hunt_expedition_requested.connect(func(p: Dictionary) -> void:
-		_record("send_hunt_expedition", p, MAIN_SCRIPT.format_send_hunt_expedition(p)))
 	_hud.send_denial_raid_requested.connect(func(p: Dictionary) -> void:
 		_record("send_denial_raid", p, MAIN_SCRIPT.format_send_denial_raid(p)))
 	_hud.recall_expedition_requested.connect(func(p: Dictionary) -> void:
@@ -996,7 +965,6 @@ func _drive_road_abandon() -> void:
 ## answer means.
 const KIT_BEARING_KINDS := {
 	"assign_labor": true,
-	"send_hunt_expedition": true,
 	"send_denial_raid": true,
 	# The SCOUTING party's kit — the `expedition` job's, not the hunt one's. It joined this list when
 	# a ranging party stopped inheriting the hunt default and got a kit the player picks.
@@ -1077,12 +1045,13 @@ const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
 const ASSIGN_LABOR_GRAMMAR_DRIVES := 5
 
-## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits.
-const ASSIGN_LABOR_BARE_DRIVES := 1
+## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits — plus the
+## FAR HERD's commit (`_drive_far_herd_assign_labor`), the hunt line a sheet past the apron sends.
+const ASSIGN_LABOR_BARE_DRIVES := 2
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 13
+const ASSIGN_LABOR_EXPECTED := 14
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##
@@ -1148,13 +1117,10 @@ const EXPECTED_KINDS := {
 	# Fission's own verb. It names a BAND rather than a party, so the handle assertion is what proves
 	# the client does not send entity bits down the split either.
 	"split_band": 1,
-	# TWO — the Band panel's parties compose and the herd drawer's, which build their payloads
-	# independently and so can drift apart.
 	# TWO each — the tile form and the herd form, which are two grammars of one verb and the pair a
 	# builder can get backwards (`docs/plan_standing_upkeep.md` §4.7a ②, §4.7b ③).
 	"build_kit": 2,
 	"build_order": 2,
-	"send_hunt_expedition": 2,
 	# ONE — the parties compose sheet is the denial raid's only launch site.
 	"send_denial_raid": 1,
 	# ONE — the shipment's only launch site is that same sheet, and one line carries both piles.

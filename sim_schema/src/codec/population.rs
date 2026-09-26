@@ -413,22 +413,19 @@ fn create_populations<'a>(
                                 // last.
                                 kitWorkersHolding: assignment.kit_workers_holding,
                                 // **THE WORK PARTY** — where this row's workers are standing when
-                                // it is not where the band is, what distance is costing it, and the
-                                // steady rate arriving home. `partyWorkers == 0` is the ordinary
-                                // local row. Appended last.
+                                // it is not where the band is, who is on the road, how far the
+                                // walk is, and the rate arriving home. `partyWorkers == 0` is the
+                                // ordinary local row. Appended last.
                                 partyX: assignment.party_x,
                                 partyY: assignment.party_y,
                                 partyWorkers: assignment.party_workers,
-                                porters: assignment.porters,
-                                travelTiles: assignment.travel_tiles,
-                                transitTurns: assignment.transit_turns,
+                                huntersOnTheRoad: assignment.hunters_on_the_road,
+                                walkTiles: assignment.walk_tiles,
+                                walkOutRemaining: assignment.walk_out_remaining,
+                                nextLoadHomeIn: assignment.next_load_home_in,
                                 partyAte: assignment.party_ate,
                                 partyDeficit: assignment.party_deficit,
                                 netRateHome: assignment.net_rate_home,
-                                // **What is LEFT of the walk out** — the live countdown, beside
-                                // the fixed length above. `0` is *the line is open*, and a local
-                                // row publishes it too. Appended last.
-                                partyTransitRemaining: assignment.party_transit_remaining,
                             },
                         )
                     })
@@ -1257,13 +1254,13 @@ fn decode_labor_assignment(
         party_x: assignment.partyX(),
         party_y: assignment.partyY(),
         party_workers: assignment.partyWorkers(),
-        porters: assignment.porters(),
-        travel_tiles: assignment.travelTiles(),
-        transit_turns: assignment.transitTurns(),
+        hunters_on_the_road: assignment.huntersOnTheRoad(),
+        walk_tiles: assignment.walkTiles(),
+        walk_out_remaining: assignment.walkOutRemaining(),
+        next_load_home_in: assignment.nextLoadHomeIn(),
         party_ate: assignment.partyAte(),
         party_deficit: assignment.partyDeficit(),
         net_rate_home: assignment.netRateHome(),
-        party_transit_remaining: assignment.partyTransitRemaining(),
     })
 }
 

@@ -532,35 +532,20 @@ pub struct LaborConfig {
     /// the sources they exploit, so those spots provide fog reveal like the band center and
     /// scout vantages do.
     pub worked_source_sight_range: u32,
-    /// Extra distance beyond `band_work_range` a Hunt assignment reaches before its hunters become
-    /// a **work party** (`systems::labor::party_begins_past`).
-    ///
-    /// **It is no longer a leash.** Past it the row used to lapse and return its workers to the
-    /// pool; it now posts a party that follows the herd, and what distance costs is porters and
-    /// friction rather than the row's life (`docs/plan_civilization_steps.md` §One work party).
-    /// What the key still decides is *where a hunt stops being local* — inside it a hunt is priced
-    /// exactly as it always was, which is the identity the party model rests on.
+    /// ⛔ **DEAD — no system may decide anything by it.** It was the extra reach beyond
+    /// `band_work_range` a Hunt row survived out to before lapsing. Nothing lapses for distance any
+    /// more: past the band's work range **every** job posts a work party
+    /// (`crate::work_party::party_begins_past`), and a hunt four tiles out walks exactly as a gather
+    /// four tiles out does. The key survives, validated and published as the cohort's
+    /// `hunt_reach`, only until the expedition path it also served is retired.
     pub hunt_leash_tiles: u32,
     /// Tiles a `move_band` order advances the band toward its target each turn.
     ///
-    /// **It is also the work party's walking speed** (`crate::work_party::transit_turns`): the
-    /// first goods off a far posting land after the party has walked out at exactly the rate a band
-    /// walks, because it is the same people on the same ground. A second travel rate for a party
-    /// would be two answers to one question.
+    /// **It is also the work party's walking speed** (`crate::work_party::walk_turns`): the party
+    /// walks out, and each porter walks a pack home, at exactly the rate a band walks, because it is
+    /// the same people on the same ground. A second travel rate for a party would be two answers to
+    /// one question.
     pub band_move_tiles_per_turn: u32,
-    /// **WHAT SHARE OF A WORK PARTY IS CARRYING RATHER THAN WORKING, PER TILE IT MUST WALK
-    /// UNAIDED** — the whole of what distance costs a posting
-    /// (`docs/plan_civilization_steps.md` §One work party).
-    ///
-    /// Charged on the tiles beyond the reach a logistics link holds itself open at — the supply
-    /// network's `reach_tiles`, **widened by whatever road runs between the band and the source**
-    /// — so a run a trail covers costs no porters at all and the party goes back to producing.
-    /// The share is clamped at the whole party, which is where a posting stops producing anything:
-    /// **a range cap nobody had to pick a number for**.
-    ///
-    /// Carry caps are a playtest dial. At the shipped value a party eight or nine tiles out is
-    /// mostly porters. Validated `0.0..=1.0`.
-    pub porter_fraction_per_travel_tile: f32,
     /// **The forward-projection horizon for a source's steady `realized` yield**, in turns. Each
     /// source's `SourceYield::realized` is the *average food/turn it will deliver over the next N
     /// turns*, computed by simulating the herd/patch forward N turns from its CURRENT state under the
@@ -637,22 +622,8 @@ impl LaborConfig {
                 value: self.arrivals_horizon_turns.to_string(),
             });
         }
-        // The porter share is a FRACTION per tile: negative would hand a distant posting more
-        // workers than it staffs, and past `1.0` a single tile beyond reach would take the whole
-        // party — both silently, on the one lever that decides whether far work is possible at all.
-        if !(0.0..=1.0).contains(&self.porter_fraction_per_travel_tile)
-            || !self.porter_fraction_per_travel_tile.is_finite()
-        {
-            return Err(LaborConfigError::Invalid {
-                field: "porter_fraction_per_travel_tile",
-                constraint: "be a finite fraction in 0.0..=1.0 (the share of a work party that \
-                             carries rather than works, per tile it walks unaided)"
-                    .to_string(),
-                value: self.porter_fraction_per_travel_tile.to_string(),
-            });
-        }
-        // A party walks out at the band's own pace, so a zero would make a far posting's first
-        // delivery never arrive (`work_party::transit_turns` would divide by zero).
+        // A party walks at the band's own pace, so a zero would make a far posting's walk never
+        // end (`work_party::walk_turns` would divide by zero).
         if self.band_move_tiles_per_turn == 0 {
             return Err(LaborConfigError::Invalid {
                 field: "band_move_tiles_per_turn",
@@ -666,7 +637,8 @@ impl LaborConfig {
         validate_plant_ladder_payoffs(&self.forage)
     }
 
-    /// Distance (inclusive) at which a Hunt assignment still yields before lapsing.
+    /// ⛔ **DEAD — published, and read by nothing that decides anything.** `band_work_range +
+    /// hunt_leash_tiles`, the distance a Hunt row used to lapse past. See [`Self::hunt_leash_tiles`].
     pub fn hunt_reach(&self) -> u32 {
         self.band_work_range + self.hunt_leash_tiles
     }

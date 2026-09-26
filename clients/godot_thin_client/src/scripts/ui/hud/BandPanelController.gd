@@ -24,7 +24,7 @@ extends RefCounted
 ## "an injection you still have to hold is relocated, not eliminated" test settles:
 ##   • `_emit_assign_labor` — owns the `assign_labor_requested` emit, the optimistic pending write and
 ##     `_after_pending_change()`. So `assign_labor` stays INDIRECT here, while the three commands with
-##     no other emitter (`cancel_order` / `send_hunt_expedition` / `recall_expedition`) are signals.
+##     no other emitter (`cancel_order` / `recall_expedition`) are signals.
 ##   • `_herd_label_for_id` — the herd vocabulary, also read by the targeting banner + command feed.
 ## The send-expedition + quarry (begin / cancel / eligibility) verbs the parties zone drives are no
 ## longer four Callables into HudLayer — they are a typed `TargetingController` collaborator now.
@@ -115,10 +115,11 @@ signal work_priority_requested(payload: Dictionary)
 # the client-local handle a FAILED send hands back to `drop_pending_assign` (`assign_labor`'s own
 # rollback shape, `hud-modules.md` → "AN OPTIMISTIC WRITE NEEDS A ROLLBACK").
 signal improvement_requested(payload: Dictionary)
-# A hunting party was dispatched from the parties zone — relayed to HudLayer.send_hunt_expedition_requested.
-signal send_hunt_expedition_requested(payload: Dictionary)
-# A DENIAL raid was dispatched — relayed to HudLayer.send_denial_raid_requested. **Its own signal, not
-# a flag on the hunt one**, because its command grammar is closed at four tokens
+# ⛔ RETIRED — **`send_hunt_expedition_requested`**: the parties zone's Hunt verb went with the herd
+# drawer's expedition branch (`docs/plan_civilization_steps.md` §One work party). A herd past the band's
+# apron is an ordinary hunt whose crew posts a caravan, composed on the herd's own sheet.
+# A DENIAL raid was dispatched — relayed to HudLayer.send_denial_raid_requested. **Its own signal**,
+# because its command grammar is closed at four tokens
 # (`send_denial_raid <faction> <band> <party_workers> <fauna_id>`) — a fifth is a hard parse error —
 # so a payload that could carry a floor or a fill target would be a payload the parser rejects.
 signal send_denial_raid_requested(payload: Dictionary)
@@ -350,8 +351,8 @@ var _rung_track_body: MarginContainer = null
 ## The compose sheets keep theirs on `ComposeState` — the model for "what a SHEET is composing" — and
 ## a role card is not a sheet: it has no open/closed act to bracket the state, no source, and it
 ## commits on the press rather than at a Send. What it is instead is one more piece of ZONE state that
-## survives a snapshot, which is this controller's own remit (`_work_filter`, `_work_open_key`,
-## `_send_hunt_floor`); a field ONE cluster reads is explicitly not a state model's (`hud-modules.md`).
+## survives a snapshot, which is this controller's own remit (`_work_filter`, `_work_open_key`); a
+## field ONE cluster reads is explicitly not a state model's (`hud-modules.md`).
 ##
 ## **KEYED BY BAND, because the cycler walks bands and a bare string would carry band A's pick onto
 ## band B's card.** Seeded from the WIRE — the role's own `LaborAssignment.kitId`, already resolved —
@@ -587,16 +588,9 @@ var _compose_float: BandComposeFloat = null
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
 # resident band's per-snapshot allocation-panel re-renders.
 var _send_expedition_count: int = HudConst.WORKER_STEP
-# Compose state for the hunt-expedition launch FLOOR — where the raid stops, `0.0..=1.0`. **This zone
-# is the SECOND launch site of `send_hunt_expedition`**, and the arc's standing rule is that the two
-# entry points cannot offer different orders: a lever present on one sheet and absent on the other is
-# the same defect as a lever that does nothing. The floor is the ONLY order a raid now carries — the
-# fill target that used to ride beside it is retired (issue #491) — so this is the whole of that state.
-var _send_hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
-
 ## **THE FORECAST QUERY SEAM**, injected by `HudLayer` after construction (`set_forecast_query`) —
-## the same instance the herd drawer's expedition branch uses, so one raid asked from two entry points
-## is one question with one request-id sequence.
+## the same instance the herd drawer's sheets use, so every question the HUD asks shares one
+## request-id sequence.
 var _forecast_query: ForecastQuery = null
 
 func set_forecast_query(query: ForecastQuery) -> void:
@@ -6257,8 +6251,14 @@ func _work_row_party_lines(model: Dictionary) -> int:
 ## ordinary local row, which is what makes that row identical to the one that shipped before any of
 ## this existed.
 ##
-## The order is the block's own and is load-bearing to read: who and where, what they ate, what the
-## walk cost, and — only where there is one — what the band still owes them.
+## The order is the block's own and is load-bearing to read: who and where, the walk out while it
+## lasts, when the next load lands, what the party ate, and — only where there is one — what the band
+## still owes it.
+##
+## ⛔ **EVERY LINE BUT THE FIRST IS PRESENT ONLY WHEN ITS OWN FIELD SAYS SO.** Each of the two
+## countdowns reads `0` as *there is nothing to say* (`walkOutRemaining` for the rest of a posting once
+## it has arrived, `nextLoadHomeIn` whenever nobody is carrying a load), and a line drawn at `0` would
+## be a promise about something that is not happening.
 ##
 ## ⛔ **THE SHORTFALL LINE APPEARS ONLY WHERE THERE IS A SHORTFALL**, says ONE clause, and is the only
 ## line here that is a warning (`labor-ui.md`'s standing rule). It is the fibre/stone case: a party
@@ -6277,11 +6277,29 @@ func _work_row_party_lines_text(model: Dictionary) -> Array:
         _work_inspector_take_key(model).to_lower(),
         int(party[SourceForecast.ASSIGNMENT_PARTY_X_KEY]),
         int(party[SourceForecast.ASSIGNMENT_PARTY_Y_KEY]),
-        int(party[SourceForecast.ASSIGNMENT_TRAVEL_TILES_KEY])]
-    var porters := int(party[SourceForecast.ASSIGNMENT_PORTERS_KEY])
-    if porters > 0:
-        crew += HudWorkVocab.WORK_ROW_PARTY_PORTERS_FORMAT % porters
+        int(party[SourceForecast.ASSIGNMENT_WALK_TILES_KEY])]
+    # **LIVE, THIS TURN** — and it moves turn to turn, which is the caravan working.
+    var on_road := int(party[SourceForecast.ASSIGNMENT_HUNTERS_ON_THE_ROAD_KEY])
+    if on_road > 0:
+        crew += HudWorkVocab.WORK_ROW_PARTY_ON_ROAD_FORMAT % on_road
     lines.append([crew, false])
+    # **THE WALK OUT, WHILE THE WHOLE PARTY IS STILL ON IT.** It names the SOURCE the party walks to,
+    # off the row's own kind.
+    var walking := int(party[SourceForecast.ASSIGNMENT_WALK_OUT_REMAINING_KEY])
+    if walking > 0:
+        var target := HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_HERD \
+            if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
+            else HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_PATCH
+        if walking == HudWorkVocab.WORK_ROW_PARTY_TURNS_SINGULAR:
+            lines.append([HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT % target, false])
+        else:
+            lines.append([HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_FORMAT % [target, walking],
+                false])
+    var next_load := int(party[SourceForecast.ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY])
+    if next_load == HudWorkVocab.WORK_ROW_PARTY_TURNS_SINGULAR:
+        lines.append([HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT, false])
+    elif next_load > 0:
+        lines.append([HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT % next_load, false])
     # **ONLY WHERE THE PARTY ATE SOMETHING.** A `Party ate 0.00` says nothing, and on the posting it
     # is most often true of — one whose take is not food — it sits directly above the deficit line,
     # which says everything it was going to.
@@ -6289,15 +6307,6 @@ func _work_row_party_lines_text(model: Dictionary) -> Array:
     if ate > 0.0:
         lines.append([HudWorkVocab.WORK_ROW_PARTY_ATE_FORMAT
             % SourceForecast.format_magnitude(ate), false])
-    # ⛔ **THE LIVE COUNTDOWN, AND ITS `0` DROPS THE LINE RATHER THAN DRAWING A ZERO.** Zero means the
-    # line is open and goods are arriving every turn, so the clause has nothing left to promise and
-    # the row's amortized rate carries the posting on its own. `transit_turns` beside it is the
-    # walk's fixed length and is deliberately NOT what this reads.
-    var remaining := int(party[SourceForecast.ASSIGNMENT_PARTY_TRANSIT_REMAINING_KEY])
-    if remaining == HudWorkVocab.WORK_ROW_PARTY_TRANSIT_SINGULAR:
-        lines.append([HudWorkVocab.WORK_ROW_PARTY_TRANSIT_ONE_FORMAT, false])
-    elif remaining > 0:
-        lines.append([HudWorkVocab.WORK_ROW_PARTY_TRANSIT_FORMAT % remaining, false])
     var deficit := float(party[SourceForecast.ASSIGNMENT_PARTY_DEFICIT_KEY])
     if deficit > 0.0:
         lines.append([HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT % SourceForecast.format_magnitude(
@@ -8206,8 +8215,8 @@ func _on_recall_all_parties_pressed(parties: Array) -> void:
             for exp in parties:
                 _on_recall_expedition_pressed(exp))
 
-## The parties footer: FOUR buttons offered directly — the three expedition missions (Scout / Hunt /
-## Deny) and the SPLIT, which is not a mission — each opening the compose sheet already on that
+## The parties footer: FOUR buttons offered directly — the three expedition missions (Scout / Deny /
+## Trade) and the SPLIT, which is not a mission — each opening the compose sheet already on that
 ## verb, or the compose sheet in their place. A button with nothing to spend stays VISIBLE and
 ## DISABLED with its reason: the section vanishing is what made expeditions look like they had been
 ## removed from the game. **The two gates are different pools** — the three expeditions want idle
@@ -8241,15 +8250,17 @@ func _build_party_footer(band: Dictionary) -> VBoxContainer:
     # **A GRID, NOT A ROW, SINCE THE FIFTH VERB ARRIVED.** Five buttons across a 354px dock column
     # leave each ~48px, which `📦 Trade` does not fit — and the zone `clip_contents`, so the fifth
     # was sliced off the edge rather than merely cramped. `HudComposeVocab.PARTY_FOOTER_COLUMNS`
-    # wraps them 3 + 2, the same treatment `build_floor_picker` gives its six rungs.
+    # wraps them into rows, the same treatment `build_floor_picker` gives its six rungs.
     var missions := GridContainer.new()
     missions.columns = HudComposeVocab.PARTY_FOOTER_COLUMNS
     missions.add_theme_constant_override("h_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     missions.add_theme_constant_override("v_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_SCOUT,
         HudComposeVocab.COMPOSE_MISSION_LABEL_SCOUT, HudComposeVocab.SEND_EXPEDITION_HINT, idle))
-    missions.add_child(_build_mission_launch_button(HudComposeVocab.COMPOSE_MISSION_HUNT,
-        HudComposeVocab.COMPOSE_MISSION_LABEL_HUNT, HudComposeVocab.SEND_HUNT_EXPEDITION_HINT, idle))
+    # ⛔ **NO HUNT VERB** (`docs/plan_civilization_steps.md` §One work party). A hunting party was the
+    # answer to game past `hunt_reach`; the work party is the answer now, and it is composed on the
+    # herd's OWN sheet as an ordinary hunt — so this footer offering a second, detached way to hunt the
+    # same herd would be two answers to one question.
     # **THE THIRD VERB** (`docs/plan_denial_raid.md` §3). It sits beside the other two rather than
     # inside the hunt form, because what it changes is a BOUND and not a number: `floor = 0` still
     # only kills what the party can haul, so denial had to become a mission to have anything to
@@ -8285,7 +8296,7 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
     # **THE MARK IS ART WHERE THE MISSION HAS ANY** (issue #249), the glyph-prefixed label where it
     # does not — which today is `split` alone, whose `⌂` is symbolic and stays. The art rides the
     # `Button`'s own `icon` property with an `icon_max_width` cap (an uncapped 256px source would set
-    # the whole 3+2 grid's cell size), and the face drops to the bare verb: art OR glyph, never both.
+    # the whole grid's cell size), and the face drops to the bare verb: art OR glyph, never both.
     # UNTINTED, like every other mark — `apply_button` sets no `icon_*_color`.
     var mark := HudSprites.for_mark(String(HudComposeVocab.MISSION_MARKS.get(mission, "")))
     btn.text = label
@@ -8320,16 +8331,13 @@ func _build_mission_launch_button(mission: String, label: String, hint: String,
 ## sheet titles itself by mission and the policy picker is unreachable except under Hunt (it used to
 ## sit above the scouting button and read as if it modified it). `✕` is the only way back.
 func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
-    var is_hunt := _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_HUNT
     var is_deny := _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_DENY
     var is_trade := _party_compose_mission == HudComposeVocab.COMPOSE_MISSION_TRADE
     var sheet := HudWidgets.make_zone_block()
     var head := HBoxContainer.new()
     var title := Label.new()
     title.text = HudComposeVocab.COMPOSE_TITLE_SCOUT
-    if is_hunt:
-        title.text = HudComposeVocab.COMPOSE_TITLE_HUNT
-    elif is_deny:
+    if is_deny:
         title.text = HudComposeVocab.COMPOSE_TITLE_DENY
     elif is_trade:
         title.text = HudComposeVocab.COMPOSE_TITLE_TRADE
@@ -8346,9 +8354,6 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
         _close_party_compose())
     head.add_child(cancel)
     sheet.add_child(head)
-    if is_hunt:
-        _fill_hunt_compose_sheet(sheet, band, idle)
-        return sheet
     if is_deny:
         _fill_denial_compose_sheet(sheet, band, idle)
         return sheet
@@ -8557,228 +8562,14 @@ func split_blocked_reason(band: Dictionary, workers: int, pool: int) -> String:
         lines.append(HudComposeVocab.SPLIT_BLOCKED_PARENT_TOO_SMALL % [remaining, min_parent])
     return HudComposeVocab.SPLIT_BLOCKED_SEPARATOR.join(lines)
 
-## The HUNT form, in the order the decision is actually made: QUARRY → POLICY → PARTY → forecast →
-## send. The quarry leads because it is what makes every field under it answerable — the per-policy
-## metrics on the picker, the max-useful party cap, the trip forecast and the no-surplus verdict are
-## all functions of the herd. Every one of those comes from the SAME helper the herd drawer's
-## beyond-reach branch uses, so the two entry points cannot quote different numbers.
-func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
-    # Re-resolve the quarry LIVE each render: a herd can be hunted out or leave the snapshot while the
-    # sheet is open, and rendering a form against a stale id would forecast a herd that is gone. A herd
-    # that MIGRATES into the band's hunt reach fails for the same reason — it is no longer a party's
-    # job — so it falls back to the `Choose…` empty state rather than forecasting a raid the player
-    # should not make.
-    var herd := _band_labor.find_world_herd(_compose.party_quarry_id())
-    if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd):
-        herd = {}
-        _clear_party_quarry()
-    sheet.add_child(_build_quarry_row(band, herd))
-    if _compose.party_quarry_id() == "":
-        # Visible-and-disabled-with-its-reason, the same convention as the idle-0 footer: the send is
-        # shown so the shape of the form is legible, and it says why it is not yet pressable.
-        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_PREY_HINT))
-        var blocked := Button.new()
-        blocked.text = SourceForecast.SEND_HUNTING_EXPEDITION_BUTTON
-        blocked.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        blocked.disabled = true
-        blocked.tooltip_text = HudComposeVocab.COMPOSE_PREY_HINT
-        HudStyle.apply_button(blocked, "ghost")
-        sheet.add_child(blocked)
-        return
-    # **THE KIT, RESOLVED BEFORE ANYTHING IS QUOTED AND MOUNTED UNDER THE PARTY STEPPER.** It is part
-    # of the question the sim is asked, so every figure below is priced for it — and the picker's ROW
-    # belongs beneath the crew it describes, so the resolve is here and the mount is further down.
-    # `party_kit_id` is shared with the denial mission (one sheet, two missions, both on the `hunt`
-    # job) and re-validated every render.
-    var kits := _band_labor.kits()
-    var default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
-    # The HERD is passed so a kit this quarry cannot be worked with is never resolved onto — the
-    # drawer's rule, and the same fresh-tier offer test, so the two entry points cannot open on
-    # different kits for one animal.
-    var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, default_kit,
-        _compose.party_kit_id(), herd, HudComposeVocab.BARE_FORECAST_PREFIX)
-    _compose.set_party_kit_id(kit_id)
-    # **THE RAID'S NUMBERS ARE ASKED FOR.** The sim forward-simulates THIS band, kit, party and floor
-    # and answers; there is no table quoted at one kit to gate against any more. The ask is idempotent
-    # on the composed key, so only a rebuild that actually moves it re-queries.
-    var raid_view := _raid_forecast_view(band, herd, kit_id, _send_expedition_count,
-        _send_hunt_floor, idle)
-    var raid_answer: Dictionary = raid_view["answer"]
-    var raid_ready := String(raid_view["state"]) == ForecastQuery.STATE_READY
-    sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.COMPOSE_FIELD_POLICY))
-    # With a herd in hand the presets finally carry their metric — the same
-    # `SourceForecast.expedition_policy_takes` the herd drawer feeds its picker.
-    #
-    # **THE METRICS COME FROM THE SAME ANSWER AS EVERYTHING ELSE HERE** — `per_preset`, one row per
-    # preset in the order they were asked for, so all four figures on the sheet are priced for the one
-    # party and kit it is composing. `{}` until the reply lands, which is the picker's supported degrade
-    # (as is a herd the wire does not describe), so the rungs render bare rather than wrong.
-    #
-    # **THREE ACROSS, the shared default** — the zone's own 2-column clamp is retired. It existed
-    # because the long preset faces (`💀 Take everything`) could not fit three in a 354px column and
-    # wrapped `↑ Learn from it` onto a second row; the faces are one word each now
-    # (`HudComposeVocab.FLOOR_PRESET_LABELS`), so the picker reads as one row here and in the drawer.
-    sheet.add_child(HudWidgets.build_floor_picker(func(floor: float) -> void:
-        _send_hunt_floor = floor
-        # Auto-max on a floor click, exactly as the herd drawer does: "give me everything this herd
-        # can spare" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
-        _compose.arm_party_autofill()
-        rerender(), _send_hunt_floor,
-        SourceForecast.expedition_policy_takes(band, herd, raid_answer.get("per_preset", []),
-            _band_labor.grid_width(), _band_labor.wrap_horizontal())))
-    # Party size, capped at the raid's max-useful plateau for THIS herd + floor (the herd drawer's
-    # own cap), so extra hunters can no longer be sent to stand idle at the kill. **The SUPPLY side is
-    # the band's idle workers alone** — nothing on the wire caps a party — and `expedition_useful_cap`
-    # is the DEMAND side the stepper takes the tighter of.
-    #
-    # **THE DEMAND SIDE RIDES THE ANSWER**, so until one lands the plateau contributes 0 and supply
-    # alone binds. That is the honest degrade: a party clamped to a plateau nobody has quoted yet would
-    # refuse hands this raid may well need.
-    #
-    # **THE CAP IS RESOLVED HERE, ABOVE THE CHART, AND THE ROW IT FEEDS IS MOUNTED FURTHER DOWN.** The
-    # chart's projection, its two crew targets and its verdict are all read against a CREW, so
-    # composing them ahead of the clamp states a verdict for a party the stepper beneath then refuses
-    # to show — visible for exactly one frame, on the render where autofill arms (a floor click, a
-    # committed drag, a fresh quarry), which is the render a player is always looking at. The forage
-    # sheet's twin ordering, and the assertion that judges both, are in `labor-ui.md`.
-    var assignable := idle
-    var capped := SourceForecast.expedition_useful_cap(band, herd, _send_hunt_floor,
-        int(raid_answer.get("useful_cap", 0)), assignable)
-    var cap: int = maxi(int(capped["cap"]), HudConst.WORKER_STEP)
-    # It does NOT wait for the reply, for the drawer's reason: the `clampi` below re-binds the count to
-    # the cap on every render, so a fill spent against the no-answer fallback still converges on the
-    # reply's plateau — while holding the one-shot deadlocks a party of 0, whose question is never asked.
-    if _compose.consume_party_autofill():
-        _send_expedition_count = cap
-    _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, cap)
-    # **THE CHART AND ITS DRAGGABLE FLOOR — the same builder and the same model the herd drawer's raid
-    # uses**, because the two entry points compose one decision and had no business presenting it two
-    # ways. `improvement` is `IMPROVEMENT_NONE` and the crew noun is the party's: a detached party
-    # builds nothing, exactly as the drawer's expedition branch already assumes.
-    #
-    # **GATED ON THE ZONE HAVING ROOM.** A horizontal dock's parties zone is height-capped and CLIPS —
-    # only its row LIST scrolls, and the compose sheet sits below that list — and the chart is ~150px,
-    # so the SHORT tier keeps the presets alone. (The band zone took the same treatment for its own
-    # outlook chart until that zone learned to scroll; this one has not, so the gate stays.) The drag
-    # goes with it:
-    # since slice 4b there is no plain-slider control left to keep, the chart's own floor flag IS the
-    # dial (see `HudWidgets.build_floor_chart`).
-    #
-    # **AND THE KIT REACHES IT CLIENT-SIDE**, through `KitRoster.priced_source` — the same seam the
-    # drawer's sheets use, never a second resolve. The chart is composed HERE out of the herd's own wire
-    # terms, so it is the one figure on the sheet the client itself has to price for the selected kit;
-    # every other number is the sim's answer to a question that already named the kit, and arrives
-    # priced. The two must therefore agree by construction rather than by luck, which is why the client
-    # side goes through the shared seam.
-    #
-    # The kit reaches the curve two ways and both are real for a raid: its CARRY scales the party's
-    # throughput, and its `dispersion` scales the quarry's retreat (`advance_expeditions` resolves the
-    # party's own kit and runs `HuntParty::stayers` exactly as a resident hunt does).
-    var priced_herd := KitRoster.priced_source(herd, HudComposeVocab.BARE_FORECAST_PREFIX, kits,
-        KitRoster.JOB_HUNT, default_kit, kit_id, band)
-    var chart_model := SourceForecast.floor_chart_model(priced_herd,
-        SourceForecast.SOURCE_KIND_HERD,
-        HudComposeVocab.BARE_FORECAST_PREFIX, _send_hunt_floor, _send_expedition_count, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(),
-        SourceForecast.rung_lesson_known(SourceForecast.SOURCE_KIND_HERD, herd,
-            HudComposeVocab.BARE_FORECAST_PREFIX, _player_knowledge()))
-    if bool(chart_model.get("known", false)) and _band_zone_tier != HudWorkVocab.BAND_ZONE_TIER_SHORT:
-        sheet.add_child(HudWidgets.build_floor_chart(chart_model,
-            func(floor: float, committed: bool) -> void:
-                _send_hunt_floor = floor
-                # **ONLY A COMMITTED CHANGE REBUILDS**, the drawer's expedition rule: a rebuild frees
-                # the chart and the drag in flight dies with it, and this sheet has no live-refresh
-                # registry to update in place (the raid's numbers are a lookup into a table sampled at
-                # five floors, so most of a drag moves nothing anyway).
-                if committed:
-                    _compose.arm_party_autofill()
-                    rerender()))
-    sheet.add_child(HudWidgets.alloc_hint_label(
-        HudFormat.floor_hint(_send_hunt_floor, SourceForecast.LABOR_KIND_HUNT, true)))
-    # The stepper ROW, mounted where the form reads it — under the chart the settled count above was
-    # composed into, and above the kit picker the party carries.
-    sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, cap,
-        func(n: int) -> void:
-            _send_expedition_count = clampi(n, HudConst.WORKER_STEP, cap)
-            rerender()))
-    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_OF_IDLE_FORMAT % idle))
-    var cap_note := String(capped["note"])
-    if cap_note != "":
-        sheet.add_child(HudWidgets.alloc_hint_label(cap_note))
-    _mount_kit_row(sheet, kits, KitRoster.JOB_HUNT, kit_id, default_kit, band,
-        func(picked: String) -> void:
-            _compose.set_party_kit_id(picked)
-            rerender(),
-        herd, HudComposeVocab.BARE_FORECAST_PREFIX, _send_expedition_count)
-    var quarry_id := _compose.party_quarry_id()
-    var confirm := Button.new()
-    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    confirm.set_meta(HudWidgets.SEND_HUNT_CONFIRM_META, true)
-    if not raid_ready:
-        # **NO ANSWER YET, OR NONE COMING** — where the kit-mismatch apology stood. Nothing derived
-        # renders: no forecast line, no bound clause, no empty-raid refusal. What DOES render is
-        # honest with no reply at all — the combat gate, composed from wire terms the band and herd
-        # already carry — plus the line saying whether we are waiting or have failed. The send stays
-        # LIVE: the raid is perfectly launchable; only its length is unquoted.
-        _mount_kit_gate_line(sheet, kits, kit_id, band, herd,
-            SourceForecast.herd_display_name(herd))
-        sheet.add_child(HudWidgets.alloc_hint_label(
-            HudComposeVocab.RAID_FORECAST_PENDING if String(raid_view["state"]) == ForecastQuery.STATE_PENDING
-            else HudComposeVocab.FORECAST_FAILED_FORMAT % String(raid_view["error"])))
-        SourceForecast.style_send_hunt_button(confirm, {}, "")
-    else:
-        # **THE TRIP READOUT — the herd drawer's boxed section, from the shared builder.** This zone
-        # answered with a one-line bbcode sentence and a standalone bound clause beside it, which is
-        # what let the two entry points drift: on a Wild Fowl flock the drawer laid out a full box
-        # here and this sheet rendered nothing at all. The box's own VERDICT folds the bound clause
-        # in (`SourceForecast.hunt_trip_verdict`), so the standalone line went with the sentence —
-        # keeping both would have printed one fact twice.
-        var trip := SourceForecast.hunt_trip_forecast(band, herd,
-            raid_answer.get("at_composed", {}), _band_labor.grid_width(),
-            _band_labor.wrap_horizontal())
-        if SourceForecast.hunt_trip_delivers(trip):
-            HudWidgets.mount_trip_readout(sheet, trip, SourceForecast.herd_display_name(herd),
-                _send_hunt_floor)
-        else:
-            # A raid with nothing to lay out in rows — no estimate, a denial quarry, a herd at its
-            # floor — keeps the ONE-LINE form, exactly as the drawer's branch does. An empty box is
-            # worse than the sentence it would replace.
-            var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip,
-                SourceForecast.herd_display_name(herd))
-            if forecast_line != "":
-                sheet.add_child(HudWidgets.forecast_label(forecast_line))
-        # WHY an empty raid is empty comes off the sim's `bound`, so the reason takes the TRIP beside
-        # the herd — "wait for the herd to rebuild" and "send more hunters" are opposite instructions.
-        var returns_empty := SourceForecast.hunt_trip_returns_empty(trip)
-        var reason := SourceForecast.hunt_empty_refusal_reason(trip, herd) if returns_empty else ""
-        # The button carries the verdict: slow/long/denial raids stay ENABLED and warn-styled, and only
-        # a herd with no surplus disables. `style_send_hunt_button` owns the text in every branch.
-        SourceForecast.style_send_hunt_button(confirm, trip, reason)
-        if returns_empty:
-            sheet.add_child(HudWidgets.alloc_hint_label(reason))
-    confirm.pressed.connect(func() -> void:
-        emit_signal("send_hunt_expedition_requested", {
-            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-            "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
-            "party_workers": _send_expedition_count,
-            "fauna_id": quarry_id,
-            "fauna_label": SourceForecast.herd_display_name(herd),
-            "floor": _send_hunt_floor,
-            # The kit the party walks out with, and the job default `Main` omits the token for.
-            "kit_id": kit_id,
-            "default_kit_id": default_kit,
-        })
-        _close_party_compose())
-    sheet.add_child(confirm)
-
 ## Mount the kit row where a sheet wants it — a no-op when the roster offers this job no kit at all,
 ## so a sheet rendered before the first snapshot (or against a world whose roster does not cover the
 ## verb) is byte-identical to what it was before the picker existed.
 ##
-## `quarry` / `prefix` are what a kit's greying is resolved against (`KitRoster.kit_offer`); both
-## dock missions have a herd in hand by the time this is reached.
+## `quarry` / `prefix` are what a kit's greying is resolved against (`KitRoster.kit_offer`); the
+## denial mission has a herd in hand by the time this is reached.
 ## **`crew` IS THE PARTY STEPPER ABOVE IT**, handed on so the hint can state how far the band's gear
-## reaches into the party being composed. Both dock missions have one; a caller with none keeps the
-## pre-clause line.
+## reaches into the party being composed. A caller with none keeps the pre-clause line.
 func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: String,
         default_kit: String, band: Dictionary, on_pick: Callable, quarry: Dictionary = {},
         prefix: String = "", crew: int = KitRoster.KIT_CREW_UNCOMPOSED) -> void:
@@ -8843,8 +8634,7 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
     # collapse for a herd that is gone. **A herd that MIGRATES INTO REACH no longer clears the form** —
     # under denial that was never a reason to drop it.
     var herd := _band_labor.find_world_herd(_compose.party_quarry_id())
-    if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd,
-            HudComposeVocab.COMPOSE_MISSION_DENY):
+    if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd):
         herd = {}
         _clear_party_quarry()
     sheet.add_child(_build_quarry_row(band, herd))
@@ -9842,7 +9632,7 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
     pick.alignment = HORIZONTAL_ALIGNMENT_LEFT
     if herd.is_empty():
         pick.text = HudComposeVocab.COMPOSE_PREY_CHOOSE
-        pick.tooltip_text = HudComposeVocab.SEND_HUNT_EXPEDITION_HINT
+        pick.tooltip_text = HudComposeVocab.SEND_DENIAL_RAID_HINT
         HudStyle.apply_button(pick, "primary")
     else:
         var name_text := SourceForecast.herd_display_name(herd)
@@ -9867,11 +9657,7 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
             name_text, int(herd.get("x", -1)), int(herd.get("y", -1)),
         ]
         HudStyle.apply_button(pick, "ghost")
-    # **THE OPEN SHEET'S MISSION DECIDES WHAT COUNTS AS A QUARRY**, so it rides with the pick rather
-    # than being re-guessed at the click: a hunt's quarry must lie beyond the band's reach and a
-    # denial raid's need not (`TargetingController.is_expedition_quarry`).
-    var mission := _party_compose_mission
-    pick.pressed.connect(func() -> void: _targeting.begin_pick_quarry(band, mission))
+    pick.pressed.connect(func() -> void: _targeting.begin_pick_quarry(band))
     row.add_child(pick)
     # **THE HEX MAY HOLD MORE THAN ONE HERD, AND THE MAP CANNOT SAY WHICH** — `try_dispatch` is handed
     # a TILE, so a rabbit warren sharing a hex with a wolf pack resolves to whichever the snapshot
@@ -9882,7 +9668,7 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
     # exactly as it did.
     if not herd.is_empty():
         var candidates := _targeting.eligible_quarries_on_tile(
-            band, int(herd.get("x", -1)), int(herd.get("y", -1)), mission)
+            band, int(herd.get("x", -1)), int(herd.get("y", -1)))
         # **THE CHOOSER'S WIDTH COMES OUT OF THE PICK, NOT OUT OF THE KEY**, and that is structural
         # now rather than a per-branch override. `build_field_key` takes a DECLARED width and does not
         # expand, so the pick is the row's only expanding child whether the row has two children or
@@ -9891,18 +9677,16 @@ func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
         # appeared: `🐇 Rabbit Warren` came back clipped to `Rabbit Warre` on the very frame the
         # chooser exists to serve, and the cure was a `SIZE_FILL` written into this branch alone.
         if candidates.size() > 1:
-            row.add_child(_build_quarry_choices_menu(band, herd, candidates, mission))
+            row.add_child(_build_quarry_choices_menu(band, herd, candidates))
     return row
 
 ## The quarry chooser: the `⋯` menu the zone heads already use, so the panel keeps ONE "there are
 ## choices here" glyph, with the candidates as radio-check items — a menu of plain items could not say
 ## which herd is the current one. A pick routes through `TargetingController.choose_quarry`, the SAME
 ## adoption the map click makes, so switching herds here and picking one there leave the composition
-## in one state — which is also why `mission` is threaded down to it rather than defaulted: the
-## adoption re-runs the eligibility test, and under denial the candidates include herds a hunt's rule
-## would refuse.
+## in one state.
 func _build_quarry_choices_menu(band: Dictionary, chosen: Dictionary,
-        candidates: Array, mission: String) -> MenuButton:
+        candidates: Array) -> MenuButton:
     var chosen_id := String(chosen.get("id", ""))
     var entries: Array = []
     for candidate_variant in candidates:
@@ -9916,7 +9700,7 @@ func _build_quarry_choices_menu(band: Dictionary, chosen: Dictionary,
             "label": name_text if sprite != null \
                 else HudComposeVocab.COMPOSE_PREY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text],
             HudWidgets.MENU_ENTRY_CHECKED: String(candidate.get("id", "")) == chosen_id,
-            "on_pick": func() -> void: _targeting.choose_quarry(band, candidate, mission),
+            "on_pick": func() -> void: _targeting.choose_quarry(band, candidate),
         }
         if sprite != null:
             entry[HudWidgets.MENU_ENTRY_ICON] = sprite
@@ -10418,30 +10202,6 @@ func _denial_forecast_view(band: Dictionary, herd: Dictionary, kit_id: String, p
             "herd_id": herd_id,
             "kit_id": kit_id,
             "party_workers": party,
-            "max_party_workers": max_party,
-        })
-    return _forecast_query.view(subject, key)
-
-## **THE HUNT QUESTION, COMPOSED AND ASKED.** The dock sheet's own copy of the herd drawer's helper —
-## the two entry points compose one raid, and each owns the ask for the sheet it is rendering.
-func _raid_forecast_view(band: Dictionary, herd: Dictionary, kit_id: String, party: int,
-        floor: float, max_party: int) -> Dictionary:
-    if _forecast_query == null:
-        return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
-    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
-    var herd_id := String(herd.get("id", ""))
-    var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_TRIP, band_id, herd_id)
-    var key := ForecastQuery.key_of(subject, kit_id, party, floor, band,
-        _band_labor.kits())
-    if party > 0 and band_id != HudConst.NO_BAND_ID and herd_id != "":
-        _forecast_query.ask(ForecastQuery.KIND_HUNT_TRIP, subject, key, {
-            "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-            "band_id": band_id,
-            "herd_id": herd_id,
-            "kit_id": kit_id,
-            "party_workers": party,
-            "floor": floor,
-            "preset_floors": SourceForecast.preset_floors(),
             "max_party_workers": max_party,
         })
     return _forecast_query.view(subject, key)

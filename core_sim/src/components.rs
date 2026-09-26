@@ -4874,22 +4874,25 @@ impl LaborAllocation {
     /// row drops the entry on the spot rather than leaving the builders funding ground the band no
     /// longer holds until the next turn's prune catches it.
     ///
-    /// Returns whether a row was found.
-    pub fn drop_source_row(&mut self, target: &LaborTarget) -> bool {
+    /// Returns the row it removed, or `None` when there was none.
+    ///
+    /// ⛔ **A far row's WORK PARTY GOES WITH IT, and the caller must bring it home.** The row can
+    /// carry a caravan — a load at the source and packs on the road — and this type holds no larder
+    /// to settle them into. The returned row is how the caller gets at it:
+    /// `systems::bring_the_dropped_party_home` is the one place that does it, so an `abandon` of a
+    /// far posting cannot silently lose what the party was carrying.
+    pub fn drop_source_row(&mut self, target: &LaborTarget) -> Option<LaborAssignment> {
         self.align_yields();
-        let Some(idx) = self
+        let idx = self
             .assignments
             .iter()
-            .position(|a| a.target.same_source(target))
-        else {
-            return false;
-        };
-        self.assignments.remove(idx);
+            .position(|a| a.target.same_source(target))?;
+        let row = self.assignments.remove(idx);
         self.last_yields.remove(idx);
         // A row going away cannot change a road's keeper, so road entries stand here and are judged
         // by the turn's own prune — [`road_holding_unchanged`].
         let _ = self.prune_build_queue(&road_holding_unchanged);
-        true
+        Some(row)
     }
 
     /// **MARK ONE SOURCE ROW WITH THE PLAYER'S RANK** — the whole of `work_priority`

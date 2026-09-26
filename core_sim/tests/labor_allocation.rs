@@ -188,9 +188,9 @@ fn stock_the_larder(app: &mut App, band: bevy::prelude::Entity, food: f32) {
 /// ⛔ **THE LOCAL IDENTITY — the single most valuable assertion in the work-party slice.**
 ///
 /// Far work only *falls out of* the one model instead of sitting beside it while the zero-distance
-/// case is completely untouched. So a source the band's own hands reach must take **no party**, pay
-/// **no porters**, lose **nothing** to friction and land its whole take in the larder on the turn it
-/// was taken — which is exactly what `travel_tiles == 0` buys.
+/// case is completely untouched. So a source the band's own hands reach must take **no party**, walk
+/// **nothing** home and land its whole take in the larder on the turn it was taken — which is exactly
+/// what posting no party inside `band_work_range` buys.
 ///
 /// It is asserted as an equality between the row's published `actual` and the larder the turn
 /// credited, in fixed point, because that is the one place a silent haircut anywhere in the party
@@ -225,7 +225,7 @@ fn a_local_row_takes_no_party_and_its_whole_take_reaches_the_larder() {
     assert_eq!(
         larder,
         scalar_from_f32(actual),
-        "every unit the row reports must reach the larder the same turn: no upkeep, no friction, \
+        "every unit the row reports must reach the larder the same turn: no upkeep, no walk, \
          no pack in transit"
     );
 }
@@ -295,10 +295,9 @@ fn a_partys_take_is_credited_to_its_home_band_not_to_the_band_beside_it() {
 /// shipped `band_move_tiles_per_turn`. A bound, not a prediction.
 const A_FEW_TURNS_OF_WALKING: usize = 6;
 
-/// **A tile clean on the other side of the map from `from`** — far enough that
-/// `porter_fraction_per_travel_tile` clamps at the whole party, so the posting carries and produces
-/// nothing. That is the range cap falling out of the clamp rather than a picked distance, and it is
-/// the only way to stage a party whose take cannot feed it.
+/// **A tile clean on the other side of the map from `from`** — far enough that a party posted there
+/// is still on its walk out for many turns, so it takes nothing and owes its whole upkeep. That is
+/// the one way to stage a party whose take cannot feed it without authoring an inedible quarry.
 fn beyond_the_carrying_range(app: &mut App, from: UVec2) -> bevy::prelude::Entity {
     let (width, height) = {
         let registry = app.world.resource::<TileRegistry>();
@@ -805,8 +804,8 @@ fn a_hunt_past_the_leash_posts_a_party_the_band_must_then_supply() {
     stock_the_larder(&mut app, provisioned, A_DEEP_LARDER);
     // **The unsupplied arm has to be genuinely unsupplied**, and a hunt party on a good herd feeds
     // itself out of its own kills — that is the rule, not an exemption. So this one is posted far
-    // enough that **every hand is a porter**: it produces nothing, owes its whole upkeep, and its
-    // band opens with an empty larder.
+    // enough that the whole party is **still walking out**: it takes nothing, owes its whole upkeep,
+    // and its band opens with an empty larder.
     let beyond_carrying = beyond_the_carrying_range(&mut app, herd_pos);
     let starving = spawn_band(&mut app, beyond_carrying, 10, hunt_alloc());
 
@@ -830,9 +829,9 @@ fn a_hunt_past_the_leash_posts_a_party_the_band_must_then_supply() {
         "a hunt party stands where its herd stands — no follow order, no pathfinding"
     );
     assert_eq!(
-        party.travel_tiles,
+        party.walk_tiles,
         7 - core_sim::LaborConfig::builtin().band_work_range,
-        "travel is measured to the apron, not to the hex"
+        "the walk is measured from the apron, not from the hex"
     );
 
     let folded = app
@@ -868,9 +867,9 @@ fn a_hunt_past_the_leash_posts_a_party_the_band_must_then_supply() {
 /// nothing left to fix, and leaving it would have hunt and forage measuring distance differently —
 /// the three-systems problem this arc exists to delete, surviving in miniature.
 ///
-/// So the row posts a party, and its travel is measured to the **apron** exactly as a forage row's
-/// is. The identity is untouched and asserted elsewhere: it lives at `travel_tiles == 0`, which is
-/// inside `band_work_range` for both jobs.
+/// So the row posts a party, and its walk is measured from the **apron** exactly as a forage row's
+/// is. The identity is untouched and asserted elsewhere: it lives inside `band_work_range`, where
+/// neither job posts a party.
 #[test]
 fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
     let mut app = spawn_world();
@@ -939,9 +938,9 @@ fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
         "⛔ a hunt past the APRON posts a party — hunt gets no longer threshold than forage",
     );
     assert_eq!(
-        party.travel_tiles,
+        party.walk_tiles,
         inside_the_old_leash - labor.band_work_range,
-        "a hunt's travel is measured to the same apron a forage row's is"
+        "a hunt's walk is measured from the same apron a forage row's is"
     );
 }
 
@@ -998,13 +997,13 @@ fn a_forage_row_out_of_work_range_posts_a_party_and_the_near_row_is_untouched() 
         "a forage party stands on its patch, because the patch does not move"
     );
     assert_eq!(
-        party.travel_tiles,
+        party.walk_tiles,
         5 - core_sim::LaborConfig::builtin().band_work_range,
-        "travel is measured to the apron: hex distance less the band's own work range"
+        "the walk is measured from the apron: hex distance less the band's own work range"
     );
     assert!(
-        party.transit_turns > 0,
-        "a posting that has to be walked to delivers nothing until the party gets there"
+        party.walk_out_remaining > 0,
+        "a posting that has to be walked to is still walking out after its first turn"
     );
 
     let kept = app
@@ -1057,9 +1056,9 @@ fn band_token(detail: &str) -> Option<u64> {
 fn every_labor_loss_line_names_the_band_by_its_durable_id() {
     let mut app = spawn_world();
     let (patch_pos, _patch_tile) = food_tile(&mut app);
-    // Far enough from the patch that the Forage row posts a work party which is **all porters** —
-    // it produces nothing, owes its whole upkeep, and the band spawns with an empty larder, so it
-    // cannot supply the posting and the row folds back this very turn.
+    // Far enough from the patch that the Forage row posts a work party still **walking out** — it
+    // takes nothing, owes its whole upkeep, and the band spawns with an empty larder, so it cannot
+    // supply the posting and the row folds back this very turn.
     let far_tile = beyond_the_carrying_range(&mut app, patch_pos);
 
     // Three hands committed to four seats: the scout is step 1 of the shedding order, so the band

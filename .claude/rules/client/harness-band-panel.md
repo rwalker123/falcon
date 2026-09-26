@@ -184,6 +184,11 @@ pushes its press and release with no awaited frame between them, `_drive_drag`'s
 physical pointer every frame, and every simulated event goes through the one `_push_input` wrapper
 the guard discriminates on.
 
+**THE CARAVAN PASS AND THE HUNT VERB'S RETIREMENT took out one frame and five `assert OK` and
+added two `: PASS`** — five hunt-compose frames out and four denial-hosted layout frames in, the hunt
+sheet's chart guards out (the `assert OK`s), and the work-party block re-staged for the caravan plus
+the footer claim in. The two sections at the foot of this file have what each claim can tell apart.
+
 **THE WORK PARTY's BLOCK ADDED two frames, six `assert OK` and fourteen `: PASS`** — two frames
 (`band_panel_work_party` and its narrow twin), whose bounds trios account for all **six**
 `assert OK`s, and **fourteen** `: PASS` — thirteen on the block itself plus
@@ -2892,98 +2897,102 @@ pool-TOE arc is anywhere near that gesture.
 
 ## The work party's block — one contrast frame, one narrow one (`docs/plan_civilization_steps.md`)
 
-**MEASURED, BEFORE AND AFTER, ON THIS TREE**: `1334 : PASS / 542 assert OK / 184 frames` →
-`1348 / 548 / 186`, exit 0 both. The baseline is a RUN with `_render_work_party_states()` swapped for
-a `pass` and the call restored afterwards, never the after-figure less the claims anyone remembers
-adding. The behaviour is `band-city-panel.md` → "The work row reports its own WORK PARTY"; what
-belongs here is the shape of the fixture and what each claim can tell apart.
+The behaviour is `band-city-panel.md` → "The work row reports its own WORK PARTY"; what belongs here
+is the shape of the fixture and what each claim can tell apart. The party is a **caravan** now
+(`.claude/rules/core_sim/work-party.md`), and the fixture is staged for it: one row per state the
+block can be in.
 
 **IT RUNS LAST, after `_render_empty_work_zone_states`**, so no earlier frame moves — and it hands
-the world and the reference band back on the way out, which that block's own restore already
-establishes as this file's idiom.
+the world and the reference band back on the way out.
 
 ⛔ **THE LOCAL ROW IS THE FIXTURE'S SUBJECT, not its scenery.** *A row with no party renders exactly
 as it did before any of this existed* is a claim about the DIFFERENCE between two rows, so the local
-forage row, the near posting, the long walk and the unsupplied posting are ONE board: a frame holding
-only party rows — or only local ones — is green whichever way the block is built, and an identity
-asserted on a band with no party anywhere on it passes on a client that never implemented the block
-at all. The identity claim leads and the near posting's three lines are its liveness companion.
+forage row and the three postings are ONE board: an identity asserted on a band with no party
+anywhere on it passes on a client that never implemented the block at all. **Its party keys are ABSENT
+rather than zeroed** — absent and `party_workers == 0` are one reading, and a fixture spelling the
+zeros out would be asserting the decoder's shape rather than the row's.
 
-**THE LOCAL ROW'S PARTY KEYS ARE ABSENT RATHER THAN ZEROED**, which is the honest fixture for a row
-the sim publishes the struct's own zeros for: absent and `party_workers == 0` are one reading, and a
-fixture spelling the zeros out would be asserting the decoder's shape rather than the row's.
+⛔ **AND `realized_yield` IS THE PARTY'S `net_rate_home` ON EVERY POSTED ROW** — one forecast
+publishes both, so a fixture giving them two numbers describes a row no server can send.
 
-⛔ **AND `realized_yield` IS THE PARTY'S `net_rate_home` ON EVERY POSTED ROW.** `systems::labor`
-settles the row's forward projection through the party's flow and writes both out of one expression,
-so a fixture giving them two different numbers describes a row no server can send — and would be the
-only witness for a board whose head total disagreed with its own rows.
+| posting | `walkTiles` | `walkOutRemaining` | `huntersOnTheRoad` | `nextLoadHomeIn` | ate | deficit | the block |
+|---|---|---|---|---|---|---|---|
+| local forage | — | — | — | — | — | — | **no block** |
+| walking out (deer) | 6 | 2 | 0 | 0 | 0 | 0 | crew line, `Walking out — reaches the herd in 2 turns` |
+| running (deer) | 8 | 0 | 1 | 3 | 2.0 | 0 | crew `· 1 on the road`, `Next load home in 3 turns`, `Party ate 2.00` |
+| unsupplied (wolf) | 5 | 0 | 1 | 1 | 0 | 1.2 | crew `· 1 on the road`, `Next load home in 1 turn`, the DANGER deficit |
 
-**The three postings differ in EVERY number** (crew, porters, walk, what was eaten, the rate), so a
-block that read the wrong row's party lands on a figure a claim names rather than on a coincidence.
-Each claim reads the lines the row actually DREW, through `HudWorkVocab.WORK_ROW_PARTY_META` — one
-meta per line, carrying that line's own text — never a subtree text scan; the expectations are
-composed through the shipped formats from the fixture's own numbers, so a reworded sentence moves the
-claim with it instead of turning it vacuous.
+**Each of the three live fields drives exactly one line and is set independently of the other two**
+(`_work_party_row` takes them as three arguments), so every absence claim below is a claim about one
+field rather than a coincidence of the fixture. The postings also differ in every number, so a block
+that read the wrong row's party lands on a figure a claim names.
 
 | claim | what only IT can say |
 |---|---|
-| a LOCAL row grows no block at all | the identity, and it is the reason the frame carries four rows |
-| the near posting draws three lines | the liveness without which the identity passes for free |
-| the crew line, by EQUALITY | the crew noun came from the board's own resolver, the tile is the PARTY's, and the porters clause appears where porters are paid |
-| the rate line contains the posting's `net_rate_home` | a far row states what ARRIVES, never `0.0 · in transit` |
-| a posting still WALKING OUT names its remaining turns | the line reads `partyTransitRemaining`; a client on `transitTurns` lands on that row's fixed walk instead |
-| the last turn reads `next turn`, not `in 1 turns` | every posting passes through one, so it is the commonest sentence this line can draw |
-| the SETTLED posting draws NO walk line | the `0` drops the clause; without this the stale reading passes every claim above by naming a real number |
-| the INEDIBLE posting draws no `Party ate` line | the shortfall line's own gate one line up, paired with the near posting's live one |
-| the shortfall line, by EQUALITY | the fibre/stone case says what the band owes it a turn |
-| NEITHER supplied posting carries that line | without it the claim above passes on a block that warns on every posting |
-| the shortfall line's ink is `DANGER` | a warning drawn in the quiet ink is a warning nobody reads, and no model claim can see a render-site decision |
-| the crew line on the SAME row keeps `INK_DIM` | nothing downstream re-tints the block — the rule a shortfall line lives under |
+| a LOCAL row grows no block at all | the identity |
+| the walking-out posting draws TWO lines | the liveness the identity and the absences below need |
+| its crew line, by EQUALITY, with no road clause | the noun is the board's own resolver's, the tile the party's, the walk one-way `-tile walk` |
+| its walk-out line names the HERD and the plural | `walkOutRemaining` is what it reads |
+| …and it carries NO next-load line and NO ate line | nobody has reached the herd; a `0` drops each |
+| the rate line contains `net_rate_home` | a far row states what ARRIVES, never `0.0 · in transit` |
+| the running crew line carries `· 1 on the road` | the live road count |
+| `Next load home in 3 turns` | `nextLoadHomeIn` is what it reads |
+| `Party ate 2.00` | the eaten share, where there is one |
+| the running posting has NO walk-out line | the claim that keeps an arrived posting from re-promising its arrival |
+| `in 1 turn`, not `in 1 turns` | every pack passes through one on its way home |
+| the deficit line, by EQUALITY | the fibre/stone case says what the band owes |
+| NEITHER supplied posting carries it | without it the claim above passes on a block that warns on every posting |
+| the INEDIBLE posting has no ate line | paired with the running posting's live one |
+| the deficit's ink is `DANGER`, the crew line's `INK_DIM` | render-site decisions no model claim can see |
+| (PNG-less) a forage party walking out names the PATCH, singular | the plant web's noun and the walk-out singular, through the one producer |
 
 **`band_panel_work_party_narrow` is not a second picture of the same thing.** The work zone
 `clip_contents` and the board is paged in uniform rows, so a block drawing taller than the capacity
-arithmetic reserved is sliced off the bottom with no overflow and no warning; the left dock is the
-narrowest zone the panel has, and `_assert_work_party_rows_fit_the_zone` measures the DRAWN rows
-against the zone they were paged into with a liveness guard ahead of it (a board that drew nothing
-fits any zone). Measured there: **4 rows, 336 of 759 px**, no elide on any line.
+arithmetic reserved is sliced off the bottom; `_assert_work_party_rows_fit_the_zone` measures the
+DRAWN rows against the zone with a liveness guard ahead of it. Measured: **4 rows, 304 of 759 px**.
 
-**`tools/work_party_proto.{gd,tscn,gd.uid}` IS DELETED with this pass.** It was a UX prototype
-rendering mock content, its `↥ Haul to …` control did not survive the design, and a harness that
-disagrees with the shipped panel in any respect only misleads. Its job — carrying the shape decision
-— is done and is in the branch history.
+> ⛔ **THE PIPELINE MODEL'S FIXTURE IS RETIRED WITH ITS FIELDS.** It staged `porters`,
+> `travelTiles` / `transitTurns` and `partyTransitRemaining` — a near posting part-way through a walk
+> the sim counted down, a settled one whose line was open, and a `First load arrives next turn`
+> singular — and every one of those fields is gone from the wire. Its sabotage history (a client
+> reading `transitTurns` in place of the countdown) has no field left to reach for.
 
-### THE FIXTURE CARRIES ALL THREE READINGS OF THE COUNTDOWN, ON ONE BOARD
+**Sabotage-verified** by drawing the next-load line on `nextLoadHomeIn == 0` (`elif > 0` → `else`):
+**EXIT=1, exactly 3 of this block's claims fail** — the walking-out posting's two-line count
+(`Next load home in 0 turns` appears), its no-next-load/no-ate absence, and the PNG-less forage walk
+out — while every presence claim stays green. Restored: green.
 
-`partyTransitRemaining` is what is LEFT of the walk and `transitTurns` is the walk's fixed length, so
-a fixture whose two numbers AGREE cannot tell a correct block from one reading the wrong field. The
-three postings therefore differ in which reading they exercise, and in nothing else that matters:
+## The DOCK's compose-surface claims ride the DENIAL form now (the Hunt verb is retired)
 
-| posting | `travelTiles` / `transitTurns` | `partyTransitRemaining` | the line |
-|---|---|---|---|
-| near | 6 | 4 | `First load arrives in 4 turns` — the PLURAL, on a number the fixed length does not equal |
-| far | 8 | 0 | **no line at all** — the walk is over and the rate line carries the row |
-| unsupplied | 5 | 1 | `First load arrives next turn` — the SINGULAR fork |
+The Parties footer's Hunt verb is gone (`band-city-panel.md` → "THE PARTIES FOOTER HAS NO HUNT
+VERB"), and with it `band_panel_compose_hunt` / `_short` / `_eradicate` / `_no_prey` / `_empty` and
+the hunt-sheet-only guards (`_assert_hunt_sheet_chart`, `_assert_chart_reads_the_settled_party`, the
+dock's trip-bound clause). **The LAYOUT claims those frames carried were never about the hunt** — they
+are about the dock's compose surface — so they moved onto the denial form, which is the dock sheet with
+a quarry to lay out:
 
-⛔ **THE SETTLED ROW IS THE CLAIM, AND IT IS AN ABSENCE.** A client still reading `transitTurns`
-renders `First load arrives in 8 turns` there — a perfectly ordinary sentence naming a perfectly real
-number — for the whole life of a posting whose goods have been arriving every turn since. No frame
-can show that; `_party_lines_carry(lines, format)` matches on the shipped format's head (its text
-before the first `%`), so the absence is asserted against the same constant the presence is and a
-reworded sentence moves both.
+- `band_panel_compose_tall` — the tall side dock HOLDS its sheet (`_assert_compose_in_zone`).
+- `band_panel_compose_short` — the height-capped top dock FLOATS it, the float fits the viewport and
+  clears the card, leaves the map clickable (9/9 presses), and an unknown zone box does not float.
+- the mark latched in the short dock is DROPPED on the move back to the tall one.
+- `band_panel_compose_no_prey` — the form with no quarry.
+- `band_panel_compose_empty` — the empty form opened through the REAL **Deny** footer button, the
+  phantom-measurement pair (1498px unsorted, 291px laid out).
 
-**AND THE `Party ate` LINE IS GATED AT `> 0`, on the unsupplied row's own evidence.** `Party ate 0.00`
-sat directly above `Needs 1.20 food a turn from home`, which says everything the zero was going to —
-the take is hide, so there was nothing to eat. It is `labor-ui.md`'s shortfall-line rule one line up
-the block, and the negative is PAIRED with the near posting's live `Party ate 1.50`: without the pair,
-*"no ate line"* passes on a block that lost the clause outright.
+**The float's Send is found by `SEND_DENIAL_CONFIRM_META`** now (`SEND_HUNT_CONFIRM_META` is deleted).
+**The Deny button arms the party seed** where the Hunt button armed none, so the block spends it
+(`consume_party_autofill`) before the denial states that stage their own `DENIAL_PARTY` — without that
+the first denial frame opened on the quarry's requirement and failed its verdict and take claims.
 
-**Sabotage-verified on two DISJOINT mutations**, both restored:
+**`_assert_footer_offers_no_hunt`** reads the launchers' own `MISSION_LAUNCH_META` values and requires
+exactly `deny · scout · split · trade` — the four that stay, paired with the absence, since a footer
+that lost every button would satisfy the absence alone. Sabotage-verified by re-adding a `hunt`
+launcher: exactly that claim fails, naming `["deny", "hunt", "scout", "split", "trade"]`.
 
-- reading `ASSIGNMENT_TRANSIT_TURNS_KEY` in place of the countdown → **EXIT=1, exactly 3 failures**,
-  the third naming the stale promise `First load arrives in 8 turns` on the settled row;
-- ungating the ate line → **EXIT=1, 2 of mine** — the near row's `Party ate 0.00` and the
-  inedible-absence claim naming the extra line.
+**The quarry-eligibility guards inverted with the rule.** `_assert_quarry_eligibility` used to require
+the near herd REFUSED (inside `hunt_reach`); every herd at a known distance is a quarry now, so it
+requires the near herd TAKEN and a herd at an UNKNOWN distance refused with targeting still armed.
+`_assert_denial_quarry_eligibility` lost its hunt half and asserts the glow at `QUARRY_NO_REACH_BOUND`.
 
-> **The second run also failed the ~5 queue auto-scroll claims** this file already records as a
-> wall-clock flake on a loaded machine (see "the engine's own pump"), which is what makes *"count the
-> failures that name your own claims"* the reading rather than *"count the failures"*.
+`_assert_dock_chart_carries_the_kit` survives PNG-less — it is arithmetic on `floor_chart_model`,
+which the herd sheet still draws — and is called from the same block.

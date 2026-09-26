@@ -46,7 +46,7 @@ use bevy::prelude::World;
 use sim_runtime::commands::{
     query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, HuntCrewTakeQuery,
     HuntCrewTakeReply, HuntCrewTakeRow, HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow,
-    QueryPayload, QueryReply,
+    QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
 };
 
 use crate::combat_config::CombatConfigHandle;
@@ -69,6 +69,7 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         QueryPayload::HuntTripForecast(ask) => answer_hunt_trip_forecast(world, ask),
         QueryPayload::DenialRaidForecast(ask) => answer_denial_raid_forecast(world, ask),
         QueryPayload::HuntCrewTake(ask) => answer_hunt_crew_take(world, ask),
+        QueryPayload::WorkPartyForecast(ask) => answer_work_party_forecast(world, ask),
         // **Answered by the server, from disk.** The slot list is a question about the filesystem,
         // not about a world — it has no `World` to resolve against and must be answerable while the
         // server is idle, which is exactly when a player opens the load menu. Reaching here means
@@ -754,6 +755,285 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
 /// answering a smaller crew than was asked about would hand a client a curve whose last row is not
 /// the plateau it thinks it is.
 const MAX_CREW_TAKE_WORKERS: u32 = 1_000;
+
+/// ⛔ **THE WORK ROW'S QUESTION, ANSWERED BY THE TURN'S OWN CARAVAN** — `netRateHome`, the walk, the
+/// hunters on the road and the first landing, for one exact (band, source, kit, crew, floor).
+///
+/// **Every term is resolved through the seam the turn resolves it through**, which is the whole of
+/// why the compose sheet and the assigned row it becomes quote one number: the walk off
+/// [`crate::work_party::resolve_walk`], the pricing off [`crate::work_party::CaravanPricing`] beside
+/// the band's other rows, the party off the band's **standing** posting on this source when it has
+/// one (so asking about a live posting answers from where that posting actually is), and the
+/// stepping off [`crate::work_party::forecast_caravan`] through the web's own projection.
+///
+/// **Inside the band's work range nothing is posted**, and the answer is the ordinary local row's
+/// steady rate with every walk field at zero — the local identity, asked for.
+///
+/// It fights at the **base** tuning, like the crew-take curve and unlike the raid sheet: a party is
+/// the band's own people hunting their range, not a detached expedition.
+fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -> QueryReply {
+    if !floor_is_valid(ask.floor) {
+        return query_failure(query_error::INVALID_FLOOR);
+    }
+    if ask.workers > MAX_CREW_TAKE_WORKERS {
+        return query_failure(query_error::INVALID_CREW);
+    }
+    let wanted = BandId(ask.band_id);
+    let faction = FactionId(ask.faction_id);
+    let Some(band) = world
+        .query::<(bevy::prelude::Entity, &BandId, &PopulationCohort)>()
+        .iter(world)
+        .find(|(_, id, cohort)| **id == wanted && cohort.faction == faction)
+        .map(|(entity, _, _)| entity)
+    else {
+        return query_failure(query_error::UNKNOWN_BAND);
+    };
+    let cohort = world
+        .get::<PopulationCohort>(band)
+        .expect("the band was found by its cohort")
+        .clone();
+    let Some(band_pos) = world
+        .get::<crate::components::Tile>(cohort.current_tile)
+        .map(|tile| tile.position)
+    else {
+        return query_failure(query_error::UNKNOWN_BAND);
+    };
+    let wear = world
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_default();
+    let allocation = world
+        .get::<crate::components::LaborAllocation>(band)
+        .cloned()
+        .unwrap_or_default();
+
+    let labor = world.resource::<LaborConfigHandle>().get();
+    let equipment = world.resource::<EquipmentConfigHandle>().get();
+    let fauna = world.resource::<FaunaConfigHandle>().get();
+    let flora = world
+        .resource::<crate::flora_config::FloraConfigHandle>()
+        .get();
+    let combat = world.resource::<CombatConfigHandle>().get();
+    let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
+    let supply = world
+        .resource::<crate::supply_network_config::SupplyNetworkConfigHandle>()
+        .get();
+    let ladder = world
+        .resource::<crate::intensification::LadderConfigHandle>()
+        .get();
+    let draw = world
+        .resource::<crate::demographics_config::DemographicsConfigHandle>()
+        .get()
+        .consumption
+        .worker_draw();
+    let output_multiplier = crate::systems::output_multiplier(
+        &cohort,
+        &world
+            .resource::<crate::wellbeing_config::WellbeingConfigHandle>()
+            .get(),
+    )
+    .to_f32();
+    let sim_config = world.resource::<crate::SimulationConfig>();
+    let map_seed = sim_config.map_seed;
+    let wrap = sim_config.map_topology.wrap_horizontal;
+    let tile_registry = world.resource::<crate::resources::TileRegistry>();
+    let geometry = (tile_registry.width, tile_registry.height, wrap);
+    let horizon = labor.yield_average_horizon_turns;
+
+    // **The source and the job its kit must serve.** A herd id the registry does not carry, or a
+    // tile with no patch on it, is refused by name.
+    enum Asked {
+        Hunt(Herd),
+        Forage {
+            patch: crate::forage::ForagePatch,
+            tile: bevy::math::UVec2,
+            take: crate::components::TakeSelection,
+        },
+    }
+    let (asked, target, job) = match &ask.source {
+        WorkPartySource::Hunt { herd_id } => {
+            let Some(herd) = world.resource::<HerdRegistry>().find(herd_id).cloned() else {
+                return query_failure(query_error::UNKNOWN_HERD);
+            };
+            (
+                Asked::Hunt(herd),
+                crate::components::LaborTarget::Hunt {
+                    fauna_id: herd_id.clone(),
+                    floor: ask.floor,
+                },
+                KitJob::Hunt,
+            )
+        }
+        WorkPartySource::Forage { x, y, take_species } => {
+            let tile = bevy::math::UVec2::new(*x, *y);
+            let Some(patch) = world
+                .resource::<crate::forage::ForageRegistry>()
+                .patch(tile)
+                .cloned()
+            else {
+                return query_failure(query_error::UNKNOWN_PATCH);
+            };
+            let take = crate::components::TakeSelection::from_keys(take_species);
+            (
+                Asked::Forage {
+                    patch,
+                    tile,
+                    take: take.clone(),
+                },
+                crate::components::LaborTarget::Forage {
+                    tile,
+                    floor: ask.floor,
+                    species: None,
+                    take_species: take,
+                },
+                KitJob::Forage,
+            )
+        }
+    };
+    // **Named, and never defaulted** — the rule every query on this channel follows.
+    let kit = match equipment.resolve_kit_for_job(Some(&ask.kit_id), job) {
+        Ok(kit) => kit,
+        Err(crate::equipment_config::KitSelectionError::Unknown { .. }) => {
+            return query_failure(query_error::UNKNOWN_KIT)
+        }
+        Err(crate::equipment_config::KitSelectionError::WrongJob { .. }) => {
+            return query_failure(query_error::KIT_WRONG_JOB)
+        }
+    };
+    let pricing = crate::work_party::CaravanPricing::resolve(
+        &equipment,
+        &kit,
+        ask.workers,
+        &wear,
+        &allocation.rows_excluding_source(&equipment, &target),
+        &labor,
+    );
+    let source_pos = match &asked {
+        Asked::Hunt(herd) => herd.position(),
+        Asked::Forage { tile, .. } => *tile,
+    };
+    let walk = crate::work_party::resolve_walk(
+        band_pos,
+        source_pos,
+        &labor,
+        &supply,
+        world.resource::<crate::routes::RoadRegistry>(),
+        crate::routes::max_route_reach_tiles(&ladder),
+        geometry,
+    );
+    // The gather's season and basket, off the tile — the same two readings the labor arm takes.
+    let forage_ground = |tile: bevy::math::UVec2| {
+        let entity = world
+            .resource::<crate::resources::TileRegistry>()
+            .index(tile.x, tile.y);
+        let seasonal = entity
+            .and_then(|entity| world.get::<crate::FoodModuleTag>(entity))
+            .map_or(crate::forage::NO_FORAGE_SEASON, |module| {
+                module.seasonal_weight.max(0.0)
+            });
+        let composition = entity
+            .and_then(|entity| world.get::<crate::components::Tile>(entity))
+            .map(|ground| {
+                crate::forage::tile_flora_composition(&flora, &labor.forage, ground, map_seed)
+                    .into_owned()
+            })
+            .unwrap_or_default();
+        (seasonal, composition)
+    };
+
+    let Some((walk_tiles, walk_turns)) = walk else {
+        // **Inside the apron: the ordinary local row's steady rate**, and nobody walks.
+        let rate_home = match &asked {
+            Asked::Hunt(herd) => {
+                let hunters =
+                    pricing.hunters(&equipment, &wear, &combat, intrinsic, herd.body_mass);
+                crate::fauna::project_realized_hunt(
+                    herd,
+                    &fauna,
+                    pricing.hunt_carry,
+                    &hunters,
+                    output_multiplier,
+                    ask.workers,
+                    ask.floor,
+                    horizon,
+                )
+                .provisions
+            }
+            Asked::Forage { patch, tile, take } => {
+                let (seasonal, composition) = forage_ground(*tile);
+                crate::forage::project_realized_forage(
+                    patch,
+                    &composition,
+                    &labor.forage,
+                    &flora,
+                    pricing.forage_carry,
+                    seasonal,
+                    output_multiplier,
+                    ask.workers,
+                    ask.floor,
+                    take,
+                    horizon,
+                )
+            }
+        };
+        return QueryReply::WorkPartyForecast(WorkPartyForecastReply {
+            posts_a_party: false,
+            rate_home,
+            ..WorkPartyForecastReply::default()
+        });
+    };
+    // **The party to step from** — the band's standing posting on this source if it has one,
+    // restamped for the asked crew, else one posted now.
+    let mut party = allocation
+        .assignments
+        .iter()
+        .find(|row| row.target.same_source(&target))
+        .and_then(|row| row.party.clone())
+        .unwrap_or_else(|| crate::WorkParty::posted(source_pos, walk_tiles, walk_turns));
+    party.restamp(source_pos, ask.workers, walk_tiles, walk_turns);
+    let upkeep = crate::work_party::party_upkeep(ask.workers, draw);
+    let forecast = match &asked {
+        Asked::Hunt(herd) => {
+            let hunters = pricing.hunters(&equipment, &wear, &combat, intrinsic, herd.body_mass);
+            crate::work_party::forecast_hunt_caravan(
+                &party,
+                herd,
+                &fauna,
+                pricing.hunt_carry,
+                &hunters,
+                output_multiplier,
+                ask.floor,
+                upkeep,
+                horizon,
+            )
+        }
+        Asked::Forage { patch, tile, take } => {
+            let (seasonal, composition) = forage_ground(*tile);
+            crate::work_party::forecast_forage_caravan(
+                &party,
+                patch,
+                &composition,
+                &labor.forage,
+                &flora,
+                pricing.forage_carry,
+                seasonal,
+                output_multiplier,
+                ask.floor,
+                take,
+                upkeep,
+                horizon,
+            )
+        }
+    };
+    QueryReply::WorkPartyForecast(WorkPartyForecastReply {
+        posts_a_party: true,
+        rate_home: forecast.rate_home,
+        walk_tiles,
+        walk_turns,
+        hunters_on_the_road: forecast.mean_on_the_road,
+        first_load_turn: forecast.first_load_turn,
+    })
+}
 
 /// A refusal, as its token. One constructor so the reply shape cannot drift between the seven
 /// failure paths.

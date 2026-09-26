@@ -3129,7 +3129,8 @@ stated in SORTED order because the link claim sorts what it collected before com
 fixture's band id is chosen so the sorted expectation reads `[3, 4, 5, 5, 7]`.
 
 **The label and detail are the sim's own** (`systems::labor`'s `status=recalled reason=unsupplied
-… travel=… deficit=…`), spelled out as chapter constants rather than recomposed through
+… walk=… deficit=… band=…`, the caravan's walk where the pipeline model once published `travel=`),
+spelled out as chapter constants in the sim's own token order rather than recomposed through
 `HudEventVocab` — an expectation built from the code under test can only agree with itself.
 
 **A clean run is 457 frames / 2269 `PASS`, exit 0 — RE-MEASURED windowed on this tree**, after merging
@@ -3138,3 +3139,87 @@ of the ninety-two `PASS` between the two figures are the knowledge-screen chapte
 section's, which added four claims and no frame. **The merged figure was measured rather than
 summed** — adding this section's delta to the incoming headline is exactly how a tally stops being
 able to report an assertion that went missing in the merge.
+
+## A far herd is an ordinary hunt: the expedition sheet's states are retired, and the far sheets carry the party section
+
+`docs/plan_civilization_steps.md` §One work party — the herd sheet's hunting-EXPEDITION branch and the
+forage sheet's range refusal are gone (`labor-ui.md` → "A FAR SOURCE IS AN ORDINARY SHEET"), and every
+state that existed to render them is retired with them rather than re-described: a frame keeping a
+retired state's name under a different picture is how a reader comes to trust a claim nobody makes.
+
+**Retired from `chapters/hunt.gd`** — `herd_hunt_expedition` and its trip-readout claims, the six
+`herd_hunt_forecast_*` raid states, `herd_hunt_expedition_automax`, the boar-raid set
+(`herd_hunt_boar_raid` / `_max_useful` / `_raid_travel` / `_no_surplus` / `_eradicate`),
+`herd_hunt_labor_bound` / `_deplete`, `herd_hunt_pelts_raid`, the empty-raid pair
+(`herd_hunt_party_cannot_kill`, `herd_hunt_horizon_travel`) and every helper only they called. The
+Wild Aurochs terms those helpers declared survive, because the sub-one, spear-short and retreat blocks
+still read them. **From `chapters/band_expedition.gd`** — `expedition_launch_policy` / `_sustain`,
+which rendered the Parties footer's retired hunt launch.
+
+**`herd_hunt_far_party` is the screen Ray opens first**: a Wild Boar 8 hexes out from a band whose
+apron is 2 (`_far_boar_band`, at the shipped one tile a turn), composed at `FAR_PARTY_HUNTERS` (2)
+against a caravan reply the fixture herd AUTHORS (`ForecastFx.WORK_PARTY_FORECAST_KEY`).
+
+⛔ **EVERY AUTHORED FIGURE IS ONE THE GAME CAN PRODUCE**, because these frames are what Ray looks at:
+a 6-tile walk is 6 turns each way at `band_move_tiles_per_turn` 1; the first load lands no sooner than
+the walk out, a pack's fill and the walk home (turn 19); the mean on the road cannot exceed the crew;
+and the rate home sits below what the crew takes at the source. The first cut read *"3 turns out"* and
+*"first load home in 5 turns"*, which no shipped config can produce. `food_forage_far_party`'s reply
+is held to the same rule (19 tiles / 19 turns, one harvester, first load at 42). Its claims:
+
+| claim | what only IT can say |
+|---|---|
+| the commit is `Hunt Here` and live | the sheet commits `assign_labor`, not a raid |
+| no `Detach a party` / `Away ` on the sheet | the retired expedition sheet's words did not survive under the ordinary one |
+| the section's three lines, by EQUALITY through the shipped formats | the walk (`6 tiles` each way, `6 turns` out), the rounded road (`0.8` → one hunter, singular noun) and the first load — and NO rate line |
+| the PER TURN food headline EQUALS the reply's `rate_home` | one food number per source: the sheet promises the `netRateHome` the committed row prints |
+| …with no `now → after` and no waste note | a steady rate home has no walk to the floor, and a caravan walks away from nothing |
+| the caption reads `ONCE RUNNING · ARRIVING HOME`, with no likely-take suffix | the caption describes the number shown — `next turn` a far party delivers nothing |
+| (on `herd_hunt_band_near` / `food_forage_band_near`) the caption still begins `NEXT TURN` | inside the apron the caption is untouched |
+| (PNG-less, on `herd_hunt_band_far`) `_with_home_rate` is the identity on an empty view and on a no-party reply | inside the apron nothing changes |
+| the recorded ASK carries the stepper's crew and `source_kind: hunt` | the section is priced at the crew being composed — the fixture's reply ignores the crew, so the rendered lines cannot say this |
+| the section speaks no `trip` / `away` / `Send` | the standing-assignment register |
+| the producer's edges (PNG-less, `work_party_section_lines`) | a road covering the run, a rarely-walked road, a first load at one turn, a one-tile walk, a plural road, no load within the horizon |
+| the section mounts | the liveness companion to the two absences below |
+| the far spine EQUALS the local hunt's | the far sheet is the same sheet plus a section, never a second grammar |
+
+**The absences ride the two-band pair**: `herd_hunt_band_near` (the band on the herd, inside its
+apron) mounts NO section, and `herd_hunt_band_far` (a far band whose herd authors no reply — the sim's
+`posts_a_party: false`) mounts none either while still committing `Hunt Here`.
+
+**`chapters/sight_fog.gd`'s `food_forage_out_of_range` IS `food_forage_far_party` now** — the same far
+band and tile, re-aimed from the refusal to the party section: the commit is live, the retired
+refusal's words are absent, and the section's four lines match the tile's authored reply in the
+harvesters' own noun, and its PER TURN food headline reads the reply's rate home under the
+`ONCE RUNNING · ARRIVING HOME` caption.
+`food_forage_band_far` keeps its frame as the unauthored twin. **The deposit
+refusal is still asserted** (`chapters/workings.gd`'s `workings_out_of_range`), in the shared
+sentence the forage sheet used to refuse in.
+
+**`chapters/forecast_seam.gd` asks the WORK PARTY's question now.** Its world-boundary and
+failure-class guards are about the seam's bookkeeping, not about any one question, and were made on
+the hunting raid's; the plateau-direction guard (`expedition_useful_cap`) is retired with the cap it
+tested. `EXPECTED_CHECKPOINTS` 16 → 14.
+
+**Checkpoints**: `hunt.gd` 374 → **338**, `band_expedition.gd` 127 → **125**, `sight_fog.gd` 14 →
+**19**, `forecast_seam.gd` 16 → **14** — each RE-MEASURED off the harness's own `reached N` rather than
+subtracted.
+
+**Sabotage-verified on three disjoint mutations**, each restored:
+
+- `_is_past_apron` answering `false` → **EXIT=1, exactly 4 failures** — both webs' section-equality
+  claims, the crew-priced ask and the section-mounts liveness; every absence claim stays green, which
+  is the pairing working.
+- the far herd's ask priced at `WORKER_STEP` instead of the stepper → exactly the crew claim fails,
+  the section's lines still passing (the fixture reply ignores the crew, which is why the ask is
+  recorded);
+- the forage commit re-gated on `_mount_work_range_refusal` → exactly the far patch's live-commit claim
+  fails;
+- `_with_home_rate` returning the model unchanged → **EXIT=1, exactly 4 failures**: both webs' headline
+  claims (the far boar reading `0.12 → 0.00` against `0.08`, the far patch `0.32` against `0.12`), the
+  no-transition claim and the no-waste claim (`⚠ 60% WASTED` back); the identity claim stays green;
+- the caption forced back to the default past the apron → **EXIT=1, exactly 2 failures**, both webs'
+  caption claims reading `NEXT TURN`; the two inside-the-apron caption claims stay green.
+
+**A clean run is 438 frames / 2253 `PASS`, exit 0 — RE-MEASURED windowed on this tree.**
+

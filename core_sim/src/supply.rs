@@ -203,12 +203,12 @@ fn link_holds(
 
 /// ⛔ **HOW FAR A LINK BETWEEN THESE TWO POINTS HOLDS ITSELF OPEN FOR FREE** — `reach_tiles`, or
 /// what the road between them widens it to, whichever is greater. The number [`link_holds`] tests a
-/// distance against, published because it has a **second reader**: a work party's porters and
-/// friction are charged on the tiles beyond it (`crate::work_party::porter_tiles`), which is what
-/// makes a worn trail promote a far posting into a near one.
+/// distance against, published because it has a **second reader**: how far a road widens it is how
+/// much of a work party's walk the road takes away (`crate::work_party::resolve_walk`), which is
+/// what makes a worn trail promote a far posting into a near one.
 ///
-/// **One producer, two readers.** The pooling test is literally `distance <= this`, so the reach a
-/// party pays porters past and the reach two camps pool inside can never drift apart — and the
+/// **One producer, two readers.** The pooling test is literally `distance <= this`, so what a road
+/// does for a caravan and what it does for two camps pooling can never drift apart — and the
 /// weakest-tile rule ([`crate::routes::path_reach_tiles`]) applies identically to both.
 ///
 /// **Cost**: the trace only runs once the free test has failed **and** the pair is within

@@ -253,7 +253,7 @@ A far Hunt or Forage row posts a **work party** rather than lapsing
 (`docs/plan_civilization_steps.md` §One work party), and a party the band cannot keep supplied folds
 back: the pack is handed over, the workers return to the pool, and the queue entry is pruned with the
 row. `systems::labor` says so on the source's own feed channel —
-`status=recalled reason=unsupplied x=… y=… travel=… deficit=…`, through `band_detail_token`, so the
+`status=recalled reason=unsupplied {x=… y=…|fauna=…} walk=… deficit=…`, through `band_detail_token`, so the
 line carries the durable `band=` a jump needs.
 
 ⛔ **IT IS NOTABLE, NOT THE ALERT `lapsed` EARNS, and holding the two apart is the whole entry.**

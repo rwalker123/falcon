@@ -121,6 +121,8 @@ static func crew_take_rows(herd: Dictionary, max_workers: int, floor: float) -> 
 ## One canned reply, in the shape `native/src/bridge/query.rs` decodes.
 static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 	var kind := String(ask.get("kind", ""))
+	if kind == ForecastQuery.KIND_WORK_PARTY:
+		return work_party_answer(hud, request_id, ask)
 	if kind == ForecastQuery.KIND_HUNT_CREW_TAKE:
 		return {"request_id": request_id, "ok": true, "kind": kind,
 			"per_crew": crew_take_rows(_quarry_for_id(hud, String(ask.get("herd_id", ""))),
@@ -144,6 +146,38 @@ static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 		presets.append(_raid_row(table, float(preset_floor), party))
 	reply["per_preset"] = presets
 	reply["useful_cap"] = _useful_cap(table, floor_value)
+	return reply
+
+## **THE WORK PARTY'S ANSWER, READ OFF THE SOURCE FIXTURE.** A herd or patch that wants a party section
+## authors the reply it stands for under `WORK_PARTY_FORECAST_KEY` (bare on a herd and on the forage
+## lookup, `patch_`-prefixed on a tile card's `tile_info`, the cross-ref's own rule), so the numbers a
+## sheet renders are the numbers the fixture states and nothing here composes a caravan.
+##
+## **A SOURCE THAT AUTHORS NONE ANSWERS `posts_a_party: false`** — the sim's own answer inside the
+## apron, and the one under which the sheet renders no section. So every far-source frame that is not
+## ABOUT the party renders exactly the ordinary sheet, rather than a section of invented figures.
+const WORK_PARTY_FORECAST_KEY := "work_party_forecast"
+const WORK_PARTY_FORECAST_PATCH_KEY := "patch_work_party_forecast"
+
+static func work_party_answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
+	var authored := {}
+	if String(ask.get("source_kind", "")) == ForecastQuery.WORK_PARTY_SOURCE_HUNT:
+		authored = _quarry_for_id(hud, String(ask.get("herd_id", ""))).get(
+			WORK_PARTY_FORECAST_KEY, {})
+	else:
+		var x := int(ask.get("x", -1))
+		var y := int(ask.get("y", -1))
+		var tile: Dictionary = hud._selection.tile_info()
+		if int(tile.get("x", -2)) == x and int(tile.get("y", -2)) == y:
+			authored = tile.get(WORK_PARTY_FORECAST_PATCH_KEY, {})
+		if authored.is_empty():
+			var patch: Dictionary = hud._band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
+			authored = patch.get(WORK_PARTY_FORECAST_KEY, {})
+	var reply := {"request_id": request_id, "ok": true, "kind": ForecastQuery.KIND_WORK_PARTY,
+		"posts_a_party": false, "rate_home": 0.0, "walk_tiles": 0, "walk_turns": 0,
+		"hunters_on_the_road": 0.0, "first_load_turn": 0}
+	for key in authored:
+		reply[key] = authored[key]
 	return reply
 
 ## **THE PLATEAU, SCANNED OVER THE FIXTURE'S OWN PARTY AXIS.** The sim walks `1..=max` contiguously;

@@ -562,7 +562,7 @@ are just somewhere else.**
     the owner of the cost from the owner of the benefit — the very thing the take's rule exists to
     prevent — and it lets any nearby camp quietly subsidise a far posting, which drains the
     provisioning pressure that makes distance a decision at all. Proximity already pays for itself
-    in the right place: it is what porters and friction are charged on.
+    in the right place: a shorter walk is what it buys.
 
     **The settling pull survives in a better form.** Founding a camp near good ground still extends
     your working reach — that camp posts its own short-run party, rather than feeding someone
@@ -576,23 +576,41 @@ are just somewhere else.**
 - **Hunters and foragers stay labor.** The party earns per-turn income into its larder the way the
   assignment does today. The lumpy raid model, its forecast and its completion rules go away with
   the expedition.
-- **Distance is paid in WORKERS, out of the party itself.** Within reach the link is free — that is
-  what `reach_tiles` means. Beyond it, a distant node still needs people to walk the goods, so a
-  share of the party is carrying rather than working, and that share rises with distance. At some
-  range the whole party is carrying and produces nothing, which is a **range cap nobody had to
-  pick a number for**. Carry caps are a playtest dial.
-- **Travel time is measured to the APRON, not to the hex.** A source inside `band_work_range` (2)
-  costs no travel at all; beyond it the modelled distance is `hex_distance − band_work_range`. This
-  is what makes today's local hunt and forage fall out of the one model rather than sit beside it.
+- **Distance is paid in WALKING, and the party runs as a CARAVAN (decided).** The party hunts or
+  gathers exactly as any hunt or forage does. When the take fills **one worker's pack**, that worker
+  carries it home, delivers it, walks back and rejoins; the rest keep working meanwhile. Nothing is
+  drawn on the map — it is only how the sim resolves the turn.
+
+  This replaced an earlier model that paid distance with two tuned terms — a fixed share of the
+  party permanently "carrying", and friction on what arrived. Both were numbers somebody picked.
+  Under the caravan the share on the road **falls out** of carry, kill rate and distance: with a
+  per-worker take `r`, a pack `L` and a one-way walk of `w` turns, the share working is
+  `L / (L + 2·w·r)`. That gets the economics right where the fixed share could not — game that fills
+  a pack slowly loses almost nobody to walking, game that fills one fast loses a lot — and more
+  workers land the first load sooner, because the first pack fills at the whole party's rate.
+
+  **The ceiling it implies is worth knowing when tuning.** As the take rate grows, what a worker can
+  deliver home tends to `L / (2·w)` — one pack per round trip. At a distance, *carry and the road*
+  bound a far posting, not how fast the source gives. Far enough out a posting delivers almost
+  nothing: **a range cap nobody had to pick a number for.**
+
+  **Friction is not charged on the party.** The walk already is the cost of distance, so a loss term
+  on top would count it twice. Food going off on a long walk is spoilage's business (#706).
+- **The walk is measured to the APRON, not to the hex.** A source inside `band_work_range` (2)
+  posts no party at all; beyond it the walk each way is `hex_distance − band_work_range` — so an
+  8-hex source walks 6 out and 6 back, 12 for the round trip, never 16. This is what makes today's
+  local hunt and forage fall out of the one model rather than sit beside it.
 - **The work row states the AMORTIZED rate**, averaged over the whole cycle including travel — six
   food arriving after a six-turn round trip reads `1.0 /turn`, never `0.0 · in transit`. That is
   what makes a near row and a far row comparable numbers on one board.
 - **Trails come free, and they PROMOTE a far posting into a near one.** `reach_tiles` is widened by
   whatever road runs between the endpoints, and automatic pooling is the only road traffic there is.
-  So a distant posting starts expensive — porters walking, friction eating the load — and if it is
-  worked steadily the trail it wears widens the radius until the link pools for free and the porters
-  go back to producing. Roads improve travel time **and** carry capacity, not only reach. The
-  distance bite and its escape hatch are one mechanism, and the player discovers it by doing.
+  The road's widening comes off the walk, so a distant posting starts expensive — workers spending
+  their turns on the road — and if it is worked steadily the trail it wears shortens the walk until
+  the road covers the run, every pack is delivered the turn it fills, and nobody walks at all. The
+  distance bite and its escape hatch are one mechanism, and the player discovers it by doing. Roads
+  should also raise what a worker carries, which lifts the far-posting ceiling above; that is the
+  route ladder's to build.
 
 What the earlier "treat the party as a split-off band" idea was buying — network pooling and the
 ability to send food along a trade route — comes from the party being an **extension of its band**,
@@ -629,8 +647,8 @@ and the food already spent on it, not people dying somewhere the player was not 
 
 *When* a far party's cargo is delivered was the decision this slice owed, and it is answered above:
 there is no launch gate to rethink, because there is no launch and no shipment to gate. The party is
-wired to its home band at creation, goods flow both ways along that tie every turn, and what
-distance costs is porters and friction rather than permission.
+wired to its home band at creation, goods flow along that tie every turn, and what distance costs is
+the walking rather than permission.
 
 ### In the anthropology
 
@@ -647,8 +665,7 @@ rendered and the WORK ROW shape was chosen — a far party's state hangs off the
 staffed it, so there is one place to look for every work item.*
 
 1. **The work party** — hunt and forage share one model, in one PR: placement at the source, herd
-   following for hunt, the home-band tie, free pooling within reach, porters and friction beyond it,
-   fold-back on unassign.
+   following for hunt, the home-band tie, the caravan beyond the apron, fold-back on unassign.
 2. **Retire the expedition hunt path and the leash** once the work party covers everything they
    did.
 3. **Client: the hunt and forage panel**, prototype first.

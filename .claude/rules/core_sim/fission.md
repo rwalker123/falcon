@@ -237,7 +237,8 @@ and `Herd::owner` is a **`FactionId`**, so both halves of a same-faction split a
 pen. **What a band loses by walking away is reach, not title** — and since the work party
 (`.claude/rules/core_sim/work-party.md`) it does not even lose the reach: a Hunt or Forage row whose
 source falls outside the band's work range **posts a party** and goes on working it, paying the
-distance in porters and friction. What it can lose is the posting, if it cannot keep that party
+distance in walking — each pack is carried home by one of the party. What it can lose is the
+posting, if it cannot keep that party
 supplied (`status=recalled reason=unsupplied`). A **deposit** row still lapses outright with
 `reason=out_of_range`.
 

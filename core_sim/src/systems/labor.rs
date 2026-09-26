@@ -253,10 +253,9 @@ pub struct LaborConfigs<'w> {
     /// for a party; it is the same people eating the same amount, somewhere else, so this is the
     /// rate `systems::population::food_demand` already charges them at.
     pub demographics: Res<'w, crate::demographics_config::DemographicsConfigHandle>,
-    /// **The logistics reach and its friction** — the distance a link holds itself open at, which
-    /// is where a work party starts paying porters, and the loss its flow takes past it
-    /// (`crate::work_party`). Read here rather than re-stated so the reach a party pays past and
-    /// the reach two camps pool inside are one number.
+    /// **The logistics reach** — read for how far a road widens it, which is how much of a work
+    /// party's walk a road takes away (`crate::work_party::resolve_walk`). Read here rather than
+    /// re-stated so what a road does for a caravan and what it does for pooling are one reading.
     pub supply_network: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
 }
 
@@ -3630,86 +3629,74 @@ fn party_source_position(target: &LaborTarget, registry: &HerdRegistry) -> Optio
     }
 }
 
-/// ⛔ **THE DISTANCE PAST WHICH A ROW ACQUIRES A PARTY — `band_work_range`, THE SAME FOR EVERY
-/// JOB.**
+/// **ONE ROW'S WORK PARTY, OPENED FOR THIS TURN** — the caravan, the hunters left at the source to
+/// work it, and what the road has already handed over.
 ///
-/// It is the band's apron: the distance its own hands reach without anybody walking goods. Past it
-/// the row posts a party, and `travel_tiles` is measured *from the apron* rather than from the
-/// band's hex (`docs/plan_civilization_steps.md` §One work party).
-///
-/// ⛔ **HUNT DOES NOT GET ITS OWN, LONGER THRESHOLD, and that is the point of the slice.** A Hunt
-/// row used to survive out to [`crate::labor_config::LaborConfig::hunt_reach`] — `band_work_range`
-/// plus `hunt_leash_tiles` — and the design doc is explicit about what that number was: *"the 5 was
-/// set so the herd did not roam out of range once a hunt was set up — in hindsight, a patch over
-/// the wrong model."* A party that follows its herd never roams out of range, so the patch has
-/// nothing left to fix, and keeping it would leave hunt and forage measuring distance differently —
-/// the three-systems problem this arc exists to remove, surviving in miniature.
-///
-/// **This is therefore a deliberate behaviour change, not an additive one**: a hunt three to five
-/// tiles out was free and now costs a porter or two and a short walk out, exactly as a forage row
-/// at the same distance always would have. The local identity the module is built around is
-/// unaffected — it is asserted at `travel_tiles == 0`, which is inside `band_work_range` for both
-/// jobs.
-///
-/// It is one function so the choice can be moved in one place.
-fn party_begins_past(_target: &LaborTarget, labor: &crate::labor_config::LaborConfig) -> u32 {
-    labor.band_work_range
-}
-
-/// **ONE ROW'S WORK PARTY, RESOLVED FOR THIS TURN** — the party itself, the flow its goods travel
-/// along, and the hands left over to actually work the source.
+/// The turn runs the caravan's rule in two halves around its own inline take: the top half
+/// ([`WorkParty::open_turn`]) is run where the party is posted, the foot
+/// ([`WorkParty::close_turn`]) at the take site. They are the same two functions
+/// [`crate::work_party::forecast_caravan`] steps, so the forecast runs the turn's own code.
 struct PartyPosting {
     party: WorkParty,
-    flow: crate::work_party::PartyFlow,
-    /// `workers − porters`: **what the existing income math sees.** Everything downstream — the
-    /// take, the rung work, the kit coverage — is priced on this reduced crew, which is what makes
-    /// *"distance is paid in workers, out of the party itself"* a mechanism rather than a note.
+    /// The party's own upkeep this turn ([`crate::work_party::party_upkeep`]).
+    upkeep: f32,
+    /// **The hunters at the source — what the existing income math sees.** Everything downstream —
+    /// the take, the rung work, the kit coverage — is priced on it, which is what makes *"the take
+    /// of whoever is present"* a mechanism rather than a note. `0` while walking out.
     working_crew: u32,
+    /// Food the walkers handed over at the top of the turn, credited home at the take site with the
+    /// eaten share — or at the foot of the pass, for an arm that never reached one.
+    pending_home: f32,
+    /// Has the foot of the turn run? An arm that returns before its take site leaves it `false`,
+    /// and the settlement below closes the turn on a zero take so the party still eats.
+    closed: bool,
+    /// **Forecast from the state this turn leaves**, struck at the take site where the source's
+    /// post-take state and every pricing term are in hand. `None` for an arm that never got there.
+    forecast: Option<crate::work_party::CaravanForecast>,
 }
 
 impl PartyPosting {
-    /// **ROUTE ONE TURN'S FOOD TAKE HOME.** The take feeds the party first; the remainder is
-    /// surplus and travels; the shortfall is a deficit the supply line has to cover.
-    ///
-    /// While the party is still walking out, what it has gathered rides in its pack and the band is
-    /// credited nothing — *"six food arriving after a six-turn walk"* is a pipeline filling, and the
-    /// row states its steady rate rather than a zero. The pack is handed over whole on the turn the
-    /// line opens, so nothing produced on the way is lost.
-    fn deliver_food_home(&mut self, produced: Scalar) -> Scalar {
-        let settled = self.flow.settle_food(produced.to_f32());
-        self.party.ate = settled.ate;
-        self.party.deficit = settled.deficit;
-        if self.party.line_is_open() {
-            scalar_from_f32(settled.home + self.party.hand_over_pack())
-        } else {
-            self.party.pack_food += settled.home;
-            scalar_zero()
-        }
+    /// **STEPS 4 AND 5 AT THE TAKE SITE** — the party eats first and the eaten share goes home, the
+    /// surplus fills the load, packs go. Returns everything credited home this turn, the walkers'
+    /// deliveries from the top of the turn included, so the take site deposits once and the row's
+    /// `actual` is that one number.
+    fn close_at_take(&mut self, provisions: Scalar, biomass: f32, pack_biomass: f32) -> Scalar {
+        let close = self.party.close_turn(
+            crate::work_party::SourceTake {
+                food: provisions.to_f32(),
+                biomass,
+            },
+            self.upkeep,
+            pack_biomass,
+        );
+        self.closed = true;
+        let delivered = std::mem::replace(&mut self.pending_home, NOTHING_DEMANDED);
+        scalar_from_f32(delivered + close.home())
     }
 }
 
 /// **The one seam a take site routes its food through**, so a row with no party is untouched and a
 /// row with one is charged exactly once. `None` is the local case and returns the take whole.
-fn deliver_take_home(posting: Option<&mut PartyPosting>, produced: Scalar) -> Scalar {
+fn deliver_take_home(
+    posting: Option<&mut PartyPosting>,
+    provisions: Scalar,
+    biomass: f32,
+    pack_biomass: f32,
+) -> Scalar {
     match posting {
-        Some(posting) => posting.deliver_food_home(produced),
-        None => produced,
+        Some(posting) => posting.close_at_take(provisions, biomass, pack_biomass),
+        None => provisions,
     }
 }
 
-/// **POST A PARTY AT `source_pos`, OR ANSWER `None` BECAUSE THE BAND'S OWN HANDS REACH IT.**
+/// **POST A PARTY AT `source_pos` AND OPEN ITS TURN, OR ANSWER `None` BECAUSE THE BAND'S OWN HANDS
+/// REACH IT.**
 ///
-/// The three costs of distance are struck here and nowhere else — porters out of the party
-/// ([`crate::work_party::porters`]), friction on what comes home
-/// ([`crate::work_party::arriving_fraction`]) and the walk out
-/// ([`crate::work_party::transit_turns`]) — each charged on the distance it is actually about. The
-/// porters and the friction ride the tiles beyond the reach a link holds itself open at, **widened
-/// by whatever road runs between band and source**, so a worn trail promotes a far posting into a
-/// near one; the walk rides the apron-measured travel distance, because a road has not moved the
-/// source.
-#[allow(clippy::too_many_arguments)] // the geometry, the two reaches, and the three config blocks
+/// The walk comes off [`crate::work_party::resolve_walk`], the resolver the seed and the query read
+/// too. A standing party keeps its caravan — its walk out, its load and its road — and has only its
+/// geometry and crew restamped; a new one starts its walk out now.
+#[allow(clippy::too_many_arguments)] // the geometry, the road reach, and the three config blocks
 fn post_a_party(
-    target: &LaborTarget,
     standing: Option<&WorkParty>,
     source_pos: UVec2,
     band_pos: UVec2,
@@ -3721,59 +3708,77 @@ fn post_a_party(
     widest_route_reach: u32,
     per_worker_draw: f32,
 ) -> Option<PartyPosting> {
-    let (width, height, wrap) = geometry;
-    let distance = crate::grid_utils::hex_distance_wrapped(band_pos, source_pos, width, wrap);
-    if distance <= party_begins_past(target, labor) {
-        return None;
-    }
-    // **The reach the link holds itself open at**, through the supply network's own producer so the
-    // distance a party pays porters past and the distance two camps pool inside are one number.
-    let free_reach = crate::supply::free_pooling_reach_tiles(
-        roads,
+    let (walk_tiles, walk_turns) = crate::work_party::resolve_walk(
         band_pos,
         source_pos,
-        supply.reach_tiles,
+        labor,
+        supply,
+        roads,
         widest_route_reach,
-        width,
-        height,
-        wrap,
-    );
-    let travel_tiles = crate::work_party::travel_tiles(distance, labor.band_work_range);
-    let porter_tiles = crate::work_party::porter_tiles(distance, free_reach);
-    let porters =
-        crate::work_party::porters(workers, porter_tiles, labor.porter_fraction_per_travel_tile);
-    let transit_turns =
-        crate::work_party::transit_turns(travel_tiles, labor.band_move_tiles_per_turn);
-    // **The walk out happens once.** A standing posting keeps its own countdown rather than
-    // restarting it from today's distance — a herd drifting further costs porters and friction, not
-    // a second walk — which is what makes this a pipeline and not a trip.
-    let mut party = match standing {
-        Some(standing) => standing.clone(),
-        None => WorkParty::walking_out(source_pos, transit_turns),
-    };
-    party.position = source_pos;
-    party.workers = workers;
-    party.porters = porters;
-    party.travel_tiles = travel_tiles;
-    party.porter_tiles = porter_tiles;
-    party.transit_turns = transit_turns;
-    let flow = crate::work_party::PartyFlow {
-        upkeep: crate::work_party::party_upkeep(workers, per_worker_draw),
-        arriving: crate::work_party::arriving_fraction(porter_tiles, supply.friction),
-    };
-    // ⛔ **THE PARTY OWES ITS UPKEEP BEFORE IT HAS TAKEN ANYTHING, and that is why the deficit is
-    // stamped HERE rather than at the take.** The take sites settle it down as they pay
-    // ([`PartyPosting::deliver_food_home`]), but an arm that returns early — a source in a state
-    // the arm declines to work, a posting so far out that every hand is a porter — never reaches
-    // one. Left to the take, such a posting reported a deficit of zero, which reads as *fully
-    // supplied* and is the one state that must never be assumed.
-    party.ate = crate::work_party::NOTHING_IN_THE_PACK;
-    party.deficit = flow.upkeep;
+        geometry,
+    )?;
+    let mut party = standing
+        .cloned()
+        .unwrap_or_else(|| WorkParty::posted(source_pos, walk_tiles, walk_turns));
+    party.restamp(source_pos, workers, walk_tiles, walk_turns);
+    let upkeep = crate::work_party::party_upkeep(workers, per_worker_draw);
+    let open = party.open_turn();
+    // ⛔ **THE PARTY OWES ITS UPKEEP BEFORE IT HAS TAKEN ANYTHING**, so the deficit is stamped here
+    // and the take site settles it down. An arm that returns early never reaches one, and a deficit
+    // left at zero would read as *fully supplied* — the one state that must never be assumed.
+    party.ate = crate::work_party::NOTHING_CARRIED;
+    party.deficit = upkeep;
     Some(PartyPosting {
-        working_crew: workers.saturating_sub(porters),
-        flow,
+        working_crew: open.present,
+        pending_home: open.delivered,
+        upkeep,
         party,
+        closed: false,
+        forecast: None,
     })
+}
+
+/// ⛔ **A ROW THE PLAYER PUT DOWN TAKES ITS PARTY HOME** — the load and every walker's pack, settled
+/// into the band's larder through [`bring_the_party_home`]'s ledger rule. What the `abandon` command
+/// and the zero-crew drop call with the row `LaborAllocation::drop_source_row` handed back: a
+/// caravan that ends early must not lose what is on the road.
+pub fn bring_the_dropped_party_home(world: &mut World, band: Entity, row: &LaborAssignment) {
+    let Some(mut party) = row.party.clone() else {
+        return;
+    };
+    let food = party.hand_over_everything();
+    if food <= crate::work_party::NOTHING_CARRIED {
+        return;
+    }
+    let mut band_parts = world.query::<(&mut PopulationCohort, &mut LaborAllocation)>();
+    if let Ok((mut cohort, mut allocation)) = band_parts.get_mut(world, band) {
+        bring_the_party_home(
+            &mut cohort.stores,
+            &mut allocation.last_food_transfers,
+            food,
+        );
+    }
+}
+
+/// **FOOD A PARTY HANDS OVER OUTSIDE A ROW'S `actual`** — the load and the road when a posting ends
+/// (the unsupplied fold-back, an unassign, a row lapsing under it), deposited in the larder and
+/// entered on the food ledger's **route** arm.
+///
+/// ⛔ **It must go on the ledger**, because it is not this turn's income: a row that is ending
+/// publishes no telemetry to count it in, and food that reached the larder through neither
+/// `food_income` nor a transfer would break the pinned identity
+/// `larder_delta == food_income − food_consumption − raid_forfeit + transfer_received −
+/// transfer_sent`. A party carrying goods home is exactly what
+/// [`crate::components::TransferLink::Route`] is for.
+fn bring_the_party_home(
+    stores: &mut LocalStore,
+    ledger: &mut crate::components::TransferLedger,
+    food: f32,
+) {
+    if food > crate::work_party::NOTHING_CARRIED {
+        stores.add(FOOD, scalar_from_f32(food));
+        ledger.credit(crate::components::TransferLink::Route, food);
+    }
 }
 
 /// **THE HAY SPLIT, STRUCK ONCE FOR EVERY PEN THIS BAND KEEPS** — the fix for the positional
@@ -4485,11 +4490,11 @@ pub fn advance_labor_allocation(
     let map_seed = sim_config.map_seed;
     let husbandry = &fauna.husbandry;
     let work_range = labor.band_work_range;
-    // **THE WORK PARTY'S THREE STANDING TERMS**, resolved once: none of them varies within a turn.
-    // The reach a link holds itself open at and its friction come from the supply network, so a
-    // party's porters are charged past exactly the distance two camps pool inside
-    // (`crate::work_party`); the per-worker food draw comes from demographics, because a party eats
-    // at the rate the band's own consumption already charges for it and never at a rate of its own.
+    // **THE WORK PARTY'S STANDING TERMS**, resolved once: none of them varies within a turn. The
+    // road reach comes from the supply network, so a road shortens a party's walk through the same
+    // seam two camps pool through (`crate::work_party::resolve_walk`); the per-worker food draw
+    // comes from demographics, because a party eats at the rate the band's own consumption already
+    // charges for it and never at a rate of its own.
     let supply_cfg = configs.supply_network.get();
     let widest_route_reach = crate::routes::max_route_reach_tiles(&ladder);
     let party_worker_draw = configs.demographics.get().consumption.worker_draw();
@@ -5173,13 +5178,12 @@ pub fn advance_labor_allocation(
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
             // ⛔ **WHAT THIS ROW ACTUALLY STAFFS AT THE SOURCE.** A row whose source is past the
             // band's own hands posts a **work party** rather than lapsing
-            // (`docs/plan_civilization_steps.md` §One work party), and a share of that party is
-            // carrying rather than working — so everything below prices the **working crew**. A
-            // local row has no party at all and reads `assignment.workers` exactly as it always
-            // did, which is the identity the whole model rests on.
+            // (`docs/plan_civilization_steps.md` §One work party). Its hunters walk packs home one
+            // at a time, so everything below prices **the hunters present** — `0` while the party
+            // is still walking out. A local row has no party at all and reads `assignment.workers`
+            // exactly as it always did, which is the identity the whole model rests on.
             let posting = party_source_position(&assignment.target, &registry).and_then(|source| {
                 post_a_party(
-                    &assignment.target,
                     assignment.party.as_ref(),
                     source,
                     band_pos,
@@ -5219,6 +5223,10 @@ pub fn advance_labor_allocation(
             // the row silently, with the party still out there. The row holds a posting; the
             // arithmetic beneath it already resolves a zero working crew to a zero take on its own.
             let take_crew_present = assignment.workers > NO_CREW_ON_THIS_ACTIVITY;
+            // **AND THE LESSON ASKS WHO IS AT THE SOURCE.** A party still on its walk out, or with
+            // every hand on the road, is not practising on the ground however well staffed the row
+            // is. On a local row this is `take_crew_present` exactly.
+            let crew_at_the_source = workers > NO_CREW_ON_THIS_ACTIVITY;
             // **THIS SOURCE'S PLACE IN THE BAND'S QUEUE, and what it declared there.** The queue
             // **is** the declaration now (`docs/plan_standing_upkeep.md` §2.4) — there is no second
             // authority on the row for it to drift from.
@@ -5416,6 +5424,32 @@ pub fn advance_labor_allocation(
             };
             let party_for = |body_mass: f32| {
                 party_resolution.party_against(crate::equipment_config::Quarry::Mass(body_mass))
+            };
+            // ⛔ **THE CARAVAN FORECAST IS PRICED AT THE ROW'S STAFFED CREW**, through the one
+            // construction the seed and the compose-sheet query make too
+            // ([`crate::work_party::CaravanPricing`]). `None` on a local row, which has no caravan.
+            let caravan_pricing = postings.contains_key(&idx).then(|| {
+                crate::work_party::CaravanPricing::resolve(
+                    &equipment_cfg,
+                    &crew_kit,
+                    assignment.workers,
+                    &band_kit,
+                    &allocation.rows_excluding_source(&equipment_cfg, &assignment.target),
+                    &labor,
+                )
+            });
+            let caravan_hunt_carry = caravan_pricing.as_ref().map(|pricing| pricing.hunt_carry);
+            let caravan_forage_carry = caravan_pricing.as_ref().map(|pricing| pricing.forage_carry);
+            let caravan_party_for = |body_mass: f32| {
+                caravan_pricing.as_ref().map(|pricing| {
+                    pricing.hunters(
+                        &equipment_cfg,
+                        &band_kit,
+                        &combat_config,
+                        person_profile,
+                        body_mass,
+                    )
+                })
             };
 
             match &assignment.target {
@@ -5957,18 +5991,43 @@ pub fn advance_labor_allocation(
                     credit_rung_lesson(
                         lesson_rung,
                         *floor,
-                        take_crew_present && working_the_patch,
+                        crew_at_the_source && working_the_patch,
                         knowledge_dials,
                         faction,
                         &mut discovery,
                     );
-                    // **AND THROUGH THIS ROW'S WORK PARTY, IF IT HAS ONE.** The take feeds the
-                    // party first, the surplus walks home losing the network's friction on the way,
-                    // and nothing lands at all until the party has finished walking out — the one
-                    // seam a far posting's food is charged at, so a local row is untouched
-                    // (`crate::work_party`). **The take flows HOME, always**: to the band that owns
-                    // this row, never to whichever band the party happens to be standing beside.
-                    let provisions = deliver_take_home(postings.get_mut(&idx), provisions);
+                    // **AND THROUGH THIS ROW'S WORK PARTY, IF IT HAS ONE.** The party eats first
+                    // and that share goes home at once; the surplus fills the load and walks home a
+                    // pack at a time — the one seam a far posting's food is charged at, so a local
+                    // row is untouched (`crate::work_party`). **The take flows HOME, always**: to
+                    // the band that owns this row, never to whichever band the party is beside.
+                    let provisions = deliver_take_home(
+                        postings.get_mut(&idx),
+                        provisions,
+                        take,
+                        caravan_forage_carry.unwrap_or(NOTHING_DEMANDED),
+                    );
+                    // **THE CARAVAN'S FORECAST, FROM THE STATE THIS TURN LEAVES** — the patch after
+                    // the take and the party after its packs went, stepped through the one
+                    // function the seed and the query answer through.
+                    if let (Some(posting), Some(carry)) =
+                        (postings.get_mut(&idx), caravan_forage_carry)
+                    {
+                        posting.forecast = Some(crate::work_party::forecast_forage_caravan(
+                            &posting.party,
+                            patch,
+                            &tile_composition,
+                            &labor.forage,
+                            &flora,
+                            carry,
+                            seasonal,
+                            mult_f,
+                            *floor,
+                            take_species,
+                            posting.upkeep,
+                            realized_horizon,
+                        ));
+                    }
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
@@ -6518,11 +6577,8 @@ pub fn advance_labor_allocation(
                     // the herd because that is where the source is, and they do it with no follow
                     // order and no pathfinding: a party's position *is* its source's, re-read every
                     // turn (`docs/plan_civilization_steps.md` §One work party). What distance costs
-                    // is porters and friction, struck on the row above, which has already priced
-                    // this arm at the **working crew**.
-                    //
-                    // `hunt_leash_tiles` survives as the distance at which the party *begins*
-                    // ([`party_begins_past`]) rather than the distance the row dies at.
+                    // is walking: the row above has already priced this arm at the **hunters
+                    // present**, and the packs go home at the take site below.
                     // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD** — the
                     // animal twin of the Forage arm's, on the animal web's own seam
                     // (`fauna::herd_keeping_rung`, which is `None` for a herd nobody owns and has
@@ -6904,7 +6960,17 @@ pub fn advance_labor_allocation(
                         // this herd's own species vector, so a penned wolf yields pelts and no meat
                         // exactly as a wild one does (`docs/plan_hunt_yield_model.md`).
                         let pen_yield = herd_hunt_yield(herd, &fauna);
-                        let paid = pen_yield.apply(take.carried, mult_f);
+                        // ⛔ **A PARTY KEEPS THE WHOLE CARCASS.** A resident band walks away from
+                        // what its packs cannot seat; a party's load is still standing at the
+                        // source, so what one porter cannot shoulder waits for the next one. Its
+                        // take is therefore every animal brought down, not the part carried.
+                        let party_keeps_the_carcass = postings.contains_key(&idx);
+                        let loaded = if party_keeps_the_carcass {
+                            take.killed_biomass()
+                        } else {
+                            take.carried
+                        };
+                        let paid = pen_yield.apply(loaded, mult_f);
                         // **THE MILK, THE EGGS AND THE DOWN** — what the herd pays for standing
                         // there, at the species' own per-head rates
                         // (`docs/plan_pen_standing_yield.md`). It rides the band's `mult_f` exactly
@@ -6922,7 +6988,28 @@ pub fn advance_labor_allocation(
                         // **And through this row's work party, if it has one** — see the Forage
                         // arm. A pen stands where its herd does, so a far pen is a posting like any
                         // other and its milk walks home the same way its meat does.
-                        let provisions = deliver_take_home(postings.get_mut(&idx), provisions);
+                        let pen_pack = caravan_hunt_carry.map_or(NOTHING_DEMANDED, |carry| {
+                            crate::work_party::hunt_pack_biomass(herd, &fauna, carry)
+                        });
+                        let provisions =
+                            deliver_take_home(postings.get_mut(&idx), provisions, loaded, pen_pack);
+                        if let (Some(posting), Some(carry), Some(hunters)) = (
+                            postings.get_mut(&idx),
+                            caravan_hunt_carry,
+                            caravan_party_for(herd.body_mass),
+                        ) {
+                            posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
+                                &posting.party,
+                                herd,
+                                &fauna,
+                                carry,
+                                &hunters,
+                                mult_f,
+                                *floor,
+                                posting.upkeep,
+                                realized_horizon,
+                            ));
+                        }
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
@@ -6935,7 +7022,7 @@ pub fn advance_labor_allocation(
                         // already rejected on the take side.
                         credit_managed_rung_lesson(
                             lesson_rung,
-                            take_crew_present,
+                            crew_at_the_source,
                             knowledge_dials,
                             faction,
                             &mut discovery,
@@ -7380,7 +7467,7 @@ pub fn advance_labor_allocation(
                     credit_rung_lesson(
                         lesson_rung,
                         *floor,
-                        take_crew_present && working_the_herd,
+                        crew_at_the_source && working_the_herd,
                         knowledge_dials,
                         faction,
                         &mut discovery,
@@ -7390,7 +7477,14 @@ pub fn advance_labor_allocation(
                     // species' `HuntYield` decides WHAT that biomass is worth, in one call that
                     // yields both products so neither can be converted without the other.
                     let hunt_yield = herd_hunt_yield(herd, &fauna);
-                    let paid = hunt_yield.apply(take.carried, mult_f);
+                    // ⛔ **A PARTY KEEPS THE WHOLE CARCASS** — see the pen branch above.
+                    let party_keeps_the_carcass = postings.contains_key(&idx);
+                    let loaded = if party_keeps_the_carcass {
+                        take.killed_biomass()
+                    } else {
+                        take.carried
+                    };
+                    let paid = hunt_yield.apply(loaded, mult_f);
                     // **The milk half, at the pastoral share** — see `standing_scale` above. A wild
                     // herd's share is zero, so this arm is byte-identical on the range.
                     let meat_provisions = paid.provisions;
@@ -7720,13 +7814,33 @@ pub fn advance_labor_allocation(
                             build_quotes.push((BuildSource::Herd(herd.id.clone()), quote));
                         }
                     }
-                    // **AND THROUGH THIS ROW'S WORK PARTY, IF IT HAS ONE.** The take feeds the
-                    // party first, the surplus walks home losing the network's friction on the way,
-                    // and nothing lands at all until the party has finished walking out — the one
-                    // seam a far posting's food is charged at, so a local row is untouched
-                    // (`crate::work_party`). **The take flows HOME, always**: to the band that owns
-                    // this row, never to whichever band the party happens to be standing beside.
-                    let provisions = deliver_take_home(postings.get_mut(&idx), provisions);
+                    // **AND THROUGH THIS ROW'S WORK PARTY, IF IT HAS ONE.** The party eats first
+                    // and that share goes home at once; the surplus fills the load and walks home a
+                    // pack at a time — the one seam a far posting's food is charged at, so a local
+                    // row is untouched (`crate::work_party`). **The take flows HOME, always**: to
+                    // the band that owns this row, never to whichever band the party is beside.
+                    let hunt_pack = caravan_hunt_carry.map_or(NOTHING_DEMANDED, |carry| {
+                        crate::work_party::hunt_pack_biomass(herd, &fauna, carry)
+                    });
+                    let provisions =
+                        deliver_take_home(postings.get_mut(&idx), provisions, loaded, hunt_pack);
+                    if let (Some(posting), Some(carry), Some(hunters)) = (
+                        postings.get_mut(&idx),
+                        caravan_hunt_carry,
+                        caravan_party_for(herd.body_mass),
+                    ) {
+                        posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
+                            &posting.party,
+                            herd,
+                            &fauna,
+                            carry,
+                            &hunters,
+                            mult_f,
+                            *floor,
+                            posting.upkeep,
+                            realized_horizon,
+                        ));
+                    }
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
@@ -8718,44 +8832,85 @@ pub fn advance_labor_allocation(
         // indices they were collected against, and after the walk has finished borrowing
         // `assignments` (`docs/plan_civilization_steps.md` §One work party).
         for (idx, mut posting) in std::mem::take(&mut postings) {
-            // **One turn of the walk out, spent.** It is counted here rather than at the take so a
-            // posting whose arm returned early still advances: the party is walking either way.
-            if !posting.party.line_is_open() {
-                posting.party.turns_to_first_arrival -= 1;
-            }
-            // ⛔ **THE ROW'S FORWARD PROJECTIONS ARE WHAT ARRIVES, NOT WHAT IS TAKEN.** `realized`
-            // is the headline the food runway and the work board read, so a far posting that
-            // published its gross take would promise a larder food that is still being eaten at the
-            // source or lost on the road. The arrival schedule is scaled by the same share so it
-            // keeps its shape — the lumpiness is the quantiser's and nothing here reshapes it.
-            //
-            // **The steady rate IS the amortized rate**, deliberately: one number for the row, not
-            // a steady figure beside a cycle average that could disagree.
-            if let Some(row) = yields.get_mut(idx) {
-                let steady = posting.flow.settle_food(row.realized).home;
-                let share = if row.realized > 0.0 {
-                    steady / row.realized
-                } else {
-                    crate::work_party::NOTHING_IN_THE_PACK
-                };
-                for arrival in row.arrivals.iter_mut() {
-                    *arrival *= share;
+            let row_lapsed = lapsed.contains(&idx);
+            // **An arm that never reached its take site still closes the turn**, on a zero take:
+            // the party eats whether or not anybody took anything, and the walkers' deliveries from
+            // the top of the turn are credited. No pack leaves on a turn the arm did not work.
+            if !posting.closed {
+                let close = posting.party.close_turn(
+                    crate::work_party::SourceTake::default(),
+                    posting.upkeep,
+                    NOTHING_DEMANDED,
+                );
+                let home =
+                    std::mem::replace(&mut posting.pending_home, NOTHING_DEMANDED) + close.home();
+                if row_lapsed {
+                    bring_the_party_home(
+                        &mut cohort.stores,
+                        &mut allocation.last_food_transfers,
+                        home,
+                    );
+                } else if home > NOTHING_DEMANDED {
+                    cohort.stores.add(FOOD, scalar_from_f32(home));
+                    if let Some(row) = yields.get_mut(idx) {
+                        row.actual += home;
+                    }
                 }
-                row.realized = steady;
-                posting.party.net_rate_home = steady;
             }
-            // ⛔ **A PARTY THE BAND CANNOT SUPPLY WALKS HOME.** The deficit has to cross the same
-            // distance the take crosses, so the larder must hold it **grossed up by the friction
-            // the outbound leg loses** — goods flow both ways along the one tie. Judged against the
-            // larder as the pass opened, for [`settle_pen_hay`]'s reason.
+            // **A row lapsing under its party brings the whole caravan home**, the load and the road
+            // with the workers.
+            if row_lapsed {
+                let everything = posting.party.hand_over_everything();
+                bring_the_party_home(
+                    &mut cohort.stores,
+                    &mut allocation.last_food_transfers,
+                    everything,
+                );
+                continue;
+            }
+            // ⛔ **THE ROW'S FORWARD PROJECTIONS ARE WHAT ARRIVES HOME, NOT WHAT IS TAKEN.**
+            // `realized` is the headline the food runway and the work board read, and a far
+            // posting publishing its gross take would promise a larder food that is still being
+            // eaten at the source or walking home. So the row reads the caravan's own forecast:
+            // `realized` is its rate home, and the arrival schedule is what it lands turn by turn.
+            if let (Some(row), Some(forecast)) = (yields.get_mut(idx), posting.forecast.as_ref()) {
+                crate::work_party::publish_caravan_projection(
+                    row,
+                    forecast,
+                    arrivals_horizon,
+                    matches!(allocation.assignments[idx].target, LaborTarget::Hunt { .. }),
+                );
+                posting.party.net_rate_home = forecast.rate_home;
+            }
+            // **UNASSIGNED: EVERYONE COMES HOME.** A row held at zero hands has nobody at the
+            // source and nobody to send, so the load and the road are settled into the band and
+            // the party is stood down. The row itself survives as a holding.
+            if allocation.assignments[idx].workers == NO_CREW_ON_THIS_ACTIVITY {
+                let everything = posting.party.hand_over_everything();
+                bring_the_party_home(
+                    &mut cohort.stores,
+                    &mut allocation.last_food_transfers,
+                    everything,
+                );
+                allocation.assignments[idx].party = None;
+                continue;
+            }
+            // ⛔ **A PARTY THE BAND CANNOT SUPPLY WALKS HOME.** Its deficit must be coverable from
+            // the home larder as the pass opened (for [`settle_pen_hay`]'s reason). Distance is paid
+            // in walking, so the deficit is **not** grossed up by a loss in transit.
             //
             // The cost of misjudging a distance is the posting ending and the food already spent on
-            // it, never people dying somewhere the player was not looking: the row folds back, its
-            // pack is handed to the band and its workers return to the pool.
-            if posting.flow.larder_needed_to_supply(posting.party.deficit) > larder_at_pass_open {
-                cohort
-                    .stores
-                    .add(FOOD, scalar_from_f32(posting.party.hand_over_pack()));
+            // it, never people dying somewhere the player was not looking: the row folds back and
+            // the whole caravan — the load and every walker's pack — comes home with the workers.
+            if !crate::work_party::larder_supplies(posting.party.deficit, larder_at_pass_open) {
+                let deficit = posting.party.deficit;
+                let walk = posting.party.walk_tiles;
+                let everything = posting.party.hand_over_everything();
+                bring_the_party_home(
+                    &mut cohort.stores,
+                    &mut allocation.last_food_transfers,
+                    everything,
+                );
                 lapsed.push(idx);
                 // **The line names the source the way its channel's other lines do** — a patch by
                 // its coordinates, a herd by its id — so the dock's row can offer the same jump.
@@ -8783,8 +8938,7 @@ pub fn advance_labor_allocation(
                     format!("{named} came home — the band could not keep them supplied"),
                     Some(band_detail_token(
                         format!(
-                            "status=recalled reason=unsupplied {source} travel={} deficit={:.2}",
-                            posting.party.travel_tiles, posting.party.deficit
+                            "status=recalled reason=unsupplied {source} walk={walk} deficit={deficit:.2}"
                         ),
                         band_id,
                     )),
