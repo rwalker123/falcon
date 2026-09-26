@@ -226,6 +226,34 @@ func run(harness) -> void:
 		% (BUSIEST_IMPORTS + BUSIEST_EXPORTS),
 		_metas(list, TradeZoneController.ROW_SHIPMENT_META).size() == BUSIEST_IMPORTS + BUSIEST_EXPORTS
 			and not list.get_global_rect().intersects(panel.card_rect()))
+	# **ESC CLAIMS THE LIST**, driven with the REAL HUD's readers (the work inspector's own guard).
+	var main_script: GDScript = load(h.DIALOG_MAIN_SCRIPT_PATH)
+	h._assert_band_panel("ESC claims the Trade list ahead of the pause menu",
+		main_script.escape_claimant(false, h._hud.is_compose_sheet_open(), h._hud.is_targeting_active(),
+			h._hud.is_work_inspector_open(), h._hud.is_knowledge_detail_open(),
+			h._hud.is_trade_list_open()) == main_script.ESC_TRADE_LIST)
+	h._hud.close_trade_list()
+	await h._settle()
+	h._assert_band_panel("…and its closer takes it down, after which ESC falls through to the pause menu",
+		not list.visible and main_script.escape_claimant(false, h._hud.is_compose_sheet_open(),
+			h._hud.is_targeting_active(), h._hud.is_work_inspector_open(),
+			h._hud.is_knowledge_detail_open(), h._hud.is_trade_list_open()) == main_script.ESC_PAUSE)
+
+	# ---- 6b. ONE CARD OVER THE ZONE AT A TIME ----------------------------------------------------
+	# The wide shell is the one place both are reachable at once: the work board and the Trade
+	# section sit side by side. Opening either closes the other.
+	trade.open_list(TradeZoneController.KIND_CAMPS)
+	await h._settle()
+	h._open_first_work_inspector()
+	await h._settle()
+	await h._settle()
+	await h._save("trade_tab_wide_exclusive")
+	h._assert_band_panel("opening the work inspector closes the Trade list",
+		h._hud.is_work_inspector_open() and not trade.is_list_open())
+	trade.open_list(TradeZoneController.KIND_CAMPS)
+	await h._settle()
+	h._assert_band_panel("…and opening the Trade list closes the work inspector",
+		trade.is_list_open() and not h._hud.is_work_inspector_open())
 	trade.dismiss()
 
 	# ---- 7. THE SHORT TIER IN THE TABBED SHELL ---------------------------------------------------

@@ -2750,32 +2750,25 @@ const FODDER_TRANSFER_ROUTE_SENT_TURN_KEY := "fodder_transfer_route_sent_turn"
 ## was unreachable on any real snapshot and the only thing keeping it alive was a fixture that staged
 ## a state no server can send. Both ledgers now simply render the rows whose figures they were given.
 
-## The eight figures, on the per-turn basis every other row of both breakdowns is on. A row read off
-## an accumulator vanishes the instant a dispatched command re-captures the frame — the defect issue
-## #517 fixed on the food account, not to be reintroduced one ledger over.
+## The LOCAL arm's four figures, on the per-turn basis every other row of both breakdowns is on. A row
+## read off an accumulator vanishes the instant a dispatched command re-captures the frame — the defect
+## issue #517 fixed on the food account, not to be reintroduced one ledger over.
+##
+## **THE ROUTE ARM HAS NO READER HERE ANY MORE** (issue #731). Its rows are split by the crossing's
+## CAUSE — shipments, a party home, a party's rations — off `transfer_crossings`
+## (`TradeLedger.cause_net`), so no surface reads the arm as one figure; the four `*_ROUTE_*_KEY`
+## names above stay only as the spelling fixtures stage the wire shape with.
 static func band_transfer_local_received_turn(band: Dictionary) -> float:
     return float(band.get(TRANSFER_LOCAL_RECEIVED_TURN_KEY, 0.0))
 
 static func band_transfer_local_sent_turn(band: Dictionary) -> float:
     return float(band.get(TRANSFER_LOCAL_SENT_TURN_KEY, 0.0))
 
-static func band_transfer_route_received_turn(band: Dictionary) -> float:
-    return float(band.get(TRANSFER_ROUTE_RECEIVED_TURN_KEY, 0.0))
-
-static func band_transfer_route_sent_turn(band: Dictionary) -> float:
-    return float(band.get(TRANSFER_ROUTE_SENT_TURN_KEY, 0.0))
-
 static func band_fodder_transfer_local_received_turn(band: Dictionary) -> float:
     return float(band.get(FODDER_TRANSFER_LOCAL_RECEIVED_TURN_KEY, 0.0))
 
 static func band_fodder_transfer_local_sent_turn(band: Dictionary) -> float:
     return float(band.get(FODDER_TRANSFER_LOCAL_SENT_TURN_KEY, 0.0))
-
-static func band_fodder_transfer_route_received_turn(band: Dictionary) -> float:
-    return float(band.get(FODDER_TRANSFER_ROUTE_RECEIVED_TURN_KEY, 0.0))
-
-static func band_fodder_transfer_route_sent_turn(band: Dictionary) -> float:
-    return float(band.get(FODDER_TRANSFER_ROUTE_SENT_TURN_KEY, 0.0))
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there). Here beside the rest of the band food

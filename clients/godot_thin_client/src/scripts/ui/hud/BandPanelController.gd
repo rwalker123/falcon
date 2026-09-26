@@ -614,6 +614,14 @@ var _forecast_query: ForecastQuery = null
 var _trade: TradeZoneController = null
 var _trade_wide: bool = false
 
+## Is the Trade tab's overflow list up? Relayed by `HudLayer.is_trade_list_open` for `Main`'s ESC chain.
+func is_trade_list_open() -> bool:
+    return _trade.is_list_open()
+
+## Put the Trade list away — ESC's path (`Main.escape_claimant` → `HudLayer.close_trade_list`).
+func close_trade_list() -> void:
+    _trade.dismiss()
+
 ## The Trade tab's controller, for the harness and for nothing that decides anything.
 func trade_zone() -> TradeZoneController:
     return _trade
@@ -638,6 +646,11 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
     _targeting = targeting
     _trade = TradeZoneController.new(band_labor, host)
     _trade.set_topbar(topbar)
+    # **ONE CARD OVER THE ZONE AT A TIME** — the Trade list and the work inspector share a layer and a
+    # room, so opening either closes the other. This controller owns both, so the coupling is these
+    # two lines and nothing else: the list's opening closes the inspector here, and
+    # `_toggle_work_inspector` closes the list.
+    _trade.list_opening.connect(close_work_inspector)
 
 ## `_topbar` is held for **the player faction's own three readouts and nothing else** — its knowledge
 ## `faction_tracks` (the rung-ready mark on a work row, the narrow reason `DrawerComposeController`
@@ -7437,6 +7450,7 @@ func _focus_work_source(model: Dictionary) -> void:
 func _toggle_work_inspector(key: String) -> void:
     _work_open_key = "" if _work_open_key == key else key
     if _work_open_key != "":
+        _trade.dismiss()
         _queue_open_key = ""
         _roster_expanded = &""
     _repage_work_zone()

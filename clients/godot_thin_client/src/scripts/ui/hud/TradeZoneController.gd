@@ -23,6 +23,10 @@ extends RefCounted
 ## **WHAT COUNTS AS TRADE** is `TradeLedger.is_trade`: pooling (Local) and shipments (Route). A band's
 ## own party coming home, a party's rations and a split's dowry never reach this tab.
 
+## A list is about to open. `BandPanelController` closes the work inspector on it — the two cards share
+## one room, and only one may stand over the zone at a time.
+signal list_opening
+
 ## Overflow panel list keys. A `camps` key may carry a commodity scope after `KIND_SCOPE_SEPARATOR`.
 const KIND_CAMPS := "camps"
 const KIND_LOCAL := "local"
@@ -538,6 +542,7 @@ func open_list(kind: String) -> void:
 	var panel := _ensure_overflow()
 	if panel == null:
 		return
+	list_opening.emit()
 	_overflow_band_id = TradeLedger.band_id_of(_band)
 	_mount(panel, kind, _band)
 

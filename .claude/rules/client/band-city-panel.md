@@ -7228,7 +7228,15 @@ all open `TradeOverflowPanel` — the `WorkInspectorDialog` idiom property for p
 the room cut back off the card's map-facing side (`BandComposeFloat.map_facing_side`), so it never
 covers the card; carrying its own `ScrollContainer`. ONE instance: opening another list re-targets it.
 A snapshot re-mounts the open list against the fresh band, and a band switch, the faction page, the
-tab leaving the screen and the panel hiding close it.
+tab leaving the screen, the panel hiding and ESC close it. **ESC** reaches it through the work
+inspector's own path: `Main.escape_claimant` asks `HudLayer.is_trade_list_open` right after the
+inspector (`ESC_TRADE_LIST`, a trailing argument defaulting to closed) and calls `close_trade_list`.
+
+**ONE CARD OVER THE ZONE AT A TIME.** The list and the work inspector share a layer and a room, so
+opening either closes the other, and `BandPanelController` — which owns both — is the only place that
+knows: `TradeZoneController.list_opening` is connected to `close_work_inspector`, and
+`_toggle_work_inspector` calls `_trade.dismiss()` when it opens a row. `trade_tab_wide_exclusive`
+asserts both directions on the wide shell, the one shell where both can be reached at once.
 
 The camps list: this band first, its direct links (rung as icon + word, link distance, rung facts off
 the published `route_rungs` table), then the relay camps — `via <first hop>` on the shortest chain
@@ -7254,5 +7262,6 @@ faction's flag (#647) replaces.
 `tools/band_panel_trade_tab.gd`, run last by `band_panel_preview`: `trade_tab_narrow_busy`,
 `trade_tab_hover_bone`, `trade_tab_camps`, `trade_tab_camps_food`, `trade_tab_folded`,
 `trade_tab_more_shipments`, `trade_tab_empty`, `trade_tab_wide` (asserts 1190, no Trade flank, the
-SHORT tier under Parties), `trade_tab_wide_route_list` and `trade_tab_short` (the tabbed shell on a
+SHORT tier under Parties), `trade_tab_wide_route_list` (plus the ESC claim), `trade_tab_wide_exclusive`
+(the list and the work inspector close each other) and `trade_tab_short` (the tabbed shell on a
 narrow bottom dock).

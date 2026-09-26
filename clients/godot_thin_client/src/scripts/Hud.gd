@@ -608,6 +608,16 @@ func close_work_inspector() -> void:
     if _bandpanel != null:
         _bandpanel.close_work_inspector()
 
+## Is the Band dock's Trade overflow list up (issue #731)? Reached BY NAME from `Main._unhandled_input`
+## for the ESC chain — a `has_method` probe that fails SILENTLY, so it must stay callable on the HUD.
+func is_trade_list_open() -> bool:
+    return _bandpanel != null and _bandpanel.is_trade_list_open()
+
+## …and put it away. ESC's handler, the twin of `close_work_inspector`.
+func close_trade_list() -> void:
+    if _bandpanel != null:
+        _bandpanel.close_trade_list()
+
 ## Is a KNOWLEDGE READING open on the knowledge screen? Reached BY NAME from `Main._unhandled_input`
 ## for the ESC chain, the `is_compose_sheet_open` idiom — a `has_method` probe that fails SILENTLY,
 ## so this method must stay callable on the HUD node.

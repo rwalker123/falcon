@@ -102,7 +102,7 @@ answered the keyboard through an open pause menu. A modal surface that owns the 
 stops the next report.
 
 **`ESCAPE` is allowed under every owner** — it is how the player leaves a surface — and *which*
-surface it reaches stays `Main.escape_claimant`'s four-way decision. The arbiter does not re-litigate
+surface it reaches stays `Main.escape_claimant`'s decision. The arbiter does not re-litigate
 that.
 
 **NOT A CONTEXT STACK, on purpose.** Push/pop trades this bug class for a worse one: an unbalanced
@@ -112,7 +112,7 @@ is rebuilt on every keystroke — have no reliable lifecycle hooks to hang a sta
 predicate cannot go out of balance, because it is recomputed from the world every frame; and being
 pure is what lets the whole policy be enumerated without standing up a scene.
 
-**Targeting, the compose sheet and the work inspector are NOT owners.** They permit map motion
+**Targeting, the compose sheet, the work inspector and the Trade tab's list are NOT owners.** They permit map motion
 because you pan while choosing a target. That is reasonable and was left alone.
 
 **The modal-menu flag is PUSHED, not discovered.** The overlay is `Main`'s `$PauseLayer`, so
