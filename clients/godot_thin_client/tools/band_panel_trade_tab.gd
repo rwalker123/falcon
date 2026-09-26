@@ -65,6 +65,7 @@ const WOOD_SHIPPED_OUT := 1.1
 ## Two causes on the same turn the tab must NOT show.
 const FOOD_PARTY_HOME := 3.1
 const FOOD_DOWRY_OUT := 18.0
+const BARROWMERE_BONE_OUT := 0.8
 const IMPORT_PARTY := 7001
 const EXPORT_PARTY := 7002
 ## The busiest turn: every good the busy turn moves plus four more, and fifteen shipments.
@@ -172,11 +173,12 @@ func run(harness) -> void:
 	await h._save("trade_tab_camps_food")
 	list_text = _text_of(list)
 	h._assert_band_panel("scoped to food: `2 camps moved it; 2 sat even`",
-		trade._popover_sub.text == HudTradeVocab.GOOD_SCOPE_SUMMARY_FORMAT % [2, 2])
+		trade._popover_sub.text == HudTradeVocab.GOOD_SCOPE_SUMMARY_FORMAT % [
+			HudTradeVocab.count_text(2, HudTradeVocab.CAMP_WORDS), 2])
 	h._assert_band_panel("…and the friction row states what the distance ate (0.3)",
 		list_text.contains(HudTradeVocab.LOST_IN_TRANSIT) and list_text.contains("%.1f"
 			% (FOOD_BARROW_OUT + FOOD_BITTER_OUT - FOOD_POOLED_IN)))
-	var food_anchor := trade.anchor_screen_rect()
+	var food_anchor := trade.anchor_rect()
 	_assert_hangs_from_its_row("trade_tab_camps_food", trade, false)
 	# A DIFFERENT row swaps the content in place and re-anchors under itself.
 	trade.open_list(TradeZoneController.KIND_CAMPS + TradeZoneController.KIND_SCOPE_SEPARATOR + "bone")
@@ -184,9 +186,13 @@ func run(harness) -> void:
 	await h._settle()
 	h._assert_band_panel("another good's row swaps the list in place and re-anchors under itself",
 		trade.is_list_open() and trade._popover_title.text == HudTradeVocab.GOOD_SCOPE_TITLE_FORMAT
-			% TradeLedger.commodity_label("bone") and trade.anchor_screen_rect().position.y
+			% TradeLedger.commodity_label("bone") and trade.anchor_rect().position.y
 			> food_anchor.position.y)
 	_assert_hangs_from_its_row("trade_tab_camps_bone", trade, false)
+	# **A COUNT OF ONE READS SINGULAR.** Only Barrowmere moved bone besides this band.
+	h._assert_band_panel("a count of one reads singular — `%s` (got `%s`)" % [
+			HudTradeVocab.GOOD_SCOPE_SUMMARY_FORMAT % ["1 camp", 3], trade._popover_sub.text],
+		trade._popover_sub.text == HudTradeVocab.GOOD_SCOPE_SUMMARY_FORMAT % ["1 camp", 3])
 	trade.dismiss()
 
 	# ---- 4. A FOLDED DIRECTION, AND ITS LIST -----------------------------------------------------
@@ -197,7 +203,7 @@ func run(harness) -> void:
 	var more := _find_meta(zone, TradeZoneController.ROW_OPENS_META, TradeZoneController.KIND_ROUTE_IN)
 	h._assert_band_panel("six imports fold to the three largest plus `3 more shipments`",
 		_metas(zone, TradeZoneController.ROW_SHIPMENT_META).size() == HudTradeVocab.SHIPMENT_FOLD_KEEP
-			and more != null and _text_of(more).contains(HudTradeVocab.MORE_SHIPMENT_PLURAL_FORMAT % 3))
+			and more != null and _text_of(more).contains(HudTradeVocab.count_text(3, HudTradeVocab.MORE_SHIPMENT_WORDS)))
 	trade.open_list(TradeZoneController.KIND_ROUTE_IN)
 	await h._settle()
 	await h._settle()
@@ -255,8 +261,8 @@ func run(harness) -> void:
 	await h._settle()
 	await h._settle()
 	await h._save("trade_tab_wide_short_below")
-	var visible_screen: Rect2 = h.get_viewport().get_screen_transform() * h.get_viewport().get_visible_rect()
-	var anchor := trade.anchor_screen_rect()
+	var visible_screen: Rect2 = h.get_viewport().get_visible_rect()
+	var anchor := trade.anchor_rect()
 	h._assert_band_panel("precondition: the row sits near the bottom edge — more room above it than below (%.0f vs %.0f)"
 			% [anchor.position.y - visible_screen.position.y, visible_screen.end.y - anchor.end.y],
 		anchor.position.y - visible_screen.position.y > visible_screen.end.y - anchor.end.y)
@@ -278,11 +284,59 @@ func run(harness) -> void:
 	await h._save("trade_tab_wide_local_hover")
 	_assert_hangs_from_its_row("trade_tab_wide_local_hover", trade, trade.list_opened_above())
 	var hover := trade.hover_card()
-	var hover_screen := hover.get_screen_transform() * Rect2(Vector2.ZERO, hover.size)
+	var hover_screen := hover.get_global_rect()
 	h._assert_band_panel("…and a hover card off a row inside it never sits under the popover",
-		hover.visible and not hover_screen.intersects(trade.list_screen_rect()))
+		hover.visible and not hover_screen.intersects(trade.list_rect()))
 	hover.dismiss()
 	trade.dismiss()
+
+	# ---- 6d. EVERY LIST AGAIN, AT A RAISED INTERFACE SCALE -------------------------------------
+	# The Options slider's own lever (`ClientSettings.ui_scale` → `UiScaler` → the window's
+	# `content_scale_factor`). The same claims, with the side each list opens left to the rule.
+	h._apply_ui_scale(h.SCALE_STATE_UI_SCALE)
+	await h._pin_canvas(SIDE_CANVAS)
+	h._push_bands(_network(_busy_crossings()))
+	panel.set_dock(SIDE_LEFT)
+	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
+	await h._settle()
+	await h._settle()
+	for kind in [TradeZoneController.KIND_CAMPS,
+			TradeZoneController.KIND_CAMPS + TradeZoneController.KIND_SCOPE_SEPARATOR + HudTradeVocab.COMMODITY_FOOD,
+			TradeZoneController.KIND_CAMPS + TradeZoneController.KIND_SCOPE_SEPARATOR + "bone"]:
+		trade.open_list(kind)
+		await h._settle()
+		await h._settle()
+		var frame := "trade_tab_scaled_%s" % kind.replace(TradeZoneController.KIND_SCOPE_SEPARATOR, "_")
+		await h._save(frame)
+		_assert_hangs_from_its_row(frame, trade, WANT_EITHER)
+		trade.dismiss()
+		await h._settle()
+	h._push_bands(_network(_many_crossings()))
+	await h._settle()
+	trade.open_list(TradeZoneController.KIND_ROUTE_IN)
+	await h._settle()
+	await h._settle()
+	await h._save("trade_tab_scaled_more_shipments")
+	_assert_hangs_from_its_row("trade_tab_scaled_more_shipments", trade, WANT_EITHER)
+	trade.dismiss()
+	await h._pin_canvas(WIDE_CANVAS)
+	h._push_bands(_network(_busiest_crossings()))
+	panel.set_dock(SIDE_BOTTOM)
+	panel.set_active_tab(BandCityPanel.ZONE_TRADE)
+	await h._settle()
+	await h._settle()
+	for kind in [TradeZoneController.KIND_ROUTE_BOTH, TradeZoneController.KIND_CAMPS,
+			TradeZoneController.KIND_LOCAL]:
+		trade.open_list(kind)
+		await h._settle()
+		await h._settle()
+		var frame := "trade_tab_scaled_wide_%s" % kind
+		await h._save(frame)
+		_assert_hangs_from_its_row(frame, trade, WANT_EITHER)
+		trade.dismiss()
+		await h._settle()
+	h._apply_ui_scale(1.0)
+	await h._settle()
 
 	# ---- 7. THE SHORT TIER IN THE TABBED SHELL ---------------------------------------------------
 	await h._pin_canvas(NARROW_BOTTOM_CANVAS)
@@ -295,6 +349,18 @@ func run(harness) -> void:
 	h._assert_band_panel("a narrow bottom dock's Trade tab lands in the SHORT tier, measured against its box",
 		trade.is_short_tier() and _find_named(zone, TradeZoneController.SHORT_TIER_NAME) != null)
 	h._assert_zone_content_fits()
+
+	# **EVERY COUNT ON THE TAB, AT ONE AND AT TWO** — the pairs themselves, so a count no fixture
+	# reaches at 1 (a 1-tile link, a single import) is still claimed.
+	var singular_ok := true
+	for words in [HudTradeVocab.CAMP_WORDS, HudTradeVocab.TILE_WORDS, HudTradeVocab.RATING_WORDS,
+			HudTradeVocab.GOOD_WORDS, HudTradeVocab.SHIPMENT_WORDS, HudTradeVocab.IMPORT_WORDS,
+			HudTradeVocab.EXPORT_WORDS, HudTradeVocab.MORE_SHIPMENT_WORDS]:
+		var one := HudTradeVocab.count_text(1, words)
+		var two := HudTradeVocab.count_text(2, words)
+		singular_ok = singular_ok and not one.ends_with("s") and two.ends_with("s") \
+			and one.begins_with("1 ") and two.begins_with("2 ")
+	h._assert_band_panel("every Trade count reads singular at 1 and plural at 2", singular_ok)
 
 	# Hand the panel back as the run found it.
 	if start_canvas == Vector2i.ZERO:
@@ -309,18 +375,41 @@ func run(harness) -> void:
 ## **THE POPOVER HANGS FROM ITS ROW** — its top one `POPOVER_GAP` under the row's bottom (or, opened
 ## upward, its bottom one gap over the row's top), its left edge on the Trade column's and the row
 ## inside its span. Adjacency, not mere visibility, is the claim: a popover that opened in the middle
-## of the map is visible too.
-func _assert_hangs_from_its_row(where: String, trade: TradeZoneController, want_above: bool) -> void:
-	var popover := trade.list_screen_rect()
-	var row := trade.anchor_screen_rect()
+## of the map is visible too. `want_above` is `WANT_BELOW` / `WANT_ABOVE`, or `WANT_EITHER` where the
+## side is the rule's to pick (the scaled pass, whose geometry differs).
+##
+## **AND IT IS AS TALL AS ITS CONTENT WHEREVER THE ROOM ALLOWS** — the card's height at least the
+## content's, and nothing to scroll. Only a list that genuinely exceeds the room on its side scrolls.
+const WANT_BELOW := 0
+const WANT_ABOVE := 1
+const WANT_EITHER := -1
+
+func _assert_hangs_from_its_row(where: String, trade: TradeZoneController, want_above: Variant) -> void:
+	var popover := trade.list_rect()
+	var row := trade.anchor_rect()
+	var above := trade.list_opened_above()
+	var want := int(want_above) if not (want_above is bool) else (WANT_ABOVE if want_above else WANT_BELOW)
 	var gap := HudTradeVocab.POPOVER_GAP
-	var vertical := absf(popover.end.y + gap - row.position.y) <= ADJACENCY_TOLERANCE if want_above \
+	var vertical := absf(popover.end.y + gap - row.position.y) <= ADJACENCY_TOLERANCE if above \
 		else absf(popover.position.y - (row.end.y + gap)) <= ADJACENCY_TOLERANCE
 	var horizontal := popover.position.x <= row.position.x + ADJACENCY_TOLERANCE \
 		and popover.end.x >= row.end.x - ADJACENCY_TOLERANCE
+	var side_ok := want == WANT_EITHER or above == (want == WANT_ABOVE)
 	h._assert_band_panel("%s: the list opens %s its row (popover %s, row %s)" % [where,
-			"ABOVE" if want_above else "under", str(popover), str(row)],
-		trade.is_list_open() and trade.list_opened_above() == want_above and vertical and horizontal)
+			"ABOVE" if above else "under", str(popover), str(row)],
+		trade.is_list_open() and side_ok and vertical and horizontal)
+	var content := trade.list_content_height()
+	var room := trade.list_room()
+	var bar := trade._popover_scroll.get_v_scroll_bar()
+	var overflow := bar.max_value - bar.page
+	if content <= room + ADJACENCY_TOLERANCE:
+		h._assert_band_panel("%s: the content fits its room (%.0f of %.0f), so the card is its full height (%.0f) and nothing scrolls (%.0f to scroll)"
+				% [where, content, room, popover.size.y, overflow],
+			popover.size.y >= content - ADJACENCY_TOLERANCE and overflow <= ADJACENCY_TOLERANCE)
+	else:
+		h._assert_band_panel("%s: the content exceeds its room (%.0f of %.0f), so the card fills the room (%.0f) and scrolls"
+				% [where, content, room, popover.size.y],
+			absf(popover.size.y - room) <= ADJACENCY_TOLERANCE and overflow > 0.0)
 
 # ---- FIXTURES ------------------------------------------------------------------------------------
 
@@ -362,10 +451,15 @@ func _network(subject_crossings: Array) -> Array:
 			band[HudTradeVocab.CROSSINGS_KEY] = subject_crossings
 		else:
 			var net := float(food_nets[entity])
-			band[HudTradeVocab.CROSSINGS_KEY] = [] if TradeLedger.is_even(net) else [
+			var own: Array = [] if TradeLedger.is_even(net) else [
 				BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD,
 					HudTradeVocab.DIRECTION_IN if net > 0.0 else HudTradeVocab.DIRECTION_OUT,
 					HudTradeVocab.CAUSE_POOLED, absf(net))]
+			# Barrowmere is the ONE other camp that moved bone — the count-of-one case.
+			if entity == BARROWMERE and not subject_crossings.is_empty():
+				own.append(_x("bone", HudTradeVocab.DIRECTION_OUT, HudTradeVocab.CAUSE_POOLED,
+					BARROWMERE_BONE_OUT, [_reading("density", "good"), _reading("length", "fair")]))
+			band[HudTradeVocab.CROSSINGS_KEY] = own
 		bands.append(band)
 	return bands
 

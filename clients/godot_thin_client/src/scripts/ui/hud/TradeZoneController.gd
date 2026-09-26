@@ -69,7 +69,11 @@ var _popover_body: VBoxContainer = null
 var _open_kind: String = ""
 var _anchor_kind: String = ""
 var _opened_above: bool = false
-var _anchor_screen: Rect2 = Rect2()
+var _anchor_rect: Rect2 = Rect2()
+## The content height and the room on the chosen side as of the last placement — the harness's
+## no-scroll-when-it-fits claim reads these.
+var _content_height: float = 0.0
+var _room: float = 0.0
 ## The frame the popover last hid on, and what it showed. A click on the row that opened it closes
 ## it TWICE over — the popup's own click-away, then the row's press — so a press landing on the same
 ## frame as that hide, for the same list, is the close and must not reopen it.
@@ -103,12 +107,20 @@ func is_short_tier() -> bool:
 func list_body() -> VBoxContainer:
 	return _popover_body
 
-## The popover's rect and its anchor row's, both in SCREEN space (what `Popup` is placed in) — the
+## The drawn card's rect and its anchor row's, both in the main window's CANVAS units — the space an
+## embedded popup's `position` and `size` are in, and the space every rect here is measured in. The
 ## harness asserts the two are adjacent.
-func list_screen_rect() -> Rect2:
+func list_rect() -> Rect2:
 	if not is_list_open():
 		return Rect2()
 	return _card_rect_of(Rect2(Vector2(_popover.position), Vector2(_popover.size)))
+
+## The list's full content height and the room on the side it opened — both canvas units.
+func list_content_height() -> float:
+	return _content_height
+
+func list_room() -> float:
+	return _room
 
 ## **THE CARD A POPUP WINDOW DRAWS IS INSET FROM THE WINDOW** by its panel's shadow: a `PopupPanel`
 ## reserves room for the shadow inside its own rect (`shadow_size`, shifted by `shadow_offset`). So the
@@ -125,8 +137,8 @@ func _card_rect_of(window: Rect2) -> Rect2:
 	return Rect2(window.position + Vector2(inset[0], inset[1]),
 		window.size - Vector2(inset[0] + inset[2], inset[1] + inset[3]))
 
-func anchor_screen_rect() -> Rect2:
-	return _anchor_screen
+func anchor_rect() -> Rect2:
+	return _anchor_rect
 
 func list_opened_above() -> bool:
 	return _opened_above
@@ -216,10 +228,8 @@ func _build_full_tier(band: Dictionary) -> VBoxContainer:
 			route_rows.add_child(_build_shipment_row(band, half[i]))
 		if half.size() > keep:
 			var rest := half.size() - keep
-			var more_format := HudTradeVocab.MORE_SHIPMENT_SINGULAR_FORMAT if rest == 1 \
-				else HudTradeVocab.MORE_SHIPMENT_PLURAL_FORMAT
 			var kind := KIND_ROUTE_IN if direction == HudTradeVocab.DIRECTION_IN else KIND_ROUTE_OUT
-			route_rows.add_child(_build_opens_row("%s %s" % [HudTradeVocab.OPENS_CARET, more_format % rest],
+			route_rows.add_child(_build_opens_row("%s %s" % [HudTradeVocab.OPENS_CARET, HudTradeVocab.count_text(rest, HudTradeVocab.MORE_SHIPMENT_WORDS)],
 				HudTradeVocab.SHIPMENT_INDENT, kind))
 	tier.add_child(route_rows)
 	return tier
@@ -238,8 +248,8 @@ func _build_short_tier(band: Dictionary) -> VBoxContainer:
 		_shipment_count_text(imports + exports), KIND_ROUTE_BOTH if imports + exports > 0 else ""))
 	if imports + exports > 0:
 		var split := _faint_label(HudTradeVocab.SPLIT_JOIN.join([
-			(HudTradeVocab.IMPORT_SINGULAR_FORMAT if imports == 1 else HudTradeVocab.IMPORT_PLURAL_FORMAT) % imports,
-			(HudTradeVocab.EXPORT_SINGULAR_FORMAT if exports == 1 else HudTradeVocab.EXPORT_PLURAL_FORMAT) % exports,
+			HudTradeVocab.count_text(imports, HudTradeVocab.IMPORT_WORDS),
+			HudTradeVocab.count_text(exports, HudTradeVocab.EXPORT_WORDS),
 		]))
 		tier.add_child(split)
 	return tier
@@ -273,7 +283,8 @@ func _build_network_line(band: Dictionary) -> PanelContainer:
 	if members.is_empty():
 		row.add_child(_row_label(HudTradeVocab.NETWORK_NONE, HudStyle.INK_DIM))
 		return box
-	var camps := HudWidgets.build_inline_link(HudTradeVocab.NETWORK_CAMPS_FORMAT % members.size(),
+	var camps := HudWidgets.build_inline_link(HudTradeVocab.NETWORK_CAMPS_FORMAT
+		% HudTradeVocab.count_text(members.size(), HudTradeVocab.CAMP_WORDS),
 		HudStyle.SIGNAL, func() -> void: open_list(KIND_CAMPS, box))
 	camps.add_theme_font_size_override("font_size", HudTradeVocab.ROW_FONT_SIZE)
 	camps.tooltip_text = HudTradeVocab.NETWORK_CAMPS_TOOLTIP
@@ -281,7 +292,8 @@ func _build_network_line(band: Dictionary) -> PanelContainer:
 	row.add_child(camps)
 	row.add_child(_spacer())
 	var span := TradeLedger.network_span(band)
-	row.add_child(_row_label(HudTradeVocab.NETWORK_SPAN_FORMAT % span if span > 0
+	row.add_child(_row_label(HudTradeVocab.NETWORK_SPAN_FORMAT
+		% HudTradeVocab.count_text(span, HudTradeVocab.TILE_WORDS) if span > 0
 		else HudTradeVocab.NETWORK_SPAN_SHARED, HudStyle.SIGNAL))
 	return box
 
@@ -300,7 +312,7 @@ func _build_good_row(band: Dictionary, good: Dictionary) -> Control:
 	var row: HBoxContainer = shell.get_child(0)
 	row.add_child(_row_label(TradeLedger.commodity_label(commodity), HudStyle.INK))
 	if piles.size() > 1:
-		var ratings := _faint_label(HudTradeVocab.RATINGS_FORMAT % piles.size())
+		var ratings := _faint_label(HudTradeVocab.count_text(piles.size(), HudTradeVocab.RATING_WORDS))
 		row.add_child(ratings)
 	row.add_child(_spacer())
 	row.add_child(_net_label(float(good[TradeLedger.GOOD_NET])))
@@ -422,12 +434,12 @@ func _show_hover(control: Control, lines: Array[Control]) -> void:
 		for line in lines:
 			line.free()
 		return
-	# Both rects in the CARD's space (the hover layer's), since a row may live in the popover's own
-	# window: through the screen, the one space every window shares.
+	# Both rects in canvas units — the hover layer's own, and the space a popover row is lifted into by
+	# the popover's position.
 	var avoid := Rect2()
 	if is_list_open():
-		avoid = _screen_to_layer(card, list_screen_rect())
-	card.show_for(lines, _screen_to_layer(card, _screen_rect(control)), avoid)
+		avoid = list_rect()
+	card.show_for(lines, _canvas_rect(control), avoid)
 
 func _hide_hover() -> void:
 	if _hover != null and is_instance_valid(_hover):
@@ -531,7 +543,7 @@ func _good_card_lines(good: Dictionary) -> Array[Control]:
 	head.add_theme_constant_override("separation", HudTradeVocab.ROW_SEPARATION)
 	head.add_child(_row_label(TradeLedger.commodity_label(String(good[TradeLedger.GOOD_COMMODITY])),
 		HudStyle.INK))
-	head.add_child(_faint_label(HudTradeVocab.RATINGS_FORMAT % piles.size()))
+	head.add_child(_faint_label(HudTradeVocab.count_text(piles.size(), HudTradeVocab.RATING_WORDS)))
 	lines.append(head)
 	for pile_variant in piles:
 		var pile: Dictionary = pile_variant
@@ -644,7 +656,7 @@ func _mount(kind: String, band: Dictionary) -> void:
 		var members := _members(band)
 		var camps := TradeLedger.camp_rows(band, members, _band_labor.grid_width(),
 			_band_labor.wrap_horizontal())
-		count = HudTradeVocab.CAMPS_COUNT_FORMAT % camps.size()
+		count = HudTradeVocab.count_text(camps.size(), HudTradeVocab.CAMP_WORDS)
 		var scope := kind.substr(KIND_CAMPS.length() + KIND_SCOPE_SEPARATOR.length()) \
 			if kind != KIND_CAMPS else ""
 		if scope == "":
@@ -654,8 +666,8 @@ func _mount(kind: String, band: Dictionary) -> void:
 		else:
 			var scoped := TradeLedger.good_across_network(band, scope, camps)
 			title = HudTradeVocab.GOOD_SCOPE_TITLE_FORMAT % TradeLedger.commodity_label(scope)
-			summary = HudTradeVocab.GOOD_SCOPE_SUMMARY_FORMAT % [int(scoped[TradeLedger.SCOPED_MOVED]),
-				int(scoped[TradeLedger.SCOPED_EVEN])]
+			summary = HudTradeVocab.GOOD_SCOPE_SUMMARY_FORMAT % [HudTradeVocab.count_text(
+				int(scoped[TradeLedger.SCOPED_MOVED]), HudTradeVocab.CAMP_WORDS), int(scoped[TradeLedger.SCOPED_EVEN])]
 			for camp in scoped[TradeLedger.SCOPED_ROWS]:
 				rows.append(_build_scoped_camp_row(camp))
 			rows.append(_build_lost_row(float(scoped[TradeLedger.SCOPED_LOST])))
@@ -723,7 +735,8 @@ func _build_camp_row(camp: Dictionary) -> Control:
 	# Two fixed columns, so the rungs and the distances line up down the list.
 	link.custom_minimum_size.x = HudTradeVocab.CAMP_LINK_COLUMN_WIDTH
 	row.add_child(link)
-	var distance := _faint_label(HudTradeVocab.DISTANCE_FORMAT % int(camp[TradeLedger.CAMP_DISTANCE]))
+	var distance := _faint_label(HudTradeVocab.count_text(int(camp[TradeLedger.CAMP_DISTANCE]),
+		HudTradeVocab.TILE_WORDS))
 	distance.custom_minimum_size.x = HudTradeVocab.CAMP_DISTANCE_COLUMN_WIDTH
 	distance.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	row.add_child(distance)
@@ -767,7 +780,8 @@ func _build_rung_mark(rung_id: String, with_word: bool) -> Control:
 			tip = word
 		else:
 			tip = "\n".join([HudRouteVocab.catalog_display_name(entry),
-				HudTradeVocab.RUNG_HOLDS_FORMAT % HudRouteVocab.catalog_link_span(entry),
+				HudTradeVocab.RUNG_HOLDS_FORMAT % HudTradeVocab.count_text(
+					HudRouteVocab.catalog_link_span(entry), HudTradeVocab.TILE_WORDS),
 				HudTradeVocab.RUNG_FRICTION_FORMAT % HudRouteVocab.catalog_friction(entry)])
 	mark.tooltip_text = tip
 	if with_word:
@@ -785,13 +799,12 @@ func _own_faction(band: Dictionary) -> int:
 func _goods_count_text(count: int) -> String:
 	if count == 0:
 		return HudTradeVocab.NONE_WORD
-	return (HudTradeVocab.GOOD_SINGULAR_FORMAT if count == 1 else HudTradeVocab.GOOD_PLURAL_FORMAT) % count
+	return HudTradeVocab.count_text(count, HudTradeVocab.GOOD_WORDS)
 
 func _shipment_count_text(count: int) -> String:
 	if count == 0:
 		return HudTradeVocab.NONE_WORD
-	return (HudTradeVocab.SHIPMENT_SINGULAR_FORMAT if count == 1
-		else HudTradeVocab.SHIPMENT_PLURAL_FORMAT) % count
+	return HudTradeVocab.count_text(count, HudTradeVocab.SHIPMENT_WORDS)
 
 ## The popover: a `PopupPanel` parented on the HUD like the disclosure popover, so it is a WINDOW and
 ## changes no zone's height. A head (title, count), an optional summary line, then the rows in its own
@@ -827,9 +840,17 @@ func _ensure_popover() -> PopupPanel:
 	_popover_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_popover_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(_popover_scroll)
+	# The rows sit in a gutter the scrollbar's width wide, reserved whether or not it shows, so the bar
+	# never covers the value column and the column does not jump when a list starts to scroll.
+	var gutter := MarginContainer.new()
+	gutter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	gutter.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	gutter.add_theme_constant_override("margin_right",
+		int(_popover_scroll.get_v_scroll_bar().get_combined_minimum_size().x))
+	_popover_scroll.add_child(gutter)
 	_popover_body = _rows_column()
 	_popover_body.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_popover_scroll.add_child(_popover_body)
+	gutter.add_child(_popover_body)
 	popover.popup_hide.connect(_on_popover_hidden)
 	_host.add_child(popover)
 	_popover = popover
@@ -848,30 +869,41 @@ func _in_popover(control: Control) -> bool:
 	return _popover != null and is_instance_valid(_popover) and _popover.is_ancestor_of(control)
 
 ## **WHERE THE POPOVER SITS**, measured off the live rects every time and never a hard-coded height.
-## Its left edge and width are the Trade column's; its top is the anchor row's bottom plus
-## `POPOVER_GAP`, when the whole list fits in the room from there to the bottom of the visible screen.
-## When it does not, it opens on whichever side of the row has MORE room — above, for a bottom dock's
-## row near the screen edge with a long list — capped to that room and scrolling past it. All in SCREEN space, the
-## disclosure popover's `get_screen_transform` math, which folds in the window and the canvas stretch.
+## Its left edge and width are the Trade column's; it hangs under the anchor row (`POPOVER_GAP`) when
+## the whole list fits in the room below. When it does not, it opens on whichever side of the row has
+## MORE room, capped to that room and scrolling past it.
+##
+## ⛔ **ONE UNIT: THE MAIN WINDOW'S CANVAS.** An embedded popup's `position` and `size` are canvas
+## units, its content lays out in canvas units, and so do `get_global_rect()` and
+## `get_visible_rect()`. It once measured the anchor through `get_screen_transform()` and the room
+## through the viewport's screen transform, which differ by the stretch — the interface scale times
+## the window's ratio to the 1920×1080 base — so the room and the content were compared in two units.
 func _place() -> void:
 	if _popover == null or not is_instance_valid(_popover):
 		return
 	var anchor := _anchor_row()
 	if anchor == null or _column == null or not is_instance_valid(_column) or not _column.is_inside_tree():
 		return
-	_anchor_screen = _screen_rect(anchor)
-	var column := _screen_rect(_column)
-	var viewport := anchor.get_viewport()
-	var visible: Rect2 = viewport.get_screen_transform() * viewport.get_visible_rect()
-	var content := _popover_content_height()
-	var room_below := visible.end.y - _anchor_screen.end.y - HudTradeVocab.POPOVER_GAP \
+	_anchor_rect = anchor.get_global_rect()
+	var column := _column.get_global_rect()
+	var visible := anchor.get_viewport().get_visible_rect()
+	var chrome := _popover_chrome_height()
+	var rows := _popover_body.get_combined_minimum_size().y
+	_content_height = chrome + rows
+	var room_below := visible.end.y - _anchor_rect.end.y - HudTradeVocab.POPOVER_GAP \
 		- HudTradeVocab.POPOVER_EDGE_MARGIN
-	var room_above := _anchor_screen.position.y - HudTradeVocab.POPOVER_GAP - visible.position.y \
+	var room_above := _anchor_rect.position.y - HudTradeVocab.POPOVER_GAP - visible.position.y \
 		- HudTradeVocab.POPOVER_EDGE_MARGIN
-	_opened_above = content > room_below and room_above > room_below
-	var height := minf(content, room_above if _opened_above else room_below)
-	var top := _anchor_screen.position.y - HudTradeVocab.POPOVER_GAP - height if _opened_above \
-		else _anchor_screen.end.y + HudTradeVocab.POPOVER_GAP
+	_opened_above = _content_height > room_below and room_above > room_below
+	_room = room_above if _opened_above else room_below
+	var height := minf(_content_height, _room)
+	# **THE SCROLL VIEWPORT'S OWN MINIMUM IS THE ROWS' SHARE OF THAT HEIGHT**, so the popup's natural
+	# size IS the placed size. A `PopupPanel` wraps its window to its content's minimum whenever that
+	# minimum changes — a snapshot relabelling a row, a font settling — and a scroll with no minimum
+	# of its own would let that wrap shrink the card to its head.
+	_popover_scroll.custom_minimum_size.y = maxf(height - chrome, 0.0)
+	var top := _anchor_rect.position.y - HudTradeVocab.POPOVER_GAP - height if _opened_above \
+		else _anchor_rect.end.y + HudTradeVocab.POPOVER_GAP
 	# The CARD goes at (column.x, top) and is (column width × height); the window around it is grown by
 	# the shadow insets so the drawn card, not the window, lines up with the Trade column.
 	var inset := _shadow_insets()
@@ -890,19 +922,14 @@ func _place_after_layout() -> void:
 	if is_list_open():
 		_place()
 
-## The popover's full content height: everything around the rows plus the rows' own height. **Once
-## it has laid out, "everything around the rows" is MEASURED** — the popover's height less its scroll
-## viewport's — since the window adds chrome of its own that no stylebox reports; before that, the
-## first placement estimates it from the card stylebox and the head (the scroll reports none of the
-## rows while it can scroll), and the placement a frame later corrects it.
-func _popover_content_height() -> float:
-	var rows := _popover_body.get_combined_minimum_size().y
-	if _popover.visible and _popover_scroll.size.y > 0.0:
-		var inset := _shadow_insets()
-		return float(_popover.size.y) - inset[1] - inset[3] - _popover_scroll.size.y + rows
-	var chrome := HudStyle.card_stylebox().get_minimum_size().y
+## Everything in the card around the rows — the stylebox and the head, summary and gaps — off
+## MINIMUM sizes alone, never a laid-out size read back: a read-back mid-resize measures the last
+## layout, and the popup's own wrap can move it between two placements. The scroll's minimum is
+## taken out, since that is the part this placement sets.
+func _popover_chrome_height() -> float:
 	var margin: Control = _popover.get_child(0)
-	return chrome + margin.get_combined_minimum_size().y + rows
+	return HudStyle.card_stylebox().get_minimum_size().y + margin.get_combined_minimum_size().y \
+		- _popover_scroll.get_combined_minimum_size().y
 
 ## The row the popover hangs from — the zone's row that opens the anchored kind. Looked up afresh
 ## each placement, because every render rebuilds the zone and frees the row it was opened from.
@@ -925,14 +952,13 @@ func _find_opens(node: Node, kind: String) -> Control:
 			return found
 	return null
 
-## A control's rect in SCREEN space.
-func _screen_rect(control: Control) -> Rect2:
-	return control.get_screen_transform() * Rect2(Vector2.ZERO, control.size)
-
-## A SCREEN rect in `on`'s canvas space — how the hover card, on a canvas layer of the main window,
-## places itself beside a row that may live in the popover's own window.
-func _screen_to_layer(on: Control, rect: Rect2) -> Rect2:
-	return on.get_viewport().get_screen_transform().affine_inverse() * rect
+## A control's rect in the main window's canvas units — a popover row lifted out of the popup's
+## window by the popup's position.
+func _canvas_rect(control: Control) -> Rect2:
+	var rect := control.get_global_rect()
+	if _in_popover(control):
+		rect.position += Vector2(_popover.position)
+	return rect
 
 func _ensure_hover() -> TradeHoverCard:
 	if _hover != null and is_instance_valid(_hover):

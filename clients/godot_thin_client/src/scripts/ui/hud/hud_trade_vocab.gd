@@ -73,23 +73,23 @@ const SHIPMENT_FOLD_KEEP := 3
 
 # ---- WORDS -----------------------------------------------------------------------------------------
 const NETWORK_KEY_WORD := "Network"
-const NETWORK_CAMPS_FORMAT := "%d camps ›"
-const NETWORK_SPAN_FORMAT := "within %d tiles"
+## **EVERY COUNT ON THE TAB IS A `[one, many]` PAIR, read through `count_text`** — never a bare
+## `"%d camps"`, which reads "1 camps". The pair is the word; `count_text` picks the half by the number.
+const CAMP_WORDS: Array[String] = ["%d camp", "%d camps"]
+const TILE_WORDS: Array[String] = ["%d tile", "%d tiles"]
+const RATING_WORDS: Array[String] = ["%d rating", "%d ratings"]
+const NETWORK_CAMPS_FORMAT := "%s ›"
+const NETWORK_SPAN_FORMAT := "within %s"
 ## A network whose camps share one tile publishes a span of 0 — it is still a network.
 const NETWORK_SPAN_SHARED := "one camp's ground"
 const NETWORK_NONE := "not pooling"
 const NETWORK_CAMPS_TOOLTIP := "Every camp this band pools with"
 
-const GOOD_SINGULAR_FORMAT := "%d good"
-const GOOD_PLURAL_FORMAT := "%d goods"
-const SHIPMENT_SINGULAR_FORMAT := "%d shipment"
-const SHIPMENT_PLURAL_FORMAT := "%d shipments"
-const IMPORT_SINGULAR_FORMAT := "%d import"
-const IMPORT_PLURAL_FORMAT := "%d imports"
-const EXPORT_SINGULAR_FORMAT := "%d export"
-const EXPORT_PLURAL_FORMAT := "%d exports"
-const MORE_SHIPMENT_SINGULAR_FORMAT := "%d more shipment"
-const MORE_SHIPMENT_PLURAL_FORMAT := "%d more shipments"
+const GOOD_WORDS: Array[String] = ["%d good", "%d goods"]
+const SHIPMENT_WORDS: Array[String] = ["%d shipment", "%d shipments"]
+const IMPORT_WORDS: Array[String] = ["%d import", "%d imports"]
+const EXPORT_WORDS: Array[String] = ["%d export", "%d exports"]
+const MORE_SHIPMENT_WORDS: Array[String] = ["%d more shipment", "%d more shipments"]
 const SPLIT_JOIN := " · "
 const NONE_WORD := "none"
 
@@ -104,7 +104,6 @@ const OPENS_CARET := "›"
 
 ## One good's row: its net this turn, and how many rating piles stand behind it when more than one.
 const AMOUNT_FORMAT := "%s %.1f"
-const RATINGS_FORMAT := "%d ratings"
 const EVEN_WORD := "even"
 ## A pile's SIGNED amount on a hover card (`+0.8` / `-0.4`).
 const SIGNED_AMOUNT_FORMAT := "%+.1f"
@@ -116,22 +115,21 @@ const EMPTY_BODY := "Camps pool when one is short of what another holds; shipmen
 
 # ---- THE OVERFLOW PANEL ----------------------------------------------------------------------------
 const CAMPS_TITLE := "The pooling network"
-const CAMPS_COUNT_FORMAT := "%d camps"
 const GOOD_SCOPE_TITLE_FORMAT := "%s across the network"
-const GOOD_SCOPE_SUMMARY_FORMAT := "%d camps moved it; %d sat even"
+## `2 camps moved it; 2 sat even` — the first half is a `CAMP_WORDS` count.
+const GOOD_SCOPE_SUMMARY_FORMAT := "%s moved it; %d sat even"
 const LOCAL_TITLE := "Pooled this turn"
 const ROUTE_TITLE_BOTH := "Trade this turn"
 const ROUTE_TITLE_IN := "Imports this turn"
 const ROUTE_TITLE_OUT := "Exports this turn"
 const THIS_BAND_WORD := "this band"
 const VIA_FORMAT := "via %s"
-const DISTANCE_FORMAT := "%d tiles"
 const LOST_IN_TRANSIT := "lost in transit — friction"
 
 # ---- THE LINK RUNG ---------------------------------------------------------------------------------
 const OPEN_GROUND_WORD := "open ground"
 const OPEN_GROUND_TIP := "within the free reach, no road — pools at full friction"
-const RUNG_HOLDS_FORMAT := "holds a link to %d tiles"
+const RUNG_HOLDS_FORMAT := "holds a link to %s"
 const RUNG_FRICTION_FORMAT := "friction ×%.2f"
 ## The icon a rung draws, keyed on the rung id's own name (the part after the branch's `route:`).
 const RUNG_ICON_PATH := "path"
@@ -193,3 +191,7 @@ const POPOVER_EDGE_MARGIN := 8.0
 const POPOVER_PADDING := 10
 ## The four sides `POPOVER_PADDING` is applied to.
 const POPOVER_MARGIN_SIDES := ["left", "top", "right", "bottom"]
+
+## `n` in the right half of a `[one, many]` pair — `1 camp`, `2 camps`, `0 camps`.
+static func count_text(n: int, words: Array[String]) -> String:
+	return (words[0] if n == 1 else words[1]) % n

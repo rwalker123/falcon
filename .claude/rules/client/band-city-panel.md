@@ -7228,13 +7228,29 @@ zone's height. It carries its own `ScrollContainer`; the Trade zone carries none
 
 **It hangs from the row that opened it.** The drawn card's left edge and width are the Trade column's
 (its own zone narrow, the section under Parties wide), its top `POPOVER_GAP` under the row's bottom —
-the disclosure popover's `get_screen_transform` math, in screen space — when the whole list fits in
-the room from there to the bottom of the visible screen. When it does not, it opens on whichever side
-of the row has **more room** (above, for a long list off a bottom dock's row), capped to that room
-and scrolling inside itself past it. Every figure is measured off the live rects at placement, and
-the content height is re-measured a frame later, once the rows have laid out. A `PopupPanel` draws
-its card inset from its window by the panel's shadow, so the window is grown by those insets and every
-rect the controller reports (`list_screen_rect`) is the drawn card's.
+when the whole list fits in the room from there to the bottom of the visible screen. When it does
+not, it opens on whichever side of the row has **more room** (above, for a long list off a bottom
+dock's row), capped to that room and scrolling inside itself past it. Every figure is measured off the
+live rects at each placement, and placed again a frame later once the rows have laid out. A
+`PopupPanel` draws its card inset from its window by the panel's shadow, so the window is grown by
+those insets and every rect the controller reports (`list_rect`) is the drawn card's.
+
+⛔ **ONE UNIT: THE MAIN WINDOW'S CANVAS.** An embedded popup's `position` / `size`, its content's
+minimum sizes, `get_global_rect()` and `get_visible_rect()` are all canvas units. The placement once
+took the anchor through `get_screen_transform()` and the room through the viewport's screen transform,
+which differ by the stretch — the interface scale times the window's ratio to the 1920×1080 base — so
+content and room were compared in two units.
+
+**THE HEIGHT IS BUILT FROM MINIMUM SIZES ONLY**, never a laid-out size read back: the content is the
+card stylebox, the head and summary, and the rows' minimum; the scroll viewport's own
+`custom_minimum_size` is set to the rows' share of the placed height. That makes the popup's natural
+size the placed size, so the `PopupPanel`'s wrap to its content minimum — which fires whenever a row
+relabels — cannot shrink the card to its head. A read-back of the popup's and the scroll's laid-out
+heights was the previous measure, and it answered from whatever layout was last on screen.
+
+The rows sit in a right gutter one scrollbar wide, reserved whether or not the list scrolls, so the
+bar never covers the value column. Every count on the tab is a `[one, many]` pair read through
+`HudTradeVocab.count_text` (`1 camp moved it`, `1 rating`, `1 tile`).
 
 **Dismissal is the popup's own**: a click away or ESC, as for the disclosure popover, which is on no
 `Main.escape_claimant` entry either. A click on the map or the work zone closes it by itself, so it
@@ -7276,6 +7292,9 @@ SHORT tier under Parties), `trade_tab_wide_route_list` (fifteen shipments do not
 dock's row, so it opens ABOVE), `trade_tab_wide_short_below` (five camps off a row with more room
 above than below still fit below, so it opens BELOW), `trade_tab_wide_local_hover` (a hover card from
 a row inside the popover sits beside it) and
-`trade_tab_short` (the tabbed shell on a narrow bottom dock). Every list frame asserts the popover is
-ADJACENT to its anchor row — one gap under it, or over it when opened upward, spanning the row —
-not merely visible.
+`trade_tab_short` (the tabbed shell on a narrow bottom dock), then every list again at
+`ui_scale` 1.35 (`trade_tab_scaled_*`, side dock and wide canvas). Every list frame asserts the popover
+is ADJACENT to its anchor row — one gap under it, or over it when opened upward, spanning the row —
+not merely visible, and that a list which fits its room is drawn at its full content height with
+nothing to scroll (one that does not fills the room and scrolls). `trade_tab_camps_bone` asserts a
+count of one reads singular.
