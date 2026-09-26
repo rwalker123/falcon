@@ -3118,11 +3118,10 @@ pub struct BandEquipment {
     /// a player. Without this the panel's `Worn out` wording is unrepresentable and every count of
     /// zero has to read as *never made*, which is wrong for exactly the item the player just lost.
     ///
-    /// **The TIER is part of the key because the readout names it out loud.** *"last flint set wore
-    /// out"* is a claim about which tier was lost, and an item-wide tally could only *infer* one —
-    /// the day iron ships beside bronze and flint, inferring *"the tier below what I can now make"*
-    /// names bronze for a flint set that actually wore out. A published string asserting the wrong
-    /// tier is worse than saying nothing.
+    /// **The TIER is part of the key because it is the fact `wear_item` actually holds**, and a
+    /// per-tier record can always be summed where an item-wide one could never be split again. The
+    /// one reader, [`Self::retired_of`], sums it: the `Worn out` / `Never made` split asks only
+    /// *whether* anything broke. The saved shape is this map, so it rides `BandRecord::equipment`.
     ///
     /// An item with no entry has retired none. **Not gameplay**: nothing in the sim branches on it,
     /// and it must not become a repair discount or a durability bonus — it is the readout's memory.
@@ -3188,8 +3187,8 @@ impl BandEquipment {
     /// ([`crate::recipes_config::RecipesConfig::anchor_grade_for_item`]).
     ///
     /// **A start-stocked unit IS an anchor-grade craft, so it says so.** A spawn stocks the item's
-    /// default tier (`equipment.md` → *"flint is today's spear, verbatim"*) and `validate` requires
-    /// the anchor grade to agree with that tier for every stat it declares — the two perform
+    /// default tier (`equipment.md` → *"every item's opening tier is `plain`"*) and `validate`
+    /// requires the anchor grade to agree with the tier each recipe makes — the two perform
     /// identically, and the ledger simply was not saying which. An unstamped batch published a bare
     /// `×1` beside rows reading `×3 good`, which is indistinguishable from a panel that failed to
     /// draw something.
@@ -3608,19 +3607,6 @@ impl BandEquipment {
             .unwrap_or(0)
     }
 
-    /// **Which TIERS of `item` this band has worn out, and how many of each** — in tier-id order,
-    /// empty for an item it has never retired.
-    ///
-    /// The readout's join: *"last flint set wore out"* names a tier, and this is the only record of
-    /// which one it was. [`Self::retired_of`] is the same tally summed for a caller that only asks
-    /// *whether* anything broke.
-    pub fn retired_tiers_of(&self, item: &str) -> impl Iterator<Item = (&str, u32)> {
-        self.retired
-            .get(item)
-            .into_iter()
-            .flat_map(|tiers| tiers.iter().map(|(tier, count)| (tier.as_str(), *count)))
-    }
-
     /// **Charge every item in `kit` whose quantum is `quantum`.** The seam every wear site calls, and
     /// the reason a site cannot forget an item: it names the *quantum* it just spent, not the items,
     /// so an item added to a kit is charged without editing a single call site.
@@ -3759,9 +3745,41 @@ pub struct BandBench {
     /// `bench_crew`) is addressed `<faction> <band>` with no source, and squeezing the bench into
     /// `work_priority`'s source grammar would make the bare token `bench` ambiguous with a herd id.
     pub priority: SourcePriority,
+    /// **WHICH RECIPE THIS BAND LAST STARTED, PER THING IT MAKES** — row key
+    /// ([`crate::recipes_config::RecipeDef::row_key`], the item or material id) → recipe id.
+    ///
+    /// It is what the crafting ledger **suggests** on an item's row when the item has more than one
+    /// recipe: the one this band chose last time, if it can still be made
+    /// (`snapshot::crafting`'s suggestion rule). A band that knaps its spears keeps being offered the
+    /// knapped recipe, and one that points them with bone keeps being offered bone, without the
+    /// player re-choosing every time.
+    ///
+    /// ⛔ **Written ONLY when a job starts** ([`Self::record_started`], called by `set_bench`) and
+    /// **never by a readout** — the capture reads it and must not decide it, or the panel would be
+    /// choosing on the player's behalf. It **outlives the job**: clearing the bench does not clear it
+    /// ([`Self::clear_job`]), because *"what did I last make spears from"* is a standing fact about the
+    /// band rather than about the thing on the bench now.
+    ///
+    /// **Persisted** with the rest of the bench (`BandRecord::bench`), so a save or a rollback does
+    /// not forget a band's habits — and that changed the bench's encoded shape, which is why
+    /// `SAVE_FORMAT_VERSION` moved. `BTreeMap` so the checkpoint and any readout iterate in a stable
+    /// order.
+    pub last_started: BTreeMap<String, String>,
 }
 
 impl BandBench {
+    /// **Remember that this band started `recipe_id` for `row`** — see [`Self::last_started`].
+    /// Overwrites the previous choice for that row; every other row is untouched.
+    pub fn record_started(&mut self, row: &str, recipe_id: &str) {
+        self.last_started
+            .insert(row.to_string(), recipe_id.to_string());
+    }
+
+    /// The recipe this band last started for `row`, if it has started one.
+    pub fn last_started_for(&self, row: &str) -> Option<&str> {
+        self.last_started.get(row).map(String::as_str)
+    }
+
     /// **Put a recipe on the bench**, discarding whatever was there. Progress and the drawn pile go
     /// with it: a job swapped out mid-pass has to draw again, because the materials it drew were for
     /// the thing it is no longer making.
@@ -3780,8 +3798,16 @@ impl BandBench {
     /// default()` drops [`Self::drawn`] on the floor rather than returning it to the store, so a
     /// band that lost people would silently lose the materials it had already cut. The shed uses
     /// [`Self::shed_one_worker`] instead.
+    ///
+    /// **[`Self::last_started`] survives it**, deliberately: which recipe a band last chose for an item
+    /// is a fact about the band, not about the job being taken off the bench, and a bench cleared
+    /// between two batches of spears must still suggest the recipe it was making them from.
     pub fn clear_job(&mut self) {
-        *self = Self::default();
+        let last_started = std::mem::take(&mut self.last_started);
+        *self = Self {
+            last_started,
+            ..Self::default()
+        };
     }
 
     /// **TAKE ONE HAND OFF THE BENCH AND LEAVE EVERYTHING ELSE STANDING** — what the shedding order

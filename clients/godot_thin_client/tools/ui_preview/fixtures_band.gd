@@ -369,11 +369,16 @@ const KIT_FORAGE_CARRY_BARE := 1.6
 ## fields are one reading, so an entry stating the worth and not the branch describes a wire the sim
 ## does not send.
 const KIT_BUILD_WORK_NEUTRAL := 0.0
-## What either build tool buys: the `equipment.json` `crook` flint tier's own value, which the
-## `hoes` mirror exactly — **the extra work ONE EQUIPPED WORKER DELIVERS PER TURN**, so an equipped
-## builder banks `PER_WORKER_OUTPUT + this` = 1.5 where a bare one banks 1.0. The two webs' rungs cost
-## the same, so mirroring the number is what makes a greyed kit read as a WEB refusal rather than as a
-## weaker tool.
+## What either build tool's OPENING tier buys: the `equipment.json` `crook`'s `plain` tier value,
+## which the `hoes`' own `plain` tier mirrors exactly — **the extra work ONE EQUIPPED WORKER DELIVERS
+## PER TURN**, so an equipped builder banks `PER_WORKER_OUTPUT + this` = 1.5 where a bare one banks
+## 1.0. The two webs' rungs cost the same, so mirroring the number is what makes a greyed kit read as
+## a WEB refusal rather than as a weaker tool.
+##
+## **IT IS THE `plain` TIER'S NUMBER AND THE TIER HAS TO BE NAMED NOW.** `crook` ships `plain` alone,
+## but `hoes` ships `[plain, flint]` and its `flint` tier buys **0.7** at a starting durability of 70
+## rather than 100 — so *"the hoes' value"* is ambiguous where it once was not. This fixture prices
+## the opening tier of both; a fixture wanting the harder, more brittle hoe states `0.7` and says so.
 ##
 ## ⛔ **IT WAS `8.5`, AND THAT NUMBER CANNOT BE CARRIED ACROSS** (`docs/plan_standing_upkeep.md` §4.8).
 ## Under the retired subtraction it meant *units taken off the job*; the shipped stat means *work added

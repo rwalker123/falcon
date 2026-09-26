@@ -1057,7 +1057,8 @@ pub struct PopulationCohortState {
     pub hunter_attack: f32,
     /// **This band's per-worker HUNT haul rate** (biomass/turn), sled resolved in — the term every
     /// hunt take, crew-size figure and hunt forecast is capped by. Equipped it is the sled's own
-    /// `flint` tier in `equipment.json` (`hunt_carry` 40); sledless it is `labor_config.json`'s
+    /// `plain` tier in `equipment.json` (`hunt_carry` 40, and the sled ships only that one tier);
+    /// sledless it is `labor_config.json`'s
     /// `hunt.per_worker_biomass_capacity` (12), which is the **no-equipment baseline** since the
     /// carries moved onto their tiers.
     ///
@@ -1873,9 +1874,24 @@ pub struct DrawnInputState {
 /// different severities on this wire precisely because a client deriving both from a boolean cannot
 /// tell them apart. Render [`Self::reason`] verbatim; never substitute *"cannot craft"*, and never
 /// re-derive a reason, a shortfall or a grade.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+///
+/// # Several offers can be ONE ledger row
+///
+/// An item may have more than one recipe (a spear pointed with bone, a spear knapped from stone), so
+/// several offers share an [`Self::output_item_id`]. The ledger shows one row per item; the last five
+/// fields are what its recipe popup and Make-picker read, all resolved sim-side.
+///
+/// **`Default` is written by hand** because [`Self::owned_at_tier`]'s default is
+/// [`OWNED_AT_TIER_UNATTRIBUTED`] (`-1`), not `0`: the FlatBuffers schema says `= -1`, and a derived
+/// `Default` would answer `0` — *"owns none at this tier"*, a real count — on every row a fixture
+/// builds with `..Default::default()`. Serde takes no default for it: a missing field fails to
+/// deserialize like every other field here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CraftOfferState {
     pub recipe_id: String,
+    /// **The row's name, not the recipe's** — the output item's own `display_name`, or the material's
+    /// title for a stock recipe. Two offers for one item carry the same string; [`Self::recipe_label`]
+    /// tells them apart.
     pub display_name: String,
     /// `kit` (a party carries it) | `tool` (it bounds one material at the bench) | `stock` (it makes
     /// a material) — the three groups the design's ledger is drawn in.
@@ -1898,20 +1914,55 @@ pub struct CraftOfferState {
     pub output_grade: String,
     /// This recipe is the running job — the row's button is spent (*"On the bench"*).
     pub on_bench: bool,
-    /// **The tier a craft would produce right now** — `ItemDefinition::craftable_tier`, the best tier
-    /// the faction knows. It is the ledger's **group head**, not a column: a head says *flint* once
-    /// and can fold away, which is what a column spending its width on every row can never do. `""`
-    /// on a material (stock) recipe.
-    pub output_tier_name: String,
-    /// Index of that tier within the item's own `tiers` list. **Heads order by rank descending** —
-    /// newest first — because there is no other honest ordering for two tier heads and alphabetical
-    /// would put Iron above Bronze.
-    pub output_tier_rank: u32,
-    /// **What the band CARRIES, said only when it disagrees with what it could now make.** `""` when
-    /// there is no news, which is every row on the shipped one-tier roster. *"carrying flint ·
-    /// poor"*, *"last flint set wore out"* — **render it verbatim**; the tier word reaches the Owned
-    /// cell only through this field and only when it is news.
-    pub owned_note: String,
+    /// **The recipe's own short name among its siblings** — *Bone*, *Flint*, *Withy*. `""` on a
+    /// recipe that is the only one making its output.
+    pub recipe_label: String,
+    /// **What this recipe would make, from this band's store right now** — one resolved headline,
+    /// `26 attack`, `8 carry`, `+0.7 build work`, `2 tile vantage`. The grade effect at
+    /// [`Self::output_grade`] for a graded recipe, the output tier's own effect otherwise. `""` for a
+    /// material output and for a bench tool.
+    pub makes: String,
+    /// **How long one fresh unit at this recipe's tier lasts**, in the item's headline wear quantum
+    /// and the wording [`EquipmentBatchState::life`] counts in — `175 blows`,
+    /// `2500 biomass gathered`. `""` for a material output.
+    pub lasts: String,
+    /// **The recipe this row suggests** — exactly one offer per row is `true`, a row being every
+    /// offer that makes the same item or, for a stock recipe, the same material. The offer that is
+    /// [`Self::on_bench`] if any, else the recipe this band last started for the row if it is
+    /// available now, else the first available in book order, else the last started, else the
+    /// first in book order.
+    pub suggested: bool,
+    /// **Units of this item the band owns at this recipe's tier**, or [`OWNED_AT_TIER_UNATTRIBUTED`]
+    /// when every recipe making the item makes the **same** tier — the ledger never recorded which
+    /// recipe made a unit, so a count per recipe there would be invented. `0` is a real count.
+    pub owned_at_tier: i32,
+}
+
+/// **What [`CraftOfferState::owned_at_tier`] publishes when a per-recipe count would be invented** —
+/// every recipe making the item makes the same tier, so there is nothing to attribute a unit to.
+/// Matches the schema's `ownedAtTier:int = -1`.
+pub const OWNED_AT_TIER_UNATTRIBUTED: i32 = -1;
+
+impl Default for CraftOfferState {
+    fn default() -> Self {
+        Self {
+            recipe_id: String::new(),
+            display_name: String::new(),
+            group: String::new(),
+            output_item_id: String::new(),
+            available: false,
+            reason: String::new(),
+            severity: String::new(),
+            shortfalls: Vec::new(),
+            output_grade: String::new(),
+            on_bench: false,
+            recipe_label: String::new(),
+            makes: String::new(),
+            lasts: String::new(),
+            suggested: false,
+            owned_at_tier: OWNED_AT_TIER_UNATTRIBUTED,
+        }
+    }
 }
 
 /// **One batch of one item a band owns**, plus a `count: 0` row for every config item it owns none

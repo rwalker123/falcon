@@ -707,8 +707,9 @@ fn create_populations<'a>(
                         let reason = builder.create_string(&offer.reason);
                         let severity = builder.create_string(&offer.severity);
                         let output_grade = builder.create_string(&offer.output_grade);
-                        let output_tier_name = builder.create_string(&offer.output_tier_name);
-                        let owned_note = builder.create_string(&offer.owned_note);
+                        let recipe_label = builder.create_string(&offer.recipe_label);
+                        let makes = builder.create_string(&offer.makes);
+                        let lasts = builder.create_string(&offer.lasts);
                         let shortfalls = create_shortfalls(builder, &offer.shortfalls);
                         fb::CraftOffer::create(
                             builder,
@@ -723,9 +724,11 @@ fn create_populations<'a>(
                                 shortfalls: Some(shortfalls),
                                 outputGrade: Some(output_grade),
                                 onBench: offer.on_bench,
-                                outputTierName: Some(output_tier_name),
-                                outputTierRank: offer.output_tier_rank,
-                                ownedNote: Some(owned_note),
+                                recipeLabel: Some(recipe_label),
+                                makes: Some(makes),
+                                lasts: Some(lasts),
+                                suggested: offer.suggested,
+                                ownedAtTier: offer.owned_at_tier,
                             },
                         )
                     })
@@ -1478,9 +1481,11 @@ fn decode_population(
             shortfalls: decode_shortfalls(offer.shortfalls()),
             output_grade: text(offer.outputGrade()),
             on_bench: offer.onBench(),
-            output_tier_name: text(offer.outputTierName()),
-            output_tier_rank: offer.outputTierRank(),
-            owned_note: text(offer.ownedNote()),
+            recipe_label: text(offer.recipeLabel()),
+            makes: text(offer.makes()),
+            lasts: text(offer.lasts()),
+            suggested: offer.suggested(),
+            owned_at_tier: offer.ownedAtTier(),
         }),
         equipment_batches: map_rows(cohort.equipmentBatches(), |batch| EquipmentBatchState {
             item_id: text(batch.itemId()),

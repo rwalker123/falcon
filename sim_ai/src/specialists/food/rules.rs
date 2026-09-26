@@ -133,14 +133,19 @@ const CULTIVATION_LESSON_COST: f32 = 20.0;
 /// per turn, so the shape's patch sites each teach it. Pinned by `config_pins`.
 const LADDER_LEARN_RATE: f32 = 1.0;
 /// **What a hoe adds to one keeper's work per turn** — `equipment.json` → `items.hoes`, tier
-/// `flint`, the `build_work` effect's `equipped` value on the `plant` branch (`0.5`); the tillage
+/// `plain`, the `build_work` effect's `equipped` value on the `plant` branch (`0.5`); the tillage
 /// kit is what an `agriculture` pool holds. Read by `ground.rs` for every `*_hoed` crew figure.
 /// Pinned by `config_pins`.
+///
+/// ⛔ **THE OPENING TIER, NOT THE BEST ONE.** `hoes` gained a knapped `flint` tier worth `0.7`
+/// (issue #736), and this brain prices the hoes a band can make from bone and fibre on turn one.
+/// Reading the better tier would quote a crew the flint rate before the faction has reached a
+/// stone deposit.
 pub(crate) const HOE_BUILD_WORK_PER_WORKER: f32 = 0.5;
 /// The tillage kit's tier whose `build_work` effect [`HOE_BUILD_WORK_PER_WORKER`] restates
-/// (`equipment.json` → `items.hoes.tiers[id == "flint"]`).
+/// (`equipment.json` → `items.hoes.tiers[id == "plain"]`).
 #[cfg(test)]
-const HOE_TIER_ID: &str = "flint";
+const HOE_TIER_ID: &str = "plain";
 
 /// **The hoe estimate's constants are the server's shipped config, held to it by a file include**
 /// — the same rule `bench/mod.rs` pins `SHIPPED_CONFIG` and `MAP_SIZES` by: this crate cannot

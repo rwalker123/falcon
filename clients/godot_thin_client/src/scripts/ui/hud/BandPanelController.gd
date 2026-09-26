@@ -1507,8 +1507,9 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     # ⛔ **AND NOT BECAUSE A KEEPING KIT MOVES NOTHING — SINCE §4.8 IT MOVES THE KEEPING ITSELF.**
     # `tillage` and `hurdling` carry the keeping jobs, `KeepingGear::resolve` derives the tool per
     # web off the roster, and an equipped keeper supplies its bare output PLUS what the kit delivers
-    # against the same unmoved demand — flint hoes are +0.5 work per keeper per turn on the plant
-    # web, hurdles the same on the animal one — with `WearQuantum::UpkeepWork` billing them for it.
+    # against the same unmoved demand — `plain` hoes are +0.5 work per keeper per turn on the plant
+    # web (their `flint` tier +0.7), hurdles the same on the animal one — with
+    # `WearQuantum::UpkeepWork` billing them for it.
     # The old note here argued from an inert axis, which stopped being true the turn those two kits
     # took the jobs.
     #

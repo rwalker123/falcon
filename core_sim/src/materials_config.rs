@@ -860,11 +860,16 @@ mod tests {
 
     /// **What ships, and the line between the two kinds of shipped material.**
     ///
-    /// The three organics and `wood` are **crafted** — each names a craft and yields to bare hands.
-    /// The three luxury crops, `hurdles` and `stone` are **uncrafted**: `craft` and `hand_working`
-    /// are both absent, which is the deliberate statement *nothing works this yet* for the crops and
-    /// *nothing takes this as an INPUT* for the fence panels and the roadstone — they are consumed
+    /// The three organics, `wood` and `stone` are **crafted** — each names a craft and yields to
+    /// bare hands. The three luxury crops and `hurdles` are **uncrafted**: `craft` and
+    /// `hand_working` are both absent, which is the deliberate statement *nothing works this yet*
+    /// for the crops and *nothing takes this as an INPUT* for the fence panels — they are consumed
     /// by an improvement, not by a bench (`docs/plan_standing_upkeep.md` §2.7).
+    ///
+    /// **`stone` crossed that line in issue #736** and is the one material on both sides of it: the
+    /// `route:paved_road` rung still eats it as an improvement pile, *and* the bench knaps it into
+    /// the three flint tiers. Being an improvement's input was never what made a material
+    /// uncrafted — having no bench recipe was.
     ///
     /// **NOTHING IS STOCKED AT SPAWN** — every material on this roster is either *produced* (a
     /// yield edge or a recipe pays it) or *picked* in the opening loadout the player composes on
@@ -898,11 +903,11 @@ mod tests {
              material is either produced or picked in the opening loadout; {stocked:?} declare one"
         );
         for (id, def) in config.materials() {
-            let crafted = [BONE, FIBRE, HIDE, WOOD].contains(&id);
+            let crafted = [BONE, FIBRE, HIDE, STONE, WOOD].contains(&id);
             assert_eq!(
                 def.craft.is_some(),
                 crafted,
-                "{id}: only the three organics name a craft"
+                "{id}: only the three organics, wood and stone name a craft"
             );
             assert_eq!(
                 def.is_hand_workable(),

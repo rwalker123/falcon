@@ -2383,6 +2383,74 @@ the control are independent, so a defect in one must leave the other's claims st
 None passed vacuously: each restoration was named by at least one assertion that reads the RENDER and
 one that reads the table.
 
+## One ledger row per thing made, its recipes behind a link (`chapters/crafting_bench.gd`)
+
+Two frames and the recipe block's claims, appended LAST in the chapter (`_recipe_states`) so no
+earlier frame moves in count. The behaviour is `crafting-panel.md`'s — "ONE SHORT ROW PER THING
+MADE"; what belongs here is the shape of the drive.
+
+| frame | what only IT can say |
+|---|---|
+| `crafting_panel` (existing) | the ledger at rest: `Kit` · `Bench tools` · `Materials`, and `2 recipes` under Baskets and Spears only |
+| `crafting_recipes_popup` | the popup under Spears' link, `Bone` / `Flint` with an Owned column of `×6` / `—` |
+| `crafting_make_picker` | the picker under the Spears row: the short bone recipe's radio disabled with its reason, the flint one lit |
+
+**The fixtures are the new wire shape**: one offer per recipe, one `suggested` per row, and two items
+chosen as the two popup cases — Spears (bone makes `plain`, knapping makes `flint`, so each offer states
+its own `owned_at_tier`) and Baskets (reed and withy make ONE tier, so both publish `-1`). The store
+gained wood and stone, because the flint offer is published AVAILABLE and a band holding no stone
+could not make it. The two-tier fixture moved off the invented `bronze` onto the shipped `flint`, and
+both spear recipes can be made there, which is what makes Start's claim about the CHOICE: it presses
+the non-suggested radio, so "sends the chosen one" and "sends the suggested one" answer differently.
+
+**Every claim is a pair and every press is real pointer input** (`_press_control`, which now FAILS a
+claim on a null control instead of raising — a raise aborts the chapter and surfaces only as the
+checkpoint guard's short count). `Esc` is a real `InputEventKey` pushed through the viewport, and the
+outside click lands on the card's own chrome. **The block opens by CLOSING the card**: the rank picker
+the state above it leaves open is VIEW state the card carries until dismissal, and it sat over both
+new frames on the first run.
+
+⛔ **ONE STATE IS A SHAPE THE SHIPPED SIM DOES NOT SEND.** *Make is live when only the non-suggested
+recipe can be made* stages a suggested recipe that cannot be made beside one that can; the sim's own
+pick prefers an available recipe, so that never arrives. It is staged because the client's rule is
+"any offer available" and nothing else can tell that from "the suggested one available" — paired with
+the clubs row, whose only recipe is short and whose Make must stay disabled.
+
+**Sabotage-verified in two runs.** Three disjoint mutations together — the popup's Owned column shown
+unconditionally, Start sending the suggested recipe, Make gated on the suggested offer alone — fail
+**exactly three** claims, one each, naming `["spears_flint"]` for the Start one. Then Make on a
+two-recipe row sending its suggested recipe directly, plus the link drawn on every row: **fifteen** —
+the whole picker chain (with three *the control to press was rendered* guards where the picker's
+controls were never built) and the single-recipe link claim with the two role-line claims it took
+down, while *Make on a single-recipe row sends that recipe* and *…opens no picker* correctly stay green.
+
+### …and no tier word reaches an Owned cell
+
+**No tier word reaches an Owned cell at all** (`crafting-panel.md` → "NO TIER WORD REACHES THE OWNED
+CELL AT ALL"). The fixtures publish a `tier_id` on every batch they own, exactly as the sim does, which
+is what gives the negative something to catch: *no Owned cell carries any tier word*, behind a
+precondition that the band really publishes tier ids, asked of the two-tier band and of the reference
+band. Beside it, *an Owned cell carries nothing beside its grades* is asked of the Spears cell as
+*everything that is not a count or a legend word*, so a line composed client-side fails it. The
+positive half is the popup's per-tier Owned column above (`×6` / `—` on Spears). Sabotage-verified by
+rendering each batch's `tier_id` in the Owned cell: exactly **three** claims fail — the tier-word
+negative on both bands and the nothing-beside-its-grades claim — while the popup's `×6` / `—` column
+stays green. The fixture offers carry no `output_tier_name` / `output_tier_rank`: those fields are
+deprecated and the sim publishes neither.
+
+### …and a material is a thing made
+
+`_assert_one_row_per_material_made`, PNG-less, at the end of `_recipe_states`. It pushes a recipe book
+carrying two stock recipes that both make `hurdles` (labelled `Wood` and `Withy`, since the sim
+requires labels on sibling recipes) and a band publishing an offer for each, one of them `suggested`,
+and asks for exactly **one** `Hurdles` row carrying the `2 recipes` link — **paired** with the
+reference band's single-recipe `Cordage` row, which must stay one row with NO link, or the first claim
+passes on a panel that links every stock row. The recipe book and the band are handed back
+afterwards, so no frame after it moves. Sabotage-verified by keying a stock row by its recipe again:
+exactly **one** claim fails, naming `2 rows, no link`, while the Cordage half stays green.
+**MEASURED ON THIS TREE: `455 / 2256`**, exit 0; `EXPECTED_CHECKPOINTS` **187**, RE-MEASURED by raising
+the const to an impossible number and reading `reached 187` back.
+
 ## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
 
 Four frames and twenty-five `PASS`, appended to the event-dock chapter before it frees its panel —

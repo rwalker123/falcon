@@ -5547,6 +5547,9 @@ table BenchState {
 // stamps no grade must not appear to promise one.
 table CraftOffer {
   recipeId:string;
+  // THE ROW'S NAME, not the recipe's: the output ITEM's own `display_name` ("Spears"), or the
+  // material's title for a stock recipe ("Hurdles"). Two offers for one item carry the SAME string —
+  // the item owns its name, and `recipeLabel` below is what tells its recipes apart.
   displayName:string;
   // "kit" (a party carries it) | "tool" (it bounds one material at the bench) | "stock" (it makes a
   // material). The design's ledger is one table in exactly these three groups.
@@ -5572,19 +5575,43 @@ table CraftOffer {
   //     recipe only that half applies.
   outputGrade:string;
   onBench:bool;          // this recipe is the running job — the row's button is spent
-  // --- THE LEDGER'S GROUP HEAD, AND WHAT THE BAND ACTUALLY CARRIES (appended last) --------------
-  // THE TIER A CRAFT WOULD PRODUCE RIGHT NOW — `ItemDefinition::craftable_tier`, the best tier the
-  // faction knows. This is the ledger's GROUP HEAD, not a column: a head says it once and can fold
-  // away, which is what a column can never do. "" on a material (stock) recipe.
-  outputTierName:string;
-  // Index of that tier within the item's own `tiers` list. The head order is by RANK DESCENDING —
-  // newest first — because the client has no other honest way to order two tier heads, and
-  // alphabetical would put Iron above Bronze.
-  outputTierRank:uint;
-  // RENDER IT VERBATIM, "" when there is no news. What the band CARRIES, said only when it
-  // disagrees with what it could now make: "carrying flint · poor", "last flint set wore out".
-  // The tier word reaches the Owned cell ONLY through this field and only when it is news.
-  ownedNote:string;
+  // Three unused slots. The ledger groups by item rather than under tier heads, and which tier a band
+  // holds is `ownedAtTier` below. Deprecated rather than deleted because slots are positional.
+  outputTierName:string (deprecated);
+  outputTierRank:uint (deprecated);
+  ownedNote:string (deprecated);
+  // --- ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK (appended last) -----------------------
+  // Several offers can share one `outputItemId` (a spear pointed with bone, a spear knapped from
+  // stone). The ledger shows ONE row per item; these five fields are what its recipe popup and its
+  // Make-picker read. All of them are RESOLVED SIM-SIDE — the client never picks, never spells a
+  // stat, never divides a durability.
+  //
+  // The recipe's own short name among its siblings — "Bone", "Flint", "Withy". "" on a recipe that is
+  // the ONLY one making its output (a label is rejected there: nothing could show it).
+  recipeLabel:string;
+  // WHAT THIS RECIPE WOULD MAKE, from this band's store right now, as one resolved headline:
+  // "26 attack", "8 carry", "40 haul", "+0.7 build work", "2 tile vantage". A graded recipe states
+  // the grade effect at `outputGrade`; an ungraded one its output tier's own effect; a stat whose
+  // equipped value lives in another config (a scout's vantage) is resolved there. "" for a material
+  // output and for a bench tool.
+  makes:string;
+  // HOW LONG ONE FRESH UNIT AT THIS RECIPE'S TIER LASTS, in the item's headline wear quantum and the
+  // same wording `EquipmentBatchState.life` counts in: "175 blows", "2500 biomass gathered". So a
+  // flint spear reads shorter than a bone one — the brittleness is the point. "" for a material output.
+  lasts:string;
+  // EXACTLY ONE offer per row is true — a row is one thing made: every offer sharing an
+  // `outputItemId`, or, for a stock recipe, every offer making the same output MATERIAL. It is the
+  // recipe the row's Costs cell shows and the picker opens on. The sim decides, in order: the offer
+  // that is `onBench` (a running job keeps the row even after its own draw leaves it unaffordable),
+  // else the recipe this band LAST STARTED for the row if it is available now, else the first
+  // available in book order, else the last started, else the first in book order.
+  suggested:bool;
+  // HOW MANY UNITS OF THIS ITEM THE BAND OWNS AT THIS RECIPE'S TIER — or -1 when every recipe making
+  // the item makes the SAME tier (a fibre basket and a withy basket are one item at one tier, and the
+  // ledger never recorded which recipe made a unit, so a count per recipe there would be invented).
+  // So spears/clubs/hoes publish counts and baskets/sled/traps/crook/wayfinding publish -1 on BOTH
+  // offers. -1 is not "none": 0 is a real count.
+  ownedAtTier:int = -1;
 }
 
 // ONE BATCH OF ONE ITEM a band owns, plus the CONFIG's items it owns none of (one row each, count 0)
@@ -5650,6 +5677,8 @@ table RecipeOutputState {
 
 table RecipeDefState {
   id:string;
+  // The OUTPUT's name — the item's own `display_name`, or the material's title — shared by every
+  // recipe making that output. `label` below is the recipe's own word.
   displayName:string;
   craft:string;
   group:string;   // "kit" | "tool" | "stock", the same three the ledger groups by
@@ -5657,6 +5686,9 @@ table RecipeDefState {
   requiresKnowledge:[string];  // empty on every ordinary kit recipe — TOOLS ARE EARNED, NEVER A PREREQUISITE
   inputs:[RecipeInputState];
   outputs:[RecipeOutputState];
+  // The recipe's short name among the recipes that make the same output — "Bone", "Flint". "" on a
+  // recipe that is the only one making its output. Appended last (append-only).
+  label:string;
 }
 
 // One craft track per faction: whether it is known and how far along it is. The lesson is charged

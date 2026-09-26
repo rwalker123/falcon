@@ -361,10 +361,12 @@ pub(crate) fn herds_to_array(
         // ⛔ **IT IS AN ADDEND, NOT A DISCOUNT, and it meant the opposite until
         // `docs/plan_standing_upkeep.md` §4.8** — a kit raises what a worker DELIVERS per turn and a
         // job's work requirement never changes, so nothing subtracts this from a cost and nothing
-        // divides by it. **A figure here belongs to an ITEM**: the shipped flint hoes deliver
-        // +0.5 build work per equipped worker per turn on a PLANT build and nothing on an animal
-        // one; hurdles mirror them on the animal side. A reader phrasing the number as *what the
-        // tools took off the job* states the opposite of what the sim sends —
+        // divides by it. **A figure here belongs to an ITEM AND TO ONE OF ITS TIERS**: the shipped
+        // hoes' `plain` tier delivers +0.5 build work per equipped worker per turn on a PLANT build
+        // and nothing on an animal one (their `flint` tier delivers +0.7, at a starting durability
+        // of 70 rather than 100); hurdles mirror the `plain` figure on the animal side. A reader
+        // phrasing the number as *what the tools took off the job* states the opposite of what the
+        // sim sends —
         // `DetailFormat.build_gear_lines` renders it as `+1.0 work a turn` for exactly that reason.
         let _ = dict.insert("build_work_from_gear", herd.buildWorkFromGear());
         // **THE SOURCE'S HALF OF THE ESTIMATE'S TERMS**, beside the sim's own answer above rather
@@ -1634,6 +1636,9 @@ pub(crate) fn recipes_to_array(
             .map(recipe_outputs_to_array)
             .unwrap_or_default();
         let _ = dict.insert("outputs", &outputs);
+        // The recipe's short name among the recipes making the same output ("Bone", "Flint"); `""`
+        // on a recipe that is the only one making its output.
+        let _ = dict.insert("label", recipe.label().unwrap_or(""));
         array.push(&dict.to_variant());
     }
     array

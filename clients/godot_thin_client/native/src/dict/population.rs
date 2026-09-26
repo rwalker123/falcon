@@ -503,9 +503,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // people and their gear and never by what they are standing on.
             let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
             // **THE BUILD AXIS AT THIS BAND'S LIVE WEAR, IN WORK UNITS** — the EXTRA work one
-            // equipped worker DELIVERS per turn (neutral `0`; the crook's and the hoes' flint tiers
-            // each declare 0.5, so an equipped builder banks `1.0 + 0.5 = 1.5` where a bare one banks
-            // `1.0`), so spent gear steps back to neutral here the way every other axis does.
+            // equipped worker DELIVERS per turn (neutral `0`; the crook's and the hoes' `plain`
+            // tiers each declare 0.5, so an equipped builder banks `1.0 + 0.5 = 1.5` where a bare
+            // one banks `1.0` — the hoes' second tier, `flint`, declares 0.7 instead, which is what
+            // makes naming the TIER load-bearing here), so spent gear steps back to neutral here the
+            // way every other axis does.
             //
             // ⛔ **AN ADDEND, NOT A DISCOUNT.** This read *"what one equipped worker takes off an
             // improvement's cost"* with the retired subtraction's **8.5** beside it. **A job's work
@@ -1387,15 +1389,28 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("shortfalls", &shortfalls_to_array(offer.shortfalls()));
             let _ = row.insert("output_grade", offer.outputGrade().unwrap_or(""));
             let _ = row.insert("on_bench", offer.onBench());
-            // **THE LEDGER'S GROUP HEAD** — the tier a craft would produce right now, and its rank
-            // in the item's own list. The heads run rank-DESCENDING (newest first), which is the
-            // client's only honest ordering: alphabetical would put Iron above Bronze.
-            let _ = row.insert("output_tier_name", offer.outputTierName().unwrap_or(""));
-            let _ = row.insert("output_tier_rank", offer.outputTierRank() as i64);
-            // **RENDER IT VERBATIM, and only this carries a tier word into the Owned cell.** `""`
-            // when there is no news — what the band carries is said only when it disagrees with
-            // what the band could now make.
-            let _ = row.insert("owned_note", offer.ownedNote().unwrap_or(""));
+            // `outputTierName` / `outputTierRank` and `ownedNote` are deprecated on the wire and not
+            // decoded: the ledger groups by group and item, never by tier, its Owned cell carries no
+            // tier word, and which tier the band holds is the recipe popup's `owned_at_tier`.
+            // **ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK.** Several offers share one
+            // `output_item_id`; the client groups them into one row and these five are what that
+            // row's recipe popup and its Make picker read. All RESOLVED SIM-SIDE — the client never
+            // picks the suggested recipe, never spells a stat and never divides a durability.
+            //
+            // The recipe's short name among its siblings ("Bone", "Flint"); `""` on a sole recipe.
+            let _ = row.insert("recipe_label", offer.recipeLabel().unwrap_or(""));
+            // What this recipe would make from this band's store ("26 attack"); `""` for a bench
+            // tool and for a material output.
+            let _ = row.insert("makes", offer.makes().unwrap_or(""));
+            // How long one fresh unit at this recipe's tier lasts ("175 blows"); `""` on a material.
+            let _ = row.insert("lasts", offer.lasts().unwrap_or(""));
+            // EXACTLY ONE offer per row is true: the recipe the row's cells show and the picker
+            // opens on.
+            let _ = row.insert("suggested", offer.suggested());
+            // Units owned at THIS recipe's tier, or `-1` when every recipe for the item makes the
+            // same tier and no count per recipe exists (`OWNED_AT_TIER_UNATTRIBUTED`). `-1` is not
+            // "none": `0` is a real count.
+            let _ = row.insert("owned_at_tier", offer.ownedAtTier() as i64);
             craft_offers.push(&row.to_variant());
         }
     }
