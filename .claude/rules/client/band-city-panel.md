@@ -2680,8 +2680,8 @@ arithmetic"*).
 
 **Frames:** `band_panel_pool_kit_short` — four cards, four answers, one frame: Agriculture short of
 WORK with its tools **FILLED** (`⚠`, no tool line), Husbandry short of BOTH (`⚠`, work line then
-`Short of tools.`), Roadwork short of **TOOLS ONLY on TWO items** with its work covered (`ⓘ`, calm
-title, the INFO tool line) and Builders with **no TOE row at all** — the *not applicable* card. And
+`Short of tools.`), Roadwork short of **TOOLS ONLY on TWO items** with its bill staged PAID IN FULL
+(`ⓘ`, calm title, `Supplies 2 of 2 work a turn.` then the INFO tool line) and Builders with **no TOE row at all** — the *not applicable* card. And
 `band_panel_pool_kit_short_builders`, the same band with a builders TOE line short: the Builders card
 flies the `ⓘ`.
 

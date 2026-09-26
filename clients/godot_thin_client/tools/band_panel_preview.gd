@@ -4911,7 +4911,7 @@ const POOL_GEAR_ROADWORK_CREW := 2
 ## |---|---|---|
 ## | `agriculture` | hoes **4 of 4** | no tool line — **FILLED**, and a row is present so this is not *not applicable* |
 ## | `husbandry` | crook **0 of 2** | `Short of tools.` under the `⚠`, beside its work shortfall |
-## | `roadwork` | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | the `ⓘ` and the INFO tool line — its work is covered; its own share of a SHARED item |
+## | `roadwork` | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | the `ⓘ`, then `Supplies 2 of 2 work a turn.` and the INFO tool line — its bill is staged PAID IN FULL (`POOL_GEAR_ROAD_DEMAND`); its own share of a SHARED item |
 ## | `builders` | none at all | nothing — **NOT APPLICABLE** |
 ##
 ## The card counts none of these numbers (issue #716); they decide only whether each pool is short.
@@ -4975,7 +4975,18 @@ func _pool_gear_band_fixture() -> Dictionary:
 	rows.append({"kind": HudConst.LABOR_KIND_BUILDERS, "workers": POOL_GEAR_BUILDERS_CREW})
 	band["labor_assignments"] = rows
 	band[HudBandLaborState.POOL_TOE_KEY] = _pool_toe_fixture()
+	# ⛔ **THE ROADWORK POOL HAS A BILL AND PAYS IT IN FULL** — the state issue #716 is about: work
+	# COVERED, tools short. A bill-less pool states no coverage sentence at all, so the `ⓘ` it flies
+	# would say nothing about a pool whose work is actually being paid.
+	band["roadwork_demand"] = POOL_GEAR_ROAD_DEMAND
+	band["roadwork_supplied"] = POOL_GEAR_ROAD_DEMAND
+	band["roadwork_shortfall"] = POOL_GEAR_ROAD_SHORTFALL
 	return band
+
+## The Roadwork pool's bill on the gear frame, PAID IN FULL — `supplied == demand`, `shortfall` zero,
+## all three published as the sim states them — so the card is covered and short only of tools.
+const POOL_GEAR_ROAD_DEMAND := 2.0
+const POOL_GEAR_ROAD_SHORTFALL := 0.0
 
 ## ---- A KEEPING POOL WITH A WORKER WHO HAD NOTHING TO DO (issue #715) ---------------------------
 ##
@@ -5657,8 +5668,13 @@ func _want_pool_tool_line(work_short: bool, tools_short: bool) -> String:
 		else HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE
 
 ## One card's whole answer (issue #716): the `⚠` meta, the ONE glyph it drew and its ink, the title's
-## ink, the tool reason's meta, and the hover — which reason is stated, each on a line of its own,
-## the work sentence first, and NO tool counted anywhere.
+## ink, the tool reason's meta, and the hover — which lines are stated, each on its own line, the
+## coverage sentence first, and NO tool counted anywhere.
+##
+## **SHORT AND BILLED ARE TWO EXPECTATIONS.** The coverage sentence is on the hover iff the pool has a
+## bill (`want_bill`), paid or not; whether that bill is SHORT is carried by the `SHORT` meta, the
+## glyph and the title ink (`want_hands`). A covered pool states its sentence too, so a claim that
+## tied the sentence to "short" could only ever stage a tools-short `ⓘ` on a pool with no bill.
 ##
 ## | work short | tools short | mark | `SHORT` meta | tool meta | title |
 ## |---|---|---|---|---|---|
@@ -5666,7 +5682,7 @@ func _want_pool_tool_line(work_short: bool, tools_short: bool) -> String:
 ## | no | yes | `ⓘ` INK_DIM | false | INFO line | INK |
 ## | no | no | none (no idle on these fixtures) | false | `""` | INK |
 func _assert_pool_card_state(label: String, role: String, answers: Dictionary, want_hands: bool,
-		want_tools: bool) -> void:
+		want_bill: bool, want_tools: bool) -> void:
 	var lines: Array = answers["lines"]
 	var want_gear := _want_pool_tool_line(want_hands, want_tools)
 	var want_glyph := ""
@@ -5693,10 +5709,9 @@ func _assert_pool_card_state(label: String, role: String, answers: Dictionary, w
 	_assert_band_panel("pool gear — %s: …its TOOL reason meta is \"%s\" (got \"%s\")"
 			% [label, want_gear, answers["gear"]], String(answers["gear"]) == want_gear)
 	var hands_at := _pool_hands_line_index(lines)
-	_assert_band_panel("pool gear — %s: …its hover %s the WORK shortfall in its own web's words (%s)"
-			% [label, "states" if want_hands else "does NOT state", lines],
-		(hands_at != POOL_HOVER_LINE_ABSENT) == want_hands
-			and (not want_hands or lines.has(_pool_role_hint(role))))
+	_assert_band_panel("pool gear — %s: …its hover %s the coverage sentence, under its own web's hint (%s)"
+			% [label, "states" if want_bill else "does NOT state", lines],
+		(hands_at != POOL_HOVER_LINE_ABSENT) == want_bill and lines.has(_pool_role_hint(role)))
 	if want_gear != "":
 		# BY EQUALITY OVER A WHOLE LINE: its own line, the shipped wording.
 		_assert_band_panel("pool gear — %s: …and states the TOOL shortfall as a line of its own, \"%s\" (%s)"
@@ -5708,8 +5723,8 @@ func _assert_pool_card_state(label: String, role: String, answers: Dictionary, w
 	var counted := _pool_tool_count_lines(lines)
 	_assert_band_panel("pool gear — %s: …and counts NO tool anywhere on its hover (%s)"
 			% [label, counted], counted.is_empty())
-	if want_hands and want_gear != "":
-		_assert_band_panel("pool gear — %s: …WORK first, then TOOLS (work line %d, tool line %d)"
+	if want_bill and want_gear != "":
+		_assert_band_panel("pool gear — %s: …coverage first, then TOOLS (coverage line %d, tool line %d)"
 				% [label, hands_at, lines.find(want_gear)],
 			hands_at != POOL_HOVER_LINE_ABSENT and hands_at + 1 == lines.find(want_gear))
 
@@ -5727,7 +5742,7 @@ func _assert_pool_card_state(label: String, role: String, answers: Dictionary, w
 ## |---|---|---|
 ## | Agriculture | hoes FILLED | `⚠`, the work sentence only — **FILLED tools say nothing** |
 ## | Husbandry | crook short | `⚠`, the work sentence, then `Short of tools.` |
-## | Roadwork | both items short | `ⓘ` in INK_DIM, calm title, the INFO tool line |
+## | Roadwork | both items short, its bill PAID IN FULL | `ⓘ` in INK_DIM, calm title, `Supplies 2 of 2 work a turn.` then the INFO tool line |
 ## | Builders | — | nothing at all — **NOT APPLICABLE** |
 func _assert_pool_kit_marks() -> void:
 	var hands := _pool_card_answers(HudWorkVocab.ROLE_NAME_AGRICULTURE)
@@ -5738,16 +5753,32 @@ func _assert_pool_kit_marks() -> void:
 		_fail("pool gear — the POOLS block is missing one of its four cards")
 		return
 	_assert_pool_card_state("a pool short of WORK, its tools FILLED",
-		HudWorkVocab.ROLE_NAME_AGRICULTURE, hands, true, false)
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, hands, true, true, false)
 	_assert_pool_card_state("a pool short of BOTH", HudWorkVocab.ROLE_NAME_HUSBANDRY, both, true,
-		true)
-	_assert_pool_card_state("a pool short of TOOLS only, its work covered",
-		HudWorkVocab.ROLE_NAME_ROADWORK, tools, false, true)
-	_assert_pool_card_state("a pool with NO TOE at all, short of nothing",
-		HudWorkVocab.ROLE_NAME_BUILDERS, absent, false, false)
+		true, true)
+	_assert_pool_card_state("a pool short of TOOLS only, its bill PAID IN FULL",
+		HudWorkVocab.ROLE_NAME_ROADWORK, tools, false, true, true)
+	_assert_pool_covered_tools_short_hover(tools)
+	_assert_pool_card_state("a pool with NO TOE and no bill, short of nothing",
+		HudWorkVocab.ROLE_NAME_BUILDERS, absent, false, false, false)
 	_assert_pool_toe_filled_is_not_absent(hands, absent)
 	_assert_pool_toe_joins_on_the_pool()
 	_assert_pool_tools_line_forks_on_work()
+
+## ⛔ GUARD: **THE STATE ISSUE #716 IS ABOUT, RENDERED — a pool paying its whole bill and short only of
+## tools.** Its hover must carry the coverage sentence at the fixture's own numbers, BY EQUALITY, and
+## the INFO tool line immediately after it. A regression that flew the `ⓘ` only on a pool with NO bill
+## passes every claim on a bill-less card and fails here.
+func _assert_pool_covered_tools_short_hover(tools: Dictionary) -> void:
+	var lines: Array = tools["lines"]
+	var want_coverage := HudWorkVocab.UPKEEP_POOL_COVERAGE_FORMAT % [
+		DetailFormat.format_work_units(POOL_GEAR_ROAD_DEMAND),
+		DetailFormat.format_work_units(POOL_GEAR_ROAD_DEMAND)]
+	var coverage_at := lines.find(want_coverage)
+	_assert_band_panel("pool gear — the covered, tools-short Roadwork card states \"%s\" then \"%s\" (%s)"
+			% [want_coverage, HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE, lines],
+		coverage_at != POOL_HOVER_LINE_ABSENT
+			and lines.find(HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE) == coverage_at + 1)
 
 ## ⛔ GUARD: **A FILLED POOL AND A POOL WITH NO TOOLS BOTH SAY NOTHING, AND THEY ARE NOT THE SAME
 ## STATE.** A row is present at `filled == required` precisely so a reader can tell *satisfied* from
@@ -5860,7 +5891,7 @@ func _assert_builders_pool_tools_short() -> void:
 		_fail("pool gear — no Builders pool card to read")
 		return
 	_assert_pool_card_state("the Builders pool short of TOOLS", HudWorkVocab.ROLE_NAME_BUILDERS,
-		builders, false, true)
+		builders, false, false, true)
 
 ## GUARD: the fund-mode control states the band's OWN mode, offers both, and quotes the pool's
 ## arithmetic — asserted together, since a control that lit no button and one that lit both are the

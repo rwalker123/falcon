@@ -171,15 +171,12 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 192 frames / 1440 `PASS` / 556 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 193 frames / 1454 `PASS` / 559 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
 
-**THE POOL CARD'S `ⓘ`/`⚠` SPLIT (issue #716) MOVED IT +1 frame, +11 `PASS`, +3 `assert OK`**
-(`band_panel_pool_kit_short_builders` and its pair, the per-card state claims, the driven fork),
-measured A/B against the pre-change tree in ONE session: 191 / 1436 / 556 → 192 / 1447 / 559. Both
-runs carried the same four pointer-custody failures (the auto-scroll trio and the foreign-event
-guard), so those are the like-for-like figures and the headline above is not a re-measurement. The wording pass that followed added one more `PASS` (the tool-count needle's own positive and
-negative, needed once the coverage sentence itself read `Supplies N of M work a turn.`).
+**THE POOL CARD'S `ⓘ`/`⚠` SPLIT (issue #716) MOVED IT 192 / 1440 / 556 → 193 / 1454 / 559**: the
+`band_panel_pool_kit_short_builders` frame, the per-card state claims, the driven tool-line fork, the
+tool-count needle's positive and negative, and the covered-bill Roadwork hover claim.
 
 **THE POINTER-CUSTODY GUARD MOVED IT 1438 → 1440 `PASS`**, frames and `assert OK` unchanged: the
 pushed-event liveness claim and the *nothing foreign reached the viewport* claim, asked once at
@@ -2757,12 +2754,14 @@ TOOLS". What belongs here is the fixture and what each claim can tell apart.
 |---|---|---|
 | Agriculture | hoes **4 of 4** | `⚠`, the work line only — the tools are **FILLED** and say nothing |
 | Husbandry | crook **0 of 2** | `⚠`, the work line, then `Short of tools.` on the next line |
-| Roadwork | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | `ⓘ` in `INK_DIM`, calm title, the INFO tool line — its work is covered |
+| Roadwork | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | `ⓘ` in `INK_DIM`, calm title, `Supplies 2 of 2 work a turn.` then the INFO tool line — its bill is staged PAID IN FULL |
 | Builders | none at all | nothing — **NOT APPLICABLE** |
 
 **`_assert_pool_card_state` makes every card's claims together**: the `SHORT` meta, the ONE glyph it
 drew and that glyph's ink, the title's ink, the tool meta by EQUALITY against the shipped sentence,
-the work line's presence in its own web's words, and **no `N of M <item>` count on any line**
+the coverage sentence present IFF the pool has a bill (a separate expectation from *short*, which the
+meta, the glyph and the title ink carry) under its own web's hint, and **no `N of M <item>` count on
+any line**
 (`POOL_TOOL_COUNT_PATTERN`, a shape rather than one item's word, so a stray count naming any item is
 caught). The expectations are the vocab's own sentences — the wording under test — never a string
 re-composed through `pool_tools_short_line`.
@@ -2771,9 +2770,12 @@ re-composed through `pool_tools_short_line`.
 a tool line passes the two SHORT cards on its own; one that never renders passes the two silent ones.
 Neither can pass all four.
 
-⛔ **THE ROADWORK CARD IS WHAT ISSUE #716 CHANGED, AND IT IS THE ONLY CARD THAT CAN SAY SO.** It is
-short of tools with its work covered, so it asserts the `ⓘ`, `SHORT` meta `false`, a calm `INK`
-title and the INFO sentence — the card that wore the `⚠` and an amber title before. The Husbandry card
+⛔ **THE ROADWORK CARD IS WHAT ISSUE #716 CHANGED, AND IT IS THE ONLY CARD THAT CAN SAY SO.** Its bill
+is staged PAID IN FULL (`roadwork_demand == roadwork_supplied`, `POOL_GEAR_ROAD_DEMAND`) and its TOE
+short, so it asserts the `ⓘ`, `SHORT` meta `false`, a calm `INK` title, and
+(`_assert_pool_covered_tools_short_hover`) `Supplies 2 of 2 work a turn.` by equality with the INFO
+sentence on the very next line. **It staged no bill at all until PR #743's review**, so the covered
+state the issue is about was never rendered and an `ⓘ` that flew only on a bill-less pool passed. The Husbandry card
 is the paired WARN form. **`band_panel_pool_kit_short_builders`** re-pushes the band with a short
 builders TOE line and asserts the Builders card flies the `ⓘ` — it is passed no `cover`, so it can
 never be work-short.
