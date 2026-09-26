@@ -1368,13 +1368,15 @@ already read `self.build.as_ref()` and every other reader was already borrowing.
   penned herd, and a **pastoral** herd — the only source the Pen rung is ever offered from — stands on
   a rung declaring no material, so its stamped bill is empty on exactly the row the player is
   deciding on. `core_sim/tests/rung_material_quote.rs` drives that case.
-- ⛔ **A ROW THE ASSIGNMENT LOOP WILL NOT REACH BIDS FOR NOTHING.** Both arms lapse an out-of-range
-  source — a patch past `band_work_range`, a herd past `hunt_reach` — and `continue` **past**
-  `apply_material_keeping`, so a claim settled for that row reserves goods nothing ever spends and the
-  source that *is* in reach is judged short by the difference: the neglect counter, the decay fraction
-  and the shed, for a shortage it did not cause. `settle_material_upkeep` and `settle_pen_hay` read one
-  rule, `systems::labor::BandReach`, because two copies of a leash are two leashes.
-  `a_pen_past_the_leash_reserves_nothing_from_the_store` drives it.
+- ⛔ **A ROW THE ASSIGNMENT LOOP WILL NOT REACH BIDS FOR NOTHING.** An arm that `continue`s skips
+  **past** `apply_material_keeping`, so a claim settled for that row reserves goods nothing ever
+  spends and the source that *is* worked is judged short by the difference: the neglect counter, the
+  decay fraction and the shed, for a shortage it did not cause. `settle_material_upkeep` and
+  `settle_pen_hay` read one rule, `systems::labor::BandReach`, because two copies of it are two
+  rules. **Distance is no longer one of its questions** — a far source posts a work party and is
+  worked wherever it stands (`.claude/rules/core_sim/work-party.md`), so the surviving case is a
+  herd the registry no longer carries, which is what
+  `a_pen_whose_herd_is_gone_reserves_nothing_from_the_store` drives.
 - ⛔ **THE COUNTDOWN SCALES BY THE *ENTRY'S* COVERAGE, NEVER THE BAND'S.** The settlement strikes its
   material want against the **head** alone, so a waiting entry is quoted at `FULLY_SERVED` and its own
   span is untouched by what the head's shelf holds. Every rung arm passes `entry_material_coverage`,

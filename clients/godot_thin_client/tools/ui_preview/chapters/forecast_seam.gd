@@ -1,7 +1,6 @@
 extends RefCounted
 
-## The forecast-query seam's own rules — the world boundary, the two failure classes, and the
-## plateau cap's direction.
+## The forecast-query seam's own rules — the world boundary and the two failure classes.
 ##
 ## One chapter of the `ui_preview` state walk, run in the order `ui_preview.gd`'s `CHAPTERS`
 ## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
@@ -9,16 +8,20 @@ extends RefCounted
 ##
 ## It is LAST and it renders NOTHING — no `_save`, so the frame set's count and its bit-identity claim
 ## are untouched. Every claim here is about a decision no picture can carry: a cached answer that must
-## not survive a world change, a refusal that must stick, a failure that must be retried, and which end
-## of a plateau a stepper seeds on. Each of the four renders exactly the same plausible sheet whichever
-## way it goes.
+## not survive a world change, a refusal that must stick, and a failure that must be retried. Each
+## renders exactly the same plausible sheet whichever way it goes.
+##
+## **THE QUESTION IT ASKS IS THE WORK PARTY'S** (`ForecastQuery.KIND_WORK_PARTY`). These claims are
+## about the seam's bookkeeping, not about any one question, and were made on the hunting raid's until
+## the hunting expedition retired from the client (`docs/plan_civilization_steps.md` §One work
+## party); the work party's is the live question that reads through the same `view`.
 ##
 ## It leaves the seam EMPTY and the harness's canned answerer reinstalled, so a chapter appended after
 ## it starts where every other one does.
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 16
+const EXPECTED_CHECKPOINTS := 14
 
 const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
@@ -43,16 +46,12 @@ const GUARD_FLOOR := 0.35
 ## would do — what is under test is the CLASS, not this spelling.
 const SERVER_REFUSAL_TOKEN := "unknown_herd"
 
-## The plateau probe's inputs. `SCANNED_PLATEAU` stands for `HuntTripForecastReply.useful_cap` and
-## `AMPLE_IDLE` is a supply side deliberately well above it, so the answer is the demand side alone.
-const SCANNED_PLATEAU := 5
-const AMPLE_IDLE := 12
+
 
 func run(harness) -> void:
 	h = harness
 	_assert_world_change_drops_the_answers()
 	_assert_failure_classes_differ()
-	_assert_useful_cap_is_the_last_rising_party()
 	_assert_the_key_carries_the_bands_gear()
 	# Back to the state every other chapter runs in: an empty seam with the canned answerer on it.
 	h._hud.forecast_query().reset()
@@ -151,21 +150,6 @@ func _assert_failure_classes_differ() -> void:
 	_ask(query, fresh_subject, RETRY_FRESH_HERD_ID)
 	h._assert_hud("a transport failure is NOT re-asked on the next render (that would spin the socket)",
 		asked.is_empty())
-
-# ---- WHICH END OF THE PLATEAU THE STEPPER SEEDS ON ----------------------------------------------
-# `HuntTripForecastReply.useful_cap` is the LAST party at which the delivered payload was still RISING
-# — the sim asserts both sides of it — so `useful_cap + 1` is the first party that adds nothing and the
-# cap is the figure itself. Read as "the first useless party" instead, every raid in the game goes out
-# one worker short of its own plateau, and the sheet renders exactly as happily either way.
-func _assert_useful_cap_is_the_last_rising_party() -> void:
-	# An empty herd carries no engagement stage, so the crew FLOOR contributes nothing and the answer
-	# is the scan alone — which is what this claim is about.
-	var capped := SourceForecast.expedition_useful_cap({}, {}, GUARD_FLOOR, SCANNED_PLATEAU, AMPLE_IDLE)
-	h._assert_hud("the raid's party cap IS the scanned plateau, not one either side of it",
-		int(capped.get("cap", -1)) == SCANNED_PLATEAU)
-	h._assert_hud("…and the supply side still binds below it",
-		int(SourceForecast.expedition_useful_cap({}, {}, GUARD_FLOOR, SCANNED_PLATEAU,
-			SCANNED_PLATEAU - 1).get("cap", -1)) == SCANNED_PLATEAU - 1)
 
 # ---- THE BAND'S GEAR IS PART OF THE QUESTION ----------------------------------------------------
 # Reported from play: two ASSIGN HUNTERS sheets for the same band and herd at the same crew of 3 — one
@@ -269,24 +253,23 @@ func _key_for(subject: String) -> String:
 	return ForecastQuery.key_of(subject, GUARD_KIT_ID, GUARD_PARTY, GUARD_FLOOR,
 		BandFx.band_fixture(), BandFx.kit_roster_fixture())
 
-## Put the hunt question for `herd_id` through the seam's real `ask`, which is the only entry point a
+## Put the work-party question for `herd_id` through the seam's real `ask`, which is the only entry point a
 ## sheet has and the one the retry rule lives in.
 func _ask(query: ForecastQuery, subject: String, herd_id: String) -> void:
-	query.ask(ForecastQuery.KIND_HUNT_TRIP, subject, _key_for(subject), {
+	query.ask(ForecastQuery.KIND_WORK_PARTY, subject, _key_for(subject), {
 		"faction_id": HudConst.PLAYER_FACTION_ID,
 		"band_id": GUARD_BAND_ID,
+		"source_kind": ForecastQuery.WORK_PARTY_SOURCE_HUNT,
 		"herd_id": herd_id,
 		"kit_id": GUARD_KIT_ID,
-		"party_workers": GUARD_PARTY,
+		"workers": GUARD_PARTY,
 		"floor": GUARD_FLOOR,
-		"preset_floors": SourceForecast.preset_floors(),
-		"max_party_workers": AMPLE_IDLE,
 	})
 
 ## Ask, then land a reply — the round trip a healthy socket makes, so the entry ends up holding an
 ## ANSWER rather than a hand-written one. Returns the subject.
 func _seed_answer(query: ForecastQuery, herd_id: String) -> String:
-	var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_TRIP, GUARD_BAND_ID, herd_id)
+	var subject := ForecastQuery.subject_of(ForecastQuery.KIND_WORK_PARTY, GUARD_BAND_ID, herd_id)
 	var landed: Array[int] = []
 	query.set_sender(func(request_id: int, _ask: Dictionary) -> bool:
 		landed.append(request_id)
@@ -294,14 +277,13 @@ func _seed_answer(query: ForecastQuery, herd_id: String) -> String:
 	_ask(query, subject, herd_id)
 	for request_id in landed:
 		query.deliver([{"request_id": request_id, "ok": true,
-			"kind": ForecastQuery.KIND_HUNT_TRIP, "at_composed": {}, "per_preset": [],
-			"useful_cap": SCANNED_PLATEAU}])
+			"kind": ForecastQuery.KIND_WORK_PARTY, "posts_a_party": true}])
 	return subject
 
 ## The same round trip, refused — through `deliver`, so the entry is failed exactly as a live reply
 ## fails it and the token is the one the seam would have stored.
 func _seed_refusal(query: ForecastQuery, herd_id: String, token: String) -> String:
-	var subject := ForecastQuery.subject_of(ForecastQuery.KIND_HUNT_TRIP, GUARD_BAND_ID, herd_id)
+	var subject := ForecastQuery.subject_of(ForecastQuery.KIND_WORK_PARTY, GUARD_BAND_ID, herd_id)
 	var landed: Array[int] = []
 	query.set_sender(func(request_id: int, _ask: Dictionary) -> bool:
 		landed.append(request_id)

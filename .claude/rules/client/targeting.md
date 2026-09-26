@@ -11,6 +11,24 @@ paths:
 
 # Command targeting — move-band and expeditions
 
+> ⛔ **THE HUNTING EXPEDITION IS NO LONGER COMPOSED ON THE CLIENT** (`docs/plan_civilization_steps.md`
+> §One work party). A herd past the band's apron is an ordinary hunt whose crew posts a caravan, so the
+> herd sheet's expedition branch, the Parties footer's Hunt verb and `send_hunt_expedition_requested`
+> are retired (`labor-ui.md` → "A FAR SOURCE IS AN ORDINARY SHEET", `band-city-panel.md` → "THE
+> PARTIES FOOTER HAS NO HUNT VERB"). **Every passage below about a hunting party's quarry, reach or
+> send is superseded.** What changed here:
+>
+> - **The quarry pick has ONE rule now, the denial raid's**: every herd at a KNOWN distance is a quarry
+>   (`QUARRY_NO_REACH_BOUND`). `quarry_min_distance`, the per-mission fork and the pending pick's
+>   mission key are deleted — the one mission left that picks a herd has no reach rule, and a parameter
+>   no reader can vary is an invitation to put the old one back. `begin_pick_quarry(band)`,
+>   `choose_quarry(band, herd)`, `is_expedition_quarry(band, herd)` and `eligible_quarries_on_tile(band,
+>   x, y)` lost their `mission` argument.
+> - ⛔ **`hunt_reach` has no reader.** The within-reach refusal note (`PREY_WITHIN_REACH_FORMAT`) went
+>   with it; a click that names no huntable herd still says so (`PREY_PICK_MISS`), under the title
+>   `PREY_PICK_NOTE_TITLE` rather than "Hunt expedition".
+> - **The glow agrees**: MapView's herd halo filters on the same `QUARRY_NO_REACH_BOUND`.
+
 ## Key scripts
 
 | Script | Purpose |

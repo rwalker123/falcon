@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
+use crate::work_party::WorkParty;
+
 /// **"Is this crew actually working the source?"** — THE eligibility term that replaced the
 /// `EcologyPhase::Thriving` gate on both webs (`docs/plan_harvest_floor.md` §3.2), asked of the
 /// **escapement room**: is there anything standing above this assignment's floor?
@@ -246,6 +248,15 @@ pub struct LaborConfigs<'w> {
     /// the `Extract` arm of the assignment loop; what runs elsewhere is the per-turn *renewal* and
     /// the decay, in `extraction::advance_deposits` a stage earlier.
     pub extraction: Res<'w, crate::extraction_config::ExtractionConfigHandle>,
+    /// **The per-capita food draw** — read for exactly one thing: a work party's own upkeep
+    /// (`crate::work_party::party_upkeep`). There is deliberately no second per-worker food rate
+    /// for a party; it is the same people eating the same amount, somewhere else, so this is the
+    /// rate `systems::population::food_demand` already charges them at.
+    pub demographics: Res<'w, crate::demographics_config::DemographicsConfigHandle>,
+    /// **The logistics reach** — read for how far a road widens it, which is how much of a work
+    /// party's walk a road takes away (`crate::work_party::resolve_walk`). Read here rather than
+    /// re-stated so what a road does for a caravan and what it does for pooling are one reading.
+    pub supply_network: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
 }
 
 /// **WHAT EACH OF A BAND'S SOURCES GETS OUT OF ITS MAINTENANCE POOLS** — one work amount per
@@ -3289,17 +3300,16 @@ pub fn settle_bands_roadwork(
 /// with yield scaled by the workers assigned to each. Runs in the Population stage after
 /// consumption drains the larder, so labor income lands the same turn (matching the old timing).
 ///
-/// - **Forage** `{ tile }`: within `band_work_range` of the band and carrying a `FoodModuleTag` →
-///   draws down the tile's depletable forage patch (§0-ii) via the shared `forage_take` primitive
-///   (Sustain gather = the regrowth skim; `sustainable` = one turn's net patch regrowth), the plant
-///   mirror of the Hunt take. Module-less / unseeded → 0 this turn, assignment kept (source
-///   conditions that recover in place). **Out of range lapses** the assignment and returns its
-///   workers to the pool (feed entry), the plant twin of the hunt leash: a patch is fixed, so
-///   out-of-range can only mean the band walked away.
+/// - **Forage** `{ tile }`: a tile carrying a `FoodModuleTag` → draws down its depletable forage
+///   patch (§0-ii) via the shared `forage_take` primitive (Sustain gather = the regrowth skim;
+///   `sustainable` = one turn's net patch regrowth), the plant mirror of the Hunt take.
+///   Module-less / unseeded → 0 this turn, assignment kept (source conditions that recover in
+///   place). **Past `band_work_range` the row posts a work party** rather than lapsing — see
+///   [`post_a_party`] and `.claude/rules/core_sim/work-party.md`.
 /// - **Hunt** `{ fauna_id, policy }`: reuses the per-policy ecology ceiling; the take is
 ///   `min(workers × per_worker_biomass_capacity, policy_ceiling)`, so under-hunting a Sustain herd
-///   (`worker_cap < regrowth`) lets it GROW. Tracks a roaming herd out to `band_work_range +
-///   hunt_leash_tiles` (leashed follow); past that — or if the herd is gone — the assignment lapses
+///   (`worker_cap < regrowth`) lets it GROW. Past `band_work_range + hunt_leash_tiles` the hunters
+///   become a **work party** and follow the herd; only a herd that is *gone* still lapses
 ///   and its workers return to the pool (feed entry).
 /// - **Scout**: reveals fog outward from the band. **Warrior**: inert (band-wide standing guard; it
 ///   does not escort or mitigate a hunt — its first consumer is the Phase 1 predator-raid path).
@@ -3570,51 +3580,204 @@ pub fn settle_scarce_tools(demands: &[(SourcePriority, f32)], available: u32) ->
     settled
 }
 
-/// **HOW FAR THIS BAND'S HANDS ACTUALLY GO** — a patch inside `band_work_range`, a herd inside
-/// `hunt_reach`, and nothing beyond either.
+/// **WILL THE ASSIGNMENT LOOP ACTUALLY REACH THIS ROW THIS TURN?**
 ///
 /// # ⛔ EVERY SETTLEMENT STRUCK BEFORE THE ASSIGNMENT LOOP MUST ASK IT
 ///
-/// Both arms of the loop lapse an out-of-reach row and `continue` **past** every keeping draw and
-/// material spend beneath them, so a settlement that reserved a store for that row would hold a
-/// reservation nothing ever draws — starving the row that *is* in reach with a shortfall it did not
-/// cause. [`settle_pen_hay`] carried the rule inline first; it is a type here so
-/// [`settle_material_upkeep`] beside it cannot state a second version of it.
+/// An arm that `continue`s skips **past** every keeping draw and material spend beneath it, so a
+/// settlement that reserved a store for that row would hold a reservation nothing ever draws —
+/// starving the row that *is* in reach with a shortfall it did not cause. [`settle_pen_hay`]
+/// carried the rule inline first; it is a type here so [`settle_material_upkeep`] beside it cannot
+/// state a second version of it.
 ///
-/// The failure it closes: a band keeping two `Normal` pens, one past the leash, with exactly one
-/// pen's hurdles on the shelf. Each was settled half; the out-of-leash pen spent nothing; the
-/// **in-reach** pen was judged half-short and took the neglect counter, the decay fraction and the
-/// shed.
+/// The failure it closes: a band keeping two `Normal` pens, one the arm skips, with exactly one
+/// pen's hurdles on the shelf. Each was settled half; the skipped pen spent nothing; the **worked**
+/// pen was judged half-short and took the neglect counter, the decay fraction and the shed.
+///
+/// # ⛔ DISTANCE IS NO LONGER ONE OF ITS QUESTIONS
+///
+/// It used to hold a band position and the two lapse distances, because a patch past
+/// `band_work_range` or a herd past `hunt_reach` was abandoned on that very `continue`. **A far
+/// source acquires a [`crate::work_party::WorkParty`] instead of lapsing**
+/// (`docs/plan_civilization_steps.md` §One work party), so every worked row is reached wherever it
+/// is and the only thing left that can make an arm skip is a herd the registry no longer carries.
+/// The type survives rather than collapsing into a bare `registry.find`, because *"will the arm
+/// reach this row"* is the question the settlements must go on asking — a second reason to skip
+/// would land here and reach all of them at once.
 #[derive(Clone, Copy)]
-struct BandReach {
-    band_pos: UVec2,
-    grid_width: u32,
-    wrap_horizontal: bool,
-    /// [`crate::labor_config::LaborConfig::band_work_range`] — the Forage arm's own lapse distance.
-    work_range: u32,
-    /// [`crate::labor_config::LaborConfig::hunt_reach`] — the Hunt arm's.
-    hunt_reach: u32,
-}
+struct BandReach;
 
 impl BandReach {
-    /// **Will the assignment loop reach this row this turn?** A herd the registry no longer carries
-    /// is `false`, because the Hunt arm lapses that row on the very same `continue`.
+    /// A herd the registry no longer carries is `false`, because the Hunt arm lapses that row on
+    /// the very same `continue`. Everything else is worked wherever it stands.
     fn holds(&self, target: &LaborTarget, registry: &HerdRegistry) -> bool {
-        let (position, limit) = match target {
-            LaborTarget::Forage { tile, .. } => (*tile, self.work_range),
-            LaborTarget::Hunt { fauna_id, .. } => match registry.find(fauna_id) {
-                Some(herd) => (herd.position(), self.hunt_reach),
-                None => return false,
+        match target {
+            LaborTarget::Hunt { fauna_id, .. } => registry.find(fauna_id).is_some(),
+            _ => true,
+        }
+    }
+}
+
+/// **WHERE THIS ROW'S WORKERS ARE STANDING** — the source's own tile, because a work party's
+/// position *is* its source's (`crate::work_party`). A band-wide role stands with the band and a
+/// working is not a posting, so both answer `None` and take no party at all.
+fn party_source_position(target: &LaborTarget, registry: &HerdRegistry) -> Option<UVec2> {
+    match target {
+        LaborTarget::Forage { tile, .. } => Some(*tile),
+        LaborTarget::Hunt { fauna_id, .. } => registry.find(fauna_id).map(|herd| herd.position()),
+        _ => None,
+    }
+}
+
+/// **ONE ROW'S WORK PARTY, OPENED FOR THIS TURN** — the caravan, the hunters left at the source to
+/// work it, and what the road has already handed over.
+///
+/// The turn runs the caravan's rule in two halves around its own inline take: the top half
+/// ([`WorkParty::open_turn`]) is run where the party is posted, the foot
+/// ([`WorkParty::close_turn`]) at the take site. They are the same two functions
+/// [`crate::work_party::forecast_caravan`] steps, so the forecast runs the turn's own code.
+struct PartyPosting {
+    party: WorkParty,
+    /// The party's own upkeep this turn ([`crate::work_party::party_upkeep`]).
+    upkeep: f32,
+    /// **The hunters at the source — what the existing income math sees.** Everything downstream —
+    /// the take, the rung work, the kit coverage — is priced on it, which is what makes *"the take
+    /// of whoever is present"* a mechanism rather than a note. `0` while walking out.
+    working_crew: u32,
+    /// Food the walkers handed over at the top of the turn, credited home at the take site with the
+    /// eaten share — or at the foot of the pass, for an arm that never reached one.
+    pending_home: f32,
+    /// Has the foot of the turn run? An arm that returns before its take site leaves it `false`,
+    /// and the settlement below closes the turn on a zero take so the party still eats.
+    closed: bool,
+    /// **Forecast from the state this turn leaves**, struck at the take site where the source's
+    /// post-take state and every pricing term are in hand. `None` for an arm that never got there.
+    forecast: Option<crate::work_party::CaravanForecast>,
+}
+
+impl PartyPosting {
+    /// **STEPS 4 AND 5 AT THE TAKE SITE** — the party eats first and the eaten share goes home, the
+    /// surplus fills the load, packs go. Returns everything credited home this turn, the walkers'
+    /// deliveries from the top of the turn included, so the take site deposits once and the row's
+    /// `actual` is that one number.
+    fn close_at_take(&mut self, provisions: Scalar, biomass: f32, pack_biomass: f32) -> Scalar {
+        let close = self.party.close_turn(
+            crate::work_party::SourceTake {
+                food: provisions.to_f32(),
+                biomass,
             },
-            // Every other role is worked where the band stands, so there is no distance to fail.
-            _ => return true,
-        };
-        crate::grid_utils::hex_distance_wrapped(
-            self.band_pos,
-            position,
-            self.grid_width,
-            self.wrap_horizontal,
-        ) <= limit
+            self.upkeep,
+            pack_biomass,
+        );
+        self.closed = true;
+        let delivered = std::mem::replace(&mut self.pending_home, NOTHING_DEMANDED);
+        scalar_from_f32(delivered + close.home())
+    }
+}
+
+/// **The one seam a take site routes its food through**, so a row with no party is untouched and a
+/// row with one is charged exactly once. `None` is the local case and returns the take whole.
+fn deliver_take_home(
+    posting: Option<&mut PartyPosting>,
+    provisions: Scalar,
+    biomass: f32,
+    pack_biomass: f32,
+) -> Scalar {
+    match posting {
+        Some(posting) => posting.close_at_take(provisions, biomass, pack_biomass),
+        None => provisions,
+    }
+}
+
+/// **POST A PARTY AT `source_pos` AND OPEN ITS TURN, OR ANSWER `None` BECAUSE THE BAND'S OWN HANDS
+/// REACH IT.**
+///
+/// The walk comes off [`crate::work_party::resolve_walk`], the resolver the seed and the query read
+/// too. A standing party keeps its caravan — its walk out, its load and its road — and has only its
+/// geometry and crew restamped; a new one starts its walk out now.
+#[allow(clippy::too_many_arguments)] // the geometry, the road reach, and the three config blocks
+fn post_a_party(
+    standing: Option<&WorkParty>,
+    source_pos: UVec2,
+    band_pos: UVec2,
+    workers: u32,
+    geometry: (u32, u32, bool),
+    labor: &crate::labor_config::LaborConfig,
+    supply: &crate::supply_network_config::SupplyNetworkConfig,
+    roads: &crate::routes::RoadRegistry,
+    widest_route_reach: u32,
+    per_worker_draw: f32,
+) -> Option<PartyPosting> {
+    let (walk_tiles, walk_turns) = crate::work_party::resolve_walk(
+        band_pos,
+        source_pos,
+        labor,
+        supply,
+        roads,
+        widest_route_reach,
+        geometry,
+    )?;
+    let mut party = standing
+        .cloned()
+        .unwrap_or_else(|| WorkParty::posted(source_pos, walk_tiles, walk_turns));
+    party.restamp(source_pos, workers, walk_tiles, walk_turns);
+    let upkeep = crate::work_party::party_upkeep(workers, per_worker_draw);
+    let open = party.open_turn();
+    // ⛔ **THE PARTY OWES ITS UPKEEP BEFORE IT HAS TAKEN ANYTHING**, so the deficit is stamped here
+    // and the take site settles it down. An arm that returns early never reaches one, and a deficit
+    // left at zero would read as *fully supplied* — the one state that must never be assumed.
+    party.ate = crate::work_party::NOTHING_CARRIED;
+    party.deficit = upkeep;
+    Some(PartyPosting {
+        working_crew: open.present,
+        pending_home: open.delivered,
+        upkeep,
+        party,
+        closed: false,
+        forecast: None,
+    })
+}
+
+/// ⛔ **A ROW THE PLAYER PUT DOWN TAKES ITS PARTY HOME** — the load and every walker's pack, settled
+/// into the band's larder through [`bring_the_party_home`]'s ledger rule. What the `abandon` command
+/// and the zero-crew drop call with the row `LaborAllocation::drop_source_row` handed back: a
+/// caravan that ends early must not lose what is on the road.
+pub fn bring_the_dropped_party_home(world: &mut World, band: Entity, row: &LaborAssignment) {
+    let Some(mut party) = row.party.clone() else {
+        return;
+    };
+    let food = party.hand_over_everything();
+    if food <= crate::work_party::NOTHING_CARRIED {
+        return;
+    }
+    let mut band_parts = world.query::<(&mut PopulationCohort, &mut LaborAllocation)>();
+    if let Ok((mut cohort, mut allocation)) = band_parts.get_mut(world, band) {
+        bring_the_party_home(
+            &mut cohort.stores,
+            &mut allocation.last_food_transfers,
+            food,
+        );
+    }
+}
+
+/// **FOOD A PARTY HANDS OVER OUTSIDE A ROW'S `actual`** — the load and the road when a posting ends
+/// (the unsupplied fold-back, an unassign, a row lapsing under it), deposited in the larder and
+/// entered on the food ledger's **route** arm.
+///
+/// ⛔ **It must go on the ledger**, because it is not this turn's income: a row that is ending
+/// publishes no telemetry to count it in, and food that reached the larder through neither
+/// `food_income` nor a transfer would break the pinned identity
+/// `larder_delta == food_income − food_consumption − raid_forfeit + transfer_received −
+/// transfer_sent`. A party carrying goods home is exactly what
+/// [`crate::components::TransferLink::Route`] is for.
+fn bring_the_party_home(
+    stores: &mut LocalStore,
+    ledger: &mut crate::components::TransferLedger,
+    food: f32,
+) {
+    if food > crate::work_party::NOTHING_CARRIED {
+        stores.add(FOOD, scalar_from_f32(food));
+        ledger.credit(crate::components::TransferLink::Route, food);
     }
 }
 
@@ -4327,7 +4490,14 @@ pub fn advance_labor_allocation(
     let map_seed = sim_config.map_seed;
     let husbandry = &fauna.husbandry;
     let work_range = labor.band_work_range;
-    let hunt_reach = labor.hunt_reach();
+    // **THE WORK PARTY'S STANDING TERMS**, resolved once: none of them varies within a turn. The
+    // road reach comes from the supply network, so a road shortens a party's walk through the same
+    // seam two camps pool through (`crate::work_party::resolve_walk`); the per-worker food draw
+    // comes from demographics, because a party eats at the rate the band's own consumption already
+    // charges for it and never at a rate of its own.
+    let supply_cfg = configs.supply_network.get();
+    let widest_route_reach = crate::routes::max_route_reach_tiles(&ladder);
+    let party_worker_draw = configs.demographics.get().consumption.worker_draw();
     // The forward-projection horizon for each source's steady `realized` yield: `realized` is the
     // average food/turn the source will deliver over the next N turns, simulated forward from its
     // current (pre-take) state, so the headline "Food /turn" is smooth and the assign-time seed matches
@@ -4807,13 +4977,7 @@ pub fn advance_labor_allocation(
         // **HOW FAR THIS BAND'S HANDS GO**, bundled once for every settlement struck before the
         // assignment loop — see [`BandReach`] for why a settlement that ignores it starves the rows
         // that *are* in reach.
-        let band_reach = BandReach {
-            band_pos,
-            grid_width,
-            wrap_horizontal,
-            work_range,
-            hunt_reach,
-        };
+        let band_reach = BandReach;
         // Productivity modifier stack (wellbeing): scale every yield by the band's output
         // multiplier at PAYOUT. One call — future modifiers slot into `output_multiplier`.
         let mult = output_multiplier(&cohort, &wellbeing);
@@ -5002,8 +5166,42 @@ pub fn advance_labor_allocation(
         // `band_kit` is: a band's ledger is one thing, and a row that read all of it would arm its
         // own crew off gear the row beside it is already holding.
         let item_budget = allocation.item_budget(&equipment_cfg);
+        // **THE LARDER AS THE PASS FOUND IT** — what a far posting's supply line is judged
+        // against, read once at the top for [`settle_pen_hay`]'s reason: taking it live inside the
+        // walk would make *"can this band still feed its party"* depend on the row's place in
+        // `assignments`, and `set_assignment` re-pushes an edited row to the end.
+        let larder_at_pass_open = cohort.stores.get(FOOD).to_f32();
+        // **THE PARTIES THIS BAND HAS OUT**, keyed by the row that staffed them. Collected as the
+        // walk goes and written back onto the assignments afterwards, because the walk borrows
+        // `assignments` immutably — the same shape `lapsed` and `repaired_takes` take.
+        let mut postings: BTreeMap<usize, PartyPosting> = BTreeMap::new();
         for (idx, assignment) in allocation.assignments.iter().enumerate() {
-            let workers = assignment.workers;
+            // ⛔ **WHAT THIS ROW ACTUALLY STAFFS AT THE SOURCE.** A row whose source is past the
+            // band's own hands posts a **work party** rather than lapsing
+            // (`docs/plan_civilization_steps.md` §One work party). Its hunters walk packs home one
+            // at a time, so everything below prices **the hunters present** — `0` while the party
+            // is still walking out. A local row has no party at all and reads `assignment.workers`
+            // exactly as it always did, which is the identity the whole model rests on.
+            let posting = party_source_position(&assignment.target, &registry).and_then(|source| {
+                post_a_party(
+                    assignment.party.as_ref(),
+                    source,
+                    band_pos,
+                    assignment.workers,
+                    (grid_width, grid_height, wrap_horizontal),
+                    &labor,
+                    &supply_cfg,
+                    &roads,
+                    widest_route_reach,
+                    party_worker_draw,
+                )
+            });
+            let workers = posting
+                .as_ref()
+                .map_or(assignment.workers, |posting| posting.working_crew);
+            if let Some(posting) = posting {
+                postings.insert(idx, posting);
+            }
             // **A ROW WITH NO TAKE CREW IS STILL VISITED, because the row is the band's HOLDING**
             // (`docs/plan_standing_upkeep.md` §2.2/§2.5). The take crew is one of three allocations
             // on a source, so skipping the row on `workers == 0` withheld the *keeping* from every
@@ -5017,7 +5215,18 @@ pub fn advance_labor_allocation(
             // **The one thing that does NOT fall out of the arithmetic is the LESSON**, which is
             // credited per assignment rather than per worker. A crew that is not there is not
             // practising, so it rides this predicate at each of the four earn sites.
-            let take_crew_present = workers > NO_CREW_ON_THIS_ACTIVITY;
+            //
+            // ⛔ **IT ASKS WHAT THE PLAYER STAFFED, NOT WHAT IS LEFT AFTER THE PORTERS.** `workers`
+            // above is the **working crew** — a far posting's hands less the ones carrying — and at
+            // enough distance every hand is a porter. Read from that, a party walking a full load
+            // home would answer *"nobody is on this row"*, and the holding test below would retire
+            // the row silently, with the party still out there. The row holds a posting; the
+            // arithmetic beneath it already resolves a zero working crew to a zero take on its own.
+            let take_crew_present = assignment.workers > NO_CREW_ON_THIS_ACTIVITY;
+            // **AND THE LESSON ASKS WHO IS AT THE SOURCE.** A party still on its walk out, or with
+            // every hand on the road, is not practising on the ground however well staffed the row
+            // is. On a local row this is `take_crew_present` exactly.
+            let crew_at_the_source = workers > NO_CREW_ON_THIS_ACTIVITY;
             // **THIS SOURCE'S PLACE IN THE BAND'S QUEUE, and what it declared there.** The queue
             // **is** the declaration now (`docs/plan_standing_upkeep.md` §2.4) — there is no second
             // authority on the row for it to drift from.
@@ -5216,6 +5425,32 @@ pub fn advance_labor_allocation(
             let party_for = |body_mass: f32| {
                 party_resolution.party_against(crate::equipment_config::Quarry::Mass(body_mass))
             };
+            // ⛔ **THE CARAVAN FORECAST IS PRICED AT THE ROW'S STAFFED CREW**, through the one
+            // construction the seed and the compose-sheet query make too
+            // ([`crate::work_party::CaravanPricing`]). `None` on a local row, which has no caravan.
+            let caravan_pricing = postings.contains_key(&idx).then(|| {
+                crate::work_party::CaravanPricing::resolve(
+                    &equipment_cfg,
+                    &crew_kit,
+                    assignment.workers,
+                    &band_kit,
+                    &allocation.rows_excluding_source(&equipment_cfg, &assignment.target),
+                    &labor,
+                )
+            });
+            let caravan_hunt_carry = caravan_pricing.as_ref().map(|pricing| pricing.hunt_carry);
+            let caravan_forage_carry = caravan_pricing.as_ref().map(|pricing| pricing.forage_carry);
+            let caravan_party_for = |body_mass: f32| {
+                caravan_pricing.as_ref().map(|pricing| {
+                    pricing.hunters(
+                        &equipment_cfg,
+                        &band_kit,
+                        &combat_config,
+                        person_profile,
+                        body_mass,
+                    )
+                })
+            };
 
             match &assignment.target {
                 LaborTarget::Forage {
@@ -5224,38 +5459,18 @@ pub fn advance_labor_allocation(
                     species,
                     take_species,
                 } => {
-                    // **Out of range → the assignment is ABANDONED**, the plant twin of the hunt
-                    // leash lapse. A patch cannot move, so beyond `band_work_range` the band walked
-                    // away from it — a decision, not a drift, and there is nothing to follow. Keeping
-                    // the assignment would pay a correct `+0.00` forever while the tile still renders
-                    // as worked and its workers stay booked, so the workers return to the pool and the
-                    // player is told which tile was given up.
-                    let distance = crate::grid_utils::hex_distance_wrapped(
-                        band_pos,
-                        *tile,
-                        grid_width,
-                        wrap_horizontal,
-                    );
-                    if distance > work_range {
-                        lapsed.push(idx);
-                        event_log.push(CommandEventEntry::new(
-                            tick.0,
-                            CommandEventKind::Forage,
-                            faction,
-                            format!(
-                                "foragers abandoned ({}, {}) — out of the band's work range",
-                                tile.x, tile.y
-                            ),
-                            Some(band_detail_token(
-                                format!(
-                                    "status=lapsed reason=out_of_range x={} y={} distance={} range={}",
-                                    tile.x, tile.y, distance, work_range
-                                ),
-                                band_id,
-                            )),
-                        ));
-                        continue;
-                    }
+                    // ⛔ **OUT OF RANGE NO LONGER ABANDONS THE ROW — IT POSTS A PARTY.** A patch
+                    // past `band_work_range` used to be given up on the spot (the plant twin of the
+                    // hunt leash lapse), on the reading that a fixed source out of range could only
+                    // mean the band had walked away from it. The work party is the other reading:
+                    // *the workers are still the band's, they are just somewhere else*
+                    // (`docs/plan_civilization_steps.md` §One work party). The gatherers stand on
+                    // the patch, a share of them carries the take home, and the row above has
+                    // already priced this arm at the **working crew**.
+                    //
+                    // The `+0.00`-forever defect the lapse existed to prevent is closed the other
+                    // way: a far row pays a real, reduced rate and states its travel on the wire,
+                    // so a worked row is never a dead one.
                     // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD.** With no
                     // hands on any of the three activities the row says only *"this band's ground"*,
                     // and the ground answers whether that is still true: a meter carrying progress
@@ -5776,11 +5991,43 @@ pub fn advance_labor_allocation(
                     credit_rung_lesson(
                         lesson_rung,
                         *floor,
-                        take_crew_present && working_the_patch,
+                        crew_at_the_source && working_the_patch,
                         knowledge_dials,
                         faction,
                         &mut discovery,
                     );
+                    // **AND THROUGH THIS ROW'S WORK PARTY, IF IT HAS ONE.** The party eats first
+                    // and that share goes home at once; the surplus fills the load and walks home a
+                    // pack at a time — the one seam a far posting's food is charged at, so a local
+                    // row is untouched (`crate::work_party`). **The take flows HOME, always**: to
+                    // the band that owns this row, never to whichever band the party is beside.
+                    let provisions = deliver_take_home(
+                        postings.get_mut(&idx),
+                        provisions,
+                        take,
+                        caravan_forage_carry.unwrap_or(NOTHING_DEMANDED),
+                    );
+                    // **THE CARAVAN'S FORECAST, FROM THE STATE THIS TURN LEAVES** — the patch after
+                    // the take and the party after its packs went, stepped through the one
+                    // function the seed and the query answer through.
+                    if let (Some(posting), Some(carry)) =
+                        (postings.get_mut(&idx), caravan_forage_carry)
+                    {
+                        posting.forecast = Some(crate::work_party::forecast_forage_caravan(
+                            &posting.party,
+                            patch,
+                            &tile_composition,
+                            &labor.forage,
+                            &flora,
+                            carry,
+                            seasonal,
+                            mult_f,
+                            *floor,
+                            take_species,
+                            posting.upkeep,
+                            realized_horizon,
+                        ));
+                    }
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
@@ -6311,7 +6558,7 @@ pub fn advance_labor_allocation(
                     };
                 }
                 LaborTarget::Hunt { fauna_id, floor } => {
-                    let Some(herd_pos) = registry.find(fauna_id).map(|herd| herd.position()) else {
+                    if registry.find(fauna_id).is_none() {
                         // Herd despawned (extinction / another hunter) → lapse.
                         lapsed.push(idx);
                         event_log.push(CommandEventEntry::new(
@@ -6325,31 +6572,13 @@ pub fn advance_labor_allocation(
                             )),
                         ));
                         continue;
-                    };
-                    let distance = crate::grid_utils::hex_distance_wrapped(
-                        band_pos,
-                        herd_pos,
-                        grid_width,
-                        wrap_horizontal,
-                    );
-                    if distance > hunt_reach {
-                        // Past the leash → the assignment lapses; workers return to the pool.
-                        lapsed.push(idx);
-                        event_log.push(CommandEventEntry::new(
-                            tick.0,
-                            CommandEventKind::Hunt,
-                            faction,
-                            format!("hunters lost the {} — it ranged too far", fauna_id),
-                            Some(band_detail_token(
-                                format!(
-                                    "status=lapsed reason=out_of_leash distance={} reach={}",
-                                    distance, hunt_reach
-                                ),
-                                band_id,
-                            )),
-                        ));
-                        continue;
                     }
+                    // ⛔ **PAST THE LEASH NO LONGER LAPSES — IT POSTS A PARTY.** The hunters follow
+                    // the herd because that is where the source is, and they do it with no follow
+                    // order and no pathfinding: a party's position *is* its source's, re-read every
+                    // turn (`docs/plan_civilization_steps.md` §One work party). What distance costs
+                    // is walking: the row above has already priced this arm at the **hunters
+                    // present**, and the packs go home at the take site below.
                     // **A HOLDING ROW LASTS EXACTLY AS LONG AS THERE IS SOMETHING TO HOLD** — the
                     // animal twin of the Forage arm's, on the animal web's own seam
                     // (`fauna::herd_keeping_rung`, which is `None` for a herd nobody owns and has
@@ -6731,7 +6960,17 @@ pub fn advance_labor_allocation(
                         // this herd's own species vector, so a penned wolf yields pelts and no meat
                         // exactly as a wild one does (`docs/plan_hunt_yield_model.md`).
                         let pen_yield = herd_hunt_yield(herd, &fauna);
-                        let paid = pen_yield.apply(take.carried, mult_f);
+                        // ⛔ **A PARTY KEEPS THE WHOLE CARCASS.** A resident band walks away from
+                        // what its packs cannot seat; a party's load is still standing at the
+                        // source, so what one porter cannot shoulder waits for the next one. Its
+                        // take is therefore every animal brought down, not the part carried.
+                        let party_keeps_the_carcass = postings.contains_key(&idx);
+                        let loaded = if party_keeps_the_carcass {
+                            take.killed_biomass()
+                        } else {
+                            take.carried
+                        };
+                        let paid = pen_yield.apply(loaded, mult_f);
                         // **THE MILK, THE EGGS AND THE DOWN** — what the herd pays for standing
                         // there, at the species' own per-head rates
                         // (`docs/plan_pen_standing_yield.md`). It rides the band's `mult_f` exactly
@@ -6746,6 +6985,31 @@ pub fn advance_labor_allocation(
                         // (the row below carries it); the store is paid the total, which is what
                         // keeps `food_income == Σ actual` and the larder identity intact.
                         let provisions = scalar_from_f32(meat_provisions + standing_provisions);
+                        // **And through this row's work party, if it has one** — see the Forage
+                        // arm. A pen stands where its herd does, so a far pen is a posting like any
+                        // other and its milk walks home the same way its meat does.
+                        let pen_pack = caravan_hunt_carry.map_or(NOTHING_DEMANDED, |carry| {
+                            crate::work_party::hunt_pack_biomass(herd, &fauna, carry)
+                        });
+                        let provisions =
+                            deliver_take_home(postings.get_mut(&idx), provisions, loaded, pen_pack);
+                        if let (Some(posting), Some(carry), Some(hunters)) = (
+                            postings.get_mut(&idx),
+                            caravan_hunt_carry,
+                            caravan_party_for(herd.body_mass),
+                        ) {
+                            posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
+                                &posting.party,
+                                herd,
+                                &fauna,
+                                carry,
+                                &hunters,
+                                mult_f,
+                                *floor,
+                                posting.upkeep,
+                                realized_horizon,
+                            ));
+                        }
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
@@ -6758,7 +7022,7 @@ pub fn advance_labor_allocation(
                         // already rejected on the take side.
                         credit_managed_rung_lesson(
                             lesson_rung,
-                            take_crew_present,
+                            crew_at_the_source,
                             knowledge_dials,
                             faction,
                             &mut discovery,
@@ -7203,7 +7467,7 @@ pub fn advance_labor_allocation(
                     credit_rung_lesson(
                         lesson_rung,
                         *floor,
-                        take_crew_present && working_the_herd,
+                        crew_at_the_source && working_the_herd,
                         knowledge_dials,
                         faction,
                         &mut discovery,
@@ -7213,7 +7477,14 @@ pub fn advance_labor_allocation(
                     // species' `HuntYield` decides WHAT that biomass is worth, in one call that
                     // yields both products so neither can be converted without the other.
                     let hunt_yield = herd_hunt_yield(herd, &fauna);
-                    let paid = hunt_yield.apply(take.carried, mult_f);
+                    // ⛔ **A PARTY KEEPS THE WHOLE CARCASS** — see the pen branch above.
+                    let party_keeps_the_carcass = postings.contains_key(&idx);
+                    let loaded = if party_keeps_the_carcass {
+                        take.killed_biomass()
+                    } else {
+                        take.carried
+                    };
+                    let paid = hunt_yield.apply(loaded, mult_f);
                     // **The milk half, at the pastoral share** — see `standing_scale` above. A wild
                     // herd's share is zero, so this arm is byte-identical on the range.
                     let meat_provisions = paid.provisions;
@@ -7542,6 +7813,33 @@ pub fn advance_labor_allocation(
                         if let Some(quote) = projected {
                             build_quotes.push((BuildSource::Herd(herd.id.clone()), quote));
                         }
+                    }
+                    // **AND THROUGH THIS ROW'S WORK PARTY, IF IT HAS ONE.** The party eats first
+                    // and that share goes home at once; the surplus fills the load and walks home a
+                    // pack at a time — the one seam a far posting's food is charged at, so a local
+                    // row is untouched (`crate::work_party`). **The take flows HOME, always**: to
+                    // the band that owns this row, never to whichever band the party is beside.
+                    let hunt_pack = caravan_hunt_carry.map_or(NOTHING_DEMANDED, |carry| {
+                        crate::work_party::hunt_pack_biomass(herd, &fauna, carry)
+                    });
+                    let provisions =
+                        deliver_take_home(postings.get_mut(&idx), provisions, loaded, hunt_pack);
+                    if let (Some(posting), Some(carry), Some(hunters)) = (
+                        postings.get_mut(&idx),
+                        caravan_hunt_carry,
+                        caravan_party_for(herd.body_mass),
+                    ) {
+                        posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
+                            &posting.party,
+                            herd,
+                            &fauna,
+                            carry,
+                            &hunters,
+                            mult_f,
+                            *floor,
+                            posting.upkeep,
+                            realized_horizon,
+                        ));
                     }
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
@@ -8530,6 +8828,127 @@ pub fn advance_labor_allocation(
                 Some(format!("status=complete action=build_complete job={verb}")),
             ));
         }
+        // **THE PARTIES, SETTLED AND WRITTEN BACK** — before the `lapsed` removal shuffles the
+        // indices they were collected against, and after the walk has finished borrowing
+        // `assignments` (`docs/plan_civilization_steps.md` §One work party).
+        for (idx, mut posting) in std::mem::take(&mut postings) {
+            let row_lapsed = lapsed.contains(&idx);
+            // **An arm that never reached its take site still closes the turn**, on a zero take:
+            // the party eats whether or not anybody took anything, and the walkers' deliveries from
+            // the top of the turn are credited. No pack leaves on a turn the arm did not work.
+            if !posting.closed {
+                let close = posting.party.close_turn(
+                    crate::work_party::SourceTake::default(),
+                    posting.upkeep,
+                    NOTHING_DEMANDED,
+                );
+                let home =
+                    std::mem::replace(&mut posting.pending_home, NOTHING_DEMANDED) + close.home();
+                if row_lapsed {
+                    bring_the_party_home(
+                        &mut cohort.stores,
+                        &mut allocation.last_food_transfers,
+                        home,
+                    );
+                } else if home > NOTHING_DEMANDED {
+                    cohort.stores.add(FOOD, scalar_from_f32(home));
+                    if let Some(row) = yields.get_mut(idx) {
+                        row.actual += home;
+                    }
+                }
+            }
+            // **A row lapsing under its party brings the whole caravan home**, the load and the road
+            // with the workers.
+            if row_lapsed {
+                let everything = posting.party.hand_over_everything();
+                bring_the_party_home(
+                    &mut cohort.stores,
+                    &mut allocation.last_food_transfers,
+                    everything,
+                );
+                continue;
+            }
+            // ⛔ **THE ROW'S FORWARD PROJECTIONS ARE WHAT ARRIVES HOME, NOT WHAT IS TAKEN.**
+            // `realized` is the headline the food runway and the work board read, and a far
+            // posting publishing its gross take would promise a larder food that is still being
+            // eaten at the source or walking home. So the row reads the caravan's own forecast:
+            // `realized` is its rate home, and the arrival schedule is what it lands turn by turn.
+            if let (Some(row), Some(forecast)) = (yields.get_mut(idx), posting.forecast.as_ref()) {
+                crate::work_party::publish_caravan_projection(
+                    row,
+                    forecast,
+                    arrivals_horizon,
+                    matches!(allocation.assignments[idx].target, LaborTarget::Hunt { .. }),
+                );
+                posting.party.net_rate_home = forecast.rate_home;
+            }
+            // **UNASSIGNED: EVERYONE COMES HOME.** A row held at zero hands has nobody at the
+            // source and nobody to send, so the load and the road are settled into the band and
+            // the party is stood down. The row itself survives as a holding.
+            if allocation.assignments[idx].workers == NO_CREW_ON_THIS_ACTIVITY {
+                let everything = posting.party.hand_over_everything();
+                bring_the_party_home(
+                    &mut cohort.stores,
+                    &mut allocation.last_food_transfers,
+                    everything,
+                );
+                allocation.assignments[idx].party = None;
+                continue;
+            }
+            // ⛔ **A PARTY THE BAND CANNOT SUPPLY WALKS HOME.** Its deficit must be coverable from
+            // the home larder as the pass opened (for [`settle_pen_hay`]'s reason). Distance is paid
+            // in walking, so the deficit is **not** grossed up by a loss in transit.
+            //
+            // The cost of misjudging a distance is the posting ending and the food already spent on
+            // it, never people dying somewhere the player was not looking: the row folds back and
+            // the whole caravan — the load and every walker's pack — comes home with the workers.
+            if !crate::work_party::larder_supplies(posting.party.deficit, larder_at_pass_open) {
+                let deficit = posting.party.deficit;
+                let walk = posting.party.walk_tiles;
+                let everything = posting.party.hand_over_everything();
+                bring_the_party_home(
+                    &mut cohort.stores,
+                    &mut allocation.last_food_transfers,
+                    everything,
+                );
+                lapsed.push(idx);
+                // **The line names the source the way its channel's other lines do** — a patch by
+                // its coordinates, a herd by its id — so the dock's row can offer the same jump.
+                let (channel, named, source) = match &allocation.assignments[idx].target {
+                    LaborTarget::Forage { tile, .. } => (
+                        CommandEventKind::Forage,
+                        format!("the gatherers at ({}, {})", tile.x, tile.y),
+                        format!("x={} y={}", tile.x, tile.y),
+                    ),
+                    LaborTarget::Hunt { fauna_id, .. } => (
+                        CommandEventKind::Hunt,
+                        format!("the hunters on the {fauna_id}"),
+                        format!("fauna={fauna_id}"),
+                    ),
+                    _ => (
+                        CommandEventKind::Forage,
+                        "the work party".to_string(),
+                        String::new(),
+                    ),
+                };
+                event_log.push(CommandEventEntry::new(
+                    tick.0,
+                    channel,
+                    faction,
+                    format!("{named} came home — the band could not keep them supplied"),
+                    Some(band_detail_token(
+                        format!(
+                            "status=recalled reason=unsupplied {source} walk={walk} deficit={deficit:.2}"
+                        ),
+                        band_id,
+                    )),
+                ));
+                continue;
+            }
+            if let Some(assignment) = allocation.assignments.get_mut(idx) {
+                assignment.party = Some(posting.party);
+            }
+        }
         // **THE REPAIRED TAKE SELECTIONS, written back** — before the `lapsed` removal shuffles the
         // indices they were collected against.
         for (idx, repaired) in repaired_takes {
@@ -8544,6 +8963,10 @@ pub fn advance_labor_allocation(
         // gone) — in reverse order to keep indices valid; workers return to the pool.
         // Remove the matching telemetry rows too so `last_yields` stays index-aligned with the
         // surviving assignments (lapsed rows carry a 0 yield anyway).
+        // **Two collectors feed this list now** — the walk's own lapses and the fold-back above —
+        // so it is ordered and deduplicated before the reverse removal that depends on both.
+        lapsed.sort_unstable();
+        lapsed.dedup();
         for idx in lapsed.into_iter().rev() {
             allocation.assignments.remove(idx);
             yields.remove(idx);
@@ -11371,6 +11794,8 @@ mod labor_yield_tests {
         world.insert_resource(config);
         world.insert_resource(FaunaConfigHandle::default());
         world.insert_resource(LaborConfigHandle::default());
+        world.insert_resource(crate::demographics_config::DemographicsConfigHandle::default());
+        world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         world.insert_resource(crate::flora_config::FloraConfigHandle::default());
         world.insert_resource(LadderConfigHandle::default());
         world.insert_resource(WellbeingConfigHandle::default());
@@ -11492,6 +11917,7 @@ mod labor_yield_tests {
                 .get_mut::<LaborAllocation>(band)
                 .expect("the fixture band has an allocation");
             allocation.assignments.push(LaborAssignment {
+                party: None,
                 target: LaborTarget::Builders,
                 // ⛔ **A `builders` ROW CARRIES NO KIT AT ALL** since §4.7a ②: the builders' kit was
                 // a property of the queue ENTRY, and `assign_labor` refuses a token here. Neither
@@ -11665,6 +12091,7 @@ mod labor_yield_tests {
             tile,
             vec![
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -11677,6 +12104,7 @@ mod labor_yield_tests {
                     upkeep_kit: None,
                 },
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
@@ -11750,6 +12178,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.0,
@@ -11792,6 +12221,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -11934,6 +12364,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor,
@@ -11968,6 +12399,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -12033,6 +12465,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.0,
@@ -12151,6 +12584,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -12167,6 +12601,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: PEN_FLOOR,
@@ -12353,6 +12788,7 @@ mod labor_yield_tests {
                 &mut world,
                 tile,
                 vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: BUILDER_FLOOR,
@@ -12489,6 +12925,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: SHALLOW_DRAW_FLOOR,
@@ -12554,6 +12991,7 @@ mod labor_yield_tests {
                 &mut world,
                 tile,
                 vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: crate::fauna::MSY_BIOMASS_FRACTION,
@@ -12666,6 +13104,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -12689,6 +13128,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,
@@ -12920,6 +13360,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -13127,6 +13568,7 @@ mod labor_yield_tests {
                         &mut world,
                         tile,
                         vec![LaborAssignment {
+                            party: None,
                             target: LaborTarget::Forage {
                                 tile: SOURCE,
                                 floor: policy,
@@ -13218,6 +13660,7 @@ mod labor_yield_tests {
                             &mut world,
                             tile,
                             vec![LaborAssignment {
+                                party: None,
                                 target: LaborTarget::Hunt {
                                     fauna_id: HERD_ID.to_string(),
                                     floor: policy,
@@ -13427,6 +13870,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -13443,6 +13887,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -13564,6 +14009,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -13661,6 +14107,7 @@ mod labor_yield_tests {
                 &mut world,
                 tile,
                 vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: policy,
@@ -13744,6 +14191,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -13763,6 +14211,7 @@ mod labor_yield_tests {
             &mut world,
             idle_tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(1, 0),
                     floor: 0.5,
@@ -13811,6 +14260,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -13914,6 +14364,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -13946,6 +14397,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -14040,6 +14492,7 @@ mod labor_yield_tests {
                 &mut world,
                 tile,
                 vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: 0.5,
@@ -14138,6 +14591,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -14176,6 +14630,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -14247,6 +14702,7 @@ mod labor_yield_tests {
                 &mut world,
                 tile,
                 vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: 0.5,
@@ -14437,6 +14893,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -14593,6 +15050,7 @@ mod labor_yield_tests {
             tile,
             vec![
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: SOURCE,
                         floor: BUILDER_FLOOR,
@@ -14605,6 +15063,7 @@ mod labor_yield_tests {
                     upkeep_kit: None,
                 },
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Agriculture,
                     workers: keepers,
                     kit: None,
@@ -14735,6 +15194,7 @@ mod labor_yield_tests {
             tile,
             vec![
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: BUILDER_FLOOR,
@@ -14745,6 +15205,7 @@ mod labor_yield_tests {
                     upkeep_kit: None,
                 },
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Husbandry,
                     workers: keepers,
                     kit: None,
@@ -14912,6 +15373,7 @@ mod labor_yield_tests {
             tile,
             vec![
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
                         floor: BUILDER_FLOOR,
@@ -14924,6 +15386,7 @@ mod labor_yield_tests {
                 // **THE `builders` ROW CARRIES NO KIT** — one is refused there since §4.7a ②,
                 // because a build's gear is a property of the queue ENTRY and not of the band.
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
@@ -15149,6 +15612,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -15333,6 +15797,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -15492,6 +15957,7 @@ mod labor_yield_tests {
                 .get_mut::<LaborAllocation>(band)
                 .expect("the fixture band has an allocation");
             allocation.assignments.push(LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: BUILDER_FLOOR,
@@ -16360,6 +16826,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: BUILDER_FLOOR,
@@ -16443,6 +16910,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: 0.5,
@@ -16476,6 +16944,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -16508,6 +16977,7 @@ mod labor_yield_tests {
             &mut world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: 0.5,
@@ -16553,6 +17023,7 @@ mod labor_yield_tests {
             world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor: policy,
@@ -16572,6 +17043,7 @@ mod labor_yield_tests {
             world,
             tile,
             vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: SOURCE,
                     floor: policy,

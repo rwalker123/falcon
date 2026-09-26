@@ -1451,6 +1451,7 @@ mod tests {
         let allocation = LaborAllocation {
             assignments: vec![
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -1463,6 +1464,7 @@ mod tests {
                     upkeep_kit: None,
                 },
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
                         floor: 0.5,
@@ -1593,6 +1595,7 @@ mod tests {
         let allocation = LaborAllocation {
             assignments: vec![
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
                         floor: 0.5,
@@ -1605,6 +1608,7 @@ mod tests {
                     upkeep_kit: None,
                 },
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
                         floor: 0.5,
@@ -1678,6 +1682,7 @@ mod tests {
     fn population_state_food_income_defaults_to_zero_without_telemetry() {
         let allocation = LaborAllocation {
             assignments: vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
                     floor: 0.5,
@@ -1739,6 +1744,7 @@ mod tests {
             take_species: TakeSelection::EVERYTHING,
         };
         let assignment = LaborAssignment {
+            party: None,
             target,
             workers: 6,
             kit: None,
@@ -1776,6 +1782,7 @@ mod tests {
     #[test]
     fn the_pressure_and_the_build_are_separate_wire_fields() {
         let assignment = LaborAssignment {
+            party: None,
             target: LaborTarget::Forage {
                 tile: UVec2::new(7, 9),
                 floor: 0.15,

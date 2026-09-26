@@ -232,6 +232,10 @@ fn world_with(seed: u64, grid: UVec2, presets: Arc<MapPresets>) -> World {
     app.world
         .insert_resource(LaborConfigHandle::new(LaborConfig::builtin()));
     app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(LadderConfigHandle::new(LadderConfig::builtin()));
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);

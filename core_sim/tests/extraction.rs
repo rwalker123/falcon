@@ -67,6 +67,8 @@ fn world_of(terrain: TerrainType) -> (World, Entity) {
     world.insert_resource(config);
     world.insert_resource(core_sim::FaunaConfigHandle::default());
     world.insert_resource(LaborConfigHandle::default());
+    world.insert_resource(core_sim::DemographicsConfigHandle::default());
+    world.insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     world.insert_resource(core_sim::FloraConfigHandle::default());
     world.insert_resource(LadderConfigHandle::default());
     world.insert_resource(core_sim::WellbeingConfigHandle::default());
@@ -159,6 +161,7 @@ fn spawn_band_of(
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Extract {
                         tile: UVec2::new(0, 0),
                         material: material.to_string(),
@@ -230,6 +233,7 @@ fn spawn_keepers(
         allocation.assignments.clear();
         for (tile, material) in workings {
             allocation.assignments.push(LaborAssignment {
+                party: None,
                 target: LaborTarget::Extract {
                     tile: *tile,
                     material: (*material).to_string(),
@@ -243,6 +247,7 @@ fn spawn_keepers(
         }
         if keepers > 0 {
             allocation.assignments.push(LaborAssignment {
+                party: None,
                 target: LaborTarget::Quarrywork,
                 workers: keepers,
                 kit: None,
@@ -732,6 +737,7 @@ fn a_band_learns_woodcraft_at_the_free_floor_and_then_raises_a_felling_working()
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture band has an allocation");
         allocation.assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Builders,
             workers: 8,
             kit: None,
@@ -1238,6 +1244,7 @@ fn an_unkept_working_slides_and_a_kept_one_stops_sliding() {
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture band has an allocation");
         allocation.assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Quarrywork,
             workers: 1,
             kit: None,
@@ -1318,6 +1325,7 @@ fn the_quarrywork_ledger_publishes_a_bill_nobody_is_paying_and_clears_when_the_r
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture band has an allocation");
         allocation.assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Quarrywork,
             workers: 1,
             kit: None,
@@ -1531,6 +1539,7 @@ fn a_slumped_working_can_be_cut_back_open() {
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture band has an allocation");
         allocation.assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Builders,
             workers: 12,
             kit: None,
@@ -1538,6 +1547,7 @@ fn a_slumped_working_can_be_cut_back_open() {
             upkeep_kit: None,
         });
         allocation.assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Quarrywork,
             workers: 4,
             kit: None,

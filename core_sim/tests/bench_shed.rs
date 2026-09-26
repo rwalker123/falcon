@@ -92,6 +92,7 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
             BandId(FIXTURE_BAND),
             LaborAllocation {
                 assignments: vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,

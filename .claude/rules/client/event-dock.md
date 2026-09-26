@@ -247,6 +247,33 @@ craft crew disappearing announces itself to nobody, which is precisely the defec
 sim changed a labor row unasked, the bench is staffed from the Work tab like any other crew, and
 `announce_shed_bench` writes the `band=` the jump needs.
 
+### `recalled` is the FOURTH Notable token — a work party walking home
+
+A far Hunt or Forage row posts a **work party** rather than lapsing
+(`docs/plan_civilization_steps.md` §One work party), and a party the band cannot keep supplied folds
+back: the pack is handed over, the workers return to the pool, and the queue entry is pruned with the
+row. `systems::labor` says so on the source's own feed channel —
+`status=recalled reason=unsupplied {x=… y=…|fauna=…} walk=… deficit=…`, through `band_detail_token`, so the
+line carries the durable `band=` a jump needs.
+
+⛔ **IT IS NOTABLE, NOT THE ALERT `lapsed` EARNS, and holding the two apart is the whole entry.**
+`lapsed` shouts because *the row was destroyed and its queued build went with it*; a fold-back is the
+POSTING ending — the food already spent on it is spent, and the people and their pack are coming
+home. The sim's own design statement is that misjudging a distance costs the posting and not lives,
+so the ladder's calibration puts it beside `trimmed` and `stalled`: **Notable, `▾`, `WARN`**, the
+glyph following from the rung exactly as the invariant above requires.
+
+⛔ **AND IT NEEDED A ROW FOR `stalled`'s REASON.** Its kind is the VERB's — `forage` / `hunt`, both
+`RUNG_ROUTINE` — so without a `DETAIL_STATUS_STYLE` entry a far posting ending announces itself to
+nobody at `DEFAULT_DETAIL_LEVEL`, which is the defect the `trimmed` / `pruned` split was added to
+close. **It takes a `DETAIL_STATUS_WORK_LINK` row on the same test the other four pass**: the sim
+changed a labor row unasked, and the Work tab is where the row now sits as an ordinary near one.
+
+**Both of its words are in `DETAIL_VALUE_LABELS`, lower-case**, so the row reads
+`recalled · unsupplied · …`. That is the `feral · untended` pair's treatment: a capitalised status
+beside a lower-case reason inside one phrase reads as two registers in one sentence, and the
+generic fallback capitalises whatever the table does not name.
+
 ### ⛔ THE GLYPH TRACKS THE RUNG, or the split is filter-only and unreadable
 
 All four tokens wore `⚠` for a release. The rungs above were **right the whole time** and did real

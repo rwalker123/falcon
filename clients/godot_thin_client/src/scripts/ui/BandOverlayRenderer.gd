@@ -44,8 +44,6 @@ const LABOR_KIND_BUILDERS := "builders"
 # tint). See _draw_range_border.
 const FORAGE_RANGE_OUTLINE := Color(0.46, 0.96, 0.46, 0.85)   # green, tied to FORAGE_WORKED_*
 const FORAGE_RANGE_OUTLINE_WIDTH := 2.0
-const HUNT_RANGE_OUTLINE := Color(0.94, 0.40, 0.36, 0.85)     # red, tied to HUNT_WORKED_COLOR
-const HUNT_RANGE_OUTLINE_WIDTH := 2.0
 const SCOUT_RANGE_OUTLINE := Color(0.32, 0.66, 0.99, 0.85)    # azure "sight", distinct from fog slate
 const SCOUT_RANGE_OUTLINE_WIDTH := 2.0
 # Per-edge axial neighbour deltas in `_hex_points` EDGE order — edge i is the segment
@@ -864,11 +862,14 @@ func _link_spans_seam(a: Vector2, b: Vector2) -> bool:
 	return absf(a.x - b.x) > _view.last_map_size.x * LINK_MAX_SPAN_FACTOR
 
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
-##  - three RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
+##  - two RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
 ##    edge-by-edge via _draw_range_border, using the sim's true **odd-r hex distance** so the
-##    boundary == actually-in-range) — forage (green, `work_range`), hunt (red, `hunt_reach`,
-##    only when it extends past `work_range`), and scout sight (azure, `scout_reveal_radius`,
-##    only when scouts are staffed). Distinct colors so the nested reaches read apart at a glance.
+##    boundary == actually-in-range) — the band's apron (green, `work_range`) and scout sight
+##    (azure, `scout_reveal_radius`, only when scouts are staffed).
+##  ⛔ **THE RED HUNT-REACH RING IS GONE** (`docs/plan_civilization_steps.md` §One work party). It
+##    outlined `hunt_reach`, a boundary that no longer bounds anything: every job — hunt or gather —
+##    posts a work party past the SAME apron, and a ring drawn at a second, larger radius told the
+##    player hunting stopped somewhere it does not.
 ##  - the SOURCE ROWS (`compute_source_rows`) — the model the docked `BandSourceList` renders and
 ##    the anchors its leader lines run to. The worked RINGS themselves belong to
 ##    `draw_worked_source_marks`, which runs for every player band whatever is selected.
@@ -902,17 +903,12 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 	# directly in the fog. What IS drawn (below) is the azure scout range BORDER: a perimeter outline at
 	# `scout_reveal_radius` marking how far the vantage reach extends, not the tiles actually revealed.
 
-	# 1. Range borders — three clean perimeter outlines of the band's reaches (see _draw_range_border):
-	#    forage (green), hunt (red, only when it extends past the forage reach), and scout sight
-	#    (azure, only when scouts are staffed). Hunt is outermost, forage innermost; distinct colors
-	#    so the nested reaches read apart. All at every zoom, like the old work-range ring.
+	# 1. Range borders — two clean perimeter outlines of the band's reaches (see _draw_range_border):
+	#    the apron (green) and scout sight (azure, only when scouts are staffed). All at every zoom.
 	var work_range := int(band.get("work_range", 0))
-	var hunt_reach := int(band.get("hunt_reach", 0))
 	var scout_reveal_radius := int(band.get("scout_reveal_radius", 0))
 	if work_range > 0:
 		_draw_range_border(eff_col, band_row, work_range, FORAGE_RANGE_OUTLINE, FORAGE_RANGE_OUTLINE_WIDTH, radius, origin)
-	if hunt_reach > work_range:
-		_draw_range_border(eff_col, band_row, hunt_reach, HUNT_RANGE_OUTLINE, HUNT_RANGE_OUTLINE_WIDTH, radius, origin)
 	if scout_reveal_radius > 0:
 		_draw_range_border(eff_col, band_row, scout_reveal_radius, SCOUT_RANGE_OUTLINE, SCOUT_RANGE_OUTLINE_WIDTH, radius, origin)
 

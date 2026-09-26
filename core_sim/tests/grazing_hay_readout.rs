@@ -182,6 +182,7 @@ fn pose_intake(app: &mut App, herd_id: &str, intake: f32) {
 /// One keeper row: tend the pen `herd_id` at the Sustain floor.
 fn keeper_row(herd_id: &str) -> LaborAssignment {
     LaborAssignment {
+        party: None,
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,
@@ -1205,6 +1206,7 @@ fn a_hay_field(app: &mut App) -> UVec2 {
 /// One gatherer row on `patch`, at the Sustain floor.
 fn forager_row(patch: UVec2) -> LaborAssignment {
     LaborAssignment {
+        party: None,
         target: LaborTarget::Forage {
             tile: patch,
             floor: SUSTAIN,

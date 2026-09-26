@@ -28,8 +28,9 @@ class_name ForecastQuery
 ## listener re-reads through `view()` and cannot render a reply the seam has already superseded.
 signal answered(subject: String)
 
-# ---- the three questions, spelled as `bridge/query.rs` matches them -------------------------------
-const KIND_HUNT_TRIP := "hunt_trip_forecast"
+# ---- the questions, spelled as `bridge/query.rs` matches them -------------------------------------
+# ⛔ The hunting RAID's question (`hunt_trip_forecast`) is no longer asked: the client composes no
+# hunting expedition (`docs/plan_civilization_steps.md` §One work party).
 const KIND_DENIAL_RAID := "denial_raid_forecast"
 ## **THE RESIDENT CREW'S TAKE CURVE** — one row per crew size, each row the WHOLE crew's animals per
 ## turn with the engagement, the retreat and the FIGHT already resolved. It is the Assign Herders
@@ -37,6 +38,12 @@ const KIND_DENIAL_RAID := "denial_raid_forecast"
 ## `combat_config.expedition_danger_multiplier` and a band hunting its own range is not, so the two
 ## replies differ by half again in the fight term and neither may borrow the other's rows.
 const KIND_HUNT_CREW_TAKE := "hunt_crew_take"
+## **THE WORK PARTY'S QUESTION** — what a crew brings HOME per turn off a source past the band's
+## apron, how far it walks, how many are on the road at a time and when the first load lands. One kind
+## for both webs; the ask's `source_kind` says which (`bridge/query.rs` refuses any other value).
+const KIND_WORK_PARTY := "work_party_forecast"
+const WORK_PARTY_SOURCE_HUNT := "hunt"
+const WORK_PARTY_SOURCE_FORAGE := "forage"
 
 # ---- what a sheet gets back -----------------------------------------------------------------------
 

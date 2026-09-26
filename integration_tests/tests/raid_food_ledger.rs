@@ -64,6 +64,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
         .expect("the starting band must sit on or beside a forage patch");
     app.world.entity_mut(band).insert(LaborAllocation {
         assignments: vec![LaborAssignment {
+            party: None,
             target: LaborTarget::Forage {
                 tile: patch,
                 floor: 0.5,

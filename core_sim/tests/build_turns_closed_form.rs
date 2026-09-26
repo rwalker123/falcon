@@ -302,6 +302,7 @@ fn spawn_keepers_of(
             LaborAllocation {
                 assignments: vec![
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Hunt {
                             fauna_id: fauna_id.to_string(),
                             floor: BUILDER_FLOOR,
@@ -321,6 +322,7 @@ fn spawn_keepers_of(
                     // estimate and the gear stamp are both quoted at the pool, so the two have to
                     // agree for a closed-form check to mean anything.
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Builders,
                         workers: builders,
                         kit: None,
@@ -1273,6 +1275,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
             LaborAllocation {
                 assignments: vec![
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Forage {
                             tile: source,
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -1289,6 +1292,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                     // **NO KIT NAMED, so the pool derives one per queue entry** — the head is a patch,
                     // so the roster answers `tillage` and the hoes are what the gear term below reads.
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Builders,
                         workers: BUILDERS,
                         kit: None,

@@ -139,6 +139,10 @@ fn spawn_world() -> App {
         .resource_mut::<FaunaConfigHandle>()
         .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world.insert_resource(FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
@@ -247,6 +251,7 @@ fn spawn_hunters(
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -710,6 +715,7 @@ fn spawn_resident_crew(
             ResidentBand,
             LaborAllocation {
                 assignments: std::iter::once(LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor,
@@ -725,6 +731,7 @@ fn spawn_resident_crew(
                 // something is declared**, because a builders row with an empty queue is hands the
                 // band is paying for and nobody is spending.
                 .chain((build_crew > 0).then_some(LaborAssignment {
+                    party: None,
                     target: LaborTarget::Builders,
                     workers: build_crew,
                     kit: None,

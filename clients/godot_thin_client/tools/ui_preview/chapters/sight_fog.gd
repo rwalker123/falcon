@@ -8,17 +8,36 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 14
+const EXPECTED_CHECKPOINTS := 19
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
+const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
+const Q := preload("res://tools/ui_preview/node_query.gd")
+const Readout := preload("res://tools/ui_preview/readouts.gd")
+
+## The caravan reply the far patch authors (`ForecastFx.WORK_PARTY_FORECAST_PATCH_KEY`) — the plant
+## web's twin of `hunt.gd`'s far herd, and every figure one the game can produce. A 21-tile run from an
+## apron of 2 walks 19 each way at the shipped one tile a turn; the crew is ONE harvester, so the road
+## holds at most one; the first load lands after the walk out, a pack's fill and the walk home
+## (19 + ~4 + 19); and what arrives home is below the take at the source.
+const FAR_PATCH_WALK_TILES := 19
+const FAR_PATCH_WALK_TURNS := 19
+const FAR_PATCH_ON_ROAD := 0.7
+const FAR_PATCH_ON_ROAD_ROUNDED := 1
+const FAR_PATCH_RATE_HOME := 0.12
+const FAR_PATCH_FIRST_LOAD := 42
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
 
 # The three fog-of-war states MapView tags onto tile_info (mirrors Hud.VISIBILITY_*).
 const VIS_UNEXPLORED := "unexplored"
+
+## The retired forage range refusal's own words (`HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT`, which
+## the deposit sheets still render) — the needle for a sentence that must not come back on a patch.
+const RETIRED_RANGE_REFUSAL_NEEDLE := "beyond this band's work range"
 
 ## YOUR OWN scouting expedition standing on an UNEXPLORED hex — the case the fog rule must NOT break.
 ## The tile carries the party AND a herd; the herd is redacted (nobody can see it), but the party stays.
@@ -122,20 +141,54 @@ func run(harness) -> void:
 	await h._save("tile_sight_foreign_visible")
 	h._hud.clear_selection()
 
-	# State 2b — the same food tile, single FAR band (~21 tiles away, beyond work_range 2): foraging is
-	# stationary gathering with NO expedition fallback, so the Forage button is DISABLED and an
-	# out-of-range hint shows ("(66,10) is 21 tiles away — beyond this band's work range (2)").
+	# State 2b — the same food tile, single FAR band (~21 tiles away, past its apron of 2).
+	# ⛔ **THIS WAS THE OUT-OF-RANGE REFUSAL, AND THE WORK PARTY IS WHAT RETIRED IT**
+	# (`docs/plan_civilization_steps.md` §One work party): a far forage crew no longer lapses, it posts
+	# a party and walks the take home, so the sheet commits as an ordinary gather and adds the party
+	# section. The DEPOSIT sheets keep the refusal (`workings.gd`'s `workings_out_of_range`).
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[1]
 	h._hud._band_labor._player_bands = []
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_band(-1)
-	h._show_tile(BaseFx.food_tile_fixture())
-	h._compose_forage(BaseFx.food_tile_fixture())
+	var far_patch := BaseFx.food_tile_fixture()
+	far_patch[ForecastFx.WORK_PARTY_FORECAST_PATCH_KEY] = {
+		"posts_a_party": true, "rate_home": FAR_PATCH_RATE_HOME,
+		"walk_tiles": FAR_PATCH_WALK_TILES, "walk_turns": FAR_PATCH_WALK_TURNS,
+		"hunters_on_the_road": FAR_PATCH_ON_ROAD, "first_load_turn": FAR_PATCH_FIRST_LOAD,
+	}
+	h._show_tile(far_patch)
+	h._compose_forage(far_patch)
 	await h._settle()
-	await h._save("food_forage_out_of_range")
+	await h._save("food_forage_far_party")
+	var patch_sheet: Control = h._hud._drawercompose._compose_sheet
+	var patch_commit := Q.compose_commit_button(patch_sheet)
+	h._assert_hud("a patch past the apron is no longer REFUSED — the commit is live",
+		patch_commit != null and not patch_commit.disabled
+			and not Q.has_label_containing(patch_sheet, RETIRED_RANGE_REFUSAL_NEEDLE))
+	var want_patch := [
+		HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
+			HudComposeVocab.WORK_PARTY_TILES_FORMAT % FAR_PATCH_WALK_TILES,
+			HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PATCH_WALK_TURNS, FAR_PATCH_WALK_TURNS],
+		HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [FAR_PATCH_ON_ROAD_ROUNDED,
+			HudComposeVocab.WORK_PARTY_CREW_SINGULAR[HudComposeVocab.HARVEST_CREW_LABEL]],
+		HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT
+			% (HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PATCH_FIRST_LOAD),
+	]
+	var got_patch := Readout.work_party_lines(patch_sheet)
+	h._assert_hud("…and it states the party's walk, road and first load in the harvesters' own noun — want %s, got %s"
+			% [str(want_patch), str(got_patch)],
+		got_patch == want_patch)
+	# **AND ITS FOOD HEADLINE IS THE RATE ARRIVING HOME**, the plant web's half of the one-number rule.
+	var patch_food := Readout.yields_account_number(patch_sheet, SourceForecast.YIELD_ACCOUNT_FOOD)
+	h._assert_hud("…with the PER TURN food headline reading the rate home (want %s, got %s)"
+			% [SourceForecast.format_magnitude(FAR_PATCH_RATE_HOME), patch_food],
+		patch_food == SourceForecast.format_magnitude(FAR_PATCH_RATE_HOME))
+	h._assert_hud("…under a caption naming the rate home (got \"%s\")" % Readout.yields_header(patch_sheet),
+		Readout.yields_header(patch_sheet) == HudComposeVocab.YIELD_HEADER_HOME_RATE.to_upper())
 
 	# State 2c — TWO bands at DIFFERENT distances from ONE food tile, NEAR band selected (821, 1 tile
-	# away ≤ range 2): enabled **Forage**. The band-picker selection — not the tile — drives it.
+	# away ≤ range 2): an ordinary gather with no party section. The band-picker selection — not the
+	# tile — drives it.
 	h._hud._band_labor._player_bands = BandFx.forage_range_bands()
 	h._hud._band_labor._player_band = h._hud._band_labor._player_bands[0]
 	h._hud._compose.reset_forage_source()
@@ -144,10 +197,16 @@ func run(harness) -> void:
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("food_forage_band_near")
+	var near_patch_caption := Readout.yields_header(h._hud._drawercompose._compose_sheet)
+	h._assert_hud("inside the apron the forage caption still reads `next turn` (got \"%s\")"
+			% near_patch_caption,
+		near_patch_caption.begins_with(SourceForecast.YIELD_ROW_HEADER.to_upper())
+			and near_patch_caption != HudComposeVocab.YIELD_HEADER_HOME_RATE.to_upper())
 
 	# State 2d — same two bands, FAR band selected via the picker (822, ~21 tiles away): the SAME tile
-	# now DISABLES Forage + shows the out-of-range hint, proving WHICH band is selected drives the
-	# enabled-vs-disabled state (the case single-band playtest can't cover).
+	# is measured past THAT band's apron, so the sheet asks the caravan forecast — the band picker
+	# drives the measure. This tile authors no reply (the sim's `posts_a_party: false`), so the frame is
+	# the ordinary gather with a live commit.
 	h._hud._compose.set_forage_band(int(BandFx.forage_range_bands()[1]["entity"]))
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()

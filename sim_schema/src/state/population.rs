@@ -374,6 +374,55 @@ pub struct LaborAssignmentState {
     /// (append-only).
     #[serde(default)]
     pub kit_workers_holding: f32,
+    /// **THE TILE THIS ROW'S WORKERS ARE STANDING ON** — the source's own position, when the source
+    /// is past the band's work range. See [`Self::party_workers`], which is the field that says
+    /// whether there is a party at all.
+    #[serde(default)]
+    pub party_x: u32,
+    /// The `y` half of [`Self::party_x`].
+    #[serde(default)]
+    pub party_y: u32,
+    /// **EVERY HAND THIS POSTING HOLDS**, and the field that says a posting exists: `0` is the
+    /// ordinary local row, where every party field beside it reads `0` too.
+    ///
+    /// A Hunt or Forage row whose source is past the band's work range posts a **work party**
+    /// (`docs/plan_civilization_steps.md` §One work party) that walks its take home a pack at a
+    /// time. It is not an entity and not a second band: the row that staffed it reports it.
+    #[serde(default)]
+    pub party_workers: u32,
+    /// **HUNTERS ON THE ROAD, THIS TURN — LIVE.** Out with a pack or walking back without one; it
+    /// moves `0, 1, 1, 0, 2…` as packs fill and hunters rejoin, which is the honest reading.
+    /// `party_workers − hunters_on_the_road` is who is working the source (nobody while walking
+    /// out).
+    #[serde(default)]
+    pub hunters_on_the_road: u32,
+    /// **THE ONE-WAY WALK, IN TILES** — `max(0, hex_distance − band_work_range − road_bonus)`,
+    /// measured from the apron. A road between band and source shortens it; one covering the whole
+    /// run takes it to `0`.
+    #[serde(default)]
+    pub walk_tiles: u32,
+    /// **TURNS OF THE WALK OUT STILL TO GO** — `> 0` while the whole party has not reached the
+    /// source, `0` for the rest of the posting's life. Never re-raised.
+    #[serde(default)]
+    pub walk_out_remaining: u32,
+    /// **TURNS UNTIL THE SOONEST PACK ON THE ROAD REACHES HOME.** `0` means nobody is carrying a
+    /// load home — a hunter walking back empty does not count — and is the signal to drop the line
+    /// rather than render a countdown at zero.
+    #[serde(default)]
+    pub next_load_home_in: u32,
+    /// **WHAT THE PARTY ATE OUT OF ITS OWN TAKE THIS TURN** — credited home, and not a second meal:
+    /// the band's population consumption already feeds these people wherever they stand.
+    #[serde(default)]
+    pub party_ate: f32,
+    /// **WHAT THE PARTY'S UPKEEP STILL WANTS AFTER ITS OWN TAKE** — the food the home band has to
+    /// supply. A party the band cannot supply folds back.
+    #[serde(default)]
+    pub party_deficit: f32,
+    /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the caravan stepped forward over
+    /// `yield_average_horizon_turns` from this state: the eaten share plus every pack that lands.
+    /// The number the work row prints.
+    #[serde(default)]
+    pub net_rate_home: f32,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and

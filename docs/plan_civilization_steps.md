@@ -544,39 +544,111 @@ are just somewhere else.**
 - **The sim places the party at the source.** No split, no move order, no follow order. A hunt
   party follows the herd on its own, because that is where the source is; a forage party stands on
   the patch, because the patch does not move.
-- **The party is a supply-network node with its own larder.** Within `reach_tiles` (3) it pools
-  with the band automatically through `balance_supply_networks`, bounded by the network's
-  `throughput_per_turn` and `friction` — the natural carry limit and loss-in-transit for a near
-  party. Beyond reach, **hauling** is the carry-back: a shipment from the party to any band the
-  player chooses. The shipment launch gate has to be rethought here, because a far party's only tie
-  is the haul itself, and that traffic is what keeps it from being cut off.
+- **The party is an EXTENSION of its home band, not a peer in the network.** The asymmetry is the
+  whole rule, and it is what keeps the band that spent the workers the band that gets the food:
+  - **Its take flows home, always** — to the band that sent it, exactly as a local assignment's
+    take does. A party working near another of your bands does *not* hand its take to that band.
+    What the home band then does with the food is the ordinary band-to-band network's business:
+    `balance_supply_networks` may well redistribute it per capita across the component, but that is
+    the home band's connectivity spending the home band's food.
+  - **Its home band feeds it, always** — the same owner as the take, which is the point. The
+    party's people never left the home band's cohort, so that band's ordinary population
+    consumption covers them wherever they stand, and **no other band ever pays for a party it did
+    not post**. A band standing beside a stranger's party may have no food to spare, and acquiring
+    somebody else's obligation is not a thing proximity should be able to do to you.
+
+    An earlier draft had feeding come from *whichever component the party stood in*, on the
+    reasoning that proximity makes keeping people alive cheap. It was wrong twice over. It splits
+    the owner of the cost from the owner of the benefit — the very thing the take's rule exists to
+    prevent — and it lets any nearby camp quietly subsidise a far posting, which drains the
+    provisioning pressure that makes distance a decision at all. Proximity already pays for itself
+    in the right place: a shorter walk is what it buys.
+
+    **The settling pull survives in a better form.** Founding a camp near good ground still extends
+    your working reach — that camp posts its own short-run party, rather than feeding someone
+    else's long-run one.
+- **There is no haul command and no destination to choose.** The party is wired to its home band at
+  creation and the flow runs both ways along that one tie — supplies out, cargo back. Assigning
+  workers stays the only command. (This retires the earlier "a shipment to any band the player
+  chooses", which was a second command in all but name.)
 - **Unassigning brings them home.** The existing fold-back (`fold_party_into_band`) settles workers,
   pack and materials into the band. There is no merge, because they never stopped being the band.
 - **Hunters and foragers stay labor.** The party earns per-turn income into its larder the way the
   assignment does today. The lumpy raid model, its forecast and its completion rules go away with
   the expedition.
-- **Trails come free.** The route branch of the intensification ladder already says a path is what
-  traffic wears in before anyone builds a road. Hauling is traffic; a far patch hauled from
-  regularly wears its own path home.
+- **Distance is paid in WALKING, and the party runs as a CARAVAN (decided).** The party hunts or
+  gathers exactly as any hunt or forage does. When the take fills **one worker's pack**, that worker
+  carries it home, delivers it, walks back and rejoins; the rest keep working meanwhile. Nothing is
+  drawn on the map — it is only how the sim resolves the turn.
+
+  This replaced an earlier model that paid distance with two tuned terms — a fixed share of the
+  party permanently "carrying", and friction on what arrived. Both were numbers somebody picked.
+  Under the caravan the share on the road **falls out** of carry, kill rate and distance: with a
+  per-worker take `r`, a pack `L` and a one-way walk of `w` turns, the share working is
+  `L / (L + 2·w·r)`. That gets the economics right where the fixed share could not — game that fills
+  a pack slowly loses almost nobody to walking, game that fills one fast loses a lot — and more
+  workers land the first load sooner, because the first pack fills at the whole party's rate.
+
+  **The ceiling it implies is worth knowing when tuning.** As the take rate grows, what a worker can
+  deliver home tends to `L / (2·w)` — one pack per round trip. At a distance, *carry and the road*
+  bound a far posting, not how fast the source gives. Far enough out a posting delivers almost
+  nothing: **a range cap nobody had to pick a number for.**
+
+  **Friction is not charged on the party.** The walk already is the cost of distance, so a loss term
+  on top would count it twice. Food going off on a long walk is spoilage's business (#706).
+- **The walk is measured to the APRON, not to the hex.** A source inside `band_work_range` (2)
+  posts no party at all; beyond it the walk each way is `hex_distance − band_work_range` — so an
+  8-hex source walks 6 out and 6 back, 12 for the round trip, never 16. This is what makes today's
+  local hunt and forage fall out of the one model rather than sit beside it.
+- **The work row states the AMORTIZED rate**, averaged over the whole cycle including travel — six
+  food arriving after a six-turn round trip reads `1.0 /turn`, never `0.0 · in transit`. That is
+  what makes a near row and a far row comparable numbers on one board.
+- **Trails come free, and they PROMOTE a far posting into a near one.** `reach_tiles` is widened by
+  whatever road runs between the endpoints, and automatic pooling is the only road traffic there is.
+  The road's widening comes off the walk, so a distant posting starts expensive — workers spending
+  their turns on the road — and if it is worked steadily the trail it wears shortens the walk until
+  the road covers the run, every pack is delivered the turn it fills, and nobody walks at all. The
+  distance bite and its escape hatch are one mechanism, and the player discovers it by doing. Roads
+  should also raise what a worker carries, which lifts the far-posting ceiling above; that is the
+  route ladder's to build.
 
 What the earlier "treat the party as a split-off band" idea was buying — network pooling and the
-ability to send food along a trade route — comes from the party being a **network node**, not from
-it being a separate band. A separate band would have needed a merge verb and a move order per turn.
+ability to send food along a trade route — comes from the party being an **extension of its band**,
+not from it being a separate band. A separate band would have needed a merge verb and a move order
+per turn; a peer network node would have handed the take to whichever band happened to be nearest.
 
 ### What goes
 
 - The local-hunt leash: a party that follows the herd never goes out of range.
-- `drop_off_within_tiles`: redundant with `reach_tiles` once the party is a network node.
+- `drop_off_within_tiles`: redundant with `reach_tiles` once the party flows along its home tie.
 - The hunt expedition path, its forecast, and the second hunt command.
+- The launch-time provision draw scaled by distance (`provision_draw_per_worker_per_tile`). It
+  models a one-shot TRIP, and a standing posting has no trip to provision — it has a supply line.
 
 ### Who eats what (decided)
 
-**Everyone in the party eats, from the party's own take.** What is left after the party is fed goes
-to the connected band — pooled within reach, hauled beyond it — or rots. A party has no store of its
-own: its larder is a pack in transit, never a place, so nothing about it tethers anyone. The band's
-consumption drops by the party's share and what arrives is net of what the party ate, which is what
-the systems already do for a network node. *When* a far party's haul is delivered, and what gates
-its launch, is a decision the work-party slice makes.
+**Everyone in the party eats, from the party's own take. The take feeds the party first; the
+remainder is surplus, and the SHORTFALL is a deficit the supply line must cover.** That one sentence
+is the whole rule, and it produces every case without a per-job exemption:
+
+- A **hunt party on a good herd** takes food, covers its own upkeep, and sends a large surplus home.
+- A **forage party on a thin patch** takes food and roughly breaks even — a posting that barely pays
+  for itself, which is a real thing to discover rather than a bug.
+- A **fibre or stone party** takes no food at all, so it runs a full deficit and food must move out
+  to it or the posting fails.
+
+There is no "lives off its kills" exemption and no auto-forage rule: hunting is not privileged, it
+simply happens to be the job whose take is edible. A party still has no store of its own — its
+larder is a pack in transit, never a place, so nothing about it tethers anyone.
+
+**A party that cannot be supplied walks home.** Provisions running low raises an alert and the party
+folds back through `fold_party_into_band`. The cost of misjudging a distance is the posting ending
+and the food already spent on it, not people dying somewhere the player was not looking.
+
+*When* a far party's cargo is delivered was the decision this slice owed, and it is answered above:
+there is no launch gate to rethink, because there is no launch and no shipment to gate. The party is
+wired to its home band at creation, goods flow along that tie every turn, and what distance costs is
+the walking rather than permission.
 
 ### In the anthropology
 
@@ -588,11 +660,12 @@ routes.
 ### Tasks
 
 Three, and the first is built **UX prototype first** — the hunt and forage panel, with the far
-case, the haul and the party reading as part of the band, before any sim code.
+case and the party reading as part of the band, before any sim code. *Done: three shapes were
+rendered and the WORK ROW shape was chosen — a far party's state hangs off the same board row that
+staffed it, so there is one place to look for every work item.*
 
 1. **The work party** — hunt and forage share one model, in one PR: placement at the source, herd
-   following for hunt, the network node, pooling within reach, hauling beyond it with the gate
-   rethought, fold-back on unassign.
+   following for hunt, the home-band tie, the caravan beyond the apron, fold-back on unassign.
 2. **Retire the expedition hunt path and the leash** once the work party covers everything they
    did.
 3. **Client: the hunt and forage panel**, prototype first.
@@ -605,8 +678,9 @@ Every decision this doc leaves unmade is owned by an issue, so it cannot be lost
   each sustains (`K`), the contact range, and the genetics numbers behind them — are chosen and
   verified in the ceiling slice (#688). The deferred refinement that a long-separated group slowly
   counts as new families again is recorded on the founding-lines slice (#687), not built first.
-- **When a far party's haul is delivered, and what gates its launch** — the work-party slice (#684),
-  decided before implementation.
+- ~~**When a far party's haul is delivered, and what gates its launch**~~ — **decided** on the
+  work-party slice (#684), before implementation, and it dissolved rather than resolved: a standing
+  posting has no launch and no shipment, so there is nothing to gate. See "The model" above.
 - **The storage lesson's pace** — a meaningful default from the existing ~20-work lessons and the
   ladder's pacing (#707), adjusted from the measurement (#705) and playtesting.
 - **Why moving never paid** — the measurement (#705).

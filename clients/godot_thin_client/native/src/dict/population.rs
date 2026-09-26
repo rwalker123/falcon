@@ -917,6 +917,62 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "hunt_useful_workers",
                 i64::from(assignment.huntUsefulWorkers()),
             );
+            // **THE WORK PARTY — WHERE THIS ROW'S WORKERS ARE STANDING WHEN IT IS NOT WHERE THE
+            // BAND IS** (`docs/plan_civilization_steps.md` §One work party). A Hunt or Forage row
+            // whose source drifts past the band's own apron no longer lapses: it posts a party, and
+            // **the row that staffed it is the row that reports it** — the party is state on the
+            // assignment, not an entity, so there is one place on the work board to look for every
+            // work item, near or far.
+            //
+            // ⛔ **`party_workers == 0` IS "THERE IS NO PARTY", and every key below reads 0 with
+            // it** — the ordinary local row, whose block the work row must not draw at all. It is
+            // the WIRE's own sentinel (`snapshot::population` publishes the struct's zeros through
+            // `map_or`), so no fallback is invented here; `travel_tiles == 0` is NOT that test, it
+            // is the identity case of a source inside `band_work_range`.
+            //
+            // All ten are always inserted so the entry shape is stable, the rule every key above
+            // follows. The ones whose zero carries a second meaning are called out where they are
+            // READ (`SourceForecast.party_readout`), which is the one place that decides what a
+            // party's absence renders as.
+            let _ = entry.insert("party_x", i64::from(assignment.partyX()));
+            let _ = entry.insert("party_y", i64::from(assignment.partyY()));
+            // Every hand the posting holds (`== workers`), and how many of them are ON THE ROAD
+            // this turn — out with a pack or walking back to rejoin. **LIVE, and it moves turn to
+            // turn** (`0, 1, 1, 0, 2…`): distance is paid in walking, one hunter at a time as the
+            // take fills a pack, so the share away falls out of carry, take rate and distance.
+            let _ = entry.insert("party_workers", i64::from(assignment.partyWorkers()));
+            let _ = entry.insert(
+                "hunters_on_the_road",
+                i64::from(assignment.huntersOnTheRoad()),
+            );
+            // The one-way walk MEASURED FROM THE APRON (`hex_distance − band_work_range`, shortened
+            // by any road). A fact about where the posting is; it does not count down.
+            let _ = entry.insert("walk_tiles", i64::from(assignment.walkTiles()));
+            // ⛔ **`walk_out_remaining > 0` ONLY WHILE THE WHOLE PARTY IS STILL WALKING OUT**, and
+            // `0` for the rest of the posting's life — the walk out happens once and is never
+            // re-raised, so that zero is the instruction to DROP the walking-out line entirely.
+            let _ = entry.insert(
+                "walk_out_remaining",
+                i64::from(assignment.walkOutRemaining()),
+            );
+            // Turns until the soonest pack on the road lands home. ⛔ **`0` MEANS NOBODY IS
+            // CARRYING A LOAD HOME** — never "lands this turn" — so it too drops its line.
+            let _ = entry.insert("next_load_home_in", i64::from(assignment.nextLoadHomeIn()));
+            // What the party ate out of its own take this turn — **not a second meal**: the band's
+            // population consumption already feeds these people wherever they stand, so this
+            // records that the food was eaten AT THE SOURCE and never had to be carried.
+            let _ = entry.insert("party_ate", f64::from(assignment.partyAte()));
+            // …and what its upkeep still wants after that take — the food the band has to carry out
+            // to it. The WHOLE upkeep on a posting whose take is not edible (fibre, stone, wood),
+            // which is the one line of the row's party block that is a warning.
+            let _ = entry.insert("party_deficit", f64::from(assignment.partyDeficit()));
+            // **THE STEADY PER-TURN RATE ARRIVING AT THE HOME BAND.** Amortized over the cycle and
+            // steady-state coincide deliberately, so the row prints ONE number: a near row and a
+            // far row are comparable figures on one board and a far posting never reads
+            // `0.0 · in transit`. It is the same number `realized_yield` above already carries on a
+            // party row (the sim settles the row's own projection through the party's flow), which
+            // is why the board's head total and this row cannot disagree.
+            let _ = entry.insert("net_rate_home", f64::from(assignment.netRateHome()));
             array.push(&entry.to_variant());
         }
     }

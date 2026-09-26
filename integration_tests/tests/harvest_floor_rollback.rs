@@ -132,6 +132,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
             LaborAllocation {
                 assignments: vec![
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Forage {
                             tile: tile_pos,
                             floor,
@@ -144,6 +145,7 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                         upkeep_kit: None,
                     },
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Hunt {
                             fauna_id: "game_rollback_probe".to_string(),
                             floor,

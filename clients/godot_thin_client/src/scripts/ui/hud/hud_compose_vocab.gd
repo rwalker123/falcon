@@ -795,21 +795,16 @@ const SEND_EXPEDITION_HINT := "Detach a party to scout distant territory, then c
 
 const SEND_EXPEDITION_BUTTON := "Send scouting party…"
 
-# Hunting expedition (PR 2, docs/plan_exploration_and_sites.md §2b): a detached party that follows a
-# migratory herd, accumulates food, and drops it at the band. Launched from a resident band by
-# picking a herd (herd-target click, not a tile), and Recalled like a scout expedition.
-const SEND_HUNT_EXPEDITION_HINT := "Detach a party to follow a migratory herd, then click on the herd."
-
-# Distance-aware herd-hunt affordance (docs/plan_exploration_and_sites.md §2b): clicking a herd
-# offers a LOCAL hunt when it's within the SELECTED band's hunt_reach, or a hunting EXPEDITION when
-# it's beyond. One compose control (worker/party stepper + policy), two labels/commands keyed off the
-# wrap-aware hex distance from the selected band's own tile.
+# ⛔ **EVERY HERD IS AN ORDINARY HUNT, WHATEVER THE DISTANCE** (`docs/plan_civilization_steps.md`
+# §One work party). The herd sheet offered a LOCAL hunt within the selected band's `hunt_reach` and a
+# hunting EXPEDITION beyond it, and that branch is what made the work party unreachable from the map.
+# One compose control and one command (`assign_labor`) for every herd; past the band's apron the sheet
+# adds a WORK PARTY section (`WORK_PARTY_*` below) saying what distance costs.
 #
 # **THE COMMIT BUTTON IS A VERB, and it does not restate the sheet's own header.** The sheet is already
 # titled `ASSIGN HUNTERS <herd>`, so "Assign Local Hunt" spent its whole width saying what the eyebrow
 # above it had just said; the forage twin has read the bare verb `Forage` all along, and the two sheets
-# now match in grammar as they do in control order. "Here" is what carries the local-vs-expedition
-# distinction — the only thing "Local" was contributing — against the expedition branch's `Send …`.
+# now match in grammar as they do in control order.
 const ASSIGN_LOCAL_HUNT_BUTTON := "Hunt Here"
 
 # **THE HUNT WEB'S SECOND COMMIT VERB, and its absence was a bug.** `_herd_crew_noun` has always
@@ -820,13 +815,14 @@ const ASSIGN_LOCAL_HUNT_BUTTON := "Hunt Here"
 #
 # The verb is derived from the crew noun the same way on both webs — Foragers→Forage, Tenders→Tend,
 # Hunters→Hunt Here, Herders→Herd Here — so a noun can never acquire a verb that does not belong to
-# it. `Here` carries the local-vs-expedition distinction against the expedition branch's `Send …`,
-# which is why it survives on this web and appears on neither plant verb.
+# it. `Here` was the local-vs-expedition distinction against the retired expedition branch's `Send …`;
+# it stays because the verbs are settled copy, and it still reads as *work this herd*.
 const ASSIGN_LOCAL_HERD_BUTTON := "Herd Here"
 
 # **THE PLANT WEB'S ONE COMMIT VERB, AT EVERY RUNG** (`docs/plan_standing_upkeep.md` §4.9 item 12c).
-# Range-aware: taking from a stand is stationary work (NO expedition fallback), so a tile beyond the
-# selected band's `work_range` disables the button rather than offering an alternative.
+# ⛔ **NOT RANGE-GATED ANY MORE.** A patch past the selected band's `work_range` posts a work party
+# rather than lapsing its crew, so the plant sheet mounts the party section instead of a refusal. The
+# refusal (`WORK_RANGE_REFUSAL_FORMAT`) is the DEPOSIT sheets' alone now: extraction still lapses.
 #
 # ⛔ **IT WAS A PAIR — `FORAGE_ASSIGN_BUTTON` (`"Forage"`) AND `TEND_ASSIGN_BUTTON` (`"Tend"`) — AND
 # THE FORK IS RETIRED, NOT MISLAID.** The dead claim, verbatim: *"A managed source — a Tended Patch
@@ -1144,17 +1140,17 @@ const PARTIES_INSPECTOR_LINE_SEPARATION := 2
 const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare for an expedition. Free some from Work."
 
 ## The compose sheet — MISSION FIRST: the footer launches straight into a mission, so the sheet is
-## always already on one and the policy picker is unreachable except under Hunt.
+## always already on one.
+##
+## ⛔ **THERE IS NO HUNT MISSION.** It was the answer to game past `hunt_reach`; the work party is the
+## answer now, composed on the herd's own sheet as an ordinary hunt (`docs/plan_civilization_steps.md`
+## §One work party).
 const COMPOSE_MISSION_SCOUT := "scout"
-
-const COMPOSE_MISSION_HUNT := "hunt"
 
 const COMPOSE_MISSION_LABEL_SCOUT := "⚑ Scout"
 
-const COMPOSE_MISSION_LABEL_HUNT := "🏹 Hunt"
-
-## **THE THIRD VERB** (`docs/plan_denial_raid.md` §3). Denial is a MISSION rather than a preset on the
-## hunt form, because the thing it changes is a BOUND and not a number: the party never stops
+## **THE DENIAL VERB** (`docs/plan_denial_raid.md` §3). Denial is a MISSION rather than a floor on an
+## ordinary hunt, because the thing it changes is a BOUND and not a number: the party never stops
 ## engaging, so it carries no floor, no fill target and no crew preset — a herd and a party size, and
 ## nothing else. `floor` must never appear anywhere in its UI.
 const COMPOSE_MISSION_DENY := "deny"
@@ -1192,9 +1188,7 @@ const COMPOSE_MISSION_LABEL_TRADE := "📦 Trade"
 ## `MISSION_LABELS_SPRITE` below, the verb without the leading glyph; one absent from it keeps its
 ## `COMPOSE_MISSION_LABEL_*` glyph face.
 ##
-## **THE IDS ARE THE ACTIVITY'S AGAIN** — `hunt` is the file the roster row, the work board's filter
-## chip and the kit picker all draw, so a hunting party is marked the same way wherever it is spoken
-## about. `scout` likewise retires the ⚑ FLAG for the drawn footprints, which is a vocabulary change
+## **THE IDS ARE THE ACTIVITY'S AGAIN** — `scout` retires the ⚑ FLAG for the drawn footprints, which is a vocabulary change
 ## and not just an art one: the flag was this grid's own mark for a mission the rest of the client
 ## already spelled with a compass, and one job may not have two drawings.
 ##
@@ -1204,7 +1198,6 @@ const COMPOSE_MISSION_LABEL_TRADE := "📦 Trade"
 ## hiding it.
 const MISSION_MARKS := {
 	COMPOSE_MISSION_SCOUT: "scout",
-	COMPOSE_MISSION_HUNT: "hunt",
 	COMPOSE_MISSION_DENY: "deny",
 	COMPOSE_MISSION_TRADE: "trade",
 }
@@ -1214,14 +1207,13 @@ const MISSION_MARKS := {
 ## twice. Art OR glyph, never both — the rule the work chips and the kit picker already follow.
 const MISSION_LABELS_SPRITE := {
 	COMPOSE_MISSION_SCOUT: "Scout",
-	COMPOSE_MISSION_HUNT: "Hunt",
 	COMPOSE_MISSION_DENY: "Deny",
 	COMPOSE_MISSION_TRADE: "Trade",
 }
 
 ## What a launch button's art may occupy, through the stock `icon_max_width` theme constant. The
 ## sources are 256px and a `Button` reserves its icon's drawn size in its MINIMUM, so uncapped art
-## would set the whole 3+2 grid's cell size. Sized to the face's own text so the mark reads as the
+## would set the whole grid's cell size. Sized to the face's own text so the mark reads as the
 ## glyph it replaced.
 const MISSION_ICON_MAX_WIDTH := 16
 
@@ -1232,7 +1224,11 @@ const MISSION_ICON_MAX_WIDTH := 16
 ## 3 + 2, the `build_floor_picker` idiom for exactly this shape (its six rungs wrap 3 + 3), and the
 ## second row costs the footer one row of height in a zone whose list above it is the `EXPAND_FILL`
 ## child that gives it up.
-const PARTY_FOOTER_COLUMNS := 3
+##
+## **FOUR BUTTONS SINCE THE HUNT VERB RETIRED, AND THEY WRAP 2 + 2.** Still two rows, so the footer's
+## height is unchanged, and each button gets half the column instead of a third — a 3 + 1 grid would
+## leave `⌂ Split` alone under three.
+const PARTY_FOOTER_COLUMNS := 2
 
 const COMPOSE_TITLE_TRADE := "Load a shipment…"
 
@@ -1437,8 +1433,6 @@ const COMPOSE_MEASURE_MAX_FRAMES := 4
 
 const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 
-const COMPOSE_TITLE_HUNT := "Setup a hunting party…"
-
 const COMPOSE_TITLE_DENY := "Setup a denial raid…"
 
 const COMPOSE_TITLE_SPLIT := "Form a new band…"
@@ -1492,8 +1486,6 @@ const COMPOSE_FIELD_PREY := "Prey"
 
 const COMPOSE_PREY_CHOOSE := "Choose…"
 
-const COMPOSE_PREY_HINT := "Choose prey — the rest of the form follows from it."
-
 const COMPOSE_PREY_TOOLTIP_FORMAT := "%s (%d, %d)\nClick to choose a different herd."
 
 const COMPOSE_PREY_LABEL_FORMAT := "%s %s"
@@ -1517,10 +1509,11 @@ const COMPOSE_PREY_ICON_MAX_WIDTH := 20
 ## species can share a glyph — which is exactly why the art branch exists in the menu too.
 const COMPOSE_PREY_CHOICES_TOOLTIP := "Another herd shares this hex — choose which one to raid."
 
-## The refusal when the player picks a herd the band can already work from home. The hunt_reach split
-## is a rule the map does not spell out, so the refusal is where it gets taught — it names the herd,
-## the distance, the reach that binds and the local alternative.
-const PREY_WITHIN_REACH_FORMAT := "%s is %d tiles away — inside %s's hunt reach (%d). Hunt it from the herd itself instead of sending a party."
+## The quarry pick's miss note — a map click that named no huntable herd — and its title in the
+## System channel. ⛔ The within-`hunt_reach` refusal that stood here is retired with the hunt
+## mission: the one mission left that picks a herd (denial) has no reach rule to teach.
+const PREY_PICK_NOTE_TITLE := "Pick prey"
+const PREY_PICK_MISS := "No huntable herd there — click on a herd."
 
 const COMPOSE_OF_IDLE_FORMAT := "of %d idle"
 
@@ -1829,11 +1822,6 @@ const KIT_TIER_DECIMALS := 1
 # refuse to show them. The sim is asked now, and answers the exact (band, kit, party, floor) — there
 # is no nearest rung to name and no other kit's raid to disown. A sheet's numbers are always its own.
 
-## **WHILE THE ANSWER IS IN FLIGHT.** First open on a quarry, or a re-query whose previous answer has
-## aged past `ForecastQuery.STALE_AFTER_MSEC`. It stands in place of the readout box — never beside
-## zeros, which would read as a raid that lands nothing.
-const RAID_FORECAST_PENDING := "Costing the raid…"
-
 ## The denial twin. Two lines rather than one because the two sheets state different things (a payload
 ## and a collapse), and a shared "waiting…" would be the only word on either that did not name what it
 ## was waiting for.
@@ -2115,3 +2103,74 @@ const HUNT_LIMIT_CREW_FORMAT := "These %s bring down " + HUNT_ANIMAL_RATE_FACE_F
 ## fixed conversions of ONE carried biomass — so the caption is what keeps them honest beside a take
 ## line that does carry a range.
 const YIELD_HEADER_AT_LIKELY_SUFFIX := " · at the likely take"
+
+## **THE CAPTION PAST THE APRON, where the headline is the rate ARRIVING HOME** (`DrawerComposeController.
+## _with_home_rate`). `next turn` would be false there: next turn a new posting is still walking out and
+## delivers nothing, and the figure is the caravan's steady rate once it is running — the `netRateHome`
+## the committed row prints.
+##
+## ⛔ **IT TAKES NO `· at the likely take` SUFFIX.** That suffix names a point of the crew-take curve's
+## low/likely/high BAND; `rate_home` is not drawn from that band — it is the caravan forecast's MEAN
+## over its horizon (`work_party::forecast_caravan` averages the projected turns it steps), a single
+## expectation with no band beside it, so there is no point of a band to name.
+const YIELD_HEADER_HOME_RATE := "once running · arriving home"
+
+# ---- THE WORK PARTY'S SECTION ON THE COMPOSE SHEET (`docs/plan_civilization_steps.md` §One work party)
+#
+# **PAST THE APRON A HUNT OR A GATHER POSTS A PARTY, AND THE SHEET SAYS WHAT DISTANCE COSTS.** Every
+# figure is the sim's caravan forecast (`ForecastQuery.KIND_WORK_PARTY`), asked at the crew, kit and
+# floor the sheet is composing — the same function the assigned row will publish its `netRateHome`
+# through, so the sheet and the row it becomes quote one number.
+#
+# ⛔ **IT IS A STANDING ASSIGNMENT, NOT A TRIP, AND THE COPY IS WRITTEN IN THAT REGISTER.** No *this
+# trip*, no *away N turns*, no *Send Anyway*, no one-shot totals: the party walks out once and then
+# the source is worked every turn, with one hunter at a time walking a full pack home and back. Each
+# line states one fact the player cannot read anywhere else on the sheet, and none argues.
+
+## The section's header, in the allocation panel's dim uppercase section treatment.
+const WORK_PARTY_SECTION_LABEL := "Work party"
+
+## **THE WALK** — one-way tiles, then the turns out and the turns back. The two `%s` are the counted
+## phrases below, so the singular forks with the number rather than with the sentence; the trailing
+## `%d` is the same count again, unitless, because the unit has just been said.
+const WORK_PARTY_WALK_FORMAT := "Walks %s each way — %s out, %d back"
+
+## A posting whose whole run is covered by road walks nowhere: every pack lands the turn it fills.
+const WORK_PARTY_NO_WALK := "A road covers the walk — each load lands home the turn it fills"
+
+## The counted phrases, singular at one.
+const WORK_PARTY_TILES_FORMAT := "%d tiles"
+const WORK_PARTY_TILES_ONE := "1 tile"
+const WORK_PARTY_TURNS_FORMAT := "%d turns"
+const WORK_PARTY_TURNS_ONE := "1 turn"
+const WORK_PARTY_COUNT_SINGULAR := 1
+
+## **HOW MANY ARE ON THE ROAD AT A TIME** — the reply's MEAN over the forecast horizon, rounded to a
+## whole person. The live figure on the assigned row moves turn to turn; this is its average, which
+## is why the sentence says *about*.
+const WORK_PARTY_ON_ROAD_FORMAT := "About %d %s on the road at a time"
+
+## …and the singular noun, keyed by the crew label the sheet has ALREADY resolved — the
+## `HUNT_NOOP_HINTS` idiom, so the stepper's noun and this sentence's cannot disagree.
+const WORK_PARTY_CREW_SINGULAR := {
+    HUNT_CREW_LABEL: "hunter",
+    HERD_CREW_LABEL: "herder",
+    HARVEST_CREW_LABEL: "harvester",
+}
+
+## Where the mean rounds below one person the packs fill slowly enough that the road is usually empty,
+## and `About 0 hunters` would read as a promise that nobody ever walks.
+const WORK_PARTY_ON_ROAD_RARELY := "Rarely anyone on the road"
+
+## Half a person — the cut at which the mean rounds to one rather than to none.
+const WORK_PARTY_ON_ROAD_ROUNDS_TO_ONE := 0.5
+
+## **WHEN THE FIRST LOAD LANDS** — the reply's 1-based turn.
+const WORK_PARTY_FIRST_LOAD_FORMAT := "First load home in %s"
+
+## `0` on the reply: no pack fills and walks home within the forecast's horizon. Stated rather than
+## dropped, because it is the answer that most changes whether this posting is worth making.
+const WORK_PARTY_NO_FIRST_LOAD := "No load reaches home within the forecast"
+
+## While the answer is in flight — the raid readout's own treatment.
+const WORK_PARTY_PENDING := "Costing the work party…"

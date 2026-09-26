@@ -1015,7 +1015,47 @@ message QueryCommand {
     ListSavesQuery list_saves = 5;
     // 5 is held by `list_saves`, so the faction capacity takes 6.
     FactionCapacityQuery faction_capacity = 6;
+    // 6 is held by `faction_capacity`, so the work party's question takes 7. Seat-gated: it is
+    // answered out of the named band's private state (its position, its gear, its standing party).
+    WorkPartyForecastQuery work_party_forecast = 7;
   }
+}
+
+// THE WORK ROW'S QUESTION: "What does THIS crew, off THIS band, carrying THIS kit, bring home per
+// turn off THIS source at THIS floor - and how far do they walk to get it?"
+//
+// A source past the band's work range is worked by a WORK PARTY that walks its take home a pack at
+// a time (docs/plan_civilization_steps.md, "One work party"). The answer steps the SAME caravan
+// function the turn publishes a row's `netRateHome` through, so the compose sheet and the assigned
+// row it becomes quote one number. Both webs, one question: a herd or a patch.
+message WorkPartyForecastQuery {
+  uint32 faction_id = 1;
+  // The asking band's durable `BandId` - its position, its live gear and any party it already has
+  // on this source price the answer.
+  uint64 band_id = 2;
+  // An `equipment.json` roster id, REQUIRED: unknown or wrong-job is an error, never a quiet fall
+  // back to the job default.
+  string kit_id = 3;
+  // The crew the sheet's stepper is on.
+  uint32 workers = 4;
+  // The composed floor, as a fraction of the source's K.
+  float floor = 5;
+  oneof source {
+    WorkPartyHuntSource hunt = 6;
+    WorkPartyForageSource forage = 7;
+  }
+}
+
+message WorkPartyHuntSource {
+  string herd_id = 1;
+}
+
+message WorkPartyForageSource {
+  uint32 x = 1;
+  uint32 y = 2;
+  // Which plants the crew carries home - `flora_config.json` species keys. EMPTY TAKES THE WHOLE
+  // BASKET, exactly as an assignment's own take selection does.
+  repeated string take_species = 3;
 }
 
 // "If I start a game on a grid this size, how many AI factions may I ask for, and how many do I get
@@ -1148,7 +1188,30 @@ message QueryReplyEnvelope {
     // 8 is held by `faction_capacity`, so the seat claim's answer takes 9. A claim is a COMMAND
     // rather than a question; it rides this envelope for the same reason `save_op` does.
     ClaimSeatReply seat_claim = 9;
+    // 9 is held by `seat_claim`, so the work party's answer takes 10.
+    WorkPartyForecastReply work_party_forecast = 10;
   }
+}
+
+// The answer to `WorkPartyForecastQuery`.
+message WorkPartyForecastReply {
+  // FALSE INSIDE THE BAND'S WORK RANGE: no party is posted, nobody walks, and `rate_home` is the
+  // ordinary local row's steady rate. Every walk field below reads 0 with it.
+  bool posts_a_party = 1;
+  // THE STEADY FOOD PER TURN ARRIVING AT THE HOME BAND - the number the assigned row will publish
+  // as `netRateHome`: the eaten share plus every pack that lands, averaged over the forecast
+  // horizon. Comparable across a near source and a far one.
+  float rate_home = 2;
+  // The ONE-WAY walk in tiles, measured from the band's apron and shortened by any road.
+  uint32 walk_tiles = 3;
+  // The same walk in turns - the party's walk out, and every porter's walk home.
+  uint32 walk_turns = 4;
+  // The expected number of hunters on the road at any one time, averaged over the horizon. A float
+  // because it IS an average; the assigned row publishes the live whole count.
+  float hunters_on_the_road = 5;
+  // The 1-based turn the first load lands at home (1 = next turn). 0 = none within the forecast
+  // horizon - not "immediately".
+  uint32 first_load_turn = 6;
 }
 
 // A query the server declined to answer. `reason` is a machine-readable snake_case token

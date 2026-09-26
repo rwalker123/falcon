@@ -3309,11 +3309,15 @@ fn seed_source_yield(
                         (
                             assignment.kit_choice(&equipment_cfg),
                             allocation.item_budget(&equipment_cfg),
+                            // **The rows this one competes with for the band's gear** — what a far
+                            // row's caravan forecast is priced beside
+                            // (`core_sim::work_party::CaravanPricing`).
+                            allocation.rows_excluding_source(&equipment_cfg, target),
                         )
                     })
             })
     };
-    let Some((crew_kit, item_budget)) = crew_gear else {
+    let Some((crew_kit, item_budget, other_rows)) = crew_gear else {
         return;
     };
     let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
@@ -3357,12 +3361,10 @@ fn seed_source_yield(
             take_species,
             ..
         } => {
-            // Out of the band's work range → the turn pays 0 (assignment kept). Keep the zero row.
-            if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
-                > labor.band_work_range
-            {
-                return;
-            }
+            // ⛔ **PAST THE BAND'S WORK RANGE THE ROW IS A CARAVAN, AND IS SEEDED AS ONE** — never
+            // declined. The row survives past range now, so a seed that returned here published
+            // `+0.00` for the whole first turn of every far posting.
+            let caravan = caravan_seed_party(app, band, target, *tile, band_pos, workers);
             let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y)
             else {
                 return;
@@ -3416,7 +3418,7 @@ fn seed_source_yield(
                     &band_wear,
                 )
             });
-            forage_source_yield_preview(
+            let mut seeded = forage_source_yield_preview(
                 patch,
                 &tile_composition,
                 &labor.forage,
@@ -3433,18 +3435,45 @@ fn seed_source_yield(
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
                 range_sigmas,
-            )
+            );
+            // **A far row is priced by stepping its caravan** — the same function the turn's
+            // published `netRateHome` answers through, at the same pricing.
+            if let Some((party, upkeep)) = caravan {
+                let pricing = core_sim::work_party::CaravanPricing::resolve(
+                    &equipment_cfg,
+                    &crew_kit,
+                    workers,
+                    &band_wear,
+                    &other_rows,
+                    &labor,
+                );
+                let forecast = core_sim::work_party::forecast_forage_caravan(
+                    &party,
+                    patch,
+                    &tile_composition,
+                    &labor.forage,
+                    &flora,
+                    pricing.forage_carry,
+                    seasonal,
+                    output_mult,
+                    *floor,
+                    take_species,
+                    upkeep,
+                    labor.yield_average_horizon_turns,
+                );
+                seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, false);
+            }
+            seeded
         }
         LaborTarget::Hunt { fauna_id, floor } => {
             let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
                 return; // herd gone → the assignment lapses next turn.
             };
-            // Past the leash → the assignment lapses next turn; keep the zero row.
-            if hex_distance_wrapped(band_pos, herd.position(), grid_width, wrap_horizontal)
-                > labor.hunt_reach()
-            {
-                return;
-            }
+            // ⛔ **NO LEASH.** This gate read `hunt_reach()`, the retired leash, and made the seed
+            // and the turn disagree for every hunt three to five tiles out: the seed declined a row
+            // the turn posts as a caravan. Past the band's work range a hunt is seeded as a
+            // caravan, exactly as a gather is.
+            let caravan = caravan_seed_party(app, band, target, herd.position(), band_pos, workers);
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
             // **The seed must be priced at THIS band's SLED tier** (the minimal TOE), or the
             // exact-forecast-equals-actual invariant breaks the moment a band's baskets run dry:
@@ -3493,7 +3522,7 @@ fn seed_source_yield(
                 hunt_injury_damage_per_animal: combat_cfg.hunt_injury_damage_per_animal,
             }
             .party_against(core_sim::Quarry::Mass(herd.body_mass));
-            hunt_source_yield_preview(
+            let mut seeded = hunt_source_yield_preview(
                 herd,
                 &fauna,
                 per_worker_biomass,
@@ -3504,7 +3533,37 @@ fn seed_source_yield(
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
                 range_sigmas,
-            )
+            );
+            if let Some((party, upkeep)) = caravan {
+                let pricing = core_sim::work_party::CaravanPricing::resolve(
+                    &equipment_cfg,
+                    &crew_kit,
+                    workers,
+                    &band_wear,
+                    &other_rows,
+                    &labor,
+                );
+                let hunters = pricing.hunters(
+                    &equipment_cfg,
+                    &band_wear,
+                    &combat_cfg,
+                    app.world.resource::<CreaturesConfigHandle>().get().person(),
+                    herd.body_mass,
+                );
+                let forecast = core_sim::work_party::forecast_hunt_caravan(
+                    &party,
+                    herd,
+                    &fauna,
+                    pricing.hunt_carry,
+                    &hunters,
+                    output_mult,
+                    *floor,
+                    upkeep,
+                    labor.yield_average_horizon_turns,
+                );
+                seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, true);
+            }
+            seeded
         }
         // **A DEPOSIT PAYS NO FOOD, AND IT DOES PAY A MATERIAL — WHICH IS THE ONLY THING THIS ARM
         // SEEDS** (`docs/plan_extraction.md` §6, issue #650).
@@ -3610,6 +3669,89 @@ fn seed_source_yield(
         | LaborTarget::Builders => return,
     };
     band_allocation_mut(app, band).set_source_yield(target, seeded);
+}
+
+/// **THE CARAVAN A FAR ROW'S SEED STEPS FROM**, or `None` inside the band's work range.
+///
+/// The row's standing party if it has one — a stepper press on a live posting re-seeds that posting,
+/// not a fresh one that would re-promise a walk out — else a party posted now. The walk comes off
+/// the one resolver the turn and the query read (`core_sim::work_party::resolve_walk`), and the
+/// upkeep off the one per-worker draw the band's consumption charges.
+fn caravan_seed_party(
+    app: &bevy::prelude::App,
+    band: Entity,
+    target: &LaborTarget,
+    source_pos: UVec2,
+    band_pos: UVec2,
+    workers: u32,
+) -> Option<(core_sim::WorkParty, f32)> {
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let supply = app
+        .world
+        .resource::<core_sim::SupplyNetworkConfigHandle>()
+        .get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let registry = app.world.resource::<TileRegistry>();
+    let geometry = (
+        registry.width,
+        registry.height,
+        app.world
+            .resource::<SimulationConfig>()
+            .map_topology
+            .wrap_horizontal,
+    );
+    let (walk_tiles, walk_turns) = core_sim::work_party::resolve_walk(
+        band_pos,
+        source_pos,
+        &labor,
+        &supply,
+        app.world.resource::<core_sim::RoadRegistry>(),
+        core_sim::routes::max_route_reach_tiles(&ladder),
+        geometry,
+    )?;
+    let mut party = app
+        .world
+        .get::<LaborAllocation>(band)
+        .and_then(|allocation| {
+            allocation
+                .assignments
+                .iter()
+                .find(|row| row.target.same_source(target))
+                .and_then(|row| row.party.clone())
+        })
+        .unwrap_or_else(|| core_sim::WorkParty::posted(source_pos, walk_tiles, walk_turns));
+    party.restamp(source_pos, workers, walk_tiles, walk_turns);
+    let draw = app
+        .world
+        .resource::<core_sim::DemographicsConfigHandle>()
+        .get()
+        .consumption
+        .worker_draw();
+    Some((party, core_sim::work_party::party_upkeep(workers, draw)))
+}
+
+/// **A far row's seed, off its caravan forecast.** `actual` is what the caravan lands **next turn**
+/// — `0` for a party still walking out, which is the honest reading rather than a missing one — and
+/// is a point, because a caravan's first turn has no retreat draw to spread; the rest is the turn's
+/// own [`core_sim::work_party::publish_caravan_projection`].
+fn seed_caravan_row(
+    row: &mut core_sim::SourceYield,
+    forecast: &core_sim::CaravanForecast,
+    arrivals_horizon: u32,
+    keeps_the_carcass: bool,
+) {
+    row.actual = forecast
+        .home_by_turn
+        .first()
+        .copied()
+        .unwrap_or(core_sim::work_party::NOTHING_CARRIED);
+    row.range = core_sim::YieldRange::certain(row.actual);
+    core_sim::work_party::publish_caravan_projection(
+        row,
+        forecast,
+        arrivals_horizon,
+        keeps_the_carcass,
+    );
 }
 
 /// Validate a labor target's **stance** against the source it names, returning a player-facing
@@ -4908,7 +5050,7 @@ fn handle_assign_labor(
     };
 
     let kind_label = target.kind();
-    let (applied, assigned_total) = {
+    let (applied, assigned_total, dropped_row) = {
         let mut allocation = band_allocation_mut(app, band.entity);
         let applied = allocation.set_assignment(target.clone(), workers, available, crew_kit);
         // **Nothing built, nothing DECLARED, nobody on it — the band's business here is over.**
@@ -4918,11 +5060,18 @@ fn handle_assign_labor(
         // row, so dropping the row would drop the entry with it).
         let queued = BuildSource::of(&target)
             .is_some_and(|source| allocation.build_queue_position(&source).is_some());
-        if applied == 0 && !source_holds_something && !queued {
-            allocation.drop_source_row(&target);
-        }
-        (applied, allocation.assigned_total())
+        let dropped_row = if applied == 0 && !source_holds_something && !queued {
+            allocation.drop_source_row(&target)
+        } else {
+            None
+        };
+        (applied, allocation.assigned_total(), dropped_row)
     };
+    // **An unassigned far row brings its whole caravan home** — the load and every walker's pack —
+    // rather than losing what was on the road with the row.
+    if let Some(row) = dropped_row.as_ref() {
+        core_sim::bring_the_dropped_party_home(&mut app.world, band.entity, row);
+    }
     // The seed must price the dip of whatever this band has **queued** here, rather than the
     // undipped stance — a build in flight is the queue's, not the row's. Read after the allocation
     // borrow is released, because resolving the declaration against the ground needs both webs'
@@ -11365,6 +11514,9 @@ fn querying_faction(query: &QueryPayload) -> Option<(FactionId, &'static str)> {
             Some((FactionId(ask.faction_id), "denial_raid_forecast"))
         }
         QueryPayload::HuntCrewTake(ask) => Some((FactionId(ask.faction_id), "hunt_crew_take")),
+        QueryPayload::WorkPartyForecast(ask) => {
+            Some((FactionId(ask.faction_id), "work_party_forecast"))
+        }
         // The save headers on disk, and the roster ceiling for a grid size. Neither reads a
         // faction's state, and both are asked from the landing screen — before a world, and
         // therefore before any seat — so a gate applied to them would close the load menu.
@@ -12623,6 +12775,7 @@ mod tests {
                 },
                 LaborAllocation {
                     assignments: vec![core_sim::LaborAssignment {
+                        party: None,
                         target,
                         workers: BAND_WORKERS,
                         kit: None,

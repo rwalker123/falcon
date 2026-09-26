@@ -78,6 +78,10 @@ fn arena() -> (App, UVec2, Entity) {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(WellbeingConfigHandle::default());
@@ -154,6 +158,7 @@ fn seat(app: &mut App, id: &str, species: &str, pos: UVec2) {
 fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> Entity {
     let assignments = if warriors > 0 {
         vec![LaborAssignment {
+            party: None,
             target: LaborTarget::Warrior,
             workers: warriors,
             kit: None,

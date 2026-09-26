@@ -7382,3 +7382,128 @@ conserve the tool) is in BOTH pickers' tooltips instead, since `none` means the 
 > **The vertical dock is unaffected at every viewport measured** (1080 / 900 / 768 / 720): its zone box
 > is the window height less chrome — 939 / 759 / 627 / 579 — against a strip that reserves 128 with the
 > pair open.
+
+## The work row reports its own WORK PARTY (`docs/plan_civilization_steps.md` §One work party)
+
+A Hunt or Forage row whose source drifts past the band's own apron no longer lapses: the sim posts a
+**work party** — state on the assignment, not an entity — and **the row that staffed it is the row
+that reports it**. So a work board has ONE place to look for every work item, near or far, and the
+party lives on its board row rather than in the parties zone or the band zone. The shape was chosen
+from a rendered prototype (`tools/work_party_proto.*`, deleted with this pass: it disagreed with the
+shipped panel in one respect and a harness that disagrees only misleads).
+
+⛔ **A ROW WITH NO PARTY RENDERS EXACTLY AS IT DID BEFORE ANY OF THIS EXISTED**, and that identity is
+the point of the shape rather than a side effect: a source the band's own hands reach takes no party
+at all, so far work *falls out of* the one model instead of sitting beside it.
+`band_panel_work_party` puts a local row and three postings on one board for that reason — the
+identity is a claim about the DIFFERENCE between two rows, and a frame holding only one kind is green
+whichever way the block is built.
+
+⛔ **THERE IS NO HAUL CONTROL AND NO DESTINATION PICKER, and the prototype's `↥ Haul to …` is the one
+thing in those frames that did not survive.** A party is wired to its home band at creation and goods
+flow both ways along that one tie every turn, so assigning workers stays the only command. Nothing in
+the block is pressable.
+
+### The block's lines, and which of them is a warning
+
+The party is a **caravan** (`.claude/rules/core_sim/work-party.md`): it hunts or gathers as any crew
+does, and each time the take fills one hunter's pack that hunter walks it home and back and rejoins.
+`BandPanelController._work_row_party_lines_text` composes the whole block and `[]` is what a local
+row answers; the row's height, the board's reservation and the drawn lines all come through that one
+count, so a line added to the block is paid for without a second edit anywhere.
+
+⛔ **EVERY LINE BUT THE CREW LINE IS PRESENT ONLY WHEN ITS OWN FIELD SAYS SO.** In order:
+
+1. **The rate line is the row's own accounts line**, unchanged. It already states what ARRIVES HOME:
+   `realizedYield` IS `netRateHome` on a party row (one forecast, `work_party::forecast_caravan`,
+   publishes both), so the model substitutes the published `net_rate_home` for `rate` where a party is
+   posted and changes no arithmetic. A far posting therefore never prints `0.0 · in transit`, which is
+   the whole argument for a near row and a far row being comparable on one board.
+2. `<N> <crew noun> · at (x, y) · <walk>-tile walk`, plus `· <N> on the road` while
+   `huntersOnTheRoad > 0`. **That count is LIVE and moves turn to turn** (`0, 1, 1, 0, 2…`) — it is
+   the caravan working, not the row flickering. The noun is `_work_inspector_take_key`'s, lower-cased
+   into the sentence. **The TILE is the party's own**: a hunt row's head names the quarry, and the
+   party stands wherever the herd is *this turn*. **The walk is ONE WAY and measured from the apron**
+   (`walkTiles`), so an 8-hex source reads a 6-tile walk off a `band_work_range` of 2.
+3. `Walking out — reaches the herd in <N> turns` (`…the patch…` on forage, `in 1 turn` at one) —
+   **only while `walkOutRemaining > 0`.** The walk out happens once; `0` is what the field reads for
+   the rest of the posting's life, and it drops the line.
+4. `Next load home in <N> turns` (`in 1 turn` at one) — **only while `nextLoadHomeIn > 0`.** `0` is
+   *"nobody is carrying a load home"*, never *"lands this turn"*.
+5. `Party ate <N>` — **not a second meal.** The band's consumption already feeds these people wherever
+   they stand; the eaten share is credited home, so the line records that it never had to be walked.
+   ⛔ **Only where the party ATE something**: `Party ate 0.00` on an inedible posting sits directly
+   above the deficit line, which says everything it was going to.
+6. ⛔ **`Needs <N> food a turn from home`, in `HudStyle.DANGER` — the ONE warning on the block**, under
+   `labor-ui.md`'s standing rule for a shortfall line: only where there is a shortfall, one clause,
+   and nothing downstream re-tints the lines above it. It is NOT a condition of the row's severity
+   stripe or of its marks, which are about the SOURCE.
+
+> #### ⛔ THE PIPELINE MODEL'S LINES ARE RETIRED WITH IT
+>
+> The first cut of the arc charged distance as a PORTER SHARE of the party plus a friction term, and
+> the block read `· <N> carrying` and `First load arrives in <N> turns` off `porters`,
+> `travelTiles` / `transitTurns` and `partyTransitRemaining`. All four fields are gone from the wire;
+> the caravan pays distance in walking alone, one hunter at a time as a pack fills, so what the block
+> can say is *who is on the road right now* and *when the next load lands*, and it says exactly that.
+
+### The board charges every row the TALLEST row on the page
+
+The work zone `clip_contents` and the board is reserved and filled in **uniform rows**
+(`remaining height / one row`, then `rows_per_col` of them), so a row that grows is a row the
+capacity arithmetic has to be told about or the page is sliced off the bottom of the zone silently.
+`HudWorkVocab.work_row_height(lines)` is BOTH what `_build_work_row` draws at and what
+`_work_board_capacity` reserves — the rule every height in this zone follows — and the fill answers
+the capacity's `row_height` with the deepest block among the FILTERED models.
+
+**That is conservative in the one direction that matters** (`reserved >= drawn`) and it costs a band
+with a far posting a row or two of page, never a row it cannot see — the pager still shows every
+source. Packing rows of mixed heights into a column would be a redesign of `_declare_work_layout`,
+whose whole balance argument is stated in rows. **The parameter's DEFAULT is the party-less height**,
+so every board without a posting pages exactly as it did and the layout probes measure what they
+always measured.
+
+### The wire's ten keys are read in ONE place
+
+`SourceForecast.party_readout` is the only reader, and `party_is_posted` the only gate.
+⛔ **`party_workers == 0` IS the sim's own "there is no party"** and every other key reads 0 with it,
+so a reader testing `walk_tiles`, `hunters_on_the_road` or `net_rate_home` instead would draw a block
+on a local row the turn one of those is honestly zero — which is most of them. `walk_tiles == 0` in
+particular is a real posting whose whole run a road covers, not a party test.
+
+The keys ride `HudBandLaborState.effective_worker_map` as a SET
+(`SourceForecast.ASSIGNMENT_PARTY_KEYS`) — that map is a hand-listed allowlist, so a key not copied
+there does not exist as far as the work board is concerned — and they are copied **blind** rather
+than presence-sensitively, which is safe for exactly one reason: an absent key and a published zero
+are one reading here, unlike `kit_workers_holding`, whose zero is the sharpest shortfall there is.
+**The pending overlay preserves them**, for the rank's reason and a sharper one of its own:
+`LaborAllocation::set_assignment` carries the whole caravan — walk out, load and road — across the
+re-push, so a client that blanked the block would flash a far posting back to a local row on every
+frame the player adjusted it.
+
+## ⛔ THE PARTIES FOOTER HAS NO HUNT VERB — a far herd is an ordinary hunt
+
+`docs/plan_civilization_steps.md` §One work party. The footer offered **Scout · Hunt · Deny · Trade ·
+Split**, and the Hunt verb composed a hunting EXPEDITION — a detached party with its own raid
+forecast, trip readout and `send_hunt_expedition`. That was the answer to game past `hunt_reach`, and
+it is retired with it: a herd past the band's apron is composed on the herd's OWN sheet as an ordinary
+hunt whose crew posts a caravan (`labor-ui.md` → "A FAR SOURCE IS AN ORDINARY SHEET"), so a second,
+detached way to hunt the same herd would be two answers to one question.
+
+- **The footer is Scout · Deny · Trade · Split, in `HudComposeVocab.PARTY_FOOTER_COLUMNS` (2) — 2 + 2.**
+  Still two rows, so the footer's height is unchanged; a 3 + 1 grid would leave `⌂ Split` alone.
+- **Gone with it, client-side**: `_fill_hunt_compose_sheet`, the dock's `_raid_forecast_view`, the
+  `_send_hunt_floor` compose state, `send_hunt_expedition_requested` on this controller, on
+  `DrawerComposeController` and on `HudLayer`, `Main.format_send_hunt_expedition` and its handler,
+  `HudWidgets.mount_trip_readout` / `SEND_HUNT_CONFIRM_META`, and the launch-sheet raid layer in
+  `SourceForecast` (`hunt_trip_forecast`, `hunt_forecast_line_bbcode`, `expedition_useful_cap`,
+  `expedition_policy_takes`, `style_send_hunt_button`, the empty-raid refusal table and their copy).
+  **The sim-side expedition code stays until #704** and is simply unreachable from the client.
+- **What survives is the IN-FLIGHT half.** A hunting party already out (a save, a rival) still renders
+  in the parties strip through `DetailFormat`'s expedition lines and `SourceForecast.trip_bound_clause`
+  — the client stopped composing hunting parties, not reading them.
+- **The DENIAL form inherited the dock sheet's layout claims** — the tall dock holding its sheet, the
+  short dock floating it, the mark dropped on a dock change, the empty form opened by its REAL footer
+  button — because those were claims about the dock's compose surface that the hunt form happened to
+  carry (`harness-band-panel.md` → "The work party's block").
+

@@ -304,6 +304,7 @@ fn spawn_the_farming_band(
         LaborAllocation {
             assignments: vec![
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -316,6 +317,7 @@ fn spawn_the_farming_band(
                     upkeep_kit: None,
                 },
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,
@@ -323,6 +325,7 @@ fn spawn_the_farming_band(
                     upkeep_kit: None,
                 },
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Agriculture,
                     workers: keepers,
                     kit: None,
@@ -690,6 +693,7 @@ fn spawn_the_herding_band(
         LaborAllocation {
             assignments: vec![
                 LaborAssignment {
+                    party: None,
                     // **The food-peak floor, not the shipped default** — a `Tame` needs stock
                     // standing *above* the hunters' floor to accrue (`crew_is_working_the_source`),
                     // and the default floor sits high enough on this flock that the hunt holds it
@@ -705,6 +709,7 @@ fn spawn_the_herding_band(
                     upkeep_kit: None,
                 },
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Builders,
                     workers: A_STEADY_BUILD_POOL,
                     kit: None,
@@ -712,6 +717,7 @@ fn spawn_the_herding_band(
                     upkeep_kit: None,
                 },
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Husbandry,
                     workers: keepers,
                     kit: None,

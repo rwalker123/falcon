@@ -381,6 +381,7 @@ fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> Shar
     let staffed = {
         let mut allocation = LaborAllocation::default();
         allocation.assignments.push(core_sim::LaborAssignment {
+            party: None,
             target: LaborTarget::Extract {
                 tile: quarry_tile,
                 material: material.clone(),
@@ -393,6 +394,7 @@ fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> Shar
         });
         for role in [LaborTarget::Roadwork, LaborTarget::Quarrywork] {
             allocation.assignments.push(core_sim::LaborAssignment {
+                party: None,
                 target: role,
                 workers: ONE_KEEPER,
                 kit: None,
@@ -928,6 +930,7 @@ fn staff_one_role(
         ..Default::default()
     };
     allocation.assignments.push(core_sim::LaborAssignment {
+        party: None,
         target: role,
         workers: keepers,
         kit: None,
@@ -1701,6 +1704,7 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                 (low_tile, low_material.clone(), SourcePriority::Low),
             ] {
                 allocation.assignments.push(core_sim::LaborAssignment {
+                    party: None,
                     target: LaborTarget::Extract {
                         tile,
                         material,
@@ -1713,6 +1717,7 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                 });
             }
             allocation.assignments.push(core_sim::LaborAssignment {
+                party: None,
                 target: LaborTarget::Quarrywork,
                 workers: KEEPERS,
                 kit: None,
@@ -2207,6 +2212,7 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                     .get_mut::<LaborAllocation>(band)
                     .expect("the fixture band holds an allocation");
                 allocation.assignments.push(core_sim::LaborAssignment {
+                    party: None,
                     target: role,
                     workers: keepers,
                     kit: None,

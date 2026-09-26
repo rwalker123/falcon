@@ -120,6 +120,10 @@ fn base_world() -> App {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
@@ -204,6 +208,7 @@ fn seat_pens(app: &mut App, tile: UVec2, pens: &[(&str, f32)]) {
 /// One keeper row: tend the pen `herd_id` under the mark `priority`, crewed `workers` strong.
 fn hunt_row(herd_id: &str, priority: SourcePriority, workers: u32) -> LaborAssignment {
     LaborAssignment {
+        party: None,
         target: LaborTarget::Hunt {
             fauna_id: herd_id.to_string(),
             floor: SUSTAIN,
