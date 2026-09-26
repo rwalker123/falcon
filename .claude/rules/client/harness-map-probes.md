@@ -717,8 +717,81 @@ sweeps the profile live via `_set_blend_profile` +
 
 **`BANK_off` is the NEUTRAL profile — i.e. the BEFORE**, the shipped global levers, in the same
 camera, and it reproduces the report exactly. `BANK_v1/v2/v3` are the ladder (**v2 = 2.6/2.2/2.6
-SHIPS**; v1 still traces the hexagon, v3 dissolves the bank) and `BANK_shipped` is config's.
+shipped** until state 28 retired it; v1 still traces the hexagon, v3 dissolves the bank) and `BANK_shipped`
+is config's — now neutral, so it renders as `BANK_off`. This fixture's tiles carry no `underlying_terrain`,
+so its navigable hexes still render and key on the bank layer; no live map can reach that state.
 `scripts/preview.sh res://tools/blend_probe.tscn` (or `-- --only=SURF` / `-- --only=BANK`)
+
+**One more state (22, ECO): ALLUVIAL ↔ PRAIRIE, every edge orientation in one frame** → `ECO_*.png`,
+the live report of a prairie hex between two alluvial hexes whose seams (the vertical E/W ones worst)
+read as razor hexagon edges. At r ≈ 75, **grid overlay OFF** (restored after), a prairie field (west)
+meets an alluvial field (east) along a column split — in odd-r that boundary alternates a vertical
+E/W edge with a diagonal NE/SE pair, so it zigzags through both orientations — plus an ISOLATED
+alluvial hex in the prairie and an ISOLATED prairie hex in the alluvial (the screenshot's own
+configuration, and the mandatory shred checks; an isolated hex also meets its field across all six
+edges, so vertical and diagonal edges of ONE hex compare directly). Each rung saves the full frame
+and `_iso_alluvial` / `_iso_prairie` / `_split` crops; `ECO_sheet_iso_prairie` puts every rung's
+isolated-prairie crop side by side. **`ECO_off` is the neutral profile, i.e. the global levers — the
+BEFORE**; `ECO_v1/v2/v3` sweep alluvial's `blend_profile` (1.6/1.4/1.8, **2.2/1.9/2.2 ships**,
+2.6/2.2/2.6) and `ECO_shipped` is config's, byte-identical to `ECO_v2`.
+
+**This state is where the symmetric seam WOBBLE was caught** (`terrain-blend-shader.md` → the
+invariant). The measurement that caught it is worth reusing on any "hard edges" report: for each edge,
+compare the mean `|ΔL|` of adjacent pixel pairs that STRADDLE the edge line against pairs lying wholly
+2–8 px beside it. A continuous blend gives a ratio near 1 (0.7–1.4 here, texture noise); a step at the
+edge gives 2–3 — and it was 1.3–3.0 on EVERY orientation, so the "vertical edges are worse" read was the
+pixel grid, not the math. Repeat it with `blend_noise_amount = 0` and `blend_height_influence = 0`
+before blaming a term.
+
+**One more state (23, ICE): a LAND terrain switches its beach off** → `ICE_before` / `ICE_shipped` (+ crops
+`_lake_ice_tundra`, `_lake_tundra_prairie`, `_shelf_ice_tundra`, `_shelf_tundra_prairie`), r ≈ 75, grid OFF.
+Column-striped land (glacier → tundra → prairie) cut by an `inland_sea` lake (rows 1–2) and a
+`continental_shelf` coast (rows 6–7), so each coastline crosses all three. `ICE_before` neutralises the three
+sand-less land profiles through `_set_shore_profile(id, {})` — the beach as drawn before the land gate — and
+must stay byte-identical to a render on the pre-gate shader. The claim is the prairie beach GROWING IN along
+the coast at the tundra→prairie hand-over, with no sand line switching on at the bisector
+(`terrain-blend-shader.md` → shore).
+
+**One more state (24, PKLAKE): a lake beside MOUNTAINS** → `PKLAKE` + `_north` / `_east` (the lake↔alpine
+shores) / `_glacier` (the lake↔glacier control), r ≈ 75, grid OFF, with a real elevation raster (the G idiom).
+The frame the blocky peak footline was reproduced and fixed on (`terrain-blend-shader.md` → the peak footline
+wobble's cell); judge it at 2–4×, where the blocks are unmistakable and a downscaled full frame hides them.
+
+**One more state (25, CORNER): three DIFFERENT biomes at one hex vertex** → `CORNER` + `_report` / `_control`,
+r ≈ 75, grid OFF. `_report` is the live report's neighbourhood in a prairie field: a `fumarole_basin` hex with
+floodplain NE, `alluvial_plain` (the 2.2 profile) E and freshwater marsh SE, so both of its right-hand vertices
+are three-layer corners, one of them profiled. `_control` is a three-layer corner with no profile on any side
+(desert, scrub E, prairie around). The frame the corner triple (`terrain-blend-shader.md` → the invariant) was
+chosen on: judge the vertices at 4×, and measure with the straddle-pixel ratio restricted to ~30 px of each
+vertex, along all three edges out of it. The hex's two-biome corners (its W side) are the in-frame control and
+must not move.
+
+**One more state (26, TREELINE): a forest edge at play zoom** → `TREELINE` + `_edge` / `_iso`, a
+`mixed_woodland` block and one isolated woodland hex in prairie, r ≈ 75, grid OFF. The frame the canopy
+treeline's radius-relative noise cell was confirmed and fixed on; judge at 3×, where the old fixed-cell fringe
+of crown fragments is visible.
+
+**One more state (27, HILLFIELD): seams along hex edges INSIDE a one-biome relief field** → `HILLFIELD` +
+`_centre`, r ≈ 75, grid OFF: a `rolling_hills` field (rows 3–5, cols 5–8) between prairie (west) and alluvial
+(east), with an elevation raster that VARIES hex to hex (`HILLFIELD_ELEVATIONS`, cycled) — a live map gives
+every hex its own elevation, and a fixture at one elevation cannot show a per-hex step at all. Beside the
+shipped frame: `_nopeaks` (relief pass skipped), `_noshadow` (`shadow_strength 0`), `_fullprom`
+(`min_prominence 1`) and `_flat` (the same ids at ONE elevation — the control). The frame the relief's
+elevation field was proved and fixed on: measure the straddle-pixel ratio on the field's internal VERTICAL
+edges ((6,3)|(7,3), (7,3)|(8,3), (5,4)|(6,4), (6,4)|(7,4), (7,5)|(8,5)) and judge the cuts at 3×.
+
+**One more state (28, NAVBASE): a navigable river whose VALLEY biome changes along it** → `NAVBASE` +
+`_crop0..2` + `_karst0..1`, r ≈ 75, grid OFF. A bending chain (`NAVBASE_WALK`) crosses prairie → alluvial →
+mixed_woodland, each hex's `underlying_terrain` the field biome under it, runs alongside a two-hex
+`inland_sea`, and walls in two `karst_cavern_mouth` POCKETS with a `salt_flat` beside each (the reported
+neighbourhood). It is the frame three reports were reproduced and fixed on (`terrain-blend-shader.md` →
+Rivers): the grey silt patches and razor valley seams (every cross-hex comparison keyed on id 37), the
+channel and bank CUT at exit edges (each hex drew only its own strokes, from a meander-warped point), and the
+rectangular block in the pockets (the bank's 2.6 profile stepping at the corner triple's nearest-vertex
+lines). Measure the straddle-pixel ratio on the chain's exit edges ((3,4)E, (4,5)E, (8,5)E), its nav↔land
+edges, and the pockets' six edges; `_crop0` is the bend whose exit edge the meander carried the channel
+across. Before any fix it read up to **2.99** on an exit edge and **5.27** on a pocket edge; after, **≤ 0.96**
+and **≤ 1.37**.
 
 ## Worked-source mark states (issue #412)
 
