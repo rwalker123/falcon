@@ -723,6 +723,10 @@ biome — its drama is incision, handled at the base-floor level, not raised rel
   wobble, so the cast-shadow onset moved with it. Moved frames: every frame with a peak biome (`G_*`, `H_*`
   with relief, `R_*` peak biomes, `S_*`, `PKLAKE*`, `map_repetition_after`, `map_overlay_legend_terrain`).
   The canopy treeline took the same fix (see the canopy section).
+- **A PEAK COAST OVERHANGS THE WATER, BY DECISION.** The relief reaches ~0.6·r past its hex as a translucent
+  footline over a lake or sea exactly as it does over land — a mountain dropping into water reads as a cliff.
+  Stopping it at the waterline, or giving a peak coast a beach and surf, was considered and **declined by the
+  user** (2026-09-26). Do not "fix" the overhang as a defect.
 - **THE RELIEF'S ELEVATION IS A CONTINUOUS FIELD, NOT A PER-HEX PICK** (`PEAK_ELEV_FIELD_*`; the "seams along
   hex edges INSIDE a rolling_hills field" report). The elev-map is NEAREST-sampled, and it drives the relief's
   prominence (how opaque the mounds draw) and its cast-shadow length. Inside a field of ONE relief biome the
