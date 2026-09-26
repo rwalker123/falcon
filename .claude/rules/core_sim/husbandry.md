@@ -959,9 +959,22 @@ dial **does not move a pen's maximum** — that is `r × K / 4`, set by `pen_den
 | wild_sheep | **8.5** | 5 |
 | crag_goat | **7.9** | 5 |
 | snow_hare | **9.4** | 5 |
-| boar | **20.0** (the global, stated) | 5 |
+| boar | **6.6** | 5 |
 | fowl | **44.0** | 5 |
 | rabbit | **12.5** | **8** |
+
+**The boar's `6.6` is the global `20.0` it used to state, re-expressed.** Its wild `engage_rate`
+went `0.33 → 1.0` — danger lives in `ferocity` / `attack` / the injury hazard, not in the reach term,
+and at `0.33` the boar sat in the small-game band beside its size peers' `1.0` — so the gain came
+down by the same factor and the pen's handling rate `engage_rate × pen_engage_gain` stayed exactly
+`6.6` animals per keeper. The pen row did not move; the wild hunt did.
+`fauna::tests::the_boar_reach_trial_leaves_the_pens_handling_rate_unchanged` pins the product.
+
+⛔ **A PER-SPECIES `engage_rate` RETUNE ALWAYS OWES A `pen_engage_gain` RETUNE ON A PENNABLE
+SPECIES** for the same reason a `pen_density` retune does: the pen reads the product, so moving one
+factor alone silently moves how many animals a keeper handles. **The pastoral rung has no such
+compensation available** — its gain is validated `> 1.0`, so the boar's pastoral reach moved
+`0.66 → 2.0` (the global `2.0` against the new rate) and its pastoral take moved with it.
 
 > **⛔ EVERY ONE OF THESE MOVED WHEN `pen_density` WAS SCALED DOWN, AND THAT IS STRUCTURAL.**
 > Lowering `K` lowers the room (`r · K / 4`), so the *same* reach clears it a keeper sooner: the

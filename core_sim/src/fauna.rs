@@ -6720,7 +6720,7 @@ pub fn herd_past_recovery(biomass: f32, carrying_capacity: f32, ecology: &Ecolog
 ///
 /// `workers × engage_rate`, **unrounded** — a reach is a *rate*, and rounding it is what made extra
 /// hunters worthless. `floor(w × rate).max(1)` answered **one animal for every crew from 1 to 6** on
-/// the shipped Wild Boar (`engage_rate 0.33`), so four hunters took exactly what one took
+/// the Wild Boar (then shipped at `engage_rate 0.33`), so four hunters took exactly what one took
 /// (`0.18 food/turn` either way, reported from play). The reach is now strictly increasing in the
 /// crew, which is the property the whole engagement stage exists to have.
 ///
@@ -11289,8 +11289,9 @@ mod tests {
 
     /// A Wild Boar's shipped body mass, in the whole numbers the case is stated in.
     const BOAR_BODY: f32 = 12.0;
-    /// A Wild Boar's shipped `engage_rate` — one hunter gets near a third of a boar per turn.
-    const BOAR_ENGAGE_RATE: f32 = 0.33;
+    /// A Wild Boar's shipped `engage_rate` — one hunter gets near one boar per turn, its size peers'
+    /// rate (Red Deer, Wild Reindeer).
+    const BOAR_ENGAGE_RATE: f32 = 1.0;
     /// A room of 27 whole boar (`27 × 12`), so the peak drop is the 28 that room's last partial body
     /// covers — `floor(324 / 12) + 1`.
     const BOAR_ROOM: f32 = 27.0 * BOAR_BODY;
@@ -11299,10 +11300,10 @@ mod tests {
     const NOTHING_STANDS: f32 = 0.0;
 
     /// **THE WILD BOAR CASE — the crew is sized on what the party puts DOWN, not on what it gets
-    /// near.** One hunter reaches `0.33` boar a turn and keeps three in four of them, so they land
-    /// `0.33 × 0.75 = 0.2475` boar. Clearing a 28-animal peak drop therefore takes
-    /// `ceil(28 / 0.2475) = 114` hunters, and the retreat-blind reading (`ceil(28 / 0.33) = 85`) is
-    /// short by a third.
+    /// near.** One hunter reaches `1.0` boar a turn and keeps three in four of them, so they land
+    /// `1.0 × 0.75 = 0.75` boar. Clearing a 28-animal peak drop therefore takes
+    /// `ceil(28 / 0.75) = 38` hunters, and the retreat-blind reading (`ceil(28 / 1.0) = 28`) is
+    /// short by a quarter.
     ///
     /// This is the contradiction the change exists to remove: the compose sheet's *clear it now*
     /// target already divided the room by the retreat-aware rate while the stepper cap beside it
@@ -11312,8 +11313,8 @@ mod tests {
     #[test]
     fn a_wary_boar_herd_needs_the_hands_the_retreat_costs() {
         const PEAK_DROP: f32 = 28.0;
-        const RETREAT_AWARE_CREW: u32 = 114;
-        const RAW_REACH_CREW: u32 = 85;
+        const RETREAT_AWARE_CREW: u32 = 38;
+        const RAW_REACH_CREW: u32 = 28;
 
         assert_eq!(
             peak_animal_drop(BOAR_ROOM, BOAR_BODY),
@@ -11323,7 +11324,7 @@ mod tests {
         let crew = hunt_engage_workers(BOAR_ROOM, BOAR_BODY, BOAR_ENGAGE_RATE, BOAR_STAY);
         assert_eq!(
             crew, RETREAT_AWARE_CREW,
-            "28 boar at 0.2475 down per hunter is {RETREAT_AWARE_CREW} hands, not {crew}"
+            "28 boar at 0.75 down per hunter is {RETREAT_AWARE_CREW} hands, not {crew}"
         );
         assert_eq!(
             hunt_engage_workers(BOAR_ROOM, BOAR_BODY, BOAR_ENGAGE_RATE, NOTHING_BREAKS_OFF,),
@@ -11341,6 +11342,77 @@ mod tests {
         assert!(
             brought_down(RETREAT_AWARE_CREW) >= PEAK_DROP,
             "…and {RETREAT_AWARE_CREW} clears it"
+        );
+    }
+
+    /// **THE BOAR REACH TRIAL MOVED THE HUNT AND LEFT THE PEN WHERE IT WAS.** The trial raised the
+    /// boar's `engage_rate` from `0.33` to `1.0` — its danger lives in `ferocity` / `attack` / the
+    /// injury hazard, and counting it a second time in the reach term had left it in the small-game
+    /// band — and lowered its `pen_engage_gain` from `20.0` to `6.6` in the same edit, because a
+    /// pen's handling rate is `engage_rate × pen_engage_gain` and pens are engagement-bound. The pair
+    /// is only a hunting change if that product did not move; this pins that it did not, read through
+    /// [`herd_engage_rate`] on a real penned boar rather than re-multiplied here.
+    ///
+    /// Paired with the wild half, because a pen reading `6.6` also passes on a roster where the trial
+    /// never landed: the wild boar must reach at the trial's rate.
+    #[test]
+    fn the_boar_reach_trial_leaves_the_pens_handling_rate_unchanged() {
+        const BOAR: &str = "Wild Boar";
+        /// The boar's wild reach before the trial.
+        const PRE_TRIAL_ENGAGE_RATE: f32 = 0.33;
+        /// The boar's pen handling gain before the trial.
+        const PRE_TRIAL_PEN_ENGAGE_GAIN: f32 = 20.0;
+        /// What one keeper handled in a boar pen before the trial, in animals per turn.
+        const PRE_TRIAL_PEN_HANDLING: f32 = PRE_TRIAL_ENGAGE_RATE * PRE_TRIAL_PEN_ENGAGE_GAIN;
+        /// The boar's wild reach the trial set — its size peers' rate.
+        const TRIAL_ENGAGE_RATE: f32 = 1.0;
+        /// Float slack for a product of two config reals; far below any step a retune would make.
+        const SAME_RATE: f32 = 1e-4;
+
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let def = fauna
+            .species_by_display(BOAR)
+            .expect("the fixture names a shipped species");
+        let anchor = UVec2::new(1, 1);
+        let capacity = def.biomass[1];
+        let herd_at_capacity = || {
+            let mut herd = Herd::new(
+                "boar_trial".to_string(),
+                BOAR.to_string(),
+                def.size_class,
+                vec![anchor],
+                capacity,
+                capacity,
+                def.fodder_per_biomass,
+                def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
+                def.body_mass,
+            );
+            herd.husbandry_ceiling = def.husbandry_ceiling;
+            herd
+        };
+
+        let wild = herd_at_capacity();
+        assert!(
+            (herd_engage_rate(&wild, &fauna) - TRIAL_ENGAGE_RATE).abs() < SAME_RATE,
+            "liveness: the wild boar must reach at the trial's rate {TRIAL_ENGAGE_RATE}, got {}",
+            herd_engage_rate(&wild, &fauna)
+        );
+
+        let mut penned = herd_at_capacity();
+        assert!(
+            penned.tame_outright(FactionId(1), &ladder),
+            "the boar must be tameable for its pen to exist"
+        );
+        assert!(
+            penned.corral_at(anchor, &ladder),
+            "the boar must be pennable — its husbandry_ceiling is the pen"
+        );
+        assert!(
+            (herd_engage_rate(&penned, &fauna) - PRE_TRIAL_PEN_HANDLING).abs() < SAME_RATE,
+            "a boar pen handles {PRE_TRIAL_PEN_HANDLING} animals per keeper, as it did before the \
+             trial; got {}",
+            herd_engage_rate(&penned, &fauna)
         );
     }
 

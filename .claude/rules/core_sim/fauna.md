@@ -884,14 +884,15 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >     branch (`fauna::NO_RETREAT_STAGE_STAY`), where the source has no engagement stage to speak of and
 >     the term is already `0`.
 >
->     The reach-only reading was visible in play: on a Wild Boar herd the compose sheet's *clear it
->     now* target divided the room by the retreat-aware rate (**108 hunters**) while the stepper cap
->     beside it divided by the raw reach (**82**), so the sheet named a crew the panel refused to let
->     the player assign — and 82 hunters demonstrably leave the herd short. Pinned in whole numbers by
->     `fauna::tests::a_wary_boar_herd_needs_the_hands_the_retreat_costs` (body 12, `engage_rate` 0.33,
->     `wariness` 0.25 at the spear line's neutral dispersion ⇒ `0.2475` boar down per hunter, so a
->     28-animal drop costs **114** hands where the raw reach reads 85), and on the exported row by
->     `hunt_yield_vector::the_exported_crew_pays_for_the_retreat`.
+>     The reach-only reading was visible in play: on a Wild Boar herd (then at `engage_rate` 0.33)
+>     the compose sheet's *clear it now* target divided the room by the retreat-aware rate (**108
+>     hunters**) while the stepper cap beside it divided by the raw reach (**82**), so the sheet named
+>     a crew the panel refused to let the player assign — and 82 hunters demonstrably leave the herd
+>     short. Pinned in whole numbers by
+>     `fauna::tests::a_wary_boar_herd_needs_the_hands_the_retreat_costs` at the shipped rate (body
+>     12, `engage_rate` 1.0, `wariness` 0.25 at the spear line's neutral dispersion ⇒ `0.75` boar down
+>     per hunter, so a 28-animal drop costs **38** hands where the raw reach reads 28), and on the
+>     exported row by `hunt_yield_vector::the_exported_crew_pays_for_the_retreat`.
 >
 >     `stay == 0` reports **`0`**, which is the answer rather than a sentinel: nothing the party
 >     reaches ever stands, so the take is identically zero at every party size and no crew achieves

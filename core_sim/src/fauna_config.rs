@@ -240,8 +240,13 @@ pub struct SpeciesDef {
     /// **Authored against `engage_rate × body_mass`** — the most biomass one hunter can ever take
     /// from this species per turn, at any weapon tier. That ceiling is what orders the roster: a
     /// mammoth's `40` is an outlier rather than the top of a smooth curve, the tameable species sit
-    /// at 20–26.5 (you hunt them until you can tame them), pen small game is at the bottom, and
-    /// dangerous-for-their-size (boar `4`, wolf `1.75`) are the worst deals in the game.
+    /// at 20–26.5 (you hunt them until you can tame them), and pen small game is at the bottom.
+    ///
+    /// **Danger is NOT a reach term.** A boar sits at `1.0 × 12 = 12`, its size peers' band (Red Deer
+    /// `15`, Wild Reindeer `20`) — its danger lives in `ferocity` / `attack` / the injury hazard, and
+    /// its `wariness 0.25` says boar do not flee. At `0.33` it read `~4`, in the small-game band,
+    /// because the danger was being counted a second time here. The wolf's `1.75` is still the
+    /// roster's lowest.
     ///
     /// **Playtest dials.** Validated finite & `> 0`.
     pub engage_rate: f32,
