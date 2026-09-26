@@ -57,7 +57,7 @@
 14_peat_heath: Seamless tileable peat heath texture, top-down view, boggy moorland, heather and moss, purple and brown tones, painterly style, 512x512 game asset
 
 # Arid (15-19)
-15_hot_desert_erg: Seamless tileable sand dune desert texture, top-down view, golden sand with small wind ripples all running in the same direction and continuing off all four edges, no large dunes, no dune shadows, uniform brightness, no vignette, even flat overhead lighting, painterly hand-painted game-art style, warm muted orange-yellow, 512x512 game asset
+15_hot_desert_erg: Seamless tileable desert sand texture, top-down view, soft golden sand with small wind ripples curving in varied directions, gently swirling, no dominant direction, no large dunes, no dune shadows, uniform brightness, no vignette, even flat overhead lighting, painterly hand-painted game-art style, pale warm muted sand beige, 512x512 game asset
 
 16_rocky_reg: Seamless tileable rocky desert reg texture, top-down view, gravel and stone pavement, sparse rocks, painterly style, grey-brown tones, 512x512 game asset
 
