@@ -133,6 +133,35 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
   edge ÷ `|ΔL|` 2–8px beside it was **1.3–3.0 on every orientation** with the bug, **0.7–1.4** with
   `blend_noise_amount = 0` (control) and with the fix — `blend_height_influence = 0` left it at 1.3–2.7, which
   exonerated the height term. It moved every frame carrying a land↔land seam and **no shoreline pixel**.
+  **THREE-BIOME CORNERS ARE A TRIPLE, NOT A PICK** (the fumarole / floodplain / alluvial / marsh notch report).
+  The branch above picks ONE neighbour — the nearest edge — which is exactly right along an edge and wrong where
+  a hex and its two neighbours at a vertex are three DIFFERENT layers: the pick switches layer along the corner
+  bisector, swapping the neighbour texture there and (with a profiled neighbour's wider band) jumping the weight,
+  which drew a hard angled NOTCH into the blend at the vertex. So a fragment whose NEAREST VERTEX is a
+  three-layer corner blends the triple (`HEX_CORNERS` in the shader): the three hexes are ordered by LAYER index
+  (A < B < C), each pair's weight is the two-biome formula evaluated canonically (`canonical_seam_t`, the lower
+  layer as "own"), and `W_A = (1 − T_AB)(1 − u)`, `W_B = T_AB (1 − u)`, `W_C = u` with
+  `u = (1 − T_AB)·T_AC + T_AB·T_BC`. Every limit is the two-biome mix (C out of reach → `mix(A, B, T_AB)`, and
+  likewise for A and B), and every input is a function of the id-map, the three centres and the world point —
+  never of which hex renders — so all three frames around the vertex compute the same value and the blend is
+  continuous across all three edges BY CONSTRUCTION. Everything that is not a three-layer corner keeps the
+  single-neighbour path **byte-identical** (every two-biome frame — `ECO_*`, `blend_isolated_*`, `V6_*`,
+  `blend_bands_*`, `V7_*`, `V10_*` — did not move; 40 frames did, each holding a three-layer corner: `CORNER*`,
+  `BANK_*` full frames, `G_*`, `H_*` full frames, the `R_flat*` field frames + the fumarole/volcano slots beside
+  the field split, `map_rivers` / `_mouth` / `_navigable`, `map_overlay_legend_terrain`).
+  * **REJECTED — the odds-weighted mean** (own 1, each neighbour layer `t/(1 − t)`). It reduces exactly to the
+    two-biome mix, but its weights are computed per FRAME, and continuity across an edge near a corner needs
+    `o_AC = o_AB · o_BC`, which independent per-edge `t`s do not satisfy — it moved the step from inside the hex
+    onto the edges between the neighbours. Measured on `blend_probe` state **25 (CORNER)** with the
+    straddle-pixel ratio inside 30 px of each vertex (≈1 = continuous): the lower-right corner's three edges
+    went from **1.35 / 1.18 / 1.41** (shipped pick) to **3.54 / 3.21 / 2.13** (odds). The triple reads
+    **0.81 / 0.98 / 1.08** there, and **1.17 / 0.87 / 1.56** at the upper-right (was 1.31 / 0.82 / 2.02);
+    two-biome corners of the same hex read 0.72–1.01 and did not move. A ratio a little above 1 at a
+    high-contrast vertex is a steep but continuous ramp, and the 4× crops show no step.
+  * **A nearest-vertex switch sits on the line from the hex centre to each edge midpoint.** The two vertex
+    triples meet there, but the far vertex's third hex is out of reach of that line for any band under ~0.43·r
+    (`width_scale` ≤ 1.7). A wider profile (alluvial 2.2, the bank 2.6) can leave it a small residual weight
+    at that line, and the switch then drops it.
   The **wobble** (world `vnoise`, cell `blend_noise_cell`) gives an organic, meandering boundary instead
   of the straight hex line, and carries **low-variance pairs** (smooth sand ↔ smooth soil) where there is
   little detail to follow. The **height term** is a *detail-following NUDGE*: with no height maps each
@@ -249,10 +278,11 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
     renders **isolated hexes surrounded by another biome**, the only state that exposes hex shredding.
     `tools/map_preview.gd` *fits* (r ≈ 83–178) and only ever shows straight band seams, so judgements made
     in it are not trustworthy for the blend.
-  - `feature_noise_cell` (default `6.0`, the world-noise cell **px** for the
-    shoreline reach/wisp + canopy treeline + peak footline; **decoupled** from the blend noise — it
-    drives the shader's `noise_cell` uniform, so the seam can be retuned without moving any
-    coastline/treeline/footline; verified by pixel-diff).
+  - `feature_noise_cell` (default `6.0`, the world-noise cell **px** for the shoreline reach/wisp and the FoW
+    wisps; **decoupled** from the blend noise — it drives the shader's `noise_cell` uniform, so the seam can be
+    retuned without moving any coastline; verified by pixel-diff). The canopy treeline and the peak footline
+    no longer read it: their cells are radius-relative (see those sections), because a fixed px cell against a
+    radius-relative amplitude shredded both at play zoom.
   - Top-level `base_texture_scale`
   (→ `base_scale`, default `0.25` = one base texture spans ~4 hex-rows; smaller covers MORE hexes,
   larger fewer — `BASE_DEFAULT_TEXTURE_SCALE` in `ui/TerrainRenderer.gd`). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
@@ -532,7 +562,13 @@ silhouette. Today the only canopy biome is **12 (mixed_woodland)** — its `blen
   **canopy↔non-canopy** boundary (`s` = signed distance, + inside the forest): D = 1 deep inside, **~0.5
   at the exact edge**, ramping to 1 over `canopy_softness` px inside and down to 0 at `canopy_overhang` px
   **outside** the forest (crowns overhang the neighbour, then fade). The treeline is world-noise
-  perturbed (`CANOPY_TREELINE_NOISE`, reusing `noise_cell`) so it's bumpy, not a clean arc. Interior
+  perturbed (`CANOPY_TREELINE_NOISE`) so it's bumpy, not a clean arc. **Its noise CELL is radius-relative**
+  (`CANOPY_TREELINE_NOISE_CELL_OVERHANGS` × `canopy_overhang`), the same zoom-mismatch fix as the peak
+  footline: on the shared 6 px `noise_cell` against a ±0.3·r amplitude the treeline shredded into a fringe of
+  cell-sized crown fragments at play zoom (`blend_probe` state **26, TREELINE**; zeroing the wobble removed
+  them, the radius-relative cell keeps the treeline bumpy in organic lobes). It moved 31 frames, every one
+  holding a canopy biome (`TREELINE*`, the `R_*` frames with mangrove / boreal or a slot beside one,
+  `map_biome_*`, `map_cohesion*`, `map_swim_*`, `map_overlay_legend_terrain`). Interior
   forest hexes (all-canopy neighbours) → D=1. Composited **after** blend+shoreline, before FoW:
   `result = mix(result, crown.rgb, crown.a · D)`.
 - **Map-space canopy UV:** `cuv = v_map / (2·hex_radius) · canopy_scale`, where `v_map = v_world -
@@ -680,7 +716,7 @@ biome — its drama is incision, handled at the base-floor level, not raised rel
   radius-relative cell (1.0 overhang) keeps the meander as organic lobes. The shadow envelope rides the same
   wobble, so the cast-shadow onset moved with it. Moved frames: every frame with a peak biome (`G_*`, `H_*`
   with relief, `R_*` peak biomes, `S_*`, `PKLAKE*`, `map_repetition_after`, `map_overlay_legend_terrain`).
-  The canopy TREELINE still reads `noise_cell` with the same kind of radius-relative amplitude.
+  The canopy treeline took the same fix (see the canopy section).
 - **Peak LOD is DECOUPLED from the blend LOD** (own `peaks_lod_enabled`, `radius ≥ peak_min_radius`,
   default 3.0 ≪ `EDGE_BLEND_MIN_RADIUS`), so the mountain mass persists at far zoom; trilinear-mipmapped
   peak array keeps it smooth (no shimmer).

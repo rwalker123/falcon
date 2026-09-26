@@ -755,6 +755,20 @@ shores) / `_glacier` (the lake↔glacier control), r ≈ 75, grid OFF, with a re
 The frame the blocky peak footline was reproduced and fixed on (`terrain-blend-shader.md` → the peak footline
 wobble's cell); judge it at 2–4×, where the blocks are unmistakable and a downscaled full frame hides them.
 
+**One more state (25, CORNER): three DIFFERENT biomes at one hex vertex** → `CORNER` + `_report` / `_control`,
+r ≈ 75, grid OFF. `_report` is the live report's neighbourhood in a prairie field: a `fumarole_basin` hex with
+floodplain NE, `alluvial_plain` (the 2.2 profile) E and freshwater marsh SE, so both of its right-hand vertices
+are three-layer corners, one of them profiled. `_control` is a three-layer corner with no profile on any side
+(desert, scrub E, prairie around). The frame the corner triple (`terrain-blend-shader.md` → the invariant) was
+chosen on: judge the vertices at 4×, and measure with the straddle-pixel ratio restricted to ~30 px of each
+vertex, along all three edges out of it. The hex's two-biome corners (its W side) are the in-frame control and
+must not move.
+
+**One more state (26, TREELINE): a forest edge at play zoom** → `TREELINE` + `_edge` / `_iso`, a
+`mixed_woodland` block and one isolated woodland hex in prairie, r ≈ 75, grid OFF. The frame the canopy
+treeline's radius-relative noise cell was confirmed and fixed on; judge at 3×, where the old fixed-cell fringe
+of crown fragments is visible.
+
 ## Worked-source mark states (issue #412)
 
 **`map_preview`** — `map_worked_ready` (the ⌃ CONTRAST: a tended patch offers Sow, a tamed

@@ -367,6 +367,11 @@ const float CANOPY_TREELINE_NOISE = 0.6;  // how hard world-noise waves the tree
 // lake↔mountain edge"). Scaled to the overhang the swing stays under a cell, so the footline meanders in
 // organic lobes at every zoom. Zeroing the wobble removes the blocks outright, which is the proof.
 const float PEAK_FOOTLINE_NOISE_CELL_OVERHANGS = 1.0;
+// The canopy TREELINE's wobble cell, in units of canopy_overhang — the same zoom-mismatch fix as the peak
+// footline above: on the shared 6 px `noise_cell` against a ±0.3·r amplitude the treeline shredded into a
+// fringe of cell-sized crown fragments at play zoom (blend_probe state 26, TREELINE); zeroing the wobble removes
+// them. Radius-relative, the crowns thin out in organic lobes at every zoom.
+const float CANOPY_TREELINE_NOISE_CELL_OVERHANGS = 1.0;
 // River look tuning (fixed feel; the widths/softness/meander/scale are the config levers).
 const int RIVER_CLASS_MINOR = 1;          // 2-bit mask class values (0 = no river; 3 is RESERVED, never drawn)
 const int RIVER_CLASS_MAX = 2;            // Major — the highest class with a texture layer (layer = class - 1)
@@ -521,6 +526,25 @@ const float FOW_NOISE_EDGE_PEAK = 0.25;
 // into hex interiors nor leave a straight discontinuity along the band's outer edge.
 const float BLEND_PERTURB_ENVELOPE_PEAK = 4.0; // normalizes p·(1−p) (max 0.25) to a peak of 1.0 at p = 0.5
 const float BLEND_SOFT_MIN = 1e-3;             // floor on blend_soft so the smoothstep never degenerates
+// THREE-BIOME CORNERS — the corner of a hex where it and its two neighbours are three DIFFERENT layers.
+// The two-biome interlock below picks ONE neighbour (the nearest edge), which is exactly right along an edge
+// and wrong at such a corner: the pick switches layer along the corner bisector, swapping the neighbour
+// texture there and — with a profiled neighbour's wider band — jumping the weight too (a hard angled NOTCH;
+// blend_probe state 25, CORNER). So a fragment whose NEAREST VERTEX is a three-layer corner blends the
+// TRIPLE instead, in a way every hex around that vertex computes IDENTICALLY:
+//   · the three hexes are ordered by LAYER index (A < B < C) — a total order all three frames agree on;
+//   · each pair's weight T is the two-biome formula evaluated canonically (the lower layer as "own"), so
+//     T_AB = today's t for that edge exactly, and T_BA would be 1 − T_AB;
+//   · W_A = (1 − T_AB)(1 − u),  W_B = T_AB (1 − u),  W_C = u,  with u = (1 − T_AB)·T_AC + T_AB·T_BC —
+//     C's weight against whichever of A/B holds the point. Each limit is the two-biome mix: C out of
+//     reach (T_AC = T_BC = 0) → mix(A, B, T_AB); A out of reach (T_AB = 1) → mix(B, C, T_BC); B out of
+//     reach (T_AB = 0) → mix(A, C, T_AC).
+// The inputs are pure functions of the id-map, the three hex centres and the world point — never of which
+// hex is rendering — so the result is continuous across all three edges out of the vertex BY CONSTRUCTION.
+// Everything that is not a three-layer corner takes the two-biome path untouched (byte-identical).
+const int HEX_CORNERS = 6;
+const float HEX_CORNER_ANGLE_OFFSET_DEG = 30.0;   // corner i sits at 60·i + 30 degrees (+y down), MapView order
+const float HEX_CORNER_STEP_DEG = 60.0;
                                                // into a divide-by-zero / hard step
 // WATER↔WATER is NOT a seam — it is a DEPTH FIELD (see the water block in fragment()).
 // The flat↔flat path above blends against the ONE nearest qualifying edge, which is right for an ecotone:
@@ -598,6 +622,28 @@ vec3 blend_profile(int layer) {
 // layer_blend_map). A seam between two unprofiled terrains is (1, 1, 1) — a bit-exact no-op.
 vec3 edge_blend_profile(vec3 own_profile, int nb_layer) {
 	return max(own_profile, blend_profile(nb_layer));
+}
+
+// The two-biome seam weight for the pair (la < lb): lb's share of the mix at world point `pt`, evaluated
+// exactly as the flat↔flat branch evaluates it with la as "own" — p from the signed distance to the pair's
+// shared edge, the pair's max() profile, the ANTISYMMETRIC wobble (+ because la < lb) and the height nudge,
+// feathered through blend_soft. Canonical order is what lets every hex around a corner compute the SAME
+// number (see HEX_CORNERS).
+float canonical_seam_t(vec2 pt, vec2 pt_map, vec2 ca, vec2 cb, int la, int lb, vec3 rgb_a, vec3 rgb_b) {
+	vec2 n = normalize(cb - ca);
+	float half_dist = 0.5 * distance(ca, cb);
+	float d = dot(pt - ca, n) - half_dist;
+	vec3 bp = max(blend_profile(la), blend_profile(lb));
+	float band = max(blend_band * bp.r, BLEND_SOFT_MIN);
+	float p = clamp(0.5 + d / (2.0 * band), 0.0, 1.0);
+	float env = BLEND_PERTURB_ENVELOPE_PEAK * p * (1.0 - p);
+	float noise_amount = blend_noise_amount * bp.g;
+	float noise_cell_px = max(blend_noise_cell * bp.b, BLEND_SOFT_MIN);
+	float wobble = (vnoise(pt_map / noise_cell_px) - 0.5) * noise_amount;
+	float h = (luma(rgb_a) - mean_luma(la)) - (luma(rgb_b) - mean_luma(lb));
+	float pw = clamp(p + (wobble - h * blend_height_influence) * env, 0.0, 1.0);
+	float soft = max(blend_soft, BLEND_SOFT_MIN);
+	return smoothstep(0.5 - soft, 0.5 + soft, pw);
 }
 
 // Canopy density across the treeline. s = signed distance to the canopy↔non-canopy boundary,
@@ -902,7 +948,59 @@ void fragment() {
 					best_bp = bp;
 				}
 			}
-			if (best_layer >= 0) {
+			// --- the NEAREST VERTEX: is it a three-layer corner? (see HEX_CORNERS) ---
+			vec2 rel = v_world - own_c;
+			int corner = 0;
+			float corner_dot = -1e9;
+			for (int i = 0; i < HEX_CORNERS; i++) {
+				float a = radians(HEX_CORNER_ANGLE_OFFSET_DEG + HEX_CORNER_STEP_DEG * float(i));
+				float cd = dot(rel, vec2(cos(a), sin(a)));
+				if (cd > corner_dot) { corner_dot = cd; corner = i; }
+			}
+			// Corner i is shared by the sides in directions i and i + 1 (the sim's odd-r order).
+			int tri_layer_b = -1;
+			int tri_layer_c = -1;
+			vec2 tri_c_b = own_c;
+			vec2 tri_c_c = own_c;
+			for (int side = 0; side < 2; side++) {
+				int tdir = (corner + side) % 6;
+				ivec2 toff = neighbor_offset(row, tdir);
+				int tcol = col + toff.x;
+				int trow = row + toff.y;
+				if (trow < 0 || trow >= grid_h) { continue; }
+				int tcol_id = tcol;
+				if (wrap_h) {
+					tcol_id = wrap_col(tcol);
+				} else if (tcol < 0 || tcol >= grid_w) {
+					continue;
+				}
+				vec4 tpx = texture(id_map, (vec2(float(tcol_id), float(trow)) + 0.5) / grid_dim);
+				int tlayer = int(tpx.r * 255.0 + 0.5);
+				int tclass = int(tpx.g * 255.0 + 0.5);
+				bool t_eligible = blend_rugged_land && own_land ? tclass != CLASS_WATER : tclass == own_class;
+				if (!t_eligible) { continue; }
+				if (side == 0) { tri_layer_b = tlayer; tri_c_b = hex_center(tcol, trow); }
+				else { tri_layer_c = tlayer; tri_c_c = hex_center(tcol, trow); }
+			}
+			bool tri_corner = tri_layer_b >= 0 && tri_layer_c >= 0 && tri_layer_b != own_layer
+				&& tri_layer_c != own_layer && tri_layer_b != tri_layer_c;
+			if (tri_corner) {
+				// Order the triple by layer: (l0, c0) < (l1, c1) < (l2, c2).
+				int l0 = own_layer; vec2 c0 = own_c;
+				int l1 = tri_layer_b; vec2 c1 = tri_c_b;
+				int l2 = tri_layer_c; vec2 c2 = tri_c_c;
+				if (l1 < l0) { int tl = l0; l0 = l1; l1 = tl; vec2 tc = c0; c0 = c1; c1 = tc; }
+				if (l2 < l1) { int tl = l1; l1 = l2; l2 = tl; vec2 tc = c1; c1 = c2; c2 = tc; }
+				if (l1 < l0) { int tl = l0; l0 = l1; l1 = tl; vec2 tc = c0; c0 = c1; c1 = tc; }
+				vec3 rgb0 = texture(biome_array, vec3(base_uv, float(l0))).rgb;
+				vec3 rgb1 = texture(biome_array, vec3(base_uv, float(l1))).rgb;
+				vec3 rgb2 = texture(biome_array, vec3(base_uv, float(l2))).rgb;
+				float t01 = canonical_seam_t(v_world, v_map, c0, c1, l0, l1, rgb0, rgb1);
+				float t02 = canonical_seam_t(v_world, v_map, c0, c2, l0, l2, rgb0, rgb2);
+				float t12 = canonical_seam_t(v_world, v_map, c1, c2, l1, l2, rgb1, rgb2);
+				float u = (1.0 - t01) * t02 + t01 * t12;
+				result = rgb0 * ((1.0 - t01) * (1.0 - u)) + rgb1 * (t01 * (1.0 - u)) + rgb2 * u;
+			} else if (best_layer >= 0) {
 				// FEATHERED, WOBBLED, DETAIL-NUDGED MIX — always continuous, never a pick.
 				// best_p is the SPLAT WEIGHT (0 deep in own hex, 0.5 exactly at the shared edge, 1 deep in
 				// the neighbour). It LEADS. Two perturbations bend it, both enveloped by 4·p·(1−p) so they
@@ -1600,7 +1698,8 @@ void fragment() {
 			}
 			// widen the guard by the noise amplitude so the bumpy fringe isn't clipped
 			if (forest_code > 0 && s > -canopy_overhang * (1.0 + CANOPY_TREELINE_NOISE)) {
-				float tn = vnoise(v_map / noise_cell + vec2(3.0, 11.0));
+				float tn = vnoise(v_map / max(canopy_overhang * CANOPY_TREELINE_NOISE_CELL_OVERHANGS, BLEND_SOFT_MIN)
+					+ vec2(3.0, 11.0));
 				s += (tn - 0.5) * 2.0 * canopy_overhang * CANOPY_TREELINE_NOISE; // bumpy treeline
 				float dens = canopy_density(s, canopy_overhang, canopy_softness);
 				if (dens > 0.0) {

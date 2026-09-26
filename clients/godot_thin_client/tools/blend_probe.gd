@@ -801,6 +801,57 @@ const PKLAKE_CROPS := [
 ]
 const PKLAKE_CROP_RADII := 1.8
 
+# --- state 25 (CORNER): three DIFFERENT biomes meeting at a hex vertex, at r ≈ 75 ------------------------------
+# The report: a white fumarole_basin hex with dark floodplain grass to its NE, alluvial_plain (the wide 2.2
+# blend_profile) to its E and a green marsh to its SE; at the upper-right and lower-right vertices a hard
+# angled NOTCH cut into the blend. The flat↔flat interlock used to pick ONE neighbour — the nearest edge — so
+# where a hex meets two DIFFERENT neighbours the pick switched along the corner bisector: the neighbour texture
+# swapped there, and (with alluvial's wider band against a neutral one) the weight jumped too. The frame
+# carries the report's neighbourhood in a prairie field, plus a CONTROL three-biome corner with no profile on
+# any side (desert hex, scrub to its E, prairie around), so a fix is judged on both the profiled and the
+# neutral case. Grid OFF.
+const CORNER_GRID_W := ISO_GRID_W
+const CORNER_GRID_H := ISO_GRID_H
+const CORNER_HEX_RADIUS := ISO_HEX_RADIUS
+const CORNER_FIELD_ID := 11               # prairie_steppe — the field
+# The report's hex and its three right-hand neighbours (even row: NE = (0,-1), E = (+1,0), SE = (0,+1)).
+const CORNER_SUBJECT := Vector2i(4, 4)
+const CORNER_SUBJECT_ID := 32             # fumarole_basin — white, rugged (blends via blend_rugged_land)
+const CORNER_NE := Vector2i(4, 3)
+const CORNER_NE_ID := 9                   # floodplain — dark grass
+const CORNER_E := Vector2i(5, 4)
+const CORNER_E_ID := 10                   # alluvial_plain — the profiled (2.2 / 1.9 / 2.2) neighbour
+const CORNER_SE := Vector2i(4, 5)
+const CORNER_SE_ID := 8                   # freshwater_marsh — green
+# The control: a desert hex with scrub to its E; its NE/SE neighbours are the prairie field, so its two
+# right-hand vertices are desert / prairie / scrub — three biomes, no blend_profile on any of them.
+const CORNER_CONTROL := Vector2i(9, 4)
+const CORNER_CONTROL_ID := 15             # hot_desert_erg
+const CORNER_CONTROL_E := Vector2i(10, 4)
+const CORNER_CONTROL_E_ID := 17           # semi_arid_scrub
+const CORNER_CROP_RADII := 1.6            # the hex plus its collar — both right-hand vertices in frame
+
+# --- state 26 (TREELINE): a forest edge at r ≈ 75 — the canopy treeline's wobble at play zoom ----------------
+# The peak footline shredded into cell-sized square blocks because its wobble's noise cell was a fixed px size
+# against a radius-relative amplitude (state 24). The canopy treeline shares that construction, so this frame
+# puts a mixed_woodland block (whose crowns are the canopy overlay) and one ISOLATED woodland hex in a prairie
+# field at the user's zoom, grid OFF, to show whether the treeline does the same.
+const TREELINE_GRID_W := ISO_GRID_W
+const TREELINE_GRID_H := ISO_GRID_H
+const TREELINE_HEX_RADIUS := ISO_HEX_RADIUS
+const TREELINE_FIELD_ID := 11          # prairie_steppe
+const TREELINE_FOREST_ID := 12         # mixed_woodland — canopy crowns over a grass floor
+const TREELINE_BLOCK_COL_MIN := 6      # the forest block: cols 6..11, rows 2..7
+const TREELINE_BLOCK_COL_MAX := 11
+const TREELINE_BLOCK_ROW_MIN := 2
+const TREELINE_BLOCK_ROW_MAX := 7
+const TREELINE_ISO := Vector2i(2, 2)   # an isolated woodland hex — every edge a treeline
+const TREELINE_CROPS := [
+	{"suffix": "edge", "hex": Vector2i(6, 4)},   # the block's west treeline
+	{"suffix": "iso", "hex": TREELINE_ISO},
+]
+const TREELINE_CROP_RADII := 1.7
+
 # --- states 18–21: THE ROADS IN THE GROUND (arc #532) ---------------------------------------------
 # ⛔ **EVERY ROAD FRAME IS RENDERED AT `ISO_HEX_RADIUS`, ON THE ISOLATED-HEXES GRID's DIMENSIONS.** This
 # file's header states the rule and it applies here with force: the road pass's widths and its softness
@@ -1224,6 +1275,14 @@ func _ready() -> void:
 	if _want("24/PKLAKE"):
 		# --- state 24 (PKLAKE): a lake beside alpine relief — the footline over water (see PKLAKE_*) ---
 		await _render_peak_lake_state()
+
+	if _want("25/CORNER"):
+		# --- state 25 (CORNER): three different biomes at one vertex — the notch report (see CORNER_*) ---
+		await _render_corner_state()
+
+	if _want("26/TREELINE"):
+		# --- state 26 (TREELINE): a forest edge at play zoom — the canopy wobble (see TREELINE_*) ---
+		await _render_treeline_state()
 
 	_finish()
 
@@ -2094,6 +2153,62 @@ func _snapshot_peak_lake() -> Dictionary:
 	overlays["channels"] = channels
 	overlays["elevation_sea_level"] = PKLAKE_SEA_LEVEL
 	return snap
+
+func _render_corner_state() -> void:
+	## State 25 (CORNER): the report's fumarole neighbourhood + a neutral-profile control corner, grid OFF.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_corner())
+	await _refit(CORNER_HEX_RADIUS)
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save("CORNER")
+	for crop: Array in [["report", CORNER_SUBJECT], ["control", CORNER_CONTROL]]:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop[1]
+		await _save_crop("CORNER_%s" % String(crop[0]), hex.x, hex.y, CORNER_CROP_RADII)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _snapshot_corner() -> Dictionary:
+	## A prairie field holding the report's four-hex neighbourhood and the control pair.
+	var arr: Array = []
+	arr.resize(CORNER_GRID_W * CORNER_GRID_H)
+	arr.fill(CORNER_FIELD_ID)
+	for placed: Array in [
+		[CORNER_SUBJECT, CORNER_SUBJECT_ID], [CORNER_NE, CORNER_NE_ID], [CORNER_E, CORNER_E_ID],
+		[CORNER_SE, CORNER_SE_ID], [CORNER_CONTROL, CORNER_CONTROL_ID], [CORNER_CONTROL_E, CORNER_CONTROL_E_ID],
+	]:
+		var hex: Vector2i = placed[0]
+		arr[hex.y * CORNER_GRID_W + hex.x] = int(placed[1])
+	return _snapshot(arr, CORNER_GRID_W, CORNER_GRID_H)
+
+func _render_treeline_state() -> void:
+	## State 26 (TREELINE): a woodland block + an isolated woodland hex in prairie, grid OFF.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_treeline())
+	await _refit(TREELINE_HEX_RADIUS)
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save("TREELINE")
+	for crop: Dictionary in TREELINE_CROPS:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop["hex"]
+		await _save_crop("TREELINE_%s" % String(crop["suffix"]), hex.x, hex.y, TREELINE_CROP_RADII)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _snapshot_treeline() -> Dictionary:
+	var arr: Array = []
+	arr.resize(TREELINE_GRID_W * TREELINE_GRID_H)
+	for y in range(TREELINE_GRID_H):
+		for x in range(TREELINE_GRID_W):
+			var in_block: bool = (x >= TREELINE_BLOCK_COL_MIN and x <= TREELINE_BLOCK_COL_MAX
+				and y >= TREELINE_BLOCK_ROW_MIN and y <= TREELINE_BLOCK_ROW_MAX)
+			arr[y * TREELINE_GRID_W + x] = TREELINE_FOREST_ID if in_block else TREELINE_FIELD_ID
+	arr[TREELINE_ISO.y * TREELINE_GRID_W + TREELINE_ISO.x] = TREELINE_FOREST_ID
+	return _snapshot(arr, TREELINE_GRID_W, TREELINE_GRID_H)
 
 func _shore_profile_of(variant: Dictionary) -> Dictionary:
 	## The three-scale `shore_profile` block a sweep variant carries. Keys match terrain_config's exactly.
