@@ -365,8 +365,8 @@ func run(harness) -> void:
 
 	# **STATE — THE FOOD LINE WITH A TRANSFER IN IT.** Not a trade readout: the supply network moves
 	# food between neighbouring larders every turn, so any co-networked band carries these two terms.
-	# They are itemized in the BREAKDOWN and deliberately absent from the `/turn` headline, which is
-	# the STEADY rate on the sim's own basis — see `DetailFormat.band_net_food`.
+	# They are itemized in the BREAKDOWN. The `/turn` headline carries the POOLED one and not the
+	# shipment — see `DetailFormat.band_headline_food_rate`.
 	h._hud._bandpanel._close_party_compose()
 	panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	var transferring := _shipper_band()

@@ -35,7 +35,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 25
+const EXPECTED_CHECKPOINTS := 29
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -51,6 +51,10 @@ const QUIET_ENTITY := 951
 const LINKED_ENTITY := 952
 const BOTH_WAYS_ENTITY := 953
 const PARTY_ENTITY := 954
+const POOLING_ENTITY := 955
+
+## **STATE 6'S POOLED FOOD** — a camp giving food to the network this turn, and nothing else crossing.
+const FOOD_POOLED_OUT := 0.4
 
 ## **THE OTHER END OF THIS CHAPTER'S SHIPMENTS** — a band the fixture names, and the carrying parties'
 ## own ids (a shipment groups on its party). Distinct from every entity above.
@@ -255,6 +259,34 @@ func run(harness) -> void:
 	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, PARTY_ENTITY)
 	await h._settle()
 
+	# **STATE 6 — THE HEADLINE RATE IS THE SUM OF THE ROWS** (issue #731). A camp that pooled food out
+	# this turn and nothing else crossed: its Food popover's rows — Gathered, Hunted, Consumed and
+	# `⇄ Local exchange` — must add up to the `/turn` headline, or the player cannot check the Trade
+	# tab against the Band tab. The headline carries this turn's POOLED net; the rows are read back off
+	# the RENDERED popover and summed, so a headline or a row that drifted fails here.
+	h._hud.show_unit_selection(_pooling_band())
+	await h._settle()
+	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, POOLING_ENTITY)
+	await h._settle()
+	await h._save("supply_food_headline_sums")
+	var pooling_rows: Array[String] = h._hud._disclosures.food_breakdown_lines(_pooling_band())
+	var rows_sum := 0.0
+	for row in pooling_rows:
+		rows_sum += _row_value(row)
+	var headline := DetailFormat.band_headline_food_rate(_pooling_band())
+	var headline_text := SourceForecast.format_yield(headline)
+	h._assert_hud("the popover states the pooled food as its own row (%s)"
+			% DetailFormat.food_breakdown_row(-FOOD_POOLED_OUT, DetailFormat.TRANSFER_LABEL_LOCAL).strip_edges(),
+		pooling_rows.has(DetailFormat.food_breakdown_row(-FOOD_POOLED_OUT, DetailFormat.TRANSFER_LABEL_LOCAL)))
+	h._assert_hud("…and the headline rate (%s) is the sum of the popover's rows (%s)"
+			% [headline_text, SourceForecast.format_signed(rows_sum)],
+		SourceForecast.format_signed(rows_sum) == SourceForecast.format_signed(headline)
+			and _collect_text(h).contains(headline_text))
+	h._assert_hud("…and it is the steady net PLUS the pooled food, not the steady net alone",
+		is_equal_approx(headline, DetailFormat.band_net_food(_pooling_band()) - FOOD_POOLED_OUT))
+	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, POOLING_ENTITY)
+	await h._settle()
+
 	# Hand the reference band back, so a chapter appended after this one starts where the rest do.
 	h._hud.update_band_alerts([BandFx.band_fixture()])
 	h._hud.show_unit_selection(BandFx.band_fixture())
@@ -322,6 +354,24 @@ func _with_food_route_out(band: Dictionary, amount: float) -> Dictionary:
 		HudConst.PLAYER_FACTION_ID, SHIPMENT_OUT_PARTY))
 	band[HudTradeVocab.CROSSINGS_KEY] = kept
 	return band
+
+## State 6's camp: food pooled OUT this turn, the arm term and the crossing behind it, and nothing
+## else crossing.
+func _pooling_band() -> Dictionary:
+	var band := _hay_keeper(POOLING_ENTITY, "Nettlebrook")
+	band[DetailFormat.TRANSFER_LOCAL_SENT_TURN_KEY] = FOOD_POOLED_OUT
+	band[HudTradeVocab.CROSSINGS_KEY] = [
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_OUT,
+			HudTradeVocab.CAUSE_POOLED, FOOD_POOLED_OUT),
+	]
+	return band
+
+## A breakdown row's signed value, read off the row's own text (`    ▲ +0.48  Gathered`).
+func _row_value(row: String) -> float:
+	var regex := RegEx.new()
+	regex.compile("[+-]\\d+\\.\\d+")
+	var found := regex.search(row)
+	return float(found.get_string()) if found != null else 0.0
 
 ## State 5's camp: a shipment in, a hunting party home with its haul, and a party out with its rations —
 ## three causes on ONE route arm, so the popover has to split them to say them right.

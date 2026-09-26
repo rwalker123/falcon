@@ -2656,6 +2656,23 @@ static func band_net_food(band: Dictionary) -> float:
         - float(band.get("food_consumption", 0.0)) \
         - band_raid_forfeit(band)
 
+## **THE BAND PANEL'S FOOD HEADLINE RATE** — `band_net_food` plus this turn's POOLED food net, so the
+## Food popover's rows (Gathered, Hunted, Consumed, Lost to raids, `⇄ Local exchange`) sum to the
+## headline on a turn when nothing else crossed. Only `pooled`: pooling happens most turns, so it
+## belongs in a rate; a shipment, a party's haul or rations and a split's dowry are one-off events
+## and stay out of it.
+##
+## ⛔ **A SEPARATE FUNCTION, AND `band_net_food` KEEPS ITS MEANING.** `band_net_food` is also read by
+## `food_is_concerning` and by the faction page (`FactionRollup`'s summed Food line and its per-band
+## drill rows); those keep the steady net. Only `BandDetailLines._band_food_line` reads this one.
+static func band_headline_food_rate(band: Dictionary) -> float:
+    return band_net_food(band) + band_pooled_food_net(band)
+
+## This turn's POOLED food, in minus out — the `pooled` crossings on `provisions`, off the per-cause
+## list (`TradeLedger.cause_net`). The Local arm's four terms also carry a split's dowry; this does not.
+static func band_pooled_food_net(band: Dictionary) -> float:
+    return TradeLedger.cause_net(band, HudConst.STORE_ITEM_PROVISIONS, [HudTradeVocab.CAUSE_POOLED])
+
 ## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
 ## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
