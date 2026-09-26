@@ -430,7 +430,8 @@ pub use systems::{
     settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
     source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
     DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
-    PoolToolPlan, PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    PoolToolPlan, PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
+    TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

@@ -18,7 +18,8 @@ use core_sim::extraction::{
 use core_sim::{
     build_test_app, BandEquipment, BandId, EquipmentConfig, FactionId, LaborAllocation,
     LaborTarget, LadderConfig, PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry,
-    RungBranch, RungKey, SourcePriority, Tile, TileRegistry, UpkeepFundMode, ViewerFaction,
+    RungBranch, RungKey, SourcePriority, Tile, TileRegistry, ToolClaimStage, UpkeepFundMode,
+    ViewerFaction,
 };
 use sim_schema::TerrainType;
 
@@ -1029,7 +1030,8 @@ fn road_supplied(app: &App, tile: UVec2) -> f32 {
 // `FODDER` store and for a material upkeep bill, and the wrong one for a hoe. `settle_scarce_tools`
 // is that function's sibling and is **stage 1** of the settlement the turn now runs: one bid per
 // `(pool, priority tier)` group, `High` → `Normal` → `Low`, and within a short tier **largest
-// remainder on the raw bid**. Stage 2 splits a group's whole allocation across that group's own
+// remainder on the raw bid** — with every keeping pool's claim in a tier settled before the
+// builders' (`ToolClaimStage`). Stage 2 splits a group's whole allocation across that group's own
 // sites, pro-rata — one pool's hands are one crew carrying their tools from site to site, so a
 // fractional unit there is correct and only a different POOL is a different set of hands.
 //
@@ -1065,8 +1067,16 @@ fn the_played_case_arms_both_pools_with_a_whole_hoe_each() {
 
     let settled = core_sim::settle_scarce_tools(
         &[
-            (SourcePriority::Normal, AGRICULTURE_BID),
-            (SourcePriority::Normal, BUILDERS_BID),
+            (
+                SourcePriority::Normal,
+                ToolClaimStage::Keeping,
+                AGRICULTURE_BID,
+            ),
+            (
+                SourcePriority::Normal,
+                ToolClaimStage::Building,
+                BUILDERS_BID,
+            ),
         ],
         TWO_HOES,
     );
@@ -1120,9 +1130,9 @@ fn every_settled_tool_is_a_whole_unit() {
     const BIDS: [f32; 4] = [0.7906, 2.0, 1.25, 3.5];
     const A_SHORT_STOCK: u32 = 4;
 
-    let demands: Vec<(SourcePriority, f32)> = BIDS
+    let demands: Vec<(SourcePriority, ToolClaimStage, f32)> = BIDS
         .iter()
-        .map(|bid| (SourcePriority::Normal, *bid))
+        .map(|bid| (SourcePriority::Normal, ToolClaimStage::Keeping, *bid))
         .collect();
     let settled = core_sim::settle_scarce_tools(&demands, A_SHORT_STOCK);
 
@@ -1154,8 +1164,12 @@ fn a_trivial_pool_does_not_eat_a_large_ones_tool() {
     assert_eq!(
         core_sim::settle_scarce_tools(
             &[
-                (SourcePriority::Normal, A_TRIVIAL_BID),
-                (SourcePriority::Normal, A_LARGE_BID),
+                (
+                    SourcePriority::Normal,
+                    ToolClaimStage::Keeping,
+                    A_TRIVIAL_BID
+                ),
+                (SourcePriority::Normal, ToolClaimStage::Keeping, A_LARGE_BID),
             ],
             ONE_TOOL,
         ),
@@ -1178,8 +1192,16 @@ fn priority_still_outranks_size() {
     assert_eq!(
         core_sim::settle_scarce_tools(
             &[
-                (SourcePriority::Normal, AN_UNMARKED_TORRENT),
-                (SourcePriority::High, A_MARKED_TRICKLE),
+                (
+                    SourcePriority::Normal,
+                    ToolClaimStage::Keeping,
+                    AN_UNMARKED_TORRENT
+                ),
+                (
+                    SourcePriority::High,
+                    ToolClaimStage::Keeping,
+                    A_MARKED_TRICKLE
+                ),
             ],
             ONE_TOOL,
         ),
@@ -1194,11 +1216,11 @@ fn priority_still_outranks_size() {
 fn no_tool_is_handed_out_twice_across_three_tiers() {
     const A_SHORT_STOCK: u32 = 3;
     let demands = [
-        (SourcePriority::High, 1.5),
-        (SourcePriority::Normal, 2.2),
-        (SourcePriority::Normal, 0.9),
-        (SourcePriority::Low, 0.4),
-        (SourcePriority::Low, 3.0),
+        (SourcePriority::High, ToolClaimStage::Keeping, 1.5),
+        (SourcePriority::Normal, ToolClaimStage::Keeping, 2.2),
+        (SourcePriority::Normal, ToolClaimStage::Keeping, 0.9),
+        (SourcePriority::Low, ToolClaimStage::Keeping, 0.4),
+        (SourcePriority::Low, ToolClaimStage::Keeping, 3.0),
     ];
 
     let settled = core_sim::settle_scarce_tools(&demands, A_SHORT_STOCK);
@@ -1231,8 +1253,16 @@ fn an_odd_tool_between_two_equal_pools_goes_to_the_earlier_one_every_run() {
     const RUNS: usize = 32;
 
     let demands = [
-        (SourcePriority::Normal, AN_EQUAL_BID),
-        (SourcePriority::Normal, AN_EQUAL_BID),
+        (
+            SourcePriority::Normal,
+            ToolClaimStage::Keeping,
+            AN_EQUAL_BID,
+        ),
+        (
+            SourcePriority::Normal,
+            ToolClaimStage::Keeping,
+            AN_EQUAL_BID,
+        ),
     ];
     let first = core_sim::settle_scarce_tools(&demands, AN_ODD_STOCK);
     assert_eq!(
@@ -1259,9 +1289,9 @@ fn a_covered_tier_is_paid_its_whole_want_and_passes_the_rest_down() {
     assert_eq!(
         core_sim::settle_scarce_tools(
             &[
-                (SourcePriority::High, 1.2),
-                (SourcePriority::Normal, 2.0),
-                (SourcePriority::Low, 0.1),
+                (SourcePriority::High, ToolClaimStage::Keeping, 1.2),
+                (SourcePriority::Normal, ToolClaimStage::Keeping, 2.0),
+                (SourcePriority::Low, ToolClaimStage::Keeping, 0.1),
             ],
             A_FULL_SHELF,
         ),
@@ -1278,7 +1308,10 @@ fn a_pool_that_asks_for_nothing_is_handed_nothing() {
 
     assert_eq!(
         core_sim::settle_scarce_tools(
-            &[(SourcePriority::High, 0.0), (SourcePriority::Normal, 0.5)],
+            &[
+                (SourcePriority::High, ToolClaimStage::Keeping, 0.0),
+                (SourcePriority::Normal, ToolClaimStage::Keeping, 0.5)
+            ],
             ONE_TOOL,
         ),
         vec![0.0, 1.0],
@@ -1294,11 +1327,144 @@ fn an_empty_shelf_arms_nobody() {
 
     assert_eq!(
         core_sim::settle_scarce_tools(
-            &[(SourcePriority::High, 1.0), (SourcePriority::Normal, 2.5)],
+            &[
+                (SourcePriority::High, ToolClaimStage::Keeping, 1.0),
+                (SourcePriority::Normal, ToolClaimStage::Keeping, 2.5)
+            ],
             NOTHING_ON_THE_SHELF,
         ),
         vec![0.0, 0.0],
         "a band that owns no tools arms nobody"
+    );
+}
+
+/// ⛔ **WITHIN ONE TIER, THE KEEPING SITE IS ARMED BEFORE THE BUILD** (`docs/plan_pool_toe.md`
+/// §2.2).
+///
+/// A build bids a whole tool per builder and a keeping site bids the fraction of a hand its bill
+/// needs, so largest remainder on the raw bid alone handed this one hoe to the build **every time**
+/// — a rule nobody wrote. A short keeping site loses something already built; a short build is only
+/// finished later. The build stands **first** in the vector so the answer cannot be a tie-break on
+/// position.
+#[test]
+fn within_one_tier_the_keeping_site_is_armed_before_the_build() {
+    const A_BUILD_BID: f32 = 2.0;
+    const A_KEEPING_BID: f32 = 0.4;
+    const ONE_TOOL: u32 = 1;
+
+    assert_eq!(
+        core_sim::settle_scarce_tools(
+            &[
+                (
+                    SourcePriority::Normal,
+                    ToolClaimStage::Building,
+                    A_BUILD_BID
+                ),
+                (
+                    SourcePriority::Normal,
+                    ToolClaimStage::Keeping,
+                    A_KEEPING_BID
+                ),
+            ],
+            ONE_TOOL,
+        ),
+        vec![0.0, 1.0],
+        "the tier's one tool keeps what is already built; the 2.0 build waits — it used to take it"
+    );
+}
+
+/// **The build in a tier takes what the keeping claims beside it leave.** Keeping bids of `0.4` and
+/// `1.3` want one and two tools, the shelf holds four, so both are armed in full and the build gets
+/// the one tool left — keeping first is an ORDER, not a ban on building.
+#[test]
+fn a_build_takes_what_the_covered_keeping_claims_in_its_tier_leave() {
+    const A_SMALL_KEEPING_BID: f32 = 0.4;
+    const A_LARGER_KEEPING_BID: f32 = 1.3;
+    const A_BUILD_BID: f32 = 2.0;
+    const FOUR_TOOLS: u32 = 4;
+
+    assert_eq!(
+        core_sim::settle_scarce_tools(
+            &[
+                (
+                    SourcePriority::Normal,
+                    ToolClaimStage::Keeping,
+                    A_SMALL_KEEPING_BID
+                ),
+                (
+                    SourcePriority::Normal,
+                    ToolClaimStage::Keeping,
+                    A_LARGER_KEEPING_BID
+                ),
+                (
+                    SourcePriority::Normal,
+                    ToolClaimStage::Building,
+                    A_BUILD_BID
+                ),
+            ],
+            FOUR_TOOLS,
+        ),
+        vec![1.0, 2.0, 1.0],
+        "each keeping claim is armed to its own ceil, and the build takes the tool left over"
+    );
+}
+
+/// ⛔ **THE STAGE NEVER CROSSES A TIER.** A `High` build takes the band's one tool from a `Normal`
+/// keeping site: putting keeping above every tier was rejected because it overrides the mark the
+/// player put on the build.
+#[test]
+fn a_high_build_still_outranks_a_normal_keeping_site() {
+    const A_BUILD_BID: f32 = 2.0;
+    const A_KEEPING_BID: f32 = 0.4;
+    const ONE_TOOL: u32 = 1;
+
+    assert_eq!(
+        core_sim::settle_scarce_tools(
+            &[
+                (
+                    SourcePriority::Normal,
+                    ToolClaimStage::Keeping,
+                    A_KEEPING_BID
+                ),
+                (SourcePriority::High, ToolClaimStage::Building, A_BUILD_BID),
+            ],
+            ONE_TOOL,
+        ),
+        vec![0.0, 1.0],
+        "the High build is served before the Normal tier, keeping or not"
+    );
+}
+
+/// ⛔ **NOTHING IS HANDED OUT TWICE ACROSS TIERS × STAGES** — six cells, each drawing on what the
+/// cell before it left, and every settled count whole.
+///
+/// Five tools: the `High` keeping claim takes one, the `High` build two, the `Normal` keeping claim
+/// its two — and the shelf is empty before the `Normal` build and the `Low` tier are reached.
+#[test]
+fn no_tool_is_handed_out_twice_across_tiers_and_stages() {
+    const FIVE_TOOLS: u32 = 5;
+    let demands = [
+        (SourcePriority::Normal, ToolClaimStage::Building, 3.0),
+        (SourcePriority::High, ToolClaimStage::Keeping, 0.5),
+        (SourcePriority::Low, ToolClaimStage::Keeping, 0.3),
+        (SourcePriority::High, ToolClaimStage::Building, 2.0),
+        (SourcePriority::Normal, ToolClaimStage::Keeping, 1.2),
+    ];
+
+    let settled = core_sim::settle_scarce_tools(&demands, FIVE_TOOLS);
+    assert!(
+        settled.iter().all(|units| units.fract() == 0.0),
+        "every cell pays whole tools: {settled:?}"
+    );
+    assert!(
+        settled.iter().sum::<f32>() <= FIVE_TOOLS as f32,
+        "the six cells between them may not issue more than the band owns: {settled:?}"
+    );
+    assert_eq!(
+        settled,
+        vec![0.0, 1.0, 0.0, 2.0, 2.0],
+        "High keeping, High build, then Normal keeping take the five; the Normal build and the Low \
+         tier find the shelf empty"
     );
 }
 
