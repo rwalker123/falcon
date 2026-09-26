@@ -1750,6 +1750,33 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     .collect()
             })
             .unwrap_or_default(),
+        // **WHAT EACH KEEPING POOL DID NOT USE** (issue #715) — published as the turn struck it off
+        // `LaborAllocation::last_pool_crew`, the `pool_toe` twin one field over.
+        //
+        // ⛔ **REPORTED, NOT RE-DERIVED, and here that is the whole point.** The figure is
+        // `systems::labor::pool_rates`' own — the hands the plan left standing *minus* the ones the
+        // bare-hand top-up then put on sites still short. This capture holds neither the claim
+        // lists nor the settled fills, so anything it worked out for itself would be a second
+        // answer, and a client that worked it out would be wrong in exactly the cases the top-up
+        // exists for.
+        pool_crew: allocation
+            .map(|alloc| {
+                alloc
+                    .last_pool_crew
+                    .iter()
+                    .map(|line| sim_schema::state::PoolCrewLineState {
+                        pool: line.pool.as_str().to_string(),
+                        idle_keepers: line.idle_keepers,
+                        // ⛔ **THE HEAD COUNT THE TURN STRUCK IT AGAINST, OFF THE SAME LINE** —
+                        // never `allocation.workers_on(..)`, which a command may already have
+                        // moved. Publishing this capture's head count beside a settled idle figure
+                        // would leave a reader projecting a pending edit with a difference of zero
+                        // and no way to see the edit at all.
+                        keepers: line.keepers,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

@@ -940,7 +940,12 @@ carries no faction: it is what there *is* to learn — each knowledge with the b
 rung that teaches it, and whether any rung's `unlock_knowledge` names it. **All of it derived from
 `intensification_ladder.json`, none of it authored.** It is faction-independent because a faction that
 has learned nothing has no row in the list above, and a roster carried there would leave a new
-player's knowledge screen with nothing on it to say there was anything to learn.
+player's knowledge screen with nothing on it to say there was anything to learn. Each row also
+carries the **subject area** of the branch that teaches it (`area`, `""` where the branch's
+descriptor names none), and the order those areas are drawn in rides beside the roster as
+`SubsistenceSection.ladderAreas` — a per-world constant diffed whole, exactly like `ladderKnowledge`
+itself. See `.claude/rules/core_sim/intensification.md` → "The branch descriptor and the subject
+areas".
 
 ### Two ways of having no countdown, and the capture is what tells them apart
 

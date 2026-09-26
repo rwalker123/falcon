@@ -75,6 +75,15 @@ var _open: bool = false
 ## filter they set survive a turn tick, exactly as the crafting ledger's fold state does.
 var _selected: String = ""
 var _filter: StringName = HudKnowledgeVocab.FILTER_ALL
+## **WHICH AREAS THE PLAYER HAS FOLDED OR UNFOLDED BY HAND** — `{area_key: bool}`, `true` a fold and
+## `false` an unfold. **An area ABSENT from here is the filter's to decide**, and that third state is
+## the whole mechanism: it is what makes a hand-made fold outlive a filter change while the filter
+## goes on folding and unfolding everything the player has not touched (`KnowledgeRoster.folded_areas`).
+##
+## ⛔ **FOLD STATE DIES WITH THE SCREEN AND IS NEVER PERSISTED** (`docs/plan_knowledge_rows.md` §6).
+## This screen has no persisted UI state and does not need to invent any — so `close()` clears it,
+## and a reopened screen starts from the plan's own default: everything open.
+var _hand_folds: Dictionary = {}
 
 # --- The craft catalogues, forwarded from the same `Main` call the crafting panel is fed by ---
 var _recipes: Array = []
@@ -155,13 +164,26 @@ func open() -> void:
 ## the one case where the orb's row appears to do nothing. `_open = true` and the key untouched is
 ## the whole contract. **It takes no key parameter**, because the orb hands over a FILTER and nothing
 ## else today.
+##
+## ⛔ **AND IT DROPS THE HAND FOLDS, WHICH IS WHAT MAKES THE ROW REACHABLE AT ALL.** A hand entry
+## beats the filter (`KnowledgeRoster.folded_areas`), so a fold the player left standing outlives the
+## hand-over and swallows the very discovery the orb's row named: fold **Food** by hand, leave the
+## screen open, tick a turn, press *Penning learned* — the filter moves to `new`, Food renders FOLDED
+## because the hand entry wins, and Penning's chip is not drawn at all. `close()` already clears them,
+## so the defect bites only while the screen is open, which is exactly the case this entry point was
+## built for. **An external hand-over is a RE-PRESENTATION of the screen**, so it starts from §5's own
+## default — everything open — precisely as a freshly opened screen does.
 func open_on_filter(filter: StringName) -> void:
 	_filter = filter
+	_hand_folds.clear()
 	_open = true
 	render()
 
 func close() -> void:
 	_open = false
+	# **THE FOLDS GO WITH THE SCREEN.** §6: no persisted UI state — a reopened screen starts from
+	# everything open, which is the default a new player has to meet.
+	_hand_folds.clear()
 	if _panel != null and is_instance_valid(_panel):
 		_panel.dismiss()
 
@@ -184,11 +206,37 @@ func render() -> void:
 	if not _open or _band_labor == null:
 		return
 	_ensure_panel()
+	var grouped := areas()
+	var folded := KnowledgeRoster.folded_areas(grouped, _filter, _hand_folds)
+	# ⛔ **A FOLDED AREA CLOSES THE READING IT HOLDS.** The toggle already says only one reading is
+	# ever open; an open reading sitting under a folded heading is the screen lying about where it
+	# came from — the row it belongs to is not on screen to point at. ONE rule, applied here rather
+	# than at each of the three seams that can fold an area (the caret, a filter press, a snapshot
+	# that changes what a filter matches), so no seam can forget it.
+	if _selection_is_folded(grouped, folded):
+		_selected = ""
 	_panel.render({
-		KnowledgePanel.PAYLOAD_DOMAINS: domains(),
+		KnowledgePanel.PAYLOAD_AREAS: grouped,
+		KnowledgePanel.PAYLOAD_FOLDED: folded,
 		KnowledgePanel.PAYLOAD_SELECTED: _selected,
 		KnowledgePanel.PAYLOAD_FILTER: _filter,
 	})
+
+## Is the open reading's node inside an area that renders FOLDED? `false` with nothing selected,
+## which is the answer that leaves `render()`'s one rule inert on the ordinary path.
+func _selection_is_folded(grouped: Array, folded: Dictionary) -> bool:
+	if _selected == "":
+		return false
+	for area_variant in grouped:
+		if not (area_variant is Dictionary):
+			continue
+		var area: Dictionary = area_variant
+		if not folded.has(StringName(String(area.get(HudKnowledgeVocab.AREA_KEY, "")))):
+			continue
+		for node in KnowledgeRoster.area_nodes(area):
+			if String(node.get(HudKnowledgeVocab.NODE_KEY, "")) == _selected:
+				return true
+	return false
 
 ## The room the card is bounded by changed shape. **Re-fit, do not re-render** — the payload is
 ## unchanged, and rebuilding to answer a question about geometry would throw the reading away.
@@ -205,6 +253,10 @@ func reset_world_state() -> void:
 	close()
 	_selected = ""
 	_filter = HudKnowledgeVocab.FILTER_ALL
+	# …and the hand folds with them. `close()` above already drops them; this is stated beside the
+	# other two pieces of view state so a future `close()` that kept them cannot leave a new world
+	# wearing the previous one's folds.
+	_hand_folds.clear()
 	_diff_turn = UNSEEN_TURN
 	_known_at_turn_start.clear()
 	_learned_this_turn.clear()
@@ -238,6 +290,17 @@ func nodes() -> Array[Dictionary]:
 func domains() -> Array[Dictionary]:
 	return KnowledgeRoster.build_domains(model())
 
+## **THE DOMAINS GATHERED UNDER THEIR SUBJECT AREAS** — what the screen draws, one level above
+## `domains()`. The model is built ONCE and both halves read it, so the rows and the heading order
+## can never describe different snapshots.
+##
+## `domains()` and `nodes()` keep working unchanged: the launcher's pip and the orb's producer count
+## NODES, and grouping them changes nothing about how many there are.
+func areas() -> Array[Dictionary]:
+	var live := model()
+	return KnowledgeRoster.group_areas(KnowledgeRoster.build_domains(live),
+		live.get(KnowledgeRoster.MODEL_AREA_ORDER, []))
+
 ## The inputs `KnowledgeRoster` derives from. Public for the harness, which needs to stage a model and
 ## check the verdict without a HUD.
 func model() -> Dictionary:
@@ -255,6 +318,7 @@ func model() -> Dictionary:
 		KnowledgeRoster.MODEL_OWNED_MATERIALS: _owned_materials(bands),
 		KnowledgeRoster.MODEL_BENCH_RECIPES: _bench_recipes(bands),
 		KnowledgeRoster.MODEL_LEARNED_THIS_TURN: _learned_this_turn,
+		KnowledgeRoster.MODEL_AREA_ORDER: _topbar.ladder_areas() if _topbar != null else [],
 	}
 
 ## The panel node, for the harnesses. `null` until the screen has been opened once.
@@ -277,11 +341,12 @@ func _ensure_panel() -> void:
 	_panel.node_selected.connect(_on_node_selected)
 	_panel.filter_selected.connect(_on_filter_selected)
 	_panel.detail_closed.connect(_on_detail_closed)
+	_panel.area_fold_toggled.connect(_on_area_fold_toggled)
 
 ## **SELECTION IS A TOGGLE, AND IT NEEDS NO NEW STATE** (`docs/plan_knowledge_rows.md` §4).
 ## `PAYLOAD_SELECTED` is a knowledge key whose EMPTY STRING already means *nothing is selected* — the
-## panel renders the placeholder for it — so a toggle is "set the key, or set it back to empty" and
-## there is nothing to remember about whether a reading is open.
+## panel mounts the detail block empty for it — so a toggle is "set the key, or set it back to
+## empty" and there is nothing to remember about whether a reading is open.
 ##
 ## Pressing the OPEN knowledge closes it; pressing a different one MOVES the reading. **Only one is
 ## ever open**, and that is not fussiness: several at once would make the panel's height a function
@@ -314,6 +379,16 @@ func is_detail_open() -> bool:
 
 func _on_filter_selected(key: StringName) -> void:
 	_filter = key
+	render()
+
+## **A HEADING'S CARET WAS PRESSED.** The hand entry is set to the NEGATION of the area's CURRENT
+## EFFECTIVE fold, never of whatever `_hand_folds` happens to hold — which is what makes the first
+## press on an area the FILTER folded unfold it, rather than recording a redundant "fold" and leaving
+## the heading shut. Once an entry exists it wins over the filter until the screen closes, which is
+## the *"a hand-made fold outlives a filter change"* rule (`docs/plan_knowledge_rows.md` §5).
+func _on_area_fold_toggled(key: StringName) -> void:
+	var grouped := areas()
+	_hand_folds[key] = not KnowledgeRoster.folded_areas(grouped, _filter, _hand_folds).has(key)
 	render()
 
 # ---- the turn diff ----------------------------------------------------------
@@ -395,6 +470,10 @@ func _diff_model() -> Dictionary:
 		KnowledgeRoster.MODEL_TRACKS: _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) \
 			if _topbar != null else {},
 		KnowledgeRoster.MODEL_CRAFT_KNOWLEDGE: _player_craft_knowledge(),
+		# The area order rides here for the reason the roster does — the two model builders describe
+		# ONE world — even though the diff walks nodes and never groups them. Grouping changes no
+		# node's state, so it can take no part in what finished this turn.
+		KnowledgeRoster.MODEL_AREA_ORDER: _topbar.ladder_areas() if _topbar != null else [],
 	}
 
 # ---- resolving the faction's sources ----------------------------------------

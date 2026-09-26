@@ -3083,8 +3083,17 @@
       "scout_vantage_range": 13.07
     }
   ],
+  "ladder_areas": [
+    "food",
+    "making",
+    "works",
+    "reach",
+    "lore",
+    "war"
+  ],
   "ladder_knowledge": [
     {
+      "area": "food",
       "branch": "plant",
       "display_name": "the knowledge of cultivation",
       "is_step": true,
@@ -3092,6 +3101,7 @@
       "order": 139
     },
     {
+      "area": "food",
       "branch": "plant",
       "display_name": "the knowledge of herding",
       "is_step": false,
@@ -3099,6 +3109,7 @@
       "order": 148
     },
     {
+      "area": "works",
       "branch": "plant",
       "display_name": "the knowledge of roadbuilding",
       "is_step": false,
@@ -5067,6 +5078,28 @@
       "name": "populations[0].name",
       "output_multiplier": 0.000001,
       "pending_reveal_count": 3,
+      "pool_crew": [
+        {
+          "idle_keepers": 19.24,
+          "keepers": 35.959999,
+          "pool": "agriculture"
+        },
+        {
+          "idle_keepers": 70.25,
+          "keepers": 0.09,
+          "pool": "husbandry"
+        },
+        {
+          "idle_keepers": 19.620001,
+          "keepers": 75.519997,
+          "pool": "roadwork"
+        },
+        {
+          "idle_keepers": 58.41,
+          "keepers": 62.630001,
+          "pool": "quarrywork"
+        }
+      ],
       "pool_toe": [
         {
           "filled": 75.68,
@@ -5936,6 +5969,28 @@
       "name": "populations[1].name",
       "output_multiplier": 0.000118,
       "pending_reveal_count": 3,
+      "pool_crew": [
+        {
+          "idle_keepers": 80.169998,
+          "keepers": 38.990002,
+          "pool": "agriculture"
+        },
+        {
+          "idle_keepers": 67.480003,
+          "keepers": 16.68,
+          "pool": "husbandry"
+        },
+        {
+          "idle_keepers": 40.110001,
+          "keepers": 1.87,
+          "pool": "roadwork"
+        },
+        {
+          "idle_keepers": 108.959999,
+          "keepers": 25.639999,
+          "pool": "quarrywork"
+        }
+      ],
       "pool_toe": [
         {
           "filled": 65.529999,
@@ -6900,6 +6955,28 @@
       "name": "populations[2].name",
       "output_multiplier": 0.000051,
       "pending_reveal_count": 3,
+      "pool_crew": [
+        {
+          "idle_keepers": 20.99,
+          "keepers": 62.919998,
+          "pool": "agriculture"
+        },
+        {
+          "idle_keepers": 4.88,
+          "keepers": 107.080002,
+          "pool": "husbandry"
+        },
+        {
+          "idle_keepers": 94.169998,
+          "keepers": 35.75,
+          "pool": "roadwork"
+        },
+        {
+          "idle_keepers": 50.970001,
+          "keepers": 112.489998,
+          "pool": "quarrywork"
+        }
+      ],
       "pool_toe": [
         {
           "filled": 100.459999,

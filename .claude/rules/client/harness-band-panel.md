@@ -171,8 +171,22 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 184 frames / 1334 `PASS` / 542 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 193 frames / 1454 `PASS` / 559 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
+
+**THE POOL CARD'S `ⓘ`/`⚠` SPLIT (issue #716) MOVED IT 192 / 1440 / 556 → 193 / 1454 / 559**: the
+`band_panel_pool_kit_short_builders` frame, the per-card state claims, the driven tool-line fork, the
+tool-count needle's positive and negative, and the covered-bill Roadwork hover claim.
+
+**THE POINTER-CUSTODY GUARD MOVED IT 1438 → 1440 `PASS`**, frames and `assert OK` unchanged: the
+pushed-event liveness claim and the *nothing foreign reached the viewport* claim, asked once at
+`_finish`. The behaviour, the two adversaries it was falsified with and why a quiet machine cannot
+reproduce the class by moving the mouse are in `test-harnesses.md` → "A SIMULATED GESTURE IS NOT
+HERMETIC" — it is the shared windowed-harness contract rather than this harness's own, and all six
+pixel harnesses take the seal. **Three of this harness's mechanisms belong to it**: `_drive_click`
+pushes its press and release with no awaited frame between them, `_drive_drag`'s hold re-warps the
+physical pointer every frame, and every simulated event goes through the one `_push_input` wrapper
+the guard discriminates on.
 
 **THE PR #680 REVIEW FIXES MOVED IT 1328 → 1334 `PASS`**, frames and `assert OK` unchanged: **+3**
 for `_assert_closed_settings_costs_the_board_nothing` (a closed build-queue block reserves nothing,
@@ -2732,75 +2746,56 @@ on every frame in the chapter — measured, the first cut of this state failed o
 
 ## The POOL TOE's four-card SET, and the two claims no card can carry
 
-`docs/plan_pool_toe.md` §5. `band_panel_pool_kit_short` stages **four pools, four answers, one
-frame**, and the behaviour is `band-city-panel.md` → "⛔ A POOL CAN BE SHORT OF ITS TOOLS". What
-belongs here is the fixture and what each claim can tell apart.
+`docs/plan_pool_toe.md` §5 and issue #716. `band_panel_pool_kit_short` stages **four pools, four
+answers, one frame**, and the behaviour is `band-city-panel.md` → "⛔ A POOL CAN BE SHORT OF ITS
+TOOLS". What belongs here is the fixture and what each claim can tell apart.
 
 | card | its TOE rows | what the card must say |
 |---|---|---|
-| Agriculture | hoes **4 of 4** | hands only — the tools are **FILLED** and say nothing |
-| Husbandry | crook **0 of 2** | hands, then one tool term, in that order |
-| Roadwork | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | tools only, TWO terms on one line |
-| Builders | none at all | nothing — **NOT APPLICABLE**, and the calm ink's negative |
+| Agriculture | hoes **4 of 4** | `⚠`, the work line only — the tools are **FILLED** and say nothing |
+| Husbandry | crook **0 of 2** | `⚠`, the work line, then `Short of tools.` on the next line |
+| Roadwork | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | `ⓘ` in `INK_DIM`, calm title, `Supplies 2 of 2 work a turn.` then the INFO tool line — its bill is staged PAID IN FULL |
+| Builders | none at all | nothing — **NOT APPLICABLE** |
+
+**`_assert_pool_card_state` makes every card's claims together**: the `SHORT` meta, the ONE glyph it
+drew and that glyph's ink, the title's ink, the tool meta by EQUALITY against the shipped sentence,
+the coverage sentence present IFF the pool has a bill (a separate expectation from *short*, which the
+meta, the glyph and the title ink carry) under its own web's hint, and **no `N of M <item>` count on
+any line**
+(`POOL_TOOL_COUNT_PATTERN`, a shape rather than one item's word, so a stray count naming any item is
+caught). The expectations are the vocab's own sentences — the wording under test — never a string
+re-composed through `pool_tools_short_line`.
 
 ⛔ **THE SET IS THE CLAIM, AND THE TWO SILENT CARDS ARE WHY.** A tooltip builder that always renders
 a tool line passes the two SHORT cards on its own; one that never renders passes the two silent ones.
 Neither can pass all four.
 
+⛔ **THE ROADWORK CARD IS WHAT ISSUE #716 CHANGED, AND IT IS THE ONLY CARD THAT CAN SAY SO.** Its bill
+is staged PAID IN FULL (`roadwork_demand == roadwork_supplied`, `POOL_GEAR_ROAD_DEMAND`) and its TOE
+short, so it asserts the `ⓘ`, `SHORT` meta `false`, a calm `INK` title, and
+(`_assert_pool_covered_tools_short_hover`) `Supplies 2 of 2 work a turn.` by equality with the INFO
+sentence on the very next line. **It staged no bill at all until PR #743's review**, so the covered
+state the issue is about was never rendered and an `ⓘ` that flew only on a bill-less pool passed. The Husbandry card
+is the paired WARN form. **`band_panel_pool_kit_short_builders`** re-pushes the band with a short
+builders TOE line and asserts the Builders card flies the `ⓘ` — it is passed no `cover`, so it can
+never be work-short.
+
 ⛔ **THE FILLED CARD AND THE NOT-APPLICABLE CARD RENDER IDENTICALLY**, so what separates them is
 asserted against the FIXTURE rather than against the card
 (`_assert_pool_toe_filled_is_not_absent`): the filled pool really has a row and the calm one has
 none, and BOTH render no line. Without the first half, *"a filled pool states no tool line"* is
-satisfied by a decoder that dropped the filled row on the way in — which would destroy the
-distinction the vector exists to carry, silently, and look exactly like this.
+satisfied by a decoder that dropped the filled row on the way in.
 
 **THE SHARED ITEM IS TWO ROWS AT DIFFERENT NUMBERS, AND QUARRYWORK'S COMES FIRST.** Roadwork and
-Quarrywork both want stone-dressing tools; the two rows are adjacent and deliberately in the wrong order
-for a reader that trusts position, so a card taking the first row naming its item states the quarry
-gang's figures. The three readings are pairwise distinct by construction — roadwork `0 of 2`,
-quarrywork `3 of 5`, their sum `3 of 7` — so `_assert_pool_toe_shared_item`'s two negatives bite on
-the figures rather than coinciding with the right answer. **Quarrywork has no card of its own** (its
-stepper rides the WORKINGS ROSTER head), so the claim is made where the shared item is visible, on
-the Roadwork card.
+Quarrywork both want stone-dressing tools; the rows are adjacent and in the wrong order for a reader
+that trusts position. The card no longer counts anything, so `_assert_pool_toe_joins_on_the_pool`
+asks the join itself: Roadwork's rows are its own two and carry none of the quarry gang's figures.
 
-**THE ROUNDING IS DRIVEN, NOT RENDERED** (`_assert_pool_toe_rounding`). Every row in the fixture is
-whole on purpose, so the frame says nothing about what happens between two integers; the rows that
-bite are constructed and handed to `HudWorkVocab.pool_toe_short_line` directly — a fractional
-shortfall (`5.5` required, `2.5` filled → `2 of 6 hoes`), one whose two halves ROUND to equality and
-whose floats do not (`3.0` / `2.9` → `2 of 3 hoes`) and one whose requirement is under a whole unit
-(`0.4` / `0.0` → `0 of 1 hoe`, never `0 of 0`). **The expectations are hand-worked from the documented
-rule**, never re-derived through the arithmetic under test, which would agree with itself whatever it
-does.
-
-⛔ **THE `3.0 / 2.9` ROW REVERSED ITS CLAIM, and the reversal IS the rule.** It used to read *"one
-that rounds UP to covered → **nothing**"*; a pool short of a tool now flies the triangle at any
-magnitude, and that row is the only one in the set that tells the raw-float short test apart from a
-comparison of the printed pair (`band-city-panel.md` → "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND
-AWAY").
-
-**`_assert_pool_toe_sub_unit_shortfall` IS THE PLAYTEST ROW, TRANSCRIBED** (`0.5666 of 0.7906`, which
-the retired apportion printed as `1 of 1 hoe` and therefore skipped). It asserts **both producers** —
-the raw-float `pool_toe_is_short` the triangle and the work row's remedy fork on, and the SENTENCE the
-hover carries — because a fix that made the line print while leaving the boolean rounding would fly no
-triangle, and one that flew the triangle over an empty hover would say nothing. A FILLED row is paired
-against both, and a standalone claim asserts a short row never reads `N of N`: that equality beside a
-live shortfall was the defect's actual output, and inferring its absence from the equality above would
-not pin it.
-
-**THE EXPECTATIONS ARE COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS**
-(`_pool_toe_term` / `_pool_toe_line`), never through `pool_toe_short_line` — the material-short
-guard's rule, which this file has already recorded twice: an expectation re-derived through the code
-under test collapses with it.
-
-⛔ **THE NEGATIVE NEEDLE IS A SHAPE, NOT A WORD.** `POOL_TOE_LINE_PATTERN` (`^[0-9]+ of [0-9]+ `) is
-what *"states NO tool shortfall"* is asked with. It was the retired sentence's fixed tail
-(` available`), which a TOE term no longer carries; a needle spelled as one item's word would be
-blind to a stray line naming a different item, which is exactly the failure the claim exists to catch.
-
-⛔ **THE WARN-AMBER CLAIM MOVED CARDS.** Builders was the tools-short card and is now the calm one,
-so the amber is asserted on ROADWORK and the calm ink on BUILDERS. The FILLED card cannot serve as
-the calm negative — it is short of HANDS on this band, so its title is amber for a reason that says
-nothing about tools.
+**THE SHORT TEST AND THE FORK ARE DRIVEN, NOT RENDERED** (`_assert_pool_tools_line_forks_on_work`).
+The playtest row (`0.5666 of 0.7906`, which the retired counted line printed as `1 of 1 hoe` and
+skipped) and a row short by a tenth (`3.0 / 2.9`) are both SHORT on the raw floats; the line takes the
+WARN form beside a work shortfall and the INFO form without one — both ways, since a composer that
+ignored `work_short` passes either alone; and a FILLED row states nothing either way.
 
 ### …and what the two retired PICKERS cost the rest of the file
 
@@ -2825,46 +2820,12 @@ nothing about tools.
   with no way to take it back. The strip opens on every confirmed entry again, and the `✕` is what
   guarantees it.
 
-### …and the counted noun is INFLECTED, which one suffix rule could not do
+### ⛔ RETIRED — the counted noun's INFLECTION claims
 
-`_assert_pool_toe_inflection`, PNG-less and driven — a counted noun is a string, and the card renders
-a perfectly ordinary line whichever form it chose. It exists because `0 of 2 crook` was reported on
-its way into a playtest.
-
-**`DetailFormat.KIT_ITEM_LABELS` IS MIXED**, so neither rule works on the whole table: *append an
-`s`* gives `Spearss` and *leave it alone* gives `0 of 2 crook`. Four readings, and the SET is the
-claim — a builder that never inflected passes the two singular rows and one that always appended
-passes the two plural rows:
-
-| item | its label | at 1 | at 2 |
-|---|---|---|---|
-| `hoes` | already plural | `0 of 1 hoe` | `1 of 2 hoes` |
-| `crook` | singular | `0 of 1 crook` | `1 of 2 crooks` |
-
-⛔ **THE `1 of 2` CASE IS ASSERTED FOR ITS OWN SAKE.** A noun following the NUMERATOR reads singular
-there and is wrong; the noun agrees with the DENOMINATOR, which is the quantity `N of M` names. The
-`0 of 1` case is the other half and is the easy one to miss — it is also reachable in play, since a
-sub-unit requirement CEILS to a denominator of one (`POOL_TOE_MIN_UNITS`, which floored it there, is
-retired: the floor is structural now, a term being emitted only for a row the raw floats call short).
-
-**A third claim per item requires the two forms to DIFFER**, or *"it inflects"* is satisfied by a row
-that spells the same word twice — which is exactly what the FALLBACK does, deliberately.
-
-**THE FALLBACK IS ASSERTED AS SAFE RATHER THAN AS RIGHT** (`POOL_TOE_INFLECT_UNLISTED_ITEM`, a
-deliberately PLURAL label, since `Spearss` is the failure it exists to refuse): an item with no
-counted row reads its label at every count and appends nothing, so it does not inflect — `0 of 1
-spears` — and **a new item a pool can require needs a row in `KIT_ITEM_COUNTED_NAMES`** rather than a
-cleverer rule. The claim pins both counts against the label and that the line does not end in `ss`.
-
-**AND NO SHIPPED POOL ITEM LEAKS A WIRE UNDERSCORE**, at either count — the reason the two road tools
-were given labels at all.
-
-> ⛔ **THE LABELS THEMSELVES MOVED, AND THE CONFIG IS WHY.** `earthmoving` / `stone_dressing` shipped
-> for one pass as `Mattocks` / `Dressing hammers`, taken from client prose in `KitRoster.gd`.
-> `equipment.json._comment_road_tools` refuses the first outright — *"a mattock beside them would
-> blur the exact plant/route line"* — and shows the second names one of three tools (*"the maul,
-> wedges and dressing hammer"*). They are `Earthmoving tools` / `Stone-dressing tools`, which is the
-> phrasing `.claude/rules/core_sim/routes.md` already uses for these two ids.
+`_assert_pool_toe_inflection`, `_assert_pool_toe_rounding` and `_assert_pool_toe_sub_unit_shortfall`
+went with the counted tool line they tested (issue #716): the card names and counts no tool, so there
+is no noun to inflect and no display pair to round. The raw-float short test they also pinned is
+carried by `_assert_pool_tools_line_forks_on_work`, above.
 
 ⛔ **THE AUTO-SCROLL BLOCK FLAKED ONCE UNDER LOAD, and it is the wall-clock budget doing what it is
 for.** A run started immediately after a `--import` failed three claims with

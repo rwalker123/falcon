@@ -591,6 +591,64 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		_unhandled_press_seen = true
 
+# ---- THE POINTER CUSTODY GUARD ------------------------------------------------------------------
+# ⛔ **EVERY SIMULATED MOUSE EVENT GOES THROUGH `_push_input`, AND ANYTHING ELSE THAT ARRIVES IS A
+# FOREIGN EVENT THIS RUN DOES NOT OWN.** `Viewport.push_input` dispatches SYNCHRONOUSLY, so a flag
+# set around the call is an exact discriminator: an `_input` notification seen while it is up came
+# from this harness, and one seen while it is down came from somewhere else — the window server, or
+# the panel's own `Input.parse_input_event`. Nothing here is a heuristic.
+#
+# **WHY IT IS WORTH A GUARD RATHER THAN A COMMENT.** A foreign motion landing between a simulated
+# press and its release used to cancel that click outright (`BaseButton` recomputes
+# `status.pressing_inside` from every motion routed to it while pressed), and a foreign motion during
+# a drag makes Godot re-pick the drag-over control. Both fail as *"a control emitted nothing"* or
+# *"the thing under a stationary pointer changed"* — never as an error, and never in the same place
+# twice. This counter turns an intermittent, environment-dependent flake into one named failure on
+# the run that suffers it.
+var _in_push := false
+## Mouse events this harness pushed — the LIVENESS half: zero foreign events is free on a run that
+## drove no input at all.
+var _pushed_mouse_events := 0
+## Mouse events that arrived from outside, EXCLUDING the ones a live drag legitimately produces.
+var _foreign_mouse_events := 0
+## What the first of them was, so a failure names something rather than a count.
+var _first_foreign_event := ""
+
+func _push_input(event: InputEvent) -> void:
+	_in_push = true
+	get_viewport().push_input(event)
+	_in_push = false
+
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventMouse):
+		return
+	if _in_push:
+		_pushed_mouse_events += 1
+		return
+	# ⛔ **A LIVE DRAG IS THE ONE LEGITIMATE FOREIGN SOURCE, AND IT IS THE PANEL'S OWN.**
+	# `BandPanelController._resolve_queue_drag_hover` pushes a zero-relative motion through
+	# `Input.parse_input_event` after the edge auto-scroll steps the list — that is SHIPPED CLIENT
+	# CODE under test, and it runs only between `NOTIFICATION_DRAG_BEGIN` and `DRAG_END`. Excusing
+	# it by that condition rather than by its shape keeps the guard blind to nothing else: outside a
+	# drag, this client pushes no mouse input of its own at all.
+	if get_viewport().gui_is_dragging():
+		return
+	_foreign_mouse_events += 1
+	if _first_foreign_event == "":
+		_first_foreign_event = "%s during %s" % [event.as_text(), _current_state]
+
+## ⛔ **THE RUN OWNED THE POINTER FROM END TO END, OR IT DID NOT AND SAYS SO.**
+## Asked once, at the end, because the cost of a foreign event is not local to the gesture it lands
+## in — it is the run's claim to be hermetic. Paired with the pushed count, since "nothing foreign
+## arrived" is satisfied by a harness that drove nothing.
+func _assert_harness_owns_the_pointer() -> void:
+	_assert_band_panel("the harness pushed mouse input at all — %d event(s), so the claim below is not vacuous"
+		% _pushed_mouse_events, _pushed_mouse_events > 0)
+	_assert_band_panel("⛔ NOTHING outside this harness put mouse input into the viewport — %d foreign event(s)%s"
+			% [_foreign_mouse_events,
+				"" if _first_foreign_event == "" else " (first: %s)" % _first_foreign_event],
+		_foreign_mouse_events == 0)
+
 
 # ---- LEGACY FIXTURE ADAPTER: the four stances -> the escapement floor ---------------------------
 # Every fixture in this file states a source's take as the retired per-STANCE ceiling table, because
@@ -804,6 +862,7 @@ const DEEP_DRAW_FLOOR := 0.15
 
 func _ready() -> void:
 	_watchdog = _resolve_watchdog()
+	HarnessWindow.seal_from_real_mouse(get_window())
 	# FREEZE ANIMATION TIME — the treatment `ui_preview`, `map_preview` and `blend_probe` all carry, and
 	# taken for the same reason: a frame that varies run-to-run cannot be pixel-diffed to prove a panel
 	# refactor changed nothing. Measured before the freeze, two runs of IDENTICAL code differed byte-wise
@@ -3765,8 +3824,9 @@ func _render_upkeep_mode_states() -> void:
 	# the same *"I am getting no messages anywhere"* the arc began with, one surface over.
 	#
 	# **FOUR CARDS, FOUR DIFFERENT ANSWERS, ONE FRAME** — which is the claim, because a client that
-	# marked every card and one that marked none are the same picture at a glance. The triangle flies on
-	# three of the four (hands, tools, both), so each card's HOVER is asserted beside its triangle.
+	# marked every card and one that marked none are the same picture at a glance. Only a WORK
+	# shortfall flies the `⚠`; tools short on a covered pool fly the `ⓘ` (issue #716), so each card's
+	# mark, inks and HOVER are asserted together.
 	_push_bands([_pool_gear_band_fixture()])
 	await _settle()
 	await _save("band_panel_pool_kit_short")
@@ -3774,6 +3834,78 @@ func _render_upkeep_mode_states() -> void:
 	_assert_zone_content_fits()
 	_assert_pool_cards_are_level("the pool gear frame")
 	_assert_pool_kit_marks()
+	# …and the BUILDERS card short of tools: never work-short (it is passed no `cover`), so the `ⓘ`.
+	_push_bands([_pool_gear_builders_short_band_fixture()])
+	await _settle()
+	await _save("band_panel_pool_kit_short_builders")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_pool_cards_are_level("the builders tools-short frame")
+	_assert_builders_pool_tools_short()
+
+	# **A POOL CAN BE FULLY PAID AND STILL HAVE A WORKER STANDING AROUND, AND IT SAID SO NOWHERE**
+	# (issue #715). A pool that covers its bill exactly and one carrying a spare hand were the same
+	# calm card with no reading at all — *"the user will not know a worker can be freed up and doing
+	# other things"*. The card's one mark slot carries three states now, and this frame stages all
+	# three at once beside the card that must stay bare: shortfall AND idle, shortfall alone, idle
+	# alone, neither. All four on one frame, because a client that marked every card and one that
+	# marked none are the same picture at a glance.
+	_push_bands([_pool_idle_band_fixture(POOL_IDLE_ROADWORK_IDLE)])
+	await _settle()
+	await _save("band_panel_pool_idle")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	# ⛔ **THE ROW STILL FITS AND IS STILL LEVEL** — the constraint this whole design bends around.
+	# The reason the idle state took the EXISTING slot rather than a second glyph is that three
+	# placements for a second mark were measured and each took the four-card row past the left dock's
+	# 356px box; a frame that flew the new mark without re-measuring would be the one that proves
+	# nothing.
+	_assert_pool_cards_are_level("the pool idle frame")
+	var idle_line := _pool_idle_sentence(POOL_IDLE_ROADWORK_IDLE)
+	# ① SHORT **and** idle — the triangle wins the slot and the title takes the amber, so the idle
+	# reading rides the hover with no mark of its own. `""` on the IDLE meta is the claim: the state
+	# is *this card is not flying the info mark*, not *this pool has nobody spare*.
+	_assert_pool_mark_slot("a pool SHORT and idle at once", HudWorkVocab.ROLE_NAME_AGRICULTURE,
+		HudWorkVocab.UPKEEP_POOL_SHORT_MARK, "", true)
+	# ② SHORT alone — unchanged from before this arc, and asserted so the widening cannot have
+	# quietly moved it.
+	_assert_pool_mark_slot("a pool SHORT of hands", HudWorkVocab.ROLE_NAME_HUSBANDRY,
+		HudWorkVocab.UPKEEP_POOL_SHORT_MARK, "", true)
+	# ③ IDLE alone — the new state. The info mark, the CALM title, and the sentence on both the
+	# meta and the hover.
+	_assert_pool_mark_slot("a pool that COVERS its bill with a worker to spare",
+		HudWorkVocab.ROLE_NAME_ROADWORK, HudWorkVocab.UPKEEP_POOL_IDLE_MARK, idle_line, false)
+	# ④ NEITHER — the paired negative, on the pool that is not a keeping pool at all and publishes
+	# no `pool_crew` row.
+	_assert_pool_mark_slot("the BUILDERS pool, which is no keeping pool",
+		HudWorkVocab.ROLE_NAME_BUILDERS, "", "", false)
+	# **AND THE WORK-UNITS READING IS THERE WHETHER OR NOT THE POOL IS SHORT** — the sentence the
+	# issue asks for, which existed all along and was gated shut behind the shortfall test. Both
+	# halves: the short card still states it, and the COVERED card now does too.
+	_assert_pool_hover_states_its_bill("a pool SHORT and idle at once",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, _pool_idle_sentence(POOL_IDLE_AGRICULTURE_IDLE))
+	_assert_pool_hover_states_its_bill("a pool that COVERS its bill with a worker to spare",
+		HudWorkVocab.ROLE_NAME_ROADWORK, idle_line)
+
+	# ⛔ **AND 0.6 OF A WORKER IS NOT A WORKER** — the same band with the same covered bill and the
+	# idle figure under the threshold. The mark's promise is *you can step this pool down by one*, and
+	# a fraction nobody can act on means nothing; without this negative the info mark passes on a card
+	# that flies it for any crumb the wire reports.
+	_push_bands([_pool_idle_band_fixture(POOL_IDLE_ROADWORK_FRACTION)])
+	await _settle()
+	await _save("band_panel_pool_idle_fraction")
+	_assert_pool_mark_slot("a pool with a FRACTION of a worker spare",
+		HudWorkVocab.ROLE_NAME_ROADWORK, "", "", false)
+	# …and its bill is still stated, so the negative is about the THRESHOLD and not about the card
+	# having fallen silent again.
+	_assert_pool_hover_states_its_bill("a pool with a FRACTION of a worker spare",
+		HudWorkVocab.ROLE_NAME_ROADWORK, "")
+
+	# **AND THE READING IS LIVE, NOT A TURN LATE** (issue #715 follow-up). The frames above are all
+	# SETTLED staffing; the reported defect is that a pool the player has just stepped said nothing
+	# at all until the turn resolved. This block appends the pending states and puts the world back.
+	await _assert_pending_pool_idle_is_live()
+
 	# ⛔ **THE BAND GOES BACK, because the dock states below re-render the POOLS block and push NO
 	# band of their own.** Order is load-bearing in this file: leaving this fixture standing had the
 	# BOTTOM-dock and TWO-COLUMN claims measuring a band they were never written about, and they
@@ -4557,11 +4689,9 @@ const POOL_CARD_COUNT := 4
 ## the title and the figure is a hover, neither of which a harness can assert without re-spelling the
 ## vocabulary the builder used.
 ##
-## ⛔ **THAT META IS *THE TRIANGLE IS FLYING*, FOR EITHER REASON** — it stopped meaning *short of hands*
-## when the triangle widened to tool shortfalls. So `hands_short_roles` is asserted as the triangle PLUS
-## the hands figure on the hover, and `calm_roles` as no triangle, no hands figure AND no tool reason:
-## a calm card read off the meta alone would pass on a card flying its triangle for its tools. Every
-## caller stages bands whose pool rows carry no kit holdings, so no card here is tool-short.
+## **THAT META IS *THE `⚠` IS FLYING*, WHICH IS A WORK SHORTFALL ALONE** (issue #716). `calm_roles`
+## is still asserted as no triangle, no hands figure AND no tool reason, so a card flying the `ⓘ` for
+## its tools cannot pass as calm. Every caller stages bands with no TOE, so no card here is tool-short.
 func _assert_pool_card_marks(where: String, hands_short_roles: Array, calm_roles: Array) -> void:
 	for role_variant in hands_short_roles:
 		var role := String(role_variant)
@@ -4571,15 +4701,15 @@ func _assert_pool_card_marks(where: String, hands_short_roles: Array, calm_roles
 			continue
 		_assert_band_panel("%s: the %s card flies the triangle" % [where, role],
 			bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)))
-		# …and the FIGURE is on that card's hover, in ITS OWN WEB'S words — the plant card must not
+		# …and the FIGURE is on that card's hover, under ITS OWN WEB'S hint — the plant card must not
 		# describe the animal one, which is exactly what one summed line could not avoid doing. Both
-		# halves: its own web's tail AND not the other's, since a card quoting both webs' sentences
-		# would satisfy a lone positive.
+		# halves: its own hint AND not the other's, since a card quoting both would satisfy a lone
+		# positive.
 		_assert_band_panel("%s: …and quotes its own web's shortfall on its hover (%s)"
 				% [where, card.tooltip_text],
 			card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE)
-			and card.tooltip_text.contains(_pool_short_tail(role))
-			and not card.tooltip_text.contains(_pool_short_tail(_other_keeping_role(role))))
+			and card.tooltip_text.contains(_pool_role_hint(role))
+			and not card.tooltip_text.contains(_pool_role_hint(_other_keeping_role(role))))
 	for role_variant in calm_roles:
 		var role := String(role_variant)
 		var card := _find_pool_card(role)
@@ -4592,21 +4722,25 @@ func _assert_pool_card_marks(where: String, hands_short_roles: Array, calm_roles
 			and not card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE)
 			and String(card.get_meta(HudWorkVocab.POOL_CARD_TOOL_SHORT_META, "")) == "")
 
-## **THE SHORTFALL SENTENCE'S OWN MIDDLE, AND THE TAIL THAT NAMES ITS WEB.** The lead was `"Short "`
-## for one run and it was VACUOUS in both directions: the Agriculture card's ordinary role HINT reads
-## *"Keeps every tended patch and Field this band works. Short of the sum, they rot."*, so a calm card
-## failed the negative and a short one passed the positive on the hint alone. This phrase appears in
-## the shortfall sentences and in no hint.
-const POOL_SHORT_TOOLTIP_NEEDLE := "work a turn; this band's"
+## **THE COVERAGE SENTENCE'S OWN TAIL** (`UPKEEP_POOL_COVERAGE_FORMAT`), which appears in the
+## coverage sentence and in no role hint, so a calm card cannot pass the negative on its hint alone.
+## One format serves every pool, so the retired per-web middle and the shared-clause needle are one.
+const POOL_SHORT_TOOLTIP_NEEDLE := " work a turn."
+const POOL_COVERAGE_TOOLTIP_NEEDLE := POOL_SHORT_TOOLTIP_NEEDLE
 
-## …and the two webs' tails, which is what makes the per-web claim a claim: the whole point of moving
-## the figure onto the cards is that a summed line could not say WHICH web was short.
-const POOL_SHORT_TAIL_PLANT := "tended ground and queued jobs need"
-const POOL_SHORT_TAIL_ANIMAL := "tamed animals and queued jobs need"
-
-func _pool_short_tail(role: String) -> String:
-	return POOL_SHORT_TAIL_ANIMAL if role == HudWorkVocab.ROLE_NAME_HUSBANDRY \
-		else POOL_SHORT_TAIL_PLANT
+## Which web a card's hover belongs to is named by its ROLE HINT now — the coverage sentence names
+## no web — so the per-web claims ask for the card's own hint and not the other web's.
+func _pool_role_hint(role: String) -> String:
+	match role:
+		HudWorkVocab.ROLE_NAME_HUSBANDRY:
+			return HudWorkVocab.HUSBANDRY_ROLE_HINT
+		HudWorkVocab.ROLE_NAME_ROADWORK:
+			return HudWorkVocab.ROADWORK_ROLE_HINT
+		HudWorkVocab.ROLE_NAME_QUARRYWORK:
+			return HudWorkVocab.QUARRYWORK_ROLE_HINT
+		HudWorkVocab.ROLE_NAME_BUILDERS:
+			return HudWorkVocab.BUILDERS_ROLE_HINT
+	return HudWorkVocab.AGRICULTURE_ROLE_HINT
 
 func _other_keeping_role(role: String) -> String:
 	return HudWorkVocab.ROLE_NAME_AGRICULTURE if role == HudWorkVocab.ROLE_NAME_HUSBANDRY \
@@ -4750,8 +4884,8 @@ func _keeping_pool_herd_fixtures() -> Array:
 
 ## The four pool rows the gear frame is built from, each staging ONE of the four answers a card can
 ## give. They ride `_keeping_pool_band_fixture`'s world, which is short of KEEPERS on both webs — so
-## the triangle is already flying for HANDS on the two keeping cards, and a tool shortfall has a hands
-## one on the same row to be told apart FROM on the hover.
+## the `⚠` is already flying for WORK on the two keeping cards, and a tool shortfall has a work one
+## on the same card to be told apart FROM on the hover.
 ##
 ## > ⛔ RETIRED — **the per-row GEAR PAIR these rows used to carry**, `kit_id` plus
 ## > `kitWorkersHolding`, which the card read through `KitRoster.row_coverage`. Its note read:
@@ -4775,15 +4909,13 @@ const POOL_GEAR_ROADWORK_CREW := 2
 ##
 ## | pool | its rows | what the card says |
 ## |---|---|---|
-## | `agriculture` | hoes **4 of 4** | nothing — **FILLED**, and a row is present so this is not *not applicable* |
-## | `husbandry` | crook **0 of 2** | one term, beside a hands shortfall on the same card |
-## | `roadwork` | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | TWO terms on one line, and its own share of a SHARED item |
+## | `agriculture` | hoes **4 of 4** | no tool line — **FILLED**, and a row is present so this is not *not applicable* |
+## | `husbandry` | crook **0 of 2** | `Short of tools.` under the `⚠`, beside its work shortfall |
+## | `roadwork` | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | the `ⓘ`, then `Supplies 2 of 2 work a turn.` and the INFO tool line — its bill is staged PAID IN FULL (`POOL_GEAR_ROAD_DEMAND`); its own share of a SHARED item |
 ## | `builders` | none at all | nothing — **NOT APPLICABLE** |
 ##
-## ⛔ **THE NUMBERS ARE WHOLE, DELIBERATELY.** `required` is a float in units and the line
-## apportions `filled` against its rounded denominator, so a fractional fixture would make the
-## expectation an exercise in re-deriving the apportionment rather than a statement of what the card
-## must say. The ROUNDING is asserted where it can be seen — `_assert_pool_toe_rounding`, driven.
+## The card counts none of these numbers (issue #716); they decide only whether each pool is short.
+## The raw-float short test is driven where it can be seen — `_assert_pool_tools_line_forks_on_work`.
 const POOL_TOE_AGRICULTURE_ITEM := DetailFormat.KIT_DURABILITY_KEY_HOES
 const POOL_TOE_AGRICULTURE_REQUIRED := 4.0
 const POOL_TOE_AGRICULTURE_FILLED := 4.0
@@ -4843,39 +4975,664 @@ func _pool_gear_band_fixture() -> Dictionary:
 	rows.append({"kind": HudConst.LABOR_KIND_BUILDERS, "workers": POOL_GEAR_BUILDERS_CREW})
 	band["labor_assignments"] = rows
 	band[HudBandLaborState.POOL_TOE_KEY] = _pool_toe_fixture()
+	# ⛔ **THE ROADWORK POOL HAS A BILL AND PAYS IT IN FULL** — the state issue #716 is about: work
+	# COVERED, tools short. A bill-less pool states no coverage sentence at all, so the `ⓘ` it flies
+	# would say nothing about a pool whose work is actually being paid.
+	band["roadwork_demand"] = POOL_GEAR_ROAD_DEMAND
+	band["roadwork_supplied"] = POOL_GEAR_ROAD_DEMAND
+	band["roadwork_shortfall"] = POOL_GEAR_ROAD_SHORTFALL
 	return band
 
-## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBERS, NEVER THROUGH
-## `HudWorkVocab.pool_toe_short_line`** — the material-short guard's rule: an expectation re-derived
-## through the code under test collapses with it. It is also what pins *"the client's existing `N of
-## M` phrasing"*, `POOL_TOE_TERM_FORMAT` being `KIT_SHORTFALL_FORMAT` less its trailing word.
-func _pool_toe_term(filled: int, required: int, item_id: String) -> String:
-	return HudWorkVocab.POOL_TOE_TERM_FORMAT % [filled, required,
-		DetailFormat.kit_item_count_word(item_id, required)]
+## The Roadwork pool's bill on the gear frame, PAID IN FULL — `supplied == demand`, `shortfall` zero,
+## all three published as the sim states them — so the card is covered and short only of tools.
+const POOL_GEAR_ROAD_DEMAND := 2.0
+const POOL_GEAR_ROAD_SHORTFALL := 0.0
 
-## …and the whole line, joined the way the card joins it.
-func _pool_toe_line(terms: Array) -> String:
-	return HudWorkVocab.RUNG_TRACK_PRICE_SEPARATOR.join(PackedStringArray(terms))
+## ---- A KEEPING POOL WITH A WORKER WHO HAD NOTHING TO DO (issue #715) ---------------------------
+##
+## **THE SILENCE THIS STAGES.** A pool that covers its bill exactly and a pool carrying a spare hand
+## rendered as the same calm card with no reading at all, so a player could not see that a worker was
+## free to be sent elsewhere. The card's one mark slot carries THREE states now — `⚠`, the info mark,
+## nothing — and this band puts all three on one row beside the fourth card that must stay bare.
+##
+## | card | its bill | its idle crew | what it must say |
+## |---|---|---|---|
+## | Agriculture | SHORT | 2.4 keepers | `⚠` — shortfall wins the slot — amber title, BOTH readings |
+## | Husbandry | SHORT | none | `⚠`, amber title, the shortfall reading alone |
+## | Roadwork | COVERED | 1.4 keepers | the INFO mark, CALM title, the bill reading AND the idle one |
+## | Builders | none | no row on the wire | nothing at all |
+##
+## ⛔ **THE `builders` ROW IS ABSENT FROM `pool_crew` RATHER THAN ZERO, because the wire never
+## publishes one** — the builders are not a keeping pool. A fixture that zeroed it would be asserting
+## against a shape no server can produce, and would hide a reader that special-cases the pool it
+## should simply never find.
+const POOL_IDLE_ROADWORK_CREW := 3
+## The `roadwork` pool's bill, PAID IN FULL — `supplied == demand`, `shortfall` zero. The sim states
+## all three for this pool, so the card's coverage test is its verdict and not a subtraction here.
+const POOL_IDLE_ROAD_DEMAND := 2.0
+const POOL_IDLE_ROAD_SHORTFALL := 0.0
+## …and what its crew did not use. **Fractional, because the wire's figure is** — a pool's share
+## arithmetic is continuous, so the card has to floor it to the whole worker a stepper press can free.
+const POOL_IDLE_ROADWORK_IDLE := 1.4
+## …and the same pool BELOW the threshold, for the paired negative: 0.6 of a worker cannot be freed by
+## any control on this panel, so a mark there would be a promise nothing can keep.
+const POOL_IDLE_ROADWORK_FRACTION := 0.6
+## The `agriculture` pool's, on a card that is ALSO short — the state that decides which mark wins.
+const POOL_IDLE_AGRICULTURE_IDLE := 2.4
+## `0` is the wire's *this pool employed every hand it was given*, and it is stated rather than
+## omitted: a row exists for every keeping pool whether or not the band staffs it.
+const POOL_CREW_FULLY_EMPLOYED := 0.0
 
-## What one pool card is flying, as the answers it publishes and draws: `{mark, gear, lines, drawn}` —
-## the triangle (`POOL_CARD_SHORT_META`), the TOOL reason's sentence (`POOL_CARD_TOOL_SHORT_META`), its
-## hover split into lines, and how many `⚠` Labels it actually DREW. The drawn count is read by the
-## mark's own `WORK_ROW_MARKS_META` handle, never by glyph, which is `_assert_pool_card_marks`' rule and
-## for its reason — and it is asserted beside the meta so the decision and the render cannot disagree.
+## The four pools the wire writes a crew row for, in wire order. ⛔ **`builders` IS DELIBERATELY
+## ABSENT** — it is not a keeping pool and no server ever publishes a row for it.
+const POOL_CREW_POOLS: Array[String] = [
+	HudConst.LABOR_KIND_AGRICULTURE, HudConst.LABOR_KIND_HUSBANDRY,
+	HudConst.LABOR_KIND_ROADWORK, HudConst.LABOR_KIND_QUARRYWORK,
+]
+
+## **THE BAND'S FOUR CREW ROWS AS THE TURN THAT SETTLED IT WOULD HAVE STAMPED THEM** — one per
+## keeping pool, each carrying the idle figure this fixture is staging and the HEAD COUNT it was
+## struck against. Spelled through the reader's own keys so a wire rename moves the fixture, and a
+## pool absent from `idle_by_pool` employed every hand it was given.
+##
+## ⛔ **`keepers` IS READ OFF THE BAND'S OWN LABOR ROW, AND THAT IS THE STAGING RULE, NOT A
+## SHORTCUT.** The sim writes the two numbers at ONE seam when the turn settles, so on a settled
+## frame the crew row's head count and the band's row are necessarily the same number — which is
+## what makes this derivation exact rather than convenient. **Everything after that moment moves the
+## LABOR ROW ALONE** (`_press_role_stepper`), which is the whole shape of a pending edit: the server
+## applies an assign the instant the command lands, outside the turn, while the crew line waits for
+## the next resolution. So a crew row must be stamped BEFORE the press and never touched by it.
+func _stamp_settled_crew(band: Dictionary, idle_by_pool: Dictionary) -> Dictionary:
+	var rows: Array = []
+	for pool in POOL_CREW_POOLS:
+		rows.append({
+			HudBandLaborState.POOL_CREW_POOL_KEY: pool,
+			HudBandLaborState.POOL_CREW_IDLE_KEY: float(idle_by_pool.get(pool,
+				POOL_CREW_FULLY_EMPLOYED)),
+			HudBandLaborState.POOL_CREW_KEEPERS_KEY: float(
+				_hud._band_labor.workers_for_role(band, pool)),
+		})
+	band[HudBandLaborState.POOL_CREW_KEY] = rows
+	return band
+
+func _pool_idle_band_fixture(roadwork_idle: float) -> Dictionary:
+	var band := _keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_SPREAD)
+	band["entity"] = 971
+	band["id"] = "Band 27"
+	var rows: Array = (band["labor_assignments"] as Array).duplicate(true)
+	rows.append({"kind": HudConst.LABOR_KIND_ROADWORK, "workers": POOL_IDLE_ROADWORK_CREW})
+	rows.append({"kind": HudConst.LABOR_KIND_BUILDERS, "workers": POOL_GEAR_BUILDERS_CREW})
+	band["labor_assignments"] = rows
+	band["roadwork_demand"] = POOL_IDLE_ROAD_DEMAND
+	band["roadwork_supplied"] = POOL_IDLE_ROAD_DEMAND
+	band["roadwork_shortfall"] = POOL_IDLE_ROAD_SHORTFALL
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_AGRICULTURE: POOL_IDLE_AGRICULTURE_IDLE,
+		HudConst.LABOR_KIND_ROADWORK: roadwork_idle,
+	})
+
+## ⛔ **COMPOSED FROM THE VOCABULARY AND THE FIXTURE'S OWN NUMBER, NEVER THROUGH
+## `HudWorkVocab.upkeep_pool_idle_line`** — the material-short guard's rule: an expectation re-derived through
+## the code under test collapses with it. The FLOOR is spelled out here too, because *1 worker out of
+## 1.4 idle* is the claim rather than an implementation detail.
+func _pool_idle_sentence(idle: float) -> String:
+	var whole := int(floorf(idle))
+	return HudWorkVocab.UPKEEP_POOL_IDLE_FORMAT % [whole,
+		HudWorkVocab.UPKEEP_POOL_IDLE_WORKER_SINGULAR if whole == 1
+		else HudWorkVocab.UPKEEP_POOL_IDLE_WORKER_PLURAL]
+
+## ---- …AND IT IS LIVE, NOT A TURN LATE (issue #715 follow-up) -----------------------------------
+##
+## **THE SILENCE THIS STAGES.** Reported from play: *"On Turn 1, I just assigned two Agriculture
+## workers. It wasn't until I advanced to turn 2 that the information icon showed."* Two causes
+## stacked — the pending GATE returned `""` on any role edit, and the wire figure it gated describes
+## the staffing the turn RESOLVED, so removing the gate alone would still have read `0` until turn 2.
+## The card projects the wire's figure by the stepper delta less the keeping this turn's queued jobs
+## will owe (`BandPanelController._projected_pool_idle`), which answers on the PENDING frame.
+##
+## | pool | what is pending | what it must say |
+## |---|---|---|
+## | Agriculture | a `+` on a pool whose bill its one keeper already covers | the INFO mark — a whole worker spare |
+## | Husbandry | a `+` on a pool that is SHORT | `⚠` and NO idle mark — the new hand is consumed |
+## | Roadwork | a `−` taking its 1.4 spare keepers down | nothing at all — 0.4 of a worker is not a worker |
+## | Agriculture, with a Sow queued THIS TURN | the same `+` | nothing — the queued job's keeping claims the hand |
+##
+## The plant pool's ONE kept site, and what a bare keeper supplies against it. **Met EXACTLY**, so
+## the wire's idle figure is an honest zero and the pending reading can only come from the delta.
+const POOL_PENDING_PLANT_DEMAND := 1.0
+## The BARE work one keeper banks in a turn, which every live source publishes as
+## `buildWorkPerWorkerTurn`. Stated rather than assumed: it is the rate the projection divides the
+## queued demand by, so a fixture without it would leave that term unpriced and the claim vacuous.
+const POOL_PENDING_PER_WORKER_TURN := 1.0
+## What the Sow queued this turn will owe once it starts — one bare keeper's whole output, so the
+## `+` beside it is claimed exactly. `upkeep_demand` on that patch stays ZERO, the sim being honest:
+## the meter is empty, nothing is owned yet, nothing is billed.
+const POOL_PENDING_SOW_UPKEEP := 1.0
+## The staffing each pool carries before the player touches it, and what the stepper leaves behind.
+## **The roadwork pair steps DOWN**, which is the `−` branch of the asymmetry.
+const POOL_PENDING_AGRICULTURE_CREW := 1
+const POOL_PENDING_AGRICULTURE_STEPPED := 2
+const POOL_PENDING_HUSBANDRY_CREW := 1
+const POOL_PENDING_HUSBANDRY_STEPPED := 2
+const POOL_PENDING_ROADWORK_CREW := 3
+const POOL_PENDING_ROADWORK_STEPPED := 2
+## …and what the plant pool is then carrying spare: the wire's `0.0` plus the one hand the `+` added,
+## nothing queued to claim it. Spelled out rather than derived through the projection, the
+## material-short guard's rule — an expectation re-computed through the code under test collapses
+## with it.
+const POOL_PENDING_SPARE_KEEPERS := 1.0
+## The two tiles that band works. The second exists only in the QUEUED fixture.
+const POOL_PENDING_KEPT_TILE := Vector2i(64, 12)
+const POOL_PENDING_SOW_TILE := Vector2i(65, 12)
+
+func _pool_pending_patch_fixtures(with_queued_sow: bool) -> Array:
+	var patches: Array = [{
+		"x": POOL_PENDING_KEPT_TILE.x, "y": POOL_PENDING_KEPT_TILE.y,
+		"is_cultivated": true, "is_field": false,
+		"upkeep_demand": POOL_PENDING_PLANT_DEMAND,
+		"upkeep_supplied": POOL_PENDING_PLANT_DEMAND,
+		"upkeep_shortfall": 0.0,
+		"upkeep_workers_needed": POOL_PENDING_AGRICULTURE_CREW,
+		"upkeep_kit_id": KEEPING_POOL_PATCH_UPKEEP_KIT, "upkeep_kit_named": false,
+		"build_work_per_worker_turn": POOL_PENDING_PER_WORKER_TURN,
+		"has_neglect_grace": true, "neglect_grace_remaining": 2,
+		"build_queue_position": SourceForecast.NOT_IN_ANY_BUILD_QUEUE,
+		"build_turns_remaining": SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+	}]
+	if with_queued_sow:
+		# **THE JOB DECLARED THIS TURN.** It is billed NOTHING today — the meter is empty — which is
+		# exactly the state whose keeping the projection has to anticipate; `field_upkeep_demand` is
+		# what the Sow will owe once it starts (`SourceForecast.FORECAST_BUILD_UPKEEP_DEMAND_KEYS`).
+		patches.append({
+			"x": POOL_PENDING_SOW_TILE.x, "y": POOL_PENDING_SOW_TILE.y,
+			"is_cultivated": true, "is_field": false,
+			"upkeep_demand": 0.0, "upkeep_supplied": 0.0, "upkeep_shortfall": 0.0,
+			"field_upkeep_demand": POOL_PENDING_SOW_UPKEEP,
+			"build_work_per_worker_turn": POOL_PENDING_PER_WORKER_TURN,
+			"build_queue_position": SourceForecast.BUILD_QUEUE_HEAD,
+			"build_turns_remaining": KEEPING_POOL_BUILD_TURNS,
+		})
+	return RUNG_FX.stamp_patches(patches)
+
+## The band those pools belong to. Its ANIMAL web is `_keeping_pool_herd_fixtures`' own short herd —
+## the control that keeps the claim meaningful — and its PLANT web is covered exactly.
+func _pool_pending_band_fixture(with_queued_sow: bool) -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 979
+	band["id"] = "Band 29"
+	band["upkeep_fund_mode"] = HudConst.UPKEEP_FUND_MODE_SPREAD
+	var rows: Array = [
+		{"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": 2, "workers_needed": 2, "floor": 0.5,
+			"target_x": POOL_PENDING_KEPT_TILE.x, "target_y": POOL_PENDING_KEPT_TILE.y,
+			"improvement": SourceForecast.IMPROVEMENT_NONE,
+			"actual_yield": 0.97, "sustainable_yield": 0.97},
+		{"kind": SourceForecast.LABOR_KIND_HUNT, "workers": 2, "workers_needed": 2, "floor": 0.5,
+			"fauna_id": UNDER_HERDED_WORK_HERD_ID, "target_x": 70, "target_y": 17,
+			"actual_yield": 1.20, "sustainable_yield": 1.20},
+		{"kind": HudConst.LABOR_KIND_AGRICULTURE, "workers": POOL_PENDING_AGRICULTURE_CREW},
+		{"kind": HudConst.LABOR_KIND_HUSBANDRY, "workers": POOL_PENDING_HUSBANDRY_CREW},
+		{"kind": HudConst.LABOR_KIND_ROADWORK, "workers": POOL_PENDING_ROADWORK_CREW},
+	]
+	if with_queued_sow:
+		rows.append({"kind": SourceForecast.LABOR_KIND_FORAGE, "workers": 2, "workers_needed": 2,
+			"floor": 0.5,
+			"target_x": POOL_PENDING_SOW_TILE.x, "target_y": POOL_PENDING_SOW_TILE.y,
+			"improvement": SourceForecast.IMPROVEMENT_SOW,
+			"actual_yield": 0.55, "sustainable_yield": 0.55})
+		band["build_queue"] = [_queue_forage_entry(POOL_PENDING_SOW_TILE)]
+	band["labor_assignments"] = rows
+	band["roadwork_demand"] = POOL_IDLE_ROAD_DEMAND
+	band["roadwork_supplied"] = POOL_IDLE_ROAD_DEMAND
+	band["roadwork_shortfall"] = POOL_IDLE_ROAD_SHORTFALL
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_ROADWORK: POOL_IDLE_ROADWORK_IDLE,
+	})
+
+## ---- …AND THE ONE TRANSITION IT STAYS SILENT ACROSS --------------------------------------------
+##
+## **A POOL SHORT BY LESS THAN ONE HAND'S WORTH.** 2.5 work a turn against two bare keepers, so the
+## `+` that follows COVERS the pool and honestly leaves `POOL_FLIP_HONEST_SPARE` of a worker over —
+## and the projection, which can see the delta but not how much of it the deficit swallowed, would
+## claim a WHOLE one. The card says nothing instead (`BandPanelController._pool_idle_line`'s gate).
+const POOL_FLIP_PLANT_DEMAND := 2.5
+## What the two settled keepers actually supplied against it — short, and short by under one hand.
+const POOL_FLIP_PLANT_SUPPLIED := 2.0
+const POOL_FLIP_AGRICULTURE_CREW := 2
+const POOL_FLIP_AGRICULTURE_STEPPED := 3
+## …and the leftover the third hand genuinely leaves. **NOT what the card says** — the card says
+## nothing at all — stated here so a reader knows the silence is deliberate and what it stands in
+## for. A mark there would promise a step-down that puts the pool straight back into shortfall.
+const POOL_FLIP_HONEST_SPARE := 0.5
+
+func _pool_flip_patch_fixtures() -> Array:
+	var patches := _pool_pending_patch_fixtures(false)
+	var kept: Dictionary = patches[0]
+	kept["upkeep_demand"] = POOL_FLIP_PLANT_DEMAND
+	kept["upkeep_supplied"] = POOL_FLIP_PLANT_SUPPLIED
+	kept["upkeep_shortfall"] = POOL_FLIP_PLANT_DEMAND - POOL_FLIP_PLANT_SUPPLIED
+	kept["upkeep_workers_needed"] = POOL_FLIP_AGRICULTURE_STEPPED
+	return RUNG_FX.stamp_patches(patches)
+
+## The same band one keeper heavier on the plant pool, against that heavier bill.
+func _pool_flip_band_fixture() -> Dictionary:
+	var band := _pool_pending_band_fixture(false)
+	band["entity"] = 981
+	band["id"] = "Band 30"
+	var rows: Array = (band["labor_assignments"] as Array).duplicate(true)
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) == HudConst.LABOR_KIND_AGRICULTURE:
+			row["workers"] = POOL_FLIP_AGRICULTURE_CREW
+	band["labor_assignments"] = rows
+	# …and its crew rows re-stamped against the heavier plant pool, so the two keepers the wire says
+	# settled this pool are the two the labor row carries. The `+` below moves the row alone.
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_ROADWORK: POOL_IDLE_ROADWORK_IDLE,
+	})
+
+## ---- …AND THE POOL WITH NOTHING TO KEEP AT ALL, WHICH IS WHAT PLAY REPORTED -------------------
+##
+## **THREE KEEPERS ON A BAND THAT WORKS NOTHING.** Reported from play at turn 1: the pool was staffed
+## and the card stayed blank. **The wire is not what was wrong** — a crew line is stamped for every
+## keeping pool whether or not the band staffs it, so this band's row is an honest `0` idle struck
+## against `0` keepers, and the three hands the press added are three hands with nowhere to go.
+##
+## ⛔ **NO SOURCES AT ALL IS THE POINT, NOT A CONVENIENCE.** With nothing tended and nothing queued
+## the pool is asked for nothing, so no shortfall can take the mark slot and no queued term can
+## absorb the hands: what the card says is the projection and nothing else.
+const POOL_BARE_AGRICULTURE_PRESSED := 3
+
+func _pool_bare_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 985
+	band["id"] = "Band 32"
+	band["upkeep_fund_mode"] = HudConst.UPKEEP_FUND_MODE_SPREAD
+	# **THE BAND WORKS NOTHING AND KEEPS NOTHING** — no forage row, no hunt row, no keeping pool
+	# staffed, no queue. The `agriculture` row does not exist until the press creates it, which is the
+	# reported shape.
+	band["labor_assignments"] = []
+	band["build_queue"] = []
+	return _stamp_settled_crew(band, {})
+
+## ---- THE JOBS SET UP THIS TURN, WHICH A STEPPER DELTA ALONE CANNOT SEE -------------------------
+##
+## **THE POOL HAS SPARE KEEPERS AND HAS JUST BEEN GIVEN A JOB.** Three settled keepers with no live
+## bill at all — so the wire honestly reports all three idle — beside a Sow declared THIS TURN whose
+## standing keeping will claim exactly three bare hands once it starts. A `+` there leaves ONE hand
+## genuinely spare, and a projection that could not see the queued job would promise FOUR.
+##
+## ⛔ **THE POOL MUST NOT BE SHORT AT THE SETTLED STAFFING, or the pending gate answers first and the
+## claim is vacuous.** That is measured rather than asserted by construction: a first cut staged one
+## keeper against a 1-work bill plus a 1-work queued job, which IS short at three-quarters of a hand,
+## so the gate silenced the card and dropping the queued term changed nothing. Three keepers covering
+## a 3-work queued bill exactly is what keeps the gate out of it.
+const POOL_QUEUED_AGRICULTURE_CREW := 4
+const POOL_QUEUED_AGRICULTURE_STEPPED := 5
+## What the queued Sow will owe once it starts — three bare keepers' whole output.
+const POOL_QUEUED_SOW_UPKEEP := 3.0
+## …and what the wire says those four keepers did with the turn that resolved: nothing, there being
+## no live bill yet. **THE CARD MAY NOT STATE THIS FIGURE ON EITHER FRAME**, which is the whole
+## claim: the sim's account runs over BILLED claims and this job owes nothing until its first work
+## is banked, so three of those four hands are already spoken for.
+const POOL_QUEUED_IDLE := 4.0
+## What the CALM card states — the wire's four less the three the queued Sow will claim. Nothing is
+## pending here, which is the ordinary way a job gets set up.
+const POOL_QUEUED_SPARE_CALM := 1.0
+## …and what it states once a `+` lands beside the same queued job.
+const POOL_QUEUED_SPARE_AFTER_STEP := 2.0
+
+func _pool_queued_patch_fixtures() -> Array:
+	var patches := _pool_pending_patch_fixtures(true)
+	# **THE KEPT SITE OWES NOTHING HERE.** Its bill is what would make the pool short at the settled
+	# staffing, and the pending gate would then answer before the queued term ever ran.
+	var kept: Dictionary = patches[0]
+	kept["upkeep_demand"] = 0.0
+	kept["upkeep_supplied"] = 0.0
+	kept["upkeep_workers_needed"] = 0
+	(patches[1] as Dictionary)["field_upkeep_demand"] = POOL_QUEUED_SOW_UPKEEP
+	return RUNG_FX.stamp_patches(patches)
+
+func _pool_queued_band_fixture() -> Dictionary:
+	var band := _pool_pending_band_fixture(true)
+	band["entity"] = 983
+	band["id"] = "Band 31"
+	var rows: Array = (band["labor_assignments"] as Array).duplicate(true)
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) == HudConst.LABOR_KIND_AGRICULTURE:
+			row["workers"] = POOL_QUEUED_AGRICULTURE_CREW
+	band["labor_assignments"] = rows
+	# **RE-STAMPED AFTER THE ROW MOVED, because the crew line and the labor row agree on a SETTLED
+	# frame** — this band's four keepers are the staffing its turn resolved, and nothing here is
+	# pending. The press that follows is what pulls the two apart.
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_AGRICULTURE: POOL_QUEUED_IDLE,
+		HudConst.LABOR_KIND_ROADWORK: POOL_IDLE_ROADWORK_IDLE,
+	})
+
+## One optimistic role edit, through the model's own writer — the client half of a stepper press.
+##
+## ⛔ **ON ITS OWN IT DOES NOT STAGE A PENDING EDIT, AND A FIXTURE THAT USES IT ALONE TESTS A STATE
+## THE LIVE CLIENT NEVER REACHES** — see `_press_role_stepper`, which every pool fixture goes
+## through.
+func _record_pending_role(entity: int, kind: String, workers: int) -> void:
+	_hud._band_labor.record_pending_assign(entity, kind, workers, -1, -1, "",
+		SourceForecast.DEFAULT_HARVEST_FLOOR)
+
+## **ONE STEPPER PRESS, STAGED THE WAY THE GAME ARRIVES AT IT** — the client's optimistic overlay
+## AND the band's LABOR ROW moved to the new head count, with the band's crew rows left exactly
+## where the last turn stamped them. Mutates the band in place; the caller re-pushes it.
+##
+## ⛔ **THE MOVED ROW IS THE HALF THE OLD FIXTURES MISSED, AND IT IS WHERE A REAL DEFECT LIVED.** The
+## sim applies `assign_labor` to the band's row the INSTANT the command lands, outside the turn, and
+## the next snapshot carries it; `poolCrew` is stamped only when a turn settles. So the live pending
+## state is a **moved labor row beside an unmoved crew row** — both readings of the head count
+## already at the new value, and only the wire's `keepers` still describing the old one. Staging the
+## press as an overlay on top of an UNCHANGED row reproduces the SHAPE of that state but not the way
+## the system arrives at it, and it leaves the band's row standing in as a settled anchor the live
+## client does not have: a projection taking its delta against that row read non-zero here and ZERO
+## in the game, which is how *three keepers assigned on turn 1, no sources at all, and no mark on
+## the card* passed every fixture in this file.
+func _press_role_stepper(band: Dictionary, kind: String, workers: int) -> void:
+	_record_pending_role(int(band.get("entity", -1)), kind, workers)
+	var rows: Array = (band["labor_assignments"] as Array).duplicate(true)
+	var moved := false
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) == kind:
+			row["workers"] = workers
+			moved = true
+	# **A POOL THE BAND HAS NEVER STAFFED HAS NO ROW UNTIL THE FIRST PRESS**, which is the reported
+	# case's own shape: the assign CREATES the assignment rather than editing one.
+	if not moved:
+		rows.append({"kind": kind, "workers": workers, "target_x": -1, "target_y": -1,
+			"fauna_id": ""})
+	band["labor_assignments"] = rows
+
+## GUARD: **ONE POOL CARD UNDER A PENDING ROLE EDIT** — the three answers it publishes together.
+##
+## ⛔ **IT IS NOT `_assert_pool_mark_slot`, AND THE TITLE INK IS WHY.** That probe requires the calm
+## `INK` on a card that is not short; a PENDING card takes the WARN amber for the pending reason
+## alone (*the number under this title is not the sim's yet*), which outranks the idle mark's own
+## leave-the-title-alone rule. So the ink is asserted here as the PRECONDITION instead: it is what
+## says the optimistic edit actually reached this card, without which every claim below would pass on
+## a card that had never seen it.
+func _assert_pending_pool_mark(label: String, role: String, want_glyph: String, want_idle: String,
+		want_short: bool) -> void:
+	var card := _find_pool_card(role)
+	if card == null:
+		_fail("pending pool idle — %s: no %s pool card to read" % [label, role])
+		return
+	var title := _label_titled_under(card, role)
+	var ink := Color.TRANSPARENT if title == null else title.get_theme_color("font_color")
+	_assert_band_panel("pending pool idle — %s: the card is showing an UNCONFIRMED edit (title %s)"
+			% [label, ink],
+		title != null and ink.is_equal_approx(HudStyle.WARN))
+	_assert_band_panel("pending pool idle — %s: …the SHORT meta is %s" % [label, want_short],
+		bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) == want_short)
+	_assert_band_panel("pending pool idle — %s: …and its IDLE meta is \"%s\" (got \"%s\")"
+			% [label, want_idle, card.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")],
+		String(card.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")) == want_idle)
+	var drawn: Array[Control] = []
+	_collect_meta_controls(card, HudWorkVocab.WORK_ROW_MARKS_META, drawn)
+	var glyphs: Array = drawn.map(func(c: Control) -> String:
+		return String(c.get_meta(HudWorkVocab.WORK_ROW_MARKS_META)))
+	var want_glyphs: Array = [] if want_glyph == "" else [want_glyph]
+	_assert_band_panel("pending pool idle — %s: …and the ONE slot holds %s (drew %s)"
+			% [label, want_glyphs, glyphs], glyphs == want_glyphs)
+
+## GUARD: **THE MARK ANSWERS ON THE FRAME THE STEPPER MOVED** (issue #715 follow-up) — the four
+## pending states above, plus the settled reading they are measured against.
+##
+## **THE SETTLED HALF IS HALF THE CLAIM.** With nothing pending the figure is the wire's WHOLE and
+## unadjusted, which is the behaviour this change may not move; without it, *"the projection answers"*
+## is satisfied by a client that had stopped reading the wire at all.
+func _assert_pending_pool_idle_is_live() -> void:
+	_set_world_herds(_keeping_pool_herd_fixtures())
+	_set_forage_patches(_pool_pending_patch_fixtures(false))
+	var band := _pool_pending_band_fixture(false)
+	_push_bands([band])
+	await _settle()
+	# ⑤ NOTHING CHANGED SINCE THE TURN RESOLVED — no stepper edit AND **nothing queued** — so the
+	# reading is the wire's figure WHOLE. That pairing is what the claim needs: *nothing pending* alone
+	# would not pin it, since the queued term adjusts a calm frame too (⑤b below). Three cards, three
+	# different readings, so a projection that had replaced the settled answer fails here rather than
+	# in a pending frame.
+	_assert_pool_mark_slot("settled, a plant pool its one keeper covers",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, "", "", false)
+	_assert_pool_mark_slot("settled, an animal pool short of hands",
+		HudWorkVocab.ROLE_NAME_HUSBANDRY, HudWorkVocab.UPKEEP_POOL_SHORT_MARK, "", true)
+	_assert_pool_mark_slot("settled, a road pool with a worker to spare",
+		HudWorkVocab.ROLE_NAME_ROADWORK, HudWorkVocab.UPKEEP_POOL_IDLE_MARK,
+		_pool_idle_sentence(POOL_IDLE_ROADWORK_IDLE), false)
+	# …and the THREE pending edits on ONE frame, beside each other: a client that marked every
+	# pending card and one that marked none are the same picture at a glance.
+	# ⛔ **EACH PRESS MOVES THE BAND'S LABOR ROW AS WELL AS THE OVERLAY, AND THE BAND IS RE-PUSHED
+	# RATHER THAN MERELY RE-RENDERED** — that is how the state arrives in the game (the assign is
+	# applied outside the turn and rides the next snapshot), and staging it any other way leaves the
+	# band's row standing in as a settled anchor no live client has. See `_press_role_stepper`.
+	_press_role_stepper(band, HudConst.LABOR_KIND_AGRICULTURE, POOL_PENDING_AGRICULTURE_STEPPED)
+	_press_role_stepper(band, HudConst.LABOR_KIND_HUSBANDRY, POOL_PENDING_HUSBANDRY_STEPPED)
+	_press_role_stepper(band, HudConst.LABOR_KIND_ROADWORK, POOL_PENDING_ROADWORK_STEPPED)
+	_push_bands([band])
+	await _settle()
+	await _save("band_panel_pool_idle_pending")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	# ⛔ **THE ROW IS STILL LEVEL AND STILL FITS** — the constraint the whole one-slot design bends
+	# around, re-asserted because a mark appearing on a frame it never appeared on before is exactly
+	# the change that could move it.
+	_assert_pool_cards_are_level("the pending pool idle frame")
+	# ① THE REPORTED CASE: a `+` on a pool whose bill is already covered makes a whole spare worker,
+	# and the mark is up on the PENDING frame rather than a turn later.
+	_assert_pending_pool_mark("a `+` on a covered plant pool",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.UPKEEP_POOL_IDLE_MARK,
+		_pool_idle_sentence(POOL_PENDING_SPARE_KEEPERS), false)
+	# ② THE CONTROL THAT KEEPS ① MEANINGFUL: a `+` on a pool that is SHORT makes no idle mark, the
+	# new hand having somewhere to go. Without it, *"a `+` marks the card"* passes on a client that
+	# marks every pending pool in the game.
+	_assert_pending_pool_mark("a `+` on an animal pool that is SHORT",
+		HudWorkVocab.ROLE_NAME_HUSBANDRY, HudWorkVocab.UPKEEP_POOL_SHORT_MARK, "", true)
+	# ③ THE `−` BRANCH: taking a hand off a pool with 1.4 spare leaves 0.4, which no stepper press can
+	# free — so the mark CLEARS on the pending frame, where the settled card above is flying it.
+	_assert_pending_pool_mark("a `−` taking the road pool's spare worker away",
+		HudWorkVocab.ROLE_NAME_ROADWORK, "", "", false)
+	# ④ AND THE JOBS SET UP THIS TURN, which is the half a stepper delta alone cannot see.
+	_hud._band_labor._pending_labor.clear()
+	_set_forage_patches(_pool_queued_patch_fixtures())
+	var queued_band := _pool_queued_band_fixture()
+	_push_bands([queued_band])
+	await _settle()
+	# THE FIRST PRECONDITION, and it is what makes ④ a claim about the QUEUED TERM: the Sow declared
+	# this turn really is in what the plant pool is asked for. Read through the panel's own producer,
+	# since no card states the figure and a hover reads plausibly at any number.
+	var asked := _pool_coverage_asked(HudWorkVocab.ROLE_NAME_AGRICULTURE)
+	_assert_band_panel("pending pool idle — the queued Sow is in the plant pool's bill (asked %.2f)"
+			% asked, is_equal_approx(asked, POOL_QUEUED_SOW_UPKEEP))
+	# ⑤b **AND THE CALM FRAME IS ADJUSTED TOO — the half of the ask that queueing a job without
+	# touching a stepper is the ordinary way to set one up.** The wire says four keepers did nothing;
+	# the Sow queued this turn will claim three of them the moment it starts, so the card states ONE.
+	# **A NUMBER RATHER THAN A SILENCE**, so the term has to move it rather than merely suppress it.
+	# It is also what keeps the pending gate out of this whole state: a pool this covered was never
+	# short at the settled staffing, so nothing here is silenced by the transition guard.
+	_assert_pool_mark_slot("settled, four keepers and a job queued this turn",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.UPKEEP_POOL_IDLE_MARK,
+		_pool_idle_sentence(POOL_QUEUED_SPARE_CALM), false)
+	await _save("band_panel_pool_idle_queued")
+	_press_role_stepper(queued_band, HudConst.LABOR_KIND_AGRICULTURE,
+		POOL_QUEUED_AGRICULTURE_STEPPED)
+	_push_bands([queued_band])
+	await _settle()
+	await _save("band_panel_pool_idle_pending_queued")
+	_assert_zone_content_fits()
+	# …and the `+` moves that number by exactly the hand it added: FIVE on the pool, three owed to the
+	# Sow, so TWO are spare. **Both halves fail if the queued term is dropped** — the calm frame goes
+	# to four and this one to five — which is what stops either being vacuous.
+	_assert_pending_pool_mark("a `+` beside a job queued THIS TURN",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.UPKEEP_POOL_IDLE_MARK,
+		_pool_idle_sentence(POOL_QUEUED_SPARE_AFTER_STEP), false)
+	# ⑥ **AND THE ONE TRANSITION THE PROJECTION MAY NOT ANSWER** — a pool SHORT by less than one
+	# hand's worth, stepped up so the `+` covers it. The new hand went into the deficit and the
+	# client cannot price how much of it the deficit swallowed, so the card says nothing rather than
+	# promising a step-down that would re-open the shortfall.
+	_hud._band_labor._pending_labor.clear()
+	_set_forage_patches(_pool_flip_patch_fixtures())
+	var flip_band := _pool_flip_band_fixture()
+	_push_bands([flip_band])
+	await _settle()
+	# THE FIRST PRECONDITION: settled, the pool really IS short — without it the gate has nothing to
+	# catch and the silence below is the ordinary *no spare hand* reading under a new name.
+	_assert_pool_mark_slot("settled, a plant pool short by under one hand of work",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.UPKEEP_POOL_SHORT_MARK, "", true)
+	_press_role_stepper(flip_band, HudConst.LABOR_KIND_AGRICULTURE,
+		POOL_FLIP_AGRICULTURE_STEPPED)
+	_push_bands([flip_band])
+	await _settle()
+	await _save("band_panel_pool_idle_pending_flip")
+	_assert_zone_content_fits()
+	# …and the SECOND, which `want_short = false` carries: the edit really did cover the pool, so the
+	# silence is the GATE's and not the triangle's. Ungated, this card would read the whole added hand
+	# as spare — which is the claim the sabotage check turns on.
+	_assert_pending_pool_mark(
+		"a `+` that COVERS a shortfall (%0.1f of a worker honestly spare — the card says nothing, deliberately)"
+			% POOL_FLIP_HONEST_SPARE,
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, "", "", false)
+	# ⑦ **THE REPORTED CASE, AND THE ONE EVERY FIXTURE ABOVE WAS BLIND TO.** Turn 1, three
+	# `agriculture` keepers put on a band with NO SOURCES AT ALL — no tended ground, no herd, no
+	# queued job — and the card said nothing. The wire is honest: its crew row was struck when the
+	# turn settled a pool nobody was on, so it reads `0` idle against `0` keepers, and the whole
+	# reading has to come from the three hands the press added.
+	_hud._band_labor._pending_labor.clear()
+	_set_forage_patches([])
+	_set_world_herds([])
+	var bare_band := _pool_bare_band_fixture()
+	_push_bands([bare_band])
+	await _settle()
+	# THE PRECONDITION: settled, nobody is on this pool and there is nothing to be idle about.
+	_assert_pool_mark_slot("settled, a plant pool nobody is on with nothing to keep",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, "", "", false)
+	_press_role_stepper(bare_band, HudConst.LABOR_KIND_AGRICULTURE, POOL_BARE_AGRICULTURE_PRESSED)
+	_push_bands([bare_band])
+	await _settle()
+	await _save("band_panel_pool_idle_bare")
+	_assert_zone_content_fits()
+	_assert_pool_cards_are_level("the bare pool frame")
+	# ⛔ **THIS IS THE ANCHOR'S OWN FIXTURE.** Both terms of the old delta — the pending-aware count
+	# and the band's labor row — are at THREE here, so a projection taking its delta against the row
+	# reads `0` and marks nothing, which is precisely what the game did. Only the wire's `keepers`
+	# still says `0`, and only a delta struck against it answers three.
+	_assert_pending_pool_mark("three keepers put on a pool with no sources at all",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, HudWorkVocab.UPKEEP_POOL_IDLE_MARK,
+		_pool_idle_sentence(float(POOL_BARE_AGRICULTURE_PRESSED)), false)
+	# ⛔ **THE WORLD GOES BACK.** The states below this block re-render the POOLS block against
+	# `_keeping_pool_band_fixture`'s world and push no patches of their own; leaving these standing
+	# fails them several hundred lines from the state that changed.
+	_hud._band_labor._pending_labor.clear()
+	_set_forage_patches(_keeping_pool_patch_fixtures())
+	_set_world_herds(_keeping_pool_herd_fixtures())
+
+## GUARD: **ONE MARK SLOT, THREE STATES, AND SHORTFALL WINS IT** (issue #715) — read off one card as
+## the four answers it publishes together: the SHORT meta, the IDLE meta, the glyph it actually DREW
+## and the ink its title took.
+##
+## **THE GLYPH IS READ HERE AND NOWHERE ELSE ON THIS CARD.** Every other probe in this file asks the
+## card's meta deliberately, so that a claim is never the string the builder was just handed. This one
+## has to look at the run, because *which of two glyphs stands in the one slot* is precisely what is
+## under test — and `WORK_ROW_MARKS_META` carries the run itself, so the Label is still found by
+## handle rather than by text.
+##
+## **AND THE TITLE'S INK IS HALF THE CLAIM.** The amber has to keep meaning *something is being lost*;
+## an idle worker is waste a stepper press fixes. A card that flew the info mark AND took the WARN
+## amber would spend the panel's one alarm ink on the least urgent thing it can say, and the mark
+## alone cannot catch it.
+func _assert_pool_mark_slot(label: String, role: String, want_glyph: String, want_idle: String,
+		want_short: bool) -> void:
+	var card := _find_pool_card(role)
+	if card == null:
+		_fail("pool idle — %s: no %s pool card to read" % [label, role])
+		return
+	_assert_band_panel("pool idle — %s: the SHORT meta is %s" % [label, want_short],
+		bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) == want_short)
+	_assert_band_panel("pool idle — %s: …and its IDLE meta is \"%s\" (got \"%s\")"
+			% [label, want_idle, card.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")],
+		String(card.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")) == want_idle)
+	var drawn: Array[Control] = []
+	_collect_meta_controls(card, HudWorkVocab.WORK_ROW_MARKS_META, drawn)
+	var glyphs: Array = drawn.map(func(c: Control) -> String:
+		return String(c.get_meta(HudWorkVocab.WORK_ROW_MARKS_META)))
+	var want_glyphs: Array = [] if want_glyph == "" else [want_glyph]
+	_assert_band_panel("pool idle — %s: …and the ONE slot holds %s (drew %s)"
+			% [label, want_glyphs, glyphs], glyphs == want_glyphs)
+	# ⛔ **AND THE MARK'S OWN INK, WHICH IS THE HALF A GLYPH CLAIM CANNOT MAKE.** The amber has to
+	# keep meaning *something is being lost*; an idle worker is waste a stepper press fixes. A single
+	# slot carrying both states in one colour would be a mark the player cannot read at a glance,
+	# which is the whole reason the info state exists rather than a second triangle.
+	if want_glyph != "":
+		var want_ink := HudStyle.WARN if want_short else HudStyle.INK_DIM
+		var mark_ink: Color = drawn[0].get_theme_color("font_color")
+		_assert_band_panel("pool idle — %s: …in the %s (%s)"
+				% [label, "WARN amber" if want_short else "the INK_DIM note", mark_ink],
+			mark_ink.is_equal_approx(want_ink))
+	var title := _label_titled_under(card, role)
+	var ink := Color.TRANSPARENT if title == null else title.get_theme_color("font_color")
+	_assert_band_panel("pool idle — %s: …and its title takes the %s ink (%s)"
+			% [label, "WARN amber" if want_short else "calm INK", ink],
+		title != null and ink.is_equal_approx(HudStyle.WARN if want_short else HudStyle.INK))
+
+## GUARD: **THE WORK-UNITS READING IS ON THE HOVER WHETHER OR NOT THE POOL IS SHORT** (issue #715) —
+## the sentence existed all along and was gated shut behind the shortfall test, which is why a
+## correctly staffed pool said nothing about how much of its crew the bill actually consumes.
+##
+## Asserted as a PAIR against the idle clause's own line, in the ordering rule the card already
+## follows: the shortfall readings first, the idle one last.
+func _assert_pool_hover_states_its_bill(label: String, role: String, want_idle: String) -> void:
+	var card := _find_pool_card(role)
+	if card == null:
+		_fail("pool idle — %s: no %s pool card to read" % [label, role])
+		return
+	var lines: Array = Array(card.tooltip_text.split(SourceForecast.TOOLTIP_LINE_SEPARATOR))
+	var bill_at := POOL_HOVER_LINE_ABSENT
+	for i in lines.size():
+		if String(lines[i]).contains(POOL_COVERAGE_TOOLTIP_NEEDLE):
+			bill_at = i
+			break
+	_assert_band_panel("pool idle — %s: …states its bill in work units on the hover (%s)"
+			% [label, lines], bill_at != POOL_HOVER_LINE_ABSENT)
+	if want_idle == "":
+		return
+	_assert_band_panel("pool idle — %s: …and the idle reading on a line of its own, AFTER it (%s)"
+			% [label, lines],
+		lines.find(want_idle) != POOL_HOVER_LINE_ABSENT
+			and bill_at < lines.find(want_idle))
+
+## What one pool card is flying, as the answers it publishes and draws: `{mark, gear, lines, drawn,
+## glyphs, mark_ink, title_ink}` — the `⚠` (`POOL_CARD_SHORT_META`), the TOOL reason's sentence
+## (`POOL_CARD_TOOL_SHORT_META`), its hover split into lines, the marks it actually DREW and their ink,
+## and its title's ink. The drawn marks are read by their own `WORK_ROW_MARKS_META` handle, never by
+## glyph, which is `_assert_pool_card_marks`' rule and for its reason — and they are asserted beside
+## the meta so the decision and the render cannot disagree.
 func _pool_card_answers(role_name: String) -> Dictionary:
 	var card := _find_pool_card(role_name)
 	if card == null:
 		return {}
 	var drawn: Array[Control] = []
 	_collect_meta_controls(card, HudWorkVocab.WORK_ROW_MARKS_META, drawn)
+	var title := _label_titled_under(card, role_name)
 	return {
 		"mark": bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)),
 		"gear": String(card.get_meta(HudWorkVocab.POOL_CARD_TOOL_SHORT_META, "")),
 		"lines": Array(card.tooltip_text.split(SourceForecast.TOOLTIP_LINE_SEPARATOR)),
 		"drawn": drawn.size(),
+		"glyphs": drawn.map(func(c: Control) -> String:
+			return String(c.get_meta(HudWorkVocab.WORK_ROW_MARKS_META))),
+		"mark_ink": Color.TRANSPARENT if drawn.is_empty() \
+			else drawn[0].get_theme_color(FONT_COLOR_THEME_KEY),
+		"title_ink": Color.TRANSPARENT if title == null \
+			else title.get_theme_color(FONT_COLOR_THEME_KEY),
 	}
 
-## A card short of both still draws ONE triangle — the second glyph was measured and refused.
+## A card draws ONE mark in its one slot whichever state it is in — a second glyph was measured and
+## refused.
 const POOL_CARD_MARKS_WHEN_FLYING := 1
 ## …and none when nothing is wrong.
 const POOL_CARD_MARKS_WHEN_CALM := 0
@@ -4890,67 +5647,102 @@ func _pool_hands_line_index(lines: Array) -> int:
 			return i
 	return POOL_HOVER_LINE_ABSENT
 
-## **THE TOOL LINE'S SHAPE, for the negative half** — `N of M <item>` at the head of a line.
-##
-## ⛔ **IT IS SPELLED AS A SHAPE RATHER THAN AS A WORD, and that is the point.** It was the retired
-## sentence's fixed tail (` available`), which a term no longer carries; a needle spelled as one
-## item's word instead would be blind to a stray line naming a different item, which is exactly the
-## failure *"no tool shortfall is stated"* exists to catch.
-const POOL_TOE_LINE_PATTERN := "^[0-9]+ of [0-9]+ "
+## ⛔ **A TOOL COUNT, ANYWHERE ON THE HOVER — the shape issue #716 retired.** `0 of 1 hoe` under a
+## worker stepper read as a head count, so the card may not count a tool on ANY line. Spelled as a
+## shape rather than as one item's word, so a stray count naming a different item is caught too. It
+## excludes `work`, since the coverage sentence is itself `Supplies N of M work a turn.`
+const POOL_TOOL_COUNT_PATTERN := "[0-9]+ of [0-9]+ (?!work\\b)[a-z]"
 
-## Which of a hover's lines state a tool shortfall, by that shape.
-func _pool_toe_lines(lines: Array) -> Array:
+## Which of a hover's lines count something in the retired `N of M <item>` shape.
+func _pool_tool_count_lines(lines: Array) -> Array:
 	var probe := RegEx.new()
-	probe.compile(POOL_TOE_LINE_PATTERN)
+	probe.compile(POOL_TOOL_COUNT_PATTERN)
 	return lines.filter(func(l: Variant) -> bool: return probe.search(String(l)) != null)
 
-## One card's whole answer: the triangle (meta AND drawn), the tool reason's meta, and the hover's
-## lines — which reason is stated, on a line of its own, in its existing words, hands first.
+## The tool sentence a card in this state must carry: the WARN form under the `⚠`, the INFO form
+## under the info mark, nothing when its tools are filled or it has none.
+func _want_pool_tool_line(work_short: bool, tools_short: bool) -> String:
+	if not tools_short:
+		return ""
+	return HudWorkVocab.POOL_TOOLS_SHORT_WARN_LINE if work_short \
+		else HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE
+
+## One card's whole answer (issue #716): the `⚠` meta, the ONE glyph it drew and its ink, the title's
+## ink, the tool reason's meta, and the hover — which lines are stated, each on its own line, the
+## coverage sentence first, and NO tool counted anywhere.
+##
+## **SHORT AND BILLED ARE TWO EXPECTATIONS.** The coverage sentence is on the hover iff the pool has a
+## bill (`want_bill`), paid or not; whether that bill is SHORT is carried by the `SHORT` meta, the
+## glyph and the title ink (`want_hands`). A covered pool states its sentence too, so a claim that
+## tied the sentence to "short" could only ever stage a tools-short `ⓘ` on a pool with no bill.
+##
+## | work short | tools short | mark | `SHORT` meta | tool meta | title |
+## |---|---|---|---|---|---|
+## | yes | either | `⚠` WARN | true | WARN line or `""` | WARN |
+## | no | yes | `ⓘ` INK_DIM | false | INFO line | INK |
+## | no | no | none (no idle on these fixtures) | false | `""` | INK |
 func _assert_pool_card_state(label: String, role: String, answers: Dictionary, want_hands: bool,
-		want_gear: String) -> void:
+		want_bill: bool, want_tools: bool) -> void:
 	var lines: Array = answers["lines"]
-	var want_mark := want_hands or want_gear != ""
-	var want_drawn := POOL_CARD_MARKS_WHEN_FLYING if want_mark else POOL_CARD_MARKS_WHEN_CALM
-	_assert_band_panel("pool gear — %s: the triangle %s (meta %s, %d drawn)"
-			% [label, "flies" if want_mark else "does NOT fly", answers["mark"], answers["drawn"]],
-		bool(answers["mark"]) == want_mark and int(answers["drawn"]) == want_drawn)
+	var want_gear := _want_pool_tool_line(want_hands, want_tools)
+	var want_glyph := ""
+	if want_hands:
+		want_glyph = HudWorkVocab.UPKEEP_POOL_SHORT_MARK
+	elif want_tools:
+		want_glyph = HudWorkVocab.UPKEEP_POOL_IDLE_MARK
+	var want_glyphs: Array = [] if want_glyph == "" else [want_glyph]
+	_assert_band_panel("pool gear — %s: the SHORT meta is %s (got %s)"
+			% [label, want_hands, answers["mark"]], bool(answers["mark"]) == want_hands)
+	_assert_band_panel("pool gear — %s: …its ONE slot holds %s (drew %s)"
+			% [label, want_glyphs, answers["glyphs"]],
+		answers["glyphs"] == want_glyphs and int(answers["drawn"]) == (POOL_CARD_MARKS_WHEN_FLYING
+			if want_glyph != "" else POOL_CARD_MARKS_WHEN_CALM))
+	if want_glyph != "":
+		var want_mark_ink := HudStyle.WARN if want_hands else HudStyle.INK_DIM
+		_assert_band_panel("pool gear — %s: …in the %s (%s)"
+				% [label, "WARN amber" if want_hands else "INK_DIM note", answers["mark_ink"]],
+			(answers["mark_ink"] as Color).is_equal_approx(want_mark_ink))
+	var want_title_ink := HudStyle.WARN if want_hands else HudStyle.INK
+	_assert_band_panel("pool gear — %s: …its title takes the %s (%s)"
+			% [label, "WARN amber" if want_hands else "calm INK", answers["title_ink"]],
+		(answers["title_ink"] as Color).is_equal_approx(want_title_ink))
 	_assert_band_panel("pool gear — %s: …its TOOL reason meta is \"%s\" (got \"%s\")"
 			% [label, want_gear, answers["gear"]], String(answers["gear"]) == want_gear)
 	var hands_at := _pool_hands_line_index(lines)
-	_assert_band_panel("pool gear — %s: …its hover %s the HANDS shortfall in its own web's words (%s)"
-			% [label, "states" if want_hands else "does NOT state", lines],
-		(hands_at != POOL_HOVER_LINE_ABSENT) == want_hands
-			and (not want_hands or String(lines[hands_at]).contains(_pool_short_tail(role))))
+	_assert_band_panel("pool gear — %s: …its hover %s the coverage sentence, under its own web's hint (%s)"
+			% [label, "states" if want_bill else "does NOT state", lines],
+		(hands_at != POOL_HOVER_LINE_ABSENT) == want_bill and lines.has(_pool_role_hint(role)))
 	if want_gear != "":
-		# BY EQUALITY OVER A WHOLE LINE: its own line, the existing wording, no remedy clause, no period.
+		# BY EQUALITY OVER A WHOLE LINE: its own line, the shipped wording.
 		_assert_band_panel("pool gear — %s: …and states the TOOL shortfall as a line of its own, \"%s\" (%s)"
 				% [label, want_gear, lines], lines.find(want_gear) != POOL_HOVER_LINE_ABSENT)
 	else:
-		var tool_lines := _pool_toe_lines(lines)
-		_assert_band_panel("pool gear — %s: …and states NO tool shortfall (%s)" % [label, tool_lines],
-			tool_lines.is_empty())
-	if want_hands and want_gear != "":
-		_assert_band_panel("pool gear — %s: …HANDS first, then TOOLS (hands line %d, tool line %d)"
+		_assert_band_panel("pool gear — %s: …and states NO tool shortfall (%s)" % [label, lines],
+			lines.find(HudWorkVocab.POOL_TOOLS_SHORT_WARN_LINE) == POOL_HOVER_LINE_ABSENT
+				and lines.find(HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE) == POOL_HOVER_LINE_ABSENT)
+	var counted := _pool_tool_count_lines(lines)
+	_assert_band_panel("pool gear — %s: …and counts NO tool anywhere on its hover (%s)"
+			% [label, counted], counted.is_empty())
+	if want_bill and want_gear != "":
+		_assert_band_panel("pool gear — %s: …coverage first, then TOOLS (coverage line %d, tool line %d)"
 				% [label, hands_at, lines.find(want_gear)],
-			hands_at != POOL_HOVER_LINE_ABSENT and hands_at < lines.find(want_gear))
+			hands_at != POOL_HOVER_LINE_ABSENT and hands_at + 1 == lines.find(want_gear))
 
-## GUARD: **THE FOUR ANSWERS A POOL'S TOE CAN GIVE, ASSERTED AS A SET ON ONE FRAME.**
+## GUARD: **THE FOUR ANSWERS A POOL'S TOE CAN GIVE, ASSERTED AS A SET ON ONE FRAME** (issue #716).
 ##
-## The triangle flies on THREE of them — short of hands, of tools, of both — so its presence alone
-## tells those three apart from nothing but the calm card. What separates them is the hover, so every
-## card is asserted on BOTH halves: the triangle (the meta and the one `⚠` it drew) and which reasons
-## its hover states, each on its own line, hands first.
+## Only a WORK shortfall flies the `⚠`; a tool shortfall on a pool that covers its work flies the
+## `ⓘ`, and the card never names or counts a tool. Every card is asserted on its mark, its inks, its
+## metas and its hover together.
 ##
 ## ⛔ **THE SET IS THE CLAIM, AND THE TWO SILENT CARDS ARE WHY.** A tooltip builder that always
 ## renders a tool line passes the SHORT cards on its own; one that never renders passes the FILLED and
-## NOT-APPLICABLE ones on its own. Neither can pass all four — which is the whole reason
-## `docs/plan_pool_toe.md` §6 asks for a short pool, a filled pool and a shared-tool pool together.
+## NOT-APPLICABLE ones on its own. Neither can pass all four.
 ##
 ## | card | its TOE | what it must say |
 ## |---|---|---|
-## | Agriculture | hoes 4 of 4 | hands only — **FILLED tools say nothing** |
-## | Husbandry | crook 0 of 2 | hands, then one tool term |
-## | Roadwork | earthmoving tools 4 of 6 · stone-dressing tools 0 of 2 | tools only, TWO terms, its own share of a shared item |
+## | Agriculture | hoes FILLED | `⚠`, the work sentence only — **FILLED tools say nothing** |
+## | Husbandry | crook short | `⚠`, the work sentence, then `Short of tools.` |
+## | Roadwork | both items short, its bill PAID IN FULL | `ⓘ` in INK_DIM, calm title, `Supplies 2 of 2 work a turn.` then the INFO tool line |
 ## | Builders | — | nothing at all — **NOT APPLICABLE** |
 func _assert_pool_kit_marks() -> void:
 	var hands := _pool_card_answers(HudWorkVocab.ROLE_NAME_AGRICULTURE)
@@ -4960,48 +5752,33 @@ func _assert_pool_kit_marks() -> void:
 	if hands.is_empty() or both.is_empty() or tools.is_empty() or absent.is_empty():
 		_fail("pool gear — the POOLS block is missing one of its four cards")
 		return
-	_assert_pool_card_state("a pool short of HANDS, its tools FILLED",
-		HudWorkVocab.ROLE_NAME_AGRICULTURE, hands, true, "")
+	_assert_pool_card_state("a pool short of WORK, its tools FILLED",
+		HudWorkVocab.ROLE_NAME_AGRICULTURE, hands, true, true, false)
 	_assert_pool_card_state("a pool short of BOTH", HudWorkVocab.ROLE_NAME_HUSBANDRY, both, true,
-		_pool_toe_term(int(POOL_TOE_HUSBANDRY_FILLED), int(POOL_TOE_HUSBANDRY_REQUIRED),
-			POOL_TOE_HUSBANDRY_ITEM))
-	_assert_pool_card_state("a pool short of TOOLS only, on TWO items",
-		HudWorkVocab.ROLE_NAME_ROADWORK, tools, false, _pool_toe_line([
-			_pool_toe_term(int(POOL_TOE_ROADWORK_FILLED), int(POOL_TOE_ROADWORK_REQUIRED),
-				POOL_TOE_ROADWORK_ITEM),
-			_pool_toe_term(int(POOL_TOE_ROADWORK_SHARED_FILLED),
-				int(POOL_TOE_ROADWORK_SHARED_REQUIRED), POOL_TOE_SHARED_ITEM),
-		]))
-	_assert_pool_card_state("a pool with NO TOE at all, short of nothing",
-		HudWorkVocab.ROLE_NAME_BUILDERS, absent, false, "")
+		true, true)
+	_assert_pool_card_state("a pool short of TOOLS only, its bill PAID IN FULL",
+		HudWorkVocab.ROLE_NAME_ROADWORK, tools, false, true, true)
+	_assert_pool_covered_tools_short_hover(tools)
+	_assert_pool_card_state("a pool with NO TOE and no bill, short of nothing",
+		HudWorkVocab.ROLE_NAME_BUILDERS, absent, false, false, false)
 	_assert_pool_toe_filled_is_not_absent(hands, absent)
-	_assert_pool_toe_shared_item(tools)
-	_assert_pool_toe_rounding()
-	_assert_pool_toe_inflection()
-	# ⛔ **AND THE CARD SAYS SO AT A GLANCE IN ITS TITLE'S INK, beside the one triangle.** A second
-	# glyph (the work rows' `◆`) was built and measured on the drawn card — two `Label`s (96px), one
-	# packed run (92px), the stepper row (94px) — against this block's 83px floor, and each took the
-	# four-card row past the left dock's 356px box. So the existing `⚠` widened to both shortfalls and
-	# the reason is on the hover; what costs no width is the triangle and the ink.
-	# ⛔ **THE TOOLS-SHORT CARD IS ROADWORK NOW, NOT BUILDERS.** The builders pool carries no TOE at
-	# all on this band, so it is the CALM card; asking it for the amber would pin the opposite claim.
-	var tools_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK),
-		HudWorkVocab.ROLE_NAME_ROADWORK)
-	_assert_band_panel("pool gear — …and the tool-short card's NAME takes the WARN amber (%s)"
-			% ("found" if tools_title != null else "no title Label on the card"),
-		tools_title != null \
-			and tools_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.WARN))
-	# …and the calm card's does not, or "the ink says short" is satisfied by a block that reddens
-	# every title it draws.
-	#
-	# ⛔ **THE CALM CARD IS THE ONE WITH NO TOE AT ALL, NOT THE ONE WHOSE TOOLS ARE FILLED.** The
-	# filled pool is short of HANDS on this band, so its title is amber for that reason and cannot
-	# serve as the negative — asking it would pass the ink claim while saying nothing about tools.
-	var builders_title := _label_titled_under(_find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS),
-		HudWorkVocab.ROLE_NAME_BUILDERS)
-	_assert_band_panel("pool gear — …while the card with nothing to say keeps the calm ink",
-		builders_title != null \
-			and builders_title.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK))
+	_assert_pool_toe_joins_on_the_pool()
+	_assert_pool_tools_line_forks_on_work()
+
+## ⛔ GUARD: **THE STATE ISSUE #716 IS ABOUT, RENDERED — a pool paying its whole bill and short only of
+## tools.** Its hover must carry the coverage sentence at the fixture's own numbers, BY EQUALITY, and
+## the INFO tool line immediately after it. A regression that flew the `ⓘ` only on a pool with NO bill
+## passes every claim on a bill-less card and fails here.
+func _assert_pool_covered_tools_short_hover(tools: Dictionary) -> void:
+	var lines: Array = tools["lines"]
+	var want_coverage := HudWorkVocab.UPKEEP_POOL_COVERAGE_FORMAT % [
+		DetailFormat.format_work_units(POOL_GEAR_ROAD_DEMAND),
+		DetailFormat.format_work_units(POOL_GEAR_ROAD_DEMAND)]
+	var coverage_at := lines.find(want_coverage)
+	_assert_band_panel("pool gear — the covered, tools-short Roadwork card states \"%s\" then \"%s\" (%s)"
+			% [want_coverage, HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE, lines],
+		coverage_at != POOL_HOVER_LINE_ABSENT
+			and lines.find(HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE) == coverage_at + 1)
 
 ## ⛔ GUARD: **A FILLED POOL AND A POOL WITH NO TOOLS BOTH SAY NOTHING, AND THEY ARE NOT THE SAME
 ## STATE.** A row is present at `filled == required` precisely so a reader can tell *satisfied* from
@@ -5022,200 +5799,99 @@ func _assert_pool_toe_filled_is_not_absent(filled: Dictionary, absent: Dictionar
 			% [filled["gear"], absent["gear"]],
 		String(filled["gear"]) == "" and String(absent["gear"]) == "")
 
-## ⛔ GUARD: **A SHARED ITEM IS STATED AS THIS POOL'S SHARE — never the other gang's, never the sum.**
-## Roadwork and Quarrywork both want stone-dressing tools at different numbers, and the card joins the TOE
-## vector on the POOL. The three readings are pairwise distinct by construction, so the negatives bite
-## on the figures rather than coinciding with the right answer.
-##
-## **The quarry gang has no card of its own** — its stepper rides the WORKINGS ROSTER head — so the
-## claim is made where the shared item is visible, which is the Roadwork card.
-func _assert_pool_toe_shared_item(tools: Dictionary) -> void:
-	var line := String(tools["gear"])
-	var mine := _pool_toe_term(int(POOL_TOE_ROADWORK_SHARED_FILLED),
-		int(POOL_TOE_ROADWORK_SHARED_REQUIRED), POOL_TOE_SHARED_ITEM)
-	var theirs := _pool_toe_term(int(POOL_TOE_QUARRYWORK_SHARED_FILLED),
-		int(POOL_TOE_QUARRYWORK_SHARED_REQUIRED), POOL_TOE_SHARED_ITEM)
-	var summed := _pool_toe_term(
-		int(POOL_TOE_ROADWORK_SHARED_FILLED + POOL_TOE_QUARRYWORK_SHARED_FILLED),
-		int(POOL_TOE_ROADWORK_SHARED_REQUIRED + POOL_TOE_QUARRYWORK_SHARED_REQUIRED),
-		POOL_TOE_SHARED_ITEM)
-	_assert_band_panel("pool gear — the SHARED item reads this pool's own share, \"%s\" (line \"%s\")"
-			% [mine, line], line.contains(mine))
-	_assert_band_panel("pool gear — …and never the quarry gang's \"%s\"" % theirs,
-		not line.contains(theirs))
-	_assert_band_panel("pool gear — …and never the two added up, \"%s\"" % summed,
-		not line.contains(summed))
+## ⛔ GUARD: **A SHARED ITEM IS JUDGED ON THIS POOL'S OWN ROWS.** Roadwork and Quarrywork both want
+## stone-dressing tools, and the card's verdict comes from `pool_toe_for`, which joins on the POOL:
+## Roadwork's rows are its own two and never the quarry gang's line for the shared item.
+func _assert_pool_toe_joins_on_the_pool() -> void:
+	var band := _hud._band_labor.panel_band()
+	var rows := HudBandLaborState.pool_toe_for(band, HudConst.LABOR_KIND_ROADWORK)
+	var pools: Array = rows.map(func(r: Variant) -> String:
+		return String((r as Dictionary).get(HudBandLaborState.POOL_TOE_POOL_KEY, "")))
+	var required: Array = rows.map(func(r: Variant) -> float:
+		return float((r as Dictionary).get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)))
+	_assert_band_panel("pool gear — the Roadwork card judges its OWN two rows (pools %s, required %s)"
+			% [pools, required],
+		rows.size() == POOL_TOE_ROADWORK_ROW_COUNT
+			and pools.all(func(p: Variant) -> bool: return p == HudConst.LABOR_KIND_ROADWORK)
+			and not required.has(POOL_TOE_QUARRYWORK_SHARED_REQUIRED))
 
-## ⛔ GUARD: **THE ROUNDING, DRIVEN — because `required` and `filled` are FLOATS and the card prints
-## WHOLE numbers.** Every TOE row in the fixture above is whole on purpose, so the frame says nothing
-## about what happens between two integers; these rows are the cases that bite, and each is a sentence
-## the card must or must not produce rather than an arithmetic identity.
-##
-## **THE EXPECTATIONS ARE HAND-WORKED FROM THE DOCUMENTED RULE, never re-derived through
-## `pool_toe_short_line` itself** — an expectation composed through the arithmetic under test agrees
-## with it by construction, whatever the arithmetic does.
-##
-## ⛔ **THE SUB-UNIT ROW IS THE PLAYTEST DEFECT AND IS THE POINT OF THE SET.** Teasel's Agriculture
-## pool at `0.5666 of 0.7906` — 72% covered, a live wire reading — printed `1 of 1 hoe` under the
-## retired apportion, which produced NO line and therefore NO triangle while the tile it keeps was
-## complaining. Two of the rows below are the same claim at two magnitudes; a rule that only handled
-## the playtest numbers would pass one and fail the other.
-##
-## | row | reads | why |
-## |---|---|---|
-## | required 5.5, filled 2.5 | `2 of 6 hoes` | ceil the want, floor the held — was `3 of 6` |
-## | required 3.0, filled 2.9 | `2 of 3 hoes` | **short by a tenth is SHORT** — was silent |
-## | required 0.4, filled 0.0 | `0 of 1 hoe` | never `0 of 0` and never `0 of 1 hoes` |
-## | required 0.7906, filled 0.5666 | `0 of 1 hoe` | the playtest row — was `1 of 1` and silent |
-## | required 4.0, filled 4.0 | **nothing** | the negative: a filled row is still not a line |
-const POOL_TOE_ROUNDING_ITEM := DetailFormat.KIT_DURABILITY_KEY_HOES
-const POOL_TOE_ROUNDING_SHORT_REQUIRED := 5.5
-const POOL_TOE_ROUNDING_SHORT_FILLED := 2.5
-const POOL_TOE_ROUNDING_SHORT_UNITS := 6
-const POOL_TOE_ROUNDING_SHORT_HELD := 2
-## A row whose halves ROUND to equality and whose floats do not. The one case that tells the raw-float
-## short test apart from a comparison of the printed pair.
-const POOL_TOE_ROUNDING_NEAR_REQUIRED := 3.0
-const POOL_TOE_ROUNDING_NEAR_FILLED := 2.9
-const POOL_TOE_ROUNDING_NEAR_UNITS := 3
-const POOL_TOE_ROUNDING_NEAR_HELD := 2
-const POOL_TOE_ROUNDING_TINY_REQUIRED := 0.4
-const POOL_TOE_ROUNDING_TINY_FILLED := 0.0
-const POOL_TOE_ROUNDING_TINY_UNITS := 1
-const POOL_TOE_ROUNDING_TINY_HELD := 0
-## ⛔ **THE LIVE PLAYTEST ROW, TRANSCRIBED FROM THE WIRE** — Teasel's `agriculture` / `hoes` line at
-## the plant site (72,28), the band holding two hoes against a Builders pool bidding 2.0 at the same
-## priority. Do not "tidy" these to round numbers: what they pin is that a shortfall smaller than one
-## whole unit still flies the triangle.
-const POOL_TOE_ROUNDING_LIVE_REQUIRED := 0.7906
-const POOL_TOE_ROUNDING_LIVE_FILLED := 0.5666
-const POOL_TOE_ROUNDING_LIVE_UNITS := 1
-const POOL_TOE_ROUNDING_LIVE_HELD := 0
-## …and the FILLED row beside it, so "states a line" is a claim rather than a builder that always does.
-const POOL_TOE_ROUNDING_FILLED_REQUIRED := 4.0
-const POOL_TOE_ROUNDING_FILLED_FILLED := 4.0
-func _assert_pool_toe_rounding() -> void:
-	var pool := HudConst.LABOR_KIND_AGRICULTURE
-	var short_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
-		POOL_TOE_ROUNDING_SHORT_REQUIRED, POOL_TOE_ROUNDING_SHORT_FILLED)])
-	var want_short := _pool_toe_term(POOL_TOE_ROUNDING_SHORT_HELD, POOL_TOE_ROUNDING_SHORT_UNITS,
-		POOL_TOE_ROUNDING_ITEM)
-	_assert_band_panel("pool gear — a FRACTIONAL shortfall CEILS its want and FLOORS what it holds — \"%s\" (want \"%s\")"
-			% [short_line, want_short], short_line == want_short)
-	# ⛔ **THE SHORT TEST IS ON THE FLOATS, and this row is the only one that says so.** Both halves
-	# round to 3, so a builder comparing its own printed pair reads `3 of 3` and falls silent — which
-	# is exactly the shape that swallowed the playtest row one order of magnitude down.
-	var near_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
-		POOL_TOE_ROUNDING_NEAR_REQUIRED, POOL_TOE_ROUNDING_NEAR_FILLED)])
-	var want_near := _pool_toe_term(POOL_TOE_ROUNDING_NEAR_HELD, POOL_TOE_ROUNDING_NEAR_UNITS,
-		POOL_TOE_ROUNDING_ITEM)
-	_assert_band_panel("pool gear — …a pool short by a TENTH of a unit still states a line — \"%s\" (want \"%s\")"
-			% [near_line, want_near], near_line == want_near)
-	var tiny_line := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM,
-		POOL_TOE_ROUNDING_TINY_REQUIRED, POOL_TOE_ROUNDING_TINY_FILLED)])
-	var want_tiny := _pool_toe_term(POOL_TOE_ROUNDING_TINY_HELD, POOL_TOE_ROUNDING_TINY_UNITS,
-		POOL_TOE_ROUNDING_ITEM)
-	_assert_band_panel("pool gear — …and a requirement under a whole unit still states a DENOMINATOR — \"%s\" (want \"%s\")"
-			% [tiny_line, want_tiny], tiny_line == want_tiny)
-	_assert_pool_toe_sub_unit_shortfall()
+## Roadwork's own TOE rows in the gear fixture: earthmoving tools and its share of stone-dressing tools.
+const POOL_TOE_ROADWORK_ROW_COUNT := 2
 
-## ⛔ GUARD: **THE PLAYTEST ROW — a SUB-UNIT tool shortfall flies the triangle and states a tool line.**
+## ⛔ GUARD: **THE SHORT TEST IS ON THE RAW FLOATS, AND THE LINE FORKS ON THE WORK SHORTFALL** — driven,
+## PNG-less, because a card showing the wrong form of the sentence is a perfectly ordinary card.
 ##
-## Reported from play: the Agriculture pool card was SILENT about the exact shortage the tile at
-## (72,28) was complaining about, while the Builders card beside it (`1.4334 of 2.0`, which survives
-## rounding) warned correctly. Both pools were genuinely short of the same two hoes.
-##
-## **BOTH HALVES OF THE CONTRACT ARE ASSERTED, because they are different producers**: the raw-float
-## predicate the triangle and the work row's remedy fork on (`pool_toe_is_short`), and the SENTENCE
-## the card's hover carries (`pool_toe_short_line`). A fix that made the line print while leaving the
-## boolean rounding would fly no triangle; one that flew the triangle over an empty hover would say
-## nothing.
-##
-## **PAIRED WITH A FILLED ROW, or "it states a line" passes on a builder that states one for
-## everything** — and the filled row is asserted on BOTH producers for the same reason.
-func _assert_pool_toe_sub_unit_shortfall() -> void:
+## The playtest row (`0.5666 of 0.7906`, Teasel's Agriculture pool at 72% covered) once rounded to
+## covered and fell silent; a row short by a TENTH is short; a FILLED row is not. The line takes the
+## WARN form beside a work shortfall and the INFO form without one — asserted both ways, since a
+## composer that ignored `work_short` passes either alone.
+const POOL_TOE_SHORT_TEST_ITEM := DetailFormat.KIT_DURABILITY_KEY_HOES
+## ⛔ **THE LIVE PLAYTEST ROW, TRANSCRIBED FROM THE WIRE.** Do not "tidy" these to round numbers: what
+## they pin is that a shortfall smaller than one whole unit is still a shortfall.
+const POOL_TOE_LIVE_REQUIRED := 0.7906
+const POOL_TOE_LIVE_FILLED := 0.5666
+## A row whose floats differ by a tenth — short, however it would round.
+const POOL_TOE_NEAR_REQUIRED := 3.0
+const POOL_TOE_NEAR_FILLED := 2.9
+## …and a FILLED row, so "it is short" is a claim rather than a predicate that always says yes.
+const POOL_TOE_FILLED_REQUIRED := 4.0
+const POOL_TOE_FILLED_FILLED := 4.0
+## The retired counted line's played reading, as the needle's positive.
+const POOL_TOE_RETIRED_COUNT_SAMPLE := "0 of 1 hoe"
+func _assert_pool_tools_line_forks_on_work() -> void:
 	var pool := HudConst.LABOR_KIND_AGRICULTURE
-	var live := [_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM, POOL_TOE_ROUNDING_LIVE_REQUIRED,
-		POOL_TOE_ROUNDING_LIVE_FILLED)]
-	var filled := [_pool_toe_row(pool, POOL_TOE_ROUNDING_ITEM, POOL_TOE_ROUNDING_FILLED_REQUIRED,
-		POOL_TOE_ROUNDING_FILLED_FILLED)]
-	_assert_band_panel("pool gear — the PLAYTEST row (%.4f of %.4f) is SHORT on the raw floats"
-			% [POOL_TOE_ROUNDING_LIVE_FILLED, POOL_TOE_ROUNDING_LIVE_REQUIRED],
-		HudWorkVocab.pool_toe_is_short(live))
-	var live_line := HudWorkVocab.pool_toe_short_line(live)
-	var want_live := _pool_toe_term(POOL_TOE_ROUNDING_LIVE_HELD, POOL_TOE_ROUNDING_LIVE_UNITS,
-		POOL_TOE_ROUNDING_ITEM)
-	_assert_band_panel("pool gear — …and states it as \"%s\" rather than reading as covered (got \"%s\")"
-			% [want_live, live_line], live_line == want_live)
-	# ⛔ **AND IT MAY NEVER PRINT `N of N`.** The retired apportion's whole failure was an equality
-	# beside a live shortfall, which reads as covered whatever the triangle does — so the shape is
-	# asserted on its own rather than inferred from the equality above.
-	_assert_band_panel("pool gear — …and a short row NEVER reads `N of N` (\"%s\")" % live_line,
-		live_line != _pool_toe_term(POOL_TOE_ROUNDING_LIVE_UNITS, POOL_TOE_ROUNDING_LIVE_UNITS,
-			POOL_TOE_ROUNDING_ITEM))
-	_assert_band_panel("pool gear — …while a FILLED row is short of nothing and states nothing (\"%s\")"
-			% HudWorkVocab.pool_toe_short_line(filled),
+	var live := [_pool_toe_row(pool, POOL_TOE_SHORT_TEST_ITEM, POOL_TOE_LIVE_REQUIRED,
+		POOL_TOE_LIVE_FILLED)]
+	var near := [_pool_toe_row(pool, POOL_TOE_SHORT_TEST_ITEM, POOL_TOE_NEAR_REQUIRED,
+		POOL_TOE_NEAR_FILLED)]
+	var filled := [_pool_toe_row(pool, POOL_TOE_SHORT_TEST_ITEM, POOL_TOE_FILLED_REQUIRED,
+		POOL_TOE_FILLED_FILLED)]
+	_assert_band_panel("pool gear — the PLAYTEST row (%.4f of %.4f) and a row short by a tenth are both SHORT"
+			% [POOL_TOE_LIVE_FILLED, POOL_TOE_LIVE_REQUIRED],
+		HudWorkVocab.pool_toe_is_short(live) and HudWorkVocab.pool_toe_is_short(near))
+	_assert_band_panel("pool gear — …beside a WORK shortfall the line is \"%s\" (got \"%s\")"
+			% [HudWorkVocab.POOL_TOOLS_SHORT_WARN_LINE, HudWorkVocab.pool_tools_short_line(live, true)],
+		HudWorkVocab.pool_tools_short_line(live, true) == HudWorkVocab.POOL_TOOLS_SHORT_WARN_LINE)
+	_assert_band_panel("pool gear — …with the work covered it is \"%s\" (got \"%s\")"
+			% [HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE, HudWorkVocab.pool_tools_short_line(live, false)],
+		HudWorkVocab.pool_tools_short_line(live, false) == HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE)
+	# …and the no-count needle still bites: the retired count reads as one, the coverage sentence not.
+	var coverage := HudWorkVocab.UPKEEP_POOL_COVERAGE_FORMAT % [
+		DetailFormat.format_work_units(POOL_TOE_LIVE_FILLED),
+		DetailFormat.format_work_units(POOL_TOE_LIVE_REQUIRED)]
+	_assert_band_panel("pool gear — the tool-count needle catches `%s` and passes \"%s\""
+			% [POOL_TOE_RETIRED_COUNT_SAMPLE, coverage],
+		_pool_tool_count_lines([POOL_TOE_RETIRED_COUNT_SAMPLE]).size() == 1
+			and _pool_tool_count_lines([coverage]).is_empty())
+	_assert_band_panel("pool gear — …while a FILLED row is short of nothing and states nothing either way",
 		not HudWorkVocab.pool_toe_is_short(filled)
-			and HudWorkVocab.pool_toe_short_line(filled) == "")
+			and HudWorkVocab.pool_tools_short_line(filled, true) == ""
+			and HudWorkVocab.pool_tools_short_line(filled, false) == "")
 
-## ⛔ GUARD: **THE COUNTED NOUN AGREES WITH THE DENOMINATOR — on a PLURAL-labelled item and on a
-## SINGULAR-labelled one, which is the whole of why one suffix rule cannot serve this table.**
-## `DetailFormat.KIT_ITEM_LABELS` is MIXED (`Hoes` is already plural, `Crook` is not), so *append an
-## `s`* gives `Spearss` and *leave it alone* gives `0 of 2 crook` — reported going into a playtest.
-##
-## **FOUR READINGS, AND THE SET IS THE CLAIM.** A builder that never inflected passes the two
-## singular rows; one that always appended passes the two plural rows. The `1 of 2` case is asserted
-## for its own sake because a noun following the NUMERATOR reads singular there and is wrong.
-##
-## | item | label | at 1 | at 2 |
-## |---|---|---|---|
-## | `hoes` | plural | `0 of 1 hoe` | `1 of 2 hoes` |
-## | `crook` | singular | `0 of 1 crook` | `1 of 2 crooks` |
-##
-## **PNG-LESS and driven**: this is a string, and the card renders a perfectly ordinary line whichever
-## form it chose.
-const POOL_TOE_INFLECT_PLURAL_ITEM := DetailFormat.KIT_DURABILITY_KEY_HOES
-const POOL_TOE_INFLECT_SINGULAR_ITEM := DetailFormat.KIT_DURABILITY_KEY_CROOK
-## An item with a label but NO counted row — the fallback arm. `spears` is deliberately a PLURAL
-## label, since the failure the fallback exists to refuse is `Spearss`.
-const POOL_TOE_INFLECT_UNLISTED_ITEM := "spears"
-const POOL_TOE_INFLECT_DOUBLED_SUFFIX := "ss"
-func _assert_pool_toe_inflection() -> void:
-	var pool := HudConst.LABOR_KIND_AGRICULTURE
-	for item_variant in [POOL_TOE_INFLECT_PLURAL_ITEM, POOL_TOE_INFLECT_SINGULAR_ITEM]:
-		var item := String(item_variant)
-		var one := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, item, 1.0, 0.0)])
-		var many := HudWorkVocab.pool_toe_short_line([_pool_toe_row(pool, item, 2.0, 1.0)])
-		_assert_band_panel("pool gear — `%s` at ONE reads its SINGULAR — \"%s\" (want \"%s\")"
-				% [item, one, _pool_toe_term(0, 1, item)], one == _pool_toe_term(0, 1, item))
-		_assert_band_panel("pool gear — …and `1 of 2` its PLURAL — \"%s\" (want \"%s\")"
-				% [many, _pool_toe_term(1, 2, item)], many == _pool_toe_term(1, 2, item))
-		# ⛔ **AND THE TWO FORMS DIFFER**, or "it inflects" is satisfied by a table whose row spells the
-		# same word twice — which is exactly what the FALLBACK does, deliberately, one claim down.
-		_assert_band_panel("pool gear — …and the two really are different words (\"%s\" / \"%s\")"
-				% [one, many], one != many)
-	# **THE FALLBACK APPENDS NOTHING, which is what makes it SAFE rather than right.** An item with no
-	# counted row reads its label at every count — today's behaviour — and structurally cannot produce
-	# `Spearss`. The cost is stated rather than hidden: it does NOT inflect, so a pool that starts
-	# requiring this item needs a row in `KIT_ITEM_COUNTED_NAMES`.
-	var bare_one := HudWorkVocab.pool_toe_short_line(
-		[_pool_toe_row(pool, POOL_TOE_INFLECT_UNLISTED_ITEM, 1.0, 0.0)])
-	var bare_many := HudWorkVocab.pool_toe_short_line(
-		[_pool_toe_row(pool, POOL_TOE_INFLECT_UNLISTED_ITEM, 2.0, 1.0)])
-	var bare_word := DetailFormat.kit_item_word(POOL_TOE_INFLECT_UNLISTED_ITEM)
-	_assert_band_panel("pool gear — an item with no counted row falls back to its LABEL at both counts (\"%s\" / \"%s\")"
-			% [bare_one, bare_many],
-		bare_one == _pool_toe_term(0, 1, POOL_TOE_INFLECT_UNLISTED_ITEM)
-			and bare_many == _pool_toe_term(1, 2, POOL_TOE_INFLECT_UNLISTED_ITEM)
-			and bare_one.ends_with(bare_word) and bare_many.ends_with(bare_word))
-	_assert_band_panel("pool gear — …and never doubles its suffix (\"%s\")" % bare_many,
-		not bare_many.ends_with(POOL_TOE_INFLECT_DOUBLED_SUFFIX))
-	# **AND NO SHIPPED POOL ITEM LEAKS A WIRE UNDERSCORE INTO THE SENTENCE**, at either count — the
-	# reason the two road tools were given labels at all.
-	var underscored := HudWorkVocab.pool_toe_short_line(
-		[_pool_toe_row(pool, POOL_TOE_SHARED_ITEM, 2.0, 0.0)])
-	_assert_band_panel("pool gear — …and an underscored wire id never reaches the line — \"%s\""
-		% underscored, not underscored.contains("_"))
+## The BUILDERS pool's own TOE line for the tools-short Builders frame: short, like the playtest
+## band's `1.4334 of 2.0` builders hoes.
+const POOL_TOE_BUILDERS_ITEM := DetailFormat.KIT_DURABILITY_KEY_HOES
+const POOL_TOE_BUILDERS_REQUIRED := 2.0
+const POOL_TOE_BUILDERS_FILLED := 1.4334
+
+## The gear band with a SHORT builders TOE line stamped on it — the Builders card's tool case.
+func _pool_gear_builders_short_band_fixture() -> Dictionary:
+	var band := _pool_gear_band_fixture()
+	var toe: Array = (band[HudBandLaborState.POOL_TOE_KEY] as Array).duplicate(true)
+	toe.append(_pool_toe_row(HudConst.LABOR_KIND_BUILDERS, POOL_TOE_BUILDERS_ITEM,
+		POOL_TOE_BUILDERS_REQUIRED, POOL_TOE_BUILDERS_FILLED))
+	band[HudBandLaborState.POOL_TOE_KEY] = toe
+	return band
+
+## GUARD: **THE BUILDERS CARD SHORT OF TOOLS FLIES THE `ⓘ`, NEVER THE `⚠`** (issue #716). It is
+## passed no `cover`, so it is never work-short, and a tool shortfall alone loses nothing.
+func _assert_builders_pool_tools_short() -> void:
+	var builders := _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS)
+	if builders.is_empty():
+		_fail("pool gear — no Builders pool card to read")
+		return
+	_assert_pool_card_state("the Builders pool short of TOOLS", HudWorkVocab.ROLE_NAME_BUILDERS,
+		builders, false, false, true)
 
 ## GUARD: the fund-mode control states the band's OWN mode, offers both, and quotes the pool's
 ## arithmetic — asserted together, since a control that lit no button and one that lit both are the
@@ -7143,13 +7819,13 @@ func _press_reaches_map(window_point: Vector2) -> bool:
 	_unhandled_press_seen = false
 	var approach := InputEventMouseMotion.new()
 	approach.position = window_point
-	get_viewport().push_input(approach)
+	_push_input(approach)
 	await get_tree().process_frame
 	var press := InputEventMouseButton.new()
 	press.button_index = MOUSE_BUTTON_LEFT
 	press.pressed = true
 	press.position = window_point
-	get_viewport().push_input(press)
+	_push_input(press)
 	await get_tree().process_frame
 	var seen := _unhandled_press_seen
 	await _release_press(window_point)
@@ -7167,12 +7843,12 @@ func _release_press(window_point: Vector2) -> void:
 	var motion := InputEventMouseMotion.new()
 	motion.position = park
 	motion.relative = park - window_point
-	get_viewport().push_input(motion)
+	_push_input(motion)
 	var release := InputEventMouseButton.new()
 	release.button_index = MOUSE_BUTTON_LEFT
 	release.pressed = false
 	release.position = park
-	get_viewport().push_input(release)
+	_push_input(release)
 	await get_tree().process_frame
 
 ## Canvas coordinates → WINDOW coordinates, which is what `push_input` takes. The states pin
@@ -13869,6 +14545,8 @@ func _report_canvas_drift(message: String) -> void:
 func _finish() -> void:
 	if _watchdog != null:
 		_watchdog.disarm()
+	# ⛔ **ASKED BEFORE THE VERDICT IS TAKEN**, or a foreign event would be reported and not counted.
+	_assert_harness_owns_the_pointer()
 	if _failures > 0:
 		print("band_panel_preview: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
 	else:
@@ -18944,6 +19622,57 @@ func _workings_rows() -> Array:
 ## ⛔ **EACH `extract` ROW NAMES ITS MATERIAL.** That field is half the row's identity, and a fixture
 ## omitting it stages an assignment `LaborTarget::Extract` cannot produce — the roster would then find
 ## no working at all and every claim below would pass as an absence.
+## …and the same band with its bill PAID IN FULL and a worker left standing (issue #715) — the
+## `quarrywork` pool's own version of the pool cards' info-mark state, which is the only shape this
+## pool can report it in because it has no card.
+##
+## **FRACTIONAL ON THE WIRE, FLOORED ON THE HEAD.** `1.7` is an ordinary reading of a continuous
+## share, and what the head may promise is the whole worker a stepper press can actually free.
+const WORKINGS_IDLE_KEEPERS := 1.7
+
+func _workings_idle_band_fixture() -> Dictionary:
+	var band := _workings_band_fixture(WORKINGS_DEMAND)
+	band["quarrywork_supplied"] = WORKINGS_DEMAND
+	band["quarrywork_shortfall"] = 0.0
+	return _stamp_settled_crew(band, {
+		HudConst.LABOR_KIND_QUARRYWORK: WORKINGS_IDLE_KEEPERS,
+	})
+
+## GUARD: **THE ROSTER HEAD'S ONE MARK SLOT, THREE STATES** (issue #715) — the head's own SHORT and
+## IDLE metas, the glyph it actually drew, and the idle reading on its hover.
+##
+## **THE GLYPH IS READ BY TEXT HERE, WHICH IS THE ONE PLACE IN THIS FILE THAT IS RIGHT.** A zone head
+## builds its readout as a plain `Label` with no handle of its own (`HudWidgets.zone_head`), and
+## *which of the two marks stands in the readout* is exactly the claim — so the text IS the subject
+## rather than a restatement of what the builder was handed. The metas beside it are what keep the
+## decision and the render from disagreeing.
+func _assert_workings_head_mark_slot(label: String, block: Control, want_glyph: String,
+		want_idle: String, want_short: bool) -> void:
+	var head := _find_meta_control(block, HudWorkVocab.POOL_CARD_IDLE_META)
+	if head == null:
+		_fail("workings idle — %s: the roster head publishes no pool state at all" % label)
+		return
+	_assert_band_panel("workings idle — %s: the head's SHORT meta is %s" % [label, want_short],
+		bool(head.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) == want_short)
+	_assert_band_panel("workings idle — %s: …and its IDLE meta is \"%s\" (got \"%s\")"
+			% [label, want_idle, head.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")],
+		String(head.get_meta(HudWorkVocab.POOL_CARD_IDLE_META, "")) == want_idle)
+	var glyphs: Array = []
+	for control in head.find_children("*", "Label", true, false):
+		var face := (control as Label).text
+		if face == HudWorkVocab.UPKEEP_POOL_SHORT_MARK \
+				or face == HudWorkVocab.UPKEEP_POOL_IDLE_MARK:
+			glyphs.append(face)
+	var want_glyphs: Array = [] if want_glyph == "" else [want_glyph]
+	_assert_band_panel("workings idle — %s: …and the ONE slot holds %s (drew %s)"
+			% [label, want_glyphs, glyphs], glyphs == want_glyphs)
+	if want_idle == "":
+		return
+	var title := _label_titled_under_head(block, HudWorkVocab.ZONE_HEADER_WORKINGS_ROSTER)
+	_assert_band_panel("workings idle — %s: …and the reading is on the head's hover (%s)"
+			% [label, "" if title == null else title.tooltip_text],
+		title != null and title.tooltip_text.contains(want_idle))
+
 func _workings_band_fixture(demand: float) -> Dictionary:
 	var band := _band_fixture()
 	band["quarrywork_demand"] = demand
@@ -19223,6 +19952,28 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	# with the stepper on this head a block that skipped case 2 would leave it nowhere to be staffed.
 	if unseen != null:
 		_assert_workings_roster_head("band_panel_workings_roster_unseen", unseen, true)
+
+	# ---- CASE 3: THE BILL IS PAID AND A WORKER IS STANDING AROUND (issue #715) --------------------
+	# ⛔ **THE FOURTH KEEPING POOL HAS NO CARD, SO THIS HEAD IS THE ONLY PLACE IT CAN REPORT.**
+	# `quarrywork` is a keeping pool like the three in the block above and publishes a `pool_crew` row
+	# like them; leaving the idle reading to the cards would make the one pool with no card the one
+	# pool that still cannot tell a player a worker is free — which is the bug, not a lesser version
+	# of it. Same predicate, same composer, same one-slot rule as a card.
+	_push_bands([_workings_idle_band_fixture()])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_workings_roster_idle")
+	_assert_zone_content_fits()
+	var spare := _workings_block()
+	_assert_band_panel("a workings pool that covers its bill still draws its block", spare != null)
+	if spare != null:
+		_assert_workings_head_mark_slot("a covered bill with a worker to spare", spare,
+			HudWorkVocab.UPKEEP_POOL_IDLE_MARK,
+			_pool_idle_sentence(WORKINGS_IDLE_KEEPERS), false)
+		# **AND THE SHORTFALL PROBE STILL READS THIS HEAD AS CALM** — the existing guard counts `⚠`
+		# Labels, so a head that flew the info mark and was also counted as short would have widened
+		# a claim three other states depend on.
+		_assert_workings_roster_head("band_panel_workings_roster_idle", spare, false)
 
 	# ---- CASE 1: NOTHING HELD AND NOTHING OWED — NO BLOCK AT ALL ---------------------------------
 	# The paired negative without which every claim above is satisfied by a block that renders
@@ -20041,18 +20792,42 @@ const QUEUE_GESTURE_DROP_HEIGHT_FRACTION := 0.25
 ## A press and a release on one window point, with nothing in between — the click a player makes when
 ## they mean to click. Deliberately NOT `_click_control`, which synthesises a `gui_input` on one node
 ## and therefore cannot tell a click from a dead handle.
+##
+## ⛔ **THE PRESS AND THE RELEASE GO IN WITH NO AWAITED FRAME BETWEEN THEM, AND THAT IS WHAT MAKES THE
+## CLICK HERMETIC.** `BaseButton` emits `pressed` on the button-UP, and only if `status.pressing_inside`
+## is still true — a flag it recomputes from **every `InputEventMouseMotion` routed to it while the
+## press is held** (`BaseButton::gui_input`: `status.pressing_inside = has_point(mm->get_position())`).
+## A harness does not own the pointer: the machine has ONE physical mouse, the OS delivers its motion
+## to this window like any other input, and `Input.warp_mouse` (which `_drive_drag` below must call)
+## generates more of the same. Any of those landing in the gap between the press and the release moves
+## `pressing_inside` off the button and the release then CANCELS the click instead of firing it — no
+## error, no warning, just a control that emitted nothing. Awaiting a frame is precisely what yields to
+## the main loop and lets the OS event queue be pumped, so the gap was the whole exposure; pushing both
+## events in one call stack closes it, because `Viewport.push_input` is processed synchronously and no
+## foreign event can be interleaved. It is NOT a longer settle — the frame budget is unchanged (hover,
+## frame, press+release, two frames), only the ORDER is.
+##
+## ⛔ **MOVING THE REAL CURSOR IS NOT A REPRODUCTION ON ITS OWN**, which is why the first sixteen
+## consecutive runs looking for this were all clean: under `scripts/preview.sh` the window is
+## `no_focus`, so macOS delivers it no `mouseMoved` at all. Delivery needs the window to be the
+## FOREGROUND one, and whether it becomes that is itself intermittent. Injecting the motion the window
+## server would have delivered reproduces it on demand — **29 failures, four of them the reported ones
+## word for word**. `HarnessWindow.seal_from_real_mouse` stops the delivery and this ordering removes
+## the window it lands in; `test-harnesses.md` → "A SIMULATED GESTURE IS NOT HERMETIC" has the whole
+## chain and both falsifications.
 func _drive_click(window_point: Vector2) -> void:
 	var hover := InputEventMouseMotion.new()
 	hover.position = window_point
-	get_viewport().push_input(hover)
+	_push_input(hover)
 	await get_tree().process_frame
 	for pressed in [true, false]:
 		var button := InputEventMouseButton.new()
 		button.button_index = MOUSE_BUTTON_LEFT
 		button.pressed = pressed
 		button.position = window_point
-		get_viewport().push_input(button)
-		await get_tree().process_frame
+		_push_input(button)
+	await get_tree().process_frame
+	await get_tree().process_frame
 
 ## Press at `from`, travel to `to` past the drag threshold, release there.
 ##
@@ -20086,15 +20861,23 @@ func _drive_click(window_point: Vector2) -> void:
 func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int = 0,
 		hold_probe: Callable = Callable(), hold_done: Callable = Callable()) -> Dictionary:
 	var parked := DisplayServer.mouse_get_position()
+	# ⛔ **CUSTODY OF THE PHYSICAL POINTER IS TAKEN BEFORE THE PRESS, NOT AT THE FIRST WAYPOINT.** The
+	# warp has to happen at all (see the header — Godot localizes a drop from the REAL cursor), and
+	# taking it here rather than after the press buys two things. The OS motion event a warp generates
+	# then lands BEFORE Godot starts accumulating `gui.drag_accum`, so it cannot pollute the threshold
+	# the gesture's own kick is measured against; and the pointer is already where the gesture believes
+	# it is for the whole of the press→first-motion gap, which is the window a foreign reading would
+	# otherwise be taken in.
+	Input.warp_mouse(from)
 	var hover := InputEventMouseMotion.new()
 	hover.position = from
-	get_viewport().push_input(hover)
+	_push_input(hover)
 	await get_tree().process_frame
 	var press := InputEventMouseButton.new()
 	press.button_index = MOUSE_BUTTON_LEFT
 	press.pressed = true
 	press.position = from
-	get_viewport().push_input(press)
+	_push_input(press)
 	await get_tree().process_frame
 	var witness_survived := is_instance_valid(witness) and witness.is_inside_tree()
 	var dragging := false
@@ -20108,11 +20891,42 @@ func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int 
 		motion.relative = point - previous
 		motion.button_mask = MOUSE_BUTTON_MASK_LEFT
 		Input.warp_mouse(point)
-		get_viewport().push_input(motion)
+		_push_input(motion)
 		await get_tree().process_frame
 		dragging = dragging or get_viewport().gui_is_dragging()
 		previous = point
+	# ⛔ **THE HOLD RE-ASSERTS THE POINTER EVERY FRAME, AND THE WINDOW SEAL IS WHAT MAKES THAT FREE.**
+	# The hold's premise is that a player parked at the edge generates NO input, so the engine's own
+	# pump is the only thing that can move the list — and the pump, like the drop, reads the REAL
+	# cursor through `DisplayServer.mouse_get_position()`. That is a direct OS query rather than an
+	# event, so `HarnessWindow.seal_from_real_mouse` cannot protect it: a physical pointer sitting
+	# anywhere else reads as a dead pump and an empty drop mark under a "stationary" pointer, which is
+	# exactly the shape of two of the reported failures.
+	#
+	# **DRIFT DETECTION AGAINST A SAMPLED ANCHOR IS NOT ENOUGH, and that was measured rather than
+	# reasoned.** Sampling the anchor from the current reading means a pointer already stolen when the
+	# sample is taken becomes the anchor, after which nothing ever "drifts" and the whole hold runs
+	# against a cursor outside the hot band — observed once in twelve runs with the pointer held
+	# elsewhere, failing the pump and drop-mark claims with zero corrections recorded.
+	#
+	# **AND RE-WARPING EVERY FRAME COSTS THE CLAIMS NOTHING NOW.** The objection to it was that each
+	# warp emits an OS motion event, and a motion event mid-drag is what makes Godot re-pick the
+	# drag-over control — so a harness generating one per frame would satisfy *"the drop mark moved
+	# under a stationary pointer"* itself and stop testing the panel's own `_resolve_queue_drag_hover`.
+	# The seal ends that: no OS mouse event reaches this viewport at all, which the run-wide custody
+	# guard asserts. The only motion during the hold is still the panel's own.
+	# The anchor is only ever a DIAGNOSTIC — correctness rides on the unconditional warp below, so a
+	# reading taken in the microsecond window between a warp and its readback cannot mislead the gesture, only
+	# the count. It is re-established by that warp each frame rather than sampled once.
+	var anchor := Vector2i.ZERO
+	var anchored := false
+	var stolen := 0
 	for _held in range(hold_frames):
+		if anchored and DisplayServer.mouse_get_position() != anchor:
+			stolen += 1
+		Input.warp_mouse(to)
+		anchor = DisplayServer.mouse_get_position()
+		anchored = true
 		# **AWAITED, so the probe may CAPTURE.** The auto-scrolled, mid-drag list exists on no other
 		# frame: the drop ends the gesture and `_repage_work_zone` rebuilds the block at scroll 0.
 		if hold_probe.is_valid():
@@ -20121,6 +20935,12 @@ func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int 
 		dragging = dragging or get_viewport().gui_is_dragging()
 		if hold_done.is_valid() and bool(hold_done.call()):
 			break
+	if stolen > 0:
+		# Something outside this harness moved the physical pointer during a gesture defined by holding
+		# it still. Said out loud rather than swallowed: the run is still valid (custody is re-asserted
+		# on the same frame) but the hold's claims were measured against a contested pointer.
+		push_warning("band_panel_preview: something outside the harness moved the pointer on %d frame(s) of a held drag — custody re-asserted each time"
+			% stolen)
 	# ⛔ **ONE LAST SAMPLE, WITH NO FRAME BETWEEN IT AND THE DROP.** The hold's loop probes and THEN
 	# awaits a frame, so the pump gets one more tick after the final sample — and a caller computing
 	# what the drop SHOULD send from that sample names the row that was under the pointer a step ago
@@ -20134,7 +20954,7 @@ func _drive_drag(from: Vector2, to: Vector2, witness: Control, hold_frames: int 
 	release.pressed = false
 	release.position = to
 	Input.warp_mouse(to)
-	get_viewport().push_input(release)
+	_push_input(release)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	DisplayServer.warp_mouse(parked - DisplayServer.window_get_position())
@@ -23156,17 +23976,26 @@ func _assert_declare_time_keeping(where: String, want_mark: bool, keepers: int) 
 		bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) == want_mark)
 	# The pool carries no keeping gear on this roster, so its supply is the bare rate every source
 	# publishes times the hands on it — composed here rather than asked of the code under test.
-	var wanted := HudWorkVocab.upkeep_pool_coverage_format(HudWorkVocab.ROLE_NAME_HUSBANDRY) % [
+	var wanted := HudWorkVocab.UPKEEP_POOL_COVERAGE_FORMAT % [
 		DetailFormat.format_work_units(float(keepers) * KEEPING_DECLARE_PER_WORKER_TURN),
 		DetailFormat.format_work_units(KEEPING_DECLARE_UPKEEP)]
-	_assert_band_panel("%s: …and its hover %s what the pool supplies against what it is asked for, by equality (%s)"
-			% [where, "states" if want_mark else "does not state", card.tooltip_text],
-		card.tooltip_text.contains(wanted) == want_mark)
-	# …and where it is calm it states NO coverage sentence at all, at any figures — without which
-	# "does not state THIS sentence" passes on a card quoting some other pair of numbers.
-	_assert_band_panel("%s: …and a covered card quotes no coverage figures at all (%s)"
+	# ⛔ **THE SENTENCE IS NOT THE TRIGGER ANY MORE, SO IT IS ASSERTED ON BOTH SIDES** (issue #715).
+	# It used to return `""` for a covered pool — that silence is exactly what the issue closed, since
+	# a pool paying its bill exactly and a pool with a worker standing idle then rendered identically.
+	# The card states what its crew is consumed by whether or not the bill is met, and the MARK is
+	# what forks; the equality is what pins that the supply figure still MOVES with the staffing,
+	# which is the whole difference between the coverage trigger and the retired *unstaffed* one.
+	_assert_band_panel("%s: …and its hover states what the pool supplies against what it is asked for, by equality (%s)"
 			% [where, card.tooltip_text],
-		card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE) == want_mark)
+		card.tooltip_text.contains(wanted))
+	# …and EXACTLY ONE coverage sentence, which is what stops the equality above passing on a card
+	# that also quotes some other pair of numbers.
+	var quoted := 0
+	for line in card.tooltip_text.split(SourceForecast.TOOLTIP_LINE_SEPARATOR):
+		if String(line).contains(POOL_SHORT_TOOLTIP_NEEDLE):
+			quoted += 1
+	_assert_band_panel("%s: …on exactly ONE line of the hover, at those figures and no others (%d)"
+			% [where, quoted], quoted == 1)
 	# THE OTHER WEB IS UNTOUCHED. A queued ANIMAL job says nothing about the plant pool, and a warning
 	# that marked both would send the player to the wrong card.
 	var plant := _find_pool_card(HudWorkVocab.ROLE_NAME_AGRICULTURE)

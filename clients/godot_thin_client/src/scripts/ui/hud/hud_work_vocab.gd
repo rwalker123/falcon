@@ -494,30 +494,21 @@ const ROLE_NAME_AGRICULTURE := "Agriculture"
 
 const ROLE_NAME_HUSBANDRY := "Husbandry"
 
-## **THE HINTS NAME THE POOL, NOT A TILE.** The hands are measured against the SUM of what the band
-## holds on that web and split across every source of it, so a player reading the card must not go
-## looking for a per-source stepper — there is none, and this sentence is where that is said.
-const AGRICULTURE_ROLE_HINT := "Keeps every tended patch and Field this band works. Short of the sum, they rot."
+## **THE HINTS NAME WHAT THE POOL KEEPS**, each role's one line on its card's hover. They carry the
+## noun the coverage sentence no longer does (`UPKEEP_POOL_COVERAGE_FORMAT`), so a hint names the
+## band's own holdings — the roads it BUILT, the ground it OPENED — never the ground it stands on.
+const AGRICULTURE_ROLE_HINT := "Agriculture workers maintain improved fields."
 
-const HUSBANDRY_ROLE_HINT := "Keeps every tamed herd and pen this band works. Short of the sum, animals drift off."
+const HUSBANDRY_ROLE_HINT := "Husbandry workers maintain tamed herds and pens."
 
 ## **THE THIRD KEEPING ROLE** (arc #532) — the roads. Its card sits beside the two above because it
 ## is the same kind of control: a band-wide count of hands set by `assign_labor`, measured against a
 ## SUM rather than staffed on a tile.
 const ROLE_NAME_ROADWORK := "Roadwork"
 
-## ⛔ **IT NAMES THE ROADS THIS BAND BUILT, NOT THE GROUND IT IS STANDING ON, and the difference is
-## the whole catchment.** A road tile's keeper is the band that graded or paved it, wherever that band
-## now stands: `route_keeping_claims` walks the roads a band keeps and never reads that band's
-## position, so a camp four tiles away goes on paying and goes on being served. What distance costs is
-## a PRICE — the road's own `keeper_remoteness`, quoted when the job was taken on — and never whether
-## the bill exists.
-##
-## **The earlier wording said the opposite** (*"the roads this band is standing on"*), which was true
-## of a model where a road was a stored path and a band paid for whatever it stood over. Under the
-## per-tile model that reading would send a player to move camp in order to stop a bill that follows
-## them regardless.
-const ROADWORK_ROLE_HINT := "Keeps the roads this band built, however far it has since walked. Short of the bill, they wash out."
+## A road tile's keeper is the band that BUILT it, wherever that band now stands
+## (`route_keeping_claims` never reads the band's position), so the hint says *built*.
+const ROADWORK_ROLE_HINT := "Roadwork workers maintain built roads."
 
 ## **THE FOURTH KEEPING ROLE** (arc #583) — the workings, on both deposit branches at once. Same
 ## family again: a band-wide count of hands set by `assign_labor`, measured against a SUM.
@@ -541,30 +532,17 @@ const ROADWORK_ROLE_HINT := "Keeps the roads this band built, however far it has
 ## so a second card would be a distinction nothing in the game can express.
 const ROLE_NAME_QUARRYWORK := "Groundwork"
 
-## ⛔ **IT NAMES THE GROUND THIS BAND OPENED, NOT THE GROUND IT IS STANDING ON** — `ROADWORK_ROLE_HINT`'s
-## correction, written into this branch from the first line rather than after a slice of the wrong
-## reading. The catchment is the band's own `extract` ROW: a working is held by the band that works
-## it, worked or idle, wherever that band has since camped. **`opened` is what carries that** — ground
-## a band merely stands on has not been opened by anybody.
-##
-## **AND IT NAMES THE CONSEQUENCE.** An unheld working slides back down its ladder — the position is
-## the thing at risk, there being no crop to rot — which is what *going back* says.
-##
-## **THIS STRING AND `UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT` ARE WRITTEN FROM ONE MODEL.** The road
-## pair's correction landed in the hint and not in the tooltip eighty lines below it for a whole
-## slice; these two were composed together, and there is no third copy.
-const QUARRYWORK_ROLE_HINT := "Holds all the ground this band has opened, worked or idle. Short of the bill, it goes back."
+## A working is held by the band that OPENED it, worked or idle, wherever that band has since camped
+## — `ROADWORK_ROLE_HINT`'s rule, so the hint says *opened*.
+const QUARRYWORK_ROLE_HINT := "Groundwork workers maintain opened ground."
 
 ## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
 ## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
 const ROLE_NAME_BUILDERS := "Builders"
 
-## **IT NAMES THE QUEUE, BECAUSE THE QUEUE IS WHERE THE HANDS GO.** Unlike the keeping pair this pool
-## is NOT split across everything the band holds: the whole of it goes on the HEAD of the band's build
-## queue until that entry's meter fills, then on the next. A hint that said "keeps every build" would
-## promise a spread the model deliberately does not offer — and *"builders with nothing to do"* needs
-## no warning, a build demand ending when its meter fills.
-const BUILDERS_ROLE_HINT := "Raises whatever this band has queued, one job at a time, head of the queue first."
+## **IT NAMES THE QUEUE, BECAUSE THE QUEUE IS WHERE THE HANDS GO** — the whole pool goes on the head
+## entry until its meter fills, then the next; it is not spread across everything the band holds.
+const BUILDERS_ROLE_HINT := "Builders work the build queue, top job first."
 
 ## **THE FUND-MODE CONTROL** — how this band splits a keeping pool it cannot stretch, `spread` or
 ## `priority` (`upkeep_mode <faction> <band> …`). It renders under the three pool cards and ONLY
@@ -601,73 +579,38 @@ const UPKEEP_MODE_PRIORITY_HINT := "Fund the biggest investments in full and let
 ## is a role name and a stepper; a number wedged into it would be the retired line again, in less room.
 const UPKEEP_POOL_SHORT_MARK := HudSelectionVocab.RUNG_HAZARD_GLYPH
 
-## …and the figure it stands for, on the card's own `tooltip_text` — **ONE SENTENCE, whose numbers are
-## what the pool SUPPLIES against what it is ASKED FOR.**
-##
-## **THERE WERE TWO SENTENCES AND THEY WERE ONE STATEMENT ALL ALONG.** A live shortfall said *"Short 2
-## of 2"* and the declare-time warning said *"a queued job will need 3 work a turn, and nobody is on
-## this pool"* — different words, different subjects, the same glyph in the same slot — which read as
-## one warning misbehaving rather than as two facts. Both are now this shape at different numbers.
-##
-## **Per web, because the whole defect of the retired summed line was that it could not say which** —
-## the plant pool keeps ground and the animal pool keeps animals, and those are different decisions
-## with different remedies. Both name the band's own holdings rather than "sources", which is the noun
-## the player sees on the map, and both name the QUEUE beside them because a job not yet started is
-## exactly what the demand figure includes before the sim bills anything for it.
-##
-## **IN WORK, NEVER IN HANDS** — `DetailFormat.build_price_clause`'s rule, for its reason: the model is
-## denominated in work units end to end, and how many hands a rate takes depends on what they carry.
-## **And it never says *rung***, a word that appears on no control the player uses.
-const UPKEEP_POOL_COVERAGE_PLANT_FORMAT := "This pool supplies %s work a turn; this band's tended ground and queued jobs need %s."
+## …and the figure it stands for, on the card's own `tooltip_text` — **ONE SENTENCE: what the pool
+## SUPPLIES against what it is ASKED FOR**, in WORK and never in hands (how many hands a rate takes
+## depends on what they carry). One format for every pool: the role hint above it names what the pool
+## keeps, so the per-web variants and their nouns are retired.
+const UPKEEP_POOL_COVERAGE_FORMAT := "Supplies %s of %s work a turn."
 
-const UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT := "This pool supplies %s work a turn; this band's tamed animals and queued jobs need %s."
-
-## …and the ROUTE web's (arc #532).
+## **THE POOL CARD'S COVERAGE LINE, or `""` where the pool has NOTHING TO HOLD** — the ONE composer, so
+## the card's marks and its hover cannot disagree about what the pool's hands are doing.
 ##
-## ⛔ **IT NAMES THE ROADS THIS BAND BUILT, NOT THE GROUND IT IS STANDING ON** — `ROADWORK_ROLE_HINT`
-## eighty lines up carries the long form of why, and this string was the copy that missed the
-## correction. A road tile's keeper is the band that graded or paved it, wherever that band has since
-## walked; `route_keeping_claims` never reads that band's position. *"The roads this band stands on"*
-## sends a player to move camp in order to stop a bill that follows them regardless — which is the
-## one remedy that cannot work.
+## **IT USED TO FALL SILENT ON AN ADEQUATE POOL, AND THAT IS THE SILENCE ISSUE #715 CLOSES.** A pool
+## that covers its bill exactly and a pool carrying a keeper with nothing to do rendered identically
+## — a calm card with no reading at all — so a player could not see that a worker was free to be
+## sent elsewhere. The sentence they needed already existed here; it was merely gated shut behind the
+## shortfall test. **The gate is now `upkeep_pool_is_short`**, a predicate of its own that the card's
+## mark forks on, and this stays the single composer: a pool with a bill states what it supplies
+## against what it is asked for whether or not the two numbers are far enough apart to warn about.
 ##
-## ⛔ **IT NAMES NO QUEUE, AND THE REASON IS THE FIGURE RATHER THAN THE LADDER.** It used to claim
-## that a route rung *"takes no builder and appends no build-queue entry"*, which is true of the free
-## floor alone: traffic wears a path and a trail in, and the two BUILT rungs are ordinary declarations
-## funded by the band's `builders` pool at the head of its queue, exactly like every rung on the other
-## two branches. What is actually true is that the number beside this sentence carries no queued
-## term — the road pool's `asked` is the cohort's published `roadwork_demand` verbatim
-## (`BandPanelController`'s road branch, which does NOT go through `_pool_coverage`), because the road
-## rows are fog-filtered and summing them client-side would understate a bill the band still owes. A
-## sentence promising a queued half the figure does not contain would be the worse error of the two.
-const UPKEEP_POOL_COVERAGE_ROUTE_FORMAT := "This pool supplies %s work a turn; the roads this band built need %s."
+## **THE `asked` GUARD STAYS.** A pool with nothing to hold says nothing, which is correct — `0 work
+## a turn` against `0` is a reading about nothing.
+static func upkeep_pool_coverage_line(cover: Dictionary) -> String:
+    var asked := maxf(float(cover.get(POOL_COVERAGE_ASKED_KEY, SourceForecast.NO_UPKEEP_DEMAND)),
+        SourceForecast.NO_UPKEEP_DEMAND)
+    var supply := maxf(float(cover.get(POOL_COVERAGE_SUPPLY_KEY, SourceForecast.NO_UPKEEP_DEMAND)),
+        SourceForecast.NO_UPKEEP_DEMAND)
+    if asked < SourceForecast.UPKEEP_WORK_MIN:
+        return ""
+    return UPKEEP_POOL_COVERAGE_FORMAT % [
+        DetailFormat.format_work_units(supply), DetailFormat.format_work_units(asked)]
 
-## …and the two DEPOSIT branches' (arc #583).
-##
-## ⛔ **IT NAMES THE WORKINGS THIS BAND OPENED, and it is written from the same model as
-## `QUARRYWORK_ROLE_HINT`** — the road pair's own lesson, where the correction landed in the hint and
-## not in the tooltip eighty lines below it. These two are the whole set; there is no third copy.
-##
-## ⛔ **IT NAMES NO QUEUE, for the road sentence's corrected reason — the FIGURE.** The pool's `asked`
-## is the cohort's published `quarrywork_demand` verbatim (`BandPanelController` does NOT take the
-## deposit branch through `_pool_coverage`), because the `deposits` rows are fog-filtered and summing
-## them client-side would understate a bill the band still owes. A sentence promising a queued term
-## the number does not carry would be the worse of the two errors.
-const UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT := "This pool supplies %s work a turn; the ground this band opened needs %s."
-
-## Which of the set a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
-## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
-static func upkeep_pool_coverage_format(role_name: String) -> String:
-    if role_name == ROLE_NAME_HUSBANDRY:
-        return UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT
-    if role_name == ROLE_NAME_ROADWORK:
-        return UPKEEP_POOL_COVERAGE_ROUTE_FORMAT
-    if role_name == ROLE_NAME_QUARRYWORK:
-        return UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT
-    return UPKEEP_POOL_COVERAGE_PLANT_FORMAT
-
-## **THE POOL CARD'S ONE LINE, or `""` where the pool covers what it is asked for** — the ONE composer,
-## so the card's mark and its hover cannot disagree about whether there is anything to say.
+## **IS THIS POOL SHORT OF HANDS** — the coverage test, extracted so the SENTENCE and the MARK can
+## part company: the sentence composes for every pool with a bill (issue #715), the amber mark fires
+## only where the bill is not being paid.
 ##
 ## **THE TRIGGER IS COVERAGE, AND IT WAS *UNSTAFFED* FOR ONE SLICE.** Reported from play: a Cultivate
 ## queued at a demand of 2.0 work a turn marked the card, ONE keeper cleared the mark, and the next
@@ -675,35 +618,98 @@ static func upkeep_pool_coverage_format(role_name: String) -> String:
 ## supplies 1.0 bare (1.5 with the derived tillage kit), so one was never enough and the mark should
 ## never have cleared. **Adequate means the pool COVERS the demand**: adding one hand to a 2.0 bill
 ## does not clear it, adding enough does, and that is what makes the mark mean something.
-static func upkeep_pool_coverage_line(role_name: String, cover: Dictionary) -> String:
+##
+## The gap test uses the same floor every work rate on this panel is stated at, so a pool short by
+## less than the readout can print is not marked for a difference nobody could see.
+##
+## ⛔ **WHERE THE SIM PUBLISHES THE SHORTFALL, THAT IS THE COVERAGE TEST — the client does not
+## subtract.** The `roadwork` pool's bill, supply and shortfall are three cohort fields struck
+## against one stamped basis (`demand − supplied == shortfall` holds verbatim on the wire), so
+## re-deriving the gap here would be a second answer free to disagree with the one the sim decayed
+## the road by. The two food webs publish no such band-level roll-up, so they keep the
+## projection-vs-demand test — which is why this is an OPTIONAL key rather than the rule.
+static func upkeep_pool_is_short(cover: Dictionary) -> bool:
     var asked := maxf(float(cover.get(POOL_COVERAGE_ASKED_KEY, SourceForecast.NO_UPKEEP_DEMAND)),
         SourceForecast.NO_UPKEEP_DEMAND)
     var supply := maxf(float(cover.get(POOL_COVERAGE_SUPPLY_KEY, SourceForecast.NO_UPKEEP_DEMAND)),
         SourceForecast.NO_UPKEEP_DEMAND)
-    # Nothing to hold, or held with room to spare. The second test is the coverage one and uses the
-    # same floor every work rate on this panel is stated at, so a pool short by less than the readout
-    # can print is not marked for a difference nobody could see.
-    #
-    # ⛔ **WHERE THE SIM PUBLISHES THE SHORTFALL, THAT IS THE COVERAGE TEST — the client does not
-    # subtract.** The `roadwork` pool's bill, supply and shortfall are three cohort fields struck
-    # against one stamped basis (`demand − supplied == shortfall` holds verbatim on the wire), so
-    # re-deriving the gap here would be a second answer free to disagree with the one the sim
-    # decayed the road by. The two food webs publish no such band-level roll-up, so they keep the
-    # projection-vs-demand test above — which is why this is an OPTIONAL key rather than the rule.
     var covered := asked - supply
     if cover.has(POOL_COVERAGE_SHORTFALL_KEY):
         covered = float(cover[POOL_COVERAGE_SHORTFALL_KEY])
-    if asked < SourceForecast.UPKEEP_WORK_MIN \
-            or covered < SourceForecast.UPKEEP_WORK_MIN:
+    return asked >= SourceForecast.UPKEEP_WORK_MIN \
+        and covered >= SourceForecast.UPKEEP_WORK_MIN
+
+## **THE POOL'S SECOND MARK — a pool nobody is short of, carrying a worker with nothing to do**
+## (issue #715). The `⚠` says *something is being lost*; an idle worker is not a road washing out,
+## it is a hand the player can have back for a stepper press, so this glyph takes `HudStyle.INK_DIM`
+## at the call site — ordinary secondary ink, claiming no severity — and leaves the card's title in
+## the calm `INK`. Not `SIGNAL`, whose documented meaning is *calm, nothing needs you*, the opposite
+## of a mark saying a worker is free, and which is cream on cream against `INK` on the `ember`
+## `DEFAULT_THEME`.
+##
+## **IT ALSO FLIES FOR A POOL SHORT OF TOOLS WHOSE WORK IS COVERED** (issue #716): every pool tool is
+## productivity, so nothing is being lost — the tools would only get more done per worker.
+##
+## ⛔ **THE NAME ROW HOLDS EXACTLY ONE GLYPH AND A WORK SHORTFALL WINS IT.** Three placements for a
+## second mark were built and measured on the drawn card, and each took the four-card row past the
+## left dock's 356px box (`BandPanelController._build_pool_card`, where the figures are). So the one
+## slot carries three states — `⚠`, this, or nothing — and a pool that is work-short flies the
+## triangle whatever else holds, because the loss is the news and the rest can wait.
+const UPKEEP_POOL_IDLE_MARK := "ⓘ"
+
+## **THE MARK'S PROMISE IS *YOU CAN STEP THIS POOL DOWN BY ONE*, SO THE THRESHOLD IS A WHOLE
+## WORKER.** `idle_keepers` is continuous — `0.4` of a keeper left standing is an ordinary reading —
+## and 0.4 of a worker cannot be freed by any control on this panel. A mark that fired on a fraction
+## nobody could act on would mean nothing, which is the lesson `upkeep_pool_is_short` learned once
+## already: *adequate* has to be a threshold the remedy can actually clear.
+const UPKEEP_POOL_IDLE_KEEPERS_MIN := 1.0
+
+## …and the floor the reading sits on, which is a FLOOR and not a fudge: the figure answers *how many
+## keepers are doing nothing*, and no adjustment to it (`BandPanelController._projected_pool_idle`)
+## can take that below none.
+const UPKEEP_POOL_IDLE_KEEPERS_NONE := 0.0
+
+## …and the reading it stands for, on the same hover as the coverage sentence and BELOW it. The noun
+## is the client's existing `worker`, never `keeper`, which appears on no control in this game.
+const UPKEEP_POOL_IDLE_FORMAT := "%d idle %s"
+const UPKEEP_POOL_IDLE_WORKER_SINGULAR := "worker"
+const UPKEEP_POOL_IDLE_WORKER_PLURAL := "workers"
+
+## **WHAT A POOL'S SPARE HANDS ARE, or `""` where there is not a whole one** — the ONE composer for
+## the idle reading, so the info mark and the hover cannot disagree about whether there is anything
+## to say, exactly as `upkeep_pool_coverage_line` is for the bill.
+##
+## ⛔ **`idle_keepers` IS READ OFF THE WIRE AND NEVER DERIVED HERE** — see
+## `HudBandLaborState.pool_crew_for`, which hands back the PAIR `{idle_keepers, keepers}` because the
+## idle figure alone cannot say which staffing it was struck against — which is why the idle-only
+## reader is retired. The card's own `supply` is a projection off a notional
+## kit and knows nothing of the sim's bare-hand top-up, so a client-side answer would name workers
+## the sim has working.
+##
+## **IT STATES THE WHOLE WORKERS ONLY.** `floor` rather than `round`, because the number is a promise
+## about a stepper press: telling a player they can free two when the pool can spare 1.6 is a promise
+## the control cannot keep.
+static func upkeep_pool_idle_line(idle_keepers: float) -> String:
+    if idle_keepers < UPKEEP_POOL_IDLE_KEEPERS_MIN:
         return ""
-    return upkeep_pool_coverage_format(role_name) % [
-        DetailFormat.format_work_units(supply), DetailFormat.format_work_units(asked)]
+    var whole := int(floorf(idle_keepers))
+    return UPKEEP_POOL_IDLE_FORMAT % [whole,
+        UPKEEP_POOL_IDLE_WORKER_SINGULAR if whole == 1 else UPKEEP_POOL_IDLE_WORKER_PLURAL]
 
 ## The two keys of the coverage dict the pool card composes and this line reads. **Named**, because
 ## producer and reader are different scripts and a typo in a `get` there is a silent zero — which on
 ## the supply side would mark every card in the game and on the demand side would mark none.
 const POOL_COVERAGE_SUPPLY_KEY := "supply"
 const POOL_COVERAGE_ASKED_KEY := "asked"
+
+## …and the OPTIONAL fourth: **was this pool short at the staffing the TURN RESOLVED**, which is a
+## different question from the three above and is asked by exactly one reader — the idle mark's
+## pending gate (`BandPanelController._pool_idle_line`). It is stamped by `_pool_coverage`, which is
+## the only producer holding both head counts; **absent means `false`**, and that is correct rather
+## than a default: the two pools whose cover is the sim's own published triple (`roadwork`,
+## `quarrywork`) carry a shortfall that does not move with the stepper at all, so no edit can flip
+## them and there is nothing for the gate to catch.
+const POOL_COVERAGE_SETTLED_SHORT_KEY := "settled_short"
 
 ## …and the OPTIONAL third, for a pool whose shortfall the sim states outright (the `roadwork` pool's
 ## `roadwork_shortfall`). **Present means "use this instead of subtracting"**, which is why the reader
@@ -1176,15 +1182,15 @@ const KIT_SHORT_MARK := "◆"
 ## flown* and a claim about *which Label flew it* are the same read.
 const WORK_ROW_MARKS_META := &"work_row_marks"
 
-## **A POOL CARD'S TOOL-SHORTFALL LINE, ON THE CARD AS META** — `pool_toe_short_line`'s answer, or
-## `""` for a pool with nothing to be short of. The card draws no gear glyph of its own — a tool
-## shortfall flies the same `⚠` a hands shortfall does — and the line is on its hover, so this is what
-## a harness asks *is the triangle flying for the TOOLS, and what does it say* without re-composing
+## **A POOL CARD'S TOOL-SHORTFALL LINE, ON THE CARD AS META** — `pool_tools_short_line`'s answer
+## (`POOL_TOOLS_SHORT_WARN_LINE` or `POOL_TOOLS_SHORT_INFO_LINE`), or `""` for a pool with nothing to
+## be short of. The card draws no gear glyph of its own and the line is on its hover, so this is what a
+## harness asks *is this card short of TOOLS, and which form does it say it in* without re-composing
 ## the wording it is checking.
 ##
 ## It is a second meta rather than a value on `BandPanelController.POOL_CARD_SHORT_META` because that
-## one is the BOOLEAN *is the triangle flying*, true for either reason; this one is the tool reason
-## alone. The hands reason has no meta — it is the hover's coverage line.
+## one is the BOOLEAN *is the `⚠` flying*, which is the WORK shortfall alone; this one is the tool
+## reason alone, whichever mark it rides under.
 ##
 ## ⛔ **IT WAS `POOL_CARD_KIT_SHORT_META` AND THE KIT IS WHAT WENT.** A pool resolved ONE kit until
 ## `docs/plan_pool_toe.md`, and the sentence this meta carried was `KitRoster.shortfall_sentence`'s —
@@ -1193,57 +1199,56 @@ const WORK_ROW_MARKS_META := &"work_row_marks"
 ## longer answer; what it carries is the pool's own TOE.
 const POOL_CARD_TOOL_SHORT_META := &"pool_card_tool_short"
 
-## **ONE TERM OF A POOL'S TOOL LINE** — `4 of 6 hoes`, `0 of 1 hoe`.
+## **A POOL CARD'S IDLE READING, ON THE CARD AS META** — `upkeep_pool_idle_line`'s answer, or `""`
+## for a pool with no whole worker to spare (issue #715).
 ##
-## ⛔ **IT IS `HudComposeVocab.KIT_SHORTFALL_FORMAT` WITHOUT THE TRAILING WORD, and the omission is
-## the only thing that differs.** That sentence states ONE shortfall and closes with ` available`; a
-## pool states a TOE, which is a LIST — `4 of 6 hoes · 0 of 2 dressing hammers` — and repeating the
-## word on every term reads as a run of sentences rather than as one line. The `N of M <thing>`
-## phrasing itself is the client's existing one, which is the whole point of not inventing a second.
-const POOL_TOE_TERM_FORMAT := "%d of %d %s"
+## It is a THIRD meta rather than a value on `BandPanelController.POOL_CARD_SHORT_META`, for
+## `POOL_CARD_TOOL_SHORT_META`'s stated reason: that one is the BOOLEAN *is the card marked SHORT*,
+## several probes read it, and widening it to *is the card marked at all* would silently change what
+## each of them asserts. This one is the idle state alone.
+##
+## **IT CARRIES THE SENTENCE RATHER THAN A FLAG**, the tool meta's rule verbatim: a harness asking
+## *which reason is this mark for, and what does it say* must not re-compose the wording it is
+## checking.
+const POOL_CARD_IDLE_META := &"pool_card_idle"
 
-## ⛔ **RETIRED — `POOL_TOE_MIN_UNITS`, THE FLOOR THAT ROUNDED A SHORTFALL AWAY.** It read: *"a line
-## exists only where `required > 0`, so its DENOMINATOR may never read zero … a real requirement can
-## round down to nothing; the floor is what keeps `0 of 0 hoes` off the card."* The goal was right and
-## the mechanism produced the defect: at `required 0.7906 / filled 0.5666` — a live playtest reading,
-## Teasel's Agriculture pool at 72% coverage — `round(0.7906)` floored UP to a denominator of 1 and
-## the apportion then drove the numerator to 1 as well, so a 28% shortfall printed `1 of 1 hoe` and
-## the card produced NO line and flew NO triangle.
-##
-## **THE FLOOR IS STRUCTURAL NOW.** A term is emitted only for a row the raw floats call SHORT, so
-## `required > POOL_TOE_SHORT_MIN` holds and `ceil` of it is at least one — a denominator can no
-## longer reach zero without a shortfall test having already declined to print anything.
+## **A POOL SHORT OF WORK AND OF TOOLS** — the tool line under the `⚠`, on its own line after the
+## coverage sentence. The coverage sentence already carries the numbers; this only adds the second
+## reason.
+const POOL_TOOLS_SHORT_WARN_LINE := "Short of tools."
 
-## **THE SMALLEST GAP IN TOOL UNITS THAT IS A SHORTFALL** — the ONE test the triangle, the line and
-## the work row's remedy all fork on, made against the WIRE'S OWN FLOATS rather than against the
-## rounded pair the card prints.
+## **A POOL THAT COVERS ITS WORK BUT IS SHORT OF TOOLS** — the reason the info mark flies. Nothing is
+## being lost, so it is said as an opportunity: the tools would stretch each worker further.
+const POOL_TOOLS_SHORT_INFO_LINE := "More tools would speed this up."
+
+## ⛔ **RETIRED — THE COUNTED TOOL LINE (`4 of 6 hoes · 0 of 2 dressing hammers`)**, with
+## `POOL_TOE_TERM_FORMAT`, `POOL_TOE_SHORT_UNIT_GAP` and its ceil/floor + `kit_item_count_word` term
+## assembly (issue #716). It sat under a WORKER stepper, so players read `0 of 1 hoe` as a head count
+## (*"with a hoe I only need one worker"*), and a list of tool names cannot scale as the roster grows
+## from hoes to ploughs to tractors. The card never names or counts tools; the work-unit coverage
+## sentence carries the numbers.
+
+## **THE SMALLEST GAP IN TOOL UNITS THAT IS A SHORTFALL** — the ONE test the card's tool line and the
+## work row's remedy both fork on, made against the WIRE'S OWN FLOATS.
 ##
-## ⛔ **THE SHORT TEST AND THE DISPLAY PAIR ARE DIFFERENT QUESTIONS, and conflating them is what let a
-## sub-unit shortfall read as covered.** *Is this pool short* is answered by `required − filled`, which
-## the sim settled and published; *what does the card say* is a rounding of that pair for a line with
-## no room for decimals. The old code asked the second and inferred the first from it.
+## ⛔ **A SUB-UNIT SHORTFALL IS A SHORTFALL.** Teasel's Agriculture pool at `0.5666 of 0.7906` — a live
+## playtest reading — once rounded to `1 of 1` and read as covered; the test is `required − filled`,
+## never a comparison of rounded figures.
 ##
 ## The value is this client's family floor for a rate that is nothing to state
 ## (`SourceForecast.UPKEEP_WORK_MIN`, `MATERIAL_FLOW_MIN`), one account over: a gap under it is float
 ## noise in the sim's own `f32` sums over a pool's sites rather than a tool anybody is missing.
 const POOL_TOE_SHORT_MIN := 0.005
 
-## **A SHORT ROW'S DENOMINATOR EXCEEDS ITS NUMERATOR BY AT LEAST THIS MANY WHOLE UNITS.** The
-## structural guarantee that `N of N` can never be printed beside a shortfall the floats affirm —
-## which is the exact reading the retired apportion produced. The ceil/floor pair below almost always
-## satisfies it on its own; the clamp is what makes *almost* into *never*, at every tolerance.
-const POOL_TOE_SHORT_UNIT_GAP := 1
-
 ## **IS THIS TOE ROW SHORT — asked of the wire's floats.** `required` and `filled` are what the sim's
-## `settle_scarce_store` settled for this `(pool, item)`; the card's whole-number pair is downstream of
-## this answer and may never be the basis for it.
+## `settle_scarce_store` settled for this `(pool, item)`.
 static func pool_toe_row_is_short(row: Dictionary) -> bool:
     var required := maxf(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)), 0.0)
     var filled := clampf(float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)), 0.0, required)
     return required - filled > POOL_TOE_SHORT_MIN
 
 ## **AND IS THIS POOL SHORT OF ANY OF ITS TOOLS** — `lines` is `HudBandLaborState.pool_toe_for`'s
-## answer for ONE pool. The boolean the work row's remedy forks on, so the pool card's triangle and
+## answer for ONE pool. The boolean the work row's remedy forks on, so the pool card's tool line and
 ## that remedy provably answer to the same test rather than to two readings of one vector.
 static func pool_toe_is_short(lines: Array) -> bool:
     for row_variant in lines:
@@ -1251,59 +1256,14 @@ static func pool_toe_is_short(lines: Array) -> bool:
             return true
     return false
 
-## **A POOL'S SHORT TOE LINES, AS ONE SENTENCE — `4 of 6 hoes · 0 of 2 dressing hammers`, or `""`.**
-## `lines` is `HudBandLaborState.pool_toe_for`'s answer for THIS pool, in wire order.
-##
-## ⛔ **A POOL WHOSE TOOLS ARE ALL FILLED SHOWS NO LINE AT ALL — not a satisfied one, not a zero.** A
-## filled line is present in the vector precisely so a reader can tell *satisfied* from *not
-## applicable*; both render nothing here, and only one of them is a line. Collapsing them at the
-## DECODER would destroy that distinction — which is why the filter is here and not there.
-##
-## ⛔ **THE SHORT TEST IS `pool_toe_row_is_short`, ON THE RAW FLOATS — never a comparison of the two
-## rounded numbers this function then prints.** A pool short by less than a whole unit is short, and
-## the card must say so; what the rounding may decide is how the numbers READ, never whether the
-## shortfall exists.
-##
-## ⛔ **THE DENOMINATOR CEILS AND THE NUMERATOR FLOORS — they are NOT apportioned.**
-##
-## > **RETIRED — *BOTH HALVES ARE APPORTIONED, NOT ROUNDED APART*.** The dead rule: *"`filled` and the
-## > shortfall behind it PARTITION `required`, so rounding each on its own gives a `4 of 6` whose
-## > remainder is 3; `HudFormat.apportion_people_to` is that one arithmetic, and the target it sums to
-## > is the rounded requirement."* **`apportion_people_to`'s premise does not hold here.** It divides
-## > WHOLE PEOPLE by a share the player chose — the target is a real count and the parts must sum to
-## > it exactly — whereas the target here is itself a rounding of a float, and the card prints `N of
-## > M` rather than `N + S`, so nothing is partitioned on screen. What the apportion actually does to
-## > a sub-unit row is round the numerator UP to the denominator, which is the defect.
-##
-## **CEIL AND FLOOR ARE EACH THE CONSERVATIVE ANSWER TO THEIR OWN QUESTION.** *How many whole tools
-## does this pool want* — you cannot buy 0.4 of a hoe, so `0.79` wants one. *How many whole tools are
-## in its hands* — `0.5666` of a hoe's service is no whole hoe, so it holds none. Together they read
-## `0 of 1 hoe` for the playtest row: still a rounding, and one that can only ever OVERSTATE the gap
-## by less than a unit, where the retired pair understated it to nothing. Both are taken with the
-## short floor's tolerance so an `f32` sum landing a hair either side of a whole unit cannot invent a
-## denominator (`6.0000005 → 7`) or lose a held one.
-static func pool_toe_short_line(lines: Array) -> String:
-    var terms: Array[String] = []
-    for row_variant in lines:
-        if not (row_variant is Dictionary):
-            continue
-        var row: Dictionary = row_variant
-        if not pool_toe_row_is_short(row):
-            continue
-        var required := maxf(float(row.get(HudBandLaborState.POOL_TOE_REQUIRED_KEY, 0.0)), 0.0)
-        var filled := clampf(float(row.get(HudBandLaborState.POOL_TOE_FILLED_KEY, 0.0)),
-            0.0, required)
-        var held := int(floor(filled + POOL_TOE_SHORT_MIN))
-        var units: int = maxi(int(ceil(required - POOL_TOE_SHORT_MIN)),
-            held + POOL_TOE_SHORT_UNIT_GAP)
-        # ⛔ **THE NOUN AGREES WITH THE DENOMINATOR, NOT WITH WHAT IS HELD.** `N of M <item>` names
-        # the M — *four of six earthmoving tools*, *one of two crooks* — so a term whose noun followed
-        # `held` would read `1 of 2 crook`, and one that never inflected would read `0 of 1 hoes`.
-        # `DetailFormat.kit_item_count_word` is the one place an item label is inflected.
-        terms.append(POOL_TOE_TERM_FORMAT % [held, units,
-            DetailFormat.kit_item_count_word(
-                String(row.get(HudBandLaborState.POOL_TOE_ITEM_KEY, "")), units)])
-    return RUNG_TRACK_PRICE_SEPARATOR.join(terms)
+## **A POOL CARD'S TOOL LINE — `""` unless `pool_toe_is_short(lines)`, else the form its mark takes.**
+## `work_short` is `upkeep_pool_is_short` for the same card: under the `⚠` the tools are a second
+## reason (`POOL_TOOLS_SHORT_WARN_LINE`); under the info mark they are the only one
+## (`POOL_TOOLS_SHORT_INFO_LINE`). A pool whose tools are all filled says nothing.
+static func pool_tools_short_line(lines: Array, work_short: bool) -> String:
+    if not pool_toe_is_short(lines):
+        return ""
+    return POOL_TOOLS_SHORT_WARN_LINE if work_short else POOL_TOOLS_SHORT_INFO_LINE
 
 const WORK_ROW_MARKS_WIDTH := 20.0
 
@@ -1912,6 +1872,30 @@ static func under_kept_note(kind: String, material_note: String = "",
 static func keeping_pool_kind(labor_kind: String) -> String:
     return HudConst.LABOR_KIND_HUSBANDRY if labor_kind == SourceForecast.LABOR_KIND_HUNT \
         else HudConst.LABOR_KIND_AGRICULTURE
+
+## **THIS CLIENT CANNOT NAME A WEB FOR THIS POOL** — `keeping_source_kind`'s answer for the two pools
+## whose queued jobs it may not price. A sentinel rather than a defaulted web, for the reason the
+## picker above states: a caller handed the WRONG web reads a real number about somebody else's
+## sources, which is a wrong answer wearing a right one's shape.
+const NO_KEEPING_SOURCE_KIND := ""
+
+## **AND THE WEB A KEEPING POOL KEEPS, ASKED BACK THE OTHER WAY** — the SOURCE kind whose jobs
+## queued this turn this pool will owe standing work for, off the POOL's own token.
+## `keeping_pool_kind`'s inverse, and its twin in the one-picker rule: the pending projection
+## (`BandPanelController._queued_keeping_hands`) reaches for a web off a pool token and nothing else
+## in this client does.
+##
+## ⛔ **`roadwork` AND `quarrywork` NAME NO WEB, AND THAT IS THE HONEST ANSWER RATHER THAN A GAP.**
+## Both publish their bill as a band-level roll-up the SIM struck, precisely because their rows are
+## fog-filtered and a client-side sum would drop what it cannot see
+## (`HudBandLaborState.roadwork_pool_state`) — so there is no queued term here to divide, and a web
+## named for them would be an invitation to sum exactly those rows.
+static func keeping_source_kind(pool_kind: String) -> String:
+    if pool_kind == HudConst.LABOR_KIND_HUSBANDRY:
+        return SourceForecast.LABOR_KIND_HUNT
+    if pool_kind == HudConst.LABOR_KIND_AGRICULTURE:
+        return SourceForecast.LABOR_KIND_FORAGE
+    return NO_KEEPING_SOURCE_KIND
 
 ## **AND ITS SEVERITY, ASKED THE SAME WAY** — DANGER for a missing good, WARN for missing hands. One
 ## producer for the pair, so a note and its ink can never describe different shortfalls.

@@ -115,9 +115,57 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
   ```glsl
   float env = 4.0 * p * (1.0 - p);                          // dies at both ends of the band
   float h   = (luma(own) - mean_luma(own_layer)) - (luma(nb) - mean_luma(nb_layer));
-  float pw  = clamp(p + ((noise - 0.5) * blend_noise_amount - h * blend_height_influence) * env, 0.0, 1.0);
+  float s   = own_layer < nb_layer ? 1.0 : -1.0;            // ANTISYMMETRIC wobble sign — see below
+  float pw  = clamp(p + (s * (noise - 0.5) * blend_noise_amount - h * blend_height_influence) * env, 0.0, 1.0);
   result    = mix(own, nb, smoothstep(0.5 - blend_soft, 0.5 + blend_soft, pw));
   ```
+  **Continuity needs `pw_nb = 1 − pw_own` at every shared point**, because each hex weighs its OWN neighbour
+  and the hex across the edge measures `p` in the mirrored frame. The height term satisfies that for free (`h`
+  flips sign with the frame). **The wobble does not** — the noise VALUE is identical from both sides, so it must
+  enter with OPPOSITE signs, signed by the terrain LAYER index (a total order both sides agree on, and never a
+  tie since a seam only exists between different layers) — the peak pass's `PEAK_BLEND_WOBBLE` discipline.
+  It shipped with the SAME sign from both sides, which pushed both hexes toward (or away from) each other: at
+  the edge, where `p = 0.5` and the envelope peaks, the two mixes disagreed by up to `2·(t − 0.5)` — **a genuine
+  step drawn exactly along the hex polyline**, its sign flickering with the noise. That step is what made
+  high-contrast pairs read as razor hexagon edges (the alluvial↔prairie report), and it read worst on the
+  **E/W edges only because a vertical line sits on the pixel grid** with no staircase to soften it — the step
+  itself was orientation-blind. Measured on `blend_probe` state **22 (ECO)**: adjacent-pixel `|ΔL|` across the
+  edge ÷ `|ΔL|` 2–8px beside it was **1.3–3.0 on every orientation** with the bug, **0.7–1.4** with
+  `blend_noise_amount = 0` (control) and with the fix — `blend_height_influence = 0` left it at 1.3–2.7, which
+  exonerated the height term. It moved every frame carrying a land↔land seam and **no shoreline pixel**.
+  **THREE-BIOME CORNERS ARE A TRIPLE, NOT A PICK** (the fumarole / floodplain / alluvial / marsh notch report).
+  The branch above picks ONE neighbour — the nearest edge — which is exactly right along an edge and wrong where
+  a hex and its two neighbours at a vertex are three DIFFERENT layers: the pick switches layer along the corner
+  bisector, swapping the neighbour texture there and (with a profiled neighbour's wider band) jumping the weight,
+  which drew a hard angled NOTCH into the blend at the vertex. So a fragment whose NEAREST VERTEX is a
+  three-layer corner blends the triple (`HEX_CORNERS` in the shader): the three hexes are ordered by LAYER index
+  (A < B < C), each pair's weight is the two-biome formula evaluated canonically (`canonical_seam_t`, the lower
+  layer as "own"), and `W_A = (1 − T_AB)(1 − u)`, `W_B = T_AB (1 − u)`, `W_C = u` with
+  `u = (1 − T_AB)·T_AC + T_AB·T_BC`. Every limit is the two-biome mix (C out of reach → `mix(A, B, T_AB)`, and
+  likewise for A and B), and every input is a function of the id-map, the three centres and the world point —
+  never of which hex renders — so all three frames around the vertex compute the same value and the blend is
+  continuous across all three edges BY CONSTRUCTION. Everything that is not a three-layer corner keeps the
+  single-neighbour path **byte-identical** (every two-biome frame — `ECO_*`, `blend_isolated_*`, `V6_*`,
+  `blend_bands_*`, `V7_*`, `V10_*` — did not move; 40 frames did, each holding a three-layer corner: `CORNER*`,
+  `BANK_*` full frames, `G_*`, `H_*` full frames, the `R_flat*` field frames + the fumarole/volcano slots beside
+  the field split, `map_rivers` / `_mouth` / `_navigable`, `map_overlay_legend_terrain`).
+  * **REJECTED — the odds-weighted mean** (own 1, each neighbour layer `t/(1 − t)`). It reduces exactly to the
+    two-biome mix, but its weights are computed per FRAME, and continuity across an edge near a corner needs
+    `o_AC = o_AB · o_BC`, which independent per-edge `t`s do not satisfy — it moved the step from inside the hex
+    onto the edges between the neighbours. Measured on `blend_probe` state **25 (CORNER)** with the
+    straddle-pixel ratio inside 30 px of each vertex (≈1 = continuous): the lower-right corner's three edges
+    went from **1.35 / 1.18 / 1.41** (shipped pick) to **3.54 / 3.21 / 2.13** (odds). The triple reads
+    **0.81 / 0.98 / 1.08** there, and **1.17 / 0.87 / 1.56** at the upper-right (was 1.31 / 0.82 / 2.02);
+    two-biome corners of the same hex read 0.72–1.01 and did not move. A ratio a little above 1 at a
+    high-contrast vertex is a steep but continuous ramp, and the 4× crops show no step.
+  * **A nearest-vertex switch sits on the line from the hex centre to each edge midpoint.** The two vertex
+    triples meet there, but the far vertex's third hex is out of reach of that line for any band under ~0.43·r
+    (`width_scale` ≤ 1.7). A wider profile (alluvial 2.2) can leave it a small residual weight at that line,
+    and the switch then drops it. **That is what drew the "rectangular block beside the karst hexes"**: while
+    a navigable hex keyed its seams on id 37 it carried the bank's 2.6 profile, and a karst pocket walled in
+    by river hexes stepped along those lines — HORIZONTAL from the centre to its E/W edge midpoints, meeting
+    the vertical E/W edges in a rectangle (`blend_probe` state 28, `NAVBASE_karst*`: pocket straddle ratios
+    up to **5.27** before, **≤ 1.37** after). It went with the keying fix below, not with any change here.
   The **wobble** (world `vnoise`, cell `blend_noise_cell`) gives an organic, meandering boundary instead
   of the straight hex line, and carries **low-variance pairs** (smooth sand ↔ smooth soil) where there is
   little detail to follow. The **height term** is a *detail-following NUDGE*: with no height maps each
@@ -181,14 +229,14 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
     few brightness points apart that share a hue. Their visible ramp is only ~`0.35·r` wide and the wobble
     displaces it by a fraction of that, so the boundary still essentially **traces the hex polyline** — which
     is invisible between two tan grasslands and *glaring* between two textures far apart in **both tone and
-    hue**. The `NavigableRiver` **bank** (id 37) is exactly that: grey, low-contrast gravel (mean luma **89**)
+    hue**. The `NavigableRiver` **bank** (id 37) was exactly that: grey, low-contrast gravel (mean luma **89**)
     whose neighbours in a river corridor are prairie/scrub (**112–127**) on one side and floodplain/alluvial
-    (**55–58**) on the other. Under the global levers alone the corridor renders as a **chain of grey
+    (**55–58**) on the other. Under the global levers alone the corridor rendered as a **chain of grey
     hexagons** — the blend fires correctly, it is simply far too narrow and too straight to read as an
     ecotone at that contrast. **This is NOT fixable with the global levers** (widening them to suit the bank
     would move every biome seam main tuned), so a terrain entry may carry an optional block scaling the seams
     **it** is on, along three axes — the flat↔flat twin of the water side's `shore_profile`:
-    `{ "id": 37, …, "blend_profile": { "width_scale": 2.6, "noise_scale": 2.2, "noise_cell_scale": 2.6 } }`
+    `{ "id": 10, …, "blend_profile": { "width_scale": 2.2, "noise_scale": 1.9, "noise_cell_scale": 2.2 } }`
     * `width_scale` multiplies `blend_band` — the ecotone's **REACH**.
     * `noise_scale` multiplies `blend_noise_amount` — the boundary wobble's **AMPLITUDE**, so the boundary
       leaves the hexagon instead of tracing it.
@@ -211,24 +259,36 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
       bound once by MapView as the `layer_blend_map` uniform and fetched in-shader by layer index
       (`blend_profile(layer)` → `vec3`; `edge_blend_profile()` is the `max` over the pair).
       `rebuild_layer_blend_map()` is public and updates the ImageTexture **in place** (so the binding
-      survives) — that is how `blend_probe` state **17 (BANK)** sweeps it. Fallbacks are the
+      survives) — that is how `blend_probe` states **17 (BANK)** and **22 (ECO)** sweep it. Fallbacks are the
       `BLEND_PROFILE_DEFAULT_*` consts; `BLEND_PROFILE_MAX_SCALE` (4.0) guard-rails the reach, since the
       apothem is only 0.866·r and a wider band would collide with the opposite seam.
-    * **Shipped:** only `navigable_river` (2.6 / 2.2 / 2.6) — chosen on `blend_probe` state 17, which renders
-      the corridor against a **dark** field and a **bright** one in ONE frame. `1.8/1.6/2.0` still traced the
-      hexagon; `3.4/2.8/3.2` started dissolving the bank's identity as a distinct silty corridor. Judge any
-      new profile there, **including the isolated-hex shred crops** — a corridor seam cannot show a torn
-      interior.
+    * **RETIRED: `navigable_river` (2.6 / 2.2 / 2.6).** It was chosen on `blend_probe` state 17 while a
+      navigable hex rendered as a whole hex of grey bank and keyed its seams on id 37. Neither is true now:
+      the hex renders its VALLEY biome and every seam keys on that (see Rivers → "A navigable hex is a
+      VALLEY"), so nothing reads a navigable hex's profile — in a live game `underlying_terrain` is never 37
+      (`core_sim` hydrology captures the biome before the overwrite). The corridor's contrast problem went
+      with the grey hex; the bank is a slim annulus with its own soft alpha. State 17's fixture carries no
+      `underlying_terrain`, so its hexes still key on the bank layer and its sweep still bites — judge a
+      profile there only for that reason; `BANK_shipped` now renders as `BANK_off`.
+    * **Shipped:** `alluvial_plain` (id 10) **(2.2 / 1.9 / 2.2)** — the dark outlier (mean luma ~55) that is
+      high-contrast against most of its neighbours, prairie (~112) above all. Chosen on `blend_probe` state
+      **22 (ECO)**, AFTER the antisymmetric-wobble fix (with the step gone, the global ecotone still left an
+      isolated alluvial hex a soft-rimmed hexagon). `1.6/1.4/1.8` still read as a hexagon; `2.6/2.2/2.6` (the
+      bank's) hazed the isolated alluvial hex into a smear. Both isolated-hex crops keep solid interiors at
+      2.2. Blast radius: only frames containing an alluvial hex moved (`ECO_shipped*`, `G_*`,
+      `blend_bands_full` / `H_gate_bands_full`, `X_dark_water`, `map_riverine_split`,
+      `map_overlay_legend_terrain`); `blend_isolated_*`, `V6_*`, `V7_*`, `V10_*` are byte-identical.
   - The blend look is **zoom-invariant** (band + wobble are both radius-relative), so a preview frame is an
     honest proxy for the game *only if it is rendered at the game's on-screen hex radius* (**r ≈ 75px**;
     hexes read ~150px across on the user's screen). `tools/blend_probe.tscn` pins that, and — critically —
     renders **isolated hexes surrounded by another biome**, the only state that exposes hex shredding.
     `tools/map_preview.gd` *fits* (r ≈ 83–178) and only ever shows straight band seams, so judgements made
     in it are not trustworthy for the blend.
-  - `feature_noise_cell` (default `6.0`, the world-noise cell **px** for the
-    shoreline reach/wisp + canopy treeline + peak footline; **decoupled** from the blend noise — it
-    drives the shader's `noise_cell` uniform, so the seam can be retuned without moving any
-    coastline/treeline/footline; verified by pixel-diff).
+  - `feature_noise_cell` (default `6.0`, the world-noise cell **px** for the shoreline reach/wisp and the FoW
+    wisps; **decoupled** from the blend noise — it drives the shader's `noise_cell` uniform, so the seam can be
+    retuned without moving any coastline; verified by pixel-diff). The canopy treeline and the peak footline
+    no longer read it: their cells are radius-relative (see those sections), because a fixed px cell against a
+    radius-relative amplitude shredded both at play zoom.
   - Top-level `base_texture_scale`
   (→ `base_scale`, default `0.25` = one base texture spans ~4 hex-rows; smaller covers MORE hexes,
   larger fewer — `BASE_DEFAULT_TEXTURE_SCALE` in `ui/TerrainRenderer.gd`). **LOD:** below `EDGE_BLEND_MIN_RADIUS`
@@ -285,9 +345,11 @@ flat↔flat interlock, every **land↔water** edge gets a coastal treatment in t
 signed-distance-to-shared-edge machinery. It fires for any edge where **exactly one side is water**
 (`blend_class` code 0) — so it's independent of the land side's class (**both flat-land and rugged-land**
 coasts get it) and never touches inland edges (flat↔flat interlock and rugged↔* inland edges stay exactly
-as before — both sides non-water → skipped). **The one exception is a `NavigableRiver` hex, whose edges are
-excluded from the pass entirely — a river meeting the sea is not a coast; see Rivers → NavigableRiver for why
-it cannot be expressed as a `shore_profile`.** Seaward read: **land → sand → surf → open water**, and the
+as before — both sides non-water → skipped). **The one exception is a `NavigableRiver` hex's true MOUTH edge — the
+edge its channel exits through into the water (`is_mouth`: the channel bit toward that neighbour, from either
+side) — which is excluded from the pass: a river meeting the sea is not a coast. Its OTHER water edges keep
+their coast, so a navigable hex running alongside a lake gets the lake's normal beach and surf; see Rivers →
+NavigableRiver for why the mouth cannot be expressed as a `shore_profile`.** Seaward read: **land → sand → surf → open water**, and the
 requirement is that **NO boundary in that chain is a hard line** — not sand↔land, not sand↔foam, not
 foam↔water.
 - **THE SIGNED COAST COORDINATE `u` — why this can't step at the hex edge.** The shore pass computes
@@ -452,11 +514,35 @@ foam↔water.
       for any beach wider than the floor**, and a continuous grow-in from nothing below it.
   - **Shipped:** `deep_ocean` **(0, 1, 1)** — the cliff · `continental_shelf` **(1, 0.75, 0.5)** — the ordinary
     beach, main wave muted, disturbance halved · `inland_sea` **(0.5, 0.5, 0)** — the approved lake. Every
-    other water terrain (coral_shelf, hydrothermal_vent_field) is neutral. Per-**LAND**-biome shore gating (a
-    grassy shore vs a wooded shore) is still deliberately NOT built — all coasts render the same beach+foam
-    art. Verify via `tools/map_preview.gd` State Q (`_biome_band_terrain` carves an ocean bay so the ocean
+    other water terrain (coral_shelf, hydrothermal_vent_field) is neutral. The LAND side may gate the sand
+    (next bullet); nothing else about a coast varies by land biome — surf and wisp are the water's. Verify via `tools/map_preview.gd` State Q (`_biome_band_terrain` carves an ocean bay so the ocean
     borders BOTH prairie and woodland) → `map_biome_blend.png` + `map_biome_shore_seam.png` (coast close-up),
     the lake via `blend_probe` **state 10 (L)**, and the cliff/beach/mixed coasts via **state 15 (D)** below.
+  - **A LAND TERRAIN CAN SWITCH ITS BEACH OFF — `shore_profile: { "sand_scale": 0..1 }` on a land entry.**
+    Ice meeting water has no sand, and the water-keyed profile cannot say so: one lake borders glacier and
+    prairie at once. So a land terrain's `shore_profile` carries ONE axis, a GATE on the beach forming on it,
+    and the effective sand reach is `water sand field × land sand field`.
+    * **Plumbing reuses `layer_shore_map`'s R channel** for land layers — no new texture. The loader
+      (`TerrainTextureManager.rebuild_layer_shore_map`) clamps a land `sand_scale` to [0, 1] (a gate, never a
+      widening) and `push_error`s on a land entry naming `foam_scale` / `wisp_scale`, which are the water's
+      alone. A land terrain with no block is neutral 1.0; land is `blend_class != "water"`, the class the
+      shader keys on (so `navigable_river`, category water but class flat, is land here).
+    * **The land field is the water field's twin**: a weighted mean over the LAND hexes of {own + 6
+      neighbours}, each weighted `smoothstep(−apothem, 0, d)` by closeness to that shared edge, own = 1 — the
+      same construction and the same `SHORE_PROFILE_REACH_APOTHEMS` continuity argument, so a glacier coast
+      running into a prairie coast grows its beach in over ~a hex instead of switching on at the land↔land
+      bisector. It feeds the reach BEFORE `sand_fade`, so a 0 leaves no tan hairline and nothing pops in. The
+      sand is land-only, so only the land frame's value is ever used — and it is continuous across the
+      waterline too (the water frame sees the same land hexes at the same weights).
+    * **It is accumulated as a DEFICIT (`1 − sand_scale`), and that is load-bearing for bit-identity.** A
+      GPU divide is a reciprocal-multiply, so `Σw / Σw` is not exactly 1.0: the first cut, a straight mean of
+      neutral 1.0s, moved stray single pixels by 1/255 in `D2_shelf_C1`, `W_*_wide` and `G_before_lake`. A
+      mean of zero deficits is exactly 0 however it is divided.
+    * **Shipped:** `glacier` (22), `seasonal_snowfield` (23), `tundra` (20) at `sand_scale 0.0`. Verified
+      on `blend_probe` state **23 (ICE)**: `ICE_before` (the three profiles neutralised) vs `ICE_shipped`, on
+      a lake and a shelf coast that each run glacier → tundra → prairie. The only frames that moved are
+      `ICE_shipped*`, `PKLAKE_glacier` and `X_dark_water` (its live id-map carries tundra); every other frame
+      is byte-identical, `V7_*` / `V10_*` included.
   - **NOTE for the next pixel-diff:** because the shipped `continental_shelf` profile is no longer neutral,
     `V7_coast_unchanged` / `V10_shore*` / `H_gate_coast` (whose sea IS the shelf) **moved** when it landed —
     that is the shipped muting, not a regression. They remain the bit-identical reference for any blend
@@ -484,7 +570,13 @@ silhouette. Today the only canopy biome is **12 (mixed_woodland)** — its `blen
   **canopy↔non-canopy** boundary (`s` = signed distance, + inside the forest): D = 1 deep inside, **~0.5
   at the exact edge**, ramping to 1 over `canopy_softness` px inside and down to 0 at `canopy_overhang` px
   **outside** the forest (crowns overhang the neighbour, then fade). The treeline is world-noise
-  perturbed (`CANOPY_TREELINE_NOISE`, reusing `noise_cell`) so it's bumpy, not a clean arc. Interior
+  perturbed (`CANOPY_TREELINE_NOISE`) so it's bumpy, not a clean arc. **Its noise CELL is radius-relative**
+  (`CANOPY_TREELINE_NOISE_CELL_OVERHANGS` × `canopy_overhang`), the same zoom-mismatch fix as the peak
+  footline: on the shared 6 px `noise_cell` against a ±0.3·r amplitude the treeline shredded into a fringe of
+  cell-sized crown fragments at play zoom (`blend_probe` state **26, TREELINE**; zeroing the wobble removed
+  them, the radius-relative cell keeps the treeline bumpy in organic lobes). It moved 31 frames, every one
+  holding a canopy biome (`TREELINE*`, the `R_*` frames with mangrove / boreal or a slot beside one,
+  `map_biome_*`, `map_cohesion*`, `map_swim_*`, `map_overlay_legend_terrain`). Interior
   forest hexes (all-canopy neighbours) → D=1. Composited **after** blend+shoreline, before FoW:
   `result = mix(result, crown.rgb, crown.a · D)`.
 - **Map-space canopy UV:** `cuv = v_map / (2·hex_radius) · canopy_scale`, where `v_map = v_world -
@@ -621,6 +713,44 @@ biome — its drama is incision, handled at the base-floor level, not raised rel
   shadow **in isolation**. That frame is necessary because the relief art overhangs the footline and is
   semi-transparent out there, so neither the eye nor a pixel sample can separate "shadow" from "dark mound
   fringe" in the composited frame.
+- **THE FOOTLINE WOBBLE'S CELL IS RADIUS-RELATIVE (`PEAK_FOOTLINE_NOISE_CELL_OVERHANGS` × `peak_overhang`),
+  like its amplitude.** It used the shared px `noise_cell` (`feature_noise_cell`, 6 px) against an amplitude of
+  `CANOPY_TREELINE_NOISE × peak_overhang` (±0.36·r, ±27 px at the game's r ≈ 75): the footline swung ~4.5
+  cells within one cell, and value noise — whose smoothstep interpolation goes flat on every lattice line —
+  shredded the relief's edge into cell-sized SQUARE blocks of mountain art over the neighbour. That is the
+  "blocky, pixelated lake↔mountain edge" report; it hit every peak footline (over glacier as much as over
+  water), and it was zoom-dependent (at map scale the amplitude shrank under the cell and hid it). **Proved by
+  toggle** on `blend_probe` state **24 (PKLAKE)**: zeroing `pk_wobble` removes the blocks outright; the
+  radius-relative cell (1.0 overhang) keeps the meander as organic lobes. The shadow envelope rides the same
+  wobble, so the cast-shadow onset moved with it. Moved frames: every frame with a peak biome (`G_*`, `H_*`
+  with relief, `R_*` peak biomes, `S_*`, `PKLAKE*`, `map_repetition_after`, `map_overlay_legend_terrain`).
+  The canopy treeline took the same fix (see the canopy section).
+- **A PEAK COAST OVERHANGS THE WATER, BY DECISION.** The relief reaches ~0.6·r past its hex as a translucent
+  footline over a lake or sea exactly as it does over land — a mountain dropping into water reads as a cliff.
+  Stopping it at the waterline, or giving a peak coast a beach and surf, was considered and **declined by the
+  user** (2026-09-26). Do not "fix" the overhang as a defect.
+- **THE RELIEF'S ELEVATION IS A CONTINUOUS FIELD, NOT A PER-HEX PICK** (`PEAK_ELEV_FIELD_*`; the "seams along
+  hex edges INSIDE a rolling_hills field" report). The elev-map is NEAREST-sampled, and it drives the relief's
+  prominence (how opaque the mounds draw) and its cast-shadow length. Inside a field of ONE relief biome the
+  peak↔peak cross-fade never runs (the same layer is skipped — its ART is continuous), so wherever two
+  neighbouring hills hexes carried different elevations the prominence and the shadow both STEPPED on the hex
+  polyline: a faint darker line, mounds cut off where they crossed it, one hex's mounds fainter than its
+  neighbour's. The pass now reads the elevation as the weighted mean over the hexes of {own + 6 neighbours}
+  carrying the relief layer being drawn, each weighted `smoothstep(−apothem, 0, d)` by closeness to its shared
+  edge — the shore profile field's construction, continuous across every edge by the same argument
+  (`SHORE_PROFILE_REACH_APOTHEMS`). It is accumulated as a DEVIATION from the reference hex's own elevation,
+  so a field of one elevation reads that elevation exactly and renders byte-identically.
+  * **Proved by toggle** on `blend_probe` state **27 (HILLFIELD)**, the straddle-pixel ratio (≈1 = continuous)
+    over the field's internal vertical edges: shipped **1.54**, one elevation for every hex **1.02**,
+    `min_prominence 1` (prominence pinned) **0.94**, `shadow_strength 0` **1.29** (the shadow length carries part
+    of it), and with the field **1.02**. No per-hex variant or UV offset exists in the pass — the peak UV is
+    continuous map space — and the base floor is continuous too (`HILLFIELD_nopeaks` 1.08).
+  * **Pre-existing, not a regression of this PR's shader work:** the same state rendered with the shader as of
+    `origin/main` reads **1.57**, after the antisymmetric-wobble commit 1.58, after the footline-cell commit
+    1.54, after the corner-triple commit 1.54.
+  * **It moved no existing harness frame** (374/374 byte-identical): every other fixture gives neighbouring
+    same-terrain relief hexes one shared elevation, which the deviation form keeps exact. Only a live map, or
+    `HILLFIELD`'s varied raster, exercises it.
 - **Peak LOD is DECOUPLED from the blend LOD** (own `peaks_lod_enabled`, `radius ≥ peak_min_radius`,
   default 3.0 ≪ `EDGE_BLEND_MIN_RADIUS`), so the mountain mass persists at far zoom; trilinear-mipmapped
   peak array keeps it smooth (no shimmer).
@@ -757,6 +887,17 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
       **only on a navigable hex** (`own_navigable`); everywhere else `base_layer == own_layer`, a no-op.
       **The `id_map` R channel STAYS terrain id 37** — that is the navigability signal the shader keys
       `own_navigable`/the channel pass on; only the *base texture* is swapped, never the id.
+    - ⛔ **EVERY CROSS-HEX COMPARISON KEYS ON THE BASE LAYER, NEVER ON THE ID** (`base_layer_of(uv, layer)`
+      in the shader, the one place the swap is spelled). The flat↔flat interlock's "different layer" test,
+      its `blend_profile`, height term (`mean_luma`), wobble sign and neighbour texture, the corner triple,
+      the shore's land sand field and its waterline `land_base` all read a NEIGHBOUR's layer, and they read
+      it off the id-map. Swapping only the own hex's base left each of them seeing every navigable hex as
+      terrain 37: two valleys of different biome met on a razor hex edge (37 == 37, no seam to blend —
+      the "brown wedges with straight edges between the bends" report), and every land neighbour blended
+      the BANK texture in at the bank's 2.6 profile (the grey hex-edged silt patches beside the river, and
+      grey wedges eating a lake's ring on `map_rivers_lake_alongside`). Measured on `blend_probe` state
+      **28 (NAVBASE)** with the straddle-pixel ratio (≈1 continuous): nav↔land edges **1.00–2.33** before,
+      **0.80–1.39** after; the valley hand-over (4,5)|(5,5) **2.88 → 1.43**.
     - **The bank is a thin annulus riding the channel's distance field.** In the navigable channel pass, the
       silty bank (`biome_array` layer for id 37 — resolved via `river_navigable_terrain_id`, never hard-coded)
       is composited OVER the underlying base across an annulus just outside the water, out to
@@ -768,9 +909,8 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
       uniform via `RIVER_DEFAULT_NAVIGABLE_BANK_WIDTH`).
     - The bank's base texture (`textures/base/37_navigable_river.png`) is still the **BANK ground**
       (placeholder: a copy of `09_floodplain`; real silty-bank art lands later) and its config `color` (the
-      fallback solid + minimap pixel) is a bank tone. **The id-37 layer ALSO carries a per-terrain
-      `blend_profile`** (`2.6 / 2.2 / 2.6` — see Edge Blending), retained for the bank's flat↔flat seams;
-      judge the bank contrast on `blend_probe` state **17 (BANK)**. **The `blend_class` G-channel code stays
+      fallback solid + minimap pixel) is a bank tone. The id-37 entry carries **no `blend_profile`** — its
+      2.6 one retired with the base-layer keying above (see Edge Blending). **The `blend_class` G-channel code stays
       "flat" (from terrain 37)** — since both the valley base and its flat neighbours are flat class, the
       flat↔flat blend fires and the navigable hex body merges seamlessly into the surrounding land with no
       hard hex seam (verified on `map_rivers_navigable.png`/`map_rivers_web.png`). Writing the underlying
@@ -870,11 +1010,29 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
   - It reuses the **same organic machinery** as the edge pass — the `river_meander_warp` domain warp, the
     low-frequency `river_width_mod` swell, the `river_bank_wobble` ragged bank (all three factored into
     shared shader functions rather than copied) — and `river_harmonize`, so the trunk reads as the same
-    river grown bigger. All noise is sampled in **WORLD space**, which is exactly what makes the channel
-    **continuous across adjacent navigable hexes**: both hexes warp the same point and read the same width
-    at their shared boundary, so the half-channels line up with no seam, pinch or gap. The **spurs ride the
-    same three**, which is why a tributary's band arrives at the vertex already warped exactly as the edge
-    pass warped it on the far side — the two meet without a notch.
+    river grown bigger. All noise is sampled in **WORLD space**, so every hex warps the same point and reads
+    the same width at it. The **spurs ride the same three**, which is why a tributary's band arrives at the
+    vertex already warped exactly as the edge pass warped it on the far side — the two meet without a notch.
+  - ⛔ **THE CHANNEL IS A UNION OVER THE RENDERING HEX AND ITS NAVIGABLE NEIGHBOURS** (`nav_hex_channel`,
+    evaluated for each navigable hex in {own + 6 neighbours}, `max` of the coverages). World-space noise
+    alone did NOT make the channel continuous, and the pass header claimed it did: a hex's strokes end at
+    its own boundary in UNWARPED space, but are measured from the WARPED point, so wherever the meander
+    carried a fragment across a shared edge, the hex it sat in measured it against the round CAP of its own
+    arm while the neighbour whose arm it now lay beside was never asked. The channel and its bank were CUT
+    along the hex line at every exit edge the meander displaced — the "brown wedge with straight edges
+    between the bends". **Proved by toggle** on `blend_probe` state **28 (NAVBASE)**: the warp off removes
+    the cut; nav↔nav straddle ratios **2.99 / 1.43 / 1.44 → 0.75 / 0.96 / 0.89** with the union.
+    * **Why 7 hexes suffice, and why it is exact.** A stroke reaches at most ~0.5·r past its own hex
+      (half-width + bank + softness + meander), and a point must be a full `r` from a hex before that hex
+      stops being one of its neighbours — so both hexes flanking any edge enumerate every hex whose water can
+      reach it and compute the same union. It runs on a LAND hex beside a navigable one too, which is what
+      lets the bank cross onto it.
+    * **Never on a WATER hex** (`own_class != CLASS_WATER`): the union would round the channel's cap out into
+      the sea at a mouth and ring it with silt, and spill bank into a lake the river runs beside. The water
+      hex keeps the channel's end at the shared edge, as the own-hex pass always did.
+    * The art follows the winner: the trunk stroke with the best coverage carries its tangent and — on a head
+      segment — its own tributary crossfade; the best spur carries its layer. With only the own hex in play
+      that is exactly the old single-hex pick.
 - **Config levers** (`terrain_config.json` → `rivers` block): `minor_width` / `major_width` /
   **`navigable_width`** (the channel HALF-width as a fraction of the hex radius — `0.14`: clearly the
   biggest water on the map, but **only somewhat** wider than Major's `0.09`. It shipped at `0.24` and read

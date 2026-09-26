@@ -2237,6 +2237,15 @@ pub struct LadderKnowledgeState {
     /// shipped `false` — it changes what a pen may draw on rather than opening a further rung.
     #[serde(default)]
     pub is_step: bool,
+    /// **The subject area of the branch that teaches it** (`"food"` | `"making"` | `"works"`): which
+    /// *heading*, one level above [`Self::branch`]. Off `intensification_ladder.json`'s `branches`
+    /// table and never a client-side list — a hard-coded area table is the retired `LADDER_DOMAINS`
+    /// bug one level up.
+    ///
+    /// `""` when the branch's descriptor names none, which the client draws under a fallback
+    /// heading rather than dropping the row.
+    #[serde(default)]
+    pub area: String,
 }
 
 /// One faction's progress on one ladder knowledge, `0..1` (`1.0` = known). Joined to the roster above

@@ -508,6 +508,132 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > a pool whose plan wants every hand supplies bit-for-bit what it supplied before step 5, and a pool
 > with idle hands and no deficit is supplied exactly its bill and never more.
 >
+> #### ⛔ WHAT STEP 5 COULD NOT PLACE IS PUBLISHED, AND IT IS STRUCK AT THE SAME SEAM
+>
+> `PopulationCohortState.poolCrew` states, per keeping pool, **how many of that pool's assigned
+> keepers the turn's bill did not consume** — the number a *"step this pool down"* mark is drawn off
+> (issue #715). It is `idle − Σ bare_hands`, clamped at none: the hands the plan left standing, less
+> the part of them step 5 just put onto the sites still short.
+>
+> ⛔ **THE POST-TOP-UP FIGURE, NEVER THE RAW `idle`.** Reporting what the plan left over would offer
+> up keepers the sim has **working** — issue #714's own defect, arriving through the readout instead
+> of through the split. `pool_toe::the_hands_step_five_spent_are_not_published_as_standing` is the
+> assertion that fails if someone later publishes the pre-top-up figure: three keepers over two
+> short-haul roads leave `1.68` standing and publish `1.04`, because step 5 spent `0.64` closing the
+> pair.
+>
+> ⛔ **ONE EXPRESSION, AT THE SEAM THAT HOLDS BOTH TERMS.** `bare_hand_top_up` is the only place that
+> knows `idle` *and* what it spent, so it returns `PoolTopUp { bare_hands, idle_keepers }` and
+> `pool_rates` returns `PoolRates { payments, idle_keepers }`. A caller re-deriving it from `fills`
+> and the payments would be a second answer free to disagree with the one step 5 actually ran —
+> `last_pool_toe`'s *"reported, never recomputed"* discipline, one field over. The capture is written
+> at [`LaborAllocation::record_pool_crew`] from each of the four paying seats and read straight out
+> at `snapshot::population`, exactly as `last_pool_toe` is.
+>
+> #### ⛔ THE IDLE FIGURE IS MEANINGLESS WITHOUT THE HEAD COUNT IT WAS STRUCK AGAINST
+>
+> A `PoolCrewLine` is a **pair**: `idleKeepers` and the `keepers` the turn settled the pool at. The
+> second is not decoration — without it the first has no basis, because the two halves of the line
+> are written at different moments than the band's own labor row is.
+>
+> **`assign_labor` moves the row immediately, outside the turn** (`handle_assign_labor`, the server
+> binary); the crew account is stamped only where the turn settles the pool. So from a stepper press
+> until the next turn resolution the published row already carries the new head count while
+> `idleKeepers` still describes the old one. A reader projecting the pending edit takes
+> `idleKeepers + (the row's current head count − keepers)`, floored at zero — the added hand is
+> **bare** (§2.3 step 5), which is exactly what lets a client price the *change* while remaining
+> unable to price the absolute.
+>
+> Publishing the row's live head count as `keepers` makes that difference `0` on precisely the frame
+> the player is deciding from, collapsing the projection onto a turn-old figure: three `agriculture`
+> keepers put on a pool with no sources on turn 1 report **none** idle. That is the defect the pair
+> closes, and it is pinned by
+> `pool_toe::the_published_head_count_is_the_one_the_turn_settled_not_the_row_as_it_stands_now` —
+> which fails if the capture ever reaches for `workers_on_job` instead of the line's own term.
+>
+> ⛔ **THE TWO TERMS ARE WRITTEN TOGETHER OR NOT AT ALL.** `PoolRates` carries `pool_rates`' own
+> `keepers` argument beside the idle figure and `PoolRates::crew` is the single place a
+> `PoolCrewLine` is built; `record_pool_crew` takes the whole line and replaces it whole. There is
+> no seam that can set one term without the other, which is the only guard against the pair coming
+> from two different moments. **In keepers and a float**, like every other hand quantity on this
+> wire, so the subtraction a reader makes against it casts nothing.
+>
+> `idleKeepers == keepers` exactly for a pool with no claims — the invariant
+> `a_pool_with_no_claims_reports_every_keeper_it_was_struck_with` pins, and the one that catches the
+> two being stamped from different turns.
+>
+> ⛔ **AN EMPTY CLAIM LIST REACHES `pool_rates`, and making it do so is half the change.**
+> A pool with a head count and **no sites** has every keeper standing — three on `agriculture` with
+> no tended ground is three idle keepers, and it is the commonest shape there is. `maintenance_shares`
+> already reached the seam (the argument is evaluated before the `zip`); `settle_bands_roadwork` and
+> `settle_bands_extraction` did not, and their `claims.is_empty()` / zero-keeper returns are gone.
+> Neither did any work: an empty claim list sums to the `NO_*_LEDGER` the demand was just cleared to,
+> and a pool of nobody settles zero hands on every claim, which pays `0` into each site and wears
+> nothing (`BandEquipment::wear_item` charges nothing for no work).
+>
+> ⛔ **AND ALL FOUR ROWS ARE STAMPED ABOVE THE SOURCE-ASSIGNMENT GUARDS, WHICH IS THE OTHER HALF.**
+> `settle_bands_roadwork` and `settle_bands_extraction` sit above the assignment loop's two
+> `continue`s — `allocation.assignments.is_empty()` and the `tiles.get(cohort.current_tile)` lookup
+> — while the two food webs' rows are stamped inside `maintenance_shares`, which was called below
+> them. So a band with **no worked sources at all** published `roadwork` and `quarrywork` and
+> neither food web, and a client reader handed no `agriculture` row drew nothing.
+>
+> **The inversion is the thing to hold on to**: `allocation.assignments` is the band's *per-source*
+> list, not its pool head counts, so a band that guard skips is precisely a band whose keepers have
+> nothing to do — the stamp went missing in the one case the figure exists to report. An
+> empty-claim-list pool reaching `pool_rates` (above) is worthless if the call site the pool is paid
+> from is never reached. The tile-lookup guard takes the same reading for the same reason: a crew
+> account is struck from a head count and a claim list, and a band whose tile cannot be read still
+> has both.
+>
+> `maintenance_shares` is therefore called above both guards. **Only the call moved, not the split**
+> — the hands were divided in `plan_pool_tools` further up, and nothing between the two seats
+> (`BandReach`, the output multiplier, the loop's empty accumulators) moves a claim or funds a hand,
+> so no band that reaches the assignment loop is paid one unit differently. The award vector a
+> skipped band computes is dropped with it; the crew lines it stamped are not.
+>
+> **The fixtures that could not see this all staff a role**, and a staffed role is itself an
+> assignment row, so every one of them walks past the guard —
+> `a_pool_with_no_claims_reports_every_keeper_it_was_struck_with` stayed green for the whole life of
+> the defect. `pool_toe::a_band_with_no_assignments_at_all_publishes_all_four_crew_lines` is the one
+> that crosses it, with
+> `::the_first_keeper_put_on_an_unworked_web_reads_as_idle_on_the_frame_of_the_press` holding the
+> player-facing half: the `0 / 0` line is what the projection above is read against, so the band's
+> first three plant keepers report as standing on the frame of the press rather than a turn later.
+>
+> ⛔ **AND THE BAND'S LEDGER IS BORROWED THERE, NOT CLONED** — which is what makes falling through
+> free. Both seats used to snapshot it with `as_deref().cloned()`, and that clone was answering a
+> borrow conflict that does not exist: every read of the ledger (`pool_or_plan`, then `pool_rates`)
+> completes **above** the payment loop and only the loop charges wear, so an immutable reborrow that
+> dies at [`pool_rates`] is all either needs. The owned value is built on the absent-component path
+> alone. **The one-snapshot rule survives as a property of the BORROW** — a kit that expires
+> part-way through the loop still cannot pay two rates in one turn, because the ledger is read
+> before a single unit is worn, and now the compiler is what says so.
+>
+> ⛔ **FOUR POOLS, AND `builders` IS NOT ONE OF THEM.** The builders are not a keeping pool:
+> `build_workers` puts the **whole** head count on the queue head (§2.4), so no builder is ever left
+> standing by a plan that wanted fewer, and the pool never reaches `pool_rates` at all. A builders
+> pool with an empty *queue* is idle in a different sense and is not measured here.
+>
+> **In keepers, and fractional** — a pool's share arithmetic is continuous, so `1.04` keepers left
+> standing is an ordinary reading. Keepers rather than work units because the control the player
+> presses is a stepper in keepers; a client wanting work multiplies by a rate it already publishes.
+> A line exists for **every** keeping pool, filled or not, unlike `poolToe`'s — a pool that employed
+> every hand says so with `0`, and dropping that row would be indistinguishable from a pool the band
+> does not staff.
+>
+> **`SAVE_FORMAT_VERSION` went to 10** with `LaborAllocation::last_pool_crew`, on the row-9 rule: the
+> allocation rides `BandRecord::labor`, so a version-9 blob has no such field and must be refused by
+> the version gate rather than by a decoder running off the end of a record. **Version 10's shape is
+> the pair**, `keepers` included: a version number names a shape some build could have written, and
+> the one-term line existed only between two commits of the branch that introduced 10.
+>
+> The rest is pinned by the four cases beside that one, all off the **encoded** frame: the issue's
+> own case (a bill one geared keeper covers, a second keeper assigned, `1.34` published), the
+> bare-handed control (two keepers on one road with no tool free **nobody**, because neither can be
+> spared), a pool with a head count and no roads publishing all of it, and a fully committed pool
+> publishing exactly `0` with no tolerance.
+>
 > **A claim carries a `SourcePriority` now** (`KeepingClaim::priority`): the site row's own on the
 > two food webs and on the deposit branches, the head row's for the builders' single claim, and
 > **`SourcePriority::default()` for a road** — there is no per-road labor row to carry a rank, and a
@@ -632,9 +758,10 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > the pools left the item budget, and with the pool row publishing the empty kit there is no caller
 > left: every other row's kit is `LaborAssignment::kit_choice`, called directly.
 >
-> **`SAVE_FORMAT_VERSION` went to 9.** A band's whole `LaborAllocation` rides `BandRecord::labor`, so
-> the new field changes the bincode shape and a version-8 blob has to be refused by the version gate
-> rather than by a decoder running off the end of a record.
+> **`SAVE_FORMAT_VERSION` went to 9** with `last_pool_toe` (it is at **10** since `last_pool_crew`
+> joined it — see "WHAT STEP 5 COULD NOT PLACE IS PUBLISHED" above). A band's whole `LaborAllocation`
+> rides `BandRecord::labor`, so a field added to it changes the bincode shape and the older blob has
+> to be refused by the version gate rather than by a decoder running off the end of a record.
 >
 > **A FIXTURE HOLDS THE GEAR AXIS ON THE LEDGER NOW, NOT ON THE ENTRY.** `bare_builders()` on a
 > `BuildQueueEntry` held nothing the moment the entry's kit stopped pricing; `core_sim::disarm_the_builders`

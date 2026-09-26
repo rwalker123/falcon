@@ -12,8 +12,8 @@ use crate::state::population::{
     CharacteristicReadingState, CohortStoreState, CraftOfferState, DrawnInputState,
     EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState,
     LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PendingMigrationState,
-    PoolToeLineState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
-    SettlementStageViewState, SourcePriorityState,
+    PoolCrewLineState, PoolToeLineState, PopulationCohortState, PopulationDemographicsState,
+    ScoutTaskState, SettlementStageViewState, SourcePriorityState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -514,6 +514,37 @@ fn create_populations<'a>(
                                 // phrasing is the pair, and a shortfall a reader subtracts for
                                 // itself cannot tell a met line from an absent one.
                                 filled: line.filled,
+                            },
+                        )
+                    })
+                    .collect();
+                Some(builder.create_vector(&rows))
+            };
+            // **EACH KEEPING POOL'S CREW ACCOUNT** — nested vector, built before the parent table
+            // like the one above, and **absent rather than empty** on the same `buildQueue`
+            // convention: a band that staffs no keeping pool at all writes no rows.
+            //
+            // ⛔ **A ZERO IS A ROW.** Unlike `poolToe`, a line is not a requirement — a pool that
+            // employed every hand it has says so with `0`, and dropping it would be
+            // indistinguishable from a pool the band does not staff.
+            let pool_crew = if cohort.pool_crew.is_empty() {
+                None
+            } else {
+                let rows: Vec<_> = cohort
+                    .pool_crew
+                    .iter()
+                    .map(|line| {
+                        let pool = builder.create_string(&line.pool);
+                        fb::PoolCrewLine::create(
+                            builder,
+                            &fb::PoolCrewLineArgs {
+                                pool: Some(pool),
+                                // **After the top-up, in keepers** — see
+                                // `PoolCrewLineState::idle_keepers`.
+                                idleKeepers: line.idle_keepers,
+                                // **The head count it was struck against**, without which the
+                                // figure above has no basis — see `PoolCrewLineState::keepers`.
+                                keepers: line.keepers,
                             },
                         )
                     })
@@ -1047,6 +1078,9 @@ fn create_populations<'a>(
                     // `kitId` publishes empty and this is where its tools are stated instead; a
                     // line exists only where the pool requires something.
                     poolToe: pool_toe,
+                    // WHAT EACH KEEPING POOL DID NOT USE — appended last. The sim's own reading,
+                    // struck after the bare-hand top-up; a client must not derive it.
+                    poolCrew: pool_crew,
                 },
             )
         })
@@ -1506,6 +1540,12 @@ fn decode_population(
             item_id: text(line.itemId()),
             required: line.required(),
             filled: line.filled(),
+        }),
+        // The keeping pools' crew accounts (issue #715) — what each pool's bill left standing.
+        pool_crew: map_rows(cohort.poolCrew(), |line| PoolCrewLineState {
+            pool: text(line.pool()),
+            idle_keepers: line.idleKeepers(),
+            keepers: line.keepers(),
         }),
         transfer_local_received_turn: cohort.transferLocalReceivedTurn(),
         transfer_local_sent_turn: cohort.transferLocalSentTurn(),

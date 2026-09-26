@@ -39,6 +39,19 @@ class_name KnowledgePanel
 ## **WHAT EXISTS IS RENDERED, AND NOTHING ELSE.** Routes / War / Telling have no nodes, so they have
 ## no rows — see `KnowledgeRoster.build_domains`, and never draw an empty domain row.
 ##
+## **THE ROWS ARE GATHERED UNDER SUBJECT-AREA HEADINGS** (`docs/plan_knowledge_rows.md` §5), which is
+## what puts a bound on the level that grows: domains grow without limit, areas answer *"what part of
+## the game is this"* and do not. **Which area a branch is in comes off the CONFIG**, on the roster
+## row, so a branch added without a client edit still gets a heading; an area with no domains is never
+## drawn, the same rule as the empty domain row one level up.
+##
+## ⛔ **FOLDING IS NOT HIDING.** A folded heading stays on screen and goes on saying what is inside
+## it, so the *"a `0.0` track is drawn greyed"* and *"the filters dim, they do not hide"* promises
+## hold at this level too — a heading that stopped carrying its tally would be the retired
+## `_build_knowledge_block` skip wearing a caret. Everything starts open, a filter folds what it does
+## not match, and a hand-made fold outlives a filter change. **None of that state lives here**: the
+## controller owns it and hands `PAYLOAD_FOLDED` back, and this file counts nothing of its own.
+##
 ## **THE DETAIL IS INLINE AND THE SELECTION IS A TOGGLE** (§4). The reading opens beneath the row
 ## whose chip was pressed, pressing the open chip closes it, and only one is ever open. The block is
 ## mounted in BOTH states at `DETAIL_BLOCK_MIN_HEIGHT`, which is what stops the card breathing as
@@ -76,12 +89,22 @@ signal filter_selected(key: StringName)
 ## close through the controller's TOGGLE, which is a coincidence of the current state rather than the
 ## thing being asked for; this says *close the reading* whatever is open.
 signal detail_closed
+## An area HEADING was pressed — its key. The panel stores no fold state of its own: the controller
+## owns it and hands the folded set back on the next payload, which is what keeps this file a
+## renderer (see the class docstring).
+signal area_fold_toggled(key: StringName)
 
 # ---- the render payload's keys (this panel's contract with its controller) ----------------------
-## `[{key, label, shape, nodes}]` — `KnowledgeRoster.build_domains`' answer, already pruned of empty
-## domains.
-const PAYLOAD_DOMAINS := "domains"
-## The selected node's key, `""` when nothing is selected (the placeholder detail pane).
+## `[{key, label, domains}]` — `KnowledgeRoster.group_areas`' answer: the domains gathered under
+## their SUBJECT AREAS, already pruned of empty domains AND of empty areas, in the order the headings
+## are drawn. **The areas are the top level of the list now**, one level above the domain rows.
+const PAYLOAD_AREAS := "areas"
+## `{area_key: true}` for the areas rendering FOLDED — `KnowledgeRoster.folded_areas`' answer, the
+## filter and the player's own presses resolved into one set by the controller. **An area absent from
+## it is open**, so an omitted key is the honest default rather than a crash.
+const PAYLOAD_FOLDED := "folded"
+## The selected node's key, `""` when nothing is selected (the detail block mounted with nothing
+## to read).
 const PAYLOAD_SELECTED := "selected"
 ## The live filter's key. `FILTER_ALL` dims nothing.
 const PAYLOAD_FILTER := "filter"
@@ -90,8 +113,8 @@ var _card: PanelContainer = null
 var _scroll: ScrollContainer = null
 var _body: VBoxContainer = null
 var _header: VBoxContainer = null
-## The domain rows and the detail block, interleaved — the detail sits immediately after the row that
-## owns the selected node, or last when nothing is selected.
+## The area headings, the domain rows and the detail block, interleaved — the detail sits immediately
+## after the row that owns the selected node, or last when nothing is selected.
 var _rows: VBoxContainer = null
 var _fit_pending: bool = false
 
@@ -178,7 +201,7 @@ func render(payload: Dictionary) -> void:
 	_payload = payload
 	HudWidgets.clear_children(_header)
 	HudWidgets.clear_children(_rows)
-	var nodes := KnowledgeRoster.flatten(payload.get(PAYLOAD_DOMAINS, []))
+	var nodes := KnowledgeRoster.flatten_areas(payload.get(PAYLOAD_AREAS, []))
 	_build_header(payload, nodes)
 	_build_rows(payload, nodes)
 	# **VISIBLE BEFORE THE FIT, and that is load-bearing**: `Container._sort_children` early-returns on
@@ -314,35 +337,117 @@ func _tally_text(nodes: Array) -> String:
 
 # ---- the domain rows --------------------------------------------------------
 
-## **ONE ROW PER DOMAIN, AND THE READING INTERLEAVED.** The hairline between two rows, then the row,
-## then — when the selected node belongs to THIS domain — the reading, immediately after it.
+## **AREA HEADING, THEN ITS DOMAIN ROWS, AND THE READING INTERLEAVED.** A hairline between two AREAS,
+## then the heading, then — unless the area is folded — each of its domain rows, with the reading
+## immediately after the row that owns the selected node.
 ##
-## **THE BLOCK IS ALWAYS MOUNTED.** With nothing selected it goes last, holding its placeholder, at
+## **THE BLOCK IS ALWAYS MOUNTED.** With nothing selected it goes last, holding nothing, at
 ## the same `DETAIL_BLOCK_MIN_HEIGHT` reserve it takes when open: the body's minimum height does not
 ## change when a knowledge is opened or closed, so the card cannot breathe (see the class docstring).
 func _build_rows(payload: Dictionary, nodes: Array) -> void:
 	var filter := StringName(payload.get(PAYLOAD_FILTER, HudKnowledgeVocab.FILTER_ALL))
 	var selected := String(payload.get(PAYLOAD_SELECTED, ""))
+	var folded: Dictionary = payload.get(PAYLOAD_FOLDED, {})
 	var open_node := _find_node(nodes, selected)
 	var placed := false
 	var first := true
-	for domain_variant in payload.get(PAYLOAD_DOMAINS, []):
-		if not (domain_variant is Dictionary):
+	for area_variant in payload.get(PAYLOAD_AREAS, []):
+		if not (area_variant is Dictionary):
 			continue
-		var domain := domain_variant as Dictionary
-		# **NO RULE BEFORE THE FIRST ROW** — the header already draws one, and a second hairline under
-		# it reads as an empty band rather than as a separator.
+		var area := area_variant as Dictionary
+		var area_key := StringName(String(area[HudKnowledgeVocab.AREA_KEY]))
+		# **NO RULE BEFORE THE FIRST HEADING** — the header already draws one, and a second hairline
+		# under it reads as an empty band rather than as a separator. Between areas the rule is what
+		# says the heading below it starts a new group; WITHIN an area the heading already groups its
+		# rows, so they are set tight against each other.
 		if not first:
 			_rows.add_child(_rule(HudStyle.LINE_SOFT))
 		first = false
-		_rows.add_child(_build_domain_row(domain, filter, selected))
-		if not open_node.is_empty() and not placed \
-				and String(open_node.get(HudKnowledgeVocab.NODE_DOMAIN, "")) \
-					== String(domain[HudKnowledgeVocab.DOMAIN_KEY]):
-			_rows.add_child(_build_detail_block(open_node))
-			placed = true
+		var is_folded := bool(folded.get(area_key, false))
+		_rows.add_child(_build_area_heading(area, is_folded))
+		# ⛔ **A FOLDED AREA DRAWS NO ROWS AND STILL SAYS WHAT IS INSIDE IT** — the heading above
+		# carries its tally in BOTH states. Folding is not hiding: a heading that went quiet about its
+		# contents would be the retired `_build_knowledge_block` skip wearing a caret, which is the
+		# defect this whole screen exists to have fixed.
+		if is_folded:
+			continue
+		for domain_variant in area[HudKnowledgeVocab.AREA_DOMAINS]:
+			if not (domain_variant is Dictionary):
+				continue
+			var domain := domain_variant as Dictionary
+			_rows.add_child(_build_domain_row(domain, filter, selected))
+			if not open_node.is_empty() and not placed \
+					and String(open_node.get(HudKnowledgeVocab.NODE_DOMAIN, "")) \
+						== String(domain[HudKnowledgeVocab.DOMAIN_KEY]):
+				_rows.add_child(_build_detail_block(open_node))
+				placed = true
 	if not placed:
 		_rows.add_child(_build_detail_block({}))
+
+## ONE AREA'S HEADING: `▾ FOOD    2 learning · 1 unused` — the caret, the area's name and the tally
+## of what is inside it.
+##
+## ⛔ **THE TALLY IS DRAWN IN BOTH STATES, AND THAT IS THE WHOLE DISTINCTION BETWEEN FOLDING AND
+## HIDING** (`docs/plan_knowledge_rows.md` §5). A `0.0` track is drawn greyed and a filtered node is
+## dimmed rather than removed, both so a player who has learned nothing is still SHOWN there is
+## something to learn; a folded heading keeps that promise by staying on screen and going on saying
+## what it holds.
+##
+## **THE TALLY IS `_tally_text` OVER THIS AREA'S OWN NODES** — the same composition and the same
+## `TALLY_*_FORMAT` words the header uses over all of them. §5's illustrative *"3 to learn"* is
+## prose, not a second spelling to author: one home per fact beats matching the phrasing, and a
+## second tally builder is how a heading comes to disagree with the header above it.
+##
+## **A `PanelContainer` WITH `gui_input`, NOT A `Button`** — the node chip's own documented rule, and
+## for its reason: a Button is not a Container, so a caret + name + tally face parented to one is
+## never laid out. **`FOCUS_NONE` like every other control on this screen** (the ✕, the filter pills,
+## the reading's own ✕): the whole surface is mouse-driven, and this handler reads mouse buttons
+## alone, so a focus ring here would be reachable by Tab and inert on Enter.
+func _build_area_heading(area: Dictionary, is_folded: bool) -> Control:
+	var key := StringName(String(area[HudKnowledgeVocab.AREA_KEY]))
+	var head := PanelContainer.new()
+	head.mouse_filter = Control.MOUSE_FILTER_STOP
+	head.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	head.focus_mode = Control.FOCUS_NONE
+	head.set_meta(HudKnowledgeVocab.AREA_META, String(key))
+	head.add_theme_stylebox_override("panel", HudStyle.empty_stylebox())
+	head.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
+				and event.pressed:
+			area_fold_toggled.emit(key))
+
+	var pad := MarginContainer.new()
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pad.add_theme_constant_override("margin_left", HudKnowledgeVocab.AREA_HEAD_PADDING_H)
+	pad.add_theme_constant_override("margin_right", HudKnowledgeVocab.AREA_HEAD_PADDING_H)
+	pad.add_theme_constant_override("margin_top", HudKnowledgeVocab.AREA_HEAD_PADDING_V)
+	pad.add_theme_constant_override("margin_bottom", HudKnowledgeVocab.AREA_HEAD_PADDING_V)
+	head.add_child(pad)
+
+	# A mouse-transparent face, so the caret, the name and the tally read (and click) as ONE heading.
+	var line := HBoxContainer.new()
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.add_theme_constant_override("separation", HudKnowledgeVocab.AREA_HEAD_SEPARATION)
+	pad.add_child(line)
+
+	var caret := _caption(HudKnowledgeVocab.FOLD_GLYPH_FOLDED if is_folded \
+		else HudKnowledgeVocab.FOLD_GLYPH_OPEN, HudStyle.INK_DIM,
+		HudKnowledgeVocab.AREA_HEAD_FONT_SIZE)
+	line.add_child(caret)
+
+	var label := _caption(String(area[HudKnowledgeVocab.AREA_LABEL]).to_upper(), HudStyle.INK,
+		HudKnowledgeVocab.AREA_HEAD_FONT_SIZE)
+	line.add_child(label)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.add_child(spacer)
+
+	var tally := _caption(_tally_text(KnowledgeRoster.area_nodes(area)), HudStyle.INK_DIM,
+		HudKnowledgeVocab.AREA_TALLY_FONT_SIZE)
+	line.add_child(tally)
+	return head
 
 ## ONE DOMAIN'S ROW: `NAME   ●chip ── ◐chip ── ○chip`, wrapping when it runs out of width.
 ##
@@ -604,7 +709,6 @@ func _build_detail_block(node: Dictionary) -> Control:
 	host.add_child(pane)
 
 	if node.is_empty():
-		pane.add_child(_detail_placeholder())
 		return host
 
 	var column := VBoxContainer.new()
@@ -704,14 +808,9 @@ func _detail_section(kicker: String, body: String) -> Control:
 	column.add_child(_detail_body(body))
 	return column
 
-func _detail_placeholder() -> Control:
-	var label := _detail_body(HudKnowledgeVocab.DETAIL_PLACEHOLDER_BODY)
-	label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
-	return label
-
 ## The reading's box. **The `SIGNAL` bar down the leading edge is what ties the block to the row above
-## it** — it is the only thing on screen saying this paragraph belongs to that chip. The placeholder
-## state draws no bar: it belongs to nothing.
+## it** — it is the only thing on screen saying this paragraph belongs to that chip. The CLOSED state
+## draws no bar: it belongs to nothing.
 func _detail_stylebox(open: bool) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.0, 0.0, 0.0, 0.0)

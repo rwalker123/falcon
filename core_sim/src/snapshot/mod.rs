@@ -1103,6 +1103,7 @@ mod tests {
         WorldSnapshot {
             header,
             ladder_knowledge: Vec::new(),
+            ladder_areas: Vec::new(),
             route_rungs: Vec::new(),
             deposit_rungs: Vec::new(),
             kits: Vec::new(),
@@ -1182,6 +1183,7 @@ mod tests {
         WorldSnapshot {
             header,
             ladder_knowledge: Vec::new(),
+            ladder_areas: Vec::new(),
             route_rungs: Vec::new(),
             deposit_rungs: Vec::new(),
             kits: Vec::new(),
@@ -1256,6 +1258,7 @@ mod tests {
         WorldSnapshot {
             header,
             ladder_knowledge: Vec::new(),
+            ladder_areas: Vec::new(),
             route_rungs: Vec::new(),
             deposit_rungs: Vec::new(),
             kits: Vec::new(),
@@ -1516,6 +1519,7 @@ mod tests {
             last_quarrywork_demand: 0.0,
             last_quarrywork_supplied: 0.0,
             last_pool_toe: Vec::new(),
+            last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
@@ -1628,6 +1632,7 @@ mod tests {
             last_quarrywork_demand: 0.0,
             last_quarrywork_supplied: 0.0,
             last_pool_toe: Vec::new(),
+            last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
@@ -1692,6 +1697,7 @@ mod tests {
             last_quarrywork_demand: 0.0,
             last_quarrywork_supplied: 0.0,
             last_pool_toe: Vec::new(),
+            last_pool_crew: Vec::new(),
             last_fodder_need: 0.0,
             last_fodder_inflow: 0.0,
             last_fodder_drain: 0.0,
@@ -2488,6 +2494,40 @@ mod tests {
             .expect("roadbuilding is taught");
         assert_eq!(road.branch, "route");
         assert!(road.is_step, "`route:dirt_road` waits on it");
+    }
+
+    /// ⛔ **THE SUBJECT AREA IS PUBLISHED, AND SO IS THE ORDER THE HEADINGS GO IN.** A hard-coded
+    /// client area table would be the retired `LADDER_DOMAINS` bug one level up: the first branch
+    /// added without a client edit would fall out of the screen. Two claims — every shipped row
+    /// names an area, and the published order is the config's own list rather than anything read
+    /// off the rows, because first-seen order would reshuffle the screen whenever a rung was added.
+    #[test]
+    fn the_published_roster_files_every_knowledge_under_a_subject_area() {
+        let ladder = LadderConfig::builtin();
+        let roster = snapshot_ladder_knowledge(&ladder);
+        assert!(!roster.is_empty(), "the shipped ladder teaches knowledges");
+
+        let areas = snapshot_ladder_areas(&ladder);
+        assert_eq!(
+            areas, ladder.areas,
+            "the display order crosses as the config declares it, including areas no branch sits \
+             under yet"
+        );
+
+        for row in &roster {
+            assert!(
+                !row.area.is_empty(),
+                "{} rides with no subject area — every SHIPPED branch has a descriptor, and the \
+                 empty reading is the fallback for one that does not",
+                row.knowledge_id
+            );
+            assert!(
+                areas.contains(&row.area),
+                "{}'s area '{}' has a place in the published display order",
+                row.knowledge_id,
+                row.area
+            );
+        }
     }
 
     #[test]

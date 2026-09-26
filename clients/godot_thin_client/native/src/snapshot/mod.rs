@@ -38,7 +38,8 @@ use crate::dict::routes::{route_rungs_to_array, routes_to_array};
 use crate::dict::subsistence::{
     characteristic_bands_to_array, craft_knowledge_to_array, food_modules_to_array,
     forage_patches_to_array, herds_to_array, intensification_knowledge_to_array, kits_to_array,
-    ladder_knowledge_to_array, materials_to_array, recipes_to_array, sedentarization_to_array,
+    ladder_areas_to_array, ladder_knowledge_to_array, materials_to_array, recipes_to_array,
+    sedentarization_to_array,
 };
 use crate::snapshot::cache::RasterCache;
 use crate::snapshot::delta::CrisisAnnotationRecord;
@@ -1480,6 +1481,12 @@ pub(crate) fn snapshot_to_dict(
 
     if let Some(roster) = snapshot.subsistence().and_then(|s| s.ladderKnowledge()) {
         let _ = dict.insert("ladder_knowledge", &ladder_knowledge_to_array(roster));
+    }
+
+    // ...and the SUBJECT AREAS the roster's branches are gathered under, in the order the headings
+    // are drawn. The same kind of per-world DECLARATION, which is why it rides beside the roster.
+    if let Some(areas) = snapshot.subsistence().and_then(|s| s.ladderAreas()) {
+        let _ = dict.insert("ladder_areas", &ladder_areas_to_array(areas));
     }
 
     // ...and the ROUTE branch's rung catalog beside it: the same kind of thing, a per-world

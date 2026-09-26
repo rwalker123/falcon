@@ -1067,7 +1067,7 @@ read *On the bench* beside bone's costs while a flint spear was being made
 **only** by `set_bench` (`record_started`, beside `set_job`), so a suggestion reflects a choice the
 player made and never one the sim inferred. `clear_job` **keeps** it — a cleared bench forgets its
 job, not the band's habits — and it rides `BandRecord::bench`, so it survives rollback and a save
-(`SAVE_FORMAT_VERSION` 10; `save_round_trip::a_bands_last_started_recipes_survive_the_round_trip`).
+(`SAVE_FORMAT_VERSION` 11; `save_round_trip::a_bands_last_started_recipes_survive_the_round_trip`).
 The rule lives in the sim because *"available"* is the sim's resolution and a client choosing the
 default would be the second copy of it; `crafting_wire` pins each of the five arms.
 
