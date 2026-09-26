@@ -433,8 +433,9 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 >    hands it produces.
 > 2. **Requirement**, per the expression above.
 > 3. **Fill**, band-wide per tool, in **two stages**: whole units across `(pool, priority tier)`
->    groups through `settle_scarce_tools` — `High` in full, then `Normal`, then `Low`, by largest
->    remainder within a tier the stock cannot cover — then each group's allocation split pro-rata
+>    groups through `settle_scarce_tools` — `High` in full, then `Normal`, then `Low`; within a tier
+>    every keeping pool before the builders; by largest remainder within a `(tier, stage)` cell the
+>    stock cannot cover — then each group's allocation split pro-rata
 >    across its own sites. **Stone-dressing wanted by Roadwork and by Quarrywork goes into ONE
 >    settlement**, because a per-pool one would issue a shared stock twice; each pool's TOE is its own
 >    share of it.
@@ -686,10 +687,24 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > settlement rather than being cast to `f32` at the call site — the one place a tool count used to
 > become fractional.
 >
-> **Stage 1's rule, per tier in `SERVED_FIRST_TO_LAST` order:** a group wants `ceil(its bid)`; a tier
-> the remainder covers is paid every want in full; a tier it cannot is apportioned by **largest
+> **Stage 1's rule, per tier in `SERVED_FIRST_TO_LAST` order and, inside a tier, per
+> `ToolClaimStage` — `Keeping` then `Building`:** a group wants `ceil(its bid)`; a `(tier, stage)`
+> cell the remainder covers is paid every want in full; a cell it cannot is apportioned by **largest
 > remainder on the RAW bid**, each group capped at its own want, ties to the earlier group, and the
-> tier consumes everything. Both halves of that are load-bearing:
+> cell consumes everything. A group's stage is `ToolClaimStage::of_pool` — the builders' pool is
+> `Building`, every standing pool is `Keeping`.
+>
+> ⛔ **Within one tier, keeping is served before building — and only within one tier.** A keeping
+> site that goes short loses something already built; a build that goes short is finished later.
+> Largest remainder on the raw bid alone ranked the other way: a build bids a whole tool per builder
+> and a keeping site the fraction of a hand its bill needs, so a tied tier's single tool went to the
+> build every time. Keeping above **every** tier was rejected because it overrides a `High` mark the
+> player put on a build, so a `High` build still outranks a `Normal` keeping site. Pinned by
+> `pool_toe::within_one_tier_the_keeping_site_is_armed_before_the_build`,
+> `pool_toe::a_high_build_still_outranks_a_normal_keeping_site`, and through a real turn by
+> `build_queue::one_hoe_between_a_build_and_a_keeping_site_at_one_priority_arms_the_keeper`.
+>
+> Both halves of the largest-remainder rule are load-bearing:
 >
 > - **Proportional to the raw bid, never to the ceil.** Bids of `0.2` and `2.0` both ceil to a whole
 >   tool, so a ranking on the want lets the trivial pool tie with the large one for the single unit
