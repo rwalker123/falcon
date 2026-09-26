@@ -127,7 +127,6 @@ const THIS_BAND_WORD := "this band"
 const VIA_FORMAT := "via %s"
 const DISTANCE_FORMAT := "%d tiles"
 const LOST_IN_TRANSIT := "lost in transit — friction"
-const CLOSE_TOOLTIP := "Close"
 
 # ---- THE LINK RUNG ---------------------------------------------------------------------------------
 const OPEN_GROUND_WORD := "open ground"
@@ -153,7 +152,7 @@ const ROW_FONT_SIZE := 12
 const SUB_FONT_SIZE := 10
 ## The section heads (`⇄ LOCAL EXCHANGE`) and the network line's key.
 const HEAD_FONT_SIZE := 10
-## The overflow panel's title.
+## The list popover's title.
 const TITLE_FONT_SIZE := 13
 const ROW_SEPARATION := 6
 const SECTION_SEPARATION := 8
@@ -182,5 +181,15 @@ const HOVER_EDGE_MARGIN := 8.0
 ## distance — fixed so they line up down the list.
 const CAMP_LINK_COLUMN_WIDTH := 120.0
 const CAMP_DISTANCE_COLUMN_WIDTH := 48.0
-## The overflow panel's content column — the width the narrow shell's zone was authored at.
-const OVERFLOW_ROW_MIN_HEIGHT := 18.0
+
+# ---- THE LIST POPOVER ------------------------------------------------------------------------------
+## Node names a harness finds it by.
+const POPOVER_NAME := "TradeListPopover"
+const POPOVER_SCROLL_NAME := "TradeListScroll"
+## How far off the anchor row the popover floats — the disclosure popover's own gap.
+const POPOVER_GAP := 4.0
+## Clearance kept between the popover and the edge of the visible screen.
+const POPOVER_EDGE_MARGIN := 8.0
+const POPOVER_PADDING := 10
+## The four sides `POPOVER_PADDING` is applied to.
+const POPOVER_MARGIN_SIDES := ["left", "top", "right", "bottom"]

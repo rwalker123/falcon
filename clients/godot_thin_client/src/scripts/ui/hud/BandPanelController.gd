@@ -607,20 +607,12 @@ var _send_hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
 ## is one question with one request-id sequence.
 var _forecast_query: ForecastQuery = null
 
-## **THE TRADE TAB'S OWN CONTROLLER** (issue #731) — it owns the zone's content, its overflow panel
+## **THE TRADE TAB'S OWN CONTROLLER** (issue #731) — it owns the zone's content, its list popover
 ## and its hover card; this controller asks it for the content and pushes the band. `_trade_wide` is
 ## which shell the last render authored it for: the content MOVES between shells (a zone of its own
 ## narrow, a section under Parties wide), so a flip is a re-render rather than a re-page.
 var _trade: TradeZoneController = null
 var _trade_wide: bool = false
-
-## Is the Trade tab's overflow list up? Relayed by `HudLayer.is_trade_list_open` for `Main`'s ESC chain.
-func is_trade_list_open() -> bool:
-    return _trade.is_list_open()
-
-## Put the Trade list away — ESC's path (`Main.escape_claimant` → `HudLayer.close_trade_list`).
-func close_trade_list() -> void:
-    _trade.dismiss()
 
 ## The Trade tab's controller, for the harness and for nothing that decides anything.
 func trade_zone() -> TradeZoneController:
@@ -646,11 +638,6 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
     _targeting = targeting
     _trade = TradeZoneController.new(band_labor, host)
     _trade.set_topbar(topbar)
-    # **ONE CARD OVER THE ZONE AT A TIME** — the Trade list and the work inspector share a layer and a
-    # room, so opening either closes the other. This controller owns both, so the coupling is these
-    # two lines and nothing else: the list's opening closes the inspector here, and
-    # `_toggle_work_inspector` closes the list.
-    _trade.list_opening.connect(close_work_inspector)
 
 ## `_topbar` is held for **the player faction's own three readouts and nothing else** — its knowledge
 ## `faction_tracks` (the rung-ready mark on a work row, the narrow reason `DrawerComposeController`
@@ -1841,7 +1828,7 @@ func _on_zones_resized() -> void:
 ## on, so the card comes down (and comes back on the tab back) by exactly one rule.
 func _on_shown_zone_changed() -> void:
     _sync_work_inspector_dialog(_work_zone_band)
-    # …and the Trade tab's overflow panel and hover card, which are the other surfaces drawn OUTSIDE
+    # …and the Trade tab's list popover and hover card, which are the other surfaces drawn OUTSIDE
     # the panel: a list open over the map for a tab the player has left has nothing behind it.
     if not _trade_zone_is_on_screen():
         _trade.dismiss()
@@ -7450,7 +7437,6 @@ func _focus_work_source(model: Dictionary) -> void:
 func _toggle_work_inspector(key: String) -> void:
     _work_open_key = "" if _work_open_key == key else key
     if _work_open_key != "":
-        _trade.dismiss()
         _queue_open_key = ""
         _roster_expanded = &""
     _repage_work_zone()
@@ -9930,7 +9916,7 @@ func render_faction() -> void:
     _party_compose_measured_box = Vector2.ZERO
     _party_compose_sheet = null
     _dismiss_compose_float()
-    # …and the Trade tab's overflow panel, which belongs to the band being left.
+    # …and the Trade tab's list popover, which belongs to the band being left.
     _trade.dismiss()
     # This page builds no work BOARD, so the re-page path must have nothing to re-page: `_on_zones_resized`
     # would otherwise rebuild the previous band's board into a host `set_zones` is about to free.

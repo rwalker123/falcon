@@ -4,9 +4,10 @@ extends RefCounted
 ## own so the tab's fixtures and claims do not grow the 25k-line harness. Driven from the harness's run
 ## order (`h`), rendering into the same long-lived panel, and APPENDED LAST so no earlier frame moves.
 ##
-## The frames: the narrow tab on a busy turn, a good's hover card, the camps panel (unscoped and scoped
-## to food), a folded direction and its `N more shipments` list, the empty turn, the wide shell's
-## option (iii) layout (Trade under Parties, the shell threshold still 1190) and the SHORT tier. The
+## The frames: the narrow tab on a busy turn, a good's hover card, the camps list (unscoped and scoped
+## to food) hanging under its row, a folded direction and its `N more shipments` list, the empty turn,
+## the wide shell's option (iii) layout (Trade under Parties, the shell threshold still 1190), a list
+## opening UPWARD off a bottom dock's row, and the SHORT tier. The
 ## claims are what a frame cannot say: which causes reached the tab, the badge's count, the tier the
 ## measurement chose, the relay's first hop, the friction row, and that no zone grew a scroll.
 
@@ -85,6 +86,8 @@ const WIDE_CANVAS := Vector2i(1920, 1080)
 const NARROW_BOTTOM_CANVAS := Vector2i(1100, 800)
 ## The three-zone threshold (issue #731 option iii leaves it here), asserted against the panel's own.
 const THREE_ZONE_SHELL_MIN_WIDTH := 1190.0
+## How far a popover's edge may sit from where its row puts it — rounding to whole pixels, not slack.
+const ADJACENCY_TOLERANCE := 1.5
 
 func run(harness) -> void:
 	h = harness
@@ -141,22 +144,26 @@ func run(harness) -> void:
 		card != null and not card.get_global_rect().intersects(bone_row.get_global_rect()))
 	card.dismiss()
 
-	# ---- 3. THE CAMPS PANEL ----------------------------------------------------------------------
+	# ---- 3. THE CAMPS LIST, UNDER THE NETWORK LINE -------------------------------------------------
 	trade.open_list(TradeZoneController.KIND_CAMPS)
 	await h._settle()
 	await h._settle()
 	await h._save("trade_tab_camps")
-	var list := trade.overflow()
+	var list := trade.list_body()
 	var list_text := _text_of(list)
-	h._assert_band_panel("the camps panel lists every member, this band first (5 rows)",
-		list.is_open() and list.body().get_child_count() == 5)
+	h._assert_band_panel("the camps list lists every member, this band first (5 rows)",
+		trade.is_list_open() and list.get_child_count() == 5)
 	h._assert_band_panel("…a relay camp names the first hop on its chain (`via Barrowmere`)",
 		list_text.contains(HudTradeVocab.VIA_FORMAT % NAMES[BARROWMERE]))
 	h._assert_band_panel("…an unroaded link reads `open ground`, a roaded one the rung's own word",
 		list_text.contains(HudTradeVocab.OPEN_GROUND_WORD) and list_text.contains("trail"))
-	h._assert_band_panel("…and the panel never covers the card it came from",
-		not list.get_global_rect().intersects(panel.card_rect()))
+	_assert_hangs_from_its_row("trade_tab_camps", trade, false)
 	h._assert_scroll_only_where_sanctioned()
+	# The row that opened it closes it.
+	trade.open_list(TradeZoneController.KIND_CAMPS)
+	await h._settle()
+	h._assert_band_panel("…and the row that opened the list closes it again",
+		not trade.is_list_open())
 
 	trade.open_list(TradeZoneController.KIND_CAMPS + TradeZoneController.KIND_SCOPE_SEPARATOR
 		+ HudTradeVocab.COMMODITY_FOOD)
@@ -165,10 +172,21 @@ func run(harness) -> void:
 	await h._save("trade_tab_camps_food")
 	list_text = _text_of(list)
 	h._assert_band_panel("scoped to food: `2 camps moved it; 2 sat even`",
-		list_text.contains(HudTradeVocab.GOOD_SCOPE_SUMMARY_FORMAT % [2, 2]))
+		trade._popover_sub.text == HudTradeVocab.GOOD_SCOPE_SUMMARY_FORMAT % [2, 2])
 	h._assert_band_panel("…and the friction row states what the distance ate (0.3)",
 		list_text.contains(HudTradeVocab.LOST_IN_TRANSIT) and list_text.contains("%.1f"
 			% (FOOD_BARROW_OUT + FOOD_BITTER_OUT - FOOD_POOLED_IN)))
+	var food_anchor := trade.anchor_screen_rect()
+	_assert_hangs_from_its_row("trade_tab_camps_food", trade, false)
+	# A DIFFERENT row swaps the content in place and re-anchors under itself.
+	trade.open_list(TradeZoneController.KIND_CAMPS + TradeZoneController.KIND_SCOPE_SEPARATOR + "bone")
+	await h._settle()
+	await h._settle()
+	h._assert_band_panel("another good's row swaps the list in place and re-anchors under itself",
+		trade.is_list_open() and trade._popover_title.text == HudTradeVocab.GOOD_SCOPE_TITLE_FORMAT
+			% TradeLedger.commodity_label("bone") and trade.anchor_screen_rect().position.y
+			> food_anchor.position.y)
+	_assert_hangs_from_its_row("trade_tab_camps_bone", trade, false)
 	trade.dismiss()
 
 	# ---- 4. A FOLDED DIRECTION, AND ITS LIST -----------------------------------------------------
@@ -184,8 +202,9 @@ func run(harness) -> void:
 	await h._settle()
 	await h._settle()
 	await h._save("trade_tab_more_shipments")
-	h._assert_band_panel("…and the fold row opens every import in the overflow panel (6)",
+	h._assert_band_panel("…and the fold row opens every import in the list popover (6)",
 		_metas(list, TradeZoneController.ROW_SHIPMENT_META).size() == MANY_IMPORTS)
+	_assert_hangs_from_its_row("trade_tab_more_shipments", trade, false)
 	trade.dismiss()
 
 	# ---- 5. THE EMPTY TURN -----------------------------------------------------------------------
@@ -222,38 +241,47 @@ func run(harness) -> void:
 	await h._settle()
 	await h._settle()
 	await h._save("trade_tab_wide_route_list")
-	h._assert_band_panel("the SHORT tier's route row opens BOTH directions over the map (%d shipments)"
+	h._assert_band_panel("the SHORT tier's route row opens BOTH directions (%d shipments)"
 		% (BUSIEST_IMPORTS + BUSIEST_EXPORTS),
-		_metas(list, TradeZoneController.ROW_SHIPMENT_META).size() == BUSIEST_IMPORTS + BUSIEST_EXPORTS
-			and not list.get_global_rect().intersects(panel.card_rect()))
-	# **ESC CLAIMS THE LIST**, driven with the REAL HUD's readers (the work inspector's own guard).
-	var main_script: GDScript = load(h.DIALOG_MAIN_SCRIPT_PATH)
-	h._assert_band_panel("ESC claims the Trade list ahead of the pause menu",
-		main_script.escape_claimant(false, h._hud.is_compose_sheet_open(), h._hud.is_targeting_active(),
-			h._hud.is_work_inspector_open(), h._hud.is_knowledge_detail_open(),
-			h._hud.is_trade_list_open()) == main_script.ESC_TRADE_LIST)
-	h._hud.close_trade_list()
-	await h._settle()
-	h._assert_band_panel("…and its closer takes it down, after which ESC falls through to the pause menu",
-		not list.visible and main_script.escape_claimant(false, h._hud.is_compose_sheet_open(),
-			h._hud.is_targeting_active(), h._hud.is_work_inspector_open(),
-			h._hud.is_knowledge_detail_open(), h._hud.is_trade_list_open()) == main_script.ESC_PAUSE)
+		_metas(list, TradeZoneController.ROW_SHIPMENT_META).size() == BUSIEST_IMPORTS + BUSIEST_EXPORTS)
+	_assert_hangs_from_its_row("trade_tab_wide_route_list", trade, true)
+	trade.dismiss()
 
-	# ---- 6b. ONE CARD OVER THE ZONE AT A TIME ----------------------------------------------------
-	# The wide shell is the one place both are reachable at once: the work board and the Trade
-	# section sit side by side. Opening either closes the other.
+	# ---- 6b. A SHORT LIST NEAR THE BOTTOM EDGE STILL OPENS BELOW -------------------------------
+	# The camps list off the network line: the row sits in the strip, with far more room above it
+	# than below — and the five camps fit below anyway, so that is where it opens. Only a list that
+	# does NOT fit below (the route list above) takes the bigger side.
 	trade.open_list(TradeZoneController.KIND_CAMPS)
 	await h._settle()
-	h._open_first_work_inspector()
+	await h._settle()
+	await h._save("trade_tab_wide_short_below")
+	var visible_screen: Rect2 = h.get_viewport().get_screen_transform() * h.get_viewport().get_visible_rect()
+	var anchor := trade.anchor_screen_rect()
+	h._assert_band_panel("precondition: the row sits near the bottom edge — more room above it than below (%.0f vs %.0f)"
+			% [anchor.position.y - visible_screen.position.y, visible_screen.end.y - anchor.end.y],
+		anchor.position.y - visible_screen.position.y > visible_screen.end.y - anchor.end.y)
+	_assert_hangs_from_its_row("trade_tab_wide_short_below", trade, false)
+	h._assert_band_panel("…and the whole list fits below, unscrolled (5 camps)",
+		list.get_child_count() == 5
+			and trade._popover_scroll.size.y >= list.get_combined_minimum_size().y - ADJACENCY_TOLERANCE)
+	trade.dismiss()
+
+	# ---- 6c. A HOVER CARD OFF A ROW INSIDE THE POPOVER -------------------------------------------
+	# The local list off the SHORT tier's own row, and a good's hover card from inside it: beside the
+	# popover, never under it.
+	trade.open_list(TradeZoneController.KIND_LOCAL)
 	await h._settle()
 	await h._settle()
-	await h._save("trade_tab_wide_exclusive")
-	h._assert_band_panel("opening the work inspector closes the Trade list",
-		h._hud.is_work_inspector_open() and not trade.is_list_open())
-	trade.open_list(TradeZoneController.KIND_CAMPS)
+	var bone_in_list := _row(list, TradeZoneController.ROW_GOOD_META, "bone")
+	trade.show_hover_for(bone_in_list)
 	await h._settle()
-	h._assert_band_panel("…and opening the Trade list closes the work inspector",
-		trade.is_list_open() and not h._hud.is_work_inspector_open())
+	await h._save("trade_tab_wide_local_hover")
+	_assert_hangs_from_its_row("trade_tab_wide_local_hover", trade, trade.list_opened_above())
+	var hover := trade.hover_card()
+	var hover_screen := hover.get_screen_transform() * Rect2(Vector2.ZERO, hover.size)
+	h._assert_band_panel("…and a hover card off a row inside it never sits under the popover",
+		hover.visible and not hover_screen.intersects(trade.list_screen_rect()))
+	hover.dismiss()
 	trade.dismiss()
 
 	# ---- 7. THE SHORT TIER IN THE TABBED SHELL ---------------------------------------------------
@@ -277,6 +305,22 @@ func run(harness) -> void:
 	panel.set_active_tab(BandCityPanel.ZONE_WORK)
 	h._push_bands([h._band_fixture()])
 	await h._settle()
+
+## **THE POPOVER HANGS FROM ITS ROW** — its top one `POPOVER_GAP` under the row's bottom (or, opened
+## upward, its bottom one gap over the row's top), its left edge on the Trade column's and the row
+## inside its span. Adjacency, not mere visibility, is the claim: a popover that opened in the middle
+## of the map is visible too.
+func _assert_hangs_from_its_row(where: String, trade: TradeZoneController, want_above: bool) -> void:
+	var popover := trade.list_screen_rect()
+	var row := trade.anchor_screen_rect()
+	var gap := HudTradeVocab.POPOVER_GAP
+	var vertical := absf(popover.end.y + gap - row.position.y) <= ADJACENCY_TOLERANCE if want_above \
+		else absf(popover.position.y - (row.end.y + gap)) <= ADJACENCY_TOLERANCE
+	var horizontal := popover.position.x <= row.position.x + ADJACENCY_TOLERANCE \
+		and popover.end.x >= row.end.x - ADJACENCY_TOLERANCE
+	h._assert_band_panel("%s: the list opens %s its row (popover %s, row %s)" % [where,
+			"ABOVE" if want_above else "under", str(popover), str(row)],
+		trade.is_list_open() and trade.list_opened_above() == want_above and vertical and horizontal)
 
 # ---- FIXTURES ------------------------------------------------------------------------------------
 

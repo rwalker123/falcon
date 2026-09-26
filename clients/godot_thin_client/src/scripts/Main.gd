@@ -2504,12 +2504,6 @@ func _send_runtime_command(line: String, message: String,
 ## for the reason the inspector is: a surface with an explicit dismiss (the reading carries a `✕`)
 ## answers ESC before ESC means "leave the game".
 ##
-## **THE BAND DOCK'S TRADE LIST SITS BESIDE THE WORK INSPECTOR, RIGHT AFTER IT** (issue #731). It is the
-## same idiom — a persistent, non-modal card with a `✕`, on the same layer — so it answers ESC for the
-## inspector's reason. The two never contend: opening either closes the other
-## (`BandPanelController`), so the order between them only states which is asked first. The argument
-## is TRAILING and defaults to closed so every caller that predates it still reads the same chain.
-##
 ## ⛔ **IT CLAIMS THE KEY ONLY WHEN A READING IS OPEN, NEVER MERELY BECAUSE THE SCREEN IS.** With the
 ## knowledge screen up and nothing selected, ESC still falls through to the pause menu exactly as it
 ## did before — the plan asks ESC to close the reading and asks nothing about closing the screen.
@@ -2517,13 +2511,11 @@ const ESC_RESUME := "resume"
 const ESC_COMPOSE_SHEET := "compose_sheet"
 const ESC_TARGETING := "targeting"
 const ESC_WORK_INSPECTOR := "work_inspector"
-const ESC_TRADE_LIST := "trade_list"
 const ESC_KNOWLEDGE_DETAIL := "knowledge_detail"
 const ESC_PAUSE := "pause"
 
 static func escape_claimant(pause_open: bool, compose_open: bool, targeting: bool,
-        work_inspector_open: bool, knowledge_detail_open: bool,
-        trade_list_open: bool = false) -> String:
+        work_inspector_open: bool, knowledge_detail_open: bool) -> String:
     if pause_open:
         return ESC_RESUME
     if compose_open:
@@ -2532,8 +2524,6 @@ static func escape_claimant(pause_open: bool, compose_open: bool, targeting: boo
         return ESC_TARGETING
     if work_inspector_open:
         return ESC_WORK_INSPECTOR
-    if trade_list_open:
-        return ESC_TRADE_LIST
     if knowledge_detail_open:
         return ESC_KNOWLEDGE_DETAIL
     return ESC_PAUSE
@@ -2545,8 +2535,7 @@ func _unhandled_input(event: InputEvent) -> void:
             hud != null and hud.has_method("is_compose_sheet_open") and bool(hud.call("is_compose_sheet_open")),
             hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")),
             hud != null and hud.has_method("is_work_inspector_open") and bool(hud.call("is_work_inspector_open")),
-            hud != null and hud.has_method("is_knowledge_detail_open") and bool(hud.call("is_knowledge_detail_open")),
-            hud != null and hud.has_method("is_trade_list_open") and bool(hud.call("is_trade_list_open")))
+            hud != null and hud.has_method("is_knowledge_detail_open") and bool(hud.call("is_knowledge_detail_open")))
         match claimant:
             ESC_RESUME:
                 _hide_pause_menu()
@@ -2558,9 +2547,6 @@ func _unhandled_input(event: InputEvent) -> void:
                 return
             ESC_WORK_INSPECTOR:
                 hud.call("close_work_inspector")
-                get_viewport().set_input_as_handled()
-            ESC_TRADE_LIST:
-                hud.call("close_trade_list")
                 get_viewport().set_input_as_handled()
             ESC_KNOWLEDGE_DETAIL:
                 hud.call("close_knowledge_detail")

@@ -3,7 +3,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/{BandCityPanel,BandFoodStatus,PenStatus}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/BandPanelController.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{BandComposeFloat,WorkInspectorDialog}.gd"
-  - "clients/godot_thin_client/src/scripts/ui/hud/{TradeZoneController,TradeLedger,TradeOverflowPanel,TradeHoverCard,FactionMark,RungLinkIcon,hud_trade_vocab}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{TradeZoneController,TradeLedger,TradeHoverCard,FactionMark,RungLinkIcon,hud_trade_vocab}.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
   - "clients/godot_thin_client/tools/band_panel_trade_tab.gd"
 ---
@@ -24,10 +24,9 @@ paths:
 | `ui/hud/BandComposeFloat.gd` | **The parties compose sheet, floated off the panel when its zone cannot hold it** — see "A COMPOSE SHEET THE ZONE CANNOT HOLD LEAVES THE ZONE" for the trigger. An **`AutoSizingPanel`**, not `PanelCard` + `DockScrollFit`: this card is measured against the VIEWPORT rather than against a dock's remaining height, which is the free-floating half of that pair (`panel-framework.md`). Both axes are fitted explicitly, because the node is a plain `Control` and no child minimum ever reaches it. **It is the card and NOTHING more — there is deliberately no full-screen catcher.** `ComposeSheet`, the herd drawer's floating sheet, is a catcher with a card inside it so a click anywhere outside dismisses; that is exactly wrong here, because the DOCK's sheet stays open through a map pick — the targeting banner and the herd glow ride on the sheet still being open while the player clicks a herd — and a catcher would eat that click. `PanelRoot`'s autopsy applies in reverse: a `STOP` control the pointer finds makes the Viewport mark the press handled before `MapView._unhandled_input` sees it, so every pixel this node claims is a pixel of dead map, and it claims only its own rect (`band_panel_preview._assert_float_leaves_the_map_clickable` drives that through `Viewport.push_input`, never off a `mouse_filter` value). **It never overlaps the card it came from, structurally rather than by a clamp**: `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the MAP-FACING side of the panel card (`MAP_FACING_SIDE`, the opposite of the docked edge) with `ANCHOR_GAP` of clearance, and the width fit, the height fit and the placement all read that ONE rect — a card too tall for it scrolls, it does not creep back across the seam. **`target_width` is the ZONE width plus this card's own chrome**, never the zone width itself: `AutoSizingPanel`'s width is the OUTER one, and a sheet handed the zone width minus a border, two content margins and a scroll gutter re-wraps, which would falsify the very measurement that floated it. `mount` applies that width BEFORE the frame `refit` waits, or the height fit reads the previous width's wrapping and leaves the card ~100px taller than its content (measured). Its ONE `ScrollContainer` is not a breach of the panel's no-scroll rule — that rule is about content whose height feeds back into a FIXED reservation, and this ceiling is real viewport room — and it stays DISABLED unless `fit_to_content` finds the content taller than the room. It draws in `BandCityPanel.panel_card_stylebox()`, the panel's own, so it reads as the panel's surface rather than a second kind of card |
 | `ui/hud/WorkInspectorDialog.gd` | **The work board's inspector, rehosted OUT of the work zone** (`docs/plan_standing_upkeep.md` §4.9 item 12d) — see "THE WORK INSPECTOR IS A DIALOG" below. An **`AutoSizingPanel`** on its OWN `CanvasLayer` (`HudLayer.work_inspector_host()`, `WORK_INSPECTOR_LAYER_INDEX` = 105), holding the `PanelContainer` `BandPanelController._build_work_inspector` still builds — the head line, the conditional notes, the arrivals strip, and (since item 12d's SECOND pass) the POLICY / PRIORITY / KITS **sections** with their controls drawn, over a two-button actions row. **A `Control` on a layer and never a `Popup`**: `Popup` auto-hides on an outside click and on parent focus loss, which is precisely the dismissal this surface forbids (it RE-TARGETS when another board row is selected, so a stepper press elsewhere is ordinary use). **NON-MODAL — no catcher, no scrim**, `BandComposeFloat`'s rule for the same reason one layer down: every pixel it claims is a pixel of dead map, so it claims only the card. **Centred in the ROOM the dock leaves — one placement for all four dock edges**, no `room_bounds` (it is a surface you WRITE INTO, so it takes a layer above the docked ones rather than dodging them — `panel-framework.md`'s table). `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the panel card's MAP-FACING side, `BandComposeFloat`'s own rect through `BandComposeFloat.map_facing_side`. It was centred in the raw viewport for one slice, which held only while the card was ~104–156px tall; the sections took it to 340 and a viewport centre then ran straight through a bottom dock's panel. `mount(strip, reserved, card_rect, map_facing)` is the whole API: `reserved` is `BandPanelController._work_inspector_height`'s answer for the same model and becomes the card's `min_height`, which is how *reserved ≥ drawn* survived the move. Rebuilt per render, never patched (the rung track's rule — every figure on the strip moves per snapshot), and the re-mount IS the re-target |
 | `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
-| `ui/hud/TradeZoneController.gd` | `RefCounted` controller for the band page's **Trade tab** (issue #731) — builds the zone (FULL or SHORT tier, chosen by measurement), owns the overflow panel and the hover card. See "The Trade tab" |
+| `ui/hud/TradeZoneController.gd` | `RefCounted` controller for the band page's **Trade tab** (issue #731) — builds the zone (FULL or SHORT tier, chosen by measurement), owns the list popover and the hover card. See "The Trade tab" |
 | `ui/hud/TradeLedger.gd` | **All-`static`** arithmetic for the Trade tab and the Food/Fodder popovers: which crossings are trade, one good's net across its ratings, shipments grouped by party, the network's camps and relays, one good across the network |
-| `ui/hud/TradeOverflowPanel.gd` | The Trade tab's ONE overflow panel — an `AutoSizingPanel` on the work inspector's layer, the `WorkInspectorDialog` idiom |
-| `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and away from an open overflow panel |
+| `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
 | `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
 | `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
 | `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
@@ -7220,23 +7219,32 @@ counts. A shipment is the crossings one party carried in one direction (`party_i
 the counterparty), cargo summed per good; a direction past `SHIPMENT_FOLD_TRIGGER` (4) shows the
 `SHIPMENT_FOLD_KEEP` (3) largest and a `N more shipments` row.
 
-### The overflow panel and the hover card
+### The list popover and the hover card
 
 **Nothing expands in place.** The network line, a good's row, a fold row and the SHORT tier's arm rows
-all open `TradeOverflowPanel` — the `WorkInspectorDialog` idiom property for property: a `Control` on
-`HudLayer.work_inspector_host()`'s layer, never a `Popup`; non-modal, no catcher, no scrim; centred in
-the room cut back off the card's map-facing side (`BandComposeFloat.map_facing_side`), so it never
-covers the card; carrying its own `ScrollContainer`. ONE instance: opening another list re-targets it.
-A snapshot re-mounts the open list against the fresh band, and a band switch, the faction page, the
-tab leaving the screen, the panel hiding and ESC close it. **ESC** reaches it through the work
-inspector's own path: `Main.escape_claimant` asks `HudLayer.is_trade_list_open` right after the
-inspector (`ESC_TRADE_LIST`, a trailing argument defaulting to closed) and calls `close_trade_list`.
+all open ONE list popover — the Band tab's disclosure idiom (`DisclosureController._open_popover`): a
+`PopupPanel` parented on the HUD, in `HudStyle.card_stylebox()`, so it is a window and changes no
+zone's height. It carries its own `ScrollContainer`; the Trade zone carries none.
 
-**ONE CARD OVER THE ZONE AT A TIME.** The list and the work inspector share a layer and a room, so
-opening either closes the other, and `BandPanelController` — which owns both — is the only place that
-knows: `TradeZoneController.list_opening` is connected to `close_work_inspector`, and
-`_toggle_work_inspector` calls `_trade.dismiss()` when it opens a row. `trade_tab_wide_exclusive`
-asserts both directions on the wide shell, the one shell where both can be reached at once.
+**It hangs from the row that opened it.** The drawn card's left edge and width are the Trade column's
+(its own zone narrow, the section under Parties wide), its top `POPOVER_GAP` under the row's bottom —
+the disclosure popover's `get_screen_transform` math, in screen space — when the whole list fits in
+the room from there to the bottom of the visible screen. When it does not, it opens on whichever side
+of the row has **more room** (above, for a long list off a bottom dock's row), capped to that room
+and scrolling inside itself past it. Every figure is measured off the live rects at placement, and
+the content height is re-measured a frame later, once the rows have laid out. A `PopupPanel` draws
+its card inset from its window by the panel's shadow, so the window is grown by those insets and every
+rect the controller reports (`list_screen_rect`) is the drawn card's.
+
+**Dismissal is the popup's own**: a click away or ESC, as for the disclosure popover, which is on no
+`Main.escape_claimant` entry either. A click on the map or the work zone closes it by itself, so it
+needs no exclusion against the work inspector. The row that opened it closes it (a press on the same
+frame the popup hid, for the same list, is that close); another Trade row in the zone swaps the
+content and re-anchors under itself; a row INSIDE the popover (a good in the local list) swaps the
+content and keeps the anchor. A popover hidden this frame re-opens a frame later, because the main
+window regaining focus from the click that hid it would otherwise hide the re-opened one. A snapshot
+re-mounts the open list against the fresh band and re-anchors it under the rebuilt row; a band switch,
+the faction page, the tab leaving the screen and the panel hiding close it.
 
 The camps list: this band first, its direct links (rung as icon + word, link distance, rung facts off
 the published `route_rungs` table), then the relay camps — `via <first hop>` on the shortest chain
@@ -7245,9 +7253,11 @@ plain hex distance. Scoped to a good: each camp's net of it off its own pooled c
 first, movers by `|net|`, then the even ones, and a `lost in transit — friction` row that is
 `-(Σ nets)` — the column does not sum to zero.
 
-The hover card (`TradeHoverCard`) is a plain `PanelContainer` on the same layer rather than a Godot
-tooltip, because a tooltip cannot be told which side to take: it sits beside the row, on the side away
-from an open overflow panel. A good's card lists its rating piles with their signed amounts; a
+The hover card (`TradeHoverCard`) is a plain `PanelContainer` on the work inspector's layer rather
+than a Godot tooltip, because a tooltip cannot be told which side to take: it sits beside the row. A
+row inside the open popover takes the popover's sides instead — the popover is a window drawn over
+that layer, so a card overlapping it would sit under it. Rects cross between the two windows through
+screen space. A good's card lists its rating piles with their signed amounts; a
 shipment's lists its cargo pile by pile.
 
 ### The faction mark
@@ -7262,6 +7272,10 @@ faction's flag (#647) replaces.
 `tools/band_panel_trade_tab.gd`, run last by `band_panel_preview`: `trade_tab_narrow_busy`,
 `trade_tab_hover_bone`, `trade_tab_camps`, `trade_tab_camps_food`, `trade_tab_folded`,
 `trade_tab_more_shipments`, `trade_tab_empty`, `trade_tab_wide` (asserts 1190, no Trade flank, the
-SHORT tier under Parties), `trade_tab_wide_route_list` (plus the ESC claim), `trade_tab_wide_exclusive`
-(the list and the work inspector close each other) and `trade_tab_short` (the tabbed shell on a
-narrow bottom dock).
+SHORT tier under Parties), `trade_tab_wide_route_list` (fifteen shipments do not fit below a bottom
+dock's row, so it opens ABOVE), `trade_tab_wide_short_below` (five camps off a row with more room
+above than below still fit below, so it opens BELOW), `trade_tab_wide_local_hover` (a hover card from
+a row inside the popover sits beside it) and
+`trade_tab_short` (the tabbed shell on a narrow bottom dock). Every list frame asserts the popover is
+ADJACENT to its anchor row — one gap under it, or over it when opened upward, spanning the row —
+not merely visible.

@@ -6,7 +6,7 @@ extends RefCounted
 ## ELSE this turn, by the link it crossed. A controller of its own rather than more of
 ## `BandPanelController` (the HUD decomposition invariant, `hud-modules.md`): the panel controller
 ## asks it for the zone's content and pushes the band, and this owns everything the tab draws — the
-## zone, its overflow panel and its hover card.
+## zone, its list popover and its hover card.
 ##
 ## **TWO TIERS, CHOSEN BY MEASUREMENT.** The FULL tier is the network line, then `⇄ Local exchange`
 ## (one line per good, its net) and `⇄ Trade route` (Imports / Exports, one line per shipment). The
@@ -16,18 +16,23 @@ extends RefCounted
 ## full tab overruns at its busiest, draws the short one. The panel never grows for it.
 ##
 ## **NOTHING EXPANDS IN PLACE.** Every list too long for the zone — the camps, a folded direction, the
-## SHORT tier's arms — opens in `TradeOverflowPanel`, so the zone's height never depends on what the
+## SHORT tier's arms — opens in the LIST POPOVER, so the zone's height never depends on what the
 ## player opened, which is the whole reason it can have a fixed budget. The zone itself owns NO
 ## `ScrollContainer` (`band_panel_preview._assert_scroll_only_where_sanctioned`).
+##
+## **THE POPOVER IS THE BAND TAB'S DISCLOSURE IDIOM** (`DisclosureController._open_popover`): a
+## `PopupPanel` — a WINDOW, so it changes no zone's height — in `HudStyle.card_stylebox()`, anchored
+## at the bottom-left of the row that opened it and as wide as the Trade column, so it reads as part
+## of the card rather than a separate window. It opens below when the whole list fits there, and
+## otherwise on whichever side of the row has more room, capped to that room and scrolling inside
+## itself past it. Dismissal is the popup's own — a click away or ESC — which is also why it
+## is on no ESC chain and needs no exclusion against the work inspector: a click anywhere else closes
+## it.
 ##
 ## **WHAT COUNTS AS TRADE** is `TradeLedger.is_trade`: pooling (Local) and shipments (Route). A band's
 ## own party coming home, a party's rations and a split's dowry never reach this tab.
 
-## A list is about to open. `BandPanelController` closes the work inspector on it — the two cards share
-## one room, and only one may stand over the zone at a time.
-signal list_opening
-
-## Overflow panel list keys. A `camps` key may carry a commodity scope after `KIND_SCOPE_SEPARATOR`.
+## List popover keys. A `camps` key may carry a commodity scope after `KIND_SCOPE_SEPARATOR`.
 const KIND_CAMPS := "camps"
 const KIND_LOCAL := "local"
 const KIND_ROUTE_IN := "route_in"
@@ -52,7 +57,24 @@ var _topbar: FactionReadouts = null
 var _panel: BandCityPanel = null
 var _host: Node = null
 
-var _overflow: TradeOverflowPanel = null
+## The list popover and its pieces, built lazily on the first open.
+var _popover: PopupPanel = null
+var _popover_title: Label = null
+var _popover_count: Label = null
+var _popover_sub: Label = null
+var _popover_scroll: ScrollContainer = null
+var _popover_body: VBoxContainer = null
+## The open list's key (`""` = closed), the row kind it is anchored under, whether it took the room
+## above, and the anchor row's screen rect as of the last placement.
+var _open_kind: String = ""
+var _anchor_kind: String = ""
+var _opened_above: bool = false
+var _anchor_screen: Rect2 = Rect2()
+## The frame the popover last hid on, and what it showed. A click on the row that opened it closes
+## it TWICE over — the popup's own click-away, then the row's press — so a press landing on the same
+## frame as that hide, for the same list, is the close and must not reopen it.
+var _closed_frame: int = -1
+var _closed_kind: String = ""
 var _hover: TradeHoverCard = null
 ## The band the zone was last built for, and the column it was built into — kept so a resize can
 ## re-author the tier in place.
@@ -61,8 +83,8 @@ var _column: VBoxContainer = null
 var _available: Vector2 = Vector2.ZERO
 ## Which tier the last build drew — read by the harness and by nothing that decides anything.
 var _short_tier: bool = false
-## The band the open overflow list belongs to; a different band closes it.
-var _overflow_band_id: int = HudConst.NO_BAND_ID
+## The band the open list belongs to; a different band closes it.
+var _list_band_id: int = HudConst.NO_BAND_ID
 
 func _init(band_labor: HudBandLaborState, host: Node) -> void:
 	_band_labor = band_labor
@@ -77,8 +99,37 @@ func set_panel(panel: BandCityPanel) -> void:
 func is_short_tier() -> bool:
 	return _short_tier
 
-func overflow() -> TradeOverflowPanel:
-	return _overflow
+## The open list's rows, for the harness.
+func list_body() -> VBoxContainer:
+	return _popover_body
+
+## The popover's rect and its anchor row's, both in SCREEN space (what `Popup` is placed in) — the
+## harness asserts the two are adjacent.
+func list_screen_rect() -> Rect2:
+	if not is_list_open():
+		return Rect2()
+	return _card_rect_of(Rect2(Vector2(_popover.position), Vector2(_popover.size)))
+
+## **THE CARD A POPUP WINDOW DRAWS IS INSET FROM THE WINDOW** by its panel's shadow: a `PopupPanel`
+## reserves room for the shadow inside its own rect (`shadow_size`, shifted by `shadow_offset`). So the
+## placement below sizes the WINDOW to put the drawn CARD where it belongs, and every rect a reader is
+## given is the card's.
+func _shadow_insets() -> Array[float]:
+	var sb := HudStyle.card_stylebox()
+	var size := float(sb.shadow_size)
+	return [size - sb.shadow_offset.x, size - sb.shadow_offset.y,
+		size + sb.shadow_offset.x, size + sb.shadow_offset.y]
+
+func _card_rect_of(window: Rect2) -> Rect2:
+	var inset := _shadow_insets()
+	return Rect2(window.position + Vector2(inset[0], inset[1]),
+		window.size - Vector2(inset[0] + inset[2], inset[1] + inset[3]))
+
+func anchor_screen_rect() -> Rect2:
+	return _anchor_screen
+
+func list_opened_above() -> bool:
+	return _opened_above
 
 func hover_card() -> TradeHoverCard:
 	return _hover
@@ -99,7 +150,7 @@ func build(band: Dictionary, available: Vector2) -> VBoxContainer:
 	_column.add_theme_constant_override("separation", HudTradeVocab.SECTION_SEPARATION)
 	_column.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_fill(_column)
-	sync_overflow(band)
+	sync_list(band)
 	return _column
 
 ## The same content as a section appended under the Parties zone's list — the wide shell's home for
@@ -223,7 +274,7 @@ func _build_network_line(band: Dictionary) -> PanelContainer:
 		row.add_child(_row_label(HudTradeVocab.NETWORK_NONE, HudStyle.INK_DIM))
 		return box
 	var camps := HudWidgets.build_inline_link(HudTradeVocab.NETWORK_CAMPS_FORMAT % members.size(),
-		HudStyle.SIGNAL, func() -> void: open_list(KIND_CAMPS))
+		HudStyle.SIGNAL, func() -> void: open_list(KIND_CAMPS, box))
 	camps.add_theme_font_size_override("font_size", HudTradeVocab.ROW_FONT_SIZE)
 	camps.tooltip_text = HudTradeVocab.NETWORK_CAMPS_TOOLTIP
 	camps.set_meta(ROW_OPENS_META, KIND_CAMPS)
@@ -337,7 +388,7 @@ func _row_shell(indent: int, opens: String) -> PanelContainer:
 		shell.gui_input.connect(func(event: InputEvent) -> void:
 			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT \
 					and event.pressed:
-				open_list(opens))
+				open_list(opens, shell))
 		shell.mouse_entered.connect(func() -> void:
 			shell.add_theme_stylebox_override("panel", _row_stylebox(indent, true)))
 		shell.mouse_exited.connect(func() -> void:
@@ -371,10 +422,12 @@ func _show_hover(control: Control, lines: Array[Control]) -> void:
 		for line in lines:
 			line.free()
 		return
+	# Both rects in the CARD's space (the hover layer's), since a row may live in the popover's own
+	# window: through the screen, the one space every window shares.
 	var avoid := Rect2()
-	if _overflow != null and is_instance_valid(_overflow) and _overflow.is_open():
-		avoid = _overflow.get_global_rect()
-	card.show_for(lines, control.get_global_rect(), avoid)
+	if is_list_open():
+		avoid = _screen_to_layer(card, list_screen_rect())
+	card.show_for(lines, _screen_to_layer(card, _screen_rect(control)), avoid)
 
 func _hide_hover() -> void:
 	if _hover != null and is_instance_valid(_hover):
@@ -529,46 +582,60 @@ func _cargo_text(shipment: Dictionary) -> String:
 			TradeLedger.commodity_label(String(good[TradeLedger.GOOD_COMMODITY])).to_lower()])
 	return HudTradeVocab.SPLIT_JOIN.join(terms)
 
-# ---- THE OVERFLOW PANEL ----------------------------------------------------------------------------
+# ---- THE LIST POPOVER ------------------------------------------------------------------------------
 
 func _camps_kind(commodity: String) -> String:
 	return KIND_CAMPS + KIND_SCOPE_SEPARATOR + commodity
 
-## Open (or re-target) the overflow panel on `kind` for the zone's band.
-func open_list(kind: String) -> void:
+## Open the list popover on `kind`, under `anchor` — or, when `anchor` is null, under the zone row
+## that opens `kind` (the harness's way in). **A row INSIDE the popover swaps the content in place and
+## keeps the anchor**; a row in the zone re-anchors. The row that opened the list closes it.
+func open_list(kind: String, anchor: Control = null) -> void:
 	if kind == "" or _band.is_empty():
 		return
-	_hide_hover()
-	var panel := _ensure_overflow()
-	if panel == null:
+	if kind == _closed_kind and Engine.get_process_frames() == _closed_frame:
 		return
-	list_opening.emit()
-	_overflow_band_id = TradeLedger.band_id_of(_band)
-	_mount(panel, kind, _band)
-
-## Re-mount the open list against a fresh `band` (a snapshot, a re-render); a different band closes it.
-func sync_overflow(band: Dictionary) -> void:
-	if _overflow == null or not is_instance_valid(_overflow) or not _overflow.is_open():
-		return
-	if TradeLedger.band_id_of(band) != _overflow_band_id:
+	if is_list_open() and kind == _open_kind and (anchor == null or not _in_popover(anchor)):
 		dismiss()
 		return
-	_mount(_overflow, _overflow.kind(), band)
+	_hide_hover()
+	var popover := _ensure_popover()
+	if popover == null:
+		return
+	if anchor == null or not _in_popover(anchor):
+		_anchor_kind = kind
+	# **A POPUP HIDDEN THIS FRAME CANNOT BE RE-OPENED THIS FRAME.** A press on another Trade row while a
+	# list is up first closes it (the popup's own click-away), and the main window's focus coming back
+	# lands AFTER that press — so a popover re-opened in the same frame is hidden again by the very
+	# click that opened it. One frame later it opens and stays.
+	if Engine.get_process_frames() == _closed_frame and _host != null and _host.is_inside_tree():
+		await _host.get_tree().process_frame
+	_list_band_id = TradeLedger.band_id_of(_band)
+	_mount(kind, _band)
 
-## Take the overflow panel and the hover card down — a band switch, the tab leaving the screen, the
-## panel hiding.
+## Re-mount the open list against a fresh `band` (a snapshot, a re-render) and re-anchor it under the
+## rebuilt row; a different band closes it.
+func sync_list(band: Dictionary) -> void:
+	if not is_list_open():
+		return
+	if TradeLedger.band_id_of(band) != _list_band_id:
+		dismiss()
+		return
+	_mount(_open_kind, band)
+
+## Take the popover and the hover card down — a band switch, the tab leaving the screen, the panel
+## hiding.
 func dismiss() -> void:
 	_hide_hover()
-	if _overflow != null and is_instance_valid(_overflow):
-		_overflow.dismiss()
-	_overflow_band_id = HudConst.NO_BAND_ID
+	if _popover != null and is_instance_valid(_popover) and _popover.visible:
+		_popover.hide()
+	_open_kind = ""
+	_list_band_id = HudConst.NO_BAND_ID
 
 func is_list_open() -> bool:
-	return _overflow != null and is_instance_valid(_overflow) and _overflow.is_open()
+	return _popover != null and is_instance_valid(_popover) and _popover.visible and _open_kind != ""
 
-func _mount(panel: TradeOverflowPanel, kind: String, band: Dictionary) -> void:
-	var card_rect := _panel.card_rect() if _panel != null else Rect2()
-	var facing := BandComposeFloat.map_facing_side(_panel.get_dock()) if _panel != null else SIDE_RIGHT
+func _mount(kind: String, band: Dictionary) -> void:
 	var rows: Array[Control] = []
 	var title := ""
 	var count := ""
@@ -626,7 +693,17 @@ func _mount(panel: TradeOverflowPanel, kind: String, band: Dictionary) -> void:
 				rows.append(head)
 				rows.append_array(_cargo_lines(shipment, HudTradeVocab.SHIPMENT_INDENT))
 		count = _shipment_count_text(total)
-	panel.mount(kind, title, count, summary, rows, card_rect, facing)
+	_open_kind = kind
+	_popover_title.text = title
+	_popover_count.text = count
+	_popover_sub.text = summary
+	_popover_sub.visible = summary != ""
+	HudWidgets.clear_children(_popover_body)
+	for row in rows:
+		_popover_body.add_child(row)
+	_place()
+	# …and again once the rows have laid out: the first placement measured them unsorted.
+	_place_after_layout()
 
 ## An unscoped camp: `Barrowmere ····· ┄┄ trail  4 tiles`, a relay `Alderfen ····· via Barrowmere  6 tiles`.
 func _build_camp_row(camp: Dictionary) -> Control:
@@ -716,16 +793,146 @@ func _shipment_count_text(count: int) -> String:
 	return (HudTradeVocab.SHIPMENT_SINGULAR_FORMAT if count == 1
 		else HudTradeVocab.SHIPMENT_PLURAL_FORMAT) % count
 
-func _ensure_overflow() -> TradeOverflowPanel:
-	if _overflow != null and is_instance_valid(_overflow):
-		return _overflow
-	var layer := _layer()
-	if layer == null:
+## The popover: a `PopupPanel` parented on the HUD like the disclosure popover, so it is a WINDOW and
+## changes no zone's height. A head (title, count), an optional summary line, then the rows in its own
+## `ScrollContainer` — the one scroll the Trade list may have, since a window reserves nothing.
+func _ensure_popover() -> PopupPanel:
+	if _popover != null and is_instance_valid(_popover):
+		return _popover
+	if _host == null:
 		return null
-	_overflow = TradeOverflowPanel.new()
-	layer.add_child(_overflow)
-	_overflow.closed.connect(_hide_hover)
-	return _overflow
+	var popover := PopupPanel.new()
+	popover.name = HudTradeVocab.POPOVER_NAME
+	popover.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
+	var margin := MarginContainer.new()
+	for side in HudTradeVocab.POPOVER_MARGIN_SIDES:
+		margin.add_theme_constant_override("margin_%s" % side, HudTradeVocab.POPOVER_PADDING)
+	popover.add_child(margin)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", HudTradeVocab.ROW_SEPARATION)
+	margin.add_child(column)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", HudTradeVocab.ROW_SEPARATION)
+	column.add_child(head)
+	_popover_title = _row_label("", HudStyle.INK)
+	_popover_title.add_theme_font_size_override("font_size", HudTradeVocab.TITLE_FONT_SIZE)
+	head.add_child(_popover_title)
+	_popover_count = _faint_label("")
+	head.add_child(_popover_count)
+	_popover_sub = _faint_label("")
+	column.add_child(_popover_sub)
+	_popover_scroll = ScrollContainer.new()
+	_popover_scroll.name = HudTradeVocab.POPOVER_SCROLL_NAME
+	_popover_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_popover_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_popover_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_child(_popover_scroll)
+	_popover_body = _rows_column()
+	_popover_body.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_popover_scroll.add_child(_popover_body)
+	popover.popup_hide.connect(_on_popover_hidden)
+	_host.add_child(popover)
+	_popover = popover
+	return popover
+
+func _on_popover_hidden() -> void:
+	# A hide that lands after the popover was already re-opened on another list is stale.
+	if _popover != null and _popover.visible:
+		return
+	_hide_hover()
+	_closed_frame = Engine.get_process_frames()
+	_closed_kind = _open_kind
+	_open_kind = ""
+
+func _in_popover(control: Control) -> bool:
+	return _popover != null and is_instance_valid(_popover) and _popover.is_ancestor_of(control)
+
+## **WHERE THE POPOVER SITS**, measured off the live rects every time and never a hard-coded height.
+## Its left edge and width are the Trade column's; its top is the anchor row's bottom plus
+## `POPOVER_GAP`, when the whole list fits in the room from there to the bottom of the visible screen.
+## When it does not, it opens on whichever side of the row has MORE room — above, for a bottom dock's
+## row near the screen edge with a long list — capped to that room and scrolling past it. All in SCREEN space, the
+## disclosure popover's `get_screen_transform` math, which folds in the window and the canvas stretch.
+func _place() -> void:
+	if _popover == null or not is_instance_valid(_popover):
+		return
+	var anchor := _anchor_row()
+	if anchor == null or _column == null or not is_instance_valid(_column) or not _column.is_inside_tree():
+		return
+	_anchor_screen = _screen_rect(anchor)
+	var column := _screen_rect(_column)
+	var viewport := anchor.get_viewport()
+	var visible: Rect2 = viewport.get_screen_transform() * viewport.get_visible_rect()
+	var content := _popover_content_height()
+	var room_below := visible.end.y - _anchor_screen.end.y - HudTradeVocab.POPOVER_GAP \
+		- HudTradeVocab.POPOVER_EDGE_MARGIN
+	var room_above := _anchor_screen.position.y - HudTradeVocab.POPOVER_GAP - visible.position.y \
+		- HudTradeVocab.POPOVER_EDGE_MARGIN
+	_opened_above = content > room_below and room_above > room_below
+	var height := minf(content, room_above if _opened_above else room_below)
+	var top := _anchor_screen.position.y - HudTradeVocab.POPOVER_GAP - height if _opened_above \
+		else _anchor_screen.end.y + HudTradeVocab.POPOVER_GAP
+	# The CARD goes at (column.x, top) and is (column width × height); the window around it is grown by
+	# the shadow insets so the drawn card, not the window, lines up with the Trade column.
+	var inset := _shadow_insets()
+	var rect := Rect2i(Vector2i(roundi(column.position.x - inset[0]), roundi(top - inset[1])),
+		Vector2i(roundi(column.size.x + inset[0] + inset[2]), roundi(height + inset[1] + inset[3])))
+	if _popover.visible:
+		_popover.position = rect.position
+		_popover.size = rect.size
+	else:
+		_popover.popup(rect)
+
+func _place_after_layout() -> void:
+	if _host == null or not _host.is_inside_tree():
+		return
+	await _host.get_tree().process_frame
+	if is_list_open():
+		_place()
+
+## The popover's full content height: everything around the rows plus the rows' own height. **Once
+## it has laid out, "everything around the rows" is MEASURED** — the popover's height less its scroll
+## viewport's — since the window adds chrome of its own that no stylebox reports; before that, the
+## first placement estimates it from the card stylebox and the head (the scroll reports none of the
+## rows while it can scroll), and the placement a frame later corrects it.
+func _popover_content_height() -> float:
+	var rows := _popover_body.get_combined_minimum_size().y
+	if _popover.visible and _popover_scroll.size.y > 0.0:
+		var inset := _shadow_insets()
+		return float(_popover.size.y) - inset[1] - inset[3] - _popover_scroll.size.y + rows
+	var chrome := HudStyle.card_stylebox().get_minimum_size().y
+	var margin: Control = _popover.get_child(0)
+	return chrome + margin.get_combined_minimum_size().y + rows
+
+## The row the popover hangs from — the zone's row that opens the anchored kind. Looked up afresh
+## each placement, because every render rebuilds the zone and frees the row it was opened from.
+func _anchor_row() -> Control:
+	if _column == null or not is_instance_valid(_column):
+		return null
+	return _find_opens(_column, _anchor_kind)
+
+func _find_opens(node: Node, kind: String) -> Control:
+	if node.has_meta(ROW_OPENS_META) and String(node.get_meta(ROW_OPENS_META)) == kind:
+		# The network line's camps link names the camps list; the popover hangs from the LINE.
+		if node is Button:
+			var line := node.get_parent().get_parent()
+			if line is PanelContainer:
+				return line as Control
+		return node as Control
+	for child in node.get_children():
+		var found := _find_opens(child, kind)
+		if found != null:
+			return found
+	return null
+
+## A control's rect in SCREEN space.
+func _screen_rect(control: Control) -> Rect2:
+	return control.get_screen_transform() * Rect2(Vector2.ZERO, control.size)
+
+## A SCREEN rect in `on`'s canvas space — how the hover card, on a canvas layer of the main window,
+## places itself beside a row that may live in the popover's own window.
+func _screen_to_layer(on: Control, rect: Rect2) -> Rect2:
+	return on.get_viewport().get_screen_transform().affine_inverse() * rect
 
 func _ensure_hover() -> TradeHoverCard:
 	if _hover != null and is_instance_valid(_hover):
@@ -737,9 +944,8 @@ func _ensure_hover() -> TradeHoverCard:
 	layer.add_child(_hover)
 	return _hover
 
-## The layer the overflow panel and the hover card live on — the work inspector's, one above the
-## event dock (`HudLayer.WORK_INSPECTOR_LAYER_INDEX`), for the same reasons: it takes part in no
-## zone's layout, and it sits over the bar so nothing drawn on it is unreachable.
+## The layer the hover card lives on — the work inspector's, one above the event dock
+## (`HudLayer.WORK_INSPECTOR_LAYER_INDEX`): it takes part in no zone's layout, and it sits over the bar.
 func _layer() -> Node:
 	if _host == null or not _host.has_method("work_inspector_host"):
 		return null

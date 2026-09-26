@@ -1,7 +1,7 @@
 class_name TradeLedger
 extends RefCounted
 
-## **THE TRADE TAB'S ARITHMETIC** (issue #731) — every figure the tab, its overflow panel and the Band
+## **THE TRADE TAB'S ARITHMETIC** (issue #731) — every figure the tab, its list popover and the Band
 ## panel's Food/Fodder popovers state about a crossing, derived from the band dict the native decoder
 ## publishes. All-`static` and node-free, so the zone builder, the popover and the preview harness read
 ## ONE answer and none of them can disagree with another about a sum.
