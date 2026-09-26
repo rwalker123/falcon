@@ -22,8 +22,8 @@ use core_sim::{
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile, TileRegistry, TransferLedger, FODDER,
-    FOOD, FULL_TIE, NO_TIE,
+    SupplyNetworkConfigHandle, SupplyNetworkMembership, Tile, TileRegistry, TransferCause,
+    TransferDirection, TransferLedger, TransferLink, FODDER, FOOD, FULL_TIE, NO_TIE,
 };
 
 /// A distinct faction for the test bands so they never network with the spawned starting bands —
@@ -124,6 +124,7 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
                 last_food_consumption: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
+                last_turn_transfer_crossings: Vec::new(),
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
@@ -918,4 +919,241 @@ fn pooling_books_both_accounts_on_the_local_arm() {
             "and the summed pair is exactly local + route for {label}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// WHY IT MOVED, PER RATING, AND OVER WHICH LINKS (issue #731)
+// ---------------------------------------------------------------------------------------------
+
+/// The chain fixture's opening hide piles, across two ratings of the one material.
+const CHAIN_RICH_HIDE: f32 = 90.0;
+const CHAIN_MIDDLING_HIDE: f32 = 10.0;
+const CHAIN_OTHER_RATING_HIDE: f32 = 40.0;
+
+/// **Three camps of one people in a CHAIN of ties** — rich–middling and middling–poor, never
+/// rich–poor — holding a stiff hide at two of them and a supple one at the third, each with an
+/// allocation to book into. Returns `(rich, middling, poor, stiff, supple)`.
+fn a_chain_holding_two_ratings(app: &mut App) -> (Entity, Entity, Entity, BandKey, BandKey) {
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let (cx, cy) = (w / 4, h / 2);
+    let rich = spawn_band(app, cx, cy, FED_FOOD);
+    let middling = spawn_band(app, cx + 2, cy, EMPTY);
+    let poor = spawn_band(app, cx + 1, cy + 1, EMPTY);
+    let stiff = BandKey(vec![3, 0]);
+    let supple = BandKey(vec![0, 3]);
+    stock_hide(app, rich, &stiff, CHAIN_RICH_HIDE, 0.92, 0.10);
+    stock_hide(app, middling, &stiff, CHAIN_MIDDLING_HIDE, 0.92, 0.10);
+    stock_hide(app, poor, &supple, CHAIN_OTHER_RATING_HIDE, 0.14, 0.92);
+    for band in [rich, middling, poor] {
+        attach_allocation(app, band);
+    }
+    seed_mutual_tie(app, rich, middling);
+    seed_mutual_tie(app, middling, poor);
+    (rich, middling, poor, stiff, supple)
+}
+
+/// ⛔ **A POOLED MATERIAL IS BOOKED PER RATING, AND A POOLED ROW NEVER NAMES ANYBODY.**
+///
+/// The balancer already runs once per `(material, rating)`; the crossings list keeps that grain, so
+/// each rating's rows net to exactly that rating's change in the band's store and two ratings are
+/// never one row. Every row the pass writes is `Pooled`, local, and carries **no counterparty and no
+/// party** — the pot is anonymous, and that is the invariant this pins.
+#[test]
+fn pooled_material_crossings_are_booked_per_rating_and_never_name_a_counterparty() {
+    let mut app = spawn_world();
+    let (rich, middling, poor, stiff, supple) = a_chain_holding_two_ratings(&mut app);
+    let before: Vec<(Entity, f32, f32)> = [rich, middling, poor]
+        .iter()
+        .map(|&band| {
+            (
+                band,
+                hide_of(&app, band, &stiff),
+                hide_of(&app, band, &supple),
+            )
+        })
+        .collect();
+
+    app.world.run_system_once(balance_supply_networks);
+
+    let mut rows_seen = 0;
+    for (band, stiff_before, supple_before) in before {
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("the fixture attached an allocation");
+        for crossing in &allocation.last_transfer_crossings {
+            rows_seen += 1;
+            assert_eq!(
+                (
+                    crossing.cause,
+                    crossing.link,
+                    crossing.counterparty,
+                    crossing.party
+                ),
+                (TransferCause::Pooled, TransferLink::Local, None, None),
+                "a pooled row is local and names nobody: {crossing:?}"
+            );
+        }
+        for (rating, held_before) in [(&stiff, stiff_before), (&supple, supple_before)] {
+            let rows: Vec<_> = allocation
+                .last_transfer_crossings
+                .iter()
+                .filter(|crossing| crossing.commodity == HIDE && crossing.rating == *rating)
+                .collect();
+            let net: f32 = rows
+                .iter()
+                .map(|crossing| match crossing.direction {
+                    TransferDirection::In => crossing.amount,
+                    TransferDirection::Out => -crossing.amount,
+                })
+                .sum();
+            let change = hide_of(&app, band, rating) - held_before;
+            assert!(
+                (net - change).abs() < LEDGER_EPSILON,
+                "the {rating:?} rows net to that rating's own change: {net} vs {change}"
+            );
+            for crossing in rows {
+                assert!(
+                    crossing.readings.contains_key(TOUGHNESS)
+                        && crossing.readings.contains_key(SUPPLENESS),
+                    "a material row carries the reading it moved at: {crossing:?}"
+                );
+            }
+        }
+    }
+    // Liveness: the poor band both received the stiff hide and gave up its supple one, so it holds
+    // one row per rating — exactly the case a scalar total would have folded into one.
+    let poor_rows = &app
+        .world
+        .get::<LaborAllocation>(poor)
+        .expect("an allocation")
+        .last_transfer_crossings;
+    for (rating, direction) in [
+        (&stiff, TransferDirection::In),
+        (&supple, TransferDirection::Out),
+    ] {
+        assert!(
+            poor_rows.iter().any(|crossing| crossing.commodity == HIDE
+                && crossing.rating == *rating
+                && crossing.direction == direction
+                && crossing.amount > LEDGER_EPSILON),
+            "liveness: the poor band's {rating:?} hide moved {direction:?}: {poor_rows:?}"
+        );
+    }
+    assert!(rows_seen > 0, "liveness: the pass booked something");
+}
+
+/// **For food and hay the rows ARE the ledger, split finer.** Summed per direction they equal the
+/// local arms of each account exactly, because one call writes both.
+#[test]
+fn pooled_goods_crossings_sum_to_the_ledger_arms() {
+    let mut app = spawn_world();
+    let (rich, middling, poor, _, _) = a_chain_holding_two_ratings(&mut app);
+    stock_hay(&mut app, rich, FED_HAY);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    for band in [rich, middling, poor] {
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("an allocation");
+        for (commodity, ledger) in [
+            (FOOD, allocation.last_food_transfers),
+            (FODDER, allocation.last_fodder_transfers),
+        ] {
+            let sum = |direction: TransferDirection| -> f32 {
+                allocation
+                    .last_transfer_crossings
+                    .iter()
+                    .filter(|crossing| {
+                        crossing.commodity == commodity && crossing.direction == direction
+                    })
+                    .map(|crossing| crossing.amount)
+                    .sum()
+            };
+            assert!(
+                (sum(TransferDirection::In) - ledger.local_received).abs() < LEDGER_EPSILON
+                    && (sum(TransferDirection::Out) - ledger.local_sent).abs() < LEDGER_EPSILON,
+                "{commodity}: the rows add up to the local arms ({ledger:?})"
+            );
+        }
+    }
+    let (rich_food, rich_hay) = ledgers_of(&app, rich);
+    assert!(
+        rich_food.local_sent > LEDGER_EPSILON && rich_hay.local_sent > LEDGER_EPSILON,
+        "liveness: the rich band pooled both accounts away"
+    );
+}
+
+/// **Each band publishes ITS OWN links, and its network's span.** A chain is not a clique: the ends
+/// each hold one link and the middle holds two, and the span — the longest link in the network — is
+/// the same figure at every member. A band in no network holds no links and a span of `0`. With no
+/// road on any tile, every link's rung is `None`.
+#[test]
+fn pooling_links_are_per_band_and_the_span_is_the_networks_longest_link() {
+    let mut app = spawn_world();
+    let (rich, middling, poor, _, _) = a_chain_holding_two_ratings(&mut app);
+    let (w, h) = {
+        let reg = app.world.resource::<TileRegistry>();
+        (reg.width, reg.height)
+    };
+    let loner = spawn_band(&mut app, (w / 4 + w / 2) % w, h / 2, FED_FOOD);
+
+    app.world.run_system_once(balance_supply_networks);
+
+    let distance = |a: Entity, b: Entity| -> u32 {
+        core_sim::grid_utils::hex_distance_wrapped(
+            position_of(&app, a),
+            position_of(&app, b),
+            w,
+            wraps(&app),
+        )
+    };
+    let (rich_middling, middling_poor) = (distance(rich, middling), distance(middling, poor));
+    let membership = app.world.resource::<SupplyNetworkMembership>();
+    let links_of = |band: Entity| -> Vec<(BandId, u32, Option<core_sim::RungKey>)> {
+        membership
+            .pooling_links_of(band)
+            .iter()
+            .map(|link| (link.band, link.distance_tiles, link.rung))
+            .collect()
+    };
+    assert_eq!(
+        links_of(rich),
+        vec![(band_id(&app, middling), rich_middling, None)],
+        "the rich end holds one link, to the middle"
+    );
+    assert_eq!(
+        links_of(poor),
+        vec![(band_id(&app, middling), middling_poor, None)],
+        "the poor end holds one link, to the middle"
+    );
+    let mut expected = vec![
+        (band_id(&app, rich), rich_middling, None),
+        (band_id(&app, poor), middling_poor, None),
+    ];
+    expected.sort_by_key(|(band, _, _)| *band);
+    assert_eq!(
+        links_of(middling),
+        expected,
+        "the middle holds both links, in band-id order"
+    );
+
+    let span = rich_middling.max(middling_poor);
+    assert!(span > 0, "liveness: the chain's camps are apart");
+    for band in [rich, middling, poor] {
+        assert_eq!(
+            membership.span_tiles_of(band),
+            span,
+            "every member reads its network's longest link"
+        );
+    }
+    assert!(
+        membership.pooling_links_of(loner).is_empty() && membership.span_tiles_of(loner) == 0,
+        "a band in no network holds no links and no span"
+    );
 }

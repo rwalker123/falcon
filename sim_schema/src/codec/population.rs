@@ -12,8 +12,9 @@ use crate::state::population::{
     CharacteristicReadingState, CohortStoreState, CraftOfferState, DrawnInputState,
     EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState,
     LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PendingMigrationState,
-    PoolCrewLineState, PoolToeLineState, PopulationCohortState, PopulationDemographicsState,
-    ScoutTaskState, SettlementStageViewState, SourcePriorityState,
+    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
+    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
+    TransferCrossingState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -551,6 +552,10 @@ fn create_populations<'a>(
                     .collect();
                 Some(builder.create_vector(&rows))
             };
+            // **WHAT CROSSED THIS BAND'S STORE, BY CAUSE, and ITS OWN POOLING LINKS** — nested
+            // vectors, built before the parent table like the one above.
+            let transfer_crossings = create_transfer_crossings(builder, &cohort.transfer_crossings);
+            let pooling_links = create_pooling_links(builder, &cohort.pooling_links);
             // **What each offered kit grants THIS band** — the resolved answer, so the client does no
             // tier stepping. Nested vector, built before the parent table like the one above.
             let kit_tiers = {
@@ -1081,6 +1086,11 @@ fn create_populations<'a>(
                     // WHAT EACH KEEPING POOL DID NOT USE — appended last. The sim's own reading,
                     // struck after the bare-hand top-up; a client must not derive it.
                     poolCrew: pool_crew,
+                    // THE CAUSE-KEYED CROSSINGS, THE BAND'S OWN POOLING LINKS AND ITS NETWORK'S
+                    // SPAN — appended last (issue #731).
+                    transferCrossings: Some(transfer_crossings),
+                    poolingLinks: Some(pooling_links),
+                    supplyNetworkSpanTiles: cohort.supply_network_span_tiles,
                 },
             )
         })
@@ -1559,7 +1569,101 @@ fn decode_population(
         expedition_trade_fodder_carry_weight: cohort.expeditionTradeFodderCarryWeight(),
         name: text(cohort.name()),
         loadout_window: cohort.loadoutWindow().map(decode_loadout_window),
+        transfer_crossings: map_rows(cohort.transferCrossings(), |crossing| {
+            TransferCrossingState {
+                commodity: text(crossing.commodity()),
+                readings: map_rows(crossing.readings(), |reading| CharacteristicReadingState {
+                    axis: text(reading.axis()),
+                    value: reading.value(),
+                    band_name: text(reading.bandName()),
+                }),
+                direction: crossing.direction(),
+                link: crossing.link(),
+                cause: crossing.cause(),
+                counterparty_band_id: crossing.counterpartyBandId(),
+                counterparty_name: text(crossing.counterpartyName()),
+                counterparty_faction: crossing.counterpartyFaction(),
+                party_id: crossing.partyId(),
+                amount: crossing.amount(),
+            }
+        }),
+        pooling_links: map_rows(cohort.poolingLinks(), |link| PoolingLinkState {
+            band_id: link.bandId(),
+            distance_tiles: link.distanceTiles(),
+            rung_id: text(link.rungId()),
+        }),
+        supply_network_span_tiles: cohort.supplyNetworkSpanTiles(),
     })
+}
+
+/// `PopulationCohortState.transferCrossings` — one row per crossing, a material's reading in the
+/// `MaterialBatchState.readings` shape.
+fn create_transfer_crossings<'a>(
+    builder: &mut FbBuilder<'a>,
+    crossings: &[TransferCrossingState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::TransferCrossingState<'a>>>> {
+    let rows: Vec<_> = crossings
+        .iter()
+        .map(|crossing| {
+            let commodity = builder.create_string(&crossing.commodity);
+            let counterparty_name = builder.create_string(&crossing.counterparty_name);
+            let readings: Vec<_> = crossing
+                .readings
+                .iter()
+                .map(|reading| {
+                    let axis = builder.create_string(&reading.axis);
+                    let band_name = builder.create_string(&reading.band_name);
+                    fb::CharacteristicReading::create(
+                        builder,
+                        &fb::CharacteristicReadingArgs {
+                            axis: Some(axis),
+                            value: reading.value,
+                            bandName: Some(band_name),
+                        },
+                    )
+                })
+                .collect();
+            let readings = builder.create_vector(&readings);
+            fb::TransferCrossingState::create(
+                builder,
+                &fb::TransferCrossingStateArgs {
+                    commodity: Some(commodity),
+                    readings: Some(readings),
+                    direction: crossing.direction,
+                    link: crossing.link,
+                    cause: crossing.cause,
+                    counterpartyBandId: crossing.counterparty_band_id,
+                    counterpartyName: Some(counterparty_name),
+                    counterpartyFaction: crossing.counterparty_faction,
+                    partyId: crossing.party_id,
+                    amount: crossing.amount,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
+}
+
+/// `PopulationCohortState.poolingLinks`.
+fn create_pooling_links<'a>(
+    builder: &mut FbBuilder<'a>,
+    links: &[PoolingLinkState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::PoolingLinkState<'a>>>> {
+    let rows: Vec<_> = links
+        .iter()
+        .map(|link| {
+            let rung_id = builder.create_string(&link.rung_id);
+            fb::PoolingLinkState::create(
+                builder,
+                &fb::PoolingLinkStateArgs {
+                    bandId: link.band_id,
+                    distanceTiles: link.distance_tiles,
+                    rungId: Some(rung_id),
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&rows)
 }
 
 /// The inverse of [`create_shortfalls`].

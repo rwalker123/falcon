@@ -1216,36 +1216,43 @@ number; an unbounded `past_recovery` still names its outcome; and the two degene
 is sabotage-verified against a different mutation. The launch half and the vocabulary live in
 `band-city-panel.md` → "DENIAL is a third MISSION on the parties footer".
 
-## The Food line's TRANSFERS are breakdown rows, and the headline is the four-term STEADY rate
+## The Food line's TRANSFERS are breakdown rows, and the headline adds the POOLED net
 
-Arc #527, issue #517. The larder identity the sim pins is
+Arc #527, issue #517, issue #731. The larder identity the sim pins is
 
 ```text
 larder_delta == foodIncome − foodConsumption − raidForfeit
                 + transferReceived − transferSent
 ```
 
-**The BREAKDOWN states all six; `DetailFormat.band_net_food` sums the first four.** The two are
-answering different questions and the split is deliberate: the headline is a per-turn RATE, and the
-transfer pair is what CROSSED a larder over the snapshot window — a past event, which the itemized
-rows are the right place for.
+**The BREAKDOWN states every term; the headline `/turn` is `DetailFormat.band_headline_food_rate`** —
+`band_net_food` (steady income − Consumed − Lost to raids) **plus this turn's POOLED food net**, the
+`pooled` crossings on `provisions` in minus out (`band_pooled_food_net`, off `transfer_crossings`).
+So the Food popover's rows — Gathered, Hunted, Consumed, Lost to raids, `⇄ Local exchange` — sum to
+the headline on a turn when nothing else crossed. Pooling is in the rate because it happens most
+turns; a shipment, a party's haul or rations and a split's dowry are one-off events and stay out of
+it, itemized in the breakdown only. `ui_preview`'s `supply_food_headline_sums` asserts the rendered
+rows sum to the rendered headline.
 
-**The reason the pair cannot ride the headline is the number printed BESIDE it.** The sim's
-`turnsOfFood` runway is computed from per-source income and excludes transfers entirely, so a folded-in
-headline makes the `/turn` rate and the `(N turns)` runway *on the same row* compute on different
-bases — two numbers on one line that cannot agree. Matching the sim's basis is the point; the red
-flash is only how it shows.
+**`band_net_food` itself is unchanged and keeps its other readers**: `food_is_concerning` (the Food
+caret's WARN) and the faction page (`FactionRollup` — the summed Food line and each band's drill row)
+read the steady net without the pooled term. Only `BandDetailLines._band_food_line` reads
+`band_headline_food_rate`.
 
-And it does flash. A shipment is bounded only by the manifest the player builds — up to the whole
-larder — unlike `raidForfeit`, which is capped at a fraction of one turn's income. A band with income
-6 and consumption 5 that sends 40 printed **`-39.0` in DANGER red under a WARN caret**, then `+1.0`
-the next frame, on an economy that had not changed.
+**One gap between the headline and the rows remains, by construction.** `⇄ Local exchange` nets the
+Local ARM's four terms, and that arm carries a split's dowry as well as pooling — so on a dowry turn
+the rows differ from the headline by the dowry. The `(N turns)` runway beside the rate is the
+sim's `turnsOfFood`, whose income term includes the same POOLED food net and no other transfer, so
+the rate and the runway on one row are on one basis (the fodder runway, `turnsOfFodder`, includes the
+local arm's whole net). The FOOD OUTLOOK chart (`FoodOutlookChart.set_projection`) adds the same
+pooled net to every step of its walk — the sim's `standing_net` in `larder_runway_turns` — so its
+empty marker lands on the turn `turnsOfFood` names; the chart has no mark for the sim's smooth arm
+(a walk that never empties draws no marker).
 
-**What this costs, stated plainly: the steady headline does NOT reflect a neighbour's recurring
-supply-network contribution.** `balance_supply_networks` moves food between co-networked larders every
-turn, and that genuinely is a standing part of a band's economy. Closing it properly means the SIM
-projecting steady transfers forward (issues #547 / #548) — a client-side fold-in of a past window is
-not that number and cannot be made into one.
+A shipment is bounded only by the manifest the player builds — up to the whole larder — unlike
+`raidForfeit`, which is capped at a fraction of one turn's income. A band with income 6 and
+consumption 5 that sends 40 would print `-39.0` in DANGER red, then `+1.0` the next frame, which is
+why a shipment is not in the rate.
 
 - **Two named magnitudes, never one signed net**, matching `raidForfeit` beside
   them: a band that both sends and receives inside one window is doing something, and a net renders
@@ -1286,8 +1293,8 @@ client's fallback font and renders as an invisible gap** — no tofu box, nothin
 the silent-failure class `Typography.gd` was retired for; `⇄` comes from the Arrows block the ▸/◀/▲▼
 carets already draw from.
 
-**Frames:** `trade_food_ledger` (a band carrying both terms, whose headline states the steady rate
-alone) and `trade_food_transfers` (the same row OPENED, which is the only state that can say the two
+**Frames:** `trade_food_ledger` (a band carrying both terms; its headline carries the pooled one and
+not the shipment) and `trade_food_transfers` (the same row OPENED, which is the only state that can say the two
 terms are itemized at all — the headline says nothing about them by design).
 
 **The command-refreshed frame is PNG-LESS and is asserted as a PAIR with them** (`chapters/trade.gd`):
@@ -1443,17 +1450,17 @@ said nothing at all. **The row names the KIND OF LINK the goods crossed**, and t
 | label | what it is |
 |---|---|
 | `⇄ Local exchange` | `balance_supply_networks` — the automatic balancing between camps within reach of one another. Nobody orders it and nobody built it |
-| `⇄ Trade route` | a shipment: a party arriving with cargo, or the draw one takes when it launches. **This one the player did** |
+| `⇄ Trade route` | a shipment: a party landing cargo, or the cargo one loads when it launches. **This one the player did** |
 
 That distinction is the whole readout, and it is what a player can act on — one of the two is a thing
 they built, and the other happens whether they look or not.
 
-⛔ **IT NAMES THE LINK AND NEVER THE COUNTERPARTY, and the counterparty version was BUILT AND
-REJECTED.** Bands have no names in this game (issue #615), so every named row was either a
-placeholder or a `Band 4` — and because a name list is variable-length it dragged a whole
+⛔ **A POPOVER ROW NAMES THE LINK AND NEVER THE COUNTERPARTY.** Bands carry real names (issue #615),
+but a name is variable-length, and the counterparty version of these rows dragged a whole
 pixel-fitting apparatus behind it (a measured column, a per-row lead, a two-pass fit, `+N more`
-overflow, a `neighbors` fallback) purely to stop rows wrapping. **Two fixed phrases cannot wrap**, and
-all of that machinery came out with them.
+overflow, a `neighbors` fallback) purely to stop a vitals-width row wrapping. **Two fixed phrases
+cannot wrap**, and all of that machinery came out with them. The counterparty is named where there is
+room for it: the band dock's Trade tab (`band-city-panel.md` → "The Trade tab").
 
 ⛔ **AND NOTHING SAYS "POOLED".** One anonymous pot is how `balance_commodity` is implemented, not
 what happens in the world: each camp holds its own stores and hands some of them to a short neighbor.
@@ -1497,6 +1504,31 @@ exactly one thing, the number's resolution, which `fodder_breakdown_row` owns.
 Each row is omitted when its NET magnitude falls below the account's existing floor
 (`SourceForecast.FOOD_FLOW_MIN` / `FODDER_FLOW_MIN`), so a camp that exchanged nothing renders
 nothing — never `⇄ Local exchange +0.00`.
+
+### `⇄ Trade route` is SHIPMENTS; a band's own parties get rows of their own (issue #731)
+
+The wire's Route arm carries three causes, because a party carried all three: a **shipment**
+(`shipment_in` / `shipment_out`), a band's own party **coming home** with its haul or folding back
+(`party_home`), and the **larder a party launches with** (`party_provisions`). Rendering the whole arm
+as `⇄ Trade route` labelled a hunt's haul as trade — and it is not in the hunting income either, since
+the sim books a homecoming as neither income nor consumption.
+
+So both popovers read the per-cause `transfer_crossings` list (`TradeLedger.cause_net`) and split it:
+
+| row | cause | where it sits |
+|---|---|---|
+| `⇄ Trade route` | `shipment_in` + `shipment_returned` − `shipment_out` | the transfer rows, as before — a shipment cancelled in camp nets to nothing here |
+| `Brought home` | `party_home` (▲) — the party's own pack, never a trade party's cargo (that is `shipment_returned`) | beside Hunted / Gathered (Grown, on the fodder account) |
+| `Party rations` | `party_provisions` (▼) | beside them too |
+
+`⇄ Local exchange` still reads the whole Local arm off the four link terms — pooling AND a split's
+dowry — unchanged. **The popover still accounts for the whole larder change**: the crossings summed
+per `(link, direction)` equal the arms by construction (`LaborAllocation::book_crossing`,
+`.claude/rules/core_sim/campaign.md` → "The cause key and the crossings list"), so the three route
+rows sum to the retired whole-arm row. `tools/ui_preview/chapters/supply_network.gd`'s
+`supply_food_party_rows` asserts all three rows and that sum. Each is omitted under the account's
+floor like every other row; the labels are `DetailFormat.TRANSFER_LABEL_BROUGHT_HOME` /
+`TRANSFER_LABEL_PARTY_RATIONS`, direction being the sign's job.
 
 ### What is on the wire, and why there is no fallback
 

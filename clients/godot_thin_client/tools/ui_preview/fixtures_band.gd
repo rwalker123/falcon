@@ -49,6 +49,30 @@ const FIXTURE_BAND_NAMES := [
 	"Nettlebrook", "Oakenshade", "Pinewold", "Ravensgate", "Saltmarch",
 ]
 
+## **ONE TRANSFER CROSSING, IN THE DECODER'S OWN SHAPE** (issue #731, `population_to_dict`'s
+## `transfer_crossings` rows) — for a fixture whose Food / Fodder popover or Trade tab has to state a
+## crossing by its CAUSE. `readings` is the `material_batches` reading shape
+## (`{axis, value, band_name}`), empty for food and fodder. Shared by `ui_preview`'s chapters and
+## `band_panel_preview`, so the two harnesses stage one row shape.
+static func transfer_crossing(commodity: String, direction: int, cause: int, amount: float,
+		readings: Array = [], counterparty_id: int = HudTradeVocab.NO_BAND,
+		counterparty_name: String = "", counterparty_faction: int = HudConst.PLAYER_FACTION_ID,
+		party_id: int = HudTradeVocab.NO_BAND) -> Dictionary:
+	var local := cause == HudTradeVocab.CAUSE_POOLED or cause == HudTradeVocab.CAUSE_DOWRY_IN \
+		or cause == HudTradeVocab.CAUSE_DOWRY_OUT
+	return {
+		HudTradeVocab.CROSSING_COMMODITY: commodity,
+		HudTradeVocab.CROSSING_READINGS: readings,
+		HudTradeVocab.CROSSING_DIRECTION: direction,
+		HudTradeVocab.CROSSING_LINK: HudTradeVocab.LINK_LOCAL if local else HudTradeVocab.LINK_ROUTE,
+		HudTradeVocab.CROSSING_CAUSE: cause,
+		HudTradeVocab.CROSSING_COUNTERPARTY_ID: counterparty_id,
+		HudTradeVocab.CROSSING_COUNTERPARTY_NAME: counterparty_name,
+		HudTradeVocab.CROSSING_COUNTERPARTY_FACTION: counterparty_faction,
+		HudTradeVocab.CROSSING_PARTY_ID: party_id,
+		HudTradeVocab.CROSSING_AMOUNT: amount,
+	}
+
 static func band_fixture() -> Dictionary:
 	return with_band_id({
 		# `name` is the SIM's field and `id` the marker stamp `MapView._rebuild_unit_markers` derives

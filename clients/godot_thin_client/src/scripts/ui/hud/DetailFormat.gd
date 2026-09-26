@@ -172,10 +172,11 @@ const TRANSFER_GLYPH := "⇄"
 #   * **Trade route** — a shipment: a party arriving with cargo, or the draw a party takes when it
 #     launches. This one the player did.
 #
-# ⛔ **IT NAMES THE LINK AND NEVER THE COUNTERPARTY.** Naming the camp at the other end was built and
-# rejected: bands genuinely have no names in this game (issue #615), so every such row was either a
-# placeholder or a `Band 4`, and the variable-length name list dragged a whole pixel-fitting apparatus
-# behind it to keep the row from wrapping. A link kind is two fixed phrases and cannot wrap.
+# ⛔ **IT NAMES THE LINK AND NEVER THE COUNTERPARTY — in a POPOVER ROW.** Bands carry real names (issue
+# #615 shipped the curated list), but a variable-length name wraps a 354px vitals row and dragged a
+# whole pixel-fitting apparatus behind it when it was tried; a link kind is two fixed phrases and
+# cannot wrap. The counterparty IS named where there is room for it: the band dock's Trade tab
+# (issue #731), one line per shipment.
 #
 # ⛔ **AND NOTHING SAYS "POOLED".** One anonymous pot is how `balance_commodity` is implemented, not
 # what happens in the world: each camp holds its own stores and hands some of them to a short
@@ -189,6 +190,15 @@ const TRANSFER_GLYPH := "⇄"
 # a copy: two accounts wording one event two ways is a drift that has already had to be undone once.
 const TRANSFER_LABEL_LOCAL := "%s Local exchange" % TRANSFER_GLYPH
 const TRANSFER_LABEL_ROUTE := "%s Trade route" % TRANSFER_GLYPH
+
+# ---- WHAT A BAND'S OWN PARTIES MOVED (issue #731) --------------------------------------------------
+# The Route arm carries more than trade: a hunt's haul dropped off, a party folding home, and the
+# larder a party takes when it launches all book there because a party CARRIED them. To a player they
+# are the band's own hunting and foraging, not a trade route, so the popovers split them out by the
+# crossing's CAUSE and state them beside Hunted / Gathered — and `⇄ Trade route` keeps shipments alone.
+# Direction is the sign's job here as on every other row, so each is one phrase.
+const TRANSFER_LABEL_BROUGHT_HOME := "Brought home"
+const TRANSFER_LABEL_PARTY_RATIONS := "Party rations"
 
 # ---- THE FODDER LEDGER'S TWO FLOWS, the labels of the `Fodder:` row's own breakdown. The larder has
 # exactly two: what the band's fodder Fields GREW this turn (`fodder_income`) and what its pens ATE
@@ -2596,6 +2606,23 @@ static func band_net_food(band: Dictionary) -> float:
         - float(band.get("food_consumption", 0.0)) \
         - band_raid_forfeit(band)
 
+## **THE BAND PANEL'S FOOD HEADLINE RATE** — `band_net_food` plus this turn's POOLED food net, so the
+## Food popover's rows (Gathered, Hunted, Consumed, Lost to raids, `⇄ Local exchange`) sum to the
+## headline on a turn when nothing else crossed. Only `pooled`: pooling happens most turns, so it
+## belongs in a rate; a shipment, a party's haul or rations and a split's dowry are one-off events
+## and stay out of it.
+##
+## ⛔ **A SEPARATE FUNCTION, AND `band_net_food` KEEPS ITS MEANING.** `band_net_food` is also read by
+## `food_is_concerning` and by the faction page (`FactionRollup`'s summed Food line and its per-band
+## drill rows); those keep the steady net. Only `BandDetailLines._band_food_line` reads this one.
+static func band_headline_food_rate(band: Dictionary) -> float:
+    return band_net_food(band) + band_pooled_food_net(band)
+
+## This turn's POOLED food, in minus out — the `pooled` crossings on `provisions`, off the per-cause
+## list (`TradeLedger.cause_net`). The Local arm's four terms also carry a split's dowry; this does not.
+static func band_pooled_food_net(band: Dictionary) -> float:
+    return TradeLedger.cause_net(band, HudConst.STORE_ITEM_PROVISIONS, [HudTradeVocab.CAUSE_POOLED])
+
 ## The STEADY total food income = Gathered + Hunted (Σ per-source realized average across the band's
 ## forage + hunt assignments). Summed from the SAME per-source realized values as the breakdown rows, so
 ## it equals Gathered + Hunted exactly — the honest long-run average of the lumpy per-turn take, so it
@@ -2690,32 +2717,25 @@ const FODDER_TRANSFER_ROUTE_SENT_TURN_KEY := "fodder_transfer_route_sent_turn"
 ## was unreachable on any real snapshot and the only thing keeping it alive was a fixture that staged
 ## a state no server can send. Both ledgers now simply render the rows whose figures they were given.
 
-## The eight figures, on the per-turn basis every other row of both breakdowns is on. A row read off
-## an accumulator vanishes the instant a dispatched command re-captures the frame — the defect issue
-## #517 fixed on the food account, not to be reintroduced one ledger over.
+## The LOCAL arm's four figures, on the per-turn basis every other row of both breakdowns is on. A row
+## read off an accumulator vanishes the instant a dispatched command re-captures the frame — the defect
+## issue #517 fixed on the food account, not to be reintroduced one ledger over.
+##
+## **THE ROUTE ARM HAS NO READER HERE ANY MORE** (issue #731). Its rows are split by the crossing's
+## CAUSE — shipments, a party home, a party's rations — off `transfer_crossings`
+## (`TradeLedger.cause_net`), so no surface reads the arm as one figure; the four `*_ROUTE_*_KEY`
+## names above stay only as the spelling fixtures stage the wire shape with.
 static func band_transfer_local_received_turn(band: Dictionary) -> float:
     return float(band.get(TRANSFER_LOCAL_RECEIVED_TURN_KEY, 0.0))
 
 static func band_transfer_local_sent_turn(band: Dictionary) -> float:
     return float(band.get(TRANSFER_LOCAL_SENT_TURN_KEY, 0.0))
 
-static func band_transfer_route_received_turn(band: Dictionary) -> float:
-    return float(band.get(TRANSFER_ROUTE_RECEIVED_TURN_KEY, 0.0))
-
-static func band_transfer_route_sent_turn(band: Dictionary) -> float:
-    return float(band.get(TRANSFER_ROUTE_SENT_TURN_KEY, 0.0))
-
 static func band_fodder_transfer_local_received_turn(band: Dictionary) -> float:
     return float(band.get(FODDER_TRANSFER_LOCAL_RECEIVED_TURN_KEY, 0.0))
 
 static func band_fodder_transfer_local_sent_turn(band: Dictionary) -> float:
     return float(band.get(FODDER_TRANSFER_LOCAL_SENT_TURN_KEY, 0.0))
-
-static func band_fodder_transfer_route_received_turn(band: Dictionary) -> float:
-    return float(band.get(FODDER_TRANSFER_ROUTE_RECEIVED_TURN_KEY, 0.0))
-
-static func band_fodder_transfer_route_sent_turn(band: Dictionary) -> float:
-    return float(band.get(FODDER_TRANSFER_ROUTE_SENT_TURN_KEY, 0.0))
 
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there). Here beside the rest of the band food

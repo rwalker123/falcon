@@ -2,6 +2,7 @@
 paths:
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.tscn"
+  - "clients/godot_thin_client/tools/band_panel_trade_tab.gd"
   # `command_guard` is gated HERE, not in `harness-headless-guards.md`, because the rationale it
   # needs is the KIT PICKER's: it `preload`s `BandFx.kit_roster_fixture()` — one of the tree's three
   # cross-harness preloads — and the "compose a NON-DEFAULT kit on every path, and write the id
@@ -171,8 +172,16 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 193 frames / 1454 `PASS` / 559 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 220 frames / 1533 `PASS` / 566 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
+
+**PR #738's REVIEW FIXES MOVED IT 216 / 1526 / 566 → 220 / 1533 / 566**: the returned-shipment pair
+(`trade_tab_shipment_cancelled`, `trade_tab_shipment_returned`), the anchor-gone close
+(`trade_tab_list_anchor_gone`) and the after-layout tier (`trade_tab_wide_full_after_render`).
+
+**MERGING #731's TRADE TAB WITH MAIN MOVED IT 193 / 1454 / 559 → 216 / 1526 / 566**, re-measured on the
+merged tree rather than summed: the Trade tab's states (`tools/band_panel_trade_tab.gd`, run last) on
+top of main's.
 
 **THE POOL CARD'S `ⓘ`/`⚠` SPLIT (issue #716) MOVED IT 192 / 1440 / 556 → 193 / 1454 / 559**: the
 `band_panel_pool_kit_short_builders` frame, the per-card state claims, the driven tool-line fork, the
@@ -2834,3 +2843,22 @@ for.** A run started immediately after a `--import` failed three claims with
 enough to starve the frame loop blows the budget and FAILS LOUDLY rather than hanging. The immediate
 re-run was green. **Judge it by a second run before treating it as a regression**; nothing in the
 pool-TOE arc is anywhere near that gesture.
+
+## The Trade tab's states live in `tools/band_panel_trade_tab.gd` (issue #731)
+
+**A file of its own, run LAST** (`await TRADE_TAB_STATES.new().run(self)` just before
+`_assert_pending_assign_rollback`), so the tab's fixtures do not grow this harness and no earlier
+frame moves. It is a `RefCounted` handed the harness node (`h`) — the `ui_preview` chapter shape —
+and it hands the panel back at the preview canvas, left-docked, on the Work tab, with the reference
+band.
+
+Its fixture is a five-camp network (one relay, one open-ground link) built off `h._band_fixture()`,
+its crossings off `BandFx.transfer_crossing` — the shared decoder-shaped row both harnesses stage.
+Three turns: the **busy** one (four goods, one foreign import, one export, plus a `party_home` and a
+`dowry_out` the tab must not show), the **fold** one (six imports) and the **busiest** one (eight
+goods, fifteen shipments), which is the one the wide shell's strip cannot hold at full height. The
+claims a frame cannot make: the causes that reached the tab, the badge's count, the tier the
+measurement chose, the relay's first hop, the friction row, the 1190 threshold with no Trade flank,
+and `_assert_scroll_only_where_sanctioned` across both shells. The frames are listed in
+`band-city-panel.md` → "The Trade tab".
+

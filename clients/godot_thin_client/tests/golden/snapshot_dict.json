@@ -5132,6 +5132,23 @@
           "required": 30.620001
         }
       ],
+      "pooling_links": [
+        {
+          "band_id": 123,
+          "distance_tiles": 53,
+          "rung_id": "populations[0].pooling_links[0].rung_id"
+        },
+        {
+          "band_id": 112,
+          "distance_tiles": 112,
+          "rung_id": "populations[0].pooling_links[1].rung_id"
+        },
+        {
+          "band_id": 97,
+          "distance_tiles": 15,
+          "rung_id": "populations[0].pooling_links[2].rung_id"
+        }
+      ],
       "quarrywork_demand": 73.029999,
       "quarrywork_shortfall": 76.830002,
       "quarrywork_supplied": 34.189999,
@@ -5152,6 +5169,78 @@
         "populations[0].stores[2].item": 0.000019
       },
       "supply_network_id": 60,
+      "supply_network_span_tiles": 173,
+      "transfer_crossings": [
+        {
+          "amount": 45.639999,
+          "cause": 174,
+          "commodity": "populations[0].transfer_crossings[0].commodity",
+          "counterparty_band_id": 137,
+          "counterparty_faction": 26,
+          "counterparty_name": "populations[0].transfer_crossings[0].counterparty_name",
+          "direction": 60,
+          "link": 183,
+          "party_id": 75,
+          "readings": [
+            {
+              "axis": "populations[0].transfer_crossings[0].readings[0].axis",
+              "band_name": "populations[0].transfer_crossings[0].readings[0].band_name",
+              "value": 41.369999
+            },
+            {
+              "axis": "populations[0].transfer_crossings[0].readings[1].axis",
+              "band_name": "populations[0].transfer_crossings[0].readings[1].band_name",
+              "value": 80.669998
+            }
+          ]
+        },
+        {
+          "amount": 109.57,
+          "cause": 73,
+          "commodity": "populations[0].transfer_crossings[1].commodity",
+          "counterparty_band_id": 84,
+          "counterparty_faction": 163,
+          "counterparty_name": "populations[0].transfer_crossings[1].counterparty_name",
+          "direction": 83,
+          "link": 138,
+          "party_id": 30,
+          "readings": [
+            {
+              "axis": "populations[0].transfer_crossings[1].readings[0].axis",
+              "band_name": "populations[0].transfer_crossings[1].readings[0].band_name",
+              "value": 54.259998
+            },
+            {
+              "axis": "populations[0].transfer_crossings[1].readings[1].axis",
+              "band_name": "populations[0].transfer_crossings[1].readings[1].band_name",
+              "value": 64.120003
+            }
+          ]
+        },
+        {
+          "amount": 1.11,
+          "cause": 200,
+          "commodity": "populations[0].transfer_crossings[2].commodity",
+          "counterparty_band_id": 115,
+          "counterparty_faction": 40,
+          "counterparty_name": "populations[0].transfer_crossings[2].counterparty_name",
+          "direction": 14,
+          "link": 181,
+          "party_id": 97,
+          "readings": [
+            {
+              "axis": "populations[0].transfer_crossings[2].readings[0].axis",
+              "band_name": "populations[0].transfer_crossings[2].readings[0].band_name",
+              "value": 17.15
+            },
+            {
+              "axis": "populations[0].transfer_crossings[2].readings[1].axis",
+              "band_name": "populations[0].transfer_crossings[2].readings[1].band_name",
+              "value": 89.209999
+            }
+          ]
+        }
+      ],
       "transfer_local_received_turn": 80.400002,
       "transfer_local_sent_turn": 3.77,
       "transfer_received": 60.07,
@@ -6023,6 +6112,23 @@
           "required": 84.980003
         }
       ],
+      "pooling_links": [
+        {
+          "band_id": 62,
+          "distance_tiles": 170,
+          "rung_id": "populations[1].pooling_links[0].rung_id"
+        },
+        {
+          "band_id": 97,
+          "distance_tiles": 103,
+          "rung_id": "populations[1].pooling_links[1].rung_id"
+        },
+        {
+          "band_id": 56,
+          "distance_tiles": 176,
+          "rung_id": "populations[1].pooling_links[2].rung_id"
+        }
+      ],
       "quarrywork_demand": 108.370003,
       "quarrywork_shortfall": 103.940002,
       "quarrywork_supplied": 106.830002,
@@ -6043,6 +6149,78 @@
         "populations[1].stores[2].item": 0.00009
       },
       "supply_network_id": 199,
+      "supply_network_span_tiles": 190,
+      "transfer_crossings": [
+        {
+          "amount": 9.59,
+          "cause": 149,
+          "commodity": "populations[1].transfer_crossings[0].commodity",
+          "counterparty_band_id": 88,
+          "counterparty_faction": 31,
+          "counterparty_name": "populations[1].transfer_crossings[0].counterparty_name",
+          "direction": 159,
+          "link": 30,
+          "party_id": 122,
+          "readings": [
+            {
+              "axis": "populations[1].transfer_crossings[0].readings[0].axis",
+              "band_name": "populations[1].transfer_crossings[0].readings[0].band_name",
+              "value": 41.610001
+            },
+            {
+              "axis": "populations[1].transfer_crossings[0].readings[1].axis",
+              "band_name": "populations[1].transfer_crossings[0].readings[1].band_name",
+              "value": 52.16
+            }
+          ]
+        },
+        {
+          "amount": 32.880001,
+          "cause": 170,
+          "commodity": "populations[1].transfer_crossings[1].commodity",
+          "counterparty_band_id": 21,
+          "counterparty_faction": 86,
+          "counterparty_name": "populations[1].transfer_crossings[1].counterparty_name",
+          "direction": 120,
+          "link": 3,
+          "party_id": 23,
+          "readings": [
+            {
+              "axis": "populations[1].transfer_crossings[1].readings[0].axis",
+              "band_name": "populations[1].transfer_crossings[1].readings[0].band_name",
+              "value": 50.110001
+            },
+            {
+              "axis": "populations[1].transfer_crossings[1].readings[1].axis",
+              "band_name": "populations[1].transfer_crossings[1].readings[1].band_name",
+              "value": 47.799999
+            }
+          ]
+        },
+        {
+          "amount": 5.4,
+          "cause": 39,
+          "commodity": "populations[1].transfer_crossings[2].commodity",
+          "counterparty_band_id": 138,
+          "counterparty_faction": 37,
+          "counterparty_name": "populations[1].transfer_crossings[2].counterparty_name",
+          "direction": 49,
+          "link": 140,
+          "party_id": 48,
+          "readings": [
+            {
+              "axis": "populations[1].transfer_crossings[2].readings[0].axis",
+              "band_name": "populations[1].transfer_crossings[2].readings[0].band_name",
+              "value": 61.209999
+            },
+            {
+              "axis": "populations[1].transfer_crossings[2].readings[1].axis",
+              "band_name": "populations[1].transfer_crossings[2].readings[1].band_name",
+              "value": 100.080002
+            }
+          ]
+        }
+      ],
       "transfer_local_received_turn": 101.760002,
       "transfer_local_sent_turn": 101.169998,
       "transfer_received": 44.830002,
@@ -7009,6 +7187,23 @@
           "required": 26.959999
         }
       ],
+      "pooling_links": [
+        {
+          "band_id": 65,
+          "distance_tiles": 103,
+          "rung_id": "populations[2].pooling_links[0].rung_id"
+        },
+        {
+          "band_id": 190,
+          "distance_tiles": 90,
+          "rung_id": "populations[2].pooling_links[1].rung_id"
+        },
+        {
+          "band_id": 123,
+          "distance_tiles": 37,
+          "rung_id": "populations[2].pooling_links[2].rung_id"
+        }
+      ],
       "quarrywork_demand": 68.559998,
       "quarrywork_shortfall": 36.98,
       "quarrywork_supplied": 83.269997,
@@ -7029,6 +7224,78 @@
         "populations[2].stores[2].item": 0.000197
       },
       "supply_network_id": 186,
+      "supply_network_span_tiles": 163,
+      "transfer_crossings": [
+        {
+          "amount": 31.139999,
+          "cause": 28,
+          "commodity": "populations[2].transfer_crossings[0].commodity",
+          "counterparty_band_id": 95,
+          "counterparty_faction": 124,
+          "counterparty_name": "populations[2].transfer_crossings[0].counterparty_name",
+          "direction": 138,
+          "link": 193,
+          "party_id": 85,
+          "readings": [
+            {
+              "axis": "populations[2].transfer_crossings[0].readings[0].axis",
+              "band_name": "populations[2].transfer_crossings[0].readings[0].band_name",
+              "value": 25.309999
+            },
+            {
+              "axis": "populations[2].transfer_crossings[0].readings[1].axis",
+              "band_name": "populations[2].transfer_crossings[0].readings[1].band_name",
+              "value": 105.260002
+            }
+          ]
+        },
+        {
+          "amount": 55.369999,
+          "cause": 39,
+          "commodity": "populations[2].transfer_crossings[1].commodity",
+          "counterparty_band_id": 146,
+          "counterparty_faction": 125,
+          "counterparty_name": "populations[2].transfer_crossings[1].counterparty_name",
+          "direction": 193,
+          "link": 156,
+          "party_id": 16,
+          "readings": [
+            {
+              "axis": "populations[2].transfer_crossings[1].readings[0].axis",
+              "band_name": "populations[2].transfer_crossings[1].readings[0].band_name",
+              "value": 63.619999
+            },
+            {
+              "axis": "populations[2].transfer_crossings[1].readings[1].axis",
+              "band_name": "populations[2].transfer_crossings[1].readings[1].band_name",
+              "value": 72.690002
+            }
+          ]
+        },
+        {
+          "amount": 34.330002,
+          "cause": 98,
+          "commodity": "populations[2].transfer_crossings[2].commodity",
+          "counterparty_band_id": 181,
+          "counterparty_faction": 142,
+          "counterparty_name": "populations[2].transfer_crossings[2].counterparty_name",
+          "direction": 72,
+          "link": 163,
+          "party_id": 127,
+          "readings": [
+            {
+              "axis": "populations[2].transfer_crossings[2].readings[0].axis",
+              "band_name": "populations[2].transfer_crossings[2].readings[0].band_name",
+              "value": 35.5
+            },
+            {
+              "axis": "populations[2].transfer_crossings[2].readings[1].axis",
+              "band_name": "populations[2].transfer_crossings[2].readings[1].band_name",
+              "value": 100.050003
+            }
+          ]
+        }
+      ],
       "transfer_local_received_turn": 108.029999,
       "transfer_local_sent_turn": 98.230003,
       "transfer_received": 29.34,

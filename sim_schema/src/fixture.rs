@@ -578,6 +578,13 @@ fn seed_snapshot() -> WorldSnapshot {
                 keepers: rank as f32,
             })
             .collect();
+        // **WHAT CROSSED THE STORE, BY CAUSE** — a repeated field inside a repeated field (a
+        // material row's readings), so both levels need elements, as `material_batches` above.
+        cohort.transfer_crossings = rows_of(TransferCrossingState {
+            readings: vec![CharacteristicReadingState::default(); 2],
+            ..Default::default()
+        });
+        cohort.pooling_links = rows();
         cohort.pending_reveal_x = vec![0u32; ROWS];
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();

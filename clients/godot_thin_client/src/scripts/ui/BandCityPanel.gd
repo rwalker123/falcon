@@ -11,8 +11,9 @@ class_name BandCityPanel
 ## tab persistence.
 ##
 ## THE BODY IS **AN ORDERED LIST OF NAMED ZONES AT A FIXED CROSS-AXIS SIZE**, declared by the SUBJECT
-## (`set_zone_layout`) and filled by it (`set_zones`). A band declares three — `band` (vitals), `work`
-## (the paged work board) and `parties`; the faction page declares four, adding `knowledge`. Nothing is
+## (`set_zone_layout`) and filled by it (`set_zones`). A band declares four — `band` (vitals), `work`
+## (the paged work board), `parties` and `trade`, the last NARROW-ONLY (`ZONE_SPEC_NARROW_ONLY`), so the
+## wide shell lays out three; the faction page declares three. Nothing is
 ## balanced, so no content can migrate between zones; nothing is fitted to
 ## content, so the reservation this panel reports changes ONLY on dock / collapse
 ## / hide / viewport-resize — never on a content edit. That is the whole point of
@@ -382,13 +383,16 @@ const HEADER_HEIGHT_FALLBACK := 44.0
 const ZONE_BAND := &"band"
 const ZONE_WORK := &"work"
 const ZONE_PARTIES := &"parties"
+## The band page's Trade zone (issue #731). A band declares it `ZONE_SPEC_NARROW_ONLY`: a tab in the
+## narrow shell, and no flank of its own in the wide one.
+const ZONE_TRADE := &"trade"
 ## Every zone key the panel knows. **The persisted tab is validated against THIS rather than against
 ## the live layout**, because prefs load before any subject has declared one — the only layout
 ## standing at that moment is the bootstrap `DEFAULT_ZONE_LAYOUT`, and a player who left on the
 ## faction page's `parties` tab must have that selection survive a check against a layout no subject
 ## has authored yet. A key the live layout lacks is handled by `_effective_tab`, which falls back to
 ## the first zone that has content.
-const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES]
+const ZONE_KEYS: Array[StringName] = [ZONE_BAND, ZONE_WORK, ZONE_PARTIES, ZONE_TRADE]
 ## A zone descriptor's fields (`set_zone_layout`). Named consts rather than bare strings, the
 ## `HudWidgets.MENU_ENTRY_*` idiom: a mistyped key in a Dictionary literal is silent.
 const ZONE_SPEC_KEY := "key"
@@ -410,6 +414,17 @@ const ZONE_SPEC_WIDTH := "width"
 ## nothing and stays at one — a widened flank with a one-column builder in it renders half a box of
 ## blank card, which is the emptiness the widening exists to remove rather than move.
 const ZONE_SPEC_MAX_COLUMNS := "max_columns"
+## **A ZONE THAT EXISTS ONLY IN THE NARROW SHELL** — a tab there, and NOTHING in the wide shell: no
+## host, no separator, no term in `wide_shell_min_width()`, `_fixed_zone_span()` or
+## `_wide_separator_span()`. Absent means `false`, so every zone that has never asked is unchanged.
+##
+## **IT EXISTS SO A ZONE CAN BE ADDED WITHOUT MOVING THE SHELL THRESHOLD.** The threshold is a SUM
+## over the wide layout, so a fourth flank would move a band's from 1190 to 1569 and tab every laptop
+## bottom dock between the two. The band page's Trade zone declares this, and its subject appends the
+## same content under another zone when the shell is wide (issue #731, option iii) — which zone is
+## the SUBJECT's call, since only it knows what its zones hold. Every wide-shell reader walks
+## `_wide_layout()`, never `_zone_layout`, so the exclusion is one filter rather than five checks.
+const ZONE_SPEC_NARROW_ONLY := "narrow_only"
 ## What an undeclared `ZONE_SPEC_MAX_COLUMNS` means, and the floor `zone_columns()` clamps to.
 const ZONE_COLUMNS_MIN := 1
 ## A zone whose wide-shell width is `ZONE_WIDTH_EXPAND` takes whatever the fixed flanks leave. Exactly
@@ -896,6 +911,13 @@ func zone_size(zone: StringName) -> Vector2:
 	# window narrower than the content leaves less than the flanks alone want.
 	return Vector2(maxf(interior.x - _fixed_zone_span() - _wide_separator_span(), 0.0), body_height)
 
+## **WHICH SHELL THE PANEL IS DRAWING RIGHT NOW** — the same test `zone_size()` and the reparenting
+## read. Published for a subject whose content MOVES between shells: the band page's Trade content is
+## a zone of its own in the narrow shell and a section under Parties in the wide one
+## (`ZONE_SPEC_NARROW_ONLY`), so its builder must know which to author, and must re-author on a flip.
+func is_wide_shell() -> bool:
+	return _shell_is_wide()
+
 ## The WORK zone's box — the one `zones_resized` reports and Hud pages its board against. A named
 ## reader of `zone_size` rather than a second answer: this zone is the expanding one, so its width is
 ## the only one that moves with the card, which makes it the box worth watching.
@@ -916,7 +938,7 @@ func shows_zone(zone: StringName) -> bool:
 	if _collapsed or not _shown:
 		return false
 	if _shell_is_wide():
-		return _zones.get(zone) is Control
+		return _zones.get(zone) is Control and _in_wide_layout(zone)
 	return _effective_tab() == zone
 
 ## …and the same answer for every declared zone at once, in `ZONE_KEYS` order — what `set_active_tab`
@@ -1813,7 +1835,7 @@ func _relayout_body() -> void:
 	# `zone_columns()` grants — so every FIXED host's pinned minimum is re-declared on each layout pass
 	# rather than only at `_build`. A single-column zone re-declares the same number it already had, so
 	# this is a no-op for the parties and knowledge flanks.
-	for spec in _zone_layout:
+	for spec in _wide_layout():
 		var host: Control = _wide_zone_hosts.get(StringName(spec.get(ZONE_SPEC_KEY, &"")))
 		if host != null and _spec_width(spec) > 0.0:
 			host.custom_minimum_size.x = _zone_span(spec)
@@ -1826,7 +1848,7 @@ func _relayout_body() -> void:
 ## `_affordable_work_columns` and `zone_size`, so none of them can disagree about how much width the
 ## chrome eats.
 func _wide_separator_span() -> float:
-	return float(maxi(_zone_layout.size() - 1, 0)) * RAIL_SEPARATOR_SPAN
+	return float(maxi(_wide_layout().size() - 1, 0)) * RAIL_SEPARATOR_SPAN
 
 ## The panel switches to the wide (zones-side-by-side) shell once its own WIDTH reaches this; below it
 ## the narrow (tabbed, one-zone) shell is used. A WIDTH test, never a dock-edge test, so a resizable
@@ -1852,7 +1874,7 @@ func _wide_separator_span() -> float:
 ## choosing, and one band column is exactly that minimum.
 func wide_shell_min_width() -> float:
 	var span := _wide_separator_span() + PANEL_CHROME_H
-	for spec in _zone_layout:
+	for spec in _wide_layout():
 		var width := _spec_width(spec)
 		span += width if width > 0.0 else ZONE_WORK_MIN_WIDTH
 	return span
@@ -2285,14 +2307,33 @@ func _rebuild_wide_shell() -> void:
 		_wide_shell.remove_child(child)
 		child.queue_free()
 	_wide_zone_hosts.clear()
-	for i in range(_zone_layout.size()):
+	var wide := _wide_layout()
+	for i in range(wide.size()):
 		if i > 0:
 			_wide_shell.add_child(_make_zone_separator())
-		var zone := StringName(_zone_layout[i].get(ZONE_SPEC_KEY, &""))
-		_wide_zone_hosts[zone] = _add_wide_zone_host(zone, _spec_width(_zone_layout[i]))
+		var zone := StringName(wide[i].get(ZONE_SPEC_KEY, &""))
+		_wide_zone_hosts[zone] = _add_wide_zone_host(zone, _spec_width(wide[i]))
+
+## **THE LAYOUT THE WIDE SHELL LAYS OUT** — the live layout less every `ZONE_SPEC_NARROW_ONLY` zone.
+## Every wide-shell reader (the hosts, the separators, the threshold, the fixed-flank span) walks this
+## and never `_zone_layout`, so a narrow-only zone costs the wide shell nothing by construction.
+func _wide_layout() -> Array[Dictionary]:
+	var wide: Array[Dictionary] = []
+	for spec in _zone_layout:
+		if not bool(spec.get(ZONE_SPEC_NARROW_ONLY, false)):
+			wide.append(spec)
+	return wide
+
+## Does the wide shell lay `zone` out? `false` for a narrow-only zone and for one the layout lacks.
+func _in_wide_layout(zone: StringName) -> bool:
+	for spec in _wide_layout():
+		if StringName(spec.get(ZONE_SPEC_KEY, &"")) == zone:
+			return true
+	return false
 
 ## The layout's zone keys, in declared order — what the tab bar, the reparenting and the effective-tab
-## fallback all walk.
+## fallback all walk. **Narrow-only zones included**: the tab bar is the narrow shell's, and the wide
+## shell's reparenting finds no host for them and detaches them.
 func _zone_order() -> Array[StringName]:
 	var keys: Array[StringName] = []
 	for spec in _zone_layout:
@@ -2331,7 +2372,7 @@ func _zone_fixed_width(zone: StringName) -> float:
 ## never a pair of named constants, which is what made a fourth zone a rewrite rather than a row.
 func _fixed_zone_span() -> float:
 	var span := 0.0
-	for spec in _zone_layout:
+	for spec in _wide_layout():
 		span += _zone_span(spec)
 	return span
 
