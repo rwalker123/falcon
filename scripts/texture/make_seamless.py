@@ -8,8 +8,10 @@ The terrain shader samples every base biome in CONTINUOUS world space with `repe
 its right edge (or top/bottom) therefore draws a STRAIGHT LINE across the map at every repeat —
 through the middle of hexes, independent of any biome seam or of the edge blend.
 
-    python3 make_seamless.py --check   # measure every base texture; exit 1 if any is over the bar
-    python3 make_seamless.py           # rewrite, in place, only the textures over the bar
+    python3 scripts/texture/make_seamless.py --check   # measure every base texture; exit 1 if any is over the bar
+    python3 scripts/texture/make_seamless.py           # rewrite, in place, only the textures over the bar
+
+Runs from any working directory: the paths below are resolved from this file's own location.
 
 THE MEASURE — the wrap ratio, per axis: the mean |dL| between the last and first column (the pair
 the repeat puts side by side) divided by the mean |dL| between adjacent INTERIOR columns (the
@@ -39,8 +41,11 @@ import numpy as np
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(HERE, "terrain_config.json")
-BASE_DIR = os.path.join(HERE, "textures", "base")
+# This file lives at <repo>/scripts/texture/; the terrain assets at <repo>/clients/godot_thin_client/assets/terrain/.
+REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
+TERRAIN_DIR = os.path.join(REPO_ROOT, "clients", "godot_thin_client", "assets", "terrain")
+CONFIG_PATH = os.path.join(TERRAIN_DIR, "terrain_config.json")
+BASE_DIR = os.path.join(TERRAIN_DIR, "textures", "base")
 # TerrainTextureManager's filename scheme: "%02d_%s.png" % [terrain_id, name].
 BASE_FILENAME_FORMAT = "%02d_%s.png"
 

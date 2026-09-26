@@ -3,7 +3,7 @@ paths:
   - "clients/godot_thin_client/assets/terrain/{TerrainTextureManager,TerrainDefinitions}.gd"
   - "clients/godot_thin_client/assets/terrain/terrain_config.json"
   - "clients/godot_thin_client/src/scripts/ui/TerrainRenderer.gd"
-  - "clients/godot_thin_client/assets/terrain/make_seamless.py"
+  - "scripts/texture/make_seamless.py"
   - "clients/godot_thin_client/assets/terrain/textures/base/**"
 ---
 
@@ -20,7 +20,7 @@ paths:
 |--------|---------|
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
 | `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
-| `assets/terrain/make_seamless.py` | The base-texture SEAMLESSNESS gate and fix. `--check` measures every texture `biome_array` loads (terrain_config.json's roster) and exits 1 if any is over `SEAM_RATIO_MAX`; without it, rewrites in place only those over the bar (idempotent). See "Base textures must tile seamlessly" |
+| `scripts/texture/make_seamless.py` (repo root) | The base-texture SEAMLESSNESS gate and fix, beside the rest of the Leonardo post-processing toolchain (`scripts/texture/README.md`). `--check` measures every texture `biome_array` loads (terrain_config.json's roster) and exits 1 if any is over `SEAM_RATIO_MAX`; without it, rewrites in place only those over the bar (idempotent). Runs from any working directory. See "Base textures must tile seamlessly" |
 
 ## Base textures must tile seamlessly
 
@@ -30,7 +30,7 @@ whose right edge does not continue its left (or bottom its top) draws a **straig
 through the middle of hexes — independent of any biome seam and of the edge blend, so no blend lever can
 hide it. It read live as a vertical line through a prairie field.
 
-**`python3 assets/terrain/make_seamless.py --check` is the gate** — run it after dropping in any base art.
+**`python3 scripts/texture/make_seamless.py --check` is the gate** — run it after dropping in any base art.
 The measure is the WRAP RATIO per axis: mean |ΔL| between the last and first column (the pair a repeat puts
 side by side) over the mean |ΔL| between adjacent interior columns, rows likewise; seamless scores ~1 and
 the bar is `SEAM_RATIO_MAX` = 1.3. The fix mode cross-fades each wrap edge with the image rolled by half its
@@ -43,6 +43,15 @@ itself is clean — that texture needs regenerating with even lighting, not the 
 strongly linear structure (dune ripples, crack networks) can leave faint doubled lines inside the band;
 regeneration with a true tiling tool is the better fix there too. First pass: 23 of 38 textures were over
 the bar (worst `23_seasonal_snowfield` 5.48, `21_periglacial_steppe` 3.18); all measure 0.73–1.12 after.
+
+**Regenerated art arrives too bright, and is graded, not re-rolled.** The Leonardo generations that
+replaced `12_mixed_woodland`, `22_glacier`, `23_seasonal_snowfield` and `24_rolling_hills` came back
+1024² JPEGs; each was resized to 512² and compared against the tile it replaced for mean RGB. The
+rolling-hills grass came back ~2× the set's brightness and was brought to the old tone with
+`scripts/texture/cool_grade.py` (per-channel gains), then its detail contrast was raised around the mean,
+because the gain alone flattened the grass into a solid fill. A generation with DIRECTIONAL structure
+(ripples or crevasses all running one way) is rejected rather than fixed: it rotates visibly at hex seams.
+
 ## Terrain Texture System
 
 Optional terrain texture graphics for the 2D map view.

@@ -15,8 +15,9 @@
 # grid of squares, so base prompts ask for even flat lighting and uniform tone.
 #
 # After generating:
-#   1. Ensure textures are seamless/tileable: `python3 make_seamless.py --check` must pass
-#      (without --check it cross-fades the wrap edges of any texture over the bar)
+#   1. Ensure textures are seamless/tileable: `python3 scripts/texture/make_seamless.py --check`
+#      must pass (without --check it cross-fades the wrap edges of any texture over the bar).
+#      The rest of the post-processing toolchain is in scripts/texture/README.md.
 #   2. Resize to 512x512 PNG
 #   3. Save to assets/terrain/textures/base/ with naming format: XX_terrain_name.png
 #   4. Restart Godot - textures load automatically
