@@ -3118,11 +3118,10 @@ pub struct BandEquipment {
     /// a player. Without this the panel's `Worn out` wording is unrepresentable and every count of
     /// zero has to read as *never made*, which is wrong for exactly the item the player just lost.
     ///
-    /// **The TIER is part of the key because the readout names it out loud.** *"last plain set wore
-    /// out"* is a claim about which tier was lost, and an item-wide tally could only *infer* one —
-    /// the day bronze and iron ship beside `plain` and `flint`, inferring *"the tier below what I can
-    /// now make"* names bronze for a `plain` set that actually wore out. A published string asserting
-    /// the wrong tier is worse than saying nothing.
+    /// **The TIER is part of the key because it is the fact `wear_item` actually holds**, and a
+    /// per-tier record can always be summed where an item-wide one could never be split again. The
+    /// one reader, [`Self::retired_of`], sums it: the `Worn out` / `Never made` split asks only
+    /// *whether* anything broke. The saved shape is this map, so it rides `BandRecord::equipment`.
     ///
     /// An item with no entry has retired none. **Not gameplay**: nothing in the sim branches on it,
     /// and it must not become a repair discount or a durability bonus — it is the readout's memory.
@@ -3606,19 +3605,6 @@ impl BandEquipment {
             .get(item)
             .map(|tiers| tiers.values().sum())
             .unwrap_or(0)
-    }
-
-    /// **Which TIERS of `item` this band has worn out, and how many of each** — in tier-id order,
-    /// empty for an item it has never retired.
-    ///
-    /// The readout's join: *"last plain set wore out"* names a tier, and this is the only record of
-    /// which one it was. [`Self::retired_of`] is the same tally summed for a caller that only asks
-    /// *whether* anything broke.
-    pub fn retired_tiers_of(&self, item: &str) -> impl Iterator<Item = (&str, u32)> {
-        self.retired
-            .get(item)
-            .into_iter()
-            .flat_map(|tiers| tiers.iter().map(|(tier, count)| (tier.as_str(), *count)))
     }
 
     /// **Charge every item in `kit` whose quantum is `quantum`.** The seam every wear site calls, and

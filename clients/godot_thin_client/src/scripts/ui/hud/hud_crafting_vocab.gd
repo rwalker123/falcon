@@ -154,10 +154,8 @@ const SHORTFALL_SHORT_KEY := "short"
 ##
 ## **`tier_id` HAS NO KEY HERE EITHER — NO TIER WORD REACHES THE OWNED CELL AT ALL.** The tier a
 ## recipe makes is named by its `recipe_label` in the row's recipe popup, and which tier the band
-## CARRIES is answered by that popup's Owned column, on an item whose recipes make different tiers. The
-## sim's `ownedNote` (`carrying plain · poor`) still rides the wire and has no key here either: it put
-## the internal word `plain` in front of the player and cost a short row a line. A cell rendering
-## `tier_id` would say `plain` on almost every row of the early game.
+## CARRIES is answered by that popup's Owned column, on an item whose recipes make different tiers. A
+## cell rendering `tier_id` would say `plain` on almost every row of the early game.
 const BAND_EQUIPMENT_BATCHES_KEY := "equipment_batches"
 const EQUIPMENT_ITEM_ID_KEY := "item_id"
 const EQUIPMENT_GRADE_KEY := "grade"
@@ -456,7 +454,7 @@ const OWNED_NONE := "Not made"
 ## answer the same question about different kinds of thing.
 const OWNED_COUNT_FORMAT := "×%d"
 ## How the Owned cell is found by IDENTITY. It carries the row's own item id, so a claim about what
-## reaches the CELL (a tier word, the sim's owned note) can be scoped to the cell rather than to the ledger —
+## reaches the CELL (a tier word) can be scoped to the cell rather than to the ledger —
 ## the recipe popup and the Make picker name tiers by design, and a panel-wide text scan cannot tell
 ## them apart from a cell.
 const OWNED_CELL_META := "crafting_owned_cell"

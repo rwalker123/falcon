@@ -377,11 +377,9 @@ that split.
   row for the whole early game; a head says it once and can **fold away**, which is what a column can
   never do. The head is the tier a row would be **made** at — **the tier that row's own recipe
   declares**, so a row does not *move* between heads as knowledge arrives: an item with two recipes
-  has a row under each. The **cell** is what the band actually **has**, so the two can disagree, and
-  that disagreement is the readout: a `Spears (flint)` row under **Flint** whose cell says
-  *carrying plain · poor* is telling you something worth knowing, while the bone `Spears` row under
-  **Plain** — making the very tier that stock is at — correctly says nothing. **The tier word appears
-  in the cell only then**, only when it is news.
+  has a row under each. The **Owned cell names no tier**: it says how many the band holds and at
+  what grades, and which tier those units are is answered per recipe in the recipes popup
+  (`CraftOffer.ownedAtTier`), where the tier is already the subject.
 
   **The heads are the tier, and the ledger's other two groups join them as one family** — `Plain`,
   `Flint`, `Bench tools`, `Materials` today; `Bronze` above `Flint` once minerals land. All are the

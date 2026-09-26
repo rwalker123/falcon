@@ -5542,17 +5542,16 @@ table CraftOffer {
   //     recipe only that half applies.
   outputGrade:string;
   onBench:bool;          // this recipe is the running job — the row's button is spent
-  // --- THE LEDGER'S GROUP HEAD, AND WHAT THE BAND ACTUALLY CARRIES (appended last) --------------
+  // --- THE TIER THIS RECIPE MAKES (appended last) ------------------------------------------------
   // THE TIER THIS RECIPE MAKES — the tier the recipe's own output row declares (a bone spear is
   // "plain", a knapped one "flint"), falling back to the best tier the faction knows for an item
   // with only one tier. "" on a material (stock) recipe.
   outputTierName:string;
   // Index of that tier within the item's own `tiers` list — 0 is the opening tier.
   outputTierRank:uint;
-  // RENDER IT VERBATIM, "" when there is no news. What the band CARRIES, said only when it
-  // disagrees with the tier THIS recipe makes: "carrying plain · poor", "last plain set wore out".
-  // The tier word reaches the Owned cell ONLY through this field and only when it is news.
-  ownedNote:string;
+  // Unused. The Owned cell carries no tier word; which tier a band holds is `ownedAtTier` below.
+  // Deprecated rather than deleted because slots are positional.
+  ownedNote:string (deprecated);
   // --- ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK (appended last) -----------------------
   // Several offers can share one `outputItemId` (a spear pointed with bone, a spear knapped from
   // stone). The ledger shows ONE row per item; these five fields are what its recipe popup and its

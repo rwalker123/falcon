@@ -283,13 +283,8 @@ fn wear_out(app: &mut App, band: Entity, item: &str) {
 }
 
 /// **Give `spears` a bronze AND an iron tier, each with the recipe that makes it** — the state the
-/// day metal lands, and the only way any of the tier-head readout can fire past the shipped roster's
-/// two rungs.
-///
-/// **FOUR tiers, and at least three are needed.** With only two, *"the tier that wore out"* and
-/// *"the tier below what I can now make"* are the same answer, so a two-tier fixture passes either
-/// implementation and proves nothing about which one the note is reading. The shipped roster has two
-/// on `spears` since issue #736, which is one short.
+/// day metal lands, so a tier head can sit past the shipped roster's two rungs and the rank it
+/// publishes is not the only non-zero one the item has.
 ///
 /// ⛔ **THE RECIPES ARE NOT OPTIONAL SCENERY.** A row's published tier head is *its own recipe's*
 /// declared tier (`RecipeOutput::tier`), so tiers appended to the item alone would leave every
@@ -498,7 +493,6 @@ struct PublishedOffer {
     on_bench: bool,
     output_tier_name: String,
     output_tier_rank: u32,
-    owned_note: String,
     /// The five fields the one-row-per-item ledger reads, decoded off the envelope like the rest.
     recipe_label: String,
     makes: String,
@@ -644,7 +638,6 @@ fn publish(app: &mut App, band: Entity) -> Published {
                     on_bench: offer.onBench(),
                     output_tier_name: offer.outputTierName().unwrap_or_default().to_string(),
                     output_tier_rank: offer.outputTierRank(),
-                    owned_note: offer.ownedNote().unwrap_or_default().to_string(),
                     recipe_label: offer.recipeLabel().unwrap_or_default().to_string(),
                     makes: offer.makes().unwrap_or_default().to_string(),
                     lasts: offer.lasts().unwrap_or_default().to_string(),
@@ -2238,28 +2231,22 @@ fn the_per_world_catalogues_round_trip() {
     );
 }
 
-/// **THE GROUP HEAD SAYS WHAT A ROW WOULD BE MADE AT; THE NOTE SAYS WHAT THE BAND HAS — AND THE NOTE
-/// IS PUBLISHED ONLY WHEN THE TWO DISAGREE.**
+/// **A ROW'S TIER HEAD IS THE TIER ITS OWN RECIPE MAKES, not the item's and not the faction's best.**
 ///
-/// Exercised by a **four-tier fixture**, because the shipped roster's two rungs are one short of
-/// telling the two note rules apart — the same treatment
-/// `a_tier_switches_an_items_attack_without_touching_its_shared_effects` gets.
+/// Exercised on a **four-tier fixture**, so the head read off the iron row sits at rank 3 while the
+/// bone row of the same item, on the same frame, off the same ledger, sits at rank 0. A head resolved
+/// from the ITEM (or from what the faction knows) would make the two equal.
 ///
-/// **The row read is the IRON one**, not `spears`: a row's head is its own recipe's declared tier,
-/// so the bone row heads `plain` for ever however many tiers the item gains. That is the model, and
-/// it is what makes the pairing below sharper than it was — the two rows differ because they make
-/// different things, on one frame, off one ledger.
-///
-/// Pinned as a **pairing**: the upgraded row against an un-upgraded one beside it on the same frame.
-/// Asserting one row's wording alone would pass on a wire that said the same thing everywhere.
+/// Pinned as a **pairing** twice over — against the bone spears row and against `clubs` beside it —
+/// because asserting one row's head alone would pass on a wire that published one tier everywhere.
+/// What the band HOLDS at each tier is the other half of the popup, and
+/// `owned_at_tier_counts_per_tier_on_spears_and_is_unattributed_on_both_baskets` pins it.
 #[test]
-fn the_owned_note_is_published_only_when_the_band_carries_something_older() {
+fn a_rows_tier_head_is_the_tier_its_own_recipe_makes() {
     let (mut app, band) = world();
     give_spears_two_metal_tiers(&mut app, |_| {});
     learn(&mut app, band, "bone_working");
     learn(&mut app, band, "weaving");
-    // Two plain batches at different grades — the note must name the WORST, because naming the best
-    // is the one the player would be told about last.
     restock(
         &mut app,
         band,
@@ -2277,32 +2264,9 @@ fn the_owned_note_is_published_only_when_the_band_carries_something_older() {
         (IRON_TIER, 3),
         "the head is the tier THIS ROW makes, and heads order by rank descending"
     );
-    assert_eq!(
-        upgraded.owned_note, "carrying plain · poor",
-        "the band holds an older tier, so the cell says so - and it names the worst grade it holds"
-    );
 
-    // THE PAIRING, on the same frame: a row making the very tier the band already holds says
-    // nothing. `clubs` gained a knapped tier with #736, so the row read here is its `plain` one.
-    let current = offer(&published, CLUBS_RECIPE);
-    assert_eq!(
-        (current.output_tier_name.as_str(), current.output_tier_rank),
-        (PLAIN_TIER, 0),
-        "the bone clubs row makes the opening tier, which is what the band already carries"
-    );
-    assert_eq!(
-        current.owned_note, "",
-        "there is nothing older in hand, so there is no news - and \"\" is what the whole shipped \
-         roster publishes"
-    );
-    assert_ne!(
-        upgraded.owned_note, current.owned_note,
-        "this is the whole point: a wire that emitted the same note everywhere cannot pass"
-    );
-
-    // THE SHARPER PAIRING, on the SAME ITEM: the bone spears row makes `plain` and heads there, so
-    // it says nothing, while the iron row two seats over says the band is carrying something older.
-    // A head resolved from the ITEM rather than from the ROW's recipe would make these two equal.
+    // THE PAIRING ON THE SAME ITEM: the bone spears row makes `plain` and heads there, however many
+    // tiers the item gains.
     let bone_row = offer(&published, SPEARS_RECIPE);
     assert_eq!(
         (
@@ -2312,30 +2276,17 @@ fn the_owned_note_is_published_only_when_the_band_carries_something_older() {
         (PLAIN_TIER, 0),
         "the bone spears row makes the tier it always made, however many tiers the item gains"
     );
-    assert_eq!(
-        bone_row.owned_note, "",
-        "and what the band holds IS what that row makes, so there is no news"
+    assert_ne!(
+        upgraded.output_tier_name, bone_row.output_tier_name,
+        "one item, one frame, two recipes - two heads"
     );
 
-    // **WORN OUT NAMES THE TIER THAT ACTUALLY WORE OUT.** The band loses its PLAIN spears while the
-    // flint and bronze tiers sit between them and the iron this row makes — so *"the tier below
-    // craftable"* would say **bronze**, a set this band never owned. Only a three-or-more-tier
-    // fixture can tell the two rules apart; at two tiers they agree.
-    wear_out(&mut app, band, SPEARS_ITEM);
-    let after = publish(&mut app, band);
-    let dry = offer(&after, SPEARS_IRON_RECIPE);
+    // AND BESIDE IT: `clubs` gained a knapped tier with #736, so its bone row heads `plain` too.
+    let clubs = offer(&published, CLUBS_RECIPE);
     assert_eq!(
-        dry.owned_note, "last plain set wore out",
-        "the note names the tier `wear_item` retired, never the neighbour of what could be made"
-    );
-    assert!(
-        !dry.owned_note.contains(BRONZE_TIER) && !dry.owned_note.contains(FLINT_TIER),
-        "bronze and flint sit between plain and iron and this band never held either - naming one \
-         would be a published string asserting the wrong tier"
-    );
-    assert_ne!(
-        dry.owned_note, upgraded.owned_note,
-        "\"we still have the old ones\" and \"the old ones broke\" are not the same sentence"
+        (clubs.output_tier_name.as_str(), clubs.output_tier_rank),
+        (PLAIN_TIER, 0),
+        "the bone clubs row makes the opening tier"
     );
 }
 

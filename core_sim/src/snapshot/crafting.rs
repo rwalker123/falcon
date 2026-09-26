@@ -590,9 +590,8 @@ fn craft_offer(
     let available = refusals.is_empty();
     let output_grade =
         preview_grade(store, plan.recipe, tiers, inputs.materials).unwrap_or_default();
-    // **The head and the cell are resolved together**, because the note is only news relative to the
-    // head — the two disagreeing is the whole readout. The head is resolved *first* because the
-    // invitation quotes what the tier being made would unlock.
+    // **The tier this recipe makes is resolved once and read four times** — the head, the invitation
+    // (which quotes what that tier would unlock), `makes`/`lasts`, and `ownedAtTier`.
     let made = made_tier(plan, inputs);
     let craftable = made.map(|(_, tier, rank)| (tier.id.as_str(), rank));
     let (output_tier_name, output_tier_rank) = craftable
@@ -636,9 +635,6 @@ fn craft_offer(
         on_bench: running == Some(plan.id),
         output_tier_name,
         output_tier_rank,
-        owned_note: craftable
-            .map(|(_, rank)| owned_note(plan, wear, rank, inputs))
-            .unwrap_or_default(),
         recipe_label: plan.label.clone(),
         makes,
         lasts,
@@ -830,77 +826,6 @@ fn made_tier<'a>(
     Some((def, tier, rank as u32))
 }
 
-/// **WHAT THE BAND CARRIES, SAID ONLY WHEN IT IS NEWS** — `""` whenever nothing the band holds is
-/// older than the tier this row would be made at, which is every row whose recipe makes the opening
-/// `plain` tier.
-///
-/// Two sentences, and they answer different questions:
-///
-/// - **units in hand at an older tier** → `carrying plain · poor`, which is what the knapped
-///   `Spears (flint)` row publishes for a band still holding bone spears. Several such batches name
-///   the **worst** grade, because naming the best is the one a player would be told about last — a
-///   row that flattered its stock would be telling them the opposite of what they need to act on.
-/// - **no units at all, and a set retired at an older tier** → `last plain set wore out`. The tier is
-///   read out of `BandEquipment::retired_tiers_of`, which `wear_item` keys by the tier of the unit it
-///   destroyed — **never inferred from `craftable_tier`'s neighbour**. With bronze and iron beside
-///   `plain` and `flint`, *"the rank below what I can now make"* names bronze for a `plain` set that
-///   actually wore out, and a published string asserting the wrong tier is worse than saying
-///   nothing. Of several retired tiers it names the **highest-ranked one still below** what the band
-///   can now make: that is the set it lost most recently.
-///
-/// **The word is rendered VERBATIM by the client** (`crafting_bench.gd`'s `TWO_TIER_CLUBS_NOTE`), so
-/// these two examples and that fixture are one sentence written in two places and must stay in step.
-fn owned_note(
-    plan: &CraftOfferPlan<'_>,
-    wear: &BandEquipment,
-    craftable_rank: u32,
-    inputs: &BandCraftInputs<'_>,
-) -> String {
-    let Some(item) = plan.output_item else {
-        return String::new();
-    };
-    let Some(def) = inputs.equipment.item(item) else {
-        return String::new();
-    };
-    let rank_of = |tier: &str| def.tiers.iter().position(|row| row.id == tier);
-    // **Worst grade first**, by the band it names; an ungraded batch is a start-stocked unit, which
-    // makes no quality claim at all and therefore sorts ahead of every one that does.
-    let carried = wear
-        .batches_of(item)
-        .iter()
-        .filter_map(|batch| rank_of(&batch.tier).map(|rank| (rank, batch)))
-        .filter(|(rank, _)| (*rank as u32) < craftable_rank)
-        .min_by_key(|(rank, batch)| {
-            let grade = batch
-                .grade
-                .as_ref()
-                .and_then(|grade| inputs.materials.band_index_of(&grade.id));
-            (grade, *rank)
-        });
-    if let Some((rank, batch)) = carried {
-        let tier = tier_word(&def.tiers[rank].id);
-        return match batch.grade.as_ref().filter(|grade| !grade.id.is_empty()) {
-            Some(grade) => format!("carrying {tier}{REASON_JOIN}{}", grade.id),
-            None => format!("carrying {tier}"),
-        };
-    }
-    if wear.count_of(item) > 0 {
-        return String::new();
-    }
-    // **The tier that actually wore out**, newest-lost first — not the neighbour of what the band can
-    // now make.
-    let lost = wear
-        .retired_tiers_of(item)
-        .filter(|(_, count)| *count > 0)
-        .filter_map(|(tier, _)| rank_of(tier))
-        .filter(|rank| (*rank as u32) < craftable_rank)
-        .max();
-    match lost {
-        Some(rank) => format!("last {} set wore out", tier_word(&def.tiers[rank].id)),
-        None => String::new(),
-    }
-}
-
 /// **THE BAND A TOOL WOULD UNLOCK — its own `craft_quality_ceiling`, never the top of the ladder.**
 ///
 /// Resolved off the tier the bench would actually make (`made_tier`, the faction's `craftable_tier`),
@@ -922,13 +847,6 @@ fn unlocked_band<'a>(
     inputs
         .materials
         .band_name(inputs.materials.band_index(ceiling))
-}
-
-/// **A tier's player-facing word, lowercased for mid-sentence use.** Resolved through
-/// [`title_from_id`] like every other id in this model — `equipment.json` authors no display name,
-/// and a tier id spelled out here would be a second copy of that id to keep in step.
-fn tier_word(tier: &str) -> String {
-    title_from_id(tier).to_lowercase()
 }
 
 /// **What a buildable row says.** Three rungs, most specific first:

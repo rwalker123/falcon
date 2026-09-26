@@ -32,7 +32,7 @@ class_name CraftingPanel
 ## a tier any more: a row carrying both a plain and a flint recipe has no one tier to be sorted under.
 ##
 ## **NO TIER WORD REACHES THE OWNED CELL AT ALL.** It states count and grade, nothing else: no
-## `tier_id`, and not the sim's `ownedNote` (still published, rendered nowhere). Which tier the band
+## `tier_id` (the schema's `ownedNote` is deprecated and unpublished). Which tier the band
 ## holds is answered in the recipe popup's Owned column, on an item whose recipes make different tiers,
 ## and a recipe's own tier is named by its `recipeLabel` there and in the picker.
 ##
@@ -1240,9 +1240,8 @@ func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 ##   service is chosen by wear rather than by quality, so it would move for a reason unrelated to what
 ##   the row claims.
 ##
-## **NO TIER WORD REACHES THIS CELL AT ALL** — no `tier_id`, and not the sim's `ownedNote` either,
-## though it still rides the wire: that note was written for the retired tier heads, it cost a row that
-## must stay short a line, and it put the internal word `plain` in front of the player. Which tier the
+## **NO TIER WORD REACHES THIS CELL AT ALL** — no `tier_id`: a row that must stay short has no line
+## for it, and it would put the internal word `plain` in front of the player. Which tier the
 ## band holds is answered in the recipe popup's Owned column, on an item whose recipes make different
 ## tiers.
 func _build_owned_cell(offer: Dictionary, batches: Array, group: String, payload: Dictionary,

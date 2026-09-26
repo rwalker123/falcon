@@ -2391,20 +2391,19 @@ the whole picker chain (with three *the control to press was rendered* guards wh
 controls were never built) and the single-recipe link claim with the two role-line claims it took
 down, while *Make on a single-recipe row sends that recipe* and *…opens no picker* correctly stay green.
 
-### …and the owned note left the row
+### …and no tier word reaches an Owned cell
 
-The sim's `ownedNote` (`carrying plain · good`) is no longer rendered or decoded, and **no tier word
-reaches an Owned cell at all** (`crafting-panel.md` → "NO TIER WORD REACHES THE OWNED CELL AT ALL").
-The fixtures keep publishing `owned_note` and `tier_id` exactly as the sim does, which is what gives
-the negatives something to catch: *no Owned cell carries a published note* **and** *no Owned cell
-carries any tier word*, each behind a precondition that the band really publishes both, asked of the
-two-tier band and of the reference band. The retired *the note is verbatim on the row that has one*
-became *the Clubs cell carries nothing beside its grades, though its suggested offer publishes a
-note*. The positive that moved is the popup's per-tier Owned column above (`×6` / `—` on Spears).
-**MEASURED ON THIS TREE: `455 / 2254` → `455 / 2259`**, exit 0 both; `EXPECTED_CHECKPOINTS` 185 →
-**190**, RE-MEASURED. Sabotage-verified by restoring the note's render: exactly **five** claims
-fail — the Clubs cell claim and both negatives on both bands — naming `carrying plain · poor` and
-`carrying plain · good`.
+**No tier word reaches an Owned cell at all** (`crafting-panel.md` → "NO TIER WORD REACHES THE OWNED
+CELL AT ALL"). The fixtures publish a `tier_id` on every batch they own, exactly as the sim does, which
+is what gives the negative something to catch: *no Owned cell carries any tier word*, behind a
+precondition that the band really publishes tier ids, asked of the two-tier band and of the reference
+band. Beside it, *an Owned cell carries nothing beside its grades* is asked of the Spears cell as
+*everything that is not a count or a legend word*, so a line composed client-side fails it. The
+positive half is the popup's per-tier Owned column above (`×6` / `—` on Spears). **MEASURED ON THIS
+TREE: `455 / 2255`**, exit 0; `EXPECTED_CHECKPOINTS` **186**, RE-MEASURED by raising the const to an
+impossible number and reading `reached 186` back. Sabotage-verified by rendering each batch's `tier_id` in
+the Owned cell: exactly **three** claims fail — the tier-word negative on both bands and the
+nothing-beside-its-grades claim — while the popup's `×6` / `—` column stays green.
 
 ## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
 

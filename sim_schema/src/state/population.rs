@@ -1853,18 +1853,13 @@ pub struct CraftOfferState {
     /// (`RecipeOutput::tier`), falling back to `ItemDefinition::craftable_tier` for a single-tier
     /// item. It is the ledger's **group head**, not a column: a head says *plain* once and can fold
     /// away, which is what a column spending its width on every row can never do. So the bone
-    /// `Spears` row heads *plain* and the knapped `Spears (flint)` row heads *flint*, on the same
+    /// `spears` offer heads *plain* and the knapped `spears_flint` offer heads *flint*, on the same
     /// item, on the same frame. `""` on a material (stock) recipe.
     pub output_tier_name: String,
     /// Index of that tier within the item's own `tiers` list. **Heads order by rank descending** —
     /// newest first — because there is no other honest ordering for two tier heads and alphabetical
     /// would put Iron above Bronze.
     pub output_tier_rank: u32,
-    /// **What the band CARRIES, said only when it disagrees with what this row would be made at.**
-    /// `""` when there is no news, which is every row whose recipe makes the opening `plain` tier.
-    /// *"carrying plain · poor"*, *"last plain set wore out"* — **render it verbatim**; the tier word
-    /// reaches the Owned cell only through this field and only when it is news.
-    pub owned_note: String,
     /// **The recipe's own short name among its siblings** — *Bone*, *Flint*, *Withy*. `""` on a
     /// recipe that is the only one making its output.
     pub recipe_label: String,
@@ -1913,7 +1908,6 @@ impl Default for CraftOfferState {
             on_bench: false,
             output_tier_name: String::new(),
             output_tier_rank: 0,
-            owned_note: String::new(),
             recipe_label: String::new(),
             makes: String::new(),
             lasts: String::new(),

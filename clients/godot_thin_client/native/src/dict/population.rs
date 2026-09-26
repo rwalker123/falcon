@@ -1394,8 +1394,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // client's only honest ordering: alphabetical would put Iron above Bronze.
             let _ = row.insert("output_tier_name", offer.outputTierName().unwrap_or(""));
             let _ = row.insert("output_tier_rank", offer.outputTierRank() as i64);
-            // `ownedNote` is NOT decoded: the ledger's Owned cell carries no tier word at all, and
-            // which tier the band holds is answered by the recipe popup's `owned_at_tier` column.
+            // `ownedNote` is deprecated on the wire and not decoded: the ledger's Owned cell carries
+            // no tier word, and which tier the band holds is the recipe popup's `owned_at_tier`.
             // **ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK.** Several offers share one
             // `output_item_id`; the client groups them into one row and these five are what that
             // row's recipe popup and its Make picker read. All RESOLVED SIM-SIDE — the client never
