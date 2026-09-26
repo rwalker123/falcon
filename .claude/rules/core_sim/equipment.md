@@ -2776,7 +2776,7 @@ band (a 30-person band at `initial_distribution`'s 59.3% working), one turn:
 | animals engaged → animals that stay | 17 → ~5.95 | 17 → ~5.95 |
 | whole animals the pack can seat | 45 | 13 |
 | biomass hauled home | ~89 | ~89 |
-| food income (`hunt.provisions_per_biomass 0.02`) | ~1.79 | ~1.79 |
+| food income (`hunt.provisions_per_biomass 0.02`, the rate this table was measured at; it is 0.06 now) | ~1.79 | ~1.79 |
 
 **On THIS species at THIS party size the sled cliff does not bite, and the retreat is why.** The
 sledless pack seats 13 whole deer and the retreat leaves ~5.95, so both tiers haul the same take —

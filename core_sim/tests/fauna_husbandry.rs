@@ -2587,13 +2587,35 @@ fn the_re_expressed_pen_lands_where_the_managed_rate_did() {
 
     /// **What each rung paid under the retired managed-harvest model**, provisions/turn on this
     /// herd. Recorded from the measurement itself, so the re-expression is checkable rather than
-    /// asserted against algebra.
-    const WILD_BEFORE: f32 = 0.3510;
-    const PASTORAL_BEFORE: f32 = 0.6966;
-    const PEN_BEFORE: f32 = 0.9990;
+    /// asserted against algebra — **at the meat rate of [`RECORDED_AT_MEAT_RATE`]**, and carried to
+    /// the shipped rate below: the take is decided in biomass, so a provisions reading is linear in
+    /// `hunt.provisions_per_biomass`.
+    const WILD_RECORDED: f32 = 0.3510;
+    const PASTORAL_RECORDED: f32 = 0.6966;
+    const PEN_RECORDED: f32 = 0.9990;
+    /// The `hunt.provisions_per_biomass` the three readings above were taken at.
+    const RECORDED_AT_MEAT_RATE: f32 = 0.02;
+    let meat_rate_scale =
+        core_sim::FaunaConfig::builtin().hunt.provisions_per_biomass / RECORDED_AT_MEAT_RATE;
+    let wild_before = WILD_RECORDED * meat_rate_scale;
+    let pastoral_before = PASTORAL_RECORDED * meat_rate_scale;
+    let pen_before = PEN_RECORDED * meat_rate_scale;
+    /// **The rung gains the readings were taken at.** The claim is that the pen's re-expression
+    /// changed nothing *at the config it was measured on*; the shipped gains have since moved
+    /// (2.0 / 4.0 → 1.25 / 1.5, a death-rate reading of what keeping buys), so the fixture states the
+    /// recording's gains rather than comparing a reading taken at one config against a run at another.
+    const RECORDED_AT_PASTORAL_GAIN: f32 = 2.0;
+    const RECORDED_AT_PEN_GAIN: f32 = 4.0;
 
     let settled = |rung: u8| -> f32 {
         let mut app = spawn_world();
+        {
+            let mut handle = app.world.resource_mut::<FaunaConfigHandle>();
+            let mut config = (*handle.get()).clone();
+            config.husbandry.pastoral_gain = RECORDED_AT_PASTORAL_GAIN;
+            config.husbandry.pen_gain = RECORDED_AT_PEN_GAIN;
+            handle.replace(std::sync::Arc::new(config));
+        }
         let id = prime_thriving_herd(&mut app);
         match rung {
             0 => {}
@@ -2625,17 +2647,17 @@ fn the_re_expressed_pen_lands_where_the_managed_rate_did() {
     let pen = settled(2);
 
     assert!(
-        (wild - WILD_BEFORE).abs() <= WILD_BEFORE * UNCHANGED_BAND,
-        "rung 1 must not move: {wild} against {WILD_BEFORE}"
+        (wild - wild_before).abs() <= wild_before * UNCHANGED_BAND,
+        "rung 1 must not move: {wild} against {wild_before}"
     );
     assert!(
-        (pastoral - PASTORAL_BEFORE).abs() <= PASTORAL_BEFORE * UNCHANGED_BAND,
-        "rung 2 must not move: {pastoral} against {PASTORAL_BEFORE} — a pen gain that reached the \
+        (pastoral - pastoral_before).abs() <= pastoral_before * UNCHANGED_BAND,
+        "rung 2 must not move: {pastoral} against {pastoral_before} — a pen gain that reached the \
          pastoral rung would show up exactly here"
     );
     assert!(
-        (pen - PEN_BEFORE).abs() <= PEN_BEFORE * ACCEPTANCE_BAND,
-        "rung 3 must land where the managed rate did: {pen} against {PEN_BEFORE} (wild {wild}, \
+        (pen - pen_before).abs() <= pen_before * ACCEPTANCE_BAND,
+        "rung 3 must land where the managed rate did: {pen} against {pen_before} (wild {wild}, \
          pastoral {pastoral})"
     );
     assert!(

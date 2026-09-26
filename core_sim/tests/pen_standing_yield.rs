@@ -111,9 +111,13 @@ fn agrees(a: f32, b: f32) -> bool {
     (a - b).abs() <= SUMMED * a.abs().max(b.abs()).max(1.0)
 }
 
-/// Turns the wire fixture runs. A handful is plenty — the assertion is that both halves are *on the
-/// row*, not that either has settled — and every one of them is a whole headless turn.
-const PUBLISHED_TURNS: u32 = 4;
+/// The most turns the wire fixture runs looking for a turn on which a body is slaughtered. The pen
+/// takes meat in **whole animals**, so a half-committed slow breeder (the aurochs' pen `r` is 0.135 at
+/// the shipped `pen_gain`) accrues its meat share across turns and hands over a carcass only on the
+/// turn the share crosses a body — a turn between two carcasses honestly publishes a meat line of 0.
+/// The test samples the first turn that DOES take a body; this bounds the search, and every turn in it
+/// is a whole headless turn.
+const MAX_TURNS_TO_A_SLAUGHTER: u32 = 20;
 
 /// **A HERD HALF-COMMITTED** — the one fraction that puts *both* lines on a row at once, which is
 /// what the wire test needs: at `0` or `1` one of the two published halves is zero and the sum
@@ -657,9 +661,17 @@ fn a_committed_fleece_herd_is_credited_fibre_without_rounding() {
 #[test]
 fn the_published_row_carries_the_split_and_still_sums_to_the_total() {
     let (mut app, id, keeper) = wire_world(DAIRY_SPECIES, Rung::Penned, COMMITTED_HALF);
-    for _ in 0..PUBLISHED_TURNS {
+
+    // Run until the published row shows a slaughter (see `MAX_TURNS_TO_A_SLAUGHTER`): a turn between
+    // two whole carcasses carries no meat line, and the premise here is the split, not the cadence.
+    let slaughtered = (0..MAX_TURNS_TO_A_SLAUGHTER).any(|_| {
         publishing_turn(&mut app, keeper);
-    }
+        published_hunt_row(&mut app).meat > 0.0
+    });
+    assert!(
+        slaughtered,
+        "a half-committed dairy pen must slaughter a body within {MAX_TURNS_TO_A_SLAUGHTER} turns"
+    );
 
     // **ASSERTED ON THE ENCODED BUFFER, not the in-process row** — a field can be right in
     // `SourceYield` and never reach a client, and the split exists solely so a client can render it.

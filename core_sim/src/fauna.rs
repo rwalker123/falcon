@@ -10544,7 +10544,7 @@ mod tests {
 
     /// The core anti-flicker property: a managed herd whose head count breathes ±1 across an
     /// `animals_per_herder` boundary reports a STABLE `herders_needed` once bumped up — it does not
-    /// drop back on a one-animal dip. A Wild Aurochs (`animals_per_herder = 12`) near 12 head.
+    /// drop back on a one-animal dip. A herd at `animals_per_herder = 12` (the aurochs' retired value) near 12 head.
     #[test]
     fn herder_requirement_is_stable_across_a_one_animal_oscillation() {
         const APH: f32 = 12.0;
@@ -12110,8 +12110,10 @@ mod tests {
         /// Enough hunters that the *herd*, not the party's reach, bounds the take.
         const HUNTERS: u32 = 20;
         /// The wild ceiling the fixture starts from, and the stock it stands at — half of it, so the
-        /// herd is exactly on its floor **before** the Tame raises `K` out from under it.
-        const WILD_CEILING: f32 = 1_000.0;
+        /// herd is exactly on its floor **before** the Tame raises `K` out from under it. Sized so the
+        /// growth share survives the retreat as at least one whole body: at `pastoral_gain` 1.25 a
+        /// `1_000` ceiling's share is under two boar, and three in four of one-and-a-bit floors to none.
+        const WILD_CEILING: f32 = 2_000.0;
         const ON_THE_WILD_FLOOR: f32 = WILD_CEILING * HALF_THE_STOCK;
         /// Horizons for the row's two projections; the assertion is on `actual`, so these only have
         /// to be live.

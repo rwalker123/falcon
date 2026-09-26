@@ -6896,7 +6896,7 @@ pub fn advance_labor_allocation(
                         // `biomass_hauled` rides `carried`. Charging both over `carried` under-charged
                         // the handling gear for exactly the animal it did the most work on: waste in
                         // this branch needs `workers × hunt_carry < body_mass`, which a Wild Aurochs
-                        // (`body_mass 120`, one required keeper at `animals_per_herder 12`) reaches on
+                        // (`body_mass 120`, one required keeper at `animals_per_herder 40`) reaches on
                         // every slaughter — 120 killed against 40 carried at the equipped tier.
                         //
                         // Two quanta rather than one is *separately* what lets a band that only keeps

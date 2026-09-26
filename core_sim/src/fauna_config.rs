@@ -400,9 +400,13 @@ pub struct SpeciesDef {
     /// animals**, i.e. ~3 herders. Per-species, per-**animal**, is the only unit that reads true.
     ///
     /// Per-species for the same reason [`SpeciesDef::body_mass`] / [`SpeciesDef::taming_cost_multiplier`] /
-    /// [`SpeciesDef::husbandry_ceiling`] are: a herder minds far more birds than aurochs. Roster:
-    /// fowl/rabbit 50, crag_goat 25, boar 15, steppe_runner/marsh_grazer 15, aurochs 12. Deer and
+    /// [`SpeciesDef::husbandry_ceiling`] are: a herder minds far more birds than aurochs. Deer and
     /// mammoth omit it — a `wild` [`HusbandryCeiling`] is never herded at all.
+    ///
+    /// **These are UNASSISTED numbers — pre-dog, pre-horse.** A couple of herders on foot mind a large
+    /// herd; dogs and riding horses are future herding **gear**, and gear is productivity, so the
+    /// shipped values leave that headroom. The roster itself lives in `fauna_config.json`'s
+    /// `_comment_animals_per_herder`, with the retired values kept there as history.
     ///
     /// Resolved **live** by display name ([`FaunaConfig::animals_per_herder_for`]), never cached on the
     /// `Herd` — the `taming_cost_multiplier_for` path, so retuning reaches herds already on the map (and it needs no
@@ -556,8 +560,8 @@ fn default_taming_cost_multiplier() -> f32 {
     DEFAULT_TAMING_COST_MULTIPLIER
 }
 
-/// **Animals one herder minds for a species that does not declare a rate** — mid-roster (between the
-/// aurochs' 12 and the fowl's 50), so an untagged or future species lands on a plausible crew size
+/// **Animals one herder minds for a species that does not declare a rate** — at the low end of the
+/// shipped roster, so an untagged or future species lands on a plausible crew size
 /// rather than a free or an impossible one. Also what an unresolvable species name reads as
 /// ([`FaunaConfig::animals_per_herder_for`]).
 pub const DEFAULT_ANIMALS_PER_HERDER: f32 = 25.0;
@@ -873,7 +877,7 @@ pub struct HuntConfig {
 impl Default for HuntConfig {
     fn default() -> Self {
         Self {
-            provisions_per_biomass: 0.02,
+            provisions_per_biomass: 0.06,
             pursuit_radius: 1,
             pursuit_tiles_per_turn: 3,
             max_pursuit_turns: 12,
@@ -931,13 +935,14 @@ pub struct HuntYieldDef {
 /// `materials.json` already defines as *"bast, sinew, grass and wool — anything twisted or woven"*.
 /// **No material was added for this arc**, which is the whole reason the row shape could be reused.
 ///
-/// # The rates are DERIVED, not invented
+/// # The rates are AUTHORED, and independent of the meat rate
 ///
-/// `per_head = k × per_unit_biomass_rate × r × body_mass / 4`, which falls out of setting a
-/// full-standing herd's output to `k ×` what the same herd's meat line pays. `K` cancels, so the
-/// rate is a pure function of the species' own breeding rate and body size and survives a
-/// `pen_density` retune without re-derivation. `k` is the fiction and the only judgement call — see
-/// `fauna_config.json`'s `_comment_standing_yield` for the per-species table.
+/// What a live animal gives per head is its own dial, independent of what its carcass gives per unit
+/// of biomass ([`HuntYieldDef::provisions_per_biomass`] / the global `hunt.provisions_per_biomass`):
+/// retuning either does not move the other. They were **first calibrated** against the meat rate of
+/// `0.02` as `per_head = k × per_unit_biomass_rate × r × body_mass / 4` — `k ×` what the same herd's
+/// meat line paid at that rate — and `fauna_config.json`'s `_comment_standing_yield` keeps that `k`
+/// table as the record of the calibration, not as an invariant to re-derive against.
 ///
 /// Both sub-fields are optional, so a species may pay food only (`aurochs`), fibre only, or both
 /// (`wild_sheep`).
@@ -1565,7 +1570,7 @@ pub struct HusbandryConfig {
     /// the **pre-larder** pen silently.
     pub pen_is_a_larder: bool,
     /// The stable-band ceiling on any managed `r`: `pastoral`/`pen` growth is capped here so a fast
-    /// breeder (rabbit wild 0.35 × pen_gain 3.0 = 1.05) is held to a logistic rate that does not
+    /// breeder (at the retired pen_gain 4.0, rabbit wild 0.35 × 4.0 = 1.4) is held to a logistic rate that does not
     /// overshoot/oscillate. `0.75` keeps the discrete logistic monotone.
     pub husbandry_regrowth_cap: f32,
     /// **The largest fenced-footprint radius a pen may reach** (Grazing 2d-β, the `ExtendPen` command).
@@ -1772,11 +1777,11 @@ impl Default for PenConfig {
 }
 
 /// **The pastoral growth multiplier (Grazing 2d §3).** A tamed, mobile herd grows `pastoral_gain ×`
-/// its own wild breeding rate (capped at [`DEFAULT_HUSBANDRY_REGROWTH_CAP`]) — protection from
-/// predation/disease/winter kill buys a *multiple* of the species' own `r`, not a flat rate, so a
-/// tamed rabbit (0.35 → 0.525) and a tamed mammoth (0.04 → 0.06) become different economies. Retires
-/// the flat `0.25`. A **playtest lever** — measure and tune (`docs/plan_grazing_2d.md` §3).
-const DEFAULT_PASTORAL_GAIN: f32 = 1.5;
+/// its own wild breeding rate (capped at [`DEFAULT_HUSBANDRY_REGROWTH_CAP`]). **Keeping animals lowers
+/// their death rate** — fewer lost to predators, winter and disease — so a kept herd grows a little
+/// faster than a wild one; it does **not** multiply their breeding, which is why the gain is small. A
+/// tamed rabbit goes 0.35 → 0.4375, a tamed mammoth 0.04 → 0.05. A **playtest lever**.
+const DEFAULT_PASTORAL_GAIN: f32 = 1.25;
 
 /// **HOW MUCH EASIER A PENNED ANIMAL IS TO HANDLE than the same animal on the range** — the
 /// multiplier on its own `engage_rate` (see [`HusbandryConfig::pen_engage_gain`]).
@@ -1863,9 +1868,9 @@ const DEFAULT_HEX_SPACE_BUDGET: Option<f32> = Some(2530.3);
 const DEFAULT_PEN_IS_A_LARDER: bool = true;
 
 /// **The pen growth multiplier (Grazing 2d §3).** The ladder's top: a penned herd grows `pen_gain ×`
-/// its wild rate (capped). Resulting pen `r`: rabbit `0.75` (capped, booms) · deer `0.30` · mammoth
-/// `0.12` (a long-haul investment). Retires the flat `0.90`. A **playtest lever**.
-const DEFAULT_PEN_GAIN: f32 = 3.0;
+/// its wild rate (capped) — a fenced, fed herd loses fewer animals still, and again breeds no more
+/// often. Resulting pen `r`: rabbit `0.525` · boar `0.15` · aurochs `0.135`. A **playtest lever**.
+const DEFAULT_PEN_GAIN: f32 = 1.5;
 
 /// **HOW MUCH OF ITS OWN WARINESS A TAMED HERD KEEPS** (`docs/plan_standing_upkeep.md` §4.9 item
 /// 12b) — the multiplier on the species' `wariness` at the pastoral rung. Half: a haltered animal

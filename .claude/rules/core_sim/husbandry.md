@@ -209,31 +209,37 @@ domestication *reduce* capacity). **Playtest dials.**
 > "two stores that never trade", which was read as though hay had no way to reach a band that needed
 > it, and that reading built half a shipment model.
 >
-> Monotone in gross at every row, and `pastoral / wild` is exactly `pastoral_gain` (2.0). The **rabbit
-> pen gross rides the cap** (`r_pen = min(husbandry_regrowth_cap 1.0, 0.35 × pen_gain 4.0) = 1.0`), so
-> its pen/wild ratio is `1.0/0.35 ≈ 2.86`, not the full `pen_gain` — a fast breeder is clamped into the
-> stable logistic band, the cap's whole job. The mammoth's negative *barren* pen net is the §2.4
+> **This table was measured at `pastoral_gain` 2.0 / `pen_gain` 4.0 and the meat rate 0.02**, and is
+> kept as that measurement. Then: monotone in gross at every row, `pastoral / wild` exactly the
+> pastoral gain, and the rabbit pen gross riding the cap (`min(1.0, 0.35 × 4.0) = 1.0`). The gains
+> ship at **1.25 / 1.5** now (see below), at which no pennable species reaches the cap. The mammoth's negative *barren* pen net is the §2.4
 > slow-breeder loss **by design** (a placement decision — on real pasture the footprint feeds it and
 > `upkeep → 0`), not a regression.
 
 | Rung | Ecology | `r` (Grazing 2d — **per-species**) | Costs |
 |---|---|---|---|
 | Wild, Sustain hunt | `ecology` | `wild_r` (rabbit 0.35 · deer 0.10 · mammoth 0.04) | a worker |
-| Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 2.0) | **a worker** (a Hunt assignment, like a wild herd — passive-free pastoral is retired) |
+| Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 1.25) | **a worker** (a Hunt assignment, like a wild herd — passive-free pastoral is retired) |
 | Corral, building | unchanged — the hunters beside the build carry what hunters carry | — | **the build's own crew** (`corral … <workers>`, hands not hunting) and **75 work units** (not a fixed turn count — the crew is the throughput, so the turns move with the number the player typed) |
-| Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 4.0, cap 1.0) | a worker + **feed (footprint-offset)** + pinned |
+| Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 1.5, cap 1.0) | a worker + **feed (footprint-offset)** + pinned |
 
 - **Grazing 2d retired the flat pastoral 0.25 / pen 0.90.** The managed rungs now scale each species'
-  **own wild `r`** by `husbandry.pastoral_gain` (2.0) / `pen_gain` (4.0), clamped to
-  `husbandry_regrowth_cap` (1.0) — a penned rabbit (`r` 1.0, cap-bound and booming) and a penned mammoth
-  (`r` 0.16, a long-haul investment) are different economies. This also fixes the fast-breeder pastoral
-  inversion (pastoral `r` = `wild_r × 2.0 > wild_r` for every species). `fauna::herd_ecology` folds the per-species
+  **own wild `r`** by `husbandry.pastoral_gain` (1.25) / `pen_gain` (1.5), clamped to
+  `husbandry_regrowth_cap` (1.0) — a penned rabbit (`r` 0.525) and a penned aurochs (`r` 0.135) are
+  different economies. This also fixes the fast-breeder pastoral inversion (pastoral `r` =
+  `wild_r × 1.25 > wild_r` for every species).
+  > **WHAT THE GAIN MEANS: keeping animals lowers their DEATH RATE, it does not multiply their
+  > breeding.** Fewer are lost to predators, winter and disease, so a kept herd grows a little
+  > faster than a wild one — hence small gains. They shipped at 1.5 / 3.0, were raised to 2.0 / 4.0
+  > on a breeding-multiple reading, and were cut to 1.25 / 1.5 on this one. `fauna::herd_ecology` folds the per-species
   rate in; `pen_ecology_for` / `pastoral_ecology_for` are the seams, `managed_regrowth_rate` the `wild_r ×
   gain → capped` map.
-  > **THE CAP IS A PEN-ONLY EFFECT, AND IT SILENTLY DISCARDS PART OF `pen_gain` ON THE FAST BREEDERS.**
-  > Any species whose wild `r` exceeds `cap / pen_gain` = **0.25** cannot receive the whole pen bonus.
-  > Of the seven **pennable** species, three lose some of it: **fowl** and **rabbit** forfeit **29%**
-  > (`0.35 × 4 = 1.4`, delivered `1.0`) and **snow hare** **17%** (`0.30 × 4 = 1.2`).
+  > **THE CAP BINDS NO PENNABLE SPECIES AT THE SHIPPED GAINS.** A species loses part of the pen
+  > bonus only where its wild `r` exceeds `cap / pen_gain` — **0.67** at `pen_gain` 1.5 — and the
+  > fastest pennable breeder is `0.35`. At the retired `pen_gain` 4.0 the threshold was 0.25 and three
+  > species lost part of it (**fowl** and **rabbit** 29%, `0.35 × 4 = 1.4` delivered `1.0`; **snow
+  > hare** 17%); the text below is that era's reading, kept because the trap it names returns with any
+  > `pen_gain` above 2.86.
   > `forest_grouse` and `river_fish` are also cap-bound but are `wild`-ceiling, so nothing can pen them
   > and the loss is unreachable. **The cap never binds at PASTORAL** — the fastest pastoral rate on the
   > roster is `0.70` — which is why the effect reads in play as the pen underperforming rather than as a
@@ -898,8 +904,14 @@ a shortfall**: the headroom table above is what the term buys.
 dial sets the whole rung:
 
 ```text
-food/turn = r_pen × base_K × pen_density × 0.005
+food/turn = r_pen × base_K × pen_density × hunt.provisions_per_biomass / 4
 ```
+
+**The tables in this section were calibrated at `hunt.provisions_per_biomass` = `0.02`** (so the
+factor was `0.005`), with `pen_gain` at `4.0`. The meat rate is `0.06` now and `pen_gain` is `1.5`,
+and `pen_density` was deliberately not retuned with them: every food/turn figure below is the
+0.02-era calibration, and today's lines are `0.06/0.02 × 1.5/4.0 = 1.125` times them wherever
+the old `husbandry_regrowth_cap` did not bind (it bound rabbit, snow hare and fowl at 4.0).
 
 It shipped **cattle at 5.0 and fowl/rabbit at 1.5** — a hex packing more cattle than poultry, when
 small stock packs far tighter than cattle. That is why the big animals clustered near a Field's
@@ -1160,15 +1172,18 @@ rate times a head count, agreeing to the float — and at `f = 1` there is no me
 stage, so the whole row is exact. `pen_standing_yield.rs` pins all three readings on the encoded
 buffer at `f = 0`, `0.5` and `1`.
 
-### The rates are DERIVED, not invented
+### The rates are AUTHORED, and independent of the meat rate
 
-`per_head = k × per_unit_biomass_rate × r × body_mass / 4`, which falls out of setting a full-standing
-herd's output to `k ×` what the same herd's meat line pays. Since meat/turn `= rate × r × K/4` and
-head `= K / body_mass`, **`K` cancels** — the per-head rate is a pure function of the species' own
-breeding rate and body size and is *independent of how big the pen is*, which is what makes it survive
-a `pen_density` or `capacity_by_biome` retune without re-derivation. **`k` is the fiction and the only
-judgement call**; the per-head column is arithmetic and must be **re-derived, never nudged**. The
-per-species table and every `k` live in `fauna_config.json`'s `_comment_standing_yield`.
+**What an animal gives per head is its own dial.** It does not depend on what the carcass gives per
+unit of biomass (`hunt.provisions_per_biomass`), and retuning either leaves the other where it is —
+the same rule that makes the meat rate one number however the animal was taken.
+
+The per-head values were **first calibrated** against the meat rate of `0.02`:
+`per_head = k × per_unit_biomass_rate × r × body_mass / 4`, i.e. `k ×` what a full-meat herd paid at
+that rate. Since meat/turn `= rate × r × K/4` and head `= K / body_mass`, `K` cancelled, so the
+calibration was independent of how big the pen is. The meat rate has since moved to `0.06` and the
+per-head column was deliberately **not** re-derived, so the `k` table in `fauna_config.json`'s
+`_comment_standing_yield` is the record of that calibration point, not an invariant.
 
 **Nothing in the config is milk-shaped or wool-shaped.** Milk and eggs are both just `provisions`;
 wool, down and cashmere are all just `fibre`. **No material was added.** `StandingYieldDef` is the
@@ -1638,8 +1653,8 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   `starve_shrink_rate` (**0.10** — a fully-unfed herd loses 10%/turn). `capacity_fraction` is
   **deleted** (`K_pen` is the fenced footprint's graze flow) and so is **`upkeep_per_biomass`** — the
   block is `deny_unknown_fields`, so a file that still carries it fails the load (see "THE PEN'S FEED
-  IS ITS OWN MECHANISM"). Plus the **per-species growth gains** `pastoral_gain` (2.0) / `pen_gain`
-  (4.0) / `husbandry_regrowth_cap` (1.0), **`pen_radius_max`** (2 — the `ExtendPen` fence cap, 2d-β,
+  IS ITS OWN MECHANISM"). Plus the **per-species growth gains** `pastoral_gain` (1.25) / `pen_gain`
+  (1.5) / `husbandry_regrowth_cap` (1.0), **`pen_radius_max`** (2 — the `ExtendPen` fence cap, 2d-β,
   validated `>= 1`), the **`pastoral`** block (phase bands only). **The pen's
   investment cost and build rate moved to `intensification_ladder.json`'s `animal:pen` rung** — the old
   `corralling_yield_fraction` 0.50 became its `yield_fraction_while_building`, since **retired**

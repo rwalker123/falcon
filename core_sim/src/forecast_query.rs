@@ -2975,8 +2975,10 @@ mod tests {
     /// is what "plateau" means, and it holds for any herd and any kit.
     #[test]
     fn the_useful_cap_is_the_real_plateau_not_a_sampled_rung() {
-        /// Wide enough to run past the fixture boar's plateau.
-        const BAND_CAN_FIELD: u32 = 30;
+        /// Wide enough to run past the fixture boar's plateau. The raid's pack is measured in FOOD,
+        /// so a richer meat rate seats fewer animals per worker and pushes the plateau out: `30`
+        /// cleared it at `hunt.provisions_per_biomass` 0.02 and not at 0.06.
+        const BAND_CAN_FIELD: u32 = 90;
 
         let world = world_with_band();
         let herd = test_herd();

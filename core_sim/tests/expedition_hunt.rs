@@ -1975,16 +1975,28 @@ const NEAR_BAND_TILES: u32 = 2;
 /// A pack a `PARTY_WORKERS` party needs **several turns** to load past the drop-off's worthwhile-load
 /// bar (`hunt.min_deliver_fraction` × cap), so a near-band delivery is a genuine **partial** — the
 /// only regime in which the drop-off gate is distinguishable from trip completion. Neither shipped
-/// value works here: at `per_worker_carry` 0.8 the pack (3.2 food) holds barely one turn's conversion
-/// (4 hunters × `per_worker_biomass_capacity` 40 = 160 biomass ≈ 3.2 food), so the raid always ends on
-/// `full`; and `unbounded_carry_config`'s 1e6 puts *half* the pack out of reach, so the gate never
-/// fires at all.
-const DROP_OFF_PER_WORKER_CARRY: f32 = 2.4;
+/// value works here: at `per_worker_carry` 0.8 the pack holds at most one turn's conversion (4
+/// hunters × `per_worker_biomass_capacity` 40 = 160 biomass, × the meat rate), so the raid always
+/// ends on `full`; and `unbounded_carry_config`'s 1e6 puts *half* the pack out of reach, so the gate
+/// never fires at all.
+///
+/// **Sized in turns of conversion, off the shipped meat rate** — the pack is measured in food and
+/// the take in biomass, so a pack stated as a bare food amount stops being "several turns" the moment
+/// `hunt.provisions_per_biomass` moves (it was `2.4`, three turns at `0.02`).
+fn drop_off_per_worker_carry() -> f32 {
+    /// How many turns of one hunter's full conversion the fixture pack holds.
+    const TURNS_OF_CONVERSION: f32 = 3.0;
+    /// One kitted hunter's haul per turn, in biomass (the sled's equipped tier).
+    const HAUL_BIOMASS_PER_WORKER: f32 = 40.0;
+    TURNS_OF_CONVERSION
+        * HAUL_BIOMASS_PER_WORKER
+        * core_sim::FaunaConfig::builtin().hunt.provisions_per_biomass
+}
 
 /// The shipped expedition config with the multi-turn pack above.
 fn drop_off_pack_config() -> Arc<ExpeditionConfig> {
     let mut cfg = (*ExpeditionConfig::builtin()).clone();
-    cfg.hunt.per_worker_carry = DROP_OFF_PER_WORKER_CARRY;
+    cfg.hunt.per_worker_carry = drop_off_per_worker_carry();
     Arc::new(cfg)
 }
 
