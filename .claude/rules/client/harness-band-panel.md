@@ -171,8 +171,10 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 193 frames / 1456 `PASS` / 557 `assert OK`, exit 0 — RE-MEASURED, and this line is
-the harness's ONLY tally.** Measured on the work-party branch rebased onto `main` at `192 / 1440 /
+**A clean run is 193 frames / 1453 `PASS` / 557 `assert OK`, exit 0 — RE-MEASURED, and this line is
+the harness's ONLY tally.** The eat-first rule's retirement moved it from `193 / 1456 / 557`: five
+claims out (the ate line, the deficit line, its supplied-postings absence, its DANGER ink, the crew
+line's ink), two in (no row carries a retired line; every party line is quiet ink). Measured on the work-party branch rebased onto `main` at `192 / 1440 /
 556`; the difference is exactly the two work-party deltas below (`+2 / +14 / +6` and `−1 / +2 / −5`),
 which is the check that no assertion went missing in the rebase rather than an arithmetic that
 produced the figure.
@@ -2918,12 +2920,18 @@ zeros out would be asserting the decoder's shape rather than the row's.
 ⛔ **AND `realized_yield` IS THE PARTY'S `net_rate_home` ON EVERY POSTED ROW** — one forecast
 publishes both, so a fixture giving them two numbers describes a row no server can send.
 
-| posting | `walkTiles` | `walkOutRemaining` | `huntersOnTheRoad` | `nextLoadHomeIn` | ate | deficit | the block |
-|---|---|---|---|---|---|---|---|
-| local forage | — | — | — | — | — | — | **no block** |
-| walking out (deer) | 6 | 2 | 0 | 0 | 0 | 0 | crew line, `Walking out — reaches the herd in 2 turns` |
-| running (deer) | 8 | 0 | 1 | 3 | 2.0 | 0 | crew `· 1 on the road`, `Next load home in 3 turns`, `Party ate 2.00` |
-| unsupplied (wolf) | 5 | 0 | 1 | 1 | 0 | 1.2 | crew `· 1 on the road`, `Next load home in 1 turn`, the DANGER deficit |
+| posting | `walkTiles` | `walkOutRemaining` | `huntersOnTheRoad` | `nextLoadHomeIn` | the block |
+|---|---|---|---|---|---|
+| local forage | — | — | — | — | **no block** |
+| walking out (deer) | 6 | 2 | 0 | 0 | crew line, `Walking out — reaches the herd in 2 turns` |
+| running (deer) | 8 | 0 | 1 | 3 | crew `· 1 on the road`, `Next load home in 3 turns` |
+| running, inedible (wolf) | 5 | 0 | 1 | 1 | crew `· 1 on the road`, `Next load home in 1 turn` |
+
+⛔ **THE WOLF POSTING WAS THE UNSUPPLIED ONE, AND IS RE-STAGED AS AN ORDINARY FAR POSTING.** Under
+the retired eat-first rule it carried `party_deficit` 1.2 and drew a DANGER `Needs … from home` line,
+and the deer posting a `Party ate 2.00`; both fields are gone from the wire
+(`.claude/rules/core_sim/work-party.md` → "RETIRED: an eat-first rule"), and a pelt take walks home
+like any other.
 
 **Each of the three live fields drives exactly one line and is set independently of the other two**
 (`_work_party_row` takes them as three arguments), so every absence claim below is a claim about one
@@ -2936,17 +2944,15 @@ that read the wrong row's party lands on a figure a claim names.
 | the walking-out posting draws TWO lines | the liveness the identity and the absences below need |
 | its crew line, by EQUALITY, with no road clause | the noun is the board's own resolver's, the tile the party's, the walk one-way `-tile walk` |
 | its walk-out line names the HERD and the plural | `walkOutRemaining` is what it reads |
-| …and it carries NO next-load line and NO ate line | nobody has reached the herd; a `0` drops each |
+| …and it carries NO next-load line | nobody has reached the herd; a `0` drops it |
 | the rate line contains `net_rate_home` | a far row states what ARRIVES, never `0.0 · in transit` |
 | the running crew line carries `· 1 on the road` | the live road count |
-| `Next load home in 3 turns` | `nextLoadHomeIn` is what it reads |
-| `Party ate 2.00` | the eaten share, where there is one |
+| `Next load home in 3 turns`, and the block is those TWO lines | `nextLoadHomeIn` is what it reads, and nothing follows it |
 | the running posting has NO walk-out line | the claim that keeps an arrived posting from re-promising its arrival |
 | `in 1 turn`, not `in 1 turns` | every pack passes through one on its way home |
-| the deficit line, by EQUALITY | the fibre/stone case says what the band owes |
-| NEITHER supplied posting carries it | without it the claim above passes on a block that warns on every posting |
-| the INEDIBLE posting has no ate line | paired with the running posting's live one |
-| the deficit's ink is `DANGER`, the crew line's `INK_DIM` | render-site decisions no model claim can see |
+| the INEDIBLE posting draws the same two lines a running posting does | a pelt take is an ordinary posting |
+| NO row's drawn block carries `Party ate` or `food a turn from home` (`RETIRED_PARTY_ROW_NEEDLES`) | the eat-first rule's lines did not survive it; the size claims above are its liveness |
+| every party line on the three postings is `INK_DIM` | no line on the block is a warning any more — a render-site decision no model claim can see |
 | (PNG-less) a forage party walking out names the PATCH, singular | the plant web's noun and the walk-out singular, through the one producer |
 
 **`band_panel_work_party_narrow` is not a second picture of the same thing.** The work zone
@@ -2962,8 +2968,13 @@ DRAWN rows against the zone with a liveness guard ahead of it. Measured: **4 row
 
 **Sabotage-verified** by drawing the next-load line on `nextLoadHomeIn == 0` (`elif > 0` → `else`):
 **EXIT=1, exactly 3 of this block's claims fail** — the walking-out posting's two-line count
-(`Next load home in 0 turns` appears), its no-next-load/no-ate absence, and the PNG-less forage walk
+(`Next load home in 0 turns` appears), its no-next-load absence, and the PNG-less forage walk
 out — while every presence claim stays green. Restored: green.
+
+**And by re-adding a `Needs 1.20 food a turn from home` line to every posted row's block: EXIT=1,
+exactly 5 failures** — the no-ate/deficit claim (it names the line on all three postings), the three
+postings' line counts, and the PNG-less forage walk's count; the local row's identity stays green, and
+nothing else in the run moves. Restored: green.
 
 ## The DOCK's compose-surface claims ride the DENIAL form now (the Hunt verb is retired)
 

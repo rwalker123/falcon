@@ -1212,11 +1212,6 @@ message WorkPartyForecastReply {
   // The 1-based turn the first load lands at home (1 = next turn). 0 = none within the forecast
   // horizon - not "immediately".
   uint32 first_load_turn = 6;
-  // THE UPKEEP THE PARTY'S OWN TAKE LEAVES UNMET, food per turn - the mean of what the committed
-  // row will publish as `partyDeficit`, over the same horizon and the same stepping as `rate_home`.
-  // 0 when the take covers the upkeep, and 0 inside the band's work range. A positive value is what
-  // the home larder must supply every turn, or the posting folds back.
-  float deficit = 7;
 }
 
 // A query the server declined to answer. `reason` is a machine-readable snake_case token

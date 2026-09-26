@@ -418,25 +418,6 @@ static func apply_palette() -> void:
 		"status=trimmed": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
 		"status=pruned": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
 		"status=stalled": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN, "rung": RUNG_NOTABLE},
-		# **A WORK PARTY THE BAND COULD NOT KEEP SUPPLIED, WALKING HOME**
-		# (`docs/plan_civilization_steps.md` §One work party; `systems::labor` writes
-		# `status=recalled reason=unsupplied …`). A far Hunt or Forage row folds back: the pack is
-		# handed to the band, the workers return to the pool, and the queue entry is pruned with the
-		# row.
-		#
-		# ⛔ **NOTABLE, NOT THE ALERT `lapsed` EARNS, and the two are worth holding apart.** `lapsed`
-		# is ranked Alert because *the row was destroyed and its queued build went with it*; a
-		# fold-back is the POSTING ending — the food already spent on it is spent, and the people and
-		# their pack are coming home. The cost of misjudging a distance is deliberately not a loss
-		# the player has to be interrupted for, which is the sim's own design statement about it.
-		#
-		# **Its kind is the VERB's** (`forage` / `hunt`), both `RUNG_ROUTINE`, so without this row a
-		# fold-back announces itself to nobody at the default floor — the same defect `trimmed` and
-		# `stalled` were added for, and the reason the token needs an entry at all rather than
-		# inheriting one.
-		"status=recalled": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
-			"rung": RUNG_NOTABLE},
-
 		"severity=warn": {"glyph": STATUS_REDUCED_GLYPH, "color": HudStyle.WARN,
 			"rung": RUNG_NOTABLE},
 		"severity=danger": {"glyph": STATUS_SHED_GLYPH, "color": HudStyle.WARN,
@@ -488,12 +469,6 @@ const DETAIL_STATUS_WORK_LINK := {
 	"status=lapsed": true,
 	"status=pruned": true,
 	"status=stalled": true,
-	# **A FOLDED-BACK WORK PARTY PASSES THE SAME TEST THE FOUR ABOVE DO**: the sim changed a labor
-	# row without being asked — the posting ended and its workers are back in the pool — so the
-	# player is owed a way to go and look at what is left of it. The Work tab is where the row now
-	# sits as an ordinary near one, and where they either re-staff it or leave it. `announce`s
-	# `band_detail_token`, so the line carries the durable `band=` the jump needs.
-	"status=recalled": true,
 	# **`status=outrunning` IS HOW THE MATERIAL ALERT NAMES ITS BAND**
 	# (`docs/plan_standing_upkeep.md` §4.9 item 12), and without it the line names none. The sim's
 	# label is *"Hurdles is running out"* — no band in it — so `SIM_BAND_LABEL_FORMAT` has nothing to
@@ -644,14 +619,6 @@ const DETAIL_VALUE_LABELS := {
 	"trimmed": "trimmed",
 	"pruned": "pruned",
 	"untended": "untended",
-	# The work party's fold-back, status and reason both — the `feral` / `untended` pair's treatment
-	# one token over, so the row reads `recalled · unsupplied` rather than mixing a capitalised
-	# status with a lower-case reason inside one phrase. Lower-case with its
-	# neighbours and for their reason: the phrase continues the label ("the hunters on the aurochs-4
-	# came home — the band could not keep them supplied" · "unsupplied"), it does not head a column.
-	# Without this entry the generic fallback capitalises it mid-sentence.
-	"unsupplied": "unsupplied",
-	"recalled": "recalled",
 }
 
 ## Fragment separator. A middot rather than a comma: the fragments are peers, not a list.

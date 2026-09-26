@@ -2107,12 +2107,9 @@ const YIELD_HEADER_AT_LIKELY_SUFFIX := " · at the likely take"
 ## **THE CAPTION PAST THE APRON, where the headline is the caravan's steady rate** (`DrawerCompose
 ## Controller._with_home_rate`). `next turn` would be false there: next turn a new posting is still
 ## walking out and delivers nothing, and the figure is the rate once the caravan is running — the
-## `netRateHome` the committed row prints.
-##
-## ⛔ **IT SAYS `PER TURN`, NOT *ARRIVING HOME*.** The figure counts the share the party eats where it
-## works as well as what walks home, so a caption naming home would overstate what reaches the
-## larder; the section's lines below it say where the food goes (what it eats, what it still needs,
-## when a load lands).
+## `netRateHome` the committed row prints, which is the WHOLE take walking home (nothing is eaten at
+## the source; the band feeds its party through its ordinary consumption). The section's lines below
+## say how it travels — the walk, the road, when the first load lands.
 ##
 ## ⛔ **IT TAKES NO `· at the likely take` SUFFIX.** That suffix names a point of the crew-take curve's
 ## low/likely/high BAND; `rate_home` is not drawn from that band — it is the caravan forecast's MEAN
@@ -2173,22 +2170,14 @@ const WORK_PARTY_ON_ROAD_ROUNDS_TO_ONE := 0.5
 ## **WHEN THE FIRST LOAD LANDS** — the reply's 1-based turn.
 const WORK_PARTY_FIRST_LOAD_FORMAT := "First load home in %s"
 
-## **WHY NO LOAD LANDS — two reasons, never both, and neither is *the forecast*.** `first_load_turn`
-## `0` is stated rather than dropped, because it is the answer that most changes whether this posting
-## is worth making; but *within the forecast* is the tool talking, so the sheet says the cause.
+## **NO LOAD LANDS SOON** — `first_load_turn` `0` on the reply: the take is too thin to fill a pack
+## soon. Stated rather than dropped, because it is the answer that most changes whether this posting
+## is worth making, and stated as its CAUSE — never *within the forecast*, which is the tool talking.
 ##
-## The party's upkeep outruns its take (`deficit > 0`): it eats the whole catch and there is never a
-## surplus to walk. It rides under the deficit line (`HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT`,
-## the committed row's own wording), and the on-the-road line is dropped beside it — an empty road is
-## this line's consequence, not a second fact.
-##
-## **ONE PER WEB, IN THAT WEB'S VERB** — a hunt catches, a gather gathers — picked at the mount off the
-## section's `source_kind`, so a forage party never reads as though it hunted.
-const WORK_PARTY_EATS_EVERYTHING_HUNT := "They eat everything they catch — nothing left to carry home"
-const WORK_PARTY_EATS_EVERYTHING_FORAGE := "They eat everything they gather — nothing left to carry home"
-
-## The take covers the party but what is left over is thin: a pack fills, only not soon.
-const WORK_PARTY_SLOW_FILL := "What they don't eat builds up too slowly to fill a pack soon"
+## **ONE PER WEB, IN THAT WEB'S VERB** — a hunt catches, a gather gathers — picked at the mount off
+## the section's `source_kind`, so a forage party never reads as though it hunted.
+const WORK_PARTY_SLOW_FILL_HUNT := "Their catch builds up too slowly to fill a pack soon"
+const WORK_PARTY_SLOW_FILL_FORAGE := "What they gather builds up too slowly to fill a pack soon"
 
 ## While the answer is in flight — the raid readout's own treatment.
 const WORK_PARTY_PENDING := "Costing the work party…"

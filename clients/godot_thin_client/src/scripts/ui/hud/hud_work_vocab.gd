@@ -1277,18 +1277,6 @@ const WORK_ROW_PARTY_CREW_FORMAT := "%d %s · at (%d, %d) · %d-tile walk"
 ## rather than out of a number anybody picked.
 const WORK_ROW_PARTY_ON_ROAD_FORMAT := " · %d on the road"
 
-## What the party ate out of its own take this turn.
-##
-## **IT IS NOT A SECOND MEAL, which is why the line states it as a fact and not as a cost.** The
-## band's population consumption already feeds these people wherever they stand; what this records is
-## that the food was eaten AT THE SOURCE and credited home, so it never had to be walked.
-##
-## ⛔ **AND IT IS DRAWN ONLY WHERE THE PARTY ATE SOMETHING**, the shortfall line's own rule one line
-## up the block. `Party ate 0.00` is a line that says nothing: on an inedible posting it sat directly
-## above *"Needs 1.20 food a turn from home"*, which says everything it was going to — the take is
-## not food, so there was nothing to eat and the deficit line is the whole story.
-const WORK_ROW_PARTY_ATE_FORMAT := "Party ate %s"
-
 ## **THE WALK OUT, WHILE THE WHOLE PARTY IS STILL ON IT** (`walkOutRemaining`). It happens once: a
 ## posting walks out, and from then on the source is worked every turn and only the loads travel.
 ##
@@ -1322,21 +1310,10 @@ const WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT := "Next load home in 1 turn"
 ## states the rule for.
 const WORK_ROW_PARTY_TURNS_SINGULAR := 1
 
-## **THE ONE WARNING ON THE BLOCK** — what the party's upkeep still wants after its own take, which
-## the band has to carry out to it. `0` on a posting that feeds itself; the WHOLE upkeep on one whose
-## take is not edible (fibre, stone, wood), which is the case the rule produces with no per-job
-## exemption anywhere. A party the band cannot supply walks home, and the dock says so
-## (`HudEventVocab` → `status=recalled`).
-##
-## It follows the shortfall line's standing rule: it appears **only** where there is a shortfall, it
-## says one clause, and nothing downstream re-tints it — the row's severity stripe and its marks are
-## about the SOURCE, and a supply gap is not one of their conditions.
-const WORK_ROW_PARTY_DEFICIT_FORMAT := "Needs %s food a turn from home"
-
 ## The stable handle on every line of the block, carrying that line's own text — the
 ## `WORK_ROW_ACCOUNTS_META` treatment, so a harness reads what was drawn rather than recomposing the
 ## string it is about to compare against. One meta for all of them: the lines are one block, they are
-## collected in draw order, and the DANGER line identifies itself by its ink.
+## collected in draw order.
 const WORK_ROW_PARTY_META := &"work_row_party"
 
 ## ⛔ **THE ROW'S GEAR MARK — A MARK OF ITS OWN, NOT A SECOND ⚠.** A row short of GEAR and a row

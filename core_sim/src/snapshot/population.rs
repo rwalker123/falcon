@@ -147,8 +147,6 @@ pub(crate) fn labor_assignment_to_state(
             .party
             .as_ref()
             .map_or(0, |p| p.next_load_home_in()),
-        party_ate: assignment.party.as_ref().map_or(0.0, |p| p.ate),
-        party_deficit: assignment.party.as_ref().map_or(0.0, |p| p.deficit),
         net_rate_home: assignment.party.as_ref().map_or(0.0, |p| p.net_rate_home),
         ..Default::default()
     };

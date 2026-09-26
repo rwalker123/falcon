@@ -28,9 +28,6 @@ const FAR_PATCH_ON_ROAD := 0.7
 const FAR_PATCH_ON_ROAD_ROUNDED := 1
 const FAR_PATCH_RATE_HOME := 0.12
 const FAR_PATCH_FIRST_LOAD := 42
-## The plant web's eats-everything reply, driven PNG-less through the producer: a harvester whose
-## gather does not cover them, so the section states the row's deficit line in the forage verb.
-const FAR_PATCH_DEFICIT := 0.09
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -190,23 +187,18 @@ func run(harness) -> void:
 	h._assert_hud("…under the caravan's neutral `once running · per turn` caption (got \"%s\")"
 			% Readout.yields_header(patch_sheet),
 		Readout.yields_header(patch_sheet) == HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
-	# **THE FORAGE TWIN OF THE DEFICIT FRAME** (`hunt.gd`'s `herd_hunt_far_party_deficit`), PNG-less
-	# through the one producer: a gather that eats its whole take states the committed row's deficit
-	# line and the eats-everything reason in the GATHER verb — a forage party never reads as a hunt.
-	var eaten := DrawerComposeController.work_party_section_lines({
+	# **THE FORAGE TWIN OF THE SLOW-FILL LINE** (`hunt.gd`'s producer edges), PNG-less through the one
+	# producer: a gather too thin to fill a pack soon says so in the GATHER verb — a forage party never
+	# reads as a hunt. Pinned by the WORD, since an equality against the constant alone is satisfied
+	# by a swapped pair.
+	var slow := DrawerComposeController.work_party_section_lines({
 		"posts_a_party": true, "walk_tiles": FAR_PATCH_WALK_TILES, "walk_turns": FAR_PATCH_WALK_TURNS,
-		"hunters_on_the_road": 0.0, "rate_home": FAR_PATCH_RATE_HOME, "first_load_turn": 0,
-		"deficit": FAR_PATCH_DEFICIT},
+		"hunters_on_the_road": FAR_PATCH_ON_ROAD, "rate_home": FAR_PATCH_RATE_HOME,
+		"first_load_turn": 0},
 		HudComposeVocab.HARVEST_CREW_LABEL, ForecastQuery.WORK_PARTY_SOURCE_FORAGE)
-	var eaten_texts := eaten.map(func(entry: Array) -> String:
-		return String(entry[DrawerComposeController.WORK_PARTY_LINE_TEXT]))
-	h._assert_hud("a gather that eats its take states the deficit and the reason in the gather verb — got %s"
-			% str(eaten_texts),
-		eaten_texts.has(HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT
-				% SourceForecast.format_magnitude(FAR_PATCH_DEFICIT))
-			and eaten_texts.has(HudComposeVocab.WORK_PARTY_EATS_EVERYTHING_FORAGE)
-			and str(eaten_texts).contains("gather")
-			and not str(eaten_texts).contains("catch"))
+	h._assert_hud("a gather too thin to fill a pack soon says so in the gather verb — got %s" % str(slow),
+		slow.has(HudComposeVocab.WORK_PARTY_SLOW_FILL_FORAGE)
+			and str(slow).contains("gather") and not str(slow).contains("catch"))
 
 	# State 2c — TWO bands at DIFFERENT distances from ONE food tile, NEAR band selected (821, 1 tile
 	# away ≤ range 2): an ordinary gather with no party section. The band-picker selection — not the

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 207
+const EXPECTED_CHECKPOINTS := 203
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
@@ -281,25 +281,6 @@ const SHED_BENCH_TRIMMED_LABEL := "crafters cut to 2 — too few workers"
 
 const SHED_BENCH_TRIMMED_DETAIL := "status=trimmed reason=too_few_workers kind=bench workers=2 lost=1 band=5"
 
-## **A WORK PARTY THE BAND COULD NOT KEEP SUPPLIED, WALKING HOME** (`docs/plan_civilization_steps.md`
-## §One work party; `systems::labor`). The fifth status token, and the second one whose kind — the
-## VERB's, `forage`/`hunt`, both `RUNG_ROUTINE` — puts it under the dock's default floor without a
-## `DETAIL_STATUS_STYLE` row of its own: a far posting ending would otherwise announce itself to
-## nobody, which is the defect the `trimmed` / `pruned` split was added to close.
-##
-## **NOTABLE RATHER THAN THE ALERT `lapsed` EARNS**, and the pair is asserted in one frame below
-## because that is the only way the difference can be seen: a fold-back is the posting ending with
-## the pack and the workers coming home, where a lapse is the row destroyed and its queued build gone
-## with it.
-##
-## The label and detail are the sim's own, spelled out here rather than composed through the code
-## under test.
-const SHED_RECALLED_LABEL := "the hunters on the aurochs-4 came home — the band could not keep them supplied"
-
-const SHED_RECALLED_DETAIL := "status=recalled reason=unsupplied fauna=aurochs-4 walk=5 deficit=1.20 band=4"
-
-const SHED_RECALLED_BAND := 4
-
 ## **THE POSITIVE COMPANION, AND THE CLAIMS ABOVE ARE HOLLOW WITHOUT IT.** An ordinary `forage`
 ## receipt — the same KIND the two trimmed rows ride — with no `status=` token at all. It must stay
 ## Routine and must NOT reach the default floor, or "the shed rows are visible" would only be saying
@@ -313,8 +294,8 @@ const SHED_RECEIPT_LABEL := "Ashfoot Forage x4"
 ## draw order is the log's, not this list's, and a sorted expectation is what keeps the claim about
 ## WHICH bands were asked rather than about the order they came back in. Band 5 twice: both craft rows
 ## name the same band, and a set would have hidden the second one.
-const SHED_LINK_BANDS: Array[int] = [SHED_TRIMMED_LINKED_BAND, SHED_RECALLED_BAND,
-	SHED_STALLED_BAND, SHED_STALLED_BAND, SHED_LAPSED_BAND]
+const SHED_LINK_BANDS: Array[int] = [SHED_TRIMMED_LINKED_BAND, SHED_STALLED_BAND,
+	SHED_STALLED_BAND, SHED_LAPSED_BAND]
 
 ## **THE NARROWEST A DRAWN LINK MAY BE, and this is a regression floor rather than a design figure.**
 ## The link shipped for one build with `clip_text` set — which keeps a `Button`'s text out of its
@@ -341,10 +322,6 @@ func _event_dock_shed_fixture() -> Array:
 			"label": SHED_STALLED_LABEL, "detail": SHED_STALLED_DETAIL, "seq": 956},
 		{"tick": 84, "kind": "craft", "faction": 0,
 			"label": SHED_BENCH_TRIMMED_LABEL, "detail": SHED_BENCH_TRIMMED_DETAIL, "seq": 957},
-		# …and the WORK PARTY walking home, in the same frame as the lapse it must not be mistaken
-		# for. Its kind is the verb's, like the two trimmed rows above.
-		{"tick": 84, "kind": "hunt", "faction": 0,
-			"label": SHED_RECALLED_LABEL, "detail": SHED_RECALLED_DETAIL, "seq": 958},
 	]
 
 
@@ -2183,24 +2160,6 @@ func run(harness) -> void:
 		_preview_visible_label_count(event_dock, SHED_STALLED_LABEL) == 1)
 	# **THE BENCH THAT WAS ONLY THINNED STILL READS AS A `trimmed`** — the negative that stops the new
 	# token quietly becoming *every* bench line. Same kind, same band, one hand still on it.
-	# ---- …AND THE WORK PARTY WALKING HOME, the FIFTH token ---------------------------------------
-	# **THE PAIR IS THE CLAIM, and both halves are in this one frame.** A fold-back is the posting
-	# ending — pack handed over, workers back in the pool — where a `lapsed` row is destroyed and its
-	# queued build goes with it; ranking the two alike is exactly what the ladder's calibration
-	# forbids. And like `stalled`, its own KIND (`hunt`, `RUNG_ROUTINE`) leaves it under the default
-	# floor, so without the `DETAIL_STATUS_STYLE` row a far posting ending says nothing to a player
-	# on default settings.
-	var recalled_glyph := _preview_dock_row_glyph(event_dock, SHED_RECALLED_LABEL)
-	h._assert_hud("a work party WALKING HOME is Notable — the posting ended, nothing was destroyed (got %s)"
-			% _preview_event_rung(event_dock, SHED_RECALLED_LABEL),
-		_preview_event_rung(event_dock, SHED_RECALLED_LABEL) == HudEventVocab.RUNG_NOTABLE)
-	h._assert_hud("…and NOT the Alert a `lapsed` row earns, which is the token it is not",
-		_preview_event_rung(event_dock, SHED_RECALLED_LABEL) != HudEventVocab.RUNG_ALERT)
-	h._assert_hud("…so it wears the reduction mark beside the cut, not the hazard beside the loss (got \"%s\")"
-			% recalled_glyph,
-		recalled_glyph == trimmed_glyph and recalled_glyph != lapsed_glyph)
-	h._assert_hud("…and it reaches the DEFAULT floor, which `hunt` alone would not have",
-		_preview_visible_label_count(event_dock, SHED_RECALLED_LABEL) == 1)
 	h._assert_hud("a bench merely CUT is still a `trimmed` — Notable, same mark (rung %s, mark \"%s\")"
 			% [_preview_event_rung(event_dock, SHED_BENCH_TRIMMED_LABEL),
 				_preview_dock_row_glyph(event_dock, SHED_BENCH_TRIMMED_LABEL)],

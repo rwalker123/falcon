@@ -821,11 +821,6 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
     let ladder = world
         .resource::<crate::intensification::LadderConfigHandle>()
         .get();
-    let draw = world
-        .resource::<crate::demographics_config::DemographicsConfigHandle>()
-        .get()
-        .consumption
-        .worker_draw();
     let output_multiplier = crate::systems::output_multiplier(
         &cohort,
         &world
@@ -991,7 +986,6 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
         .and_then(|row| row.party.clone())
         .unwrap_or_else(|| crate::WorkParty::posted(source_pos, walk_tiles, walk_turns));
     party.restamp(source_pos, ask.workers, walk_tiles, walk_turns);
-    let upkeep = crate::work_party::party_upkeep(ask.workers, draw);
     let forecast = match &asked {
         Asked::Hunt(herd) => {
             let hunters = pricing.hunters(&equipment, &wear, &combat, intrinsic, herd.body_mass);
@@ -1003,7 +997,6 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 &hunters,
                 output_multiplier,
                 ask.floor,
-                upkeep,
                 horizon,
             )
         }
@@ -1020,7 +1013,6 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 output_multiplier,
                 ask.floor,
                 take,
-                upkeep,
                 horizon,
             )
         }
@@ -1032,9 +1024,6 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
         walk_turns,
         hunters_on_the_road: forecast.mean_on_the_road,
         first_load_turn: forecast.first_load_turn,
-        // **The deficit the committed row will publish** — stepped by the same close, averaged
-        // over the same horizon as `rate_home`, never recomputed from a rate.
-        deficit: forecast.mean_deficit,
     })
 }
 
@@ -1251,8 +1240,6 @@ mod tests {
         world.insert_resource(CreaturesConfigHandle::default());
         world.insert_resource(CombatConfigHandle::default());
         world.insert_resource(LaborConfigHandle::default());
-        world.insert_resource(crate::demographics_config::DemographicsConfigHandle::default());
-        world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         world.insert_resource(FaunaConfigHandle::default());
         world.insert_resource(ExpeditionConfigHandle::default());
         world.insert_resource(HerdRegistry {

@@ -97,10 +97,6 @@ fn spawn_world() -> App {
     // The movement pass reads `band_move_tiles_per_turn` off it — a marching party is the second
     // source of route traffic.
     app.world.insert_resource(LaborConfigHandle::default());
-    app.world
-        .insert_resource(core_sim::DemographicsConfigHandle::default());
-    app.world
-        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
 
     app.add_systems(bevy::app::Startup, spawn_initial_world);
     app.update();

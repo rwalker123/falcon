@@ -423,8 +423,6 @@ fn create_populations<'a>(
                                 walkTiles: assignment.walk_tiles,
                                 walkOutRemaining: assignment.walk_out_remaining,
                                 nextLoadHomeIn: assignment.next_load_home_in,
-                                partyAte: assignment.party_ate,
-                                partyDeficit: assignment.party_deficit,
                                 netRateHome: assignment.net_rate_home,
                             },
                         )
@@ -1258,8 +1256,6 @@ fn decode_labor_assignment(
         walk_tiles: assignment.walkTiles(),
         walk_out_remaining: assignment.walkOutRemaining(),
         next_load_home_in: assignment.nextLoadHomeIn(),
-        party_ate: assignment.partyAte(),
-        party_deficit: assignment.partyDeficit(),
         net_rate_home: assignment.netRateHome(),
     })
 }

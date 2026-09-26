@@ -3868,20 +3868,15 @@ func _mount_work_party_section(target: VBoxContainer, crew_label: String, source
     host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     host.set_meta(HudWidgets.WORK_PARTY_SECTION_META, true)
     host.add_child(HudWidgets.alloc_section_label(HudComposeVocab.WORK_PARTY_SECTION_LABEL))
-    var lines: Array = []
+    var lines: Array[String] = []
     if state == ForecastQuery.STATE_PENDING:
-        lines.append([HudComposeVocab.WORK_PARTY_PENDING, false])
+        lines.append(HudComposeVocab.WORK_PARTY_PENDING)
     elif state != ForecastQuery.STATE_READY:
-        lines.append([HudComposeVocab.FORECAST_FAILED_FORMAT % String(view.get("error", "")), false])
+        lines.append(HudComposeVocab.FORECAST_FAILED_FORMAT % String(view.get("error", "")))
     else:
         lines = work_party_section_lines(answer, crew_label, source_kind)
-    for entry in lines:
-        var text := String(entry[WORK_PARTY_LINE_TEXT])
+    for text in lines:
         var line := HudWidgets.alloc_hint_label(text)
-        # The deficit line takes the committed row's DANGER ink (`BandPanelController.
-        # _build_work_row_party_line`), so the sheet and the row cannot state it differently.
-        if bool(entry[WORK_PARTY_LINE_IS_SHORTFALL]):
-            line.add_theme_color_override("font_color", HudStyle.DANGER)
         line.set_meta(HudWidgets.WORK_PARTY_LINE_META, text)
         host.add_child(line)
     target.add_child(host)
@@ -3929,59 +3924,43 @@ func _with_home_rate(model: Dictionary, party_view: Dictionary) -> Dictionary:
     out[YIELD_MODEL_HOME_RATE] = true
     return out
 
-## The index of a section line's text within one `work_party_section_lines` entry, and of the flag
-## saying whether it is THE shortfall line — the committed row's `PARTY_LINE_TEXT` /
-## `PARTY_LINE_IS_SHORTFALL` pair, positional for the same reason.
-const WORK_PARTY_LINE_TEXT := 0
-const WORK_PARTY_LINE_IS_SHORTFALL := 1
-
-## The section's lines off one READY reply, each a `[text, is_shortfall]` pair — split out so the
-## harness can drive every branch of the copy without a sheet.
+## The section's lines, as text, off one READY reply — split out so the harness can drive every
+## branch of the copy without a sheet.
 ##
-## **A PARTY THAT EATS ITS WHOLE TAKE (`deficit > 0`)** states the deficit in the committed row's own
-## words and DANGER ink, then the reason no load lands; the on-the-road line is dropped, because an
-## empty road is that reason's consequence and would read as a separate fact.
-##
-## `source_kind` is the section's web (`ForecastQuery.WORK_PARTY_SOURCE_*`), and picks the
-## eats-everything line's verb.
+## `source_kind` is the section's web (`ForecastQuery.WORK_PARTY_SOURCE_*`), and picks the slow-fill
+## line's verb.
 static func work_party_section_lines(answer: Dictionary, crew_label: String,
-        source_kind: String) -> Array:
-    var lines: Array = []
+        source_kind: String) -> Array[String]:
+    var lines: Array[String] = []
     var walk_tiles := int(answer.get("walk_tiles", 0))
     var walk_turns := int(answer.get("walk_turns", 0))
     if walk_tiles <= 0:
-        lines.append([HudComposeVocab.WORK_PARTY_NO_WALK, false])
+        lines.append(HudComposeVocab.WORK_PARTY_NO_WALK)
     else:
-        lines.append([HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
+        lines.append(HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
             _counted(walk_tiles, HudComposeVocab.WORK_PARTY_TILES_FORMAT,
                 HudComposeVocab.WORK_PARTY_TILES_ONE),
             _counted(walk_turns, HudComposeVocab.WORK_PARTY_TURNS_FORMAT,
-                HudComposeVocab.WORK_PARTY_TURNS_ONE), walk_turns], false])
-    var deficit := float(answer.get("deficit", 0.0))
-    if deficit > 0.0:
-        lines.append([HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT
-            % SourceForecast.format_magnitude(deficit), true])
-        lines.append([HudComposeVocab.WORK_PARTY_EATS_EVERYTHING_HUNT
-            if source_kind == ForecastQuery.WORK_PARTY_SOURCE_HUNT
-            else HudComposeVocab.WORK_PARTY_EATS_EVERYTHING_FORAGE, false])
-        return lines
+                HudComposeVocab.WORK_PARTY_TURNS_ONE), walk_turns])
     var on_road := float(answer.get("hunters_on_the_road", 0.0))
     if on_road < HudComposeVocab.WORK_PARTY_ON_ROAD_ROUNDS_TO_ONE:
-        lines.append([HudComposeVocab.WORK_PARTY_ON_ROAD_RARELY, false])
+        lines.append(HudComposeVocab.WORK_PARTY_ON_ROAD_RARELY)
     else:
         var people := maxi(roundi(on_road), HudComposeVocab.WORK_PARTY_COUNT_SINGULAR)
         var noun := String(HudComposeVocab.WORK_PARTY_CREW_SINGULAR.get(crew_label,
             crew_label.to_lower())) if people == HudComposeVocab.WORK_PARTY_COUNT_SINGULAR \
             else crew_label.to_lower()
-        lines.append([HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [people, noun], false])
+        lines.append(HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [people, noun])
     # ⛔ **NO "Brings home X food a turn" LINE.** The rate home IS the sheet's PER TURN headline past
     # the apron (`_with_home_rate`); a second statement of it here would say one number twice.
     var first_load := int(answer.get("first_load_turn", 0))
     if first_load <= 0:
-        lines.append([HudComposeVocab.WORK_PARTY_SLOW_FILL, false])
+        lines.append(HudComposeVocab.WORK_PARTY_SLOW_FILL_HUNT
+            if source_kind == ForecastQuery.WORK_PARTY_SOURCE_HUNT
+            else HudComposeVocab.WORK_PARTY_SLOW_FILL_FORAGE)
     else:
-        lines.append([HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT % _counted(first_load,
-            HudComposeVocab.WORK_PARTY_TURNS_FORMAT, HudComposeVocab.WORK_PARTY_TURNS_ONE), false])
+        lines.append(HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT % _counted(first_load,
+            HudComposeVocab.WORK_PARTY_TURNS_FORMAT, HudComposeVocab.WORK_PARTY_TURNS_ONE))
     return lines
 
 ## `n` in its counted phrase, singular at one.

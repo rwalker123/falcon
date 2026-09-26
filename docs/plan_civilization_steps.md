@@ -627,23 +627,27 @@ per turn; a peer network node would have handed the take to whichever band happe
 
 ### Who eats what (decided)
 
-**Everyone in the party eats, from the party's own take. The take feeds the party first; the
-remainder is surplus, and the SHORTFALL is a deficit the supply line must cover.** That one sentence
-is the whole rule, and it produces every case without a per-job exemption:
+**The home band feeds its party, and nothing about feeding is modelled at the source.** The party's
+people never left the band's cohort, so the band's ordinary consumption already feeds them wherever
+they stand. **The whole take goes into the load and walks home.** Supplies need no mechanism of
+their own: the porters carrying the take home carry supplies back out on the return leg.
 
-- A **hunt party on a good herd** takes food, covers its own upkeep, and sends a large surplus home.
-- A **forage party on a thin patch** takes food and roughly breaks even — a posting that barely pays
-  for itself, which is a real thing to discover rather than a bug.
-- A **fibre or stone party** takes no food at all, so it runs a full deficit and food must move out
-  to it or the posting fails.
+So a party's food is the band's food, exactly as a local hunter's is. A fibre or stone party costs
+the band what those workers would cost at home; a hunt that catches less than its hunters eat costs
+the band the difference, near or far, and that is the hunt's own balance to tune rather than a
+warning for each sheet to issue. What distance does cost, honestly, is the pipeline: during the walk
+out and the first pack's fill the band feeds the party and receives nothing yet. A party still has
+no store of its own — its larder is a pack in transit, never a place, so nothing about it tethers
+anyone.
 
-There is no "lives off its kills" exemption and no auto-forage rule: hunting is not privileged, it
-simply happens to be the job whose take is edible. A party still has no store of its own — its
-larder is a pack in transit, never a place, so nothing about it tethers anyone.
-
-**A party that cannot be supplied walks home.** Provisions running low raises an alert and the party
-folds back through `fold_party_into_band`. The cost of misjudging a distance is the posting ending
-and the food already spent on it, not people dying somewhere the player was not looking.
+**It replaced an eat-first rule, and the reason is worth keeping.** The first cut had the party eat
+from its own take before anything walked home, with any shortfall a deficit the home larder had to
+cover or the posting folded back. It was bookkeeping — the band's consumption already fed those
+people, so the eaten share had to be credited home again to avoid charging them twice — and the only
+physical thing it changed was which food walked. What it produced was a deficit, a supply gate, a
+fold-back, an event and four readouts, which together told a player looking at a thin hunt that food
+was "arriving home" while no load ever did. Abstracting it out removed all of it and lost nothing
+the model needed.
 
 *When* a far party's cargo is delivered was the decision this slice owed, and it is answered above:
 there is no launch gate to rethink, because there is no launch and no shipment to gate. The party is

@@ -465,21 +465,3 @@ static func _collect_work_party_lines(node: Node, lines: Array) -> void:
 		lines.append(String((node as Control).get_meta(HudWidgets.WORK_PARTY_LINE_META)))
 	for child in node.get_children():
 		_collect_work_party_lines(child, lines)
-
-## **THE SECTION'S LINES DRAWN IN DANGER INK** — the texts (off `HudWidgets.WORK_PARTY_LINE_META`) of
-## every section label whose resolved `font_color` is `HudStyle.DANGER`. The shortfall line's claim is
-## that it is THE warning in the committed row's ink; reading the colour the label resolves, rather
-## than the pair the producer returned, is what ties that claim to the drawn label.
-static func work_party_danger_lines(root: Node) -> Array:
-	var lines: Array = []
-	_collect_work_party_danger_lines(root, lines)
-	return lines
-
-static func _collect_work_party_danger_lines(node: Node, lines: Array) -> void:
-	if node == null:
-		return
-	if node is Label and (node as Label).has_meta(HudWidgets.WORK_PARTY_LINE_META) \
-			and (node as Label).get_theme_color("font_color") == HudStyle.DANGER:
-		lines.append(String((node as Label).get_meta(HudWidgets.WORK_PARTY_LINE_META)))
-	for child in node.get_children():
-		_collect_work_party_danger_lines(child, lines)

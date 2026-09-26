@@ -67,7 +67,6 @@ fn world_of(terrain: TerrainType) -> (World, Entity) {
     world.insert_resource(config);
     world.insert_resource(core_sim::FaunaConfigHandle::default());
     world.insert_resource(LaborConfigHandle::default());
-    world.insert_resource(core_sim::DemographicsConfigHandle::default());
     world.insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     world.insert_resource(core_sim::FloraConfigHandle::default());
     world.insert_resource(LadderConfigHandle::default());

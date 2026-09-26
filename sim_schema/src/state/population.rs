@@ -410,16 +410,9 @@ pub struct LaborAssignmentState {
     /// rather than render a countdown at zero.
     #[serde(default)]
     pub next_load_home_in: u32,
-    /// **WHAT THE PARTY ATE OUT OF ITS OWN TAKE THIS TURN** — credited home, and not a second meal:
-    /// the band's population consumption already feeds these people wherever they stand.
-    #[serde(default)]
-    pub party_ate: f32,
-    /// **WHAT THE PARTY'S UPKEEP STILL WANTS AFTER ITS OWN TAKE** — the food the home band has to
-    /// supply. A party the band cannot supply folds back.
-    #[serde(default)]
-    pub party_deficit: f32,
     /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the caravan stepped forward over
-    /// `yield_average_horizon_turns` from this state: the eaten share plus every pack that lands.
+    /// `yield_average_horizon_turns` from this state: every pack that lands, per turn — the whole
+    /// take, delayed by the walk.
     /// The number the work row prints.
     #[serde(default)]
     pub net_rate_home: f32,

@@ -71,8 +71,6 @@ fn spawn_world() -> App {
         .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
-        .insert_resource(core_sim::DemographicsConfigHandle::default());
-    app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());

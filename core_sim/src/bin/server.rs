@@ -3438,7 +3438,7 @@ fn seed_source_yield(
             );
             // **A far row is priced by stepping its caravan** — the same function the turn's
             // published `netRateHome` answers through, at the same pricing.
-            if let Some((party, upkeep)) = caravan {
+            if let Some(party) = caravan {
                 let pricing = core_sim::work_party::CaravanPricing::resolve(
                     &equipment_cfg,
                     &crew_kit,
@@ -3458,7 +3458,6 @@ fn seed_source_yield(
                     output_mult,
                     *floor,
                     take_species,
-                    upkeep,
                     labor.yield_average_horizon_turns,
                 );
                 seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, false);
@@ -3534,7 +3533,7 @@ fn seed_source_yield(
                 labor.arrivals_horizon_turns,
                 range_sigmas,
             );
-            if let Some((party, upkeep)) = caravan {
+            if let Some(party) = caravan {
                 let pricing = core_sim::work_party::CaravanPricing::resolve(
                     &equipment_cfg,
                     &crew_kit,
@@ -3558,7 +3557,6 @@ fn seed_source_yield(
                     &hunters,
                     output_mult,
                     *floor,
-                    upkeep,
                     labor.yield_average_horizon_turns,
                 );
                 seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, true);
@@ -3675,8 +3673,7 @@ fn seed_source_yield(
 ///
 /// The row's standing party if it has one — a stepper press on a live posting re-seeds that posting,
 /// not a fresh one that would re-promise a walk out — else a party posted now. The walk comes off
-/// the one resolver the turn and the query read (`core_sim::work_party::resolve_walk`), and the
-/// upkeep off the one per-worker draw the band's consumption charges.
+/// the one resolver the turn and the query read (`core_sim::work_party::resolve_walk`).
 fn caravan_seed_party(
     app: &bevy::prelude::App,
     band: Entity,
@@ -3684,7 +3681,7 @@ fn caravan_seed_party(
     source_pos: UVec2,
     band_pos: UVec2,
     workers: u32,
-) -> Option<(core_sim::WorkParty, f32)> {
+) -> Option<core_sim::WorkParty> {
     let labor = app.world.resource::<LaborConfigHandle>().get();
     let supply = app
         .world
@@ -3721,13 +3718,7 @@ fn caravan_seed_party(
         })
         .unwrap_or_else(|| core_sim::WorkParty::posted(source_pos, walk_tiles, walk_turns));
     party.restamp(source_pos, workers, walk_tiles, walk_turns);
-    let draw = app
-        .world
-        .resource::<core_sim::DemographicsConfigHandle>()
-        .get()
-        .consumption
-        .worker_draw();
-    Some((party, core_sim::work_party::party_upkeep(workers, draw)))
+    Some(party)
 }
 
 /// **A far row's seed, off its caravan forecast.** `actual` is what the caravan lands **next turn**

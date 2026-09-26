@@ -2304,32 +2304,19 @@ fn a_second_ring_is_accepted(app: &mut App, id: &str) -> bool {
         .begin_pen_extension(radius_max)
 }
 
-/// **Walk the band clean off the map's other side and empty its larder**, so the keepers it leaves
-/// on the pen are a work party it cannot supply and the row folds back — the third exit, and the
-/// one no command issues.
+/// **The band loses every working hand**, so the shed empties every row it staffed and the keeper
+/// row goes with its queue entry — the third exit, and the one no command issues.
 ///
-/// ⛔ **DISTANCE ALONE NO LONGER ENDS A ROW.** A Hunt row past the leash used to lapse on the spot;
-/// it posts a [`core_sim::WorkParty`] now (`docs/plan_civilization_steps.md` §One work party) and
-/// keeps working the source from where it stands. What still ends it is **provisioning**: a party
-/// whose band cannot get food out to it walks home, taking its queue entry with it. So the fixture
-/// has to stage the failure the exit actually has, and an empty larder is the whole of it.
-fn strand_the_band_beyond_supply(app: &mut App, band: Entity, from: UVec2) {
-    let (width, height) = {
-        let registry = app.world.resource::<TileRegistry>();
-        (registry.width, registry.height)
-    };
-    let far = UVec2::new((from.x + width / 2) % width, (from.y + height / 2) % height);
-    let tile = app
-        .world
-        .resource::<TileRegistry>()
-        .index(far.x, far.y)
-        .expect("the far tile resolves");
-    let mut cohort = app
-        .world
+/// ⛔ **NEITHER DISTANCE NOR AN EMPTY LARDER ENDS A ROW ANY MORE.** A Hunt row past the leash posts a
+/// [`core_sim::WorkParty`] and keeps working (`docs/plan_civilization_steps.md` §One work party), and
+/// a party is fed by its band's ordinary consumption, so there is no supply gate to fail either. The
+/// exit that survives without a command is the band's own people running out — the shedding order
+/// emptying the row — so that is what this stages.
+fn the_band_loses_its_hands(app: &mut App, band: Entity) {
+    app.world
         .get_mut::<PopulationCohort>(band)
-        .expect("the band keeps its cohort");
-    cohort.current_tile = tile;
-    cohort.stores.set(core_sim::FOOD, scalar_zero());
+        .expect("the band keeps its cohort")
+        .working = scalar_zero();
 }
 
 /// **A RING THAT LEAVES THE BUILD QUEUE CAN BE STARTED AGAIN.**
@@ -2382,15 +2369,15 @@ fn an_abandoned_pen_frees_its_ring_to_be_started_again() {
     );
 }
 
-/// The **FOLD-BACK** exit — nobody issued a command at all: the band walked away, could not keep
-/// the party it left on the pen supplied, and the turn's prune took the entry with the row. It is
-/// the easiest of the three to miss and it strands the ring identically
+/// The **LAPSE** exit — nobody issued a command at all: the band lost the hands that kept the pen,
+/// the shed emptied the row, and the turn's prune took the entry with it. It is the easiest of the
+/// three to miss and it strands the ring identically
 /// ([`an_unqueued_ring_frees_the_pen_to_be_extended_again`] has the mechanism).
 #[test]
 fn a_lapsed_keeper_row_frees_its_ring_to_be_started_again() {
-    let (mut app, band, herd_id, source) = world_with_a_ring_at_the_head(BUILDERS);
+    let (mut app, band, herd_id, _) = world_with_a_ring_at_the_head(BUILDERS);
     resolve_a_pen_turn(&mut app);
-    strand_the_band_beyond_supply(&mut app, band, source);
+    the_band_loses_its_hands(&mut app, band);
     resolve_a_pen_turn(&mut app);
     assert!(
         queued_sources(&app, band).is_empty(),

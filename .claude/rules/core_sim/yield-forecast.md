@@ -770,15 +770,15 @@ no longer apron than a Forage one, so a hunt three to five tiles out now posts a
 retired leash made it free. See `.claude/rules/core_sim/work-party.md` → "The local identity is the
 point".
 
-**Nothing lapses for distance any more.** What still lapses: a herd the registry no longer carries;
-a holding with nothing left to hold; and — new — a party the band **cannot supply**, which folds
-back with `status=recalled reason=unsupplied` (Notable, not the Alert-ranked `lapsed`).
+**Nothing lapses for distance any more, and nothing lapses for food either** — a party is fed by
+its band's ordinary consumption. What still lapses: a herd the registry no longer carries, and a
+holding with nothing left to hold.
 
 Guarded by `labor_allocation::a_forage_row_out_of_work_range_posts_a_party_and_the_near_row_is_untouched`
-and `::a_hunt_past_the_leash_posts_a_party_the_band_must_then_supply`, each of which asserts both
-halves in the same run — the far row kept **and** the near row untouched, the supplied posting kept
-**and** the unsupplied one folded back — so neither *"nothing lapses"* nor *"everything lapses"* can
-pass.
+and `::a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it`, each of which asserts
+both halves in the same run — the far row kept **and** the near row untouched, the far posting kept
+(by a band with an empty larder) **and** the posting whose herd has gone ended — so neither
+*"nothing lapses"* nor *"everything lapses"* can pass.
 
 **The assign-time seed prices a far row by stepping its caravan** — `seed_source_yield` no longer
 declines a Hunt or Forage row past range, and its Hunt gate no longer reads the retired

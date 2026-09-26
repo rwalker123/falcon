@@ -2226,16 +2226,9 @@ table LaborAssignment {
   // hunter walking back empty does not count), which is the signal to drop the line, not to draw
   // a countdown at zero.
   nextLoadHomeIn:uint = 0;
-  // What the party ate out of its own take this turn (min(take, party upkeep)). NOT a second meal,
-  // and credited home: the band's population consumption already feeds these people wherever they
-  // stand, so this records that the food was eaten AT THE SOURCE and never had to be carried.
-  partyAte:float = 0;
-  // What the party's upkeep still wants after its own take - the food the home band has to supply.
-  // A party the band cannot supply walks home: the row folds back and the feed says so.
-  partyDeficit:float = 0;
   // *** THE PER-TURN RATE ARRIVING AT THE HOME BAND - the number the work row prints. ***
   // The caravan stepped forward over labor_config.yield_average_horizon_turns from this state:
-  // the eaten share plus every pack that lands, per turn. A near row and a far row are comparable
+  // every pack that lands, per turn - the whole take, delayed by the walk. A near row and a far row are comparable
   // figures on one board. THE TAKE FLOWS HOME, ALWAYS - to the band that owns this row.
   netRateHome:float = 0;
 }

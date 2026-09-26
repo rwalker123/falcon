@@ -52,19 +52,6 @@ pub struct DemographicsConsumption {
     pub elder_factor: f32,
 }
 
-impl DemographicsConsumption {
-    /// **ONE WORKING ADULT'S FOOD FOR ONE TURN** — the `working` bracket's own term of
-    /// `systems::population::food_demand`, named so the one other reader of it cannot
-    /// invent a second rate.
-    ///
-    /// That reader is a **work party's upkeep** (`crate::work_party::party_upkeep`): a party is the
-    /// band's own people standing somewhere else, so it eats at exactly the rate the band's
-    /// consumption already charges for them, never at a rate of its own.
-    pub fn worker_draw(&self) -> f32 {
-        self.per_capita_draw * self.working_factor
-    }
-}
-
 /// Campaign-start seeding. Each freshly spawned band starts with `food_reserve_days` turns of
 /// its own food demand carried in its larder (food is band-local from day one — no faction pool)
 /// and a `well_fed_morale_bonus` for opening the game provisioned.

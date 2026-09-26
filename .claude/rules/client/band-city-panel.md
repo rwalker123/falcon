@@ -7404,7 +7404,7 @@ thing in those frames that did not survive.** A party is wired to its home band 
 flow both ways along that one tie every turn, so assigning workers stays the only command. Nothing in
 the block is pressable.
 
-### The block's lines, and which of them is a warning
+### The block's lines — none of them is a warning
 
 The party is a **caravan** (`.claude/rules/core_sim/work-party.md`): it hunts or gathers as any crew
 does, and each time the take fills one hunter's pack that hunter walks it home and back and rejoins.
@@ -7430,14 +7430,18 @@ count, so a line added to the block is paid for without a second edit anywhere.
    the rest of the posting's life, and it drops the line.
 4. `Next load home in <N> turns` (`in 1 turn` at one) — **only while `nextLoadHomeIn > 0`.** `0` is
    *"nobody is carrying a load home"*, never *"lands this turn"*.
-5. `Party ate <N>` — **not a second meal.** The band's consumption already feeds these people wherever
-   they stand; the eaten share is credited home, so the line records that it never had to be walked.
-   ⛔ **Only where the party ATE something**: `Party ate 0.00` on an inedible posting sits directly
-   above the deficit line, which says everything it was going to.
-6. ⛔ **`Needs <N> food a turn from home`, in `HudStyle.DANGER` — the ONE warning on the block**, under
-   `labor-ui.md`'s standing rule for a shortfall line: only where there is a shortfall, one clause,
-   and nothing downstream re-tints the lines above it. It is NOT a condition of the row's severity
-   stripe or of its marks, which are about the SOURCE.
+
+Every line is the row's quiet `INK_DIM`, and `_work_row_party_lines_text` returns plain strings.
+
+> #### ⛔ THE EAT-FIRST RULE'S LINES ARE RETIRED WITH IT
+>
+> The first caravan had the party eat its upkeep out of its own take, and the block read `Party ate
+> <N>` and — the one warning, in DANGER — `Needs <N> food a turn from home`, off `partyAte` /
+> `partyDeficit`; an unsupplied posting folded back with a `status=recalled` feed line. The home band
+> now feeds its party through its ordinary consumption and the whole take walks home
+> (`.claude/rules/core_sim/work-party.md` → "RETIRED: an eat-first rule"), so both fields, both lines,
+> the recalled event and the `[text, is_shortfall]` pair that carried the DANGER flag are gone. An
+> inedible posting (a wolf pack's pelts) is an ordinary posting: its whole take walks home too.
 
 > #### ⛔ THE PIPELINE MODEL'S LINES ARE RETIRED WITH IT
 >
@@ -7463,7 +7467,7 @@ whose whole balance argument is stated in rows. **The parameter's DEFAULT is the
 so every board without a posting pages exactly as it did and the layout probes measure what they
 always measured.
 
-### The wire's ten keys are read in ONE place
+### The wire's eight keys are read in ONE place
 
 `SourceForecast.party_readout` is the only reader, and `party_is_posted` the only gate.
 ⛔ **`party_workers == 0` IS the sim's own "there is no party"** and every other key reads 0 with it,

@@ -6208,32 +6208,24 @@ func _build_work_row_accounts(model: Dictionary) -> MarginContainer:
     column.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
     column.add_child(line_two)
     for line in _work_row_party_lines_text(model):
-        column.add_child(_build_work_row_party_line(
-            String(line[PARTY_LINE_TEXT]), bool(line[PARTY_LINE_IS_SHORTFALL])))
+        column.add_child(_build_work_row_party_line(String(line)))
     margin.add_child(column)
     return margin
 
-## The index of a party line's text within one `_work_row_party_lines_text` entry, and of the flag
-## saying whether it is THE shortfall line. A two-element Array rather than a Dictionary: the block
-## is composed and consumed in one file, and the pair is positional in both.
-const PARTY_LINE_TEXT := 0
-const PARTY_LINE_IS_SHORTFALL := 1
-
-## One line of a row's party block. Quiet ink like the accounts above it, **except the shortfall
-## line**, which is the one warning on the block and takes `HudStyle.DANGER` — a supply gap stops
-## the work, where the row's amber marks mean *dearer* or *at risk*.
+## One line of a row's party block, in the quiet ink of the accounts above it. **None of its lines is
+## a warning**: the home band feeds its party through its ordinary consumption, so a posting has no
+## supply gap to state (`.claude/rules/core_sim/work-party.md` → "RETIRED: an eat-first rule").
 ##
 ## `OVERRUN_TRIM_ELLIPSIS` and the unconditional hover are the accounts line's treatment, taken for
 ## its reason: a `Label` with autowrap off reports its whole text as its minimum width, and this zone
 ## is anchored full-rect into a host that `clip_contents`, so one long line would clamp the tab's
 ## column to its own width and slice the right edge off every row's stepper. `MOUSE_FILTER_PASS`
 ## likewise — the whole row is a click target and STOP would punch a full-width hole in it.
-func _build_work_row_party_line(text: String, is_shortfall: bool) -> Label:
+func _build_work_row_party_line(text: String) -> Label:
     var label := Label.new()
     label.text = text
     label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    label.add_theme_color_override("font_color",
-        HudStyle.DANGER if is_shortfall else HudStyle.INK_DIM)
+    label.add_theme_color_override("font_color", HudStyle.INK_DIM)
     label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     HudWidgets.set_label_tooltip(label, text)
     label.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -6252,23 +6244,21 @@ func _work_row_party_lines(model: Dictionary) -> int:
 ## this existed.
 ##
 ## The order is the block's own and is load-bearing to read: who and where, the walk out while it
-## lasts, when the next load lands, what the party ate, and — only where there is one — what the band
-## still owes it.
+## lasts, and when the next load lands.
 ##
 ## ⛔ **EVERY LINE BUT THE FIRST IS PRESENT ONLY WHEN ITS OWN FIELD SAYS SO.** Each of the two
 ## countdowns reads `0` as *there is nothing to say* (`walkOutRemaining` for the rest of a posting once
 ## it has arrived, `nextLoadHomeIn` whenever nobody is carrying a load), and a line drawn at `0` would
 ## be a promise about something that is not happening.
 ##
-## ⛔ **THE SHORTFALL LINE APPEARS ONLY WHERE THERE IS A SHORTFALL**, says ONE clause, and is the only
-## line here that is a warning (`labor-ui.md`'s standing rule). It is the fibre/stone case: a party
-## whose take is not edible runs its whole upkeep as a deficit, with no per-job exemption anywhere in
-## the model.
-func _work_row_party_lines_text(model: Dictionary) -> Array:
+## ⛔ **THERE IS NO FOOD ACCOUNT ON THE BLOCK** — no *ate*, no *needs from home*. The whole take walks
+## home and the band feeds its party through its ordinary consumption, so the row has nothing of the
+## party's own eating to state.
+func _work_row_party_lines_text(model: Dictionary) -> Array[String]:
     var party: Dictionary = model.get("party", {})
     if not SourceForecast.party_is_posted(party):
         return []
-    var lines: Array = []
+    var lines: Array[String] = []
     var crew := HudWorkVocab.WORK_ROW_PARTY_CREW_FORMAT % [
         int(party[SourceForecast.ASSIGNMENT_PARTY_WORKERS_KEY]),
         # The board's existing crew-noun resolver, never a third one: the plant web has one word and
@@ -6282,7 +6272,7 @@ func _work_row_party_lines_text(model: Dictionary) -> Array:
     var on_road := int(party[SourceForecast.ASSIGNMENT_HUNTERS_ON_THE_ROAD_KEY])
     if on_road > 0:
         crew += HudWorkVocab.WORK_ROW_PARTY_ON_ROAD_FORMAT % on_road
-    lines.append([crew, false])
+    lines.append(crew)
     # **THE WALK OUT, WHILE THE WHOLE PARTY IS STILL ON IT.** It names the SOURCE the party walks to,
     # off the row's own kind.
     var walking := int(party[SourceForecast.ASSIGNMENT_WALK_OUT_REMAINING_KEY])
@@ -6291,26 +6281,14 @@ func _work_row_party_lines_text(model: Dictionary) -> Array:
             if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
             else HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_PATCH
         if walking == HudWorkVocab.WORK_ROW_PARTY_TURNS_SINGULAR:
-            lines.append([HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT % target, false])
+            lines.append(HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT % target)
         else:
-            lines.append([HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_FORMAT % [target, walking],
-                false])
+            lines.append(HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_FORMAT % [target, walking])
     var next_load := int(party[SourceForecast.ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY])
     if next_load == HudWorkVocab.WORK_ROW_PARTY_TURNS_SINGULAR:
-        lines.append([HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT, false])
+        lines.append(HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT)
     elif next_load > 0:
-        lines.append([HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT % next_load, false])
-    # **ONLY WHERE THE PARTY ATE SOMETHING.** A `Party ate 0.00` says nothing, and on the posting it
-    # is most often true of — one whose take is not food — it sits directly above the deficit line,
-    # which says everything it was going to.
-    var ate := float(party[SourceForecast.ASSIGNMENT_PARTY_ATE_KEY])
-    if ate > 0.0:
-        lines.append([HudWorkVocab.WORK_ROW_PARTY_ATE_FORMAT
-            % SourceForecast.format_magnitude(ate), false])
-    var deficit := float(party[SourceForecast.ASSIGNMENT_PARTY_DEFICIT_KEY])
-    if deficit > 0.0:
-        lines.append([HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT % SourceForecast.format_magnitude(
-            deficit), true])
+        lines.append(HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT % next_load)
     return lines
 
 func _work_row_stripe_color(model: Dictionary) -> Color:

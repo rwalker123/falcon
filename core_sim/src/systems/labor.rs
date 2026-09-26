@@ -248,11 +248,6 @@ pub struct LaborConfigs<'w> {
     /// the `Extract` arm of the assignment loop; what runs elsewhere is the per-turn *renewal* and
     /// the decay, in `extraction::advance_deposits` a stage earlier.
     pub extraction: Res<'w, crate::extraction_config::ExtractionConfigHandle>,
-    /// **The per-capita food draw** — read for exactly one thing: a work party's own upkeep
-    /// (`crate::work_party::party_upkeep`). There is deliberately no second per-worker food rate
-    /// for a party; it is the same people eating the same amount, somewhere else, so this is the
-    /// rate `systems::population::food_demand` already charges them at.
-    pub demographics: Res<'w, crate::demographics_config::DemographicsConfigHandle>,
     /// **The logistics reach** — read for how far a road widens it, which is how much of a work
     /// party's walk a road takes away (`crate::work_party::resolve_walk`). Read here rather than
     /// re-stated so what a road does for a caravan and what it does for pooling are one reading.
@@ -3638,17 +3633,15 @@ fn party_source_position(target: &LaborTarget, registry: &HerdRegistry) -> Optio
 /// [`crate::work_party::forecast_caravan`] steps, so the forecast runs the turn's own code.
 struct PartyPosting {
     party: WorkParty,
-    /// The party's own upkeep this turn ([`crate::work_party::party_upkeep`]).
-    upkeep: f32,
     /// **The hunters at the source — what the existing income math sees.** Everything downstream —
     /// the take, the rung work, the kit coverage — is priced on it, which is what makes *"the take
     /// of whoever is present"* a mechanism rather than a note. `0` while walking out.
     working_crew: u32,
-    /// Food the walkers handed over at the top of the turn, credited home at the take site with the
-    /// eaten share — or at the foot of the pass, for an arm that never reached one.
+    /// Food the walkers handed over at the top of the turn, credited home at the take site — or at
+    /// the foot of the pass, for an arm that never reached one.
     pending_home: f32,
     /// Has the foot of the turn run? An arm that returns before its take site leaves it `false`,
-    /// and the settlement below closes the turn on a zero take so the party still eats.
+    /// and the settlement below closes the turn on a zero take so the walkers' deliveries land.
     closed: bool,
     /// **Forecast from the state this turn leaves**, struck at the take site where the source's
     /// post-take state and every pricing term are in hand. `None` for an arm that never got there.
@@ -3656,22 +3649,20 @@ struct PartyPosting {
 }
 
 impl PartyPosting {
-    /// **STEPS 4 AND 5 AT THE TAKE SITE** — the party eats first and the eaten share goes home, the
-    /// surplus fills the load, packs go. Returns everything credited home this turn, the walkers'
-    /// deliveries from the top of the turn included, so the take site deposits once and the row's
-    /// `actual` is that one number.
+    /// **STEPS 4 AND 5 AT THE TAKE SITE** — the whole take fills the load and packs go. Returns
+    /// everything credited home this turn, the walkers' deliveries from the top of the turn
+    /// included, so the take site deposits once and the row's `actual` is that one number.
     fn close_at_take(&mut self, provisions: Scalar, biomass: f32, pack_biomass: f32) -> Scalar {
-        let close = self.party.close_turn(
+        let landed_now = self.party.close_turn(
             crate::work_party::SourceTake {
                 food: provisions.to_f32(),
                 biomass,
             },
-            self.upkeep,
             pack_biomass,
         );
         self.closed = true;
         let delivered = std::mem::replace(&mut self.pending_home, NOTHING_DEMANDED);
-        scalar_from_f32(delivered + close.home())
+        scalar_from_f32(delivered + landed_now)
     }
 }
 
@@ -3695,7 +3686,7 @@ fn deliver_take_home(
 /// The walk comes off [`crate::work_party::resolve_walk`], the resolver the seed and the query read
 /// too. A standing party keeps its caravan — its walk out, its load and its road — and has only its
 /// geometry and crew restamped; a new one starts its walk out now.
-#[allow(clippy::too_many_arguments)] // the geometry, the road reach, and the three config blocks
+#[allow(clippy::too_many_arguments)] // the geometry, the road reach, and the two config blocks
 fn post_a_party(
     standing: Option<&WorkParty>,
     source_pos: UVec2,
@@ -3706,7 +3697,6 @@ fn post_a_party(
     supply: &crate::supply_network_config::SupplyNetworkConfig,
     roads: &crate::routes::RoadRegistry,
     widest_route_reach: u32,
-    per_worker_draw: f32,
 ) -> Option<PartyPosting> {
     let (walk_tiles, walk_turns) = crate::work_party::resolve_walk(
         band_pos,
@@ -3721,17 +3711,10 @@ fn post_a_party(
         .cloned()
         .unwrap_or_else(|| WorkParty::posted(source_pos, walk_tiles, walk_turns));
     party.restamp(source_pos, workers, walk_tiles, walk_turns);
-    let upkeep = crate::work_party::party_upkeep(workers, per_worker_draw);
     let open = party.open_turn();
-    // ⛔ **THE PARTY OWES ITS UPKEEP BEFORE IT HAS TAKEN ANYTHING**, so the deficit is stamped here
-    // and the take site settles it down. An arm that returns early never reaches one, and a deficit
-    // left at zero would read as *fully supplied* — the one state that must never be assumed.
-    party.ate = crate::work_party::NOTHING_CARRIED;
-    party.deficit = upkeep;
     Some(PartyPosting {
         working_crew: open.present,
         pending_home: open.delivered,
-        upkeep,
         party,
         closed: false,
         forecast: None,
@@ -4490,14 +4473,11 @@ pub fn advance_labor_allocation(
     let map_seed = sim_config.map_seed;
     let husbandry = &fauna.husbandry;
     let work_range = labor.band_work_range;
-    // **THE WORK PARTY'S STANDING TERMS**, resolved once: none of them varies within a turn. The
-    // road reach comes from the supply network, so a road shortens a party's walk through the same
-    // seam two camps pool through (`crate::work_party::resolve_walk`); the per-worker food draw
-    // comes from demographics, because a party eats at the rate the band's own consumption already
-    // charges for it and never at a rate of its own.
+    // **THE WORK PARTY'S STANDING TERMS**, resolved once: neither varies within a turn. The road
+    // reach comes from the supply network, so a road shortens a party's walk through the same seam
+    // two camps pool through (`crate::work_party::resolve_walk`).
     let supply_cfg = configs.supply_network.get();
     let widest_route_reach = crate::routes::max_route_reach_tiles(&ladder);
-    let party_worker_draw = configs.demographics.get().consumption.worker_draw();
     // The forward-projection horizon for each source's steady `realized` yield: `realized` is the
     // average food/turn the source will deliver over the next N turns, simulated forward from its
     // current (pre-take) state, so the headline "Food /turn" is smooth and the assign-time seed matches
@@ -5166,11 +5146,6 @@ pub fn advance_labor_allocation(
         // `band_kit` is: a band's ledger is one thing, and a row that read all of it would arm its
         // own crew off gear the row beside it is already holding.
         let item_budget = allocation.item_budget(&equipment_cfg);
-        // **THE LARDER AS THE PASS FOUND IT** — what a far posting's supply line is judged
-        // against, read once at the top for [`settle_pen_hay`]'s reason: taking it live inside the
-        // walk would make *"can this band still feed its party"* depend on the row's place in
-        // `assignments`, and `set_assignment` re-pushes an edited row to the end.
-        let larder_at_pass_open = cohort.stores.get(FOOD).to_f32();
         // **THE PARTIES THIS BAND HAS OUT**, keyed by the row that staffed them. Collected as the
         // walk goes and written back onto the assignments afterwards, because the walk borrows
         // `assignments` immutably — the same shape `lapsed` and `repaired_takes` take.
@@ -5193,7 +5168,6 @@ pub fn advance_labor_allocation(
                     &supply_cfg,
                     &roads,
                     widest_route_reach,
-                    party_worker_draw,
                 )
             });
             let workers = posting
@@ -6024,7 +5998,6 @@ pub fn advance_labor_allocation(
                             mult_f,
                             *floor,
                             take_species,
-                            posting.upkeep,
                             realized_horizon,
                         ));
                     }
@@ -7006,7 +6979,6 @@ pub fn advance_labor_allocation(
                                 &hunters,
                                 mult_f,
                                 *floor,
-                                posting.upkeep,
                                 realized_horizon,
                             ));
                         }
@@ -7837,7 +7809,6 @@ pub fn advance_labor_allocation(
                             &hunters,
                             mult_f,
                             *floor,
-                            posting.upkeep,
                             realized_horizon,
                         ));
                     }
@@ -8837,13 +8808,11 @@ pub fn advance_labor_allocation(
             // the party eats whether or not anybody took anything, and the walkers' deliveries from
             // the top of the turn are credited. No pack leaves on a turn the arm did not work.
             if !posting.closed {
-                let close = posting.party.close_turn(
-                    crate::work_party::SourceTake::default(),
-                    posting.upkeep,
-                    NOTHING_DEMANDED,
-                );
+                let landed_now = posting
+                    .party
+                    .close_turn(crate::work_party::SourceTake::default(), NOTHING_DEMANDED);
                 let home =
-                    std::mem::replace(&mut posting.pending_home, NOTHING_DEMANDED) + close.home();
+                    std::mem::replace(&mut posting.pending_home, NOTHING_DEMANDED) + landed_now;
                 if row_lapsed {
                     bring_the_party_home(
                         &mut cohort.stores,
@@ -8893,56 +8862,6 @@ pub fn advance_labor_allocation(
                     everything,
                 );
                 allocation.assignments[idx].party = None;
-                continue;
-            }
-            // ⛔ **A PARTY THE BAND CANNOT SUPPLY WALKS HOME.** Its deficit must be coverable from
-            // the home larder as the pass opened (for [`settle_pen_hay`]'s reason). Distance is paid
-            // in walking, so the deficit is **not** grossed up by a loss in transit.
-            //
-            // The cost of misjudging a distance is the posting ending and the food already spent on
-            // it, never people dying somewhere the player was not looking: the row folds back and
-            // the whole caravan — the load and every walker's pack — comes home with the workers.
-            if !crate::work_party::larder_supplies(posting.party.deficit, larder_at_pass_open) {
-                let deficit = posting.party.deficit;
-                let walk = posting.party.walk_tiles;
-                let everything = posting.party.hand_over_everything();
-                bring_the_party_home(
-                    &mut cohort.stores,
-                    &mut allocation.last_food_transfers,
-                    everything,
-                );
-                lapsed.push(idx);
-                // **The line names the source the way its channel's other lines do** — a patch by
-                // its coordinates, a herd by its id — so the dock's row can offer the same jump.
-                let (channel, named, source) = match &allocation.assignments[idx].target {
-                    LaborTarget::Forage { tile, .. } => (
-                        CommandEventKind::Forage,
-                        format!("the gatherers at ({}, {})", tile.x, tile.y),
-                        format!("x={} y={}", tile.x, tile.y),
-                    ),
-                    LaborTarget::Hunt { fauna_id, .. } => (
-                        CommandEventKind::Hunt,
-                        format!("the hunters on the {fauna_id}"),
-                        format!("fauna={fauna_id}"),
-                    ),
-                    _ => (
-                        CommandEventKind::Forage,
-                        "the work party".to_string(),
-                        String::new(),
-                    ),
-                };
-                event_log.push(CommandEventEntry::new(
-                    tick.0,
-                    channel,
-                    faction,
-                    format!("{named} came home — the band could not keep them supplied"),
-                    Some(band_detail_token(
-                        format!(
-                            "status=recalled reason=unsupplied {source} walk={walk} deficit={deficit:.2}"
-                        ),
-                        band_id,
-                    )),
-                ));
                 continue;
             }
             if let Some(assignment) = allocation.assignments.get_mut(idx) {
@@ -11794,7 +11713,6 @@ mod labor_yield_tests {
         world.insert_resource(config);
         world.insert_resource(FaunaConfigHandle::default());
         world.insert_resource(LaborConfigHandle::default());
-        world.insert_resource(crate::demographics_config::DemographicsConfigHandle::default());
         world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         world.insert_resource(crate::flora_config::FloraConfigHandle::default());
         world.insert_resource(LadderConfigHandle::default());

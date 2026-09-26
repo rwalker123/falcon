@@ -25684,17 +25684,18 @@ const PARTY_NEAR_HERD_ID := "game_deer_07"
 ## …and the RUNNING one's. Its own quarry, so a claim about one row's block cannot be satisfied by the
 ## other's.
 const PARTY_FAR_HERD_ID := "game_deer_79"
-## THE INEDIBLE posting — a wolf pack pays pelts and no meat, so its party runs its WHOLE upkeep as a
-## deficit. That is the case the design produces with no per-job exemption anywhere, and it is the
-## one line of the block that is a warning.
-const PARTY_DEFICIT_HERD_ID := TRADE_ONLY_HERD_ID
+## THE INEDIBLE posting — a wolf pack pays pelts and no meat. Under the retired eat-first rule this
+## was the unsupplied posting with a DANGER deficit line; the band now feeds its party through its
+## ordinary consumption, so it is an ordinary far posting whose whole take walks home like any other
+## (`.claude/rules/core_sim/work-party.md` → "RETIRED: an eat-first rule").
+const PARTY_PELT_HERD_ID := TRADE_ONLY_HERD_ID
 
 ## The LOCAL row's tile — the band's own hex, which is what "the band's own hands reach it" means.
 const PARTY_LOCAL_X := 71
 const PARTY_LOCAL_Y := 18
 
 ## The WALKING-OUT posting's terms (`herd_hunt` near): the whole party is still on the road to the
-## herd, so nothing is taken, nothing is eaten and nobody is walking a load home — the block states the
+## herd, so nothing is taken and nobody is walking a load home — the block states the
 ## crew and the walk out, and nothing else. `walk_out_remaining` is PLURAL here; the singular is
 ## driven PNG-less on the plant web below.
 const PARTY_NEAR_WORKERS := 4
@@ -25713,18 +25714,20 @@ const PARTY_FAR_WORKERS := 6
 const PARTY_FAR_WALK_TILES := 8
 const PARTY_FAR_ON_ROAD := 1
 const PARTY_FAR_NEXT_LOAD := 3
-const PARTY_FAR_ATE := 2.0
 const PARTY_FAR_RATE := 0.9
 
-## The deficit posting. It eats NOTHING out of its own take — hide is not a meal — so the whole of its
-## upkeep is food the band has to carry out to it, and its block states NO `Party ate` line at all.
-## It is running (a hunter on the road) and carries the next load's SINGULAR, `in 1 turn`.
-const PARTY_DEFICIT_WORKERS := 3
-const PARTY_DEFICIT_WALK_TILES := 5
-const PARTY_DEFICIT_ON_ROAD := 1
-const PARTY_DEFICIT_NEXT_LOAD := 1
-const PARTY_DEFICIT_ATE := 0.0
-const PARTY_DEFICIT_NEED := 1.2
+## The pelt posting: running (a hunter on the road) and carrying the next load's SINGULAR,
+## `in 1 turn`. Its take is not food, so its food rate is `0` — and its block is the same two lines
+## any running posting draws, with nothing about feeding it.
+const PARTY_PELT_WORKERS := 3
+const PARTY_PELT_WALK_TILES := 5
+const PARTY_PELT_ON_ROAD := 1
+const PARTY_PELT_NEXT_LOAD := 1
+
+## **THE RETIRED EAT-FIRST RULE'S ROW LINES** — `Party ate …` and `Needs … food a turn from home`,
+## spelled literally because their formats are deleted with the rule. Each is a needle no row's
+## drawn block may carry.
+const RETIRED_PARTY_ROW_NEEDLES: Array[String] = ["Party ate", "food a turn from home"]
 
 ## The tile the postings' herds stand on — the row's published target, which is where the party is.
 const PARTY_SOURCE_X := 70
@@ -25756,12 +25759,11 @@ func _work_party_band_fixture() -> Dictionary:
 			"actual_yield": 0.62, "sustainable_yield": 0.62, "realized_yield": 0.62,
 			"kit_id": BandFx.KIT_DEFAULT_FORAGE},
 		_work_party_row(PARTY_NEAR_HERD_ID, PARTY_NEAR_WORKERS, PARTY_NEAR_WALK_TILES,
-			PARTY_NEAR_WALK_OUT, 0, 0, 0.0, 0.0, PARTY_NEAR_RATE),
+			PARTY_NEAR_WALK_OUT, 0, 0, PARTY_NEAR_RATE),
 		_work_party_row(PARTY_FAR_HERD_ID, PARTY_FAR_WORKERS, PARTY_FAR_WALK_TILES,
-			0, PARTY_FAR_ON_ROAD, PARTY_FAR_NEXT_LOAD, PARTY_FAR_ATE, 0.0, PARTY_FAR_RATE),
-		_work_party_row(PARTY_DEFICIT_HERD_ID, PARTY_DEFICIT_WORKERS, PARTY_DEFICIT_WALK_TILES,
-			0, PARTY_DEFICIT_ON_ROAD, PARTY_DEFICIT_NEXT_LOAD, PARTY_DEFICIT_ATE,
-			PARTY_DEFICIT_NEED, 0.0),
+			0, PARTY_FAR_ON_ROAD, PARTY_FAR_NEXT_LOAD, PARTY_FAR_RATE),
+		_work_party_row(PARTY_PELT_HERD_ID, PARTY_PELT_WORKERS, PARTY_PELT_WALK_TILES,
+			0, PARTY_PELT_ON_ROAD, PARTY_PELT_NEXT_LOAD, 0.0),
 	]
 	return band
 
@@ -25777,7 +25779,7 @@ func _work_party_band_fixture() -> Dictionary:
 ## `next_load_home_in` — are separate arguments because each drives exactly one line, and a claim
 ## about one line's absence is only a claim if the other two can be set independently of it.
 func _work_party_row(herd_id: String, workers: int, walk: int, walk_out: int, on_road: int,
-		next_load: int, ate: float, deficit: float, rate: float) -> Dictionary:
+		next_load: int, rate: float) -> Dictionary:
 	return {
 		"kind": "hunt", "workers": workers, "fauna_id": herd_id, "floor": 0.5,
 		"target_x": PARTY_SOURCE_X, "target_y": PARTY_SOURCE_Y,
@@ -25788,7 +25790,7 @@ func _work_party_row(herd_id: String, workers: int, walk: int, walk_out: int, on
 		"party_x": PARTY_SOURCE_X + walk, "party_y": PARTY_SOURCE_Y,
 		"party_workers": workers, "hunters_on_the_road": on_road,
 		"walk_tiles": walk, "walk_out_remaining": walk_out, "next_load_home_in": next_load,
-		"party_ate": ate, "party_deficit": deficit, "net_rate_home": rate,
+		"net_rate_home": rate,
 	}
 
 ## **THE FOUR STATES, IN ONE FRAME AND THEN IN THE NARROWEST ZONE THE PANEL HAS.**
@@ -25796,7 +25798,7 @@ func _work_party_row(herd_id: String, workers: int, walk: int, walk_out: int, on
 ## ⛔ **ONE FRAME, BECAUSE THE IDENTITY IS A CONTRAST.** *A row with no party renders exactly as it
 ## did before any of this existed* is a claim about the DIFFERENCE between two rows, and a frame
 ## holding only party rows — or only local ones — is green whichever way the block is built. So the
-## local row, the near posting, the long walk and the unsupplied posting are one board.
+## local row, the near posting, the long walk and the pelt posting are one board.
 ##
 ## The NARROW half is not decoration either: this zone `clip_contents` and the board is paged in
 ## uniform rows, so a block drawing taller than the capacity arithmetic reserved is sliced off the
@@ -25804,7 +25806,7 @@ func _work_party_row(herd_id: String, workers: int, walk: int, walk_out: int, on
 ## has, and it is where the crew line's elide is under real pressure.
 func _render_work_party_states() -> void:
 	_set_forage_patches([])
-	_set_world_herds(_herd_fixtures() + [{"id": PARTY_DEFICIT_HERD_ID, "species": "Grey Wolf",
+	_set_world_herds(_herd_fixtures() + [{"id": PARTY_PELT_HERD_ID, "species": "Grey Wolf",
 		"x": 75, "y": 17, "population": 24, "ecology_phase": "thriving"}])
 	_push_bands([_work_party_band_fixture()])
 	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
@@ -25844,14 +25846,14 @@ func _assert_work_party_block() -> void:
 		% [PARTY_LOCAL_X, PARTY_LOCAL_Y]))
 	var near := _work_party_lines(_work_row_for_herd(PARTY_NEAR_HERD_ID))
 	var far := _work_party_lines(_work_row_for_herd(PARTY_FAR_HERD_ID))
-	var short := _work_party_lines(_work_row_for_herd(PARTY_DEFICIT_HERD_ID))
+	var pelt := _work_party_lines(_work_row_for_herd(PARTY_PELT_HERD_ID))
 	var hunters := HudComposeVocab.HUNT_CREW_LABEL.to_lower()
 	# ⛔ **THE IDENTITY, AND IT LEADS.** Every claim below is about a block; this is the claim that no
 	# block is drawn at all where the band's own hands reach the source.
 	_assert_band_panel("band_panel_work_party: ⛔ a LOCAL row grows no party block at all (%d lines)"
 			% local.size(), local.is_empty())
 	# **WALKING OUT** — the crew and the walk out, and nothing else: nobody has reached the herd, so
-	# nothing is eaten and nobody is on the road with a load. Two lines, by count first, so the
+	# nobody is on the road with a load. Two lines, by count first, so the
 	# absence claims below cannot be satisfied by a block that drew nothing.
 	_assert_band_panel("…while the WALKING-OUT posting beside it draws two lines (%s)" % str(near),
 		near.size() == 2)
@@ -25863,73 +25865,72 @@ func _assert_work_party_block() -> void:
 	_assert_band_panel("…and when it reaches the herd (%s)" % [near[1] if near.size() > 1 else "<none>"],
 		near.size() > 1 and near[1] == HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_FORMAT % [
 			HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_HERD, PARTY_NEAR_WALK_OUT])
-	_assert_band_panel("…and NO next-load line and NO ate line while nobody has reached the herd",
-		not _party_lines_carry(near, HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT)
-			and not _party_lines_carry(near, HudWorkVocab.WORK_ROW_PARTY_ATE_FORMAT))
+	_assert_band_panel("…and NO next-load line while nobody has reached the herd",
+		not _party_lines_carry(near, HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT))
 	# **THE RATE LINE IS THE ROW'S OWN, AND IT STATES WHAT ARRIVES.** A far posting prints the
 	# amortized steady rate, never `0.0` and never an *in transit* clause.
 	_assert_band_panel("…and the row's rate line states what ARRIVES HOME, not what is taken (%s)"
 			% _work_row_accounts_text(_work_row_for_herd(PARTY_NEAR_HERD_ID)),
 		_work_row_accounts_text(_work_row_for_herd(PARTY_NEAR_HERD_ID)).contains(
 			SourceForecast.format_yield(PARTY_NEAR_RATE)))
-	# **RUNNING** — a hunter on the road, a load due, a meal eaten at the source.
+	# **RUNNING** — a hunter on the road and a load due.
 	_assert_band_panel("a RUNNING posting names its hunter on the road on the crew line (%s)"
 			% [far[0] if not far.is_empty() else "<none>"],
 		not far.is_empty() and far[0] == HudWorkVocab.WORK_ROW_PARTY_CREW_FORMAT % [
 				PARTY_FAR_WORKERS, hunters, PARTY_SOURCE_X + PARTY_FAR_WALK_TILES, PARTY_SOURCE_Y,
 				PARTY_FAR_WALK_TILES]
 			+ HudWorkVocab.WORK_ROW_PARTY_ON_ROAD_FORMAT % PARTY_FAR_ON_ROAD)
-	_assert_band_panel("…says when the next load lands home (%s)"
-			% [far[1] if far.size() > 1 else "<none>"],
-		far.size() > 1 and far[1] == HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT
+	_assert_band_panel("…says when the next load lands home, and that is the whole block (%s)"
+			% str(far),
+		far.size() == 2 and far[1] == HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT
 			% PARTY_FAR_NEXT_LOAD)
-	_assert_band_panel("…and what it ate at the source (%s)" % str(far),
-		far.size() == 3 and far[2] == HudWorkVocab.WORK_ROW_PARTY_ATE_FORMAT
-			% SourceForecast.format_magnitude(PARTY_FAR_ATE))
 	# ⛔ **AND ITS WALK OUT IS OVER, SO THAT LINE IS GONE** — the claim that keeps a posting from
 	# re-promising an arrival every turn after it arrived.
 	_assert_band_panel("…while its walk-out line is gone for good (%s)" % str(far),
 		not _party_lines_carry(far, HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_FORMAT))
 	# ⛔ **AND THE LAST TURN READS AS ENGLISH.** Every pack passes through `1` on its way home.
 	_assert_band_panel("…and a load one turn out reads as English, not `in 1 turns` (%s)"
-			% [short[1] if short.size() > 1 else "<none>"],
-		short.size() > 1 and short[1] == HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT)
-	# **THE SHORTFALL LINE — the fibre/stone case, and the one warning on the block.**
-	_assert_band_panel("an UNSUPPLIED posting says what the band owes it a turn (%s)"
-			% [short[-1] if not short.is_empty() else "<none>"],
-		not short.is_empty() and short[-1] == HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT
-			% SourceForecast.format_magnitude(PARTY_DEFICIT_NEED))
-	_assert_band_panel("…and NEITHER supplied posting carries that line (%s | %s)"
-			% [str(near), str(far)],
-		not _party_lines_carry(near, HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT)
-			and not _party_lines_carry(far, HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT))
-	# ⛔ **A POSTING THAT ATE NOTHING SAYS NOTHING ABOUT IT**, paired with the running posting's live
-	# ate line, or *"no ate line"* passes on a block that lost the clause outright.
-	_assert_band_panel("an INEDIBLE posting draws no `Party ate` line at all (%s)" % str(short),
-		short.size() == 3
-			and not _party_lines_carry(short, HudWorkVocab.WORK_ROW_PARTY_ATE_FORMAT))
-	# **THE INK IS HALF OF WHAT THE LINE SAYS**, and it is a render-site decision no model claim can
-	# see: a warning drawn in the quiet ink is a warning nobody reads.
-	var short_label := _work_party_label(_work_row_for_herd(PARTY_DEFICIT_HERD_ID), -1)
-	_assert_band_panel("…and it is drawn in DANGER (%s)"
-			% [short_label.get_theme_color(FONT_COLOR_THEME_KEY) if short_label != null else "<none>"],
-		short_label != null
-			and short_label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.DANGER))
-	var crew_label := _work_party_label(_work_row_for_herd(PARTY_DEFICIT_HERD_ID), 0)
-	_assert_band_panel("…while the crew line on the SAME row keeps the row's quiet ink (%s)"
-			% [crew_label.get_theme_color(FONT_COLOR_THEME_KEY) if crew_label != null else "<none>"],
-		crew_label != null
-			and crew_label.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(HudStyle.INK_DIM))
+			% [pelt[1] if pelt.size() > 1 else "<none>"],
+		pelt.size() > 1 and pelt[1] == HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT)
+	# **AN INEDIBLE TAKE IS AN ORDINARY POSTING** — the crew line and the next load, nothing about
+	# feeding the party, because the band feeds it through its ordinary consumption.
+	_assert_band_panel("an INEDIBLE posting draws the same two lines any running posting does (%s)"
+			% str(pelt),
+		pelt.size() == 2)
+	# ⛔ **NO ROW CARRIES A FOOD ACCOUNT OF ITS PARTY'S OWN** — the retired eat-first rule's `Party
+	# ate` and `Needs … from home`, searched in every row's drawn block. Paired with the size claims
+	# above, or "no such line" passes on a board that drew no blocks at all.
+	var retired: Array[String] = []
+	for block in [local, near, far, pelt]:
+		for line in block:
+			for needle in RETIRED_PARTY_ROW_NEEDLES:
+				if String(line).contains(needle):
+					retired.append(String(line))
+	_assert_band_panel("…and NO row carries an ate or deficit line (found %s)" % str(retired),
+		retired.is_empty())
+	# **THE WHOLE BLOCK IS QUIET INK** — none of its lines is a warning any more.
+	var ink_failures: Array[String] = []
+	for herd_id in [PARTY_NEAR_HERD_ID, PARTY_FAR_HERD_ID, PARTY_PELT_HERD_ID]:
+		var party_row := _work_row_for_herd(herd_id)
+		if party_row == null:
+			ink_failures.append("<no row for %s>" % herd_id)
+			continue
+		for control in _collect_meta_controls(party_row, HudWorkVocab.WORK_ROW_PARTY_META, []):
+			if not (control as Label).get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(
+					HudStyle.INK_DIM):
+				ink_failures.append(String(control.get_meta(HudWorkVocab.WORK_ROW_PARTY_META)))
+	_assert_band_panel("…and every party line is drawn in the row's quiet ink (off-ink: %s)"
+			% str(ink_failures), ink_failures.is_empty())
 	# **THE PLANT WEB'S WALK OUT, AND ITS SINGULAR** — PNG-less through the ONE producer, since the
 	# frame's board is hunt postings: a forage party walks to the PATCH, off the row's own kind.
 	var patch_lines: Array = _hud._bandpanel._work_row_party_lines_text({
 		"kind": SourceForecast.LABOR_KIND_FORAGE,
 		"party": SourceForecast.party_readout({
-			"party_workers": PARTY_DEFICIT_WORKERS, "walk_tiles": PARTY_DEFICIT_WALK_TILES,
+			"party_workers": PARTY_PELT_WORKERS, "walk_tiles": PARTY_PELT_WALK_TILES,
 			"walk_out_remaining": HudWorkVocab.WORK_ROW_PARTY_TURNS_SINGULAR})})
 	_assert_band_panel("a forage party walking out names the PATCH, and its last turn in English (%s)"
 			% str(patch_lines),
-		patch_lines.size() == 2 and String(patch_lines[1][0]) \
+		patch_lines.size() == 2 and String(patch_lines[1]) \
 			== HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT
 				% HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_PATCH)
 
@@ -25965,26 +25966,13 @@ func _work_party_lines(row: Control) -> Array[String]:
 		lines.append(String(control.get_meta(HudWorkVocab.WORK_ROW_PARTY_META)))
 	return lines
 
-## …and the LABEL at one index, for the claims about ink rather than words. A negative index counts
-## from the end, so the shortfall line is `-1` whatever the block above it holds.
-func _work_party_label(row: Control, index: int) -> Label:
-	if row == null:
-		return null
-	var controls := _collect_meta_controls(row, HudWorkVocab.WORK_ROW_PARTY_META, [])
-	if controls.is_empty():
-		return null
-	var at := index if index >= 0 else controls.size() + index
-	if at < 0 or at >= controls.size():
-		return null
-	return controls[at] as Label
-
 ## Does this block carry the line `format` composes? Matched on that format's own leading words — up
 ## to its first placeholder — so a reworded sentence moves the claim with it rather than turning it
 ## vacuous. None of the block's formats leads with its placeholder, which is what makes the head a
 ## real needle.
 ##
-## **One helper for every absence claim on the block**, because they are one question asked of three
-## different lines and three spellings of it are three chances to drift.
+## **One helper for every absence claim on the block**, because they are one question asked of
+## different lines and a spelling per line is a chance per line to drift.
 func _party_lines_carry(lines: Array[String], format: String) -> bool:
 	var head := format.split("%", true, 1)[0].strip_edges()
 	if head == "":

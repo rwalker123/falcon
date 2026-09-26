@@ -900,18 +900,16 @@ const ASSIGNMENT_WALK_OUT_REMAINING_KEY := "walk_out_remaining"
 # Turns until the soonest pack on the road lands home. ⛔ **`0` MEANS NOBODY IS CARRYING A LOAD HOME**,
 # never "lands this turn" — so it too drops its line.
 const ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY := "next_load_home_in"
-const ASSIGNMENT_PARTY_ATE_KEY := "party_ate"
-const ASSIGNMENT_PARTY_DEFICIT_KEY := "party_deficit"
 const ASSIGNMENT_NET_RATE_HOME_KEY := "net_rate_home"
 
-## Every party key in one list, so the work-row map copies them as a SET rather than as ten
-## hand-listed lines that an eleventh field could be forgotten out of. Each is a plain scalar, so
+## Every party key in one list, so the work-row map copies them as a SET rather than as eight
+## hand-listed lines that a ninth field could be forgotten out of. Each is a plain scalar, so
 ## unlike the material accounts beside them they can all travel the same way.
 const ASSIGNMENT_PARTY_KEYS: Array[String] = [
 	ASSIGNMENT_PARTY_X_KEY, ASSIGNMENT_PARTY_Y_KEY, ASSIGNMENT_PARTY_WORKERS_KEY,
 	ASSIGNMENT_HUNTERS_ON_THE_ROAD_KEY, ASSIGNMENT_WALK_TILES_KEY,
 	ASSIGNMENT_WALK_OUT_REMAINING_KEY, ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY,
-	ASSIGNMENT_PARTY_ATE_KEY, ASSIGNMENT_PARTY_DEFICIT_KEY, ASSIGNMENT_NET_RATE_HOME_KEY,
+	ASSIGNMENT_NET_RATE_HOME_KEY,
 ]
 
 # **WHAT A WHOLE TRIP LANDS, PER MATERIAL** — on each row of the `HuntTripForecast` reply (the
@@ -5673,8 +5671,6 @@ static func party_readout(row: Dictionary) -> Dictionary:
         ASSIGNMENT_WALK_TILES_KEY: int(row.get(ASSIGNMENT_WALK_TILES_KEY, 0)),
         ASSIGNMENT_WALK_OUT_REMAINING_KEY: int(row.get(ASSIGNMENT_WALK_OUT_REMAINING_KEY, 0)),
         ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY: int(row.get(ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY, 0)),
-        ASSIGNMENT_PARTY_ATE_KEY: float(row.get(ASSIGNMENT_PARTY_ATE_KEY, 0.0)),
-        ASSIGNMENT_PARTY_DEFICIT_KEY: float(row.get(ASSIGNMENT_PARTY_DEFICIT_KEY, 0.0)),
         ASSIGNMENT_NET_RATE_HOME_KEY: float(row.get(ASSIGNMENT_NET_RATE_HOME_KEY, 0.0)),
     }
 

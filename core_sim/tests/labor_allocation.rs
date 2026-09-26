@@ -96,8 +96,6 @@ fn spawn_world() -> App {
         .hold_wariness_at_zero();
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
-        .insert_resource(core_sim::DemographicsConfigHandle::default());
-    app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
@@ -171,12 +169,12 @@ fn spawn_band(
         .id()
 }
 
-/// **More food than any fixture party's upkeep can want**, so *"can this band supply its posting"*
-/// is answered `yes` for a reason the test states rather than by accident. A band spawns with an
-/// **empty** larder here, which is the opposite answer and is what the fold-back arms rely on.
+/// **A stocked larder to measure a credit against** — the home band opens with it, so food its
+/// party lands shows up as a rise above a stated figure rather than above zero. Nothing about a
+/// posting depends on it: a party is fed by its band's ordinary consumption.
 const A_DEEP_LARDER: f32 = 500.0;
 
-/// Put food in a band's larder — the thing a far posting's supply line is judged against.
+/// Put food in a band's larder.
 fn stock_the_larder(app: &mut App, band: bevy::prelude::Entity, food: f32) {
     app.world
         .get_mut::<PopulationCohort>(band)
@@ -261,7 +259,7 @@ fn a_partys_take_is_credited_to_its_home_band_not_to_the_band_beside_it() {
     // nothing of its own.
     let neighbour = spawn_band(&mut app, patch_tile, 10, LaborAllocation::default());
 
-    // Long enough for the party to finish walking out and for the line to be open and flowing.
+    // Long enough for the party to walk out, fill a pack and walk it home.
     for _ in 0..A_FEW_TURNS_OF_WALKING {
         app.world.run_system_once(advance_labor_allocation);
     }
@@ -291,24 +289,10 @@ fn a_partys_take_is_credited_to_its_home_band_not_to_the_band_beside_it() {
     );
 }
 
-/// Enough turns for a party five tiles out to finish its walk and deliver on the open line, at the
-/// shipped `band_move_tiles_per_turn`. A bound, not a prediction.
-const A_FEW_TURNS_OF_WALKING: usize = 6;
-
-/// **A tile clean on the other side of the map from `from`** — far enough that a party posted there
-/// is still on its walk out for many turns, so it takes nothing and owes its whole upkeep. That is
-/// the one way to stage a party whose take cannot feed it without authoring an inedible quarry.
-fn beyond_the_carrying_range(app: &mut App, from: UVec2) -> bevy::prelude::Entity {
-    let (width, height) = {
-        let registry = app.world.resource::<TileRegistry>();
-        (registry.width, registry.height)
-    };
-    let far = UVec2::new((from.x + width / 2) % width, (from.y + height / 2) % height);
-    app.world
-        .resource::<TileRegistry>()
-        .index(far.x, far.y)
-        .expect("the far tile resolves")
-}
+/// Enough turns for a party five tiles out to walk out, fill a pack and walk it home, at the shipped
+/// `band_move_tiles_per_turn` — now that the whole take walks, nothing reaches the larder before a
+/// pack does. A bound, not a prediction.
+const A_FEW_TURNS_OF_WALKING: usize = 40;
 
 fn forage_alloc(tile: UVec2, workers: u32) -> LaborAllocation {
     forage_alloc_policy(tile, workers, 0.5)
@@ -430,8 +414,6 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
         .insert_resource(LaborConfigHandle::new(tuned_labor_config(|config| {
             config.hunt.per_worker_biomass_capacity = TINY_PER_WORKER_HAUL;
         })));
-    app.world
-        .insert_resource(core_sim::DemographicsConfigHandle::default());
     app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
@@ -749,7 +731,8 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
     );
 }
 
-/// ⛔ **(c) A HUNT PAST THE LEASH POSTS A WORK PARTY — IT NO LONGER LAPSES.**
+/// ⛔ **(c) A HUNT PAST THE LEASH FOLLOWS ITS HERD AS A WORK PARTY, AND ONLY A VANISHED HERD ENDS
+/// IT.**
 ///
 /// The leash existed so a herd could not roam out of range once a hunt was set up, and out of leash
 /// the row was destroyed. The work party is the other reading of the same situation: *the workers
@@ -757,40 +740,45 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
 /// (`docs/plan_civilization_steps.md` §One work party). The hunters follow the herd with no follow
 /// order, because a party's position **is** its source's.
 ///
-/// **Both halves are asserted in one test on purpose.** A band that can feed the party keeps the
-/// row; a band with an empty larder cannot get food out to it and the posting folds back. Without
-/// the second half *"a far hunt is kept"* would pass on a sim that had simply stopped lapsing
-/// anything, and without the first the fold-back would pass on one that lapsed everything.
+/// **Both halves are asserted in one run on purpose.** A far posting is kept — by a band with an
+/// **empty** larder, because a party is fed by its band's ordinary consumption and nothing about
+/// the posting is gated on what the band has put by — while a posting whose herd leaves the
+/// registry ends, which is the lapse that survives. Without the second half *"a far hunt is kept"*
+/// would pass on a sim that had stopped lapsing anything; without the first, *"a vanished herd ends
+/// the row"* would pass on one that lapsed every far posting.
 #[test]
-fn a_hunt_past_the_leash_posts_a_party_the_band_must_then_supply() {
+fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
     let mut app = spawn_world();
-    let (id, herd_pos) = {
+    let (followed, vanishing) = {
         let registry = app.world.resource::<HerdRegistry>();
-        let herd = registry
+        let mut game = registry
             .herds
             .iter()
-            .find(|h| h.id.starts_with("game_"))
-            .expect("expected game herd");
-        (herd.id.clone(), herd.position())
+            .filter(|h| h.id.starts_with("game_"))
+            .map(|herd| (herd.id.clone(), herd.position()));
+        (
+            game.next().expect("expected a game herd"),
+            game.next().expect("expected a second game herd"),
+        )
     };
     let grid = app.world.resource::<SimulationConfig>().grid_size;
-    // A tile at least 7 tiles away on X (> band_work_range 2 + hunt_leash_tiles 3 = 5).
-    let far_x = if herd_pos.x + 7 < grid.x {
-        herd_pos.x + 7
-    } else {
-        herd_pos.x.saturating_sub(7)
+    // A camp seven tiles along X from `at` (> band_work_range 2 + hunt_leash_tiles 3 = 5).
+    let seven_out = |app: &App, at: UVec2| {
+        let far_x = if at.x + 7 < grid.x {
+            at.x + 7
+        } else {
+            at.x.saturating_sub(7)
+        };
+        app.world
+            .resource::<TileRegistry>()
+            .index(far_x, at.y)
+            .expect("far tile resolves")
     };
-    let far = UVec2::new(far_x, herd_pos.y);
-    let tile = app
-        .world
-        .resource::<TileRegistry>()
-        .index(far.x, far.y)
-        .expect("far tile resolves");
-    let hunt_alloc = || LaborAllocation {
+    let hunt_alloc = |fauna_id: &str| LaborAllocation {
         assignments: vec![LaborAssignment {
             party: None,
             target: LaborTarget::Hunt {
-                fauna_id: id.clone(),
+                fauna_id: fauna_id.to_string(),
                 floor: 0.5,
             },
             workers: 3,
@@ -800,32 +788,41 @@ fn a_hunt_past_the_leash_posts_a_party_the_band_must_then_supply() {
         }],
         ..Default::default()
     };
-    let provisioned = spawn_band(&mut app, tile, 10, hunt_alloc());
-    stock_the_larder(&mut app, provisioned, A_DEEP_LARDER);
-    // **The unsupplied arm has to be genuinely unsupplied**, and a hunt party on a good herd feeds
-    // itself out of its own kills — that is the rule, not an exemption. So this one is posted far
-    // enough that the whole party is **still walking out**: it takes nothing, owes its whole upkeep,
-    // and its band opens with an empty larder.
-    let beyond_carrying = beyond_the_carrying_range(&mut app, herd_pos);
-    let starving = spawn_band(&mut app, beyond_carrying, 10, hunt_alloc());
+    let kept_camp = seven_out(&app, followed.1);
+    let kept = spawn_band(&mut app, kept_camp, 10, hunt_alloc(&followed.0));
+    let ended_camp = seven_out(&app, vanishing.1);
+    let ended = spawn_band(&mut app, ended_camp, 10, hunt_alloc(&vanishing.0));
 
     app.world.run_system_once(advance_labor_allocation);
-
-    let kept = app
-        .world
-        .get::<LaborAllocation>(provisioned)
-        .expect("the provisioned band keeps its allocation");
-    assert_eq!(
-        kept.assignments.len(),
-        1,
-        "a hunt past the leash must follow the herd as a work party, not lapse"
+    assert!(
+        app.world
+            .get::<LaborAllocation>(ended)
+            .and_then(|allocation| allocation.assignments.first())
+            .is_some_and(|row| row.party.is_some()),
+        "fixture: the second band posted a party before its herd went"
     );
-    let party = kept.assignments[0]
+    // The herd the second posting follows leaves the registry.
+    app.world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .retain(|herd| herd.id != vanishing.0);
+    app.world.run_system_once(advance_labor_allocation);
+
+    let kept_rows = app
+        .world
+        .get::<LaborAllocation>(kept)
+        .expect("the kept band keeps its allocation");
+    assert_eq!(
+        kept_rows.assignments.len(),
+        1,
+        "a hunt past the leash must follow the herd as a work party, not lapse — with an empty larder"
+    );
+    let party = kept_rows.assignments[0]
         .party
         .as_ref()
         .expect("the far row carries a work party");
     assert_eq!(
-        party.position, herd_pos,
+        party.position, followed.1,
         "a hunt party stands where its herd stands — no follow order, no pathfinding"
     );
     assert_eq!(
@@ -834,30 +831,30 @@ fn a_hunt_past_the_leash_posts_a_party_the_band_must_then_supply() {
         "the walk is measured from the apron, not from the hex"
     );
 
-    let folded = app
-        .world
-        .get::<LaborAllocation>(starving)
-        .expect("the starving band keeps its allocation component");
     assert!(
-        folded.assignments.is_empty(),
-        "a party the band cannot keep supplied walks home and the row folds back"
+        app.world
+            .get::<LaborAllocation>(ended)
+            .expect("the second band keeps its allocation component")
+            .assignments
+            .is_empty(),
+        "a posting whose herd has left the registry ends"
     );
-    let recalled = app.world.resource::<CommandEventLog>().iter().any(|entry| {
+    let told = app.world.resource::<CommandEventLog>().iter().any(|entry| {
         entry
             .detail
             .as_deref()
-            .is_some_and(|detail| detail.contains("status=recalled reason=unsupplied"))
+            .is_some_and(|detail| detail.contains("status=lapsed reason=herd_gone"))
     });
     assert!(
-        recalled,
-        "a fold-back must say so on the feed rather than the row vanishing silently"
+        told,
+        "the lapse must say so on the feed rather than the row vanishing silently"
     );
 }
 
 /// ⛔ **(c'') THE LEASH DISTANCE IS GONE: A HUNT *INSIDE* THE OLD LEASH POSTS A PARTY TOO.**
 ///
 /// This is the assertion that pins the one apron, and nothing else in the suite can fail in its
-/// place. [`a_hunt_past_the_leash_posts_a_party_the_band_must_then_supply`] stages its herd seven
+/// place. [`a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it`] stages its herd seven
 /// tiles out — past `hunt_reach()` **and** past `band_work_range` — so it passes whether a Hunt row
 /// begins its party at 2 or at 5. The interesting distance is the one **between** them.
 ///
@@ -921,7 +918,6 @@ fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
             ..Default::default()
         },
     );
-    stock_the_larder(&mut app, band, A_DEEP_LARDER);
 
     app.world.run_system_once(advance_labor_allocation);
 
@@ -973,7 +969,6 @@ fn a_forage_row_out_of_work_range_posts_a_party_and_the_near_row_is_untouched() 
         .index(far_x, patch_pos.y)
         .expect("far tile resolves");
     let walked_away = spawn_band(&mut app, far_tile, 10, forage_alloc(patch_pos, 3));
-    stock_the_larder(&mut app, walked_away, A_DEEP_LARDER);
     // A second band camped on the patch itself — same system run, same source, still in range.
     let still_there = spawn_band(&mut app, patch_tile, 10, forage_alloc(patch_pos, 3));
 
@@ -1026,6 +1021,9 @@ fn a_forage_row_out_of_work_range_posts_a_party_and_the_near_row_is_untouched() 
 /// the `assert_ne!` below is a real comparison and not a coincidence.
 const LOSS_LINE_BAND: core_sim::BandId = core_sim::BandId(7);
 
+/// A herd id no registry carries — the source a loss line's hunt row lapses on.
+const GONE_HERD: &str = "a_herd_that_has_gone";
+
 /// The value of the `band=` token in `detail`, or `None` when it carries no such token. Read off the
 /// space-delimited `key=value` grammar the client's dock parses, so this asserts on the published
 /// form rather than on the format string that produced it.
@@ -1043,10 +1041,10 @@ fn band_token(detail: &str) -> Option<u64> {
 /// `{tick, kind, faction, label, detail, seq}` and carries no band field. Without the token the
 /// shipped link renders on nothing.
 ///
-/// **Both shapes of loss are on one band here, on purpose.** The work party's fold-back names its
-/// source (`travel=`/`deficit=`), while the shed **band-wide role** names none at all
-/// (`kind=scout`) — so on the second line there is nothing whatever a reader could infer a band
-/// from, which is why the token has to be stated rather than derived.
+/// **Both shapes of loss are on one band here, on purpose.** A source row lapsing because its herd
+/// has gone (`reason=herd_gone`) and the shed **band-wide role** (`kind=scout`) — and neither line
+/// carries anything a reader could infer a band from, which is why the token has to be stated
+/// rather than derived.
 ///
 /// **It asserts the id is the DURABLE one, not the entity's bits.** Both are `u64` and neither would
 /// fail to compile; the client resolves this id through a roster join keyed on `band_id`, so entity
@@ -1055,15 +1053,24 @@ fn band_token(detail: &str) -> Option<u64> {
 #[test]
 fn every_labor_loss_line_names_the_band_by_its_durable_id() {
     let mut app = spawn_world();
-    let (patch_pos, _patch_tile) = food_tile(&mut app);
-    // Far enough from the patch that the Forage row posts a work party still **walking out** — it
-    // takes nothing, owes its whole upkeep, and the band spawns with an empty larder, so it cannot
-    // supply the posting and the row folds back this very turn.
-    let far_tile = beyond_the_carrying_range(&mut app, patch_pos);
-
-    // Three hands committed to four seats: the scout is step 1 of the shedding order, so the band
-    // sheds it and then walks away from the patch it can no longer reach.
-    let mut allocation = forage_alloc(patch_pos, 3);
+    let (_patch_pos, camp) = food_tile(&mut app);
+    // A hunt on a herd the registry does not carry — the surviving source lapse — and three hands
+    // committed to four seats: the scout is step 1 of the shedding order, so the band sheds it, and
+    // then the hunt row lapses because its herd is gone.
+    let mut allocation = LaborAllocation {
+        assignments: vec![LaborAssignment {
+            party: None,
+            target: LaborTarget::Hunt {
+                fauna_id: GONE_HERD.to_string(),
+                floor: 0.5,
+            },
+            workers: 3,
+            kit: None,
+            priority: SourcePriority::default(),
+            upkeep_kit: None,
+        }],
+        ..Default::default()
+    };
     allocation.assignments.push(LaborAssignment {
         party: None,
         target: LaborTarget::Scout,
@@ -1072,7 +1079,7 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
         priority: SourcePriority::default(),
         upkeep_kit: None,
     });
-    let band = spawn_band(&mut app, far_tile, 3, allocation);
+    let band = spawn_band(&mut app, camp, 3, allocation);
     app.world.entity_mut(band).insert(LOSS_LINE_BAND);
 
     app.world.run_system_once(advance_labor_allocation);
@@ -1082,16 +1089,12 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
         .resource::<CommandEventLog>()
         .iter()
         .filter_map(|entry| entry.detail.clone())
-        .filter(|detail| {
-            detail.contains("status=lapsed")
-                || detail.contains("status=trimmed")
-                || detail.contains("status=recalled")
-        })
+        .filter(|detail| detail.contains("status=lapsed") || detail.contains("status=trimmed"))
         .collect();
     assert_eq!(
         losses.len(),
         2,
-        "fixture: the band must lose its scout AND recall the party on the patch — {losses:?}"
+        "fixture: the band must lose its scout AND the hunt on the vanished herd — {losses:?}"
     );
     assert!(
         losses.iter().any(|detail| detail.contains("kind=scout")),
@@ -1100,8 +1103,8 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
     assert!(
         losses
             .iter()
-            .any(|detail| detail.contains("reason=unsupplied")),
-        "fixture: the other is the work party's fold-back — {losses:?}"
+            .any(|detail| detail.contains("reason=herd_gone")),
+        "fixture: the other is the source row's lapse — {losses:?}"
     );
     for detail in &losses {
         assert_eq!(
@@ -1302,8 +1305,6 @@ fn set_hunt_haul_rate(app: &mut App, rate: f32) {
             config.hunt.per_worker_biomass_capacity = rate;
         })));
     app.world
-        .insert_resource(core_sim::DemographicsConfigHandle::default());
-    app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
         .insert_resource(core_sim::EquipmentConfigHandle::new(
@@ -1317,8 +1318,6 @@ fn set_forage_gather_rate(app: &mut App, rate: f32) {
         .insert_resource(LaborConfigHandle::new(tuned_labor_config(|config| {
             config.forage.per_worker_biomass_capacity = rate;
         })));
-    app.world
-        .insert_resource(core_sim::DemographicsConfigHandle::default());
     app.world
         .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world

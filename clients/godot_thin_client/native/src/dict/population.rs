@@ -958,14 +958,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // Turns until the soonest pack on the road lands home. ⛔ **`0` MEANS NOBODY IS
             // CARRYING A LOAD HOME** — never "lands this turn" — so it too drops its line.
             let _ = entry.insert("next_load_home_in", i64::from(assignment.nextLoadHomeIn()));
-            // What the party ate out of its own take this turn — **not a second meal**: the band's
-            // population consumption already feeds these people wherever they stand, so this
-            // records that the food was eaten AT THE SOURCE and never had to be carried.
-            let _ = entry.insert("party_ate", f64::from(assignment.partyAte()));
-            // …and what its upkeep still wants after that take — the food the band has to carry out
-            // to it. The WHOLE upkeep on a posting whose take is not edible (fibre, stone, wood),
-            // which is the one line of the row's party block that is a warning.
-            let _ = entry.insert("party_deficit", f64::from(assignment.partyDeficit()));
             // **THE STEADY PER-TURN RATE ARRIVING AT THE HOME BAND.** Amortized over the cycle and
             // steady-state coincide deliberately, so the row prints ONE number: a near row and a
             // far row are comparable figures on one board and a far posting never reads

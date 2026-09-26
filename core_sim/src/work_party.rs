@@ -35,6 +35,13 @@
 //! picked. Distance is paid in walking now, so nothing is lost in transit on top — that would count
 //! it twice. Friction still governs band-to-band pooling, untouched.
 //!
+//! # NOTHING ABOUT FEEDING IS MODELLED AT THE SOURCE
+//!
+//! **The home band feeds its party through its ordinary consumption**, which already charges those
+//! workers wherever they stand, and supplies ride the porters' return leg. So the whole take goes
+//! into the load and walks home; nothing is eaten out of it, and a party cannot be short of food
+//! separately from its band.
+//!
 //! # NO INDIVIDUAL HUNTERS
 //!
 //! Nobody is simulated as a unit and nothing moves on the map. It is the codebase's ordinary
@@ -74,9 +81,6 @@ pub const NO_LOAD_WITHIN_HORIZON: u32 = 0;
 
 /// An empty load, or a walker who has handed over what they carried.
 pub const NOTHING_CARRIED: f32 = 0.0;
-
-/// The party's upkeep is fully covered — nothing has to come out to it.
-pub const NO_DEFICIT: f32 = 0.0;
 
 /// **ONE HUNTER ON THE ROAD** — out with a pack, or on the way back without one.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -137,17 +141,6 @@ pub struct WorkParty {
     pub load_food: f32,
     /// **THE HUNTERS ON THE ROAD** — at most the party, in the order they left.
     pub on_the_road: Vec<Walker>,
-    /// **What the party ate out of its own take this turn** — `min(take, upkeep)`.
-    ///
-    /// ⛔ **It is not a second meal, and it is credited home.** These are the band's own people and
-    /// the band's population consumption already feeds them wherever they stand; food eaten *at the
-    /// source* is food the band did not have to carry out. Charging it again would bill the band
-    /// twice for the same mouths.
-    pub ate: f32,
-    /// **What the party's upkeep still wants after its own take** — the food the band has to supply.
-    /// `0` on a posting that feeds itself; the whole of the upkeep for one whose take is not edible,
-    /// which is the case the rule produces with no per-job exemption anywhere.
-    pub deficit: f32,
     /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the food home per turn over the forecast
     /// horizon, stepped from this party's state ([`forecast_caravan`]). The number the work row
     /// prints, so a near row and a far row are comparable figures on one board.
@@ -155,7 +148,7 @@ pub struct WorkParty {
 }
 
 /// **WHAT THE SOURCE GAVE UP THIS TURN** — the take of the hunters present, in the two units the
-/// caravan reads: food (what eats and what goes home) and biomass (what a pack is measured in).
+/// caravan reads: food (what goes home) and biomass (what a pack is measured in).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SourceTake {
     pub food: f32,
@@ -170,22 +163,6 @@ pub struct TurnOpen {
     /// **The hunters at the source** — the crew the take is priced at. `0` while the party is still
     /// walking out.
     pub present: u32,
-}
-
-/// **The foot of a caravan turn** ([`WorkParty::close_turn`]): what went home without being walked.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TurnClose {
-    /// Food the party ate out of its own take — credited home ([`WorkParty::ate`]).
-    pub ate: f32,
-    /// Packs that went home on a walk of no length and so landed the turn they filled.
-    pub delivered: f32,
-}
-
-impl TurnClose {
-    /// Everything this half of the turn credited to the home band.
-    pub fn home(&self) -> f32 {
-        self.ate + self.delivered
-    }
 }
 
 impl WorkParty {
@@ -267,11 +244,12 @@ impl WorkParty {
         }
     }
 
-    /// **STEPS 4 AND 5 OF A CARAVAN TURN** — the party eats, then the packs go.
+    /// **STEPS 4 AND 5 OF A CARAVAN TURN** — the take is loaded, then the packs go. Returns the food
+    /// that landed home this turn without being walked (a walk of no length).
     ///
-    /// 4. **The party eats first, from the take, and the eaten share goes home at once** (see
-    ///    [`Self::ate`]). Only the **surplus** goes into the load, so a party on thin game eats most
-    ///    of its take and walks little home.
+    /// 4. **The whole take goes into the load.** Nothing is eaten out of it at the source: the home
+    ///    band feeds its party through its ordinary consumption, and supplies ride the porters'
+    ///    return leg (see the module doc).
     /// 5. **While the load holds a pack and a hunter is at the source, one hunter leaves with one
     ///    pack.** Departures therefore never exceed the hunters present. On a walk of no length the
     ///    pack lands this turn and nobody leaves at all.
@@ -280,21 +258,11 @@ impl WorkParty {
     /// ([`crate::fauna::one_pack_biomass`] on the animal web, continuous on the plant web). What one
     /// pack cannot hold stays in the load for the next porter — nobody walks away from it, so
     /// nothing a resident band would waste is wasted here. An unbounded carry takes the whole load.
-    pub fn close_turn(&mut self, take: SourceTake, upkeep: f32, pack_biomass: f32) -> TurnClose {
-        let produced = take.food.max(NOTHING_CARRIED);
-        let ate = produced.min(upkeep.max(NOTHING_CARRIED));
-        let surplus = produced - ate;
-        // The biomass that goes with the surplus food. A take worth no food at all (an inedible
-        // quarry, a fibre crop) loads the whole of its biomass — the porters still walk it.
-        let surplus_biomass = if produced > NOTHING_CARRIED {
-            take.biomass * (surplus / produced)
-        } else {
-            take.biomass
-        };
-        self.load_biomass += surplus_biomass.max(NOTHING_CARRIED);
-        self.load_food += surplus;
-        self.ate = ate;
-        self.deficit = (upkeep - ate).max(NO_DEFICIT);
+    pub fn close_turn(&mut self, take: SourceTake, pack_biomass: f32) -> f32 {
+        // A take worth no food at all (an inedible quarry, a fibre crop) still loads its biomass —
+        // the porters walk it whatever it is worth.
+        self.load_biomass += take.biomass.max(NOTHING_CARRIED);
+        self.load_food += take.food.max(NOTHING_CARRIED);
 
         let mut delivered = NOTHING_CARRIED;
         let mut present = self.hunters_present();
@@ -319,28 +287,23 @@ impl WorkParty {
                 present -= 1;
             }
         }
-        TurnClose { ate, delivered }
+        delivered
     }
 
     /// **ONE WHOLE CARAVAN TURN around a take `take` prices at the hunters present** — the forecast's
     /// entry point, and exactly [`Self::open_turn`] → the take → [`Self::close_turn`], which is the
     /// turn's own sequence. Returns everything credited home this turn and whether a load landed.
-    pub fn step(
-        &mut self,
-        upkeep: f32,
-        pack_biomass: f32,
-        take: impl FnOnce(u32) -> SourceTake,
-    ) -> (f32, bool) {
+    pub fn step(&mut self, pack_biomass: f32, take: impl FnOnce(u32) -> SourceTake) -> (f32, bool) {
         let open = self.open_turn();
         let taken = take(open.present);
-        let close = self.close_turn(taken, upkeep, pack_biomass);
-        let load_landed = open.delivered + close.delivered > NOTHING_CARRIED;
-        (open.delivered + close.home(), load_landed)
+        let landed_now = self.close_turn(taken, pack_biomass);
+        let home = open.delivered + landed_now;
+        (home, home > NOTHING_CARRIED)
     }
 
     /// **EVERYTHING THE PARTY HAS, BROUGHT HOME** — the load and every walker's pack, with the road
-    /// and the load emptied. What an unassign, an abandon and the unsupplied fold-back all settle
-    /// into the band: a caravan that ends early must not lose what is on the road.
+    /// and the load emptied. What an unassign, an abandon and a row lapsing under its party all
+    /// settle into the band: a caravan that ends early must not lose what is on the road.
     pub fn hand_over_everything(&mut self) -> f32 {
         let on_the_road: f32 = self.on_the_road.iter().map(|walker| walker.food).sum();
         let load = std::mem::replace(&mut self.load_food, NOTHING_CARRIED);
@@ -416,20 +379,6 @@ pub fn resolve_walk(
     .saturating_sub(supply.reach_tiles);
     let tiles = walk_tiles(distance, labor.band_work_range, road_bonus);
     Some((tiles, walk_turns(tiles, labor.band_move_tiles_per_turn)))
-}
-
-/// **THE PARTY'S OWN UPKEEP** — `workers × the per-worker draw population.rs already charges`.
-/// There is deliberately no second food rate for a party: it is the same people eating the same
-/// amount, somewhere else.
-pub fn party_upkeep(workers: u32, per_worker_draw: f32) -> f32 {
-    workers as f32 * per_worker_draw
-}
-
-/// ⛔ **CAN THE HOME BAND KEEP THIS PARTY FED?** — the deficit must be coverable from the home
-/// larder, or the posting folds back. Distance is paid in walking, so the deficit is **not** grossed
-/// up by a transit loss; supplies walking out to a crew are the storage arc's accounting.
-pub fn larder_supplies(deficit: f32, larder: f32) -> bool {
-    deficit <= NO_DEFICIT || larder >= deficit
 }
 
 /// ⛔ **WHAT A CARAVAN FORECAST IS PRICED AT — THE ROW'S STAFFED CREW, OFF THE BAND'S SHARE OF ITS
@@ -517,7 +466,7 @@ impl CaravanPricing {
 /// a caravan forecast is written onto a yield row, shared by the turn and the assign-time seed.
 ///
 /// `realized` is the headline the food runway and the work board read, so a far posting publishing
-/// its gross take would promise a larder food still being eaten at the source or walking home. The
+/// what it takes this turn would promise a larder food that is still walking home. The
 /// row reads the caravan instead: `realized` is its rate home and the arrival schedule is what it
 /// lands turn by turn. **`row.actual` is the caller's** — the turn's real credit, or the seed's
 /// first projected turn — and the published split `meat + standing == actual` is kept by scaling the
@@ -564,11 +513,6 @@ pub struct CaravanForecast {
     pub mean_on_the_road: f32,
     /// **The 1-based turn the first load lands**, or [`NO_LOAD_WITHIN_HORIZON`].
     pub first_load_turn: u32,
-    /// **The party's upkeep its own take leaves unmet, per turn** — [`WorkParty::deficit`] averaged
-    /// over the same turns [`Self::rate_home`] is, stepped by the same close. It is the figure the
-    /// committed row publishes as `partyDeficit`, read forward rather than recomputed; `0` when the
-    /// take covers the upkeep.
-    pub mean_deficit: f32,
 }
 
 /// ⛔ **THE CARAVAN, STEPPED FORWARD `horizon` TURNS FROM `start`** — the one function the turn's
@@ -582,17 +526,15 @@ pub struct CaravanForecast {
 pub fn forecast_caravan(
     start: &WorkParty,
     horizon: u32,
-    upkeep: f32,
     pack_biomass: f32,
     mut take: impl FnMut(u32) -> Option<SourceTake>,
 ) -> CaravanForecast {
     let mut party = start.clone();
     let mut forecast = CaravanForecast::default();
     let mut on_the_road = 0u32;
-    let mut deficit = NO_DEFICIT;
     for turn in 1..=horizon {
         let mut spent = false;
-        let (home, load_landed) = party.step(upkeep, pack_biomass, |present| {
+        let (home, load_landed) = party.step(pack_biomass, |present| {
             take(present).unwrap_or_else(|| {
                 spent = true;
                 SourceTake::default()
@@ -600,7 +542,6 @@ pub fn forecast_caravan(
         });
         forecast.home_by_turn.push(home);
         on_the_road += party.hunters_on_the_road();
-        deficit += party.deficit;
         if load_landed && forecast.first_load_turn == NO_LOAD_WITHIN_HORIZON {
             forecast.first_load_turn = turn;
         }
@@ -612,7 +553,6 @@ pub fn forecast_caravan(
     if turns > 0 {
         forecast.rate_home = forecast.home_by_turn.iter().sum::<f32>() / turns as f32;
         forecast.mean_on_the_road = on_the_road as f32 / turns as f32;
-        forecast.mean_deficit = deficit / turns as f32;
     }
     forecast
 }
@@ -623,7 +563,7 @@ pub fn forecast_caravan(
 ///
 /// The pack is one hunter's carry at this herd's rung ([`crate::fauna::herd_carry_rate`]) seated in
 /// whole animals ([`crate::fauna::one_pack_biomass`]).
-#[allow(clippy::too_many_arguments)] // the take's full context, plus the caravan's two terms
+#[allow(clippy::too_many_arguments)] // the take's full context, plus the caravan's own term
 pub fn forecast_hunt_caravan(
     party: &WorkParty,
     herd: &crate::fauna::Herd,
@@ -632,12 +572,11 @@ pub fn forecast_hunt_caravan(
     hunters: &HuntingParty,
     output_multiplier: f32,
     floor: f32,
-    upkeep: f32,
     horizon: u32,
 ) -> CaravanForecast {
     let pack = hunt_pack_biomass(herd, fauna, carry_per_worker);
     let mut projection = HuntProjection::new(herd, fauna);
-    forecast_caravan(party, horizon, upkeep, pack, |present| {
+    forecast_caravan(party, horizon, pack, |present| {
         projection
             .step(
                 fauna,
@@ -672,7 +611,7 @@ pub fn hunt_pack_biomass(
 /// A gather at no crew takes nothing, which the projection reads as a spent stand; the caravan asks
 /// at no crew every turn the party is walking out or wholly on the road, so that case is read as a
 /// zero take on a stand that goes on regrowing, never as the end of the run.
-#[allow(clippy::too_many_arguments)] // the gather's full context, plus the caravan's two terms
+#[allow(clippy::too_many_arguments)] // the gather's full context, plus the caravan's own term
 pub fn forecast_forage_caravan(
     party: &WorkParty,
     patch: &crate::forage::ForagePatch,
@@ -684,14 +623,12 @@ pub fn forecast_forage_caravan(
     output_multiplier: f32,
     floor: f32,
     take_species: &crate::components::TakeSelection,
-    upkeep: f32,
     horizon: u32,
 ) -> CaravanForecast {
     let mut projection = ForageProjection::new(patch);
     forecast_caravan(
         party,
         horizon,
-        upkeep,
         carry_per_worker,
         |present| match projection.step(
             tile_composition,
@@ -718,8 +655,8 @@ pub fn forecast_forage_caravan(
 mod tests {
     use super::*;
 
-    /// A crew-linear take with no upkeep: `present × rate` biomass, one food per biomass. The regime
-    /// the steady-state formula is exact in.
+    /// A crew-linear take: `present × rate` biomass, one food per biomass. The regime the
+    /// steady-state formula is exact in, with `r` the whole per-hunter take.
     fn crew_linear(rate: f32) -> impl FnMut(u32) -> Option<SourceTake> {
         move |present| {
             let biomass = present as f32 * rate;
@@ -766,7 +703,7 @@ mod tests {
         for turn in 0..(warm_up + measured) {
             let open = party.open_turn();
             let taken = take(open.present).unwrap();
-            party.close_turn(taken, 0.0, pack);
+            party.close_turn(taken, pack);
             ever_walked |= party.hunters_on_the_road() > NOBODY_ON_THE_ROAD;
             // **The crew the take was priced at** — who worked the source this turn, which is what
             // the formula's share is a share of.
@@ -792,7 +729,7 @@ mod tests {
         let first = |workers: u32| {
             let mut party = WorkParty::posted(UVec2::ZERO, 4, 4);
             party.workers = workers;
-            forecast_caravan(&party, 60, 0.0, 12.0, crew_linear(0.5)).first_load_turn
+            forecast_caravan(&party, 60, 12.0, crew_linear(0.5)).first_load_turn
         };
         let (few, many) = (first(2), first(8));
         assert_ne!(
@@ -818,7 +755,6 @@ mod tests {
                 food: 100.0,
                 biomass: 100.0,
             },
-            0.0,
             5.0,
         );
         assert_eq!(
@@ -834,39 +770,6 @@ mod tests {
         );
     }
 
-    /// **The eaten share goes home at once, and only the surplus is loaded.**
-    #[test]
-    fn the_party_eats_first_and_only_the_surplus_is_carried() {
-        let mut party = WorkParty::posted(UVec2::ZERO, 2, 2);
-        party.workers = 4;
-        party.walk_out_remaining = NO_WALK;
-        party.open_turn();
-        let close = party.close_turn(
-            SourceTake {
-                food: 10.0,
-                biomass: 20.0,
-            },
-            4.0,
-            1_000.0,
-        );
-        assert_eq!(close.ate, 4.0);
-        assert_eq!(party.deficit, NO_DEFICIT);
-        assert!((party.load_food - 6.0).abs() < 1e-5);
-        assert!((party.load_biomass - 12.0).abs() < 1e-5);
-    }
-
-    /// No per-job exemption: a take worth no food runs the full deficit.
-    #[test]
-    fn a_take_that_is_not_food_runs_the_full_deficit() {
-        let mut party = WorkParty::posted(UVec2::ZERO, 2, 2);
-        party.workers = 3;
-        let close = party.close_turn(SourceTake::default(), 3.0, 5.0);
-        assert_eq!(close.ate, 0.0);
-        assert_eq!(party.deficit, 3.0);
-        assert!(!larder_supplies(party.deficit, 2.0));
-        assert!(larder_supplies(party.deficit, 3.0));
-    }
-
     /// ⛔ **The fold-back brings the road home** — every walker's pack and the load.
     #[test]
     fn handing_over_brings_every_walker_and_the_load_home() {
@@ -879,7 +782,6 @@ mod tests {
                 food: 25.0,
                 biomass: 25.0,
             },
-            0.0,
             10.0,
         );
         assert_eq!(
@@ -905,10 +807,9 @@ mod tests {
                 food: 30.0,
                 biomass: 30.0,
             },
-            0.0,
             10.0,
         );
-        assert_eq!(close.delivered, 30.0);
+        assert_eq!(close, 30.0);
         assert_eq!(party.hunters_on_the_road(), NOBODY_ON_THE_ROAD);
     }
 
@@ -932,7 +833,6 @@ mod tests {
                 food: body,
                 biomass: body,
             },
-            0.0,
             pack,
         );
         assert_eq!(
@@ -942,7 +842,7 @@ mod tests {
         );
         let mut home = 0.0_f32;
         for _ in 0..10 {
-            home += party.step(0.0, pack, |_| SourceTake::default()).0;
+            home += party.step(pack, |_| SourceTake::default()).0;
         }
         assert!(
             (home + party.load_food - body).abs() < 1e-2,
@@ -1024,7 +924,6 @@ mod tests {
                 food: 5.0,
                 biomass: 5.0,
             },
-            0.0,
             5.0,
         );
         assert_eq!(party.next_load_home_in(), walk);
@@ -1038,7 +937,7 @@ mod tests {
             if back_on.is_none() && open.present == 1 {
                 back_on = Some(turn);
             }
-            party.close_turn(SourceTake::default(), 0.0, 5.0);
+            party.close_turn(SourceTake::default(), 5.0);
         }
         assert_eq!(landed_on, Some(walk));
         assert_eq!(

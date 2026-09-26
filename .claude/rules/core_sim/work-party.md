@@ -24,7 +24,6 @@ in `forecast_query.rs`.
 |------|---------|
 | `src/data/labor_config.json` | `band_work_range` (**2**) is the apron: past it every job posts a party, and the walk is measured from it. `band_move_tiles_per_turn` (**1**) is read a second time as the party's walking speed — the walk out and every porter's walk home — and is validated `>= 1` for that reason. **No lever of this arc's own exists**: the share of a party on the road falls out of carry, take rate and distance |
 | `src/data/supply_network_config.json` | Read, not written: `reach_tiles` is subtracted from `supply::free_pooling_reach_tiles` to give the **road bonus** — how much of a walk a road takes away. `friction` is **not** read: distance is paid in walking |
-| `src/data/demographics_config.json` | Read, not written: `consumption.per_capita_draw × consumption.working_factor` is the party's upkeep, through the named seam `DemographicsConsumption::worker_draw` |
 
 ## A party is state ON the labor assignment, not an entity
 
@@ -130,18 +129,29 @@ its own inline take, the forecast around a projected one (`WorkParty::step`). Or
    source, never re-raised.
 3. **Take with the hunters PRESENT** (`workers − on the road`) through the **ordinary take path** —
    every arm the resident take runs. There is no caravan-specific take formula.
-4. **The party eats first, from the take, and the eaten share is credited HOME at once.** Only the
-   surplus goes into the load, so a party on thin game eats most of its take and walks little home.
+4. **The whole take goes into the load.** Nothing is eaten out of it at the source — see below.
 5. **Fill and dispatch.** While the load holds one pack and a hunter is present, one hunter leaves
    with one pack. Departures therefore never exceed the hunters present.
 
-> ### ⛔ THE EATEN SHARE IS CREDITED HOME — it is not a second meal
+### ⛔ The home band feeds its party — nothing about feeding is modelled at the source
+
+**The home band feeds its party through its ordinary consumption; supplies ride the porters' return
+leg, so nothing about feeding is modelled at the source.** The party's people never left the home
+band's cohort, and `simulate_population` already charges the whole `working` bracket wherever those
+workers stand. A porter walking a pack home walks supplies back out on the way to rejoin, so the
+feeding needs no mechanism of its own. The whole take walks home, and a party cannot be short of food
+separately from its band: if the larder runs dry, the band starves by the ordinary demographic rules,
+and its party with it.
+
+> #### RETIRED: an eat-first rule
 >
-> The band's population consumption already feeds these workers: they never left the cohort, and
-> `simulate_population` charges the whole `working` bracket. Food the party ate **at the source** is
-> food the band did not have to carry out, not food that vanished. Netting it out again would bill the
-> band twice for one meal. What the caravan changes is only its consequence: the eaten share never
-> enters the load, so it is never walked.
+> The first caravan had the party eat its upkeep out of its own take before anything was loaded,
+> crediting the eaten share home. It was bookkeeping — it changed nothing physical except *which*
+> food walked — and it produced a deficit, a supply gate that folded an "unsupplied" posting back
+> (`status=recalled reason=unsupplied`), and four readouts (`partyAte`, `partyDeficit` on the row,
+> `deficit` on the query reply, the recalled feed line) to explain the gate. All of it is deleted.
+> Do not reintroduce a per-party food account: the band's consumption is the one place its people
+> eat.
 
 **One pack is one hunter's carry, seated by the web's own rule** — `fauna::one_pack_biomass` on the
 animal web (whole animals, **rounded down**), continuous on the plant web. It is deliberately **not**
@@ -156,23 +166,19 @@ the whole load in one pack.
 always were: a batch carries a characteristic vector and a band key, and a pipe over those is the
 storage arc's. Standing yield (milk) is food with no biomass: it rides the load with the next pack.
 
-**The deficit is stamped when the party is posted**, and the take site settles it down. An arm that
-returns before its take site still closes the turn on a zero take, so the party still eats and a
-deficit is never left at zero — the one reading that must never be assumed.
-
 **A crew at the source is what earns a lesson** (`crew_at_the_source`, the hunters present), while
 the holding test asks what the player **staffed** (`take_crew_present`). Read the holding test off the
 hunters present and a party with every hand on the road would retire its own row silently; read the
 lesson off the staffed crew and a party walking out would learn at a source it has not reached.
 
-### ⛔ The take flows HOME, always — and the feeding is the home band's too
+### ⛔ The take flows HOME, always
 
 To the band that owns the row, **never** to whichever band the party is standing beside. A party is an
 *extension of its home band*, not a peer node in the supply network, in **either** direction:
 `balance_supply_networks` has no party awareness at all, and a party's position never enters the
-union-find. The home band feeds it, because the party's people never left the home band's cohort —
-cost and benefit have one owner. Making the party a network node "so it can be fed" re-introduces the
-bug the take's rule forbids, one direction over.
+union-find. Cost and benefit have one owner — the home band feeds its party and receives its take.
+Making the party a network node "so it can be fed" re-introduces the bug the take's rule forbids, one
+direction over.
 
 Pinned by `labor_allocation::a_partys_take_is_credited_to_its_home_band_not_to_the_band_beside_it`.
 
@@ -192,11 +198,11 @@ It is read in three places, and must stay one function:
 |---|---|---|
 | the turn | the take site, from the state the turn leaves | the row's `netRateHome`, `realized` and arrival schedule (`publish_caravan_projection`) |
 | the assign-time seed | `bin/server.rs::seed_source_yield` | the same three, plus `actual` = what lands next turn (`0` while walking out) |
-| the compose-sheet query | `forecast_query::answer_work_party_forecast` | `rate_home`, the walk, the mean hunters on the road, the first landing, the mean `deficit` |
+| the compose-sheet query | `forecast_query::answer_work_party_forecast` | `rate_home`, the walk, the mean hunters on the road, the first landing |
 
 **The row's projections are what arrives home, not what is taken.** `realized` is the headline the
-food runway and the work board read, so a far row publishing its gross take would promise a larder
-food still being eaten at the source or walking home. The published split `meat + standing == actual`
+food runway and the work board read, so a far row publishing what it takes this turn would promise
+a larder food that is still walking home. The published split `meat + standing == actual`
 is kept by scaling the two parts onto the row's `actual` in their own proportion.
 
 **Priced at the row's STAFFED crew** (`work_party::CaravanPricing`), not at the hunters present this
@@ -229,7 +235,6 @@ Every party field on `LaborAssignment` (`snapshot.fbs`) reads `0` on a local row
 | `walkTiles` | the one-way walk, from the apron, shortened by any road |
 | `walkOutRemaining` | `> 0` while the whole party is still walking out; `0` for the rest of the posting |
 | `nextLoadHomeIn` | turns until the soonest pack lands; `0` = nobody is carrying a load home |
-| `partyAte` / `partyDeficit` | the eaten share (credited home) and the upkeep still wanted |
 | `netRateHome` | food per turn arriving home — the number the row prints |
 
 The query is `QueryPayload::WorkPartyForecast` (`sim_runtime`, proto query field 7, reply field 10),
@@ -239,40 +244,16 @@ token for an unknown band, herd (`unknown_herd`) or patch (`unknown_patch`), an 
 kit, an invalid floor or an oversized crew.
 
 **The reply** is `posts_a_party`, `rate_home`, `walk_tiles`, `walk_turns`, `hunters_on_the_road` (a
-mean, so a float), `first_load_turn` (1-based, `0` = none within the horizon) and **`deficit`** — every
-walk field and the deficit read `0` inside the apron.
-
-> #### ⛔ `deficit` IS WHAT LETS THE SHEET WARN BEFORE THE ROW DOES
->
-> A small party on thin game eats its whole take: no pack ever fills, and the committed row prints
-> its `partyDeficit` as food the home larder must send every turn. Without the figure on the reply the
-> compose sheet had no way to say so before the player committed — reported from play on a
-> three-hunter boar sheet (`0.17` food a turn taken against `0.48` of upkeep).
->
-> It is `CaravanForecast::mean_deficit` — `WorkParty::deficit` averaged over the **same** turns and
-> the **same** stepping `rate_home` is, never recomputed from a rate. It is **not** bit-equal to the
-> row's published `partyDeficit`, and cannot be: the row's figure is *this turn's* shortfall against
-> the whole-animal take, the reply's is the horizon mean through the smooth projection every forecast
-> uses. At a steady footing the two differ by the float noise between a quantised take and its
-> expectation (measured `2.7e-7` food), which `work_party_caravan`'s `DEFICIT_TOLERANCE` bounds. A
-> posting still walking out averages its walk-out turns in, where the party eats and takes nothing,
-> so its mean reads **higher** than the row's first figures — the honest reading for a sheet quoting
-> a posting that has not yet reached its source.
-
-Pinned by `work_party_caravan::a_thin_take_quotes_the_deficit_the_row_will_publish` (a genuinely
-positive deficit, at the shipped draw, with nothing on the road and liveness on both sides) and, for
-the surplus case, the same comparison inside `::the_query_quotes_exactly_the_rate_the_row_publishes`.
+mean, so a float) and `first_load_turn` (1-based, `0` = none within the horizon) — every walk field
+reads `0` inside the apron.
 
 ## Fold-back, unassign, abandon — everything comes home
 
 **A caravan that ends early must not lose what is on the road.** `WorkParty::hand_over_everything`
-settles the load and every walker's pack into the band on all three exits:
+settles the load and every walker's pack into the band on every exit:
 
-- **Unsupplied fold-back** — the deficit must be coverable from the home larder as the pass opened
-  (`work_party::larder_supplies`, `larder >= deficit`; **not** grossed up by any transit loss). Failing
-  it folds the row back and says so on the source's own feed channel:
-  `status=recalled reason=unsupplied {x= y=|fauna=} walk= deficit= band=` — **Notable, not Alert**:
-  nothing was destroyed and the pack came home.
+- **A lapsing row** — the herd the posting follows has left the registry, or a holding has nothing
+  left to hold; the row ends with `status=lapsed` and its caravan comes home.
 - **Unassign** — a row held at zero hands has nobody at the source and nobody to send, so the caravan
   is brought home and the party stood down (the row survives as a holding if it holds anything).
 - **Abandon / a zero-crew drop** — `LaborAllocation::drop_source_row` returns the row it removed, and
@@ -284,8 +265,8 @@ settles the load and every walker's pack into the band on all three exits:
 > that reached the larder through neither `food_income` nor a transfer would break the pinned identity
 > `larder_delta == food_income − food_consumption − raid_forfeit + transfer_received − transfer_sent`.
 > A party carrying goods home is exactly what `TransferLink::Route` is for, so `bring_the_party_home`
-> credits it there. Food a **live** posting lands (the eaten share, a delivered pack) goes through the
-> row's `actual` like any other take.
+> credits it there. Food a **live** posting lands (a delivered pack) goes through the row's `actual`
+> like any other take.
 
 Pinned by `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home`, on both the
 larder and the route arm.
@@ -310,4 +291,3 @@ the arm reach this row"* is the question the settlements must go on asking.
 | `work_party::tests::a_carcass_heavier_than_one_pack_goes_home_over_several_porters` | the big carcass: nothing wasted that the resident take would waste |
 | `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home` | the road comes home, on the larder and the route arm |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes` | forecast == actual on the encoded snapshot |
-| `work_party_caravan::a_thin_take_quotes_the_deficit_the_row_will_publish` | the sheet's `deficit` is the row's `partyDeficit`, genuinely positive |
