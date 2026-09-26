@@ -575,6 +575,20 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > `net_drain <= 0` (net-positive): the `999.0` **not-food-limited** sentinel, which the client
 > renders as ∞.
 >
+> **Income includes this turn's POOLED food net** (`snapshot::population::pooled_food_net` — the
+> band's `Pooled` crossings on `FOOD` off `last_turn_transfer_crossings`, in minus out). It enters
+> both arms as a standing per-turn rate: added to every turn of the arrival walk, and to the steady
+> income in the smooth arm. It is signed and unclamped, so a band pooling food away drains faster and
+> one receiving it lasts longer, and income plus pooled net covering demand is the sentinel as
+> before. **Pooled only, never `TransferLedger::local_net`**: the local arm also carries a split's
+> dowry, a one-off that would swing the runway for the turn it lands. It is the same basis as the
+> client's Food headline rate (`DetailFormat.band_headline_food_rate`), and it is read off the
+> per-turn twin, so a recapture republishes the same runway. The fodder runway keeps its own
+> reading (`local_net()` folded into its income). Pinned by
+> `snapshot::population::tests::{pooling_food_out_shortens_the_runway_and_pooling_it_in_lengthens_it,
+> a_dowry_turn_does_not_move_the_runway}` and
+> `transfer_food_ledger::a_recapture_publishes_the_same_food_runway`.
+>
 > **Consumption here is the forward `food_demand`** (what the people will *want* to eat), not
 > `last_food_consumption`: `demand` is always resolvable, where the actual debit is `0` before a
 > band's first turn and falls short of demand in a famine. The client's chart drains by
@@ -793,6 +807,9 @@ transferSent` ledger identity.
 > material has no arm and books its row alone. Pinned on real turns off the encoded envelope by
 > `transfer_food_ledger::the_crossings_add_up_to_the_ledger_on_a_pooling_and_shipping_turn` and its
 > dowry and recapture siblings.
+>
+> **The food runway reads the rows**: its income term includes this turn's `Pooled` food net, and no
+> other cause (see "`turnsOfFood` is `larder / net drain`").
 >
 > **Rows merge by key** — everything but the amount (a material row's exact reading blends on the
 > store's own amount-weighted rule) — so a band that pools every turn holds one `Pooled` row per good

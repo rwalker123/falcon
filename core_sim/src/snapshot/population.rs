@@ -300,28 +300,61 @@ pub const NOT_FOOD_LIMITED_TURNS: f32 = 999.0;
 ///    is "no data", never a famine): fall back to the smooth `larder / net_drain` on the **steady**
 ///    `realized` income, capped at the sentinel.
 /// 3. `net_drain <= 0` (net-positive, not food-limited): the [`NOT_FOOD_LIMITED_TURNS`] sentinel.
+///
+/// **`standing_net` is a per-turn crossing projected as a RATE** — signed, and it may push the net
+/// income below zero, which is honest: a band pooling more away than it grows drains faster than its
+/// consumption alone says. It lands in **both** arms, because both are an income term: added to every
+/// turn of the arrival walk, and to `steady_income` in the smooth arm. Nothing clamps it; the walk's
+/// own floor at zero is the larder's, not the rate's. The food runway passes its pooled net here; the
+/// fodder runway folds its local net into `steady_income` and passes `0.0`.
 pub(crate) fn larder_runway_turns(
     larder: f32,
     consumption: f32,
     steady_income: f32,
+    standing_net: f32,
     arrivals: &[f32],
 ) -> f32 {
     let drain = consumption;
     if !arrivals.is_empty() {
         let mut food = larder.max(0.0);
         for (turn, arrival) in arrivals.iter().enumerate() {
-            food = (food + arrival - drain).max(0.0);
+            food = (food + arrival + standing_net - drain).max(0.0);
             if food <= 0.0 {
                 // `turn` is 0-based over "turns from now", so the count is one more.
                 return (turn + 1) as f32;
             }
         }
     }
-    let net_drain = drain - steady_income;
+    let net_drain = drain - (steady_income + standing_net);
     if net_drain <= 0.0 {
         return NOT_FOOD_LIMITED_TURNS;
     }
     (larder / net_drain).min(NOT_FOOD_LIMITED_TURNS)
+}
+
+/// A runway with no standing crossing of its own — the fodder runway, which folds its local net into
+/// the income term instead.
+const NO_STANDING_NET: f32 = 0.0;
+
+/// ⛔ **THIS TURN'S POOLED FOOD, IN MINUS OUT** — the band's `Pooled` crossings on `FOOD`, off the
+/// per-turn twin [`PopulationCohort::last_turn_transfer_crossings`], so a recapture reads what the
+/// turn's frame read.
+///
+/// **Pooled and nothing else**, deliberately narrower than [`crate::components::TransferLedger::local_net`]: the local
+/// arm also carries a split's dowry, which happens once, and a runway projects a rate. Signed —
+/// negative for a band that pooled food away.
+pub(crate) fn pooled_food_net(cohort: &PopulationCohort) -> f32 {
+    cohort
+        .last_turn_transfer_crossings
+        .iter()
+        .filter(|crossing| {
+            crossing.cause == crate::components::TransferCause::Pooled && crossing.commodity == FOOD
+        })
+        .map(|crossing| match crossing.direction {
+            crate::components::TransferDirection::In => crossing.amount,
+            crate::components::TransferDirection::Out => -crossing.amount,
+        })
+        .sum()
 }
 
 /// The band-wide merged arrival schedule: element-wise sum of every source's `arrivals`, so slot
@@ -1193,6 +1226,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // `turns_of_food`; see `larder_runway_turns`). Consumption is the forward `demand` above (what
     // the people will want to eat), not `last_food_consumption`: `demand` is always resolvable,
     // where the actual debit is `0` before a band's first turn and short of demand in a famine.
+    //
+    // ⛔ **POOLED FOOD IS A TERM OF THE RATE** ([`pooled_food_net`]), for the fodder runway's reason
+    // below: two linked camps pool every turn, so a band sending food away empties sooner and a band
+    // receiving it lasts longer, and a runway blind to that contradicts the larder it counts down.
+    // **Pooled only — never `local_net()`**: the local arm also carries a split's dowry, a one-off
+    // that would swing the runway for the one turn it lands. It is the same basis the client's Food
+    // headline rate adds (`DetailFormat.band_headline_food_rate`), so the rate and the runway beside
+    // it agree. Read off the per-turn twin on the cohort, so a recapture republishes the same runway.
     let turns_of_food = if demand.raw() <= 0 {
         NOT_FOOD_LIMITED_TURNS
     } else {
@@ -1200,6 +1241,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             cohort.stores.get(FOOD).to_f32(),
             demand.to_f32(),
             steady_food_income,
+            pooled_food_net(cohort),
             &merged_arrival_schedule(allocation),
         )
     };
@@ -1273,6 +1315,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         cohort.stores.get(FODDER).to_f32(),
         allocation.map(|a| a.last_fodder_drain).unwrap_or(0.0),
         fodder_income + fodder_transfers.local_net(),
+        NO_STANDING_NET,
         &[],
     );
     // Expedition discriminators + persistence fields (empty/false for a normal band).
@@ -2394,6 +2437,100 @@ mod tests {
         assert_eq!(
             runway as u32, expected,
             "the reported runway must be the turn the walked larder empties"
+        );
+    }
+
+    /// A per-turn food crossing on the cohort's per-turn twin, as `book_crossing` would have merged it.
+    fn food_crossing(
+        cause: crate::components::TransferCause,
+        direction: crate::components::TransferDirection,
+        amount: f32,
+    ) -> crate::components::TransferCrossing {
+        crate::components::TransferCrossing::goods(FOOD, direction, cause, amount)
+    }
+
+    /// ⛔ **POOLED FOOD MOVES THE RUNWAY, IN BOTH DIRECTIONS AND IN BOTH ARMS.** The same band, the
+    /// same income, once pooling a share of its demand away and once receiving it: out is shorter,
+    /// in is longer, than the band that pooled nothing. Asserted on the arrival walk (a projected
+    /// schedule) and on the smooth arm (no schedule), because the term is an income term in each.
+    #[test]
+    fn pooling_food_out_shortens_the_runway_and_pooling_it_in_lengthens_it() {
+        use crate::components::{TransferCause, TransferDirection};
+        let base = cohort(TEST_LARDER);
+        let demand = demand_of(&base);
+        // Income covering a quarter of the drain, and a pooled move of a quarter either way: every
+        // arm stays food-limited, so the comparison is between three finite runways.
+        let per_turn = demand * 0.25;
+        let pooled = demand * 0.25;
+        for allocation in [
+            allocation_with(vec![per_turn; 40], per_turn),
+            allocation_with(Vec::new(), per_turn),
+        ] {
+            let runway = |direction: Option<TransferDirection>| -> f32 {
+                let mut band = base.clone();
+                if let Some(direction) = direction {
+                    band.last_turn_transfer_crossings =
+                        vec![food_crossing(TransferCause::Pooled, direction, pooled)];
+                }
+                captured_runway(&band, Some(&allocation), None)
+            };
+            let (alone, out, into) = (
+                runway(None),
+                runway(Some(TransferDirection::Out)),
+                runway(Some(TransferDirection::In)),
+            );
+            assert!(
+                out < alone && alone < into && into < NOT_FOOD_LIMITED_TURNS,
+                "pooled out < no pooling < pooled in: {out} / {alone} / {into} (schedule of {})",
+                allocation.last_yields[0].arrivals.len()
+            );
+        }
+    }
+
+    /// **A dowry does not move the runway.** It rides the same local arm pooling does, but it is a
+    /// split's one-off, and a runway projects a rate — so only `Pooled` rows are its term.
+    #[test]
+    fn a_dowry_turn_does_not_move_the_runway() {
+        use crate::components::{TransferCause, TransferDirection};
+        let base = cohort(TEST_LARDER);
+        let per_turn = demand_of(&base) * 0.25;
+        let allocation = allocation_with(Vec::new(), per_turn);
+        let alone = captured_runway(&base, Some(&allocation), None);
+        for (cause, direction) in [
+            (TransferCause::DowryOut, TransferDirection::Out),
+            (TransferCause::DowryIn, TransferDirection::In),
+        ] {
+            let mut band = base.clone();
+            band.last_turn_transfer_crossings =
+                vec![food_crossing(cause, direction, TEST_LARDER * 0.5)];
+            assert_eq!(
+                captured_runway(&band, Some(&allocation), None),
+                alone,
+                "a {cause:?} row must leave the runway where it was"
+            );
+        }
+        assert!(
+            alone < NOT_FOOD_LIMITED_TURNS,
+            "liveness: the runway is finite"
+        );
+    }
+
+    /// **Income plus a pooled inflow that covers demand is not food-limited**, exactly as income alone
+    /// covering it is.
+    #[test]
+    fn a_band_fed_by_its_pool_reports_the_not_food_limited_sentinel() {
+        use crate::components::{TransferCause, TransferDirection};
+        let mut band = cohort(TEST_LARDER);
+        let demand = demand_of(&band);
+        let allocation = allocation_with(Vec::new(), demand * 0.5);
+        band.last_turn_transfer_crossings = vec![food_crossing(
+            TransferCause::Pooled,
+            TransferDirection::In,
+            demand,
+        )];
+        assert_eq!(
+            captured_runway(&band, Some(&allocation), None),
+            NOT_FOOD_LIMITED_TURNS
         );
     }
 

@@ -1239,11 +1239,12 @@ caret's WARN) and the faction page (`FactionRollup` — the summed Food line and
 read the steady net without the pooled term. Only `BandDetailLines._band_food_line` reads
 `band_headline_food_rate`.
 
-**Two gaps between the headline and the rows remain, by construction.** `⇄ Local exchange` nets the
+**One gap between the headline and the rows remains, by construction.** `⇄ Local exchange` nets the
 Local ARM's four terms, and that arm carries a split's dowry as well as pooling — so on a dowry turn
-the rows differ from the headline by the dowry. And the `(N turns)` runway beside the rate is the
-sim's `turnsOfFood`, which excludes transfers (the fodder runway, `turnsOfFodder`, includes the local
-arm's net), so on a pooling turn the rate and the runway on one row are on different bases.
+the rows differ from the headline by the dowry. The `(N turns)` runway beside the rate is the
+sim's `turnsOfFood`, whose income term includes the same POOLED food net and no other transfer, so
+the rate and the runway on one row are on one basis (the fodder runway, `turnsOfFodder`, includes the
+local arm's whole net).
 
 A shipment is bounded only by the manifest the player builds — up to the whole larder — unlike
 `raidForfeit`, which is capped at a fraction of one turn's income. A band with income 6 and

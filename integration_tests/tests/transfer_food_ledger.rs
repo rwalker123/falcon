@@ -1228,3 +1228,39 @@ fn networked_camps_publish_their_pooling_link() {
         "a command's refresh re-reads the turn's links rather than blanking them"
     );
 }
+
+/// `turnsOfFood` off the encoded envelope.
+fn published_runway(app: &bevy::prelude::App, band: BandId) -> f32 {
+    with_published_row(app, band, |row| row.turnsOfFood())
+}
+
+/// **The runway counts pooled food, and a command's refresh republishes the same runway** — it reads
+/// the cohort's per-turn crossings, never the accumulator the turn's reset clears, so a recapture
+/// cannot drop the pooled term and move the number.
+#[test]
+fn a_recapture_publishes_the_same_food_runway() {
+    let mut app = world();
+    let (fed, hungry) = two_networked_bands(&mut app);
+    let (fed_id, hungry_id) = (band_id(&app, fed), band_id(&app, hungry));
+    run_turn(&mut app);
+
+    assert!(
+        published_crossings(&app, hungry_id)
+            .iter()
+            .any(|row| row.cause == CAUSE_POOLED && row.commodity == FOOD),
+        "liveness: the turn pooled food, so the runway carries a pooled term"
+    );
+    let before = [
+        published_runway(&app, fed_id),
+        published_runway(&app, hungry_id),
+    ];
+    recapture_snapshot_in_place(&mut app.world);
+    let after = [
+        published_runway(&app, fed_id),
+        published_runway(&app, hungry_id),
+    ];
+    assert_eq!(
+        before, after,
+        "the refreshed frame republishes the turn's runway"
+    );
+}
