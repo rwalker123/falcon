@@ -1325,7 +1325,7 @@ func effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
 ## > `pool_toe_for`'s now.
 ## >
 ## > **Its pending caveat outlived it and is stated where it is still true**
-## > (`BandPanelController._pool_toe_short_line`): a settled per-pool reading describes the staffing
+## > (`BandPanelController._pool_toe_settled_rows`): a settled per-pool reading describes the staffing
 ## > the TURN resolved, so the caller gates on `effective_role_workers`' `pending` flag rather than
 ## > quoting a requirement the `+` just moved.
 
