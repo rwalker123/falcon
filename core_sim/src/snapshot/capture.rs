@@ -2906,6 +2906,17 @@ pub fn capture_snapshot(
             }
             position.is_some_and(|pos| visibility_ledger.is_visible(viewer, pos.x, pos.y))
         };
+        // **Every live band's name, by id** — a crossing names its counterparty off this, and a
+        // shipment's counterparty may be a band the viewer holds no row for.
+        let band_names: crate::snapshot::population::BandNameLookup = populations
+            .iter()
+            .filter_map(|(_, _, _, _, _, band_id, band_name, _, _)| {
+                Some((
+                    *band_id?,
+                    band_name.map(|name| name.0.clone()).unwrap_or_default(),
+                ))
+            })
+            .collect();
         let mut population_states: Vec<PopulationCohortState> = populations
             .iter()
             .filter_map(
@@ -3044,6 +3055,7 @@ pub fn capture_snapshot(
                         demographics: &demographics_config,
                         wellbeing: &wellbeing_config,
                         supply_membership: &supply_membership,
+                        band_names: &band_names,
                         work_range: band_work_range,
                         raid_radius: fauna_config.predators.raid_radius,
                         scout_vantage_distance,

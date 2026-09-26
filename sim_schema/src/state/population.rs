@@ -1605,6 +1605,64 @@ pub struct PopulationCohortState {
     /// Appended last (append-only).
     #[serde(default)]
     pub pool_crew: Vec<PoolCrewLineState>,
+    /// **WHAT CROSSED THIS BAND'S STORE THIS TURN, BY CAUSE** — the detail beneath the eight
+    /// `transfer_*_turn` / `fodder_transfer_*_turn` arms, one row per `(good, rating, direction,
+    /// cause, counterparty, party)`. For provisions and fodder the rows summed per `(link,
+    /// direction)` equal those arms exactly; for a material they are its only transfer account, one
+    /// row per rating. See [`TransferCrossingState`]. Appended last (append-only).
+    #[serde(default)]
+    pub transfer_crossings: Vec<TransferCrossingState>,
+    /// **This band's own supply-network links this turn** — its direct links, not every member of
+    /// its network. Empty for a band in no network. Appended last (append-only).
+    #[serde(default)]
+    pub pooling_links: Vec<PoolingLinkState>,
+    /// **The span this band's network formed at** — the longest hex distance among its network's
+    /// links this turn, `0` in no network. The distance the links actually reached, not the
+    /// `reach_tiles` lever. Appended last (append-only).
+    #[serde(default)]
+    pub supply_network_span_tiles: u32,
+}
+
+/// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of
+/// [`PopulationCohortState::transfer_crossings`]. The code tables are in `snapshot.fbs`'s
+/// `TransferCrossingState`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TransferCrossingState {
+    /// The store key — `"provisions"`, `"fodder"`, or a `materials.json` material id.
+    pub commodity: String,
+    /// A material's exact reading of what crossed, per axis in the material's declared order.
+    /// Empty for provisions and fodder.
+    pub readings: Vec<CharacteristicReadingState>,
+    /// `0` = in, `1` = out.
+    pub direction: u8,
+    /// `0` = local, `1` = route — always the cause's own link.
+    pub link: u8,
+    /// `0` pooled, `1` dowry_out, `2` dowry_in, `3` shipment_out, `4` shipment_in, `5` party_home,
+    /// `6` party_provisions, `7` shipment_returned (a shipment's undelivered cargo coming home,
+    /// naming the destination its `shipment_out` named). ⛔ A pooled row never names a counterparty.
+    pub cause: u8,
+    /// The other band's `band_id`, `0` = none.
+    pub counterparty_band_id: u64,
+    /// Its name; empty = the sim can no longer name it (render the `Band #<id>` fallback).
+    pub counterparty_name: String,
+    /// Its faction — meaningful only when [`Self::counterparty_band_id`] is non-zero.
+    pub counterparty_faction: u32,
+    /// The carrying party's `band_id`, `0` = no party. The key one shipment's goods group under.
+    pub party_id: u64,
+    /// A positive magnitude; [`Self::direction`] carries the sign.
+    pub amount: f32,
+}
+
+/// **ONE SUPPLY-NETWORK LINK OF ONE BAND** — a row of [`PopulationCohortState::pooling_links`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PoolingLinkState {
+    /// The band at the other end.
+    pub band_id: u64,
+    /// Hex distance between the two camps this turn.
+    pub distance_tiles: u32,
+    /// The rung holding the run, as a `RouteRungState.rung_key` (`"route:trail"`); `""` where any
+    /// tile on the path has no kept road.
+    pub rung_id: String,
 }
 
 /// **ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT** — a row of

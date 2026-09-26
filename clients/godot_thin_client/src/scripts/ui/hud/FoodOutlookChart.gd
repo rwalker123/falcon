@@ -10,9 +10,15 @@ class_name FoodOutlookChart
 ## re-derives no yield and no ecology.
 ##
 ## The walk, per turn i of the horizon:
-##     food = max(0, food + Σ arrival_schedule[i] over the band's sources − drain)
-## with `drain` (consumption + pen feed) held FLAT across the projection — this is a "if nothing
+##     food = max(0, food + Σ arrival_schedule[i] over the band's sources + standing_net − drain)
+## with `drain` (the people's consumption) and `standing_net` (this turn's POOLED food net, signed —
+## `DetailFormat.band_pooled_food_net`) held FLAT across the projection — this is a "if nothing
 ## changes" readout, not a forecast of the player's future decisions.
+##
+## **IT IS THE SIM'S RUNWAY WALK, TERM FOR TERM** (`snapshot::population::larder_runway_turns`'s first
+## arm), so the empty marker lands on the turn `turnsOfFood` beside it names. The sim's second arm —
+## the smooth `larder / net_drain` when the walk never empties within the horizon — has no mark here:
+## a chart whose larder does not empty draws no marker at all.
 
 ## Chart box: wide enough to give 20 turns a legible tick, short enough to stay a glanceable readout
 ## rather than an analytics chart. The width sits inside `BandCityPanel.SECTION_COLUMN_WIDTH` so the
@@ -59,8 +65,10 @@ func _init() -> void:
 
 ## Compose + store the projection. `start_food` is the band's current larder (provisions),
 ## `arrivals[i]` the merged food landing i+1 turns from now, `drain` the flat per-turn cost
-## (consumption + pen feed). `current_turn` labels the empty marker (`UNKNOWN_TURN` → relative).
-func set_projection(start_food: float, arrivals: PackedFloat32Array, drain: float, current_turn: int) -> void:
+## (consumption), `standing_net` the flat per-turn pooled food net (signed; the sim's `standing_net`).
+## `current_turn` labels the empty marker (`UNKNOWN_TURN` → relative).
+func set_projection(start_food: float, arrivals: PackedFloat32Array, drain: float, current_turn: int,
+		standing_net: float = 0.0) -> void:
 	_arrivals = arrivals
 	_current_turn = current_turn
 	_empty_index = NO_EMPTY_TURN
@@ -69,11 +77,16 @@ func set_projection(start_food: float, arrivals: PackedFloat32Array, drain: floa
 	var food: float = maxf(start_food, 0.0)
 	_series.push_back(food)
 	for i in range(arrivals.size()):
-		food = maxf(food + arrivals[i] - drain, 0.0)
+		food = maxf(food + arrivals[i] + standing_net - drain, 0.0)
 		_series.push_back(food)
 		if _empty_index == NO_EMPTY_TURN and food <= 0.0:
 			_empty_index = i
 	queue_redraw()
+
+## The turn the larder empties, counted from now (1 = after this coming turn) — the number the sim's
+## `turnsOfFood` states when its walk empties — or `NO_EMPTY_TURN`.
+func empty_turn() -> int:
+	return _empty_index + 1 if _empty_index != NO_EMPTY_TURN else NO_EMPTY_TURN
 
 func _draw() -> void:
 	if _series.size() < 2:

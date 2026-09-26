@@ -528,13 +528,32 @@ impl LocalStore {
     /// **Batch by batch rather than pooled**, for the same reason the supply network balances per
     /// rating: one averaged arrival would drag a mammoth hide down to a hare pelt on the walk home.
     /// The destination's ordinary merge rule then runs per batch, which is where merging belongs.
-    pub fn drain_materials_into(&mut self, into: &mut LocalStore) {
+    ///
+    /// **Returns what moved, per `(material, batch)`**, at the reading each batch carried — the
+    /// shape [`LaborAllocation::book_material_draws`] books a route crossing from, so an arrival is
+    /// booked per rating exactly as it moved.
+    pub fn drain_materials_into(&mut self, into: &mut LocalStore) -> Vec<(String, MaterialDraw)> {
         let moving = std::mem::take(&mut self.materials);
+        let mut moved = Vec::new();
         for (material, batches) in moving {
             for (band, batch) in batches {
-                into.deposit_material(&material, band, batch.amount, &batch.characteristics);
+                into.deposit_material(
+                    &material,
+                    band.clone(),
+                    batch.amount,
+                    &batch.characteristics,
+                );
+                moved.push((
+                    material.clone(),
+                    MaterialDraw {
+                        band,
+                        amount: batch.amount,
+                        characteristics: batch.characteristics,
+                    },
+                ));
             }
         }
+        moved
     }
 
     /// **Peel `amount` of `material` off the store IN ITS OWN ORDER, splitting the last batch** —
@@ -718,12 +737,268 @@ fn entity_placeholder() -> Entity {
 /// `integration_tests/tests/transfer_food_ledger.rs` pins against real turns. A future mechanism that
 /// is neither carries no default: it picks the arm it belongs to, or this enum grows and the wire
 /// grows with it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransferLink {
     /// Bands standing together — supply-network pooling, a fission dowry.
     Local,
     /// An expedition party carried it — a shipment, a drop-off, a fold-back.
     Route,
+}
+
+impl TransferLink {
+    /// The wire's `ubyte` — `0 = local`, `1 = route`, as `TransferCrossingState.link` documents.
+    pub fn wire_code(self) -> u8 {
+        match self {
+            TransferLink::Local => 0,
+            TransferLink::Route => 1,
+        }
+    }
+}
+
+/// **WHICH WAY A CROSSING WENT, from the booking band's side.** A signed amount would do, but the
+/// ledger this refines states four magnitudes rather than a net for its own reason (a band that
+/// both sends and receives is doing something), and the crossings list keeps that shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransferDirection {
+    /// Into this band's store.
+    In,
+    /// Out of this band's store.
+    Out,
+}
+
+impl TransferDirection {
+    /// The wire's `ubyte` — `0 = in`, `1 = out`, as `TransferCrossingState.direction` documents.
+    pub fn wire_code(self) -> u8 {
+        match self {
+            TransferDirection::In => 0,
+            TransferDirection::Out => 1,
+        }
+    }
+}
+
+/// ⛔ **WHY GOODS CROSSED — THE PRODUCER OF A CROSSING, one per ledger writer, and finer than
+/// [`TransferLink`]** (`docs/band_trade_tab_ux_proposal.html` §05, issue #731).
+///
+/// The link answers *what carried it*; the cause answers *what happened*, and the two diverge
+/// exactly where a player cares: a hunting party's drop-off and a shipment from a neighbour both
+/// ride the [`TransferLink::Route`] arm, but only one of them is trade. **Every cause has exactly one
+/// link** ([`Self::link`]), so a crossing's link is derived rather than chosen and the two cannot
+/// disagree.
+///
+/// | cause | link | writer |
+/// |---|---|---|
+/// | `Pooled` | local | `supply::balance_supply_networks` — food, fodder and material ratings |
+/// | `DowryOut` / `DowryIn` | local | `systems::fission` — the parent's share handed to a splinter |
+/// | `ShipmentOut` | route | `send_trade_expedition` — the **cargo** only |
+/// | `ShipmentIn` | route | `advance_expeditions` — a shipment landing |
+/// | `PartyHome` | route | a party's **own pack** coming home — a hunting party's drop-off, the `Returning` fold-back, a cancel in camp |
+/// | `PartyProvisions` | route | a party's **launch larder** — a scout's, and a shipment party's |
+/// | `ShipmentReturned` | route | a trade party's **undelivered cargo** coming home — the `Returning` fold-back, a cancel in camp |
+///
+/// **`PartyHome`, `PartyProvisions` and the dowry are not trade**: they are the band's own people
+/// and the band's own split. The ledger still books them (they cross the larder through neither
+/// income nor consumption, so the food identity needs them); the cause is what lets a reader leave
+/// them off a trade readout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransferCause {
+    /// Supply-network pooling between camps standing together. **Anonymous by construction** — the
+    /// pot has no counterparty, see [`TransferCrossing::counterparty`].
+    Pooled,
+    /// The parent's side of a split: the share of its stores that walked out with the splinter.
+    DowryOut,
+    /// The splinter's side of a split: what it opened its life holding.
+    DowryIn,
+    /// A trade shipment's cargo, leaving the sender at launch.
+    ShipmentOut,
+    /// A trade shipment's cargo, landing in the destination's store.
+    ShipmentIn,
+    /// A band's own party handing its take or its unspent pack back — a drop-off or a fold-back.
+    /// **The pack only**: a trade party's undelivered cargo is [`Self::ShipmentReturned`].
+    PartyHome,
+    /// The walking larder a party is outfitted with at launch — its own rations, not a shipment.
+    PartyProvisions,
+    /// **A shipment's cargo coming back undelivered** — the destination could not be resolved, or
+    /// the party was cancelled in camp. It answers the launch's [`Self::ShipmentOut`]: the same
+    /// counterparty (the destination it was bound for) and the same party, so a reader can net the
+    /// two. Never [`Self::PartyHome`], which is the band's own pack and not a shipment at all.
+    ShipmentReturned,
+}
+
+impl TransferCause {
+    /// **The one link this cause crosses on** — derived, so a writer cannot book a pooling move on
+    /// the route arm.
+    pub fn link(self) -> TransferLink {
+        match self {
+            TransferCause::Pooled | TransferCause::DowryOut | TransferCause::DowryIn => {
+                TransferLink::Local
+            }
+            TransferCause::ShipmentOut
+            | TransferCause::ShipmentIn
+            | TransferCause::PartyHome
+            | TransferCause::PartyProvisions
+            | TransferCause::ShipmentReturned => TransferLink::Route,
+        }
+    }
+
+    /// The wire's `ubyte`, in declaration order — the table `TransferCrossingState.cause` documents.
+    /// Append-only, like the schema it rides.
+    pub fn wire_code(self) -> u8 {
+        match self {
+            TransferCause::Pooled => 0,
+            TransferCause::DowryOut => 1,
+            TransferCause::DowryIn => 2,
+            TransferCause::ShipmentOut => 3,
+            TransferCause::ShipmentIn => 4,
+            TransferCause::PartyHome => 5,
+            TransferCause::PartyProvisions => 6,
+            TransferCause::ShipmentReturned => 7,
+        }
+    }
+}
+
+/// **THE OTHER BAND ON A CROSSING** — its durable id and the people it belongs to.
+///
+/// The faction rides here, fixed at booking, because the counterparty of a shipment may be a
+/// foreign band the viewer's client has no row for (fog, or another faction's camp), and a band that
+/// has since died has no component left to read it off. The **name** is resolved at capture instead:
+/// it is minted once and never changes, and an unresolvable one publishes empty, which a client
+/// renders as its `Band #<id>` fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferCounterparty {
+    pub band: BandId,
+    pub faction: FactionId,
+}
+
+/// ⛔ **ONE GOOD THAT CROSSED THIS BAND'S STORE, BY CAUSE** — a row of
+/// [`LaborAllocation::last_transfer_crossings`], and the detail beneath [`TransferLedger`]'s four
+/// arms.
+///
+/// **Additive, never a replacement.** The ledger remains the ledger: the food identity closes over
+/// its arms, and for `FOOD` / `FODDER` the crossings summed per `(link, direction)` equal those arms
+/// exactly, because both are written by one call ([`LaborAllocation::book_crossing`]).
+///
+/// **A material is booked per RATING**, never summed across ratings or materials — the rule every
+/// material readout on this wire keeps. `rating` is the merge key the store itself uses and
+/// `readings` the amount-weighted exact reading of what moved; both are empty for food and fodder.
+///
+/// **Merged by key.** Two crossings that agree on everything but `amount` are one row: a band pools
+/// every turn and a window can hold several passes, and a list that appended would grow a duplicate
+/// row per pass.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransferCrossing {
+    /// `FOOD`, `FODDER`, or a `materials.json` material id.
+    pub commodity: String,
+    /// The material pile's per-axis band — the store's merge key. Empty for food and fodder.
+    pub rating: crate::materials_config::BandKey,
+    /// The exact amount-weighted reading of what crossed, per axis. Empty for food and fodder.
+    pub readings: BTreeMap<String, f32>,
+    pub direction: TransferDirection,
+    /// Always `cause.link()` — stored so a reader need not know the table.
+    pub link: TransferLink,
+    pub cause: TransferCause,
+    /// **The other band, where there is one.** `Some` on a shipment (the destination on
+    /// `ShipmentOut` and `ShipmentReturned`, the sender on `ShipmentIn`) and on a dowry (the other
+    /// half of the split).
+    ///
+    /// ⛔ **NEVER on [`TransferCause::Pooled`] — an invariant, not an omission.** A pooling pass
+    /// moves a commodity toward one per-capita balance across the whole component, so what a band
+    /// receives is a share of a pot every surplus member paid into; naming "who gave it" would invent
+    /// a pairing the balancer never made. `PartyHome` / `PartyProvisions` have none either: the other
+    /// end is the band's own party, named by [`Self::party`].
+    pub counterparty: Option<TransferCounterparty>,
+    /// **The shipping party's [`BandId`]** — the key a client groups one shipment's goods into one
+    /// row by, and the `bandId` that party's own cohort row carries while it is on the map. Two
+    /// parties from one band landing in one turn are two ids and therefore two shipments. `None` for
+    /// a crossing no party carried (pooling, a dowry).
+    pub party: Option<BandId>,
+    /// A positive magnitude; [`Self::direction`] carries the sign.
+    pub amount: f32,
+}
+
+impl TransferCrossing {
+    /// A **commodity** crossing — `FOOD` or `FODDER` — with no counterparty or party yet.
+    pub fn goods(
+        commodity: &str,
+        direction: TransferDirection,
+        cause: TransferCause,
+        amount: f32,
+    ) -> Self {
+        Self {
+            commodity: commodity.to_string(),
+            rating: crate::materials_config::BandKey::default(),
+            readings: BTreeMap::new(),
+            direction,
+            link: cause.link(),
+            cause,
+            counterparty: None,
+            party: None,
+            amount,
+        }
+    }
+
+    /// A **material** crossing — one pile at one rating, carrying the reading it moved at.
+    pub fn material(
+        material: &str,
+        rating: crate::materials_config::BandKey,
+        readings: BTreeMap<String, f32>,
+        direction: TransferDirection,
+        cause: TransferCause,
+        amount: f32,
+    ) -> Self {
+        Self {
+            rating,
+            readings,
+            ..Self::goods(material, direction, cause, amount)
+        }
+    }
+
+    /// Name the other band.
+    pub fn with_counterparty(mut self, counterparty: Option<TransferCounterparty>) -> Self {
+        self.counterparty = counterparty;
+        self
+    }
+
+    /// Name the party that carried it.
+    pub fn with_party(mut self, party: Option<BandId>) -> Self {
+        self.party = party;
+        self
+    }
+
+    /// **The merge key** — everything but the amount and the exact reading.
+    fn same_row(&self, other: &Self) -> bool {
+        self.commodity == other.commodity
+            && self.rating == other.rating
+            && self.direction == other.direction
+            && self.link == other.link
+            && self.cause == other.cause
+            && self.counterparty == other.counterparty
+            && self.party == other.party
+    }
+
+    /// Fold `other` (a crossing on the same row) into this one: the amounts add and each axis's
+    /// reading becomes the amount-weighted average — the store's own merge rule
+    /// ([`LocalStore::deposit_material`]), so a row's reading is the reading of everything it counts.
+    fn absorb(&mut self, other: &Self) {
+        let total = self.amount + other.amount;
+        if total > 0.0 {
+            let (held_share, arriving_share) = (self.amount / total, other.amount / total);
+            let axes: BTreeSet<String> = self
+                .readings
+                .keys()
+                .chain(other.readings.keys())
+                .cloned()
+                .collect();
+            self.readings = axes
+                .into_iter()
+                .map(|axis| {
+                    let held = self.readings.get(&axis).copied().unwrap_or_default();
+                    let arriving = other.readings.get(&axis).copied().unwrap_or_default();
+                    (axis, held * held_share + arriving * arriving_share)
+                })
+                .collect();
+        }
+        self.amount = total;
+    }
 }
 
 /// **GOODS THAT CROSSED BETWEEN THIS BAND'S LARDER AND SOMEBODY ELSE'S, SPLIT BY [`TransferLink`]** —
@@ -872,6 +1147,11 @@ pub struct PopulationCohort {
     /// and credited back home if it never does. The arm was wired before the verb could fill it, on
     /// the bet that both accounts have one shape and the wire is append-only; the bet paid.
     pub last_turn_fodder_transfers: TransferLedger,
+    /// **EVERY GOOD THAT CROSSED THIS BAND'S STORE, BY CAUSE, AS OF THIS TURN'S FRAME** — the
+    /// per-turn twin of [`LaborAllocation::last_transfer_crossings`], copied on the same pass as the
+    /// two ledgers above and for their reason: the accumulator resets after the capture reads it, and
+    /// a recapture must not blank the rows. On the wire as `PopulationCohortState.transferCrossings`.
+    pub last_turn_transfer_crossings: Vec<TransferCrossing>,
     /// This turn's signed morale delta (before clamping into `[0, 1]`). Recomputed each turn by
     /// `simulate_population`; on the client wire as `PopulationCohortState.morale_delta`, which the
     /// client renders as a rising/falling trend arrow.
@@ -1385,14 +1665,21 @@ pub enum ExpeditionMission {
     /// **It is one-way.** The party carries goods out, deposits them, and walks home empty; a priced
     /// return flow is a later slice, not an omission here.
     ///
-    /// **There is no faction on it, and no same-faction branch anywhere it is read.** Faction is a
-    /// property of the endpoint (`.claude/rules/core_sim/connections.md`), so a shipment to another
-    /// people works by construction rather than by a clause.
+    /// **There is no same-faction branch anywhere it is read.** Faction is a property of the
+    /// endpoint (`.claude/rules/core_sim/connections.md`), so a shipment to another people works by
+    /// construction rather than by a clause. The destination's faction rides here only as half of
+    /// the shipment's ledger identity — see [`Self::consignee`].
     Trade {
         /// **The destination band's durable id** — the key, never rendered. A [`BandId`] rather than
         /// an `Entity` for the reason every other durable handle in this file is one: the band
         /// outlives any entity index, and the party must still name it after a rollback.
         destination_band: BandId,
+        /// **The destination's faction, fixed at launch** — the other half of the
+        /// [`TransferCounterparty`] the launch's `ShipmentOut` names. Carried rather than re-read
+        /// because the cargo can come home *because* the destination is gone
+        /// ([`TransferCause::ShipmentReturned`]), and a dead band has no component left to read it
+        /// off. **Never branched on.**
+        destination_faction: FactionId,
         /// **The destination's display name, resolved ONCE at launch — and EMPTY today, because
         /// bands have no names in this game.**
         ///
@@ -1440,15 +1727,16 @@ impl ExpeditionMission {
     /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
     /// `Hunt { fauna_id, target_species, floor }` from `target_herd` + `target_species` + `floor`;
     /// `"deny"` reconstructs `Deny { fauna_id, target_species }` from the two strings alone — it
-    /// carries no number; `"trade"` reconstructs `Trade { destination_band, destination_name }` from
-    /// the destination pair, which shares nothing with the herd pair (a shipment names a *people*);
-    /// anything else is `Scout`.
+    /// carries no number; `"trade"` reconstructs `Trade { destination_band, destination_faction,
+    /// destination_name }` from the destination triple, which shares nothing with the herd pair (a
+    /// shipment names a *people*); anything else is `Scout`.
     pub fn from_wire(
         kind: &str,
         target_herd: &str,
         target_species: &str,
         floor: f32,
         destination_band: u64,
+        destination_faction: u32,
         destination_name: &str,
     ) -> Self {
         match kind {
@@ -1463,6 +1751,7 @@ impl ExpeditionMission {
             },
             "trade" => ExpeditionMission::Trade {
                 destination_band: BandId(destination_band),
+                destination_faction: FactionId(destination_faction),
                 destination_name: destination_name.to_string(),
             },
             _ => ExpeditionMission::Scout,
@@ -1477,6 +1766,23 @@ impl ExpeditionMission {
             ExpeditionMission::Trade {
                 destination_band, ..
             } => Some(*destination_band),
+            _ => None,
+        }
+    }
+
+    /// **Who a shipment's cargo is addressed to** — the [`TransferCounterparty`] its launch books
+    /// `ShipmentOut` against and an undelivered homecoming books `ShipmentReturned` against, read
+    /// from this one place so the two rows cannot name different bands. `None` for every other verb.
+    pub fn consignee(&self) -> Option<TransferCounterparty> {
+        match self {
+            ExpeditionMission::Trade {
+                destination_band,
+                destination_faction,
+                ..
+            } => Some(TransferCounterparty {
+                band: *destination_band,
+                faction: *destination_faction,
+            }),
             _ => None,
         }
     }
@@ -1512,6 +1818,7 @@ impl ExpeditionMission {
             ExpeditionMission::Trade {
                 destination_band,
                 destination_name,
+                ..
             } => {
                 if destination_name.is_empty() {
                     format!("band {}", destination_band.0)
@@ -3988,6 +4295,16 @@ pub struct LaborAllocation {
     /// the `route` one is a shipment carrying bales — see
     /// [`PopulationCohort::last_turn_fodder_transfers`].
     pub last_fodder_transfers: TransferLedger,
+    /// **THE SAME WINDOW'S CROSSINGS, ONE ROW PER (good, rating, direction, cause, counterparty,
+    /// party)** — the cause detail beneath the two ledgers above, and the one account materials have.
+    /// See [`TransferCrossing`].
+    ///
+    /// Written only through [`Self::book_crossing`], which books a food or fodder crossing into its
+    /// ledger in the same call, so the crossings and the ledger arms cannot drift. The same
+    /// accumulate/reset discipline and the same snapshot window as [`Self::last_food_transfers`];
+    /// copied to [`PopulationCohort::last_turn_transfer_crossings`] before the turn capture.
+    /// Excluded from equality below, like the rest of the per-turn telemetry.
+    pub last_transfer_crossings: Vec<TransferCrossing>,
     /// **THE HAY THIS BAND'S PENS ARE SHORT, PER TURN** — `Σ max(0, demand_grass − footprint_intake)`
     /// over every pen the band kept this turn, in fodder units. Written by
     /// `advance_labor_allocation` once its assignment loop has seen every row, and exported as
@@ -4453,6 +4770,68 @@ pub struct BuildQueueEntry {
 }
 
 impl LaborAllocation {
+    /// ⛔ **THE ONE WAY A CROSSING IS BOOKED** — the ledger arm (for `FOOD` / `FODDER`) and the
+    /// crossings row, in one call, so the cause detail and the four arms it refines cannot disagree.
+    ///
+    /// A material has no ledger and books its row alone. **Added, never assigned** (the ledger's
+    /// rule), and **merged by key** ([`TransferCrossing`]) so repeated passes in one window add to a
+    /// row rather than appending a duplicate. A non-positive amount books nothing: an empty move is
+    /// not a crossing, and the ledger arms it would have added to are unchanged by it.
+    pub fn book_crossing(&mut self, crossing: TransferCrossing) {
+        if crossing.amount <= 0.0 {
+            return;
+        }
+        let ledger = if crossing.commodity == FOOD {
+            Some(&mut self.last_food_transfers)
+        } else if crossing.commodity == FODDER {
+            Some(&mut self.last_fodder_transfers)
+        } else {
+            None
+        };
+        if let Some(ledger) = ledger {
+            match crossing.direction {
+                TransferDirection::In => ledger.credit(crossing.link, crossing.amount),
+                TransferDirection::Out => ledger.debit(crossing.link, crossing.amount),
+            }
+        }
+        match self
+            .last_transfer_crossings
+            .iter_mut()
+            .find(|row| row.same_row(&crossing))
+        {
+            Some(row) => row.absorb(&crossing),
+            None => self.last_transfer_crossings.push(crossing),
+        }
+    }
+
+    /// **Book every batch of a material move as its own crossing** — one row per `(material,
+    /// rating)` the move touched, never summed across either. The shape [`LocalStore`]'s batch moves
+    /// report (`take_material_batches`, `drain_materials_into`), so every route writer books a
+    /// material the same way.
+    pub fn book_material_draws(
+        &mut self,
+        draws: &[(String, MaterialDraw)],
+        direction: TransferDirection,
+        cause: TransferCause,
+        counterparty: Option<TransferCounterparty>,
+        party: Option<BandId>,
+    ) {
+        for (material, draw) in draws {
+            self.book_crossing(
+                TransferCrossing::material(
+                    material,
+                    draw.band.clone(),
+                    draw.characteristics.clone(),
+                    direction,
+                    cause,
+                    draw.amount.to_f32(),
+                )
+                .with_counterparty(counterparty)
+                .with_party(party),
+            );
+        }
+    }
+
     /// **THE BAND'S WHOLE MATERIAL INFLOW, PER TURN** — this turn's credited take
     /// ([`Self::last_material_income`]) plus what its bench will bank
     /// ([`crate::systems::bench_material_rate`], which is that half's only producer).

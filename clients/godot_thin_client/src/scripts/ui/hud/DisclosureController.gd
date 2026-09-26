@@ -180,6 +180,10 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var hunted := DetailFormat.sum_realized_yield(band, SourceForecast.LABOR_KIND_HUNT)
     if hunted >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(hunted, DetailFormat.FOOD_LABEL_HUNTED))
+    # The band's OWN parties, beside the hunting and foraging they are part of (issue #731).
+    for row in _party_transfer_rows(band, HudTradeVocab.COMMODITY_FOOD):
+        if absf(float(row[1])) >= SourceForecast.FOOD_FLOW_MIN:
+            lines.append(DetailFormat.food_breakdown_row(float(row[1]), String(row[0])))
     var eaten := float(band.get("food_consumption", 0.0))
     if eaten >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-eaten, DetailFormat.FOOD_LABEL_CONSUMED))
@@ -239,11 +243,39 @@ func _link_transfer_lines(band: Dictionary) -> Array[String]:
         - DetailFormat.band_transfer_local_sent_turn(band)
     if absf(local_net) >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(local_net, DetailFormat.TRANSFER_LABEL_LOCAL))
-    var route_net := DetailFormat.band_transfer_route_received_turn(band) \
-        - DetailFormat.band_transfer_route_sent_turn(band)
+    var route_net := _shipment_net(band, HudTradeVocab.COMMODITY_FOOD)
     if absf(route_net) >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(route_net, DetailFormat.TRANSFER_LABEL_ROUTE))
     return lines
+
+## **`⇄ Trade route` IS SHIPMENTS, AND ONLY SHIPMENTS** (issue #731). The Route arm on the wire also
+## carries a band's own party coming home and the larder a party launches with, because a party
+## carried both — and rendering the whole arm as a trade route labelled a hunt's haul as trade. So the
+## row nets only the crossings whose CAUSE is a shipment, read off the per-cause crossings list —
+## `shipment_in`, `shipment_out` and `shipment_returned` (a trade party's undelivered cargo coming
+## back), so a shipment cancelled in camp nets to nothing here. `Brought home` is `party_home` alone:
+## the party's own pack, never its cargo.
+##
+## **THE POPOVER STILL ACCOUNTS FOR THE WHOLE LARDER CHANGE.** The crossings summed per link equal the
+## arm by construction (`LaborAllocation::book_crossing`), and the Route arm is exactly shipments
+## (out, in and returned) + party home + party rations — so this row plus `_party_transfer_rows`' two is the retired
+## whole-arm row, split three ways. `⇄ Local exchange` keeps the whole Local arm (pooling and a
+## split's dowry), unchanged.
+func _shipment_net(band: Dictionary, commodity: String) -> float:
+    return TradeLedger.cause_net(band, commodity, HudTradeVocab.SHIPMENT_CAUSES)
+
+## **WHAT THE BAND'S OWN PARTIES MOVED THIS TURN** — `[label, signed net]` pairs for `▲ Brought home`
+## (a hunt's drop-off, a party folding home) and `▼ Party rations` (the larder a party took when it
+## launched). Neither is trade and neither is in the hunting income (the sim books a homecoming as
+## "neither income nor consumption"), so they are stated beside Hunted / Gathered, where the player
+## looks for the band's own gathering. The caller omits each under its account's floor.
+func _party_transfer_rows(band: Dictionary, commodity: String) -> Array:
+    return [
+        [DetailFormat.TRANSFER_LABEL_BROUGHT_HOME,
+            TradeLedger.cause_net(band, commodity, [HudTradeVocab.CAUSE_PARTY_HOME])],
+        [DetailFormat.TRANSFER_LABEL_PARTY_RATIONS,
+            TradeLedger.cause_net(band, commodity, [HudTradeVocab.CAUSE_PARTY_PROVISIONS])],
+    ]
 
 ## The FODDER larder's two flows, the rows under the `Fodder:` summary: what the band's fodder Fields
 ## GREW this turn and what its pens ATE. The fodder twin of `food_breakdown_lines`, and the reason
@@ -270,6 +302,10 @@ func fodder_breakdown_lines(band: Dictionary) -> Array[String]:
     var grown := float(band.get("fodder_income", 0.0))
     if grown >= SourceForecast.FODDER_FLOW_MIN:
         lines.append(DetailFormat.fodder_breakdown_row(grown, DetailFormat.FODDER_LABEL_GROWN))
+    # The band's own parties' hay — the food ledger's two rows, one account over (issue #731).
+    for row in _party_transfer_rows(band, HudTradeVocab.COMMODITY_FODDER):
+        if absf(float(row[1])) >= SourceForecast.FODDER_FLOW_MIN:
+            lines.append(DetailFormat.fodder_breakdown_row(float(row[1]), String(row[0])))
     var eaten := float(band.get("fodder_need", 0.0))
     if eaten >= SourceForecast.FODDER_FLOW_MIN:
         lines.append(DetailFormat.fodder_breakdown_row(-eaten, DetailFormat.FODDER_LABEL_PENS))
@@ -295,8 +331,7 @@ func fodder_breakdown_lines(band: Dictionary) -> Array[String]:
         - DetailFormat.band_fodder_transfer_local_sent_turn(band)
     if absf(local_net) >= SourceForecast.FODDER_FLOW_MIN:
         lines.append(DetailFormat.fodder_breakdown_row(local_net, DetailFormat.TRANSFER_LABEL_LOCAL))
-    var route_net := DetailFormat.band_fodder_transfer_route_received_turn(band) \
-        - DetailFormat.band_fodder_transfer_route_sent_turn(band)
+    var route_net := _shipment_net(band, HudTradeVocab.COMMODITY_FODDER)
     if absf(route_net) >= SourceForecast.FODDER_FLOW_MIN:
         lines.append(DetailFormat.fodder_breakdown_row(route_net, DetailFormat.TRANSFER_LABEL_ROUTE))
     return lines
