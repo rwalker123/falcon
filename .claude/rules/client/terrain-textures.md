@@ -47,10 +47,16 @@ the bar (worst `23_seasonal_snowfield` 5.48, `21_periglacial_steppe` 3.18); all 
 **A replaced PNG is invisible until the project is re-imported.** `_load_asset_image` asks
 `ResourceLoader` first — so an exported build, where the PNG is a `.ctex` inside the `.pck`, still
 loads — and in the editor tree that serves `.godot/imported/`, which launching the client does not
-refresh. `Image.load_from_file` is only the fallback for a path the loader does not know. So run
-`godot --headless --path clients/godot_thin_client --import` after dropping in art: without it the
-build stamp is current and the map draws the OLD texture (it did, live, for the regenerated glacier).
-The check is the import's `.md5` sidecar, whose `source_md5` must equal the PNG's.
+refresh. `Image.load_from_file` is only the fallback for a path the loader does not know. Without an
+import the build stamp is current and the map draws the OLD texture (it did, live, for the regenerated
+glacier). The check is the import's `.md5` sidecar, whose `source_md5` must equal the PNG's.
+
+**`scripts/run_stack.sh` re-imports for you** — `ensure_godot_import` runs on every client launch
+(the full stack and `--client-only` alike) and imports when any importable asset under the client is
+newer than its own stamp, `.godot/run_stack_import.stamp`. It exists because the older
+`ensure_godot_class_cache` re-scans only when a `*.gd` changed, so an art-only change (the glacier
+commit) slipped past it. **A bare `godot` launch or a preview harness does not import** — run
+`godot --headless --path clients/godot_thin_client --import` first.
 
 **Regenerated art arrives too bright, and is graded, not re-rolled.** The Leonardo generations that
 replaced `12_mixed_woodland`, `22_glacier`, `23_seasonal_snowfield` and `24_rolling_hills` came back

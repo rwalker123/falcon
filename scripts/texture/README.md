@@ -102,7 +102,10 @@ which are fully opaque.
 - **New art does not appear until the project is RE-IMPORTED.** `TerrainTextureManager._load_asset_image`
   tries `ResourceLoader` first (so exported builds, where the PNG is a `.ctex` in the `.pck`, work), and
   in the editor tree that serves the IMPORTED copy in `.godot/imported/` — which a client launch does
-  not refresh. `Image.load_from_file` is only the fallback for a path the loader does not know. After
-  replacing a PNG run `godot --headless --path clients/godot_thin_client --import`, then restart the
-  client. Symptom of skipping it: the build stamp is current and the map still draws the old art. A
-  replaced texture's `.godot/imported/<name>.png-*.md5` carries a `source_md5` that must equal the PNG's.
+  not refresh. `Image.load_from_file` is only the fallback for a path the loader does not know.
+  `scripts/run_stack.sh` re-imports on launch when any importable asset is newer than its own stamp
+  (`ensure_godot_import`, both the full stack and `--client-only`), so restarting through it is enough.
+  A bare `godot` launch or a harness run (`scripts/preview.sh`) does NOT — run
+  `godot --headless --path clients/godot_thin_client --import` first. Symptom of skipping it: the build
+  stamp is current and the map still draws the old art. A replaced texture's
+  `.godot/imported/<name>.png-*.md5` carries a `source_md5` that must equal the PNG's.

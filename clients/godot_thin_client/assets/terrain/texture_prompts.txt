@@ -20,9 +20,10 @@
 #      The rest of the post-processing toolchain is in scripts/texture/README.md.
 #   2. Resize to 512x512 PNG
 #   3. Save to assets/terrain/textures/base/ with naming format: XX_terrain_name.png
-#   4. Re-import, THEN restart the client: `godot --headless --path clients/godot_thin_client --import`.
-#      Textures load through Godot's import cache (.godot/imported/), which a launch does not refresh,
-#      so skipping this keeps drawing the old art with a current build stamp.
+#   4. Restart through scripts/run_stack.sh, which re-imports changed art on launch. Textures load
+#      through Godot's import cache (.godot/imported/), which a bare `godot` launch or a preview
+#      harness does not refresh — for those, run
+#      `godot --headless --path clients/godot_thin_client --import` first.
 #
 # ============================================================================
 
