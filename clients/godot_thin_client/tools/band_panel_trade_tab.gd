@@ -114,14 +114,19 @@ func run(harness) -> void:
 	h._assert_band_panel("the tab's badge counts this turn's SHIPMENTS, both ways — 2 (got `%s`)"
 		% String(badge.get("text", "")), String(badge.get("text", "")) == "2")
 	var goods := _metas(zone, TradeZoneController.ROW_GOOD_META)
-	h._assert_band_panel("the Local arm is one line per GOOD, food and fodder first (got %s)" % str(goods),
-		goods == ["provisions", "fodder", "bone", "hide"])
+	h._assert_band_panel("the Local arm is one line per MOVING good, food and fodder first (got %s)" % str(goods),
+		goods == ["provisions", "fodder", "bone"])
 	var food_net := TradeLedger.goods_net(_subject())[0]
 	h._assert_band_panel("…and food's line is the POOLED net alone — no homecoming, no dowry (%.1f)"
 		% float(food_net[TradeLedger.GOOD_NET]),
 		is_equal_approx(float(food_net[TradeLedger.GOOD_NET]), FOOD_POOLED_IN))
-	h._assert_band_panel("…and a sub-decimal net reads `even`, never an arrow on 0.0",
-		_row_text(zone, TradeZoneController.ROW_GOOD_META, "hide").contains(HudTradeVocab.EVEN_WORD))
+	# **A GOOD THAT NETS EVEN HAS NO ROW AND IS NOT COUNTED.** Hide pooled in at 0.02 this turn —
+	# under the readout's one decimal — so the tab says nothing about it.
+	h._assert_band_panel("…and hide, which netted even, has no row and is not counted (`%s`)"
+			% HudTradeVocab.count_text(3, HudTradeVocab.GOOD_WORDS),
+		_row(zone, TradeZoneController.ROW_GOOD_META, "hide") == null
+			and _text_of(zone).contains(HudTradeVocab.count_text(3, HudTradeVocab.GOOD_WORDS))
+			and not _text_of(zone).contains(HudTradeVocab.EVEN_WORD))
 	var shipments := _metas(zone, TradeZoneController.ROW_SHIPMENT_META)
 	h._assert_band_panel("the Route arm is one line per shipment — an import and an export (got %s)"
 		% str(shipments), shipments == [DUSKWATER_NAME, NAMES[BITTERBROOK]])
@@ -223,6 +228,32 @@ func run(harness) -> void:
 		_find_named(zone, TradeZoneController.NETWORK_LINE_NAME) != null
 			and _text_of(zone).contains(HudTradeVocab.EMPTY_HEAD))
 	h._assert_band_panel("…and carries no badge", String(badge.get("text", "")) == "")
+
+	# ---- 5b. ONLY WHAT IS MOVING: three turns, one arm or none ----------------------------------
+	# Only piles that net EVEN moved: nothing is on the tab, so it reads as the empty turn.
+	h._push_bands(_network(_even_only_crossings()))
+	await h._settle()
+	await h._save("trade_tab_even_only")
+	zone = panel._zones.get(BandCityPanel.ZONE_TRADE)
+	h._assert_band_panel("a turn whose pooled goods all net even reads as nothing crossed — no Local heading, no row",
+		_text_of(zone).contains(HudTradeVocab.EMPTY_HEAD) and not _has_heading(zone, DetailFormat.TRANSFER_LABEL_LOCAL)
+			and _metas(zone, TradeZoneController.ROW_GOOD_META).is_empty())
+	# Pooling, and no shipment: the Trade route section is not drawn at all.
+	h._push_bands(_network(_pooled_only(_busy_crossings())))
+	await h._settle()
+	await h._save("trade_tab_pooling_only")
+	zone = panel._zones.get(BandCityPanel.ZONE_TRADE)
+	h._assert_band_panel("pooling and no shipment: Local exchange is drawn and Trade route is not, heading included",
+		_has_heading(zone, DetailFormat.TRANSFER_LABEL_LOCAL)
+			and not _has_heading(zone, DetailFormat.TRANSFER_LABEL_ROUTE))
+	# Shipments, and nothing pooled: the Local exchange section is not drawn at all.
+	h._push_bands(_network(_shipments_only(_busy_crossings())))
+	await h._settle()
+	await h._save("trade_tab_shipments_only")
+	zone = panel._zones.get(BandCityPanel.ZONE_TRADE)
+	h._assert_band_panel("shipments and nothing pooled: Trade route is drawn and Local exchange is not, heading included",
+		_has_heading(zone, DetailFormat.TRANSFER_LABEL_ROUTE)
+			and not _has_heading(zone, DetailFormat.TRANSFER_LABEL_LOCAL))
 
 	# ---- 6. THE WIDE SHELL — option (iii) --------------------------------------------------------
 	# The BUSIEST turn — eight goods and fifteen shipments, the proposal's own worst case — which is
@@ -531,6 +562,25 @@ func _busiest_crossings() -> Array:
 			BUSIEST_AMOUNT_STEP * (i + 1), [], DUSKWATER_ID + i, "%s %d" % [DUSKWATER_NAME, i + 1],
 			FOREIGN_FACTION if foreign else HudConst.PLAYER_FACTION_ID, BUSIEST_BASE_PARTY + i))
 	return list
+
+## Two pooled piles that each net under the readout's one decimal — moved, but nothing to show.
+func _even_only_crossings() -> Array:
+	return [
+		_x("hide", HudTradeVocab.DIRECTION_IN, HudTradeVocab.CAUSE_POOLED, HIDE_POOLED_IN,
+			[_reading("toughness", "fair"), _reading("suppleness", "fair")]),
+		_x(HudTradeVocab.COMMODITY_FODDER, HudTradeVocab.DIRECTION_OUT, HudTradeVocab.CAUSE_POOLED,
+			HIDE_POOLED_IN),
+	]
+
+func _pooled_only(list: Array) -> Array:
+	return list.filter(func(x): return TradeLedger.is_pooled(x))
+
+func _shipments_only(list: Array) -> Array:
+	return list.filter(func(x): return TradeLedger.is_shipment(x))
+
+## Does `node` draw a section head for `label` (`HudWidgets.zone_head` upper-cases its title)?
+func _has_heading(node: Node, label: String) -> bool:
+	return _text_of(node).contains(label.to_upper())
 
 func _x(commodity: String, direction: int, cause: int, amount: float, readings: Array = []) -> Dictionary:
 	return BandFx.transfer_crossing(commodity, direction, cause, amount, readings)

@@ -204,15 +204,20 @@ func _build_full_tier(band: Dictionary) -> VBoxContainer:
 	if not TradeLedger.has_trade(band):
 		_add_empty_state(tier)
 		return tier
-	# ⇄ LOCAL EXCHANGE — one line per good, its net this turn.
-	var goods := TradeLedger.goods_net(band)
-	tier.add_child(HudWidgets.zone_head(DetailFormat.TRANSFER_LABEL_LOCAL, _goods_count_text(goods.size())))
-	var local_rows := _rows_column()
-	for good in goods:
-		local_rows.add_child(_build_good_row(band, good))
-	tier.add_child(local_rows)
+	# **A SECTION WITH NOTHING IN IT IS NOT DRAWN, heading included** — the tab shows what is moving.
+	# ⇄ LOCAL EXCHANGE — one line per good that moved, its net this turn.
+	var goods := TradeLedger.moving_goods(band)
+	if not goods.is_empty():
+		tier.add_child(HudWidgets.zone_head(DetailFormat.TRANSFER_LABEL_LOCAL,
+			_goods_count_text(goods.size())))
+		var local_rows := _rows_column()
+		for good in goods:
+			local_rows.add_child(_build_good_row(band, good))
+		tier.add_child(local_rows)
 	# ⇄ TRADE ROUTE — Imports then Exports, each counted in shipments and folded past the trigger.
 	var shipments := TradeLedger.shipments(band)
+	if shipments.is_empty():
+		return tier
 	tier.add_child(HudWidgets.zone_head(DetailFormat.TRANSFER_LABEL_ROUTE,
 		_shipment_count_text(shipments.size())))
 	var route_rows := _rows_column()
@@ -239,14 +244,16 @@ func _build_full_tier(band: Dictionary) -> VBoxContainer:
 func _build_short_tier(band: Dictionary) -> VBoxContainer:
 	var tier := _tier_column(SHORT_TIER_NAME)
 	tier.add_child(_build_network_line(band))
-	var goods := TradeLedger.goods_net(band)
-	tier.add_child(_build_arm_row(DetailFormat.TRANSFER_LABEL_LOCAL,
-		_goods_count_text(goods.size()), KIND_LOCAL if not goods.is_empty() else ""))
+	# An arm with nothing moving has no row — the full tier's rule.
+	var goods := TradeLedger.moving_goods(band)
+	if not goods.is_empty():
+		tier.add_child(_build_arm_row(DetailFormat.TRANSFER_LABEL_LOCAL,
+			_goods_count_text(goods.size()), KIND_LOCAL))
 	var imports := TradeLedger.shipments_in_direction(band, HudTradeVocab.DIRECTION_IN).size()
 	var exports := TradeLedger.shipments_in_direction(band, HudTradeVocab.DIRECTION_OUT).size()
-	tier.add_child(_build_arm_row(DetailFormat.TRANSFER_LABEL_ROUTE,
-		_shipment_count_text(imports + exports), KIND_ROUTE_BOTH if imports + exports > 0 else ""))
 	if imports + exports > 0:
+		tier.add_child(_build_arm_row(DetailFormat.TRANSFER_LABEL_ROUTE,
+			_shipment_count_text(imports + exports), KIND_ROUTE_BOTH))
 		var split := _faint_label(HudTradeVocab.SPLIT_JOIN.join([
 			HudTradeVocab.count_text(imports, HudTradeVocab.IMPORT_WORDS),
 			HudTradeVocab.count_text(exports, HudTradeVocab.EXPORT_WORDS),
@@ -672,7 +679,7 @@ func _mount(kind: String, band: Dictionary) -> void:
 				rows.append(_build_scoped_camp_row(camp))
 			rows.append(_build_lost_row(float(scoped[TradeLedger.SCOPED_LOST])))
 	elif kind == KIND_LOCAL:
-		var goods := TradeLedger.goods_net(band)
+		var goods := TradeLedger.moving_goods(band)
 		title = HudTradeVocab.LOCAL_TITLE
 		count = _goods_count_text(goods.size())
 		for good in goods:
@@ -797,13 +804,9 @@ func _own_faction(band: Dictionary) -> int:
 	return int(band.get("faction", HudConst.PLAYER_FACTION_ID))
 
 func _goods_count_text(count: int) -> String:
-	if count == 0:
-		return HudTradeVocab.NONE_WORD
 	return HudTradeVocab.count_text(count, HudTradeVocab.GOOD_WORDS)
 
 func _shipment_count_text(count: int) -> String:
-	if count == 0:
-		return HudTradeVocab.NONE_WORD
 	return HudTradeVocab.count_text(count, HudTradeVocab.SHIPMENT_WORDS)
 
 ## The popover: a `PopupPanel` parented on the HUD like the disclosure popover, so it is a WINDOW and

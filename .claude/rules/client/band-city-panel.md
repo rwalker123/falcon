@@ -7198,10 +7198,19 @@ re-renders on a flip rather than re-paging. The drawer's flat host calls `build_
 ### Two tiers, chosen by measurement
 
 The FULL tier: the network line (`NETWORK  5 camps ›   within 5 tiles` — the span is
-`supply_network_span_tiles`, never `reach_tiles`), then `⇄ Local exchange` (one line per good, its net
-summed across its own ratings and never across goods, `even` under `HudTradeVocab.EVEN_FLOOR`), then
-`⇄ Trade route` (`▲ Imports` / `▼ Exports`, one line per shipment, no date). The SHORT tier: the
-network line, then one row per arm stating its count and opening its list.
+`supply_network_span_tiles`, never `reach_tiles`), then `⇄ Local exchange` (one line per good that
+MOVED, its net summed across its own ratings and never across goods), then `⇄ Trade route`
+(`▲ Imports` / `▼ Exports`, one line per shipment, no date). The SHORT tier: the network line, then one
+row per arm stating its count and opening its list.
+
+**The tab shows only what is actually moving.** A good whose net is under
+`HudTradeVocab.EVEN_FLOOR` has no row and is not counted (`TradeLedger.moving_goods`), in both tiers
+and in the local list's popover, so no good row on the tab reads `even`. A section with nothing in
+it is not drawn, heading included — Local exchange with no moving good, Trade route with no shipment,
+an Imports or Exports sub-head with no shipment that way — and the SHORT tier drops an empty arm's
+row the same way. A turn with neither (including one whose pooled piles all net even) is the empty
+turn (`TradeLedger.has_trade` is false). The camps list scoped to a good is the roster, not the tab:
+it still lists every camp, the even ones included, with its `sat even` count.
 
 **The full tier is built, its combined minimum height measured, and compared against the room** — the
 Trade zone's own `zone_size()` in the narrow shell, the Parties list's viewport (the zone box less its
@@ -7288,7 +7297,9 @@ faction's flag (#647) replaces.
 `tools/band_panel_trade_tab.gd`, run last by `band_panel_preview`: `trade_tab_narrow_busy`,
 `trade_tab_hover_bone`, `trade_tab_camps`, `trade_tab_camps_food`, `trade_tab_folded`,
 `trade_tab_more_shipments`, `trade_tab_empty`, `trade_tab_wide` (asserts 1190, no Trade flank, the
-SHORT tier under Parties), `trade_tab_wide_route_list` (fifteen shipments do not fit below a bottom
+SHORT tier under Parties), `trade_tab_even_only` (only even-netting piles moved: the empty turn, no
+Local heading, no row), `trade_tab_pooling_only` (no Trade route heading), `trade_tab_shipments_only`
+(no Local exchange heading), `trade_tab_wide_route_list` (fifteen shipments do not fit below a bottom
 dock's row, so it opens ABOVE), `trade_tab_wide_short_below` (five camps off a row with more room
 above than below still fit below, so it opens BELOW), `trade_tab_wide_local_hover` (a hover card from
 a row inside the popover sits beside it) and

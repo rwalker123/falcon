@@ -91,7 +91,6 @@ const IMPORT_WORDS: Array[String] = ["%d import", "%d imports"]
 const EXPORT_WORDS: Array[String] = ["%d export", "%d exports"]
 const MORE_SHIPMENT_WORDS: Array[String] = ["%d more shipment", "%d more shipments"]
 const SPLIT_JOIN := " · "
-const NONE_WORD := "none"
 
 const IMPORTS_WORD := "Imports"
 const EXPORTS_WORD := "Exports"
@@ -104,6 +103,8 @@ const OPENS_CARET := "›"
 
 ## One good's row: its net this turn, and how many rating piles stand behind it when more than one.
 const AMOUNT_FORMAT := "%s %.1f"
+## A camp's net in the camps panel scoped to a good, under `EVEN_FLOOR`. The tab's own good rows never
+## read it: a good that nets even has no row there.
 const EVEN_WORD := "even"
 ## A pile's SIGNED amount on a hover card (`+0.8` / `-0.4`).
 const SIGNED_AMOUNT_FORMAT := "%+.1f"

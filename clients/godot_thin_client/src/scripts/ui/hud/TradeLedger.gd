@@ -75,11 +75,11 @@ static func cause_net(band: Dictionary, commodity: String, causes: Array) -> flo
 	return net
 
 ## Is anything on the tab this turn — a pooled good or a shipment?
+## **THE TAB SHOWS ONLY WHAT IS ACTUALLY MOVING** — a pooled good whose net does not read `even`, or a
+## shipment. A turn whose only pooled piles net `even` has nothing on the tab and reads as the empty
+## state, exactly as a turn with no crossing at all does.
 static func has_trade(band: Dictionary) -> bool:
-	for crossing in crossings(band):
-		if is_trade(crossing):
-			return true
-	return false
+	return not moving_goods(band).is_empty() or not shipments(band).is_empty()
 
 # ---- GOODS -----------------------------------------------------------------------------------------
 
@@ -124,6 +124,17 @@ static func goods_net(band: Dictionary) -> Array[Dictionary]:
 		if is_pooled(crossing):
 			pooled.append(crossing)
 	return group_goods(pooled)
+
+## **THE LOCAL ARM AS THE TAB STATES IT** — `goods_net` less every good whose net reads `even`
+## (`EVEN_FLOOR`). The tab shows what is actually moving, so a good whose piles cancel to nothing has
+## no row and is not counted. The camps panel scoped to a good is the roster and still lists every
+## camp, the even ones included; that reads `goods_net`'s per-camp nets, not this.
+static func moving_goods(band: Dictionary) -> Array[Dictionary]:
+	var moving: Array[Dictionary] = []
+	for good in goods_net(band):
+		if not is_even(float(good[GOOD_NET])):
+			moving.append(good)
+	return moving
 
 ## `crossings` grouped by commodity, then by rating pile, each netted — the shape `goods_net` and a
 ## shipment's cargo share. Piles are ordered by `|net|` descending.
