@@ -2034,14 +2034,14 @@ func _assert_seeded_faction_colors_are_unchanged() -> void:
 	]
 	for index in seeded.size():
 		_assert_map("faction %d keeps its own colour (%s)" % [index, str(seeded[index])],
-			_map.faction_color(index, MAP_VIEW.BAND_FACTION_FALLBACK_COLOR) == seeded[index])
+			MAP_VIEW.faction_color(index, MAP_VIEW.BAND_FACTION_FALLBACK_COLOR) == seeded[index])
 	# …and the legacy NAME spelling still resolves to the same people.
 	_assert_map("the legacy name Obsidian still resolves to faction 1's colour",
-		_map.faction_color("Obsidian", MAP_VIEW.BAND_FACTION_FALLBACK_COLOR) == seeded[1])
+		MAP_VIEW.faction_color("Obsidian", MAP_VIEW.BAND_FACTION_FALLBACK_COLOR) == seeded[1])
 	# A people that is not there is still the caller's fallback — the one thing that must NOT be a
 	# generated colour.
 	_assert_map("an absent faction is still the caller's fallback",
-		_map.faction_color("", MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
+		MAP_VIEW.faction_color("", MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
 			== MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
 
 
@@ -2051,7 +2051,7 @@ func _assert_seeded_faction_colors_are_unchanged() -> void:
 func _assert_generated_faction_colors_are_distinct() -> void:
 	var seen: Array[Color] = []
 	for index in PALETTE_MAX_FACTION_ID + 1:
-		var color: Color = _map.faction_color(index, MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
+		var color: Color = MAP_VIEW.faction_color(index, MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
 		if color == MAP_VIEW.BAND_FACTION_FALLBACK_COLOR:
 			_assert_map("faction %d has a colour of its own, not the unknown-faction tint" % index, false)
 		if seen.has(color):

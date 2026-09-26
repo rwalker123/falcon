@@ -2624,9 +2624,9 @@ elsewhere in the suite**, which is the rung table's own guards catching a kind p
 
 ## `chapters/supply_network.gd` — which link the goods crossed (issue #548)
 
-**Appended LAST in `CHAPTERS`**, after `knowledge_panel`, so no existing frame moves. Four frames and
-sixteen assertions (`EXPECTED_CHECKPOINTS` **20** — frames count too; COUNTED off the source, `16 +
-4`, because the guard only fails on `reached < expected` and a const set above the truth is the one
+**Appended LAST in `CHAPTERS`**, after `knowledge_panel`, so no existing frame moves. Five frames and
+twenty assertions (`EXPECTED_CHECKPOINTS` **25** — frames count too; COUNTED off the source, `20 +
+5`, because the guard only fails on `reached < expected` and a const set above the truth is the one
 error it cannot catch). It
 ends by handing the reference band back, so a chapter appended after it starts where every other one
 does. The behaviour is `band-readouts.md`'s; what belongs here is the shape of the fixtures and of the
@@ -2643,6 +2643,7 @@ what stop the states being four plausible pictures.
 | `supply_quiet` | **the negative case** — a camp where nothing crossed either link carries its ordinary flows and NOT ONE transfer row, on EITHER account. Claimed on the `⇄` glyph rather than the two labels, so a row naming some third link kind cannot slip past |
 | `supply_food_links` | both kinds as their own rows among `Gathered` / `Hunted` / `Consumed`, and the breakdown is rows ONLY — no sentence, no footer, no radius |
 | `supply_food_route_both_ways` | both directions on one link netted into **ONE** `⇄ Trade route +1.00` row, with BOTH gross figures asserted absent — plus, PNG-less, the consequence of netting: a kind whose arrivals and departures cancel exactly renders no row |
+| `supply_food_party_rows` | (issue #731) `⇄ Trade route` is the SHIPMENT alone; a party's haul reads `Brought home` and its launch larder `Party rations`, beside Hunted — and the three sum to the route arm the wire carries |
 | `supply_fodder_links` | the Fodder popover keeps `Grown` / `Pens` and gains the identical pair at its own one-decimal resolution — held beside `supply_food_links`, which is the consistency proof |
 
 **THE CONSISTENCY CLAIM IS MECHANICAL, not two frames side by side.** `_transfer_phrases` strips both

@@ -55,6 +55,8 @@ const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 ## (`tools/ui_preview/fixtures_rung.gd`). Every patch and herd fixture below stamps its rung through
 ## it, so no row here can stand on a rung its own `is_cultivated` / `corralled` pair contradicts.
 const RUNG_FX := preload("res://tools/ui_preview/fixtures_rung.gd")
+## The Trade tab's states (issue #731), kept out of this file — see `band_panel_trade_tab.gd`.
+const TRADE_TAB_STATES := preload("res://tools/band_panel_trade_tab.gd")
 ## The hex `_band_fixture()` stands on — the tile the map-path state clicks.
 const MAP_PATH_TILE := Vector2i(71, 18)
 ## A grid just large enough to hold MAP_PATH_TILE, and one flat terrain id to fill it with.
@@ -2584,6 +2586,9 @@ func _ready() -> void:
 	await _render_work_inspector_dialog_states()
 
 	await _render_empty_work_zone_states()
+
+	# The band dock's Trade tab (issue #731) — its own file, appended last so no frame above moves.
+	await TRADE_TAB_STATES.new().run(self)
 
 	_assert_pending_assign_rollback()
 

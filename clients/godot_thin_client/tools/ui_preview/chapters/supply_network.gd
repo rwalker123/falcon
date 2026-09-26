@@ -18,9 +18,14 @@ extends RefCounted
 ##     reach of one another.
 ##   * `⇄ Trade route` — a shipment: a party arriving with cargo, or the draw one takes on launch.
 ##
-## ⛔ **NO COUNTERPARTY IS NAMED, AND THAT WAS BUILT AND REJECTED.** Bands have no names in this game
-## (issue #615), so every named row was a placeholder — and a variable-length name list dragged a
-## pixel-fitting apparatus behind it to stop rows wrapping. Two fixed phrases cannot wrap.
+## ⛔ **NO COUNTERPARTY IS NAMED IN A POPOVER ROW.** Bands carry real names (issue #615), but a
+## variable-length name wraps a vitals-width row and dragged a pixel-fitting apparatus behind it when it
+## was tried; two fixed phrases cannot wrap. The band dock's Trade tab (issue #731) is where the
+## counterparty is named.
+##
+## **`⇄ Trade route` IS SHIPMENTS ONLY** (issue #731). The route arm also carries a band's own party
+## coming home and the larder a party launches with; the popover splits those out by the crossing's
+## CAUSE into `Brought home` / `Party rations`, beside Hunted — the last state below.
 ##
 ## ⛔ **AND NO PROSE.** No mechanism sentence, no radius, no range warning. The rows are the readout.
 ##
@@ -30,7 +35,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 20
+const EXPECTED_CHECKPOINTS := 25
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -45,6 +50,21 @@ var h
 const QUIET_ENTITY := 951
 const LINKED_ENTITY := 952
 const BOTH_WAYS_ENTITY := 953
+const PARTY_ENTITY := 954
+
+## **THE OTHER END OF THIS CHAPTER'S SHIPMENTS** — a band the fixture names, and the carrying parties'
+## own ids (a shipment groups on its party). Distinct from every entity above.
+const SHIPPER_BAND_ID := 4097
+const SHIPPER_NAME := "Barrowmere"
+const SHIPMENT_IN_PARTY := 5001
+const HAY_SHIPMENT_PARTY := 5002
+const SHIPMENT_OUT_PARTY := 5003
+
+## **STATE 5'S OWN PARTIES**: a hunt's haul brought home and the rations a party took when it left —
+## both on the Route arm, neither trade. Different from every figure above so a row reading the wrong
+## cause fails here.
+const PARTY_HOME_IN := 3.1
+const PARTY_RATIONS_OUT := 1.2
 
 ## **THE FOOD LEDGER'S TURN.** Goods arrived over both kinds of link — the automatic balancing with a
 ## short neighbor, and a shipment that walked in. Two different stories about one larder, which is the
@@ -159,8 +179,7 @@ func run(harness) -> void:
 	# **AND A KIND THAT CANCELS EXACTLY RENDERS NOTHING**, which is the consequence of netting and is
 	# stated here as a fact of the readout rather than left to be discovered. The net falls under the
 	# account's floor and is omitted, exactly as every other flow in this ledger is.
-	var cancelled := _both_ways_band()
-	cancelled[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY] = FOOD_ROUTE_IN
+	var cancelled := _with_food_route_out(_both_ways_band(), FOOD_ROUTE_IN)
 	var cancelled_rows: Array[String] = h._hud._disclosures.food_breakdown_lines(cancelled)
 	h._assert_hud("a turn whose arrivals and departures cancel shows no row for that kind",
 		not _any(cancelled_rows, DetailFormat.TRANSFER_LABEL_ROUTE)
@@ -204,6 +223,38 @@ func run(harness) -> void:
 	# frame no server can send and the arm it exercised is retired. State 1 above makes the claim that
 	# is left: four keys present and zero renders no transfer row at all.
 
+	# **STATE 5 — THE BAND'S OWN PARTIES ARE NOT A TRADE ROUTE** (issue #731). A hunt's haul brought home
+	# and the rations a party launched with both cross on the Route arm, because a party carried them;
+	# the popover used to render the whole arm as `⇄ Trade route`, labelling a hunt as trade. Split by
+	# the crossing's cause: the shipment keeps the route row, the two party rows sit beside Hunted.
+	h._hud.show_unit_selection(_party_band())
+	await h._settle()
+	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, PARTY_ENTITY)
+	await h._settle()
+	await h._save("supply_food_party_rows")
+	var party_rows: Array[String] = h._hud._disclosures.food_breakdown_lines(_party_band())
+	var home_row := DetailFormat.food_breakdown_row(PARTY_HOME_IN, DetailFormat.TRANSFER_LABEL_BROUGHT_HOME)
+	var rations_row := DetailFormat.food_breakdown_row(-PARTY_RATIONS_OUT,
+		DetailFormat.TRANSFER_LABEL_PARTY_RATIONS)
+	h._assert_hud("a party's haul reads as its own row (%s), not as trade" % home_row.strip_edges(),
+		party_rows.has(home_row))
+	h._assert_hud("…and a party's launch larder as another (%s)" % rations_row.strip_edges(),
+		party_rows.has(rations_row))
+	h._assert_hud("…and `⇄ Trade route` is the SHIPMENT alone (%s)" % route_in_row.strip_edges(),
+		party_rows.has(route_in_row) and _count_containing(party_rows, DetailFormat.TRANSFER_LABEL_ROUTE) == 1)
+	# **THE ROWS STILL ACCOUNT FOR THE WHOLE ARM.** Shipment + home + rations is exactly the route arm
+	# the retired single row stated — the split moves the figure, it does not lose any of it.
+	var party_band := _party_band()
+	var arm := float(party_band[DetailFormat.TRANSFER_ROUTE_RECEIVED_TURN_KEY]) \
+		- float(party_band[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY])
+	var split := FOOD_ROUTE_IN + PARTY_HOME_IN - PARTY_RATIONS_OUT
+	h._assert_hud("…and the three rows sum to the route arm the wire carries (%.2f = %.2f)" % [split, arm],
+		is_equal_approx(split, arm) and party_rows.find(home_row) < party_rows.find(
+			DetailFormat.food_breakdown_row(-float(party_band["food_consumption"]),
+				DetailFormat.FOOD_LABEL_CONSUMED)))
+	_click_breakdown(HudDisclosureVocab.BREAKDOWN_KIND_FOOD, PARTY_ENTITY)
+	await h._settle()
+
 	# Hand the reference band back, so a chapter appended after this one starts where the rest do.
 	h._hud.update_band_alerts([BandFx.band_fixture()])
 	h._hud.show_unit_selection(BandFx.band_fixture())
@@ -225,6 +276,20 @@ func _linked_band() -> Dictionary:
 	var band := _hay_keeper(LINKED_ENTITY, "Greyfen")
 	band[DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY] = FOOD_LOCAL_IN
 	band[DetailFormat.TRANSFER_ROUTE_RECEIVED_TURN_KEY] = FOOD_ROUTE_IN
+	# **THE CROSSINGS BEHIND THE ARMS, BY CAUSE** (issue #731) — what the wire sends beside the four
+	# terms, summing to them per (link, direction). The route row reads its SHIPMENTS off these.
+	band[HudTradeVocab.CROSSINGS_KEY] = [
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_POOLED, FOOD_LOCAL_IN),
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_SHIPMENT_IN, FOOD_ROUTE_IN, [], SHIPPER_BAND_ID, SHIPPER_NAME,
+			HudConst.PLAYER_FACTION_ID, SHIPMENT_IN_PARTY),
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FODDER, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_POOLED, HAY_LOCAL_IN),
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FODDER, HudTradeVocab.DIRECTION_OUT,
+			HudTradeVocab.CAUSE_SHIPMENT_OUT, HAY_ROUTE_OUT, [], SHIPPER_BAND_ID, SHIPPER_NAME,
+			HudConst.PLAYER_FACTION_ID, HAY_SHIPMENT_PARTY),
+	]
 	# **THE HAY MOVES DIFFERENTLY FROM THE GRAIN, DELIBERATELY.** Same turn, same two links, different
 	# amounts and one different direction — so a ledger reading the other account's figures fails here
 	# instead of looking plausible on every frame.
@@ -240,7 +305,39 @@ func _both_ways_band() -> Dictionary:
 	band["id"] = "Elderford"
 	band["name"] = "Elderford"
 	band = BandFx.with_band_id(band)
-	band[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY] = FOOD_ROUTE_OUT
+	band[HudTradeVocab.CROSSINGS_KEY] = (band[HudTradeVocab.CROSSINGS_KEY] as Array).duplicate(true)
+	return _with_food_route_out(band, FOOD_ROUTE_OUT)
+
+## `band` with a food SHIPMENT of `amount` leaving down a route — the arm term and the crossing behind
+## it, set together so the two can never disagree about the turn.
+func _with_food_route_out(band: Dictionary, amount: float) -> Dictionary:
+	band[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY] = amount
+	var kept: Array = []
+	for crossing in band.get(HudTradeVocab.CROSSINGS_KEY, []):
+		if not (TradeLedger.commodity_of(crossing) == HudTradeVocab.COMMODITY_FOOD
+				and TradeLedger.cause_of(crossing) == HudTradeVocab.CAUSE_SHIPMENT_OUT):
+			kept.append(crossing)
+	kept.append(BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_OUT,
+		HudTradeVocab.CAUSE_SHIPMENT_OUT, amount, [], SHIPPER_BAND_ID, SHIPPER_NAME,
+		HudConst.PLAYER_FACTION_ID, SHIPMENT_OUT_PARTY))
+	band[HudTradeVocab.CROSSINGS_KEY] = kept
+	return band
+
+## State 5's camp: a shipment in, a hunting party home with its haul, and a party out with its rations —
+## three causes on ONE route arm, so the popover has to split them to say them right.
+func _party_band() -> Dictionary:
+	var band := _hay_keeper(PARTY_ENTITY, "Kestrelwatch")
+	band[DetailFormat.TRANSFER_ROUTE_RECEIVED_TURN_KEY] = FOOD_ROUTE_IN + PARTY_HOME_IN
+	band[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY] = PARTY_RATIONS_OUT
+	band[HudTradeVocab.CROSSINGS_KEY] = [
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_SHIPMENT_IN, FOOD_ROUTE_IN, [], SHIPPER_BAND_ID, SHIPPER_NAME,
+			HudConst.PLAYER_FACTION_ID, SHIPMENT_IN_PARTY),
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_PARTY_HOME, PARTY_HOME_IN),
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_OUT,
+			HudTradeVocab.CAUSE_PARTY_PROVISIONS, PARTY_RATIONS_OUT),
+	]
 	return band
 
 ## The chapter's band shape: the reference fixture under this chapter's own entity and handle, plus a
@@ -270,6 +367,8 @@ func _hay_keeper(entity: int, id: String) -> Dictionary:
 			DetailFormat.FODDER_TRANSFER_ROUTE_RECEIVED_TURN_KEY,
 			DetailFormat.FODDER_TRANSFER_ROUTE_SENT_TURN_KEY]:
 		band[key] = 0.0
+	# …and the crossings list, empty — the decoder inserts it on every cohort too.
+	band[HudTradeVocab.CROSSINGS_KEY] = []
 	return band
 
 

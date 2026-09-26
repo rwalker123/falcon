@@ -441,6 +441,14 @@ const BAND_ZONE_LAYOUT: Array[Dictionary] = [
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_PARTIES,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_PARTIES,
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH},
+    # **TRADE IS NARROW-ONLY** (issue #731, option iii): a fourth tab on a side dock, and NO fourth
+    # flank on a wide shell — its content rides under Parties there (`build_parties_zone`), so the
+    # shell threshold stays the three flanks' 1190 rather than rising to 1569 and tabbing every laptop
+    # bottom dock between the two. The width is declared for completeness and summed by nothing.
+    {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_TRADE,
+        BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_TRADE,
+        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH,
+        BandCityPanel.ZONE_SPEC_NARROW_ONLY: true},
 ]
 
 ## **THE FACTION PAGE DECLARES THREE ZONES, THE SAME COUNT A BAND DOES.** It declared a fourth,
@@ -599,6 +607,17 @@ var _send_hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
 ## is one question with one request-id sequence.
 var _forecast_query: ForecastQuery = null
 
+## **THE TRADE TAB'S OWN CONTROLLER** (issue #731) — it owns the zone's content, its overflow panel
+## and its hover card; this controller asks it for the content and pushes the band. `_trade_wide` is
+## which shell the last render authored it for: the content MOVES between shells (a zone of its own
+## narrow, a section under Parties wide), so a flip is a re-render rather than a re-page.
+var _trade: TradeZoneController = null
+var _trade_wide: bool = false
+
+## The Trade tab's controller, for the harness and for nothing that decides anything.
+func trade_zone() -> TradeZoneController:
+    return _trade
+
 func set_forecast_query(query: ForecastQuery) -> void:
     _forecast_query = query
 
@@ -617,6 +636,8 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
     _emit_assign_labor_fn = emit_assign_labor
     _herd_label_for_id_fn = herd_label_for_id
     _targeting = targeting
+    _trade = TradeZoneController.new(band_labor, host)
+    _trade.set_topbar(topbar)
 
 ## `_topbar` is held for **the player faction's own three readouts and nothing else** — its knowledge
 ## `faction_tracks` (the rung-ready mark on a work row, the narrow reason `DrawerComposeController`
@@ -1775,6 +1796,11 @@ func _on_zones_resized() -> void:
     if _panel_is_faction:
         rerender()
         return
+    # **A SHELL FLIP MOVES THE TRADE CONTENT** between its own zone and the foot of Parties, so it is a
+    # re-render, never a re-page (`_trade_wide`).
+    if _panel.is_wide_shell() != _trade_wide:
+        rerender()
+        return
     # The COLUMN COUNT is the second reason to rebuild rather than re-page, and for the same reason as
     # the tier: the band zone's split across columns is AUTHORED at build time, so a flank that has
     # gained or lost a column cannot be re-flowed in place — it would keep a layout built for a
@@ -1788,6 +1814,8 @@ func _on_zones_resized() -> void:
     # zone for it would be three.
     _sync_band_zone_scroll()
     _repage_work_zone()
+    # The Trade tier is chosen against the box, so a new box may re-author it — in place.
+    _trade.refill(_trade_room())
 
 ## The panel's `shown_zone_changed` handler — the narrow shell swapped the zone its body draws.
 ##
@@ -1800,6 +1828,10 @@ func _on_zones_resized() -> void:
 ## on, so the card comes down (and comes back on the tab back) by exactly one rule.
 func _on_shown_zone_changed() -> void:
     _sync_work_inspector_dialog(_work_zone_band)
+    # …and the Trade tab's overflow panel and hover card, which are the other surfaces drawn OUTSIDE
+    # the panel: a list open over the map for a tab the player has left has nothing behind it.
+    if not _trade_zone_is_on_screen():
+        _trade.dismiss()
 
 ## The height the band zone's TIER is chosen against: the box times the number of columns the flank
 ## lays out across.
@@ -7528,6 +7560,45 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
         return
     emit_signal("cancel_order_requested", band, scope)
 
+# ---- zone `trade` -----------------------------------------------------------
+
+## Zone `trade` (issue #731) — the narrow shell's fourth tab. `TradeZoneController` authors it; this
+## only hands it the band and the box. A wide shell never calls this: the same content is a section
+## under Parties there (`build_parties_zone`).
+func build_trade_zone(band: Dictionary) -> VBoxContainer:
+    return _trade.build(band, _trade_zone_box())
+
+## The box the Trade content is authored against: its own zone's in the narrow shell, the Parties
+## zone's in the wide one (where it lives). The fallback keeps a no-dock host laying out sensibly.
+func _trade_zone_box() -> Vector2:
+    if _panel == null:
+        return HudWorkVocab.ZONE_FALLBACK_SIZE
+    var zone := BandCityPanel.ZONE_PARTIES if _trade_wide else BandCityPanel.ZONE_TRADE
+    var box: Vector2 = _panel.zone_size(zone)
+    return box if box.x > 0.0 and box.y > 0.0 else HudWorkVocab.ZONE_FALLBACK_SIZE
+
+## **THE ROOM THE TRADE TIER IS MEASURED AGAINST.** Narrow: its own zone's box. Wide: the Parties
+## zone's scrolling list — the box less the zone's fixed chrome (its head, any empty hint, the footer
+## and the gaps between them), since that list is where the section sits and the most of it a player
+## sees without scrolling.
+func _trade_room() -> Vector2:
+    var box := _trade_zone_box()
+    if not _trade_wide or _parties_zone_col == null or not is_instance_valid(_parties_zone_col):
+        return box
+    var used := 0.0
+    for child in _parties_zone_col.get_children():
+        if child is Control and String(child.name) != HudWorkVocab.PARTIES_LIST_NAME:
+            used += (child as Control).get_combined_minimum_size().y
+    used += float(maxi(_parties_zone_col.get_child_count() - 1, 0)) \
+        * float(_parties_zone_col.get_theme_constant("separation"))
+    return Vector2(box.x, maxf(box.y - used, 0.0))
+
+## Is the Trade content on screen — its own tab in the narrow shell, the Parties flank in the wide?
+func _trade_zone_is_on_screen() -> bool:
+    if _panel == null:
+        return false
+    return _panel.shows_zone(BandCityPanel.ZONE_PARTIES if _trade_wide else BandCityPanel.ZONE_TRADE)
+
 # ---- zone `parties` ---------------------------------------------------------
 
 ## Zone `parties`: head + `⋯` menu · one row per party in the field · the compose footer.
@@ -7549,7 +7620,7 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 ##
 ## The scroll takes `SIZE_EXPAND_FILL`, which is what the old bottom spacer did — so the footer is
 ## still pinned to the bottom of the zone and a short list still renders exactly where it did.
-func build_parties_zone(band: Dictionary) -> VBoxContainer:
+func build_parties_zone(band: Dictionary, with_trade: bool = false) -> VBoxContainer:
     # BEFORE anything reads the latched float requirement below: a box change invalidates the mark.
     _note_parties_zone_box()
     var col := HudWidgets.make_zone_column()
@@ -7586,6 +7657,13 @@ func build_parties_zone(band: Dictionary) -> VBoxContainer:
     else:
         rows.add_child(_build_parties_inspector(inspected))
     col.add_child(_build_party_footer(band))
+    # **THE WIDE SHELL'S HOME FOR THE TRADE CONTENT** (issue #731, option iii): a section at the foot of
+    # this zone's own scrolling list — one scroll down, no fourth flank, the shell threshold unchanged.
+    # Inside the sanctioned scroll, so it adds no `ScrollContainer` of its own. Only the DOCK asks for it
+    # (`with_trade`): the drawer's flat host stacks the zones itself and has no Trade tab to stand in for.
+    # Built AFTER the footer, because the room it is tiered against is what the head and footer leave.
+    if with_trade:
+        rows.add_child(_trade.build_section(band, _trade_room()))
     return col
 
 ## The parties zone's scrolling list host — a `ScrollContainer` whose single child is the VBox the rows
@@ -9691,6 +9769,10 @@ func _push_zone_badges(band: Dictionary) -> void:
             awaiting = true
     _panel.set_tab_badge(BandCityPanel.ZONE_PARTIES,
         str(parties.size()) if not parties.is_empty() else "", awaiting)
+    # Trade carries this turn's SHIPMENTS, both ways, and nothing on a turn with none. Pooling never
+    # counts — it happens most turns whether the player looks or not, so a badge that counted it would
+    # never go out.
+    _panel.set_tab_badge(BandCityPanel.ZONE_TRADE, TradeZoneController.badge_text(band), false)
 
 ## Recall the selected in-flight expedition (folds it home). Emits recall_expedition_requested;
 ## Main formats the `recall_expedition …` command.
@@ -9772,11 +9854,19 @@ func render_band(unit: Dictionary) -> void:
     # `_trade_cargo_zones_rebuilding`. Set around exactly this call because this is where the old
     # zones are detached, and cleared immediately after, so no early return can strand it.
     _trade_cargo_zones_rebuilding = true
-    _panel.set_zones({
+    # **WHICH SHELL THE TRADE CONTENT IS AUTHORED FOR** is read once, here, before either builder that
+    # places it runs — `build_parties_zone` appends it on a wide shell, and only a narrow one is handed
+    # a Trade zone of its own.
+    _trade_wide = _panel.is_wide_shell()
+    var zones := {
         BandCityPanel.ZONE_BAND: HudWidgets.wrap_zone(build_band_zone(_band_labor.panel_band())),
         BandCityPanel.ZONE_WORK: HudWidgets.wrap_zone(build_work_zone(_band_labor.panel_band())),
-        BandCityPanel.ZONE_PARTIES: HudWidgets.wrap_zone(build_parties_zone(_band_labor.panel_band())),
-    })
+        BandCityPanel.ZONE_PARTIES: HudWidgets.wrap_zone(build_parties_zone(_band_labor.panel_band(),
+            _trade_wide)),
+    }
+    if not _trade_wide:
+        zones[BandCityPanel.ZONE_TRADE] = HudWidgets.wrap_zone(build_trade_zone(_band_labor.panel_band()))
+    _panel.set_zones(zones)
     _trade_cargo_zones_rebuilding = false
     _push_zone_badges(_band_labor.panel_band())
     # Header: settlement stage + name + stage label. The stage `id` is the panel's sprite key
@@ -9826,6 +9916,8 @@ func render_faction() -> void:
     _party_compose_measured_box = Vector2.ZERO
     _party_compose_sheet = null
     _dismiss_compose_float()
+    # …and the Trade tab's overflow panel, which belongs to the band being left.
+    _trade.dismiss()
     # This page builds no work BOARD, so the re-page path must have nothing to re-page: `_on_zones_resized`
     # would otherwise rebuild the previous band's board into a host `set_zones` is about to free.
     # **AND THE INSPECTOR'S CARD COMES DOWN WITH IT, the float's own rule** — it lives outside the panel,
@@ -10107,6 +10199,7 @@ func refresh_snapshot() -> void:
         _party_compose_measured_box = Vector2.ZERO
         _party_compose_sheet = null
         _dismiss_compose_float()
+        _trade.dismiss()
         return
     # The page SURVIVES a snapshot, exactly as a band subject does — its totals are what the tick just
     # moved, so a tick is precisely when it must re-render rather than hand the panel back to a band.
@@ -10137,6 +10230,7 @@ func _index_of_player_band(entity: int) -> int:
 ## in `render_band`, since main's section-block model rebuilds that label each render.)
 func set_panel(panel: BandCityPanel) -> void:
     _panel = panel
+    _trade.set_panel(panel)
     # THE PANEL OWNS THE FILE, THIS CONTROLLER OWNS THE VOCABULARY. The panel stores the work sort as
     # an opaque string, so validating it is this side's job: an empty (never chosen) or unknown value
     # — a hand-edited prefs file, a sort retired since it was written — leaves the default standing.

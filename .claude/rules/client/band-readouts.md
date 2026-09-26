@@ -1443,17 +1443,17 @@ said nothing at all. **The row names the KIND OF LINK the goods crossed**, and t
 | label | what it is |
 |---|---|
 | `⇄ Local exchange` | `balance_supply_networks` — the automatic balancing between camps within reach of one another. Nobody orders it and nobody built it |
-| `⇄ Trade route` | a shipment: a party arriving with cargo, or the draw one takes when it launches. **This one the player did** |
+| `⇄ Trade route` | a shipment: a party landing cargo, or the cargo one loads when it launches. **This one the player did** |
 
 That distinction is the whole readout, and it is what a player can act on — one of the two is a thing
 they built, and the other happens whether they look or not.
 
-⛔ **IT NAMES THE LINK AND NEVER THE COUNTERPARTY, and the counterparty version was BUILT AND
-REJECTED.** Bands have no names in this game (issue #615), so every named row was either a
-placeholder or a `Band 4` — and because a name list is variable-length it dragged a whole
+⛔ **A POPOVER ROW NAMES THE LINK AND NEVER THE COUNTERPARTY.** Bands carry real names (issue #615),
+but a name is variable-length, and the counterparty version of these rows dragged a whole
 pixel-fitting apparatus behind it (a measured column, a per-row lead, a two-pass fit, `+N more`
-overflow, a `neighbors` fallback) purely to stop rows wrapping. **Two fixed phrases cannot wrap**, and
-all of that machinery came out with them.
+overflow, a `neighbors` fallback) purely to stop a vitals-width row wrapping. **Two fixed phrases
+cannot wrap**, and all of that machinery came out with them. The counterparty is named where there is
+room for it: the band dock's Trade tab (`band-city-panel.md` → "The Trade tab").
 
 ⛔ **AND NOTHING SAYS "POOLED".** One anonymous pot is how `balance_commodity` is implemented, not
 what happens in the world: each camp holds its own stores and hands some of them to a short neighbor.
@@ -1497,6 +1497,31 @@ exactly one thing, the number's resolution, which `fodder_breakdown_row` owns.
 Each row is omitted when its NET magnitude falls below the account's existing floor
 (`SourceForecast.FOOD_FLOW_MIN` / `FODDER_FLOW_MIN`), so a camp that exchanged nothing renders
 nothing — never `⇄ Local exchange +0.00`.
+
+### `⇄ Trade route` is SHIPMENTS; a band's own parties get rows of their own (issue #731)
+
+The wire's Route arm carries three causes, because a party carried all three: a **shipment**
+(`shipment_in` / `shipment_out`), a band's own party **coming home** with its haul or folding back
+(`party_home`), and the **larder a party launches with** (`party_provisions`). Rendering the whole arm
+as `⇄ Trade route` labelled a hunt's haul as trade — and it is not in the hunting income either, since
+the sim books a homecoming as neither income nor consumption.
+
+So both popovers read the per-cause `transfer_crossings` list (`TradeLedger.cause_net`) and split it:
+
+| row | cause | where it sits |
+|---|---|---|
+| `⇄ Trade route` | `shipment_in` − `shipment_out` | the transfer rows, as before |
+| `Brought home` | `party_home` (▲) | beside Hunted / Gathered (Grown, on the fodder account) |
+| `Party rations` | `party_provisions` (▼) | beside them too |
+
+`⇄ Local exchange` still reads the whole Local arm off the four link terms — pooling AND a split's
+dowry — unchanged. **The popover still accounts for the whole larder change**: the crossings summed
+per `(link, direction)` equal the arms by construction (`LaborAllocation::book_crossing`,
+`.claude/rules/core_sim/campaign.md` → "The cause key and the crossings list"), so the three route
+rows sum to the retired whole-arm row. `tools/ui_preview/chapters/supply_network.gd`'s
+`supply_food_party_rows` asserts all three rows and that sum. Each is omitted under the account's
+floor like every other row; the labels are `DetailFormat.TRANSFER_LABEL_BROUGHT_HOME` /
+`TRANSFER_LABEL_PARTY_RATIONS`, direction being the sign's job.
 
 ### What is on the wire, and why there is no fallback
 

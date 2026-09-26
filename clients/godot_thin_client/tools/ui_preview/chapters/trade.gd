@@ -382,6 +382,14 @@ func run(harness) -> void:
 	transferring["transfer_sent_turn"] = TRANSFER_ROUTE_OUT
 	transferring[DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY] = TRANSFER_LOCAL_IN
 	transferring[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY] = TRANSFER_ROUTE_OUT
+	# …and the CROSSINGS behind those two terms (issue #731): the route row states SHIPMENTS, read off
+	# the per-cause list, so the launch that sent this food is booked as the shipment it is.
+	transferring[HudTradeVocab.CROSSINGS_KEY] = [
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_POOLED, TRANSFER_LOCAL_IN),
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_OUT,
+			HudTradeVocab.CAUSE_SHIPMENT_OUT, TRANSFER_ROUTE_OUT),
+	]
 	h._hud.update_band_alerts([transferring, _neighbour_band()])
 	h._hud.show_unit_selection(transferring)
 	await h._settle()

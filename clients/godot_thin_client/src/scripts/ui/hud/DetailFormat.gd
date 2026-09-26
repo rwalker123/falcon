@@ -172,10 +172,11 @@ const TRANSFER_GLYPH := "⇄"
 #   * **Trade route** — a shipment: a party arriving with cargo, or the draw a party takes when it
 #     launches. This one the player did.
 #
-# ⛔ **IT NAMES THE LINK AND NEVER THE COUNTERPARTY.** Naming the camp at the other end was built and
-# rejected: bands genuinely have no names in this game (issue #615), so every such row was either a
-# placeholder or a `Band 4`, and the variable-length name list dragged a whole pixel-fitting apparatus
-# behind it to keep the row from wrapping. A link kind is two fixed phrases and cannot wrap.
+# ⛔ **IT NAMES THE LINK AND NEVER THE COUNTERPARTY — in a POPOVER ROW.** Bands carry real names (issue
+# #615 shipped the curated list), but a variable-length name wraps a 354px vitals row and dragged a
+# whole pixel-fitting apparatus behind it when it was tried; a link kind is two fixed phrases and
+# cannot wrap. The counterparty IS named where there is room for it: the band dock's Trade tab
+# (issue #731), one line per shipment.
 #
 # ⛔ **AND NOTHING SAYS "POOLED".** One anonymous pot is how `balance_commodity` is implemented, not
 # what happens in the world: each camp holds its own stores and hands some of them to a short
@@ -189,6 +190,15 @@ const TRANSFER_GLYPH := "⇄"
 # a copy: two accounts wording one event two ways is a drift that has already had to be undone once.
 const TRANSFER_LABEL_LOCAL := "%s Local exchange" % TRANSFER_GLYPH
 const TRANSFER_LABEL_ROUTE := "%s Trade route" % TRANSFER_GLYPH
+
+# ---- WHAT A BAND'S OWN PARTIES MOVED (issue #731) --------------------------------------------------
+# The Route arm carries more than trade: a hunt's haul dropped off, a party folding home, and the
+# larder a party takes when it launches all book there because a party CARRIED them. To a player they
+# are the band's own hunting and foraging, not a trade route, so the popovers split them out by the
+# crossing's CAUSE and state them beside Hunted / Gathered — and `⇄ Trade route` keeps shipments alone.
+# Direction is the sign's job here as on every other row, so each is one phrase.
+const TRANSFER_LABEL_BROUGHT_HOME := "Brought home"
+const TRANSFER_LABEL_PARTY_RATIONS := "Party rations"
 
 # ---- THE FODDER LEDGER'S TWO FLOWS, the labels of the `Fodder:` row's own breakdown. The larder has
 # exactly two: what the band's fodder Fields GREW this turn (`fodder_income`) and what its pens ATE
