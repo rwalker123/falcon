@@ -359,6 +359,14 @@ const float SHORE_PROFILE_REACH_APOTHEMS = 1.0;
 // (0,0,0) instead of exploding, which is the same zero output, continuously.
 const float SHORE_PROFILE_WEIGHT_MIN = 1e-4;
 const float CANOPY_TREELINE_NOISE = 0.6;  // how hard world-noise waves the treeline in/out (× overhang)
+// The PEAK footline wobble's CELL, in units of peak_overhang — i.e. radius-relative, like its amplitude
+// (CANOPY_TREELINE_NOISE × peak_overhang). It used the shared px `noise_cell` (feature_noise_cell, 6 px):
+// against a ±0.36·r amplitude (±27 px at the game's r ≈ 75) the footline swung ~4.5 cells within one cell,
+// and value noise — whose smoothstep interpolation goes FLAT on every lattice line — then shredded the
+// relief's edge into cell-sized SQUARE blocks of mountain art out over the neighbour (the "blocky, pixelated
+// lake↔mountain edge"). Scaled to the overhang the swing stays under a cell, so the footline meanders in
+// organic lobes at every zoom. Zeroing the wobble removes the blocks outright, which is the proof.
+const float PEAK_FOOTLINE_NOISE_CELL_OVERHANGS = 1.0;
 // River look tuning (fixed feel; the widths/softness/meander/scale are the config levers).
 const int RIVER_CLASS_MINOR = 1;          // 2-bit mask class values (0 = no river; 3 is RESERVED, never drawn)
 const int RIVER_CLASS_MAX = 2;            // Major — the highest class with a texture layer (layer = class - 1)
@@ -977,6 +985,19 @@ void fragment() {
 			// Own water carries weight 1 by construction; land contributes nothing (it has no profile).
 			vec3 prof_sum = own_water ? shore_profile(own_layer) : vec3(0.0);
 			float prof_w = own_water ? 1.0 : 0.0;
+			// THE LAND'S OWN SAND GATE — the land-side twin of the field above, over the LAND hexes of
+			// {own + 6 neighbours} and reading only `sand_scale` (the R channel of the same layer_shore_map:
+			// a land terrain may say "no beach on me" — ice meeting water has no sand — while surf and wisp
+			// stay the water's). SAME construction, SAME reach, SAME continuity argument
+			// (SHORE_PROFILE_REACH_APOTHEMS): a glacier coast running into a prairie coast grows its beach in
+			// over ~a hex instead of switching at the land↔land bisector. Only the land side reads it — the
+			// sand is land-only (u ≤ 0) — so a water fragment's value is never used.
+			// Accumulated as the DEFICIT (1 − sand_scale), not the scale: a GPU divide is a reciprocal-multiply
+			// and x / x is not exactly 1.0, so a mean of neutral 1.0s moved stray pixels by 1/255. A mean of
+			// zero deficits is exactly 0 however it is divided, so every land terrain without a shore_profile
+			// stays BIT-exact.
+			float land_deficit_sum = own_water ? 0.0 : 1.0 - shore_profile(own_layer).r;
+			float land_sand_w = own_water ? 0.0 : 1.0;
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
 				int ncol = col + off.x;
@@ -1005,6 +1026,10 @@ void fragment() {
 					float w = smoothstep(-prof_reach, 0.0, d);
 					prof_sum += shore_profile(nlayer) * w;
 					prof_w += w;
+				} else {
+					float lw = smoothstep(-half_dist * SHORE_PROFILE_REACH_APOTHEMS, 0.0, d);
+					land_deficit_sum += (1.0 - shore_profile(nlayer).r) * lw;
+					land_sand_w += lw;
 				}
 				if (own_water == nb_water) { continue; } // the COAST edge: exactly one side must be water
 				// …EXCEPT a TRUE RIVER MOUTH — the one navigable edge where the channel actually flows out INTO
@@ -1066,7 +1091,12 @@ void fragment() {
 				// Scaling each band separately instead (`(band * scale) * wobble`) is the same value in exact
 				// arithmetic but rounds a different intermediate, which moved a handful of ocean pixels by
 				// 1/255 — a no-op, but not a bit-identical one.
-				float sand_wobble = sand_scale * wobble;
+				// The LAND's sand gate multiplies the water's, BEFORE the reach and so before sand_fade: a 0
+				// leaves no tan hairline, and a beach growing in from a glacier coast fades up, never pops.
+				// Every land terrain without a shore_profile has deficit 0, so land_sand is exactly 1.0 and
+				// sand_scale × 1.0 is bit-exact (see the accumulator above).
+				float land_sand = 1.0 - land_deficit_sum / max(land_sand_w, SHORE_PROFILE_WEIGHT_MIN);
+				float sand_wobble = (sand_scale * land_sand) * wobble;
 				float foam_wobble = foam_scale * wobble;
 				float wisp_wobble = wisp_scale * wobble;
 				// The beach's reach, BEFORE the px floor — the floor is what the fade-out below is measured
@@ -1723,7 +1753,8 @@ void fragment() {
 			// The footline wobble, shared by the shadow ENVELOPE and the peak composite below so the shadow's
 			// onset meanders with the art's footline instead of tracing the hex edge. Map-space noise, so a
 			// world point reads the same value from both sides of an edge — continuity survives it.
-			float tn = vnoise(v_map / noise_cell + vec2(7.0, 5.0));
+			float tn = vnoise(v_map / max(peak_overhang * PEAK_FOOTLINE_NOISE_CELL_OVERHANGS, BLEND_SOFT_MIN)
+				+ vec2(7.0, 5.0));
 			float pk_wobble = (tn - 0.5) * 2.0 * peak_overhang * CANOPY_TREELINE_NOISE;
 			// Cast-shadow envelope: 1 at the footline, 0 beyond the (elevation-scaled, DIRECTIONAL) reach.
 			// See the PEAK_SHADOW_* consts — this is what keeps the shadow off the hex grid.

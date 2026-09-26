@@ -741,6 +741,20 @@ edge gives 2–3 — and it was 1.3–3.0 on EVERY orientation, so the "vertical
 pixel grid, not the math. Repeat it with `blend_noise_amount = 0` and `blend_height_influence = 0`
 before blaming a term.
 
+**One more state (23, ICE): a LAND terrain switches its beach off** → `ICE_before` / `ICE_shipped` (+ crops
+`_lake_ice_tundra`, `_lake_tundra_prairie`, `_shelf_ice_tundra`, `_shelf_tundra_prairie`), r ≈ 75, grid OFF.
+Column-striped land (glacier → tundra → prairie) cut by an `inland_sea` lake (rows 1–2) and a
+`continental_shelf` coast (rows 6–7), so each coastline crosses all three. `ICE_before` neutralises the three
+sand-less land profiles through `_set_shore_profile(id, {})` — the beach as drawn before the land gate — and
+must stay byte-identical to a render on the pre-gate shader. The claim is the prairie beach GROWING IN along
+the coast at the tundra→prairie hand-over, with no sand line switching on at the bisector
+(`terrain-blend-shader.md` → shore).
+
+**One more state (24, PKLAKE): a lake beside MOUNTAINS** → `PKLAKE` + `_north` / `_east` (the lake↔alpine
+shores) / `_glacier` (the lake↔glacier control), r ≈ 75, grid OFF, with a real elevation raster (the G idiom).
+The frame the blocky peak footline was reproduced and fixed on (`terrain-blend-shader.md` → the peak footline
+wobble's cell); judge it at 2–4×, where the blocks are unmistakable and a downscaled full frame hides them.
+
 ## Worked-source mark states (issue #412)
 
 **`map_preview`** — `map_worked_ready` (the ⌃ CONTRAST: a tended patch offers Sow, a tamed

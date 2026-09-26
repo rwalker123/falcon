@@ -476,11 +476,35 @@ foam↔water.
       for any beach wider than the floor**, and a continuous grow-in from nothing below it.
   - **Shipped:** `deep_ocean` **(0, 1, 1)** — the cliff · `continental_shelf` **(1, 0.75, 0.5)** — the ordinary
     beach, main wave muted, disturbance halved · `inland_sea` **(0.5, 0.5, 0)** — the approved lake. Every
-    other water terrain (coral_shelf, hydrothermal_vent_field) is neutral. Per-**LAND**-biome shore gating (a
-    grassy shore vs a wooded shore) is still deliberately NOT built — all coasts render the same beach+foam
-    art. Verify via `tools/map_preview.gd` State Q (`_biome_band_terrain` carves an ocean bay so the ocean
+    other water terrain (coral_shelf, hydrothermal_vent_field) is neutral. The LAND side may gate the sand
+    (next bullet); nothing else about a coast varies by land biome — surf and wisp are the water's. Verify via `tools/map_preview.gd` State Q (`_biome_band_terrain` carves an ocean bay so the ocean
     borders BOTH prairie and woodland) → `map_biome_blend.png` + `map_biome_shore_seam.png` (coast close-up),
     the lake via `blend_probe` **state 10 (L)**, and the cliff/beach/mixed coasts via **state 15 (D)** below.
+  - **A LAND TERRAIN CAN SWITCH ITS BEACH OFF — `shore_profile: { "sand_scale": 0..1 }` on a land entry.**
+    Ice meeting water has no sand, and the water-keyed profile cannot say so: one lake borders glacier and
+    prairie at once. So a land terrain's `shore_profile` carries ONE axis, a GATE on the beach forming on it,
+    and the effective sand reach is `water sand field × land sand field`.
+    * **Plumbing reuses `layer_shore_map`'s R channel** for land layers — no new texture. The loader
+      (`TerrainTextureManager.rebuild_layer_shore_map`) clamps a land `sand_scale` to [0, 1] (a gate, never a
+      widening) and `push_error`s on a land entry naming `foam_scale` / `wisp_scale`, which are the water's
+      alone. A land terrain with no block is neutral 1.0; land is `blend_class != "water"`, the class the
+      shader keys on (so `navigable_river`, category water but class flat, is land here).
+    * **The land field is the water field's twin**: a weighted mean over the LAND hexes of {own + 6
+      neighbours}, each weighted `smoothstep(−apothem, 0, d)` by closeness to that shared edge, own = 1 — the
+      same construction and the same `SHORE_PROFILE_REACH_APOTHEMS` continuity argument, so a glacier coast
+      running into a prairie coast grows its beach in over ~a hex instead of switching on at the land↔land
+      bisector. It feeds the reach BEFORE `sand_fade`, so a 0 leaves no tan hairline and nothing pops in. The
+      sand is land-only, so only the land frame's value is ever used — and it is continuous across the
+      waterline too (the water frame sees the same land hexes at the same weights).
+    * **It is accumulated as a DEFICIT (`1 − sand_scale`), and that is load-bearing for bit-identity.** A
+      GPU divide is a reciprocal-multiply, so `Σw / Σw` is not exactly 1.0: the first cut, a straight mean of
+      neutral 1.0s, moved stray single pixels by 1/255 in `D2_shelf_C1`, `W_*_wide` and `G_before_lake`. A
+      mean of zero deficits is exactly 0 however it is divided.
+    * **Shipped:** `glacier` (22), `seasonal_snowfield` (23), `tundra` (20) at `sand_scale 0.0`. Verified
+      on `blend_probe` state **23 (ICE)**: `ICE_before` (the three profiles neutralised) vs `ICE_shipped`, on
+      a lake and a shelf coast that each run glacier → tundra → prairie. The only frames that moved are
+      `ICE_shipped*`, `PKLAKE_glacier` and `X_dark_water` (its live id-map carries tundra); every other frame
+      is byte-identical, `V7_*` / `V10_*` included.
   - **NOTE for the next pixel-diff:** because the shipped `continental_shelf` profile is no longer neutral,
     `V7_coast_unchanged` / `V10_shore*` / `H_gate_coast` (whose sea IS the shelf) **moved** when it landed —
     that is the shipped muting, not a regression. They remain the bit-identical reference for any blend
@@ -645,6 +669,18 @@ biome — its drama is incision, handled at the base-floor level, not raised rel
   shadow **in isolation**. That frame is necessary because the relief art overhangs the footline and is
   semi-transparent out there, so neither the eye nor a pixel sample can separate "shadow" from "dark mound
   fringe" in the composited frame.
+- **THE FOOTLINE WOBBLE'S CELL IS RADIUS-RELATIVE (`PEAK_FOOTLINE_NOISE_CELL_OVERHANGS` × `peak_overhang`),
+  like its amplitude.** It used the shared px `noise_cell` (`feature_noise_cell`, 6 px) against an amplitude of
+  `CANOPY_TREELINE_NOISE × peak_overhang` (±0.36·r, ±27 px at the game's r ≈ 75): the footline swung ~4.5
+  cells within one cell, and value noise — whose smoothstep interpolation goes flat on every lattice line —
+  shredded the relief's edge into cell-sized SQUARE blocks of mountain art over the neighbour. That is the
+  "blocky, pixelated lake↔mountain edge" report; it hit every peak footline (over glacier as much as over
+  water), and it was zoom-dependent (at map scale the amplitude shrank under the cell and hid it). **Proved by
+  toggle** on `blend_probe` state **24 (PKLAKE)**: zeroing `pk_wobble` removes the blocks outright; the
+  radius-relative cell (1.0 overhang) keeps the meander as organic lobes. The shadow envelope rides the same
+  wobble, so the cast-shadow onset moved with it. Moved frames: every frame with a peak biome (`G_*`, `H_*`
+  with relief, `R_*` peak biomes, `S_*`, `PKLAKE*`, `map_repetition_after`, `map_overlay_legend_terrain`).
+  The canopy TREELINE still reads `noise_cell` with the same kind of radius-relative amplitude.
 - **Peak LOD is DECOUPLED from the blend LOD** (own `peaks_lod_enabled`, `radius ≥ peak_min_radius`,
   default 3.0 ≪ `EDGE_BLEND_MIN_RADIUS`), so the mountain mass persists at far zoom; trilinear-mipmapped
   peak array keeps it smooth (no shimmer).

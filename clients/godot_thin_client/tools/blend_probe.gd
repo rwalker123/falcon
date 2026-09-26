@@ -738,6 +738,69 @@ const ECO_VARIANTS := [
 	{"name": "ECO_v3", "width_scale": 2.6, "noise_scale": 2.2, "noise_cell_scale": 2.6},
 ]
 
+# --- state 23 (ICE): a LAND terrain switches its beach off — glacier → tundra → prairie along ONE coast ---
+# The report: the tan beach ran along glacier coasts, where ice meets water with no sand. A LAND terrain's
+# `shore_profile.sand_scale` now gates the beach as a continuous land-side field (terrain-blend-shader.md →
+# shore), so the claim this state carries is that the beach GROWS IN along a coastline that runs from ice to
+# grass — no hard line of sand switching on at a land↔land bisector — on BOTH kinds of water: an inland_sea
+# lake (rows ICE_LAKE_ROWS) and a continental_shelf coast (rows ICE_SHELF_ROWS). Land is striped by column
+# (ICE_LAND_BANDS), so every coast crosses glacier → tundra → prairie. `ICE_before` is the same frame with
+# the three land profiles neutralised — the beach as it was drawn before the gate existed.
+const ICE_GRID_W := ISO_GRID_W
+const ICE_GRID_H := ISO_GRID_H
+const ICE_HEX_RADIUS := ISO_HEX_RADIUS
+const ICE_LAKE_ID := 2               # inland_sea
+const ICE_SHELF_ID := 1              # continental_shelf
+const ICE_LAKE_ROWS := [1, 2]
+const ICE_SHELF_ROWS := [6, 7]
+# Water columns: the lake and the shelf leave a land margin at both ends so each is a closed body of water.
+const ICE_WATER_COL_START := 1
+const ICE_WATER_COL_END := 13        # exclusive
+# Land stripes by column: [first col, terrain id]. glacier (22) → tundra (20) → prairie (11).
+const ICE_LAND_BANDS := [[0, 22], [5, 20], [9, 11]]
+const ICE_SANDLESS_IDS := [22, 20, 23]   # the three land terrains that ship sand_scale 0
+# Crops (native res): each coast at the glacier→tundra and tundra→prairie hand-overs. Kept left of the
+# bottom-right minimap.
+const ICE_CROPS := [
+	{"suffix": "lake_ice_tundra", "hex": Vector2i(5, 3)},
+	{"suffix": "lake_tundra_prairie", "hex": Vector2i(9, 3)},
+	{"suffix": "shelf_ice_tundra", "hex": Vector2i(5, 5)},
+	{"suffix": "shelf_tundra_prairie", "hex": Vector2i(9, 5)},
+]
+const ICE_CROP_RADII := 2.2
+
+# --- state 24 (PKLAKE): a lake beside MOUNTAINS — the relief's footline over water, at r ≈ 75 ---------------
+# The report: where an inland_sea lake meets alpine_mountain hexes, the boundary rendered as a ragged
+# staircase of small SQUARE blocks of mountain art out over the water. The screenshot's neighbourhood: a lake
+# with alpine relief along its north and east shores and glacier along the south and west. It ships a real
+# elevation raster (the G idiom — without one every hex reads PEAK_ELEV_FALLBACK and prominence cannot be
+# judged). Crops sit on the lake↔alpine shores (the defect) and the lake↔glacier shore (the control: no peak
+# pass there at all).
+const PKLAKE_GRID_W := ISO_GRID_W
+const PKLAKE_GRID_H := ISO_GRID_H
+const PKLAKE_HEX_RADIUS := ISO_HEX_RADIUS
+const PKLAKE_LAKE_ID := 2          # inland_sea
+const PKLAKE_ALPINE_ID := 26       # alpine_mountain — carries a peak overlay
+const PKLAKE_GLACIER_ID := 22      # glacier — flat, no relief
+# The lake: rows 3..6, cols 4..8. Alpine fills everything north of LAKE_ROW_MIN and east of LAKE_COL_MAX;
+# glacier the rest.
+const PKLAKE_LAKE_ROW_MIN := 3
+const PKLAKE_LAKE_ROW_MAX := 6
+const PKLAKE_LAKE_COL_MIN := 4
+const PKLAKE_LAKE_COL_MAX := 8
+const PKLAKE_ELEVATION_BY_ID := {
+	2: 0.20,    # inland_sea — below sea level
+	22: 0.40,   # glacier
+	26: 0.95,   # alpine_mountain — the high relief
+}
+const PKLAKE_SEA_LEVEL := 0.30
+const PKLAKE_CROPS := [
+	{"suffix": "north", "hex": Vector2i(6, 3)},   # lake hex under the alpine north shore
+	{"suffix": "east", "hex": Vector2i(8, 4)},    # lake hex under the alpine east shore
+	{"suffix": "glacier", "hex": Vector2i(5, 6)}, # lake hex on the glacier south shore — the control
+]
+const PKLAKE_CROP_RADII := 1.8
+
 # --- states 18–21: THE ROADS IN THE GROUND (arc #532) ---------------------------------------------
 # ⛔ **EVERY ROAD FRAME IS RENDERED AT `ISO_HEX_RADIUS`, ON THE ISOLATED-HEXES GRID's DIMENSIONS.** This
 # file's header states the rule and it applies here with force: the road pass's widths and its softness
@@ -1153,6 +1216,14 @@ func _ready() -> void:
 	if _want("22/ECO"):
 		# --- state 22 (ECO): alluvial ↔ prairie, every edge orientation + both shred checks (see ECO_*) ---
 		await _render_ecotone_state()
+
+	if _want("23/ICE"):
+		# --- state 23 (ICE): land terrains switch the beach off — glacier → tundra → prairie coasts ---
+		await _render_ice_coast_state()
+
+	if _want("24/PKLAKE"):
+		# --- state 24 (PKLAKE): a lake beside alpine relief — the footline over water (see PKLAKE_*) ---
+		await _render_peak_lake_state()
 
 	_finish()
 
@@ -1940,6 +2011,89 @@ func _snapshot_ecotone() -> Dictionary:
 	arr[ECO_ISO_PRAIRIE.y * ECO_GRID_W + ECO_ISO_PRAIRIE.x] = ECO_PRAIRIE_ID
 	return _snapshot(arr, ECO_GRID_W, ECO_GRID_H)
 
+
+func _render_ice_coast_state() -> void:
+	## State 23 (ICE): `ICE_before` (the three sand-less land profiles neutralised — the beach as drawn before
+	## the land gate) then `ICE_shipped` (config's), one camera, grid OFF. See the ICE_* const block.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_ice_coast())
+	await _refit(ICE_HEX_RADIUS)
+	for terrain_id: int in ICE_SANDLESS_IDS:
+		_set_shore_profile(terrain_id, {})
+	await _render_ice_coast_frame("ICE_before")
+	_restore_shore_profiles()
+	await _render_ice_coast_frame("ICE_shipped")
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _render_ice_coast_frame(name: String) -> void:
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save(name)
+	for crop: Dictionary in ICE_CROPS:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop["hex"]
+		await _save_crop("%s_%s" % [name, String(crop["suffix"])], hex.x, hex.y, ICE_CROP_RADII)
+
+
+func _snapshot_ice_coast() -> Dictionary:
+	## Column-striped land (glacier → tundra → prairie) with an inland_sea lake and a continental_shelf coast
+	## cut across every stripe.
+	var arr: Array = []
+	arr.resize(ICE_GRID_W * ICE_GRID_H)
+	for y in range(ICE_GRID_H):
+		for x in range(ICE_GRID_W):
+			var id: int = int(ICE_LAND_BANDS[0][1])
+			for band: Array in ICE_LAND_BANDS:
+				if x >= int(band[0]):
+					id = int(band[1])
+			var in_water_cols: bool = x >= ICE_WATER_COL_START and x < ICE_WATER_COL_END
+			if in_water_cols and ICE_LAKE_ROWS.has(y):
+				id = ICE_LAKE_ID
+			elif in_water_cols and ICE_SHELF_ROWS.has(y):
+				id = ICE_SHELF_ID
+			arr[y * ICE_GRID_W + x] = id
+	return _snapshot(arr, ICE_GRID_W, ICE_GRID_H)
+
+func _render_peak_lake_state() -> void:
+	## State 24 (PKLAKE): the lake-beside-mountains neighbourhood, grid OFF, one frame + three crops.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_peak_lake())
+	await _refit(PKLAKE_HEX_RADIUS)
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save("PKLAKE")
+	for crop: Dictionary in PKLAKE_CROPS:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop["hex"]
+		await _save_crop("PKLAKE_%s" % String(crop["suffix"]), hex.x, hex.y, PKLAKE_CROP_RADII)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _snapshot_peak_lake() -> Dictionary:
+	## Alpine north + east of the lake, glacier south + west, with an elevation raster (the G idiom).
+	var arr: Array = []
+	arr.resize(PKLAKE_GRID_W * PKLAKE_GRID_H)
+	var elev := PackedFloat32Array()
+	elev.resize(PKLAKE_GRID_W * PKLAKE_GRID_H)
+	for y in range(PKLAKE_GRID_H):
+		for x in range(PKLAKE_GRID_W):
+			var tid: int = PKLAKE_GLACIER_ID
+			if y < PKLAKE_LAKE_ROW_MIN or x > PKLAKE_LAKE_COL_MAX:
+				tid = PKLAKE_ALPINE_ID
+			elif (y <= PKLAKE_LAKE_ROW_MAX and x >= PKLAKE_LAKE_COL_MIN):
+				tid = PKLAKE_LAKE_ID
+			arr[y * PKLAKE_GRID_W + x] = tid
+			elev[y * PKLAKE_GRID_W + x] = float(PKLAKE_ELEVATION_BY_ID[tid])
+	var snap: Dictionary = _snapshot(arr, PKLAKE_GRID_W, PKLAKE_GRID_H)
+	var overlays: Dictionary = snap["overlays"]
+	var channels: Dictionary = overlays.get("channels", {})
+	channels["elevation"] = {"raw": elev, "normalized": elev, "label": "Elevation"}
+	overlays["channels"] = channels
+	overlays["elevation_sea_level"] = PKLAKE_SEA_LEVEL
+	return snap
 
 func _shore_profile_of(variant: Dictionary) -> Dictionary:
 	## The three-scale `shore_profile` block a sweep variant carries. Keys match terrain_config's exactly.
