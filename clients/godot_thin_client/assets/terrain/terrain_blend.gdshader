@@ -367,6 +367,18 @@ const float CANOPY_TREELINE_NOISE = 0.6;  // how hard world-noise waves the tree
 // lake↔mountain edge"). Scaled to the overhang the swing stays under a cell, so the footline meanders in
 // organic lobes at every zoom. Zeroing the wobble removes the blocks outright, which is the proof.
 const float PEAK_FOOTLINE_NOISE_CELL_OVERHANGS = 1.0;
+// THE RELIEF'S ELEVATION IS A FIELD, NOT A PER-HEX PICK. The elev-map is NEAREST-sampled — one value per hex —
+// and it drives the relief's prominence (how opaque the mounds draw) and its cast-shadow length. Inside a field
+// of ONE relief biome the peak↔peak cross-fade never runs (the same layer is skipped: its ART is already
+// continuous), so where two neighbouring hills hexes had different elevations the prominence and the shadow
+// both STEPPED exactly on the hex polyline: a faint darker line, mounds cut off where they crossed it, one hex's
+// mounds fainter than its neighbour's (blend_probe state 27, HILLFIELD). So the elevation the pass uses is the
+// weighted mean over the hexes of {own + 6 neighbours} carrying the relief layer being drawn, each weighted by
+// closeness to its shared edge — the shore profile field's construction, and continuous across every edge by the
+// same argument (see SHORE_PROFILE_REACH_APOTHEMS). It is accumulated as a DEVIATION from the reference hex's
+// own elevation, so a field of one elevation reads that elevation exactly (no divide rounding).
+const float PEAK_ELEV_FIELD_REACH_APOTHEMS = 1.0;
+const float PEAK_ELEV_FIELD_WEIGHT_MIN = 1e-4;
 // The canopy TREELINE's wobble cell, in units of canopy_overhang — the same zoom-mismatch fix as the peak
 // footline above: on the shared 6 px `noise_cell` against a ±0.3·r amplitude the treeline shredded into a
 // fringe of cell-sized crown fragments at play zoom (blend_probe state 26, TREELINE); zeroing the wobble removes
@@ -1946,6 +1958,34 @@ void fragment() {
 				// captured peak-neighbour's — so the overhang/shadow on the ground side of the seam reads the
 				// peak's height, not the low neighbour-ground hex's (which discontinued across the seam).
 				float peak_elev = own_is_peak ? own_elev : nb_peak_elev;  // 0..1
+				// …as a continuous FIELD over the hexes carrying this relief layer (see PEAK_ELEV_FIELD_*).
+				float elev_ref = peak_elev;
+				float elev_dev_sum = 0.0;
+				float elev_w_sum = own_is_peak ? 1.0 : 0.0;
+				for (int dir = 0; dir < 6; dir++) {
+					ivec2 eoff = neighbor_offset(row, dir);
+					int ecol = col + eoff.x;
+					int erow = row + eoff.y;
+					if (erow < 0 || erow >= grid_h) { continue; }
+					int ecol_id = ecol;
+					if (wrap_h) {
+						ecol_id = wrap_col(ecol);
+					} else if (ecol < 0 || ecol >= grid_w) {
+						continue;
+					}
+					vec2 euv = (vec2(float(ecol_id), float(erow)) + 0.5) / grid_dim;
+					int ecode = int(texture(id_map, euv).a * 255.0 + 0.5);
+					if (ecode != peak_code) { continue; }
+					vec2 e_c = hex_center(ecol, erow);
+					float e_half = 0.5 * distance(own_c, e_c);
+					float e_d = dot(v_world - own_c, normalize(e_c - own_c)) - e_half;
+					float ew = smoothstep(-e_half * PEAK_ELEV_FIELD_REACH_APOTHEMS, 0.0, e_d);
+					elev_dev_sum += ew * (texture(elev_map, euv).r - elev_ref);
+					elev_w_sum += ew;
+				}
+				if (elev_w_sum > PEAK_ELEV_FIELD_WEIGHT_MIN) {
+					peak_elev = elev_ref + elev_dev_sum / elev_w_sum;
+				}
 
 				// --- CAST SHADOW: look back toward the light; if a peak occludes, darken this ground ---
 				// peak_light_dir points TOWARD the light (top-left). A fragment is shadowed if a peak sits

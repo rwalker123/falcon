@@ -852,6 +852,37 @@ const TREELINE_CROPS := [
 ]
 const TREELINE_CROP_RADII := 1.7
 
+# --- state 27 (HILLFIELD): seams along hex edges INSIDE a field of one relief biome, at r ≈ 75 ----------------
+# The report: inside a field of rolling_hills — every hex the SAME terrain — straight faint darker lines ran
+# exactly along the hex polylines, mounds were cut off where they crossed one, and one hex's mounds were visibly
+# fainter than its neighbour's. A live map gives every hex its OWN elevation, so the field ships a real
+# elevation raster that VARIES hex to hex (HILLFIELD_ELEVATIONS, cycled) — without it every hex reads
+# PEAK_ELEV_FALLBACK and nothing per-hex can differ. The field (rows 3–5, cols 5–8: a centre plus its ring and
+# more) sits between a prairie field (west) and an alluvial field (east), as in the shot. `HILLFIELD_flat` is
+# the same ids at ONE elevation — the control that says whether the seams track elevation at all.
+const HILLFIELD_GRID_W := ISO_GRID_W
+const HILLFIELD_GRID_H := ISO_GRID_H
+const HILLFIELD_HEX_RADIUS := ISO_HEX_RADIUS
+const HILLFIELD_HILLS_ID := 24            # rolling_hills — carries the peak (mound) overlay
+const HILLFIELD_WEST_ID := 11             # prairie_steppe
+const HILLFIELD_EAST_ID := 10             # alluvial_plain
+const HILLFIELD_SPLIT_COL := 7            # field west of this col is prairie, the rest alluvial
+const HILLFIELD_ROW_MIN := 3
+const HILLFIELD_ROW_MAX := 5
+const HILLFIELD_COL_MIN := 5
+const HILLFIELD_COL_MAX := 8
+const HILLFIELD_SEA_LEVEL := 0.30
+const HILLFIELD_FIELD_ELEVATION := 0.36
+# Per-hills-hex elevations, cycled over the field in row-major order — the spread a live hills field has.
+const HILLFIELD_ELEVATIONS := [0.52, 0.66, 0.44, 0.71, 0.58, 0.48, 0.63, 0.55, 0.69, 0.46, 0.60, 0.50]
+const HILLFIELD_FLAT_ELEVATION := 0.58
+# Crops (native res): the field's centre hex with all six internal edges (incl. its vertical E and W edges).
+const HILLFIELD_CROP := Vector2i(6, 4)
+const HILLFIELD_CROP_RADII := 1.6
+const HILLFIELD_PEAKS_OFF_MIN_RADIUS := 100000.0   # peak LOD pushed above the render radius: no relief pass
+const HILLFIELD_NO_SHADOW_STRENGTH := 0.0
+const HILLFIELD_FULL_PROMINENCE := 1.0             # min_prominence 1 → every hex draws at full prominence
+
 # --- states 18–21: THE ROADS IN THE GROUND (arc #532) ---------------------------------------------
 # ⛔ **EVERY ROAD FRAME IS RENDERED AT `ISO_HEX_RADIUS`, ON THE ISOLATED-HEXES GRID's DIMENSIONS.** This
 # file's header states the rule and it applies here with force: the road pass's widths and its softness
@@ -1283,6 +1314,10 @@ func _ready() -> void:
 	if _want("26/TREELINE"):
 		# --- state 26 (TREELINE): a forest edge at play zoom — the canopy wobble (see TREELINE_*) ---
 		await _render_treeline_state()
+
+	if _want("27/HILLFIELD"):
+		# --- state 27 (HILLFIELD): seams inside a one-biome relief field (see HILLFIELD_*) ---
+		await _render_hillfield_state()
 
 	_finish()
 
@@ -2209,6 +2244,64 @@ func _snapshot_treeline() -> Dictionary:
 			arr[y * TREELINE_GRID_W + x] = TREELINE_FOREST_ID if in_block else TREELINE_FIELD_ID
 	arr[TREELINE_ISO.y * TREELINE_GRID_W + TREELINE_ISO.x] = TREELINE_FOREST_ID
 	return _snapshot(arr, TREELINE_GRID_W, TREELINE_GRID_H)
+
+func _render_hillfield_state() -> void:
+	## State 27 (HILLFIELD): the shipped frame, the ONE-elevation control, and one toggle per suspect term of
+	## the relief pass (peaks off, cast shadow off, prominence pinned), each with the centre-hex crop.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_hillfield(false))
+	await _refit(HILLFIELD_HEX_RADIUS)
+	await _render_hillfield_frame("HILLFIELD")
+	for variant: Array in [
+		["HILLFIELD_nopeaks", _peak_overrides({"peak_min_radius": HILLFIELD_PEAKS_OFF_MIN_RADIUS})],
+		["HILLFIELD_noshadow", _peak_overrides({"shadow_strength": HILLFIELD_NO_SHADOW_STRENGTH})],
+		["HILLFIELD_fullprom", _peak_overrides({"min_prominence": HILLFIELD_FULL_PROMINENCE})],
+	]:
+		var token: Array = _override_config(variant[1])
+		await _render_hillfield_frame(String(variant[0]))
+		_restore_config(token)
+	_map.display_snapshot(_snapshot_hillfield(true))
+	await _refit(HILLFIELD_HEX_RADIUS)
+	await _render_hillfield_frame("HILLFIELD_flat")
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _render_hillfield_frame(name: String) -> void:
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save(name)
+	# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+	await _settle()
+	await _save_crop("%s_centre" % name, HILLFIELD_CROP.x, HILLFIELD_CROP.y, HILLFIELD_CROP_RADII)
+
+
+func _snapshot_hillfield(flat_elevation: bool) -> Dictionary:
+	## A rolling_hills field between prairie (west) and alluvial (east), with a per-hex elevation raster.
+	var arr: Array = []
+	arr.resize(HILLFIELD_GRID_W * HILLFIELD_GRID_H)
+	var elev := PackedFloat32Array()
+	elev.resize(HILLFIELD_GRID_W * HILLFIELD_GRID_H)
+	var hills_index := 0
+	for y in range(HILLFIELD_GRID_H):
+		for x in range(HILLFIELD_GRID_W):
+			var i: int = y * HILLFIELD_GRID_W + x
+			var in_field: bool = (y >= HILLFIELD_ROW_MIN and y <= HILLFIELD_ROW_MAX
+				and x >= HILLFIELD_COL_MIN and x <= HILLFIELD_COL_MAX)
+			if in_field:
+				arr[i] = HILLFIELD_HILLS_ID
+				elev[i] = HILLFIELD_FLAT_ELEVATION if flat_elevation else float(
+					HILLFIELD_ELEVATIONS[hills_index % HILLFIELD_ELEVATIONS.size()])
+				hills_index += 1
+			else:
+				arr[i] = HILLFIELD_WEST_ID if x < HILLFIELD_SPLIT_COL else HILLFIELD_EAST_ID
+				elev[i] = HILLFIELD_FIELD_ELEVATION
+	var snap: Dictionary = _snapshot(arr, HILLFIELD_GRID_W, HILLFIELD_GRID_H)
+	var overlays: Dictionary = snap["overlays"]
+	var channels: Dictionary = overlays.get("channels", {})
+	channels["elevation"] = {"raw": elev, "normalized": elev, "label": "Elevation"}
+	overlays["channels"] = channels
+	overlays["elevation_sea_level"] = HILLFIELD_SEA_LEVEL
+	return snap
 
 func _shore_profile_of(variant: Dictionary) -> Dictionary:
 	## The three-scale `shore_profile` block a sweep variant carries. Keys match terrain_config's exactly.

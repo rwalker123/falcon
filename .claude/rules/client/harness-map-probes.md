@@ -769,6 +769,15 @@ must not move.
 treeline's radius-relative noise cell was confirmed and fixed on; judge at 3×, where the old fixed-cell fringe
 of crown fragments is visible.
 
+**One more state (27, HILLFIELD): seams along hex edges INSIDE a one-biome relief field** → `HILLFIELD` +
+`_centre`, r ≈ 75, grid OFF: a `rolling_hills` field (rows 3–5, cols 5–8) between prairie (west) and alluvial
+(east), with an elevation raster that VARIES hex to hex (`HILLFIELD_ELEVATIONS`, cycled) — a live map gives
+every hex its own elevation, and a fixture at one elevation cannot show a per-hex step at all. Beside the
+shipped frame: `_nopeaks` (relief pass skipped), `_noshadow` (`shadow_strength 0`), `_fullprom`
+(`min_prominence 1`) and `_flat` (the same ids at ONE elevation — the control). The frame the relief's
+elevation field was proved and fixed on: measure the straddle-pixel ratio on the field's internal VERTICAL
+edges ((6,3)|(7,3), (7,3)|(8,3), (5,4)|(6,4), (6,4)|(7,4), (7,5)|(8,5)) and judge the cuts at 3×.
+
 ## Worked-source mark states (issue #412)
 
 **`map_preview`** — `map_worked_ready` (the ⌃ CONTRAST: a tended patch offers Sow, a tamed

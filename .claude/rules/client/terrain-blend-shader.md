@@ -717,6 +717,28 @@ biome — its drama is incision, handled at the base-floor level, not raised rel
   wobble, so the cast-shadow onset moved with it. Moved frames: every frame with a peak biome (`G_*`, `H_*`
   with relief, `R_*` peak biomes, `S_*`, `PKLAKE*`, `map_repetition_after`, `map_overlay_legend_terrain`).
   The canopy treeline took the same fix (see the canopy section).
+- **THE RELIEF'S ELEVATION IS A CONTINUOUS FIELD, NOT A PER-HEX PICK** (`PEAK_ELEV_FIELD_*`; the "seams along
+  hex edges INSIDE a rolling_hills field" report). The elev-map is NEAREST-sampled, and it drives the relief's
+  prominence (how opaque the mounds draw) and its cast-shadow length. Inside a field of ONE relief biome the
+  peak↔peak cross-fade never runs (the same layer is skipped — its ART is continuous), so wherever two
+  neighbouring hills hexes carried different elevations the prominence and the shadow both STEPPED on the hex
+  polyline: a faint darker line, mounds cut off where they crossed it, one hex's mounds fainter than its
+  neighbour's. The pass now reads the elevation as the weighted mean over the hexes of {own + 6 neighbours}
+  carrying the relief layer being drawn, each weighted `smoothstep(−apothem, 0, d)` by closeness to its shared
+  edge — the shore profile field's construction, continuous across every edge by the same argument
+  (`SHORE_PROFILE_REACH_APOTHEMS`). It is accumulated as a DEVIATION from the reference hex's own elevation,
+  so a field of one elevation reads that elevation exactly and renders byte-identically.
+  * **Proved by toggle** on `blend_probe` state **27 (HILLFIELD)**, the straddle-pixel ratio (≈1 = continuous)
+    over the field's internal vertical edges: shipped **1.54**, one elevation for every hex **1.02**,
+    `min_prominence 1` (prominence pinned) **0.94**, `shadow_strength 0` **1.29** (the shadow length carries part
+    of it), and with the field **1.02**. No per-hex variant or UV offset exists in the pass — the peak UV is
+    continuous map space — and the base floor is continuous too (`HILLFIELD_nopeaks` 1.08).
+  * **Pre-existing, not a regression of this PR's shader work:** the same state rendered with the shader as of
+    `origin/main` reads **1.57**, after the antisymmetric-wobble commit 1.58, after the footline-cell commit
+    1.54, after the corner-triple commit 1.54.
+  * **It moved no existing harness frame** (374/374 byte-identical): every other fixture gives neighbouring
+    same-terrain relief hexes one shared elevation, which the deviation form keeps exact. Only a live map, or
+    `HILLFIELD`'s varied raster, exercises it.
 - **Peak LOD is DECOUPLED from the blend LOD** (own `peaks_lod_enabled`, `radius ≥ peak_min_radius`,
   default 3.0 ≪ `EDGE_BLEND_MIN_RADIUS`), so the mountain mass persists at far zoom; trilinear-mipmapped
   peak array keeps it smooth (no shimmer).
