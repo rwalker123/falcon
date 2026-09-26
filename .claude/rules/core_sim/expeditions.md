@@ -1370,8 +1370,42 @@ with nothing to notice.
   state — the goods have already left the sender's store — so a rollback that zeroed it would destroy
   them.
 - **An undeliverable shipment comes home in it.** `fold_party_into_band` settles the cargo beside the
-  party's own pack and returns a `FoldBack { food, materials }`, so the feed line and the food ledger
-  cannot disagree about one arrival.
+  party's own pack and returns a `FoldBack { food, fodder, materials, moved_materials }`, so the feed
+  line and the ledger cannot disagree about one arrival — `moved_materials` is every batch that came
+  home at the reading it carried, what `FoldBack::book_home` books per rating.
+
+### The launch books TWO causes: the cargo is the shipment, the walking larder is the party's own
+
+Every route writer books through `LaborAllocation::book_crossing` with a `TransferCause`
+(`campaign.md` → "The cause key and the crossings list"), and the trade launch is the one writer that
+moves two different things at once. The debit used to be `cargo + provisions` in one number, so a row
+reading *"Shipment to Bitterbrook — 12.0"* overstated the shipment by what the party eats on the
+road. It is now two crossings:
+
+| What left | Cause | Counterparty | Why |
+|---|---|---|---|
+| the cargo — food, hay, each material batch at its rating | `ShipmentOut` | the destination band, with its faction | a transfer to another band |
+| the walking larder (`provisions`) | `PartyProvisions` | none | the party's own rations, eaten on the road and folded back if unspent — the scout's launch-larder cause |
+
+**The food ledger's route arm is unchanged** — it still carries cargo plus larder, because both left
+the larder through neither consumption nor a pen; the split is in the cause. Both are booked **after**
+`launch_party_from_band`, so every row names the party's `BandId` (`TransferCrossing::party`), the key
+a client groups one shipment under. `ResolvedShipment` carries the destination's faction for the
+counterparty, since a foreign destination may have no row on the sender's wire. Pinned by
+`server::tests::a_shipment_launch_books_cargo_as_shipment_out_and_the_larder_as_party_provisions`.
+
+The other route writers, by cause:
+
+| Site | Cause | Counterparty / party |
+|---|---|---|
+| a scout's launch larder (`handle_send_expedition`) | `PartyProvisions` | none / the scout party |
+| a shipment landing (`advance_expeditions`, `Outbound`) | `ShipmentIn` — food, hay, and each drained batch at the rating it moved at | the sender (the party's `home_band`) / the party |
+| a hunt's drop-off (`Delivering`) | `PartyHome` — food and each batch | none / the party |
+| the `Returning` fold-back, and a cancel in camp | `PartyHome`, through the one `FoldBack::book_home` | none / the party |
+
+**`PartyHome` and `PartyProvisions` are not trade.** They ride the route arm because a party carried
+the goods, which keeps the ledger whole, but the other end is the band's own people. The cause is what
+lets a trade readout leave them out and a food readout put a homecoming beside the hunts it came from.
 
 ### The phases are the ones that already exist
 

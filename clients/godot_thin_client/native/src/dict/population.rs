@@ -1517,6 +1517,80 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("pool_toe", &pool_toe);
 
+    // --- WHAT CROSSED THIS BAND'S STORE, BY CAUSE (issue #731) -------------------------------------
+    // One row per (good, rating, direction, cause, counterparty, party), on the per-turn window the
+    // eight `transfer_*_turn` arms are on. For `provisions` and `fodder` the rows summed per
+    // (link, direction) equal those arms; for a material they are its only transfer account, one row
+    // per RATING — a surface sums one material's ratings for its summary line, never two materials.
+    //
+    // The codes are the schema's (`TransferCrossingState` in `snapshot.fbs`):
+    //   direction  0 in, 1 out
+    //   link       0 local, 1 route
+    //   cause      0 pooled, 1 dowry_out, 2 dowry_in, 3 shipment_out, 4 shipment_in, 5 party_home,
+    //              6 party_provisions
+    // ⛔ A POOLED ROW NEVER NAMES A COUNTERPARTY (`counterparty_band_id == 0`) — the invariant, not a
+    // gap. `party_id` is the carrying party's `band_id` (0 = none), the key one shipment groups by.
+    // Always inserted (empty array when absent) so the band dict has a stable shape.
+    let mut transfer_crossings = VarArray::new();
+    if let Some(crossings) = cohort.transferCrossings() {
+        for crossing in crossings.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("commodity", crossing.commodity().unwrap_or_default());
+            // A material's exact reading per axis, in its DECLARED order — the `material_batches`
+            // shape. Empty for provisions and fodder.
+            let mut readings = VarArray::new();
+            if let Some(list) = crossing.readings() {
+                for reading in list.iter() {
+                    let mut entry = VarDictionary::new();
+                    let _ = entry.insert("axis", reading.axis().unwrap_or(""));
+                    let _ = entry.insert("value", reading.value() as f64);
+                    let _ = entry.insert("band_name", reading.bandName().unwrap_or(""));
+                    readings.push(&entry.to_variant());
+                }
+            }
+            let _ = row.insert("readings", &readings);
+            let _ = row.insert("direction", crossing.direction() as i64);
+            let _ = row.insert("link", crossing.link() as i64);
+            let _ = row.insert("cause", crossing.cause() as i64);
+            let _ = row.insert("counterparty_band_id", crossing.counterpartyBandId() as i64);
+            // Empty with a non-zero id = a band the sim can no longer name; render `Band #<id>`.
+            let _ = row.insert(
+                "counterparty_name",
+                crossing.counterpartyName().unwrap_or_default(),
+            );
+            let _ = row.insert(
+                "counterparty_faction",
+                crossing.counterpartyFaction() as i64,
+            );
+            let _ = row.insert("party_id", crossing.partyId() as i64);
+            let _ = row.insert("amount", crossing.amount() as f64);
+            transfer_crossings.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("transfer_crossings", &transfer_crossings);
+
+    // --- THIS BAND'S OWN POOLING LINKS, AND ITS NETWORK'S SPAN (issue #731) -----------------------
+    // Every supply-network link the balancer formed with this band this turn — its DIRECT links, not
+    // every member of `supply_network_id`. `rung_id` joins the ladder's route rung rows
+    // (`"route:trail"`); `""` = some tile on the run has no kept road. The span is the longest link
+    // in the band's whole network (0 = no network) — the distance the links actually reached, not
+    // the config's free reach.
+    let mut pooling_links = VarArray::new();
+    if let Some(links) = cohort.poolingLinks() {
+        for link in links.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("band_id", link.bandId() as i64);
+            let _ = row.insert("distance_tiles", link.distanceTiles() as i64);
+            let _ = row.insert("rung_id", link.rungId().unwrap_or_default());
+            pooling_links.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("pooling_links", &pooling_links);
+    let _ = dict.insert(
+        "supply_network_span_tiles",
+        cohort.supplyNetworkSpanTiles() as i64,
+    );
+
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
     // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and
     // `materialBudget` were deleted from `CampaignSection.openingLoadout` and live here; what stayed

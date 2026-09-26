@@ -36,9 +36,10 @@ use core_sim::{
     BeatLedger, BuildJob, BuildSource, CampaignLabel, CombatConfigHandle, CreaturesConfigHandle,
     Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, ExtractionConfigHandle,
     FloraConfigHandle, FoodModuleTag, ForkAnswerError, HuntingParty, KitChoice, KitJob,
-    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialsConfigHandle,
-    RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SourcePriority, SpeciesRefusal,
-    StartProfile, StartProfileOverrides, TakeSelection, TransferLink, UpkeepFundMode,
+    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, MaterialDraw,
+    MaterialsConfigHandle, RecipesConfigHandle, ResidentBand, RungKey, SiteRefusal, SourcePriority,
+    SpeciesRefusal, StartProfile, StartProfileOverrides, TakeSelection, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, UpkeepFundMode,
     WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
@@ -5174,15 +5175,6 @@ fn handle_send_expedition(
         band_cohort.sync_size();
         drawn
     };
-    // The scout's launch larder is food leaving the band with the party — the same food-ledger
-    // transfer term, on the same [`TransferLink::Route`] arm, a shipment's cargo takes, and it comes
-    // back on the fold-back.
-    if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(band.entity) {
-        allocation
-            .last_food_transfers
-            .debit(TransferLink::Route, drawn.to_f32());
-    }
-
     // Retask the cloned cohort into a detached party co-located with the band.
     expedition_cohort.children = Scalar::from_i64(0);
     expedition_cohort.working = party_scalar;
@@ -5198,6 +5190,21 @@ fn handle_send_expedition(
 
     // A detached party is a band in its own right, so it takes its own durable id.
     let expedition_band_id = app.world.resource_mut::<BandIdAllocator>().allocate();
+    // The scout's launch larder is food leaving the band with the party — the same food-ledger
+    // transfer term, on the same `TransferLink::Route` arm, a shipment's cargo takes, and it comes
+    // back on the fold-back. **Its cause is [`TransferCause::PartyProvisions`]**: the party's own
+    // rations, never trade. Booked once the party's id exists, so the row names the party.
+    if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(band.entity) {
+        allocation.book_crossing(
+            TransferCrossing::goods(
+                FOOD,
+                TransferDirection::Out,
+                TransferCause::PartyProvisions,
+                drawn.to_f32(),
+            )
+            .with_party(Some(expedition_band_id)),
+        );
+    }
     // **...but it INHERITS the home band's name, and must not mint one.** A party is those same
     // people walking somewhere, not a new band: minting here would consume a name slot the faction
     // never founded a band for, and put a second name on screen for one group of people. An absent
@@ -6179,6 +6186,9 @@ fn handle_send_denial_raid(
 /// debited, so a refused `send_trade_expedition` leaves the band exactly as it stood.
 struct ResolvedShipment {
     destination_band: BandId,
+    /// **The destination's people** — fixed onto the shipment's `ShipmentOut` crossings, which name
+    /// the destination for a client that may have no row for a foreign band.
+    destination_faction: FactionId,
     destination_name: String,
     destination_pos: UVec2,
     /// The FOOD the shipment will carry, summed over the order's food lines.
@@ -6249,9 +6259,9 @@ fn resolve_shipment(
         query
             .iter(&app.world)
             .find(|(id, _)| **id == wanted)
-            .map(|(id, cohort)| (*id, cohort.current_tile))
+            .map(|(id, cohort)| (*id, cohort.current_tile, cohort.faction))
     };
-    let Some((destination_band, destination_tile)) = destination else {
+    let Some((destination_band, destination_tile, destination_faction)) = destination else {
         emit_command_failure(
             app,
             CommandEventKind::ExpeditionSent,
@@ -6457,6 +6467,7 @@ fn resolve_shipment(
 
     Some(ResolvedShipment {
         destination_band,
+        destination_faction,
         // **EMPTY, because bands have no names in this game.** This briefly resolved through
         // `starting_unit_label`, which answers `StartingUnit.kind` — the unit *archetype*
         // (`"BandForager"`), the same string for every seeded band — so an in-flight party's row
@@ -6563,6 +6574,8 @@ fn handle_send_trade_expedition(
     let requested_provisions = scalar_from_f32(
         party_workers as f32 * distance as f32 * cfg.provision_draw_per_worker_per_tile,
     );
+    // Every material batch the cargo took, at its own rating — the shipment's `ShipmentOut` rows.
+    let mut loaded_materials: Vec<(String, MaterialDraw)> = Vec::new();
     let (provisions, shipment_store) = {
         let Some(mut band_cohort) = app.world.get_mut::<PopulationCohort>(outfit.band.entity)
         else {
@@ -6594,38 +6607,18 @@ fn handle_send_trade_expedition(
         // of one material therefore leave as two batches and arrive as two batches.
         for (material, amount) in &shipment.materials {
             for draw in band_cohort.stores.take_material_batches(material, *amount) {
-                loaded.deposit_material(material, draw.band, draw.amount, &draw.characteristics);
+                loaded.deposit_material(
+                    material,
+                    draw.band.clone(),
+                    draw.amount,
+                    &draw.characteristics,
+                );
+                loaded_materials.push((material.clone(), draw));
             }
         }
         let provisions = band_cohort.stores.take(FOOD, requested_provisions);
         (provisions, loaded)
     };
-    // **The sending half of the food ledger's transfer terms, on the [`TransferLink::Route`] arm** —
-    // the cargo the shipment carries AND the larder the party walks on, because both are food that
-    // left this band's store through neither consumption nor a pen, and a party is carrying both.
-    // The receiving half is booked when the shipment lands, and the rest comes home on the
-    // fold-back if it never does.
-    //
-    // ⛔ **THE FOOD LEDGER DOES NOT BOOK THE HAY, AND A PARTY CAN NOW BE CARRYING SOME.** A shipment
-    // takes fodder lines, so the sum below is deliberately narrowed to the two food terms rather
-    // than to "everything in the cargo": the identity this ledger closes is
-    // `larder_delta == foodIncome − foodConsumption − raidForfeit + transferReceived −
-    // transferSent`, over the FOOD larder, and hay never enters that larder. Booking a bale here
-    // would break the identity by exactly the bale.
-    //
-    // The hay has a ledger of its own, right below, on the same arm and the same window.
-    if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(outfit.band.entity) {
-        allocation.last_food_transfers.debit(
-            TransferLink::Route,
-            shipment_store.get(FOOD).to_f32() + provisions.to_f32(),
-        );
-        // **The sending half of the FODDER ledger's route arm** — the hay aboard, and nothing else.
-        // The walking larder (`provisions`) is food: a party is people, and people do not eat hay.
-        allocation
-            .last_fodder_transfers
-            .debit(TransferLink::Route, shipment_store.get(FODDER).to_f32());
-    }
-
     let band_label = outfit.band.label.clone();
     let mission = ExpeditionMission::Trade {
         destination_band: shipment.destination_band,
@@ -6638,6 +6631,7 @@ fn handle_send_trade_expedition(
     let destination_label = mission.destination_display();
     let carried_food = shipment_store.get(FOOD).to_f32();
     let carried_fodder = shipment_store.get(FODDER).to_f32();
+    let home_entity = outfit.band.entity;
     let carried_materials: Vec<String> = shipment
         .materials
         .iter()
@@ -6668,6 +6662,58 @@ fn handle_send_trade_expedition(
         );
         return;
     };
+
+    // **The sending half of the transfer terms, on the `TransferLink::Route` arm — and SPLIT BY
+    // CAUSE.** Two different things left this band's store with the party:
+    //
+    // - **the cargo** — food, hay and every material batch the order named — is the shipment:
+    //   [`TransferCause::ShipmentOut`], naming the destination band. Its receiving half is booked
+    //   when the shipment lands, and it comes home on the fold-back if it never does;
+    // - **the walking larder** (`provisions`) is the party's own rations, eaten on the road and
+    //   folded back if unspent: [`TransferCause::PartyProvisions`], the scout's launch-larder cause.
+    //
+    // Summed into one `ShipmentOut` figure, a row reading *"Shipment to Bitterbrook — 12.0"* would
+    // overstate the shipment by whatever the party eats on the way. Both are food that left through
+    // neither consumption nor a pen, so the food ledger's route arm books both exactly as before; the
+    // split is in the cause. The hay goes to its own ledger (`book_crossing` routes it), and the
+    // provisions are food only — a party is people, and people do not eat hay.
+    //
+    // Booked after the launch so every row names the party that carries it.
+    let party_band = app.world.get::<BandId>(expedition_entity).copied();
+    let destination = Some(TransferCounterparty {
+        band: shipment.destination_band,
+        faction: shipment.destination_faction,
+    });
+    if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(home_entity) {
+        for (commodity, amount) in [(FOOD, carried_food), (FODDER, carried_fodder)] {
+            allocation.book_crossing(
+                TransferCrossing::goods(
+                    commodity,
+                    TransferDirection::Out,
+                    TransferCause::ShipmentOut,
+                    amount,
+                )
+                .with_counterparty(destination)
+                .with_party(party_band),
+            );
+        }
+        allocation.book_material_draws(
+            &loaded_materials,
+            TransferDirection::Out,
+            TransferCause::ShipmentOut,
+            destination,
+            party_band,
+        );
+        allocation.book_crossing(
+            TransferCrossing::goods(
+                FOOD,
+                TransferDirection::Out,
+                TransferCause::PartyProvisions,
+                provisions.to_f32(),
+            )
+            .with_party(party_band),
+        );
+    }
 
     // The manifest reads as a list, never as a total: a sum of food and hide is the retired trade
     // axis under a new name, and a sum of bread and hay is the retired `upkeep_per_biomass`.
@@ -6913,16 +6959,12 @@ fn cancel_party_standing_in_camp(
     };
     // The pack and any undelivered cargo landing back in the band's larder is a transfer, exactly as
     // the `Returning` arm's fold-back is — a cancel differs only in *when* it fires, not in what
-    // carried the food, so it takes the same [`TransferLink::Route`] arm.
+    // carried the food, so it takes the same `TransferLink::Route` arm and the same
+    // [`TransferCause::PartyHome`] cause, through the same routine. The hay rides it too, so a
+    // cancelled shipment does not leave the sent-at-launch debit standing with nothing against it.
+    let party_band = app.world.get::<BandId>(entity).copied();
     if let Some(mut allocation) = app.world.get_mut::<LaborAllocation>(expedition.home_band) {
-        allocation
-            .last_food_transfers
-            .credit(TransferLink::Route, fold.food.to_f32());
-        // And the hay on its own ledger, so a cancelled shipment does not leave the sent-at-launch
-        // debit standing with nothing that ever came back against it.
-        allocation
-            .last_fodder_transfers
-            .credit(TransferLink::Route, fold.fodder.to_f32());
+        fold.book_home(&mut allocation, party_band);
     }
     Some(CancelledInCamp {
         position,
@@ -12607,6 +12649,7 @@ mod tests {
                     last_food_consumption: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
+                    last_turn_transfer_crossings: Vec::new(),
                     last_morale_delta: core_sim::scalar_zero(),
                     last_morale_cause: Default::default(),
                     last_morale_contributions: Default::default(),
@@ -21256,6 +21299,135 @@ mod tests {
             allocation.last_fodder_transfers.received() < TRADE_EPSILON,
             "a launch only sends: nothing arrived"
         );
+    }
+
+    /// How far the destination is walked away from the sender for the launch-cause test, in hex
+    /// steps — any positive distance makes the walk need a larder; a few tiles keeps it well inside
+    /// the map on any seed.
+    const TRADE_WALK_TILES: u32 = 4;
+
+    /// ⛔ **THE LAUNCH BOOKS THE CARGO AS THE SHIPMENT AND THE WALKING LARDER AS THE PARTY'S OWN**
+    /// (issue #731).
+    ///
+    /// The debit used to be `cargo + provisions` in one number, so a row reading *"Shipment to X"*
+    /// overstated the shipment by what the party eats on the road. Three claims, each falsifiable
+    /// alone: the `ShipmentOut` food is the cargo and not a unit more; the `PartyProvisions` food is
+    /// exactly the larder the party left holding; and the food ledger's route arm still carries both,
+    /// because the split is in the cause and not in the ledger. The destination stands a few tiles off
+    /// so the larder is non-zero — the liveness half, without which the first claim is vacuous.
+    #[test]
+    fn a_shipment_launch_books_cargo_as_shipment_out_and_the_larder_as_party_provisions() {
+        let mut app = build_world_app();
+        let (sender, destination, faction) = two_bands_that_know_each_other(&mut app);
+        let sender_id = app.world.get::<core_sim::BandId>(sender).expect("an id").0;
+        let destination_entity = {
+            let mut query = app.world.query::<(Entity, &core_sim::BandId)>();
+            query
+                .iter(&app.world)
+                .find(|(_, id)| **id == destination)
+                .map(|(entity, _)| entity)
+                .expect("the destination band exists")
+        };
+        let destination_faction = app
+            .world
+            .get::<PopulationCohort>(destination_entity)
+            .expect("the destination")
+            .faction;
+        // Walk the destination off the sender's tile: the tie is already formed, and the trip now
+        // has a distance to provision.
+        let far_tile = {
+            let from = {
+                let tile = app
+                    .world
+                    .get::<PopulationCohort>(destination_entity)
+                    .expect("the destination")
+                    .current_tile;
+                app.world.get::<Tile>(tile).expect("a real tile").position
+            };
+            let registry = app.world.resource::<TileRegistry>();
+            let x = (from.x + TRADE_WALK_TILES) % registry.width.max(1);
+            registry.index(x, from.y).expect("the tile is on the map")
+        };
+        {
+            let mut cohort = app
+                .world
+                .get_mut::<PopulationCohort>(destination_entity)
+                .expect("the destination");
+            cohort.current_tile = far_tile;
+            cohort.home = far_tile;
+        }
+
+        handle_send_trade_expedition(
+            &mut app,
+            faction,
+            Some(sender_id),
+            TRADE_PARTY,
+            destination.0,
+            food_cargo(TRADE_CARGO_FOOD),
+            None,
+        );
+        let party = launched_party(&mut app).expect("the shipment left");
+        let party_id = *app
+            .world
+            .get::<core_sim::BandId>(party)
+            .expect("a party id");
+        let walking_larder = app
+            .world
+            .get::<PopulationCohort>(party)
+            .expect("the party")
+            .stores
+            .get(FOOD)
+            .to_f32();
+        assert!(
+            walking_larder > TRADE_EPSILON,
+            "liveness: a walk of {TRADE_WALK_TILES} tiles must draw a larder, got {walking_larder}"
+        );
+
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(sender)
+            .expect("the sending band has an allocation");
+        let food_by = |cause: TransferCause| -> f32 {
+            allocation
+                .last_transfer_crossings
+                .iter()
+                .filter(|crossing| crossing.commodity == FOOD && crossing.cause == cause)
+                .map(|crossing| crossing.amount)
+                .sum()
+        };
+        assert!(
+            (food_by(TransferCause::ShipmentOut) - TRADE_CARGO_FOOD).abs() < TRADE_EPSILON,
+            "the shipment is the CARGO alone: {} vs {TRADE_CARGO_FOOD} (larder {walking_larder})",
+            food_by(TransferCause::ShipmentOut)
+        );
+        assert!(
+            (food_by(TransferCause::PartyProvisions) - walking_larder).abs() < TRADE_EPSILON,
+            "the walking larder is the party's own provisions: {} vs {walking_larder}",
+            food_by(TransferCause::PartyProvisions)
+        );
+        assert!(
+            (allocation.last_food_transfers.route_sent - (TRADE_CARGO_FOOD + walking_larder)).abs()
+                < TRADE_EPSILON,
+            "and the ledger's route arm still carries both — the split is in the cause: {} vs {}",
+            allocation.last_food_transfers.route_sent,
+            TRADE_CARGO_FOOD + walking_larder
+        );
+        for crossing in &allocation.last_transfer_crossings {
+            assert_eq!(
+                crossing.party,
+                Some(party_id),
+                "every launch row names the party that carries it: {crossing:?}"
+            );
+            let expected =
+                (crossing.cause == TransferCause::ShipmentOut).then_some(TransferCounterparty {
+                    band: destination,
+                    faction: destination_faction,
+                });
+            assert_eq!(
+                crossing.counterparty, expected,
+                "the cargo names the destination and the larder names nobody: {crossing:?}"
+            );
+        }
     }
 
     /// **A band cannot ship hay it does not have**, and the hay account answers for itself: a full

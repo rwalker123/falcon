@@ -1521,6 +1521,24 @@ table PopulationCohortState {
   // `quarrywork` | `builders`, the same spelling `LaborAssignment.kind` publishes for the row, so a
   // client joins a line to its pool card without a table of its own.
   poolToe:[PoolToeLine];
+  // --- WHAT CROSSED THIS BAND'S STORE, BY CAUSE (appended last, issue #731) ---------------------
+  // The detail beneath the eight `transfer*Turn` / `fodderTransfer*Turn` arms above: one row per
+  // (good, rating, direction, cause, counterparty, party), on the same per-turn window. For food and
+  // fodder the rows summed per (link, direction) equal those arms exactly - one call books both.
+  // Materials have no arms; these rows are their only transfer account, one per RATING and never
+  // summed across ratings or materials. See `TransferCrossingState`.
+  transferCrossings:[TransferCrossingState];
+  // --- THIS BAND'S OWN POOLING LINKS (appended last, issue #731) --------------------------------
+  // Every supply-network link the balancer formed with this band this turn - its direct links, not
+  // every member of its network (a network is a chain as often as a star). Empty for a band in no
+  // network. What a rung buys (`holdsLinkToTiles`, `frictionMultiplier`) is on `RouteRungState`,
+  // joined by `rungId`; it is not repeated here.
+  poolingLinks:[PoolingLinkState];
+  // THE SPAN THIS BAND'S NETWORK FORMED AT - the longest hex distance among the links of its whole
+  // network this turn, 0 for a band in no network. The "within N tiles" figure: the distance the
+  // links actually reached, free reach and road-held reach alike, and NOT the `reach_tiles` lever.
+  // A network whose camps all share one tile also reads 0; `supplyNetworkId` tells the two apart.
+  supplyNetworkSpanTiles:uint = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -6624,6 +6642,58 @@ table RouteState {
 
 table RouteSection {
   routes:[RouteState];
+}
+
+// ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE - a row of `PopulationCohortState.transferCrossings`.
+// Appended last (append-only discipline).
+table TransferCrossingState {
+  // The store key: "provisions" (FOOD), "fodder", or a `materials.json` material id.
+  commodity:string;
+  // The pile's rating, for a material: the exact amount-weighted reading of what crossed, per axis,
+  // in the material's declared axis order - the `MaterialBatchState.readings` shape. Empty for
+  // provisions and fodder.
+  readings:[CharacteristicReading];
+  // 0 = in (into this band's store), 1 = out.
+  direction:ubyte;
+  // 0 = local (bands standing together), 1 = route (a party carried it). Always the cause's link.
+  link:ubyte;
+  // WHY IT CROSSED. Append-only, like the table:
+  //   0 = pooled            supply-network pooling            local  in|out  no counterparty
+  //   1 = dowry_out         a split's share, parent side      local  out     the splinter
+  //   2 = dowry_in          a split's share, splinter side    local  in      the parent
+  //   3 = shipment_out      a trade shipment's CARGO          route  out     the destination
+  //   4 = shipment_in       a trade shipment landing          route  in      the sender
+  //   5 = party_home        own party's drop-off / fold-back  route  in      none
+  //   6 = party_provisions  own party's launch larder         route  out     none
+  // 1, 2, 5 and 6 are not trade: the band's own split and the band's own people.
+  // *** A POOLED ROW NEVER NAMES A COUNTERPARTY *** - an invariant, not an omission: pooling pays a
+  // band out of one per-capita pot every surplus member put into, so there is no "who" to name.
+  cause:ubyte;
+  // The other band's durable `bandId`, 0 = none (pooled, party_home, party_provisions).
+  counterpartyBandId:ulong = 0;
+  // Its name and faction, carried here because a foreign counterparty may have no row on the
+  // client's roster (fog, another faction). An empty name with a non-zero id is a band the sim can no
+  // longer name (it has since died); render the `Band #<id>` fallback. Faction is meaningful only
+  // when `counterpartyBandId != 0`.
+  counterpartyName:string;
+  counterpartyFaction:uint;
+  // The `bandId` of the party that carried it - the key one shipment's goods group under, and the
+  // `bandId` that party's own cohort row carries while it is on the map. 0 = no party (pooled, dowry).
+  partyId:ulong = 0;
+  // A positive magnitude; `direction` carries the sign.
+  amount:float;
+}
+
+// ONE SUPPLY-NETWORK LINK OF ONE BAND - a row of `PopulationCohortState.poolingLinks`. Appended last.
+table PoolingLinkState {
+  // The band at the other end of the link.
+  bandId:ulong;
+  // Hex distance between the two camps this turn.
+  distanceTiles:uint;
+  // The rung holding the run - the weakest tile of the path between the camps, as a
+  // `RouteRungState.rungKey` wire key ("route:trail"). "" = some tile on the path has no kept road,
+  // which is every link held by the free reach over open ground.
+  rungId:string;
 }
 
 // ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT - a row of `PopulationCohortState.poolToe`,

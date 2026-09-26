@@ -516,8 +516,8 @@ unit-tested `balance_commodity`. Config: `supply_network_config.json`.
 > On a pile of `0.75` an absolute `0.5` floor is not a dead-band, it is a **wall**: per-capita
 > equalization computes a `0.375` move and the floor drops it, every turn, in silence. The symptom
 > from play was a band blocked on bone for hoes while the camp three hexes away held some — and
-> because materials have no transfer account (see "Food only — for the IDENTITY"), nothing on the
-> glass could say so.
+> because materials then had no transfer account at all, nothing on the glass could say so. They
+> have one now, per rating: see "The cause key and the crossings list".
 >
 > **`0.0025` is calibrated to leave food where it was**, not as a fresh tuning judgement: two camps
 > holding 400 food between them have a fair share of 200, and `200 × 0.0025` is exactly the retired
@@ -751,23 +751,97 @@ transferSent` ledger identity.
 > path itself — a second `capture_snapshot` does not reproduce it.
 >
 > **Food only — for the IDENTITY.** Materials cross between bands too — the network pools them per
-> rating, a shipment carries them — and there is deliberately **no materials identity**: a material's
-> account is the batch store itself, and a scalar total of hide and bone is the retired trade axis
-> under a new name.
+> rating, a shipment carries them — and there is deliberately **no materials identity** and no
+> material ledger arm: a scalar total of hide and bone is the retired trade axis under a new name.
+> What materials do have is **crossings**, one row per rating — see the callout below.
 >
 > **FODDER KEEPS THE SAME FOUR ARMS AND CLOSES NOTHING** (`LaborAllocation::last_fodder_transfers`,
 > wire `fodderTransfer{Local,Route}{Received,Sent}Turn`). Hay pools exactly as grain does — the
 > balancer walks a band's whole store — and until #548 nothing counted it, so a receiving band's
 > `fodderStore` rose with only *grown* and *eaten* to explain it. What the account buys is the rows
-> that name the **link kind** the hay crossed — `⇄ Local exchange` / `⇄ Trade route`, one netted row
-> each and **never a counterparty**, since bands have no names (#615) — and the **runway**, which
-> nets the **`local`** arm in and deliberately not
+> that name the **link kind** the hay crossed — `⇄ Local exchange` / `⇄ Trade route` — and the
+> **runway**, which nets the **`local`** arm in and deliberately not
 > the `route` one (`yield-forecast.md` → "Local crossings are a rate and count; route crossings are
-> events and do not"); it is not a second reconciliation identity.
-> **Its `route` arm reads `0` on every frame today**, because a shipment's manifest refuses any cargo
-> item that is not food or a material (`ResolvedShipment`) — a fact about shipments rather than about
-> hay, and the reason both accounts still carry one shape.
+> events and do not"); it is not a second reconciliation identity. **Its `route` arm is live**: a
+> shipment's manifest takes a `fodder` line (issue #590), so a party carries bales between camps.
 >
+> #### The cause key and the crossings list — WHY it crossed, beneath the four arms (issue #731)
+>
+> The link names the vehicle; a player also asks *what happened*, and the two diverge exactly where
+> it matters — a hunt's drop-off and a neighbour's shipment are both `route`, and only one is trade.
+> So every writer books a **`TransferCause`** (`components.rs`), and each cause has exactly one link
+> (`TransferCause::link`), so a crossing's link is derived rather than chosen:
+>
+> | Cause | Link | Counterparty | Writer |
+> |---|---|---|---|
+> | `Pooled` | local | **none** | `balance_supply_networks` — food, fodder, and each material rating |
+> | `DowryOut` / `DowryIn` | local | the other half of the split | `systems::fission` (`fission.md`) |
+> | `ShipmentOut` | route | the destination | the trade launch — **the cargo only** (`expeditions.md`) |
+> | `ShipmentIn` | route | the sender (the party's home band) | a shipment landing |
+> | `PartyHome` | route | none — names the party | a hunt's drop-off, the `Returning` fold-back, a cancel in camp |
+> | `PartyProvisions` | route | none — names the party | a party's launch larder (a scout's, a shipment party's) |
+>
+> **Eight writer sites, seven causes.** The cancel-in-camp fold-back (`cancel_party_standing_in_camp`
+> in `bin/server.rs`) is the eighth site and books the same `PartyHome` as the `Returning` arm,
+> through the same `FoldBack::book_home`.
+>
+> **The ledger is unchanged and remains the ledger; the cause detail is ADDITIVE.** Each crossing is a
+> `TransferCrossing` row on `LaborAllocation::last_transfer_crossings` — `{commodity, rating, readings,
+> direction, link, cause, counterparty, party, amount}` — and **`LaborAllocation::book_crossing` is the
+> one way either is written**: for `FOOD` / `FODDER` it credits or debits the ledger arm *and* merges
+> the row, in one call, so the rows summed per `(link, direction)` equal the arms by construction. A
+> material has no arm and books its row alone. Pinned on real turns off the encoded envelope by
+> `transfer_food_ledger::the_crossings_add_up_to_the_ledger_on_a_pooling_and_shipping_turn` and its
+> dowry and recapture siblings.
+>
+> **Rows merge by key** — everything but the amount (a material row's exact reading blends on the
+> store's own amount-weighted rule) — so a band that pools every turn holds one `Pooled` row per good
+> and direction, not one per pass. The window, the reset (`reset_transfer_ledger`) and the per-turn
+> twin (`PopulationCohort::last_turn_transfer_crossings`, copied by `publish_turn_transfers`) are the
+> ledger's own, for the ledger's reason: a recapture must not blank the rows.
+>
+> ⛔ **A `Pooled` ROW NEVER NAMES A COUNTERPARTY — AN INVARIANT, NOT AN OMISSION.** The balancer moves
+> each commodity toward one per-capita share across the whole component, so a receiver is paid out
+> of a pot every surplus member put into: there is no "who gave it" to name, and naming one would
+> invent a pairing the balancer never made. Pinned by
+> `supply_network::pooled_material_crossings_are_booked_per_rating_and_never_name_a_counterparty`.
+>
+> **Materials pool per rating, and are booked per rating.** The pooling loop's material branch books
+> each member's signed delta per `(material, rating)` as its own row — a send at the sender's own
+> batch reading, an arrival at the senders' blended one — never summed across ratings or materials.
+>
+> **`party` is the carrying party's `BandId`** — the id that party's own cohort row publishes while it
+> is on the map, and the key a client groups one shipment's goods under. Two parties from one band
+> landing in one turn are two ids.
+>
+> **The counterparty carries its faction, fixed at booking**, because a shipment's other end may be a
+> foreign band the viewer has no row for, or one that has since died. Its **name** is resolved at
+> capture off every live band (`snapshot::population::BandNameLookup`); an unresolvable one publishes
+> empty, which a client renders as its `Band #<id>` fallback.
+>
+> On the wire as `PopulationCohortState.transferCrossings` (`TransferCrossingState`; the direction,
+> link and cause codes are documented in `snapshot.fbs`). Food's `commodity` is the store key,
+> `"provisions"`. Serialized with the allocation and the cohort, so a save round-trips
+> (`SAVE_FORMAT_VERSION` 10).
+
+> #### A band's own pooling links, and the span its network formed at
+>
+> `balance_supply_networks` reads each link **once** off the tiles between its camps (`trace_path`):
+> the friction its roads buy, which the component's friction still takes the best of, and the
+> **rung holding the run** — `routes::path_lesson_rung`, the weakest tile and `None` where any tile has
+> no kept road, the same reading a connection's lesson takes. Every link is recorded from **both**
+> ends on `SupplyNetworkMembership` (`pooling_links_of`), so each band publishes its own direct links
+> — a chain is not a clique — as `PopulationCohortState.poolingLinks` (`{bandId, distanceTiles,
+> rungId}`, `rungId` the `RouteRungState.rungKey`, `""` for none). What a rung buys is on the rung
+> table and is not repeated per link.
+>
+> **`supplyNetworkSpanTiles` is the longest link in the band's component** — the same figure at every
+> member, `0` in no network (and for a network whose camps share one tile, which `supplyNetworkId`
+> tells apart). It is the distance the links actually formed at, free reach and road-held reach
+> alike, and deliberately **not** `reach_tiles`. Both live on the per-turn membership resource, so a
+> recapture re-reads them. Pinned by `supply_network::pooling_links_are_per_band_and_the_span_is_the_networks_longest_link`
+> and, for the rung, `route_traffic::a_pooling_link_names_the_weakest_rung_on_its_run`.
+
 > Pinned by `integration_tests/tests/transfer_food_ledger.rs` against real turns and the real
 > exported snapshot, over every producer. **A producer that fires between two captures needs a case
 > that fires it between two captures**: the split half of that file survived a real hole because the

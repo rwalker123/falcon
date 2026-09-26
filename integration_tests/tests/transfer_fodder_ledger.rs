@@ -531,3 +531,155 @@ fn an_undelivered_shipments_hay_comes_home_and_is_credited_back() {
          rather than left standing as a phantom: {credited} vs {CARGO_FODDER}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// WHY THE HAY MOVED: the cause-keyed crossings (issue #731)
+// ---------------------------------------------------------------------------------------------
+
+/// The wire's route-arm, direction and cause codes this file reads (`TransferCrossingState`).
+const LINK_ROUTE: u8 = 1;
+const DIRECTION_IN: u8 = 0;
+const CAUSE_SHIPMENT_IN: u8 = 4;
+const CAUSE_PARTY_HOME: u8 = 5;
+
+/// `(link, direction, cause, counterpartyBandId, partyId, amount)` for every **fodder** crossing a
+/// band published, off the encoded envelope.
+fn hay_crossings(app: &bevy::prelude::App, band: BandId) -> Vec<(u8, u8, u8, u64, u64, f32)> {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section is published")
+        .iter()
+        .find(|cohort| cohort.bandId() == band.0)
+        .expect("the band's row is published");
+    row.transferCrossings()
+        .map(|rows| {
+            rows.iter()
+                .filter(|crossing| crossing.commodity() == Some(FODDER))
+                .map(|crossing| {
+                    (
+                        crossing.link(),
+                        crossing.direction(),
+                        crossing.cause(),
+                        crossing.counterpartyBandId(),
+                        crossing.partyId(),
+                        crossing.amount(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// **A landed hay shipment is one `ShipmentIn` row on the route arm** — the whole of the fodder
+/// route arm it refines, naming the band that sent it and the party that carried it.
+#[test]
+fn a_landed_hay_shipment_is_a_shipment_in_row_naming_its_sender_and_party() {
+    let mut app = world();
+    let (sender, host) = a_sender_and_a_foreign_destination(&mut app);
+    let (sender_id, host_id) = (band_id(&app, sender), band_id(&app, host));
+    app.world
+        .insert_resource(core_sim::ViewerFaction(FOREIGN_FACTION));
+    let host_pos = position_of(&app, host);
+    let party = spawn_hay_shipment(&mut app, sender, host_id, host_pos, CARGO_FODDER);
+    let party_id = band_id(&app, party);
+
+    run_turn(&mut app);
+
+    let rows = hay_crossings(&app, host_id);
+    let arm = rows_of(&app, host_id).hay_route_received;
+    assert!(
+        (arm - CARGO_FODDER).abs() < EPSILON,
+        "liveness: the shipment landed ({arm})"
+    );
+    assert_eq!(
+        rows.len(),
+        1,
+        "one shipment of hay lands as one row: {rows:?}"
+    );
+    let (link, direction, cause, counterparty, carried_by, amount) = rows[0];
+    assert_eq!(
+        (link, direction, cause, counterparty, carried_by),
+        (
+            LINK_ROUTE,
+            DIRECTION_IN,
+            CAUSE_SHIPMENT_IN,
+            sender_id.0,
+            party_id.0
+        ),
+        "a route arrival, a shipment, from its sender, carried by its party: {rows:?}"
+    );
+    assert!(
+        (amount - arm).abs() < EPSILON,
+        "and the row is the whole of the route arm: {amount} vs {arm}"
+    );
+}
+
+/// **An undelivered shipment's hay coming home is `PartyHome`, not trade** — a route arrival booked
+/// against the band's own party, naming no counterparty, and summing to the route arm it credits.
+#[test]
+fn undelivered_hay_coming_home_is_a_party_home_row_not_a_shipment() {
+    let mut app = world();
+    let (sender, host) = a_sender_and_a_foreign_destination(&mut app);
+    let (sender_id, host_id) = (band_id(&app, sender), band_id(&app, host));
+    let sender_pos = position_of(&app, sender);
+    let far = walk_away(&mut app, host, sender_pos);
+    let party = spawn_hay_shipment(&mut app, sender, host_id, far, CARGO_FODDER);
+    let party_id = band_id(&app, party);
+    for _ in 0..TURNS_TO_GET_CLEAR {
+        run_turn(&mut app);
+    }
+    app.world.despawn(host);
+
+    let mut homecoming = Vec::new();
+    for _ in 0..MAX_TURNS_HOME {
+        if app.world.get::<Expedition>(party).is_none() {
+            break;
+        }
+        run_turn(&mut app);
+        let rows = hay_crossings(&app, sender_id);
+        let arm = rows_of(&app, sender_id).hay_route_received;
+        let rows_in: f32 = rows
+            .iter()
+            .filter(|(link, direction, ..)| *link == LINK_ROUTE && *direction == DIRECTION_IN)
+            .map(|row| row.5)
+            .sum();
+        assert!(
+            (rows_in - arm).abs() < EPSILON,
+            "every turn, the route-in rows are the route-in arm: {rows_in} vs {arm} ({rows:?})"
+        );
+        homecoming.extend(rows.into_iter().filter(|row| row.2 == CAUSE_PARTY_HOME));
+    }
+    assert!(
+        app.world.get::<Expedition>(party).is_none(),
+        "the party folds back rather than walking forever"
+    );
+    assert_eq!(
+        homecoming.len(),
+        1,
+        "the homecoming is one row: {homecoming:?}"
+    );
+    let (_, _, _, counterparty, carried_by, amount) = homecoming[0];
+    assert_eq!(
+        (counterparty, carried_by),
+        (0, party_id.0),
+        "the band's own party brought it home — no counterparty, the party named"
+    );
+    assert!(
+        (amount - CARGO_FODDER).abs() < EPSILON,
+        "the whole undelivered shipment came home: {amount} vs {CARGO_FODDER}"
+    );
+}

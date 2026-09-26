@@ -460,6 +460,9 @@ pub(crate) struct HuntCrewLevers<'a> {
     pub(crate) baseline_haul_rate: f32,
 }
 
+/// `BandId → name` over every live band, the lookup a crossing's counterparty is named from.
+pub(crate) type BandNameLookup = std::collections::HashMap<BandId, String>;
+
 pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) entity: Entity,
     /// The band's durable id, published so a client can address it in a command without sending
@@ -477,6 +480,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) demographics: &'a DemographicsConfig,
     pub(crate) wellbeing: &'a crate::wellbeing_config::WellbeingConfig,
     pub(crate) supply_membership: &'a SupplyNetworkMembership,
+    /// **Every live band's name, by id** — what a crossing's counterparty publishes as, resolved
+    /// once per capture. A foreign counterparty is on it too: the viewer may have no row for that
+    /// band, which is why the name rides the crossing at all.
+    pub(crate) band_names: &'a BandNameLookup,
     pub(crate) work_range: u32,
     /// Echo of `fauna.predators.raid_radius` — surfaced per-cohort exactly like `work_range` (a global
     /// lever the client needs per-band to check whether a visible aggressive predator is in raid range).
@@ -731,6 +738,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         demographics,
         wellbeing,
         supply_membership,
+        band_names,
         work_range,
         raid_radius,
         scout_vantage_distance,
@@ -1750,6 +1758,74 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     .collect()
             })
             .unwrap_or_default(),
+        // **WHAT CROSSED THIS BAND'S STORE, BY CAUSE** — off the per-turn twin on the cohort, never
+        // the accumulator, for the reason the eight ledger arms above are: a recapture runs after
+        // the accumulator has reset and must not blank the rows.
+        transfer_crossings: cohort
+            .last_turn_transfer_crossings
+            .iter()
+            .map(|crossing| transfer_crossing_state(crossing, craft_inputs.materials, band_names))
+            .collect(),
+        // **THIS BAND'S OWN POOLING LINKS AND ITS NETWORK'S SPAN** — read off the per-turn
+        // membership the balancer wrote, which a recapture re-reads unchanged.
+        pooling_links: supply_membership
+            .pooling_links_of(entity)
+            .iter()
+            .map(|link| sim_schema::state::PoolingLinkState {
+                band_id: link.band.0,
+                distance_tiles: link.distance_tiles,
+                // `""` where the run has no kept road on some tile — the wire's "no rung" reading.
+                rung_id: link.rung.map(|rung| rung.wire_key()).unwrap_or_default(),
+            })
+            .collect(),
+        supply_network_span_tiles: supply_membership.span_tiles_of(entity),
+    }
+}
+
+/// **One crossing as the wire carries it** — the codes off the enums' own `wire_code`, a material's
+/// reading in the `MaterialBatchState.readings` shape (declared axis order, exact value and band
+/// name), and the counterparty's name resolved off the capture's lookup.
+fn transfer_crossing_state(
+    crossing: &crate::components::TransferCrossing,
+    materials: &crate::materials_config::MaterialsConfig,
+    band_names: &BandNameLookup,
+) -> sim_schema::state::TransferCrossingState {
+    let counterparty = crossing.counterparty;
+    sim_schema::state::TransferCrossingState {
+        commodity: crossing.commodity.clone(),
+        // **In the material's DECLARED axis order** — `material_batches`' rule. Food and fodder carry
+        // no reading, and a material the table does not know publishes none rather than a guess.
+        readings: materials
+            .material(&crossing.commodity)
+            .filter(|_| !crossing.readings.is_empty())
+            .map(|def| def.characteristics.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .map(|axis| {
+                let value = crossing.readings.get(axis).copied().unwrap_or_default();
+                sim_schema::state::CharacteristicReadingState {
+                    axis: axis.clone(),
+                    value,
+                    band_name: materials
+                        .band_name(materials.band_index(value))
+                        .unwrap_or_default()
+                        .to_string(),
+                }
+            })
+            .collect(),
+        direction: crossing.direction.wire_code(),
+        link: crossing.link.wire_code(),
+        cause: crossing.cause.wire_code(),
+        counterparty_band_id: counterparty.map(|other| other.band.0).unwrap_or_default(),
+        counterparty_name: counterparty
+            .and_then(|other| band_names.get(&other.band))
+            .cloned()
+            .unwrap_or_default(),
+        counterparty_faction: counterparty
+            .map(|other| other.faction.0)
+            .unwrap_or_default(),
+        party_id: crossing.party.map(|party| party.0).unwrap_or_default(),
+        amount: crossing.amount,
     }
 }
 
@@ -2125,6 +2201,7 @@ mod tests {
             last_food_consumption: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
+            last_turn_transfer_crossings: Vec::new(),
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
@@ -2171,6 +2248,7 @@ mod tests {
             demographics: &DemographicsConfig::builtin(),
             wellbeing: &crate::wellbeing_config::WellbeingConfig::builtin(),
             supply_membership: &SupplyNetworkMembership::default(),
+            band_names: &BandNameLookup::default(),
             work_range: 0,
             raid_radius: 0,
             scout_vantage_distance: 0,

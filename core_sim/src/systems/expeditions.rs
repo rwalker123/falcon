@@ -28,6 +28,9 @@ type ExpeditionParty = (
     Option<&'static BandTravel>,
     &'static mut Expedition,
     Option<&'static mut BandEquipment>,
+    // **The party's own durable id** — the key its crossings name it by (`TransferCrossing::party`),
+    // so a client groups one shipment's goods under the party that carried them.
+    Option<&'static BandId>,
 );
 
 /// **The RESIDENT bands [`advance_expeditions`] reaches**, named for the reason [`ExpeditionParty`]
@@ -276,8 +279,10 @@ pub fn advance_expeditions(
         }
     }
 
-    for (entity, mut cohort, travel, mut expedition, mut party_equipment) in expeditions.iter_mut()
+    for (entity, mut cohort, travel, mut expedition, mut party_equipment, party_band) in
+        expeditions.iter_mut()
     {
+        let party_band = party_band.copied();
         let Ok(exp_pos) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
             continue;
         };
@@ -865,6 +870,10 @@ pub fn advance_expeditions(
                         let carried_food = expedition.cargo.get(FOOD);
                         let carried_fodder = expedition.cargo.get(FODDER);
                         let carried_materials = materials_carried(&expedition.cargo);
+                        // **The sender, named on the host's row** — the band that outfitted the
+                        // party, in the party's own faction (a party is its home band's people).
+                        let sender =
+                            home_band_id.map(|band| TransferCounterparty { band, faction });
                         let landed = bands.get_mut(host_entity).ok().map(
                             |(_, mut host, _, _, allocation)| {
                                 let moved = expedition.cargo.take(FOOD, carried_food);
@@ -881,21 +890,39 @@ pub fn advance_expeditions(
                                 // **Batch by batch into the HOST's store** — the shipment's ratings
                                 // are what make it a shipment of goods rather than of a number, so
                                 // two ratings of one material arrive as two batches.
-                                expedition.cargo.drain_materials_into(&mut host.stores);
-                                // The receiving half of the food ledger's transfer terms, on the
-                                // [`TransferLink::Route`] arm — a party carried this here. The
-                                // *sending* half was booked at launch, against the band the party
-                                // was drawn off, on the same arm.
+                                let moved_materials =
+                                    expedition.cargo.drain_materials_into(&mut host.stores);
+                                // The receiving half of a shipment — [`TransferCause::ShipmentIn`],
+                                // on the `TransferLink::Route` arm, because a party carried this
+                                // here. The *sending* half was booked at launch, against the band
+                                // the party was drawn off, as `ShipmentOut`.
                                 //
-                                // **The hay books on its own ledger, never this one**: the food
+                                // **The hay books on its own ledger, never the food one**
+                                // (`book_crossing` routes each key to its account): the food
                                 // identity closes over the FOOD larder, which a bale never enters.
+                                // Materials book per batch, at the rating each one moved at.
                                 if let Some(mut allocation) = allocation {
-                                    allocation
-                                        .last_food_transfers
-                                        .credit(TransferLink::Route, moved.to_f32());
-                                    allocation
-                                        .last_fodder_transfers
-                                        .credit(TransferLink::Route, moved_fodder.to_f32());
+                                    for (commodity, amount) in
+                                        [(FOOD, moved), (FODDER, moved_fodder)]
+                                    {
+                                        allocation.book_crossing(
+                                            TransferCrossing::goods(
+                                                commodity,
+                                                TransferDirection::In,
+                                                TransferCause::ShipmentIn,
+                                                amount.to_f32(),
+                                            )
+                                            .with_counterparty(sender)
+                                            .with_party(party_band),
+                                        );
+                                    }
+                                    allocation.book_material_draws(
+                                        &moved_materials,
+                                        TransferDirection::In,
+                                        TransferCause::ShipmentIn,
+                                        sender,
+                                        party_band,
+                                    );
                                 }
                                 (moved, moved_fodder)
                             },
@@ -982,16 +1009,11 @@ pub fn advance_expeditions(
                         banked_materials = fold.materials;
                         // The pack and the cargo landing in the band's larder is food crossing from
                         // a party into a band, which is neither income nor consumption. A party
-                        // carried it, so the arm is [`TransferLink::Route`] whatever its mission was.
+                        // carried it, so the arm is `TransferLink::Route` whatever its mission was
+                        // — and the cause is [`TransferCause::PartyHome`], the band's own people
+                        // coming back, never trade.
                         if let Some(mut allocation) = allocation {
-                            allocation
-                                .last_food_transfers
-                                .credit(TransferLink::Route, fold.food.to_f32());
-                            // The hay on its own ledger, so an undelivered shipment does not leave
-                            // the launch's route debit standing with nothing against it.
-                            allocation
-                                .last_fodder_transfers
-                                .credit(TransferLink::Route, fold.fodder.to_f32());
+                            fold.book_home(&mut allocation, party_band);
                         }
                     }
                     event_log.push(expedition_returned_event(
@@ -1439,14 +1461,29 @@ pub fn advance_expeditions(
                         // **The materials ride the same delivery**, batch by batch so a mammoth
                         // hide is never averaged into a hare pelt on the walk home.
                         banked_materials = materials_carried(&cohort.stores);
-                        cohort.stores.drain_materials_into(&mut home.stores);
+                        let moved_materials = cohort.stores.drain_materials_into(&mut home.stores);
                         // A drop-off is food crossing from a party into a band's larder — the same
-                        // ledger term, and the same [`TransferLink::Route`] arm, a shipment's arrival
+                        // ledger term, and the same `TransferLink::Route` arm, a shipment's arrival
                         // takes. The link names the VEHICLE, not the errand: a hunt walked this home.
+                        // The CAUSE names the errand — [`TransferCause::PartyHome`], the band's own
+                        // hunt, which is what keeps it off a trade readout.
                         if let Some(mut allocation) = allocation {
-                            allocation
-                                .last_food_transfers
-                                .credit(TransferLink::Route, delivered.to_f32());
+                            allocation.book_crossing(
+                                TransferCrossing::goods(
+                                    FOOD,
+                                    TransferDirection::In,
+                                    TransferCause::PartyHome,
+                                    delivered.to_f32(),
+                                )
+                                .with_party(party_band),
+                            );
+                            allocation.book_material_draws(
+                                &moved_materials,
+                                TransferDirection::In,
+                                TransferCause::PartyHome,
+                                None,
+                                party_band,
+                            );
                         }
                     }
                     event_log.push(CommandEventEntry::new(
@@ -1590,13 +1627,14 @@ pub fn fold_party_into_band(
         home.stores.add(FODDER, undelivered_fodder);
     }
     let materials = materials_carried(&party.stores) + materials_carried(cargo);
-    party.stores.drain_materials_into(&mut home.stores);
-    cargo.drain_materials_into(&mut home.stores);
+    let mut moved_materials = party.stores.drain_materials_into(&mut home.stores);
+    moved_materials.extend(cargo.drain_materials_into(&mut home.stores));
     home.sync_size();
     FoldBack {
         food: leftover + undelivered,
         fodder: undelivered_fodder,
         materials,
+        moved_materials,
     }
 }
 
@@ -1614,6 +1652,37 @@ pub struct FoldBack {
     /// identity closes over the food larder alone.
     pub fodder: Scalar,
     pub materials: f32,
+    /// **Every material batch that came home**, pack and undelivered cargo alike, at the reading it
+    /// carried — what [`Self::book_home`] books per rating.
+    pub moved_materials: Vec<(String, crate::components::MaterialDraw)>,
+}
+
+impl FoldBack {
+    /// ⛔ **BOOK A HOMECOMING — ONE ROUTINE FOR BOTH FOLD-BACK SITES** (the `Returning` arm and a
+    /// cancel in camp), for the reason [`fold_party_into_band`] is one routine: the two differ only in
+    /// *when* they fire. Food, hay and each material batch are booked as
+    /// [`TransferCause::PartyHome`] crossings naming the party, with no counterparty — the other end
+    /// is the band's own people, not another band.
+    pub fn book_home(&self, allocation: &mut LaborAllocation, party: Option<BandId>) {
+        for (commodity, amount) in [(FOOD, self.food), (FODDER, self.fodder)] {
+            allocation.book_crossing(
+                TransferCrossing::goods(
+                    commodity,
+                    TransferDirection::In,
+                    TransferCause::PartyHome,
+                    amount.to_f32(),
+                )
+                .with_party(party),
+            );
+        }
+        allocation.book_material_draws(
+            &self.moved_materials,
+            TransferDirection::In,
+            TransferCause::PartyHome,
+            None,
+            party,
+        );
+    }
 }
 
 /// The `ExpeditionReturned` feed line a fold-back publishes, built in one place so the two call

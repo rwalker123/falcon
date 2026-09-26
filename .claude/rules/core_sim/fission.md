@@ -207,10 +207,21 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
 > share as before, because nothing there is quantised and there is no floor to fall through.
 ### The dowry is a transfer, and it is booked as one
 
-The share of the larder that walks out with the new band is **food that crossed between two larders**,
-so it is booked into the food ledger's transfer terms: a debit on the parent's
-`last_food_transfers`, a credit on the child's, the same ledger `balance_supply_networks` and a trade
-shipment write (`.claude/rules/core_sim/campaign.md` → the transfer callout, which owns the identity).
+The share of the stores that walks out with the new band is **goods that crossed between two
+larders**, so it is booked through `LaborAllocation::book_crossing` — the one writer of the transfer
+ledgers and the crossings list (`.claude/rules/core_sim/campaign.md` → the transfer callout, which owns
+the identity, and "The cause key and the crossings list"). The parent books **`DowryOut`**, the
+splinter **`DowryIn`**, and **each end names the other** as its counterparty (with their shared
+faction) — a split is between two known bands, unlike the anonymous pool. The parent's half is booked
+after the splinter's `BandId` is allocated, so its row can name it.
+
+**Food, hay and every material batch.** Food and fodder land on the parent's `last_food_transfers` /
+`last_fodder_transfers` and the child's; each moved material batch books its own row at its rating
+and reading. The hay share is on the fodder ledger so the parent's fallen hayloft is not read by the
+fodder runway as a drain.
+
+**The dowry is not trade.** The cause is what lets a trade readout leave it out: it is a one-off the
+player chose by splitting, and its place is the split's own announcement and the new band's panel.
 
 **The dowry takes the `TransferLink::Local` arm.** A splinter is camped where its parent is and
 nothing carried the food anywhere — the same *standing together* crossing pooling is, and not the
@@ -224,11 +235,12 @@ transferSent` is simply false on the turn a band splits. The child receives it o
 `LaborAllocation` it is spawned with, because its first published frame is the one that has to
 account for it.
 
-**FOOD only.** The child takes a share of the material batches too (above), but materials deliberately
-have no identity of their own — a material's account is the batch store itself.
+**The identity is FOOD only.** Materials have crossings but no identity and no ledger arm — a scalar
+total of hide and bone is the retired trade axis under a new name.
 
 Pinned by `transfer_food_ledger::the_food_ledger_reconciles_when_a_band_splits_mid_window`, which
-splits after a published frame and asserts the identity on **both** halves.
+splits after a published frame and asserts the identity on **both** halves, and by
+`transfer_food_ledger::the_dowry_rows_name_each_side_of_the_split`.
 
 **There is deliberately NO breeding stock**, and the reason is structural rather than a balance call:
 a band's stores hold `provisions`, `fodder` and material batches and nothing else; a corralled `Herd` carries

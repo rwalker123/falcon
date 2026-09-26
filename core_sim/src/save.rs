@@ -104,7 +104,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 7 | `WorldStatics.start_location` (`StartLocation`) became a **per-faction map** — one `Option<UVec2>` replaced by a `FactionId`-keyed table, because worldgen now places every registered faction at its own start, and a rival founding a settlement must not move your marker |
 /// | 8 | `SimState.victory` (`VictoryState.modes`) became a **per-faction map** — one mode list replaced by a `FactionId`-keyed table, because a victory threshold measures one people and the world's totals were scoring everybody's; `SimulationMetrics` gained its per-faction twins in the same change |
 /// | 9 | `LaborAllocation` gained `last_pool_toe` — the five standing pools' settled tables of equipment, which the wire publishes as `PopulationCohortState.poolToe`. A band's whole allocation rides `BandRecord::labor`, so a version-8 blob has no such field and a bincode decode of one runs off the end of the record rather than reporting a version |
-pub const SAVE_FORMAT_VERSION: u32 = 9;
+/// | 10 | `LaborAllocation` gained `last_transfer_crossings` and `PopulationCohort` its per-turn twin `last_turn_transfer_crossings` — the cause-keyed crossings list beneath the transfer ledgers (issue #731), which the wire publishes as `PopulationCohortState.transferCrossings`. Both ride `BandRecord`, so a version-9 blob has no such field |
+pub const SAVE_FORMAT_VERSION: u32 = 10;
 
 /// gzip level for the payload document.
 ///
