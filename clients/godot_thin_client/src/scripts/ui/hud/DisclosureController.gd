@@ -251,11 +251,14 @@ func _link_transfer_lines(band: Dictionary) -> Array[String]:
 ## **`⇄ Trade route` IS SHIPMENTS, AND ONLY SHIPMENTS** (issue #731). The Route arm on the wire also
 ## carries a band's own party coming home and the larder a party launches with, because a party
 ## carried both — and rendering the whole arm as a trade route labelled a hunt's haul as trade. So the
-## row nets only the crossings whose CAUSE is a shipment, read off the per-cause crossings list.
+## row nets only the crossings whose CAUSE is a shipment, read off the per-cause crossings list —
+## `shipment_in`, `shipment_out` and `shipment_returned` (a trade party's undelivered cargo coming
+## back), so a shipment cancelled in camp nets to nothing here. `Brought home` is `party_home` alone:
+## the party's own pack, never its cargo.
 ##
 ## **THE POPOVER STILL ACCOUNTS FOR THE WHOLE LARDER CHANGE.** The crossings summed per link equal the
-## arm by construction (`LaborAllocation::book_crossing`), and the Route arm is exactly shipments +
-## party home + party rations — so this row plus `_party_transfer_rows`' two is the retired
+## arm by construction (`LaborAllocation::book_crossing`), and the Route arm is exactly shipments
+## (out, in and returned) + party home + party rations — so this row plus `_party_transfer_rows`' two is the retired
 ## whole-arm row, split three ways. `⇄ Local exchange` keeps the whole Local arm (pooling and a
 ## split's dowry), unchanged.
 func _shipment_net(band: Dictionary, commodity: String) -> float:

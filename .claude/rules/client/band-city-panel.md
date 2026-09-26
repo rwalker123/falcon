@@ -7367,14 +7367,33 @@ it still lists every camp, the even ones included, with its `sat even` count.
 **The full tier is built, its combined minimum height measured, and compared against the room** — the
 Trade zone's own `zone_size()` in the narrow shell, the Parties list's viewport (the zone box less its
 head, hint, footer and gaps, `_trade_room()`) in the wide one. No height is hard-coded. A 1920 bottom
-dock's strip lands in the SHORT tier on a busy turn; the panel never grows for it. A resize re-authors
-the tier in place (`TradeZoneController.refill`). The empty turn is the network line and
-*"Nothing crossed this turn."* in either tier.
+dock's strip lands in the SHORT tier on a busy turn; the panel never grows for it. The empty turn is
+the network line and *"Nothing crossed this turn."* in either tier.
+
+**THE TIER IS RE-CHOSEN AFTER LAYOUT, ON ONE PATH.** A render and a resize both queue
+`BandPanelController._schedule_trade_refill`, which a frame later measures the room on the laid-out
+column and re-authors the tier in place (`TradeZoneController.refill`, a no-op when the room has not
+moved), at most once per frame. The Parties column's autowrap hints (the empty-parties hint, the
+no-idle reason) and an inline compose sheet report a word-per-line height while the column is
+detached mid-`build_parties_zone`, so a render measuring there took the section to SHORT while the
+resize path picked FULL; a detached column now answers with the last live measurement for the same
+box (`_trade_live_room`). `trade_tab_wide_full_after_render` asserts FULL after a render and after a
+resize, beside the empty-parties hint.
 
 ### What counts as trade
 
 `TradeLedger.is_trade`: the Local arm is cause `pooled`, the Route arm is `shipment_in` /
-`shipment_out`. `party_home`, `party_provisions`, `dowry_in` and `dowry_out` never reach the tab. The
+`shipment_out` / `shipment_returned`. `party_home`, `party_provisions`, `dowry_in` and `dowry_out`
+never reach the tab.
+
+**A RETURN UNDOES ITS EXPORT** (`TradeLedger.net_shipment_crossings`, the one place it is netted). A
+`shipment_returned` (wire code 7, Route/In) is a trade party's undelivered cargo folding home; it names
+the destination and carries the same `party_id` as the `shipment_out` it came from. It is taken off
+that party's export in the same window, good by good and rating by rating: a cancel in camp nets the
+export to nothing, so the shipment has no row and counts toward neither the badge nor "N shipments"; a
+partial return leaves the remainder on the export row; a return with no export in the window (it left
+on an earlier turn) lists under Imports as its own row, `↩ Bitterbrook ⚑ (returned) ····· 1.5 hide`,
+counted as a shipment. Frames: `trade_tab_shipment_cancelled`, `trade_tab_shipment_returned`. The
 tab badge is this turn's shipment count, both ways, and no badge on a turn with none — pooling never
 counts. A shipment is the crossings one party carried in one direction (`party_id`, falling back to
 the counterparty), cargo summed per good; a direction past `SHIPMENT_FOLD_TRIGGER` (4) shows the
@@ -7421,7 +7440,9 @@ content and re-anchors under itself; a row INSIDE the popover (a good in the loc
 content and keeps the anchor. A popover hidden this frame re-opens a frame later, because the main
 window regaining focus from the click that hid it would otherwise hide the re-opened one. A snapshot
 re-mounts the open list against the fresh band and re-anchors it under the rebuilt row; a band switch,
-the faction page, the tab leaving the screen and the panel hiding close it.
+the faction page, the tab leaving the screen and the panel hiding close it. **If the row it hangs from
+is gone after a re-render** — its good now nets even, the tier flipped FULL↔SHORT, its arm emptied —
+the list closes rather than re-anchoring elsewhere (`trade_tab_list_anchor_gone`).
 
 The camps list: this band first, its direct links (rung as icon + word, link distance, rung facts off
 the published `route_rungs` table), then the relay camps — `via <first hop>` on the shortest chain

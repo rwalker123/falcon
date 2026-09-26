@@ -613,6 +613,12 @@ var _forecast_query: ForecastQuery = null
 ## narrow, a section under Parties wide), so a flip is a re-render rather than a re-page.
 var _trade: TradeZoneController = null
 var _trade_wide: bool = false
+## The last Trade room measured on a LAID-OUT Parties column, and the box it was measured in — what a
+## render answers with while its own column is still detached (`_trade_room`).
+var _trade_live_room: Vector2 = Vector2.ZERO
+var _trade_live_box: Vector2 = Vector2.ZERO
+## A post-layout tier re-check is queued for the next frame (`_schedule_trade_refill`).
+var _trade_refill_pending: bool = false
 
 ## The Trade tab's controller, for the harness and for nothing that decides anything.
 func trade_zone() -> TradeZoneController:
@@ -1817,8 +1823,8 @@ func _on_zones_resized() -> void:
     # zone for it would be three.
     _sync_band_zone_scroll()
     _repage_work_zone()
-    # The Trade tier is chosen against the box, so a new box may re-author it — in place.
-    _trade.refill(_trade_room())
+    # The Trade tier is chosen against the box, so a new box may re-author it — in place, after layout.
+    _schedule_trade_refill()
 
 ## The panel's `shown_zone_changed` handler — the narrow shell swapped the zone its body draws.
 ##
@@ -7869,17 +7875,45 @@ func _trade_zone_box() -> Vector2:
 ## zone's scrolling list — the box less the zone's fixed chrome (its head, any empty hint, the footer
 ## and the gaps between them), since that list is where the section sits and the most of it a player
 ## sees without scrolling.
+##
+## ⛔ **ONLY A LAID-OUT COLUMN CAN ANSWER.** The Parties column's autowrap hints (the empty-parties hint,
+## the no-idle reason) and an inline compose sheet report a word-per-line height while the column is
+## detached — which it is, mid-`build_parties_zone` — so a room measured there is too short and the
+## section drops to SHORT on every render while the resize path, measuring the live column, picks
+## FULL. So a detached column answers with the last LIVE measurement for the same box
+## (`_trade_live_room`), and `_schedule_trade_refill` re-chooses the tier a frame after every render
+## and every resize, on one path, so the two can never disagree.
 func _trade_room() -> Vector2:
     var box := _trade_zone_box()
     if not _trade_wide or _parties_zone_col == null or not is_instance_valid(_parties_zone_col):
         return box
+    if not _parties_zone_col.is_inside_tree() and _trade_live_box == box \
+            and _trade_live_room != Vector2.ZERO:
+        return _trade_live_room
     var used := 0.0
     for child in _parties_zone_col.get_children():
         if child is Control and String(child.name) != HudWorkVocab.PARTIES_LIST_NAME:
             used += (child as Control).get_combined_minimum_size().y
     used += float(maxi(_parties_zone_col.get_child_count() - 1, 0)) \
         * float(_parties_zone_col.get_theme_constant("separation"))
-    return Vector2(box.x, maxf(box.y - used, 0.0))
+    var room := Vector2(box.x, maxf(box.y - used, 0.0))
+    if _parties_zone_col.is_inside_tree():
+        _trade_live_box = box
+        _trade_live_room = room
+    return room
+
+## **RE-CHOOSE THE TRADE TIER AFTER LAYOUT** — the one path a render and a resize both take, run at
+## most once per frame (a second request in the same frame rides the first). `refill` is a no-op when
+## the room has not moved.
+func _schedule_trade_refill() -> void:
+    if _trade_refill_pending or _host == null or not _host.is_inside_tree():
+        return
+    _trade_refill_pending = true
+    await _host.get_tree().process_frame
+    _trade_refill_pending = false
+    if _panel_is_faction or _panel == null:
+        return
+    _trade.refill(_trade_room())
 
 ## Is the Trade content on screen — its own tab in the narrow shell, the Parties flank in the wide?
 func _trade_zone_is_on_screen() -> bool:
@@ -10157,6 +10191,8 @@ func render_band(unit: Dictionary) -> void:
     _panel.set_zones(zones)
     _trade_cargo_zones_rebuilding = false
     _push_zone_badges(_band_labor.panel_band())
+    # The Trade tier, re-chosen against the laid-out column a frame from now — see `_trade_room`.
+    _schedule_trade_refill()
     # Header: settlement stage + name + stage label. The stage `id` is the panel's sprite key
     # (bundled art), the `icon` its emoji fallback for a stage with no art; both already flow
     # onto the marker/cohort dict. A missing stage falls back to a neutral glyph.

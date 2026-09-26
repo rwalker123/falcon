@@ -68,6 +68,11 @@ const FOOD_DOWRY_OUT := 18.0
 const BARROWMERE_BONE_OUT := 0.8
 ## Food the outlook state's band pools away each turn — past its surplus, so its larder empties.
 const OUTLOOK_POOLED_OUT := 4.0
+## The cancelled and the late-returned shipments' parties and cargo.
+const CANCEL_PARTY := 7301
+const RETURN_PARTY := 7302
+const CANCEL_FOOD := 12.0
+const RETURN_HIDE := 1.5
 const IMPORT_PARTY := 7001
 const EXPORT_PARTY := 7002
 ## The busiest turn: every good the busy turn moves plus four more, and fifteen shipments.
@@ -86,6 +91,8 @@ const MANY_IMPORT_AMOUNT_STEP := 1.5
 ## bottom dock (the tabbed shell at a strip's height, which is where the SHORT tier lands).
 const SIDE_CANVAS := Vector2i(1500, 900)
 const WIDE_CANVAS := Vector2i(1920, 1080)
+## A second wide canvas to resize through and back — still wide, so the shell does not flip.
+const WIDE_RESIZE_CANVAS := Vector2i(2000, 1080)
 const NARROW_BOTTOM_CANVAS := Vector2i(1100, 800)
 ## The three-zone threshold (issue #731 option iii leaves it here), asserted against the panel's own.
 const THREE_ZONE_SHELL_MIN_WIDTH := 1190.0
@@ -257,6 +264,51 @@ func run(harness) -> void:
 		_has_heading(zone, DetailFormat.TRANSFER_LABEL_ROUTE)
 			and not _has_heading(zone, DetailFormat.TRANSFER_LABEL_LOCAL))
 
+	# ---- 5c. A SHIPMENT THAT CAME BACK -----------------------------------------------------------
+	# Cancelled in camp: the export and its equal return in one window, one party. Nothing crossed on
+	# the route — no row, no badge, and the Food popover's `⇄ Trade route` nets to nothing.
+	h._push_bands(_network(_pooled_only(_busy_crossings()) + _cancelled_shipment()))
+	await h._settle()
+	await h._save("trade_tab_shipment_cancelled")
+	zone = panel._zones.get(BandCityPanel.ZONE_TRADE)
+	badge = panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {})
+	var cancel_food: Array[String] = h._hud._disclosures.food_breakdown_lines(_subject())
+	h._assert_band_panel("a shipment cancelled in camp has no route row and no badge (badge `%s`)"
+			% String(badge.get("text", "")),
+		not _has_heading(zone, DetailFormat.TRANSFER_LABEL_ROUTE) and String(badge.get("text", "")) == ""
+			and _metas(zone, TradeZoneController.ROW_SHIPMENT_META).is_empty())
+	h._assert_band_panel("…and the Food popover shows no `⇄ Trade route` row and no `Brought home` — cargo is not the party's haul",
+		not _any_line(cancel_food, DetailFormat.TRANSFER_LABEL_ROUTE)
+			and not _any_line(cancel_food, DetailFormat.TRANSFER_LABEL_BROUGHT_HOME))
+	# Returned on a LATER turn: no export in this window to net, so it is an import of its own.
+	h._push_bands(_network(_pooled_only(_busy_crossings()) + _late_return()))
+	await h._settle()
+	await h._save("trade_tab_shipment_returned")
+	zone = panel._zones.get(BandCityPanel.ZONE_TRADE)
+	badge = panel._tab_badges.get(BandCityPanel.ZONE_TRADE, {})
+	var returned_row := _row(zone, TradeZoneController.ROW_SHIPMENT_META, NAMES[BITTERBROOK])
+	h._assert_band_panel("a return with no export in the window lists under Imports as `%s %s … %s`, counted"
+			% [HudTradeVocab.RETURN_ARROW, NAMES[BITTERBROOK], HudTradeVocab.RETURNED_SUFFIX],
+		returned_row != null and _text_of(returned_row).contains(HudTradeVocab.RETURN_ARROW)
+			and _text_of(returned_row).contains(HudTradeVocab.RETURNED_SUFFIX)
+			and _text_of(zone).contains(HudTradeVocab.IMPORTS_WORD)
+			and _find_all(returned_row, "FactionMark").size() == 1
+			and String(badge.get("text", "")) == "1")
+
+	# ---- 5d. AN OPEN LIST WHOSE ROW VANISHES CLOSES ------------------------------------------------
+	h._push_bands(_network(_busy_crossings()))
+	await h._settle()
+	trade.open_list(TradeZoneController.KIND_CAMPS + TradeZoneController.KIND_SCOPE_SEPARATOR + "bone")
+	await h._settle()
+	await h._settle()
+	var was_open := trade.is_list_open()
+	h._push_bands(_network(_without_good(_busy_crossings(), "bone")))
+	await h._settle()
+	await h._settle()
+	await h._save("trade_tab_list_anchor_gone")
+	h._assert_band_panel("a list whose good no longer moves closes on the re-render (was open %s)" % str(was_open),
+		was_open and not trade.is_list_open())
+
 	# ---- 6. THE WIDE SHELL — option (iii) --------------------------------------------------------
 	# The BUSIEST turn — eight goods and fifteen shipments, the proposal's own worst case — which is
 	# what the strip's body cannot hold at full height.
@@ -322,6 +374,28 @@ func run(harness) -> void:
 		hover.visible and not hover_screen.intersects(trade.list_rect()))
 	hover.dismiss()
 	trade.dismiss()
+
+	# ---- 6e. THE WIDE SHELL'S TIER IS CHOSEN AFTER LAYOUT -----------------------------------------
+	# A Parties column carrying its empty-parties hint (an autowrap label, which measures a word per
+	# line while its column is detached) and room enough for the FULL tier: the tier must be FULL after
+	# a snapshot render AND after a resize — one path, so the two cannot disagree.
+	h._push_bands(_network(_food_only()))
+	await h._settle()
+	await h._settle()
+	parties = panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	h._assert_band_panel("precondition: the Parties column carries its empty-parties hint",
+		_text_of(parties).contains(HudComposeVocab.PARTIES_EMPTY_HINT))
+	await h._save("trade_tab_wide_full_after_render")
+	h._assert_band_panel("the wide shell's Trade section is FULL after a snapshot render",
+		not trade.is_short_tier() and _find_named(parties, TradeZoneController.FULL_TIER_NAME) != null)
+	await h._pin_canvas(WIDE_RESIZE_CANVAS)
+	await h._settle()
+	await h._pin_canvas(WIDE_CANVAS)
+	await h._settle()
+	await h._settle()
+	parties = panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	h._assert_band_panel("…and still FULL after a resize",
+		not trade.is_short_tier() and _find_named(parties, TradeZoneController.FULL_TIER_NAME) != null)
 
 	# ---- 6d. EVERY LIST AGAIN, AT A RAISED INTERFACE SCALE -------------------------------------
 	# The Options slider's own lever (`ClientSettings.ui_scale` → `UiScaler` → the window's
@@ -595,6 +669,41 @@ func _even_only_crossings() -> Array:
 		_x(HudTradeVocab.COMMODITY_FODDER, HudTradeVocab.DIRECTION_OUT, HudTradeVocab.CAUSE_POOLED,
 			HIDE_POOLED_IN),
 	]
+
+## A shipment loaded and cancelled in camp in one window: the export and its equal return, one party.
+func _cancelled_shipment() -> Array:
+	return [
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_OUT,
+			HudTradeVocab.CAUSE_SHIPMENT_OUT, CANCEL_FOOD, [], _id(BITTERBROOK), NAMES[BITTERBROOK],
+			HudConst.PLAYER_FACTION_ID, CANCEL_PARTY),
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_SHIPMENT_RETURNED, CANCEL_FOOD, [], _id(BITTERBROOK), NAMES[BITTERBROOK],
+			HudConst.PLAYER_FACTION_ID, CANCEL_PARTY),
+	]
+
+## Cargo returning on a later turn than it left — no export in this window to net against.
+func _late_return() -> Array:
+	return [BandFx.transfer_crossing("hide", HudTradeVocab.DIRECTION_IN,
+		HudTradeVocab.CAUSE_SHIPMENT_RETURNED, RETURN_HIDE,
+		[_reading("toughness", "good"), _reading("suppleness", "fair")], _id(BITTERBROOK),
+		NAMES[BITTERBROOK], HudConst.PLAYER_FACTION_ID, RETURN_PARTY)]
+
+## The busy turn's pooled food alone — a Trade section short enough for the FULL tier anywhere.
+func _food_only() -> Array:
+	var out: Array = []
+	for x in _busy_crossings():
+		if TradeLedger.is_pooled(x) and TradeLedger.commodity_of(x) == HudTradeVocab.COMMODITY_FOOD:
+			out.append(x)
+	return out
+
+func _without_good(list: Array, commodity: String) -> Array:
+	return list.filter(func(x): return TradeLedger.commodity_of(x) != commodity)
+
+func _any_line(lines: Array, needle: String) -> bool:
+	for line in lines:
+		if String(line).contains(needle):
+			return true
+	return false
 
 func _pooled_only(list: Array) -> Array:
 	return list.filter(func(x): return TradeLedger.is_pooled(x))

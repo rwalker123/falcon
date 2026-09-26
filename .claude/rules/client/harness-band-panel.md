@@ -172,8 +172,12 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 216 frames / 1526 `PASS` / 566 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 220 frames / 1533 `PASS` / 566 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
+
+**PR #738's REVIEW FIXES MOVED IT 216 / 1526 / 566 → 220 / 1533 / 566**: the returned-shipment pair
+(`trade_tab_shipment_cancelled`, `trade_tab_shipment_returned`), the anchor-gone close
+(`trade_tab_list_anchor_gone`) and the after-layout tier (`trade_tab_wide_full_after_render`).
 
 **MERGING #731's TRADE TAB WITH MAIN MOVED IT 193 / 1454 / 559 → 216 / 1526 / 566**, re-measured on the
 merged tree rather than summed: the Trade tab's states (`tools/band_panel_trade_tab.gd`, run last) on

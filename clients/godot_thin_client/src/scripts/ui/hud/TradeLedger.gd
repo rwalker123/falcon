@@ -192,6 +192,70 @@ const SHIPMENT_COUNTERPARTY_NAME := "counterparty_name"
 const SHIPMENT_COUNTERPARTY_FACTION := "counterparty_faction"
 const SHIPMENT_TOTAL := "total"
 const SHIPMENT_CARGO := "cargo"
+## True for a shipment made of returned cargo with no export in the window to net against.
+const SHIPMENT_RETURNED := "returned"
+## The flag `net_shipment_crossings` stamps on a returned crossing it could not net away.
+const RETURNED_FLAG := "_returned"
+
+## **THE SHIPMENT CROSSINGS AFTER A RETURN HAS UNDONE ITS EXPORT** — the one place a
+## `shipment_returned` is netted. Each returned pile is taken off the SAME party's `shipment_out` of
+## the same good at the same rating (`rating_key`) in this window, pile by pile:
+##   * a cancel in camp (the whole cargo back) nets the export to nothing, and that shipment has no
+##     row and does not count;
+##   * a partial return leaves the remainder on the export;
+##   * a return with no export left to net against (it left on an earlier turn) stays, as an IMPORT
+##     stamped `RETURNED_FLAG` — the `↩ … (returned)` row.
+## Crossings a return did not touch are passed through unchanged.
+static func net_shipment_crossings(band: Dictionary) -> Array[Dictionary]:
+	var returned: Dictionary = {}
+	var outs: Array[Dictionary] = []
+	var rest: Array[Dictionary] = []
+	for crossing in crossings(band):
+		match cause_of(crossing):
+			HudTradeVocab.CAUSE_SHIPMENT_RETURNED:
+				var key := _return_key(crossing)
+				returned[key] = float(returned.get(key, 0.0)) + absf(float(crossing.get(HudTradeVocab.CROSSING_AMOUNT, 0.0)))
+			HudTradeVocab.CAUSE_SHIPMENT_OUT:
+				outs.append(crossing)
+			HudTradeVocab.CAUSE_SHIPMENT_IN:
+				rest.append(crossing)
+	var result: Array[Dictionary] = []
+	for crossing in outs:
+		var key := _return_key(crossing)
+		var back := float(returned.get(key, 0.0))
+		if back <= 0.0:
+			result.append(crossing)
+			continue
+		var amount := absf(float(crossing.get(HudTradeVocab.CROSSING_AMOUNT, 0.0)))
+		var taken := minf(back, amount)
+		returned[key] = back - taken
+		if is_even(amount - taken):
+			continue
+		var remainder := crossing.duplicate()
+		remainder[HudTradeVocab.CROSSING_AMOUNT] = amount - taken
+		result.append(remainder)
+	result.append_array(rest)
+	# Returned cargo with no export left to net: an import of its own, marked returned.
+	for crossing in crossings(band):
+		if cause_of(crossing) != HudTradeVocab.CAUSE_SHIPMENT_RETURNED:
+			continue
+		var key := _return_key(crossing)
+		var left := float(returned.get(key, 0.0))
+		if is_even(left):
+			continue
+		var amount := absf(float(crossing.get(HudTradeVocab.CROSSING_AMOUNT, 0.0)))
+		var shown := minf(left, amount)
+		returned[key] = left - shown
+		var own := crossing.duplicate()
+		own[HudTradeVocab.CROSSING_AMOUNT] = shown
+		own[RETURNED_FLAG] = true
+		result.append(own)
+	return result
+
+## What a return nets against: the party, the good and the pile's rating.
+static func _return_key(crossing: Dictionary) -> String:
+	return "%d|%s|%s" % [int(crossing.get(HudTradeVocab.CROSSING_PARTY_ID, HudTradeVocab.NO_BAND)),
+		commodity_of(crossing), rating_key(crossing)]
 
 ## **THE ROUTE ARM, ONE ENTRY PER SHIPMENT.** A shipment is the crossings ONE party carried — grouped
 ## on `party_id`, falling back to the counterparty where the party is unnamed — and in ONE direction,
@@ -201,14 +265,13 @@ const SHIPMENT_CARGO := "cargo"
 static func shipments(band: Dictionary) -> Array[Dictionary]:
 	var groups: Dictionary = {}
 	var order: Array[String] = []
-	for crossing in crossings(band):
-		if not is_shipment(crossing):
-			continue
+	for crossing in net_shipment_crossings(band):
 		var party := int(crossing.get(HudTradeVocab.CROSSING_PARTY_ID, HudTradeVocab.NO_BAND))
 		var counterparty := int(crossing.get(HudTradeVocab.CROSSING_COUNTERPARTY_ID, HudTradeVocab.NO_BAND))
 		var direction := int(crossing.get(HudTradeVocab.CROSSING_DIRECTION, HudTradeVocab.DIRECTION_IN))
-		var key := "%d|%s" % [direction,
-			("p%d" % party) if party != HudTradeVocab.NO_BAND else ("c%d" % counterparty)]
+		var key := "%d|%s|%s" % [direction,
+			("p%d" % party) if party != HudTradeVocab.NO_BAND else ("c%d" % counterparty),
+			"r" if bool(crossing.get(RETURNED_FLAG, false)) else ""]
 		if not groups.has(key):
 			var carried: Array[Dictionary] = []
 			groups[key] = {
@@ -218,6 +281,7 @@ static func shipments(band: Dictionary) -> Array[Dictionary]:
 				SHIPMENT_COUNTERPARTY_NAME: String(crossing.get(HudTradeVocab.CROSSING_COUNTERPARTY_NAME, "")),
 				SHIPMENT_COUNTERPARTY_FACTION: int(crossing.get(HudTradeVocab.CROSSING_COUNTERPARTY_FACTION,
 					HudConst.PLAYER_FACTION_ID)),
+				SHIPMENT_RETURNED: bool(crossing.get(RETURNED_FLAG, false)),
 				"_crossings": carried,
 			}
 			order.append(key)

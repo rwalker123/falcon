@@ -184,9 +184,13 @@ func build_section(band: Dictionary, available: Vector2) -> VBoxContainer:
 func refill(available: Vector2) -> void:
 	if _column == null or not is_instance_valid(_column) or _band.is_empty():
 		return
+	if available == _available:
+		return
 	_available = available
 	HudWidgets.clear_children(_column)
 	_fill(_column)
+	# The rows an open list hangs from were just rebuilt: re-anchor it, or close it if its row is gone.
+	sync_list(_band)
 
 func _fill(col: VBoxContainer) -> void:
 	var full := _build_full_tier(_band)
@@ -361,11 +365,16 @@ func _build_shipment_row(band: Dictionary, shipment: Dictionary) -> Control:
 
 func _add_counterparty(row: HBoxContainer, band: Dictionary, shipment: Dictionary) -> void:
 	var inbound := int(shipment[TradeLedger.SHIPMENT_DIRECTION]) == HudTradeVocab.DIRECTION_IN
-	var name := _row_label("%s %s" % [HudTradeVocab.IMPORT_ARROW if inbound else HudTradeVocab.EXPORT_ARROW,
-		TradeLedger.counterparty_label(shipment)], HudStyle.INK_DIM)
+	var returned := bool(shipment.get(TradeLedger.SHIPMENT_RETURNED, false))
+	var arrow := HudTradeVocab.RETURN_ARROW if returned \
+		else (HudTradeVocab.IMPORT_ARROW if inbound else HudTradeVocab.EXPORT_ARROW)
+	var name := _row_label("%s %s" % [arrow, TradeLedger.counterparty_label(shipment)], HudStyle.INK_DIM)
 	row.add_child(name)
 	row.add_child(FactionMark.make(int(shipment[TradeLedger.SHIPMENT_COUNTERPARTY_FACTION]),
 		_own_faction(band)))
+	# `↩ Bitterbrook ⚑ (returned)` — cargo that came back, with no export in this window to net.
+	if returned:
+		row.add_child(_faint_label(HudTradeVocab.RETURNED_SUFFIX))
 
 ## The SHORT tier's arm row: `⇄ LOCAL EXCHANGE ····· 8 goods ›`, opening `kind` (none when empty).
 func _build_arm_row(title: String, count: String, kind: String) -> Control:
@@ -884,7 +893,13 @@ func _in_popover(control: Control) -> bool:
 func _place() -> void:
 	if _popover == null or not is_instance_valid(_popover):
 		return
+	# **THE ROW IT HANGS FROM IS GONE — close it; never re-anchor elsewhere.** A re-render can take the
+	# anchor row away (its good now nets even, the tier flipped FULL↔SHORT, its arm emptied), and a list
+	# left open under a row that no longer exists points at nothing.
 	var anchor := _anchor_row()
+	if anchor == null and _column != null and is_instance_valid(_column):
+		dismiss()
+		return
 	if anchor == null or _column == null or not is_instance_valid(_column) or not _column.is_inside_tree():
 		return
 	_anchor_rect = anchor.get_global_rect()

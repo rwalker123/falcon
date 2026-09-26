@@ -1517,8 +1517,8 @@ So both popovers read the per-cause `transfer_crossings` list (`TradeLedger.caus
 
 | row | cause | where it sits |
 |---|---|---|
-| `⇄ Trade route` | `shipment_in` − `shipment_out` | the transfer rows, as before |
-| `Brought home` | `party_home` (▲) | beside Hunted / Gathered (Grown, on the fodder account) |
+| `⇄ Trade route` | `shipment_in` + `shipment_returned` − `shipment_out` | the transfer rows, as before — a shipment cancelled in camp nets to nothing here |
+| `Brought home` | `party_home` (▲) — the party's own pack, never a trade party's cargo (that is `shipment_returned`) | beside Hunted / Gathered (Grown, on the fodder account) |
 | `Party rations` | `party_provisions` (▼) | beside them too |
 
 `⇄ Local exchange` still reads the whole Local arm off the four link terms — pooling AND a split's

@@ -51,12 +51,17 @@ const CAUSE_SHIPMENT_OUT := 3
 const CAUSE_SHIPMENT_IN := 4
 const CAUSE_PARTY_HOME := 5
 const CAUSE_PARTY_PROVISIONS := 6
+## A trade party's UNDELIVERED cargo folding home — a cancel in camp, or a party walking back from a
+## destination that died. Route/In; names the destination as counterparty and the same `party_id` as
+## the `shipment_out` it undoes (`TradeLedger.net_shipment_crossings`).
+const CAUSE_SHIPMENT_RETURNED := 7
 
 ## **WHAT COUNTS AS TRADE.** The Local arm is `pooled`; the Route arm is a shipment either way. A
 ## band's own party coming home, a party's launch larder and a split's dowry are NEVER on the tab —
 ## they are the band's own hunting and foraging (the Food popover's rows) and the split's own event.
-const TRADE_CAUSES: Array[int] = [CAUSE_POOLED, CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT]
-const SHIPMENT_CAUSES: Array[int] = [CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT]
+const TRADE_CAUSES: Array[int] = [CAUSE_POOLED, CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT,
+	CAUSE_SHIPMENT_RETURNED]
+const SHIPMENT_CAUSES: Array[int] = [CAUSE_SHIPMENT_IN, CAUSE_SHIPMENT_OUT, CAUSE_SHIPMENT_RETURNED]
 
 ## The store keys of the two larders on a crossing. Food's is the sim's store key, `provisions`.
 const COMMODITY_FOOD := HudConst.STORE_ITEM_PROVISIONS
@@ -99,6 +104,9 @@ const OUT_GLYPH := "▼"
 ## A shipment's arrow: `←` for what came in, `→` for what left.
 const IMPORT_ARROW := "←"
 const EXPORT_ARROW := "→"
+## A returned shipment's row — its cargo came back with no export to net against in this window.
+const RETURN_ARROW := "↩"
+const RETURNED_SUFFIX := "(returned)"
 const OPENS_CARET := "›"
 
 ## One good's row: its net this turn, and how many rating piles stand behind it when more than one.
