@@ -717,7 +717,9 @@ sweeps the profile live via `_set_blend_profile` +
 
 **`BANK_off` is the NEUTRAL profile — i.e. the BEFORE**, the shipped global levers, in the same
 camera, and it reproduces the report exactly. `BANK_v1/v2/v3` are the ladder (**v2 = 2.6/2.2/2.6
-SHIPS**; v1 still traces the hexagon, v3 dissolves the bank) and `BANK_shipped` is config's.
+shipped** until state 28 retired it; v1 still traces the hexagon, v3 dissolves the bank) and `BANK_shipped`
+is config's — now neutral, so it renders as `BANK_off`. This fixture's tiles carry no `underlying_terrain`,
+so its navigable hexes still render and key on the bank layer; no live map can reach that state.
 `scripts/preview.sh res://tools/blend_probe.tscn` (or `-- --only=SURF` / `-- --only=BANK`)
 
 **One more state (22, ECO): ALLUVIAL ↔ PRAIRIE, every edge orientation in one frame** → `ECO_*.png`,
@@ -777,6 +779,19 @@ shipped frame: `_nopeaks` (relief pass skipped), `_noshadow` (`shadow_strength 0
 (`min_prominence 1`) and `_flat` (the same ids at ONE elevation — the control). The frame the relief's
 elevation field was proved and fixed on: measure the straddle-pixel ratio on the field's internal VERTICAL
 edges ((6,3)|(7,3), (7,3)|(8,3), (5,4)|(6,4), (6,4)|(7,4), (7,5)|(8,5)) and judge the cuts at 3×.
+
+**One more state (28, NAVBASE): a navigable river whose VALLEY biome changes along it** → `NAVBASE` +
+`_crop0..2` + `_karst0..1`, r ≈ 75, grid OFF. A bending chain (`NAVBASE_WALK`) crosses prairie → alluvial →
+mixed_woodland, each hex's `underlying_terrain` the field biome under it, runs alongside a two-hex
+`inland_sea`, and walls in two `karst_cavern_mouth` POCKETS with a `salt_flat` beside each (the reported
+neighbourhood). It is the frame three reports were reproduced and fixed on (`terrain-blend-shader.md` →
+Rivers): the grey silt patches and razor valley seams (every cross-hex comparison keyed on id 37), the
+channel and bank CUT at exit edges (each hex drew only its own strokes, from a meander-warped point), and the
+rectangular block in the pockets (the bank's 2.6 profile stepping at the corner triple's nearest-vertex
+lines). Measure the straddle-pixel ratio on the chain's exit edges ((3,4)E, (4,5)E, (8,5)E), its nav↔land
+edges, and the pockets' six edges; `_crop0` is the bend whose exit edge the meander carried the channel
+across. Before any fix it read up to **2.99** on an exit edge and **5.27** on a pocket edge; after, **≤ 0.96**
+and **≤ 1.37**.
 
 ## Worked-source mark states (issue #412)
 

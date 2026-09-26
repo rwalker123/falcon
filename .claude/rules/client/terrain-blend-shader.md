@@ -160,8 +160,12 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
     high-contrast vertex is a steep but continuous ramp, and the 4× crops show no step.
   * **A nearest-vertex switch sits on the line from the hex centre to each edge midpoint.** The two vertex
     triples meet there, but the far vertex's third hex is out of reach of that line for any band under ~0.43·r
-    (`width_scale` ≤ 1.7). A wider profile (alluvial 2.2, the bank 2.6) can leave it a small residual weight
-    at that line, and the switch then drops it.
+    (`width_scale` ≤ 1.7). A wider profile (alluvial 2.2) can leave it a small residual weight at that line,
+    and the switch then drops it. **That is what drew the "rectangular block beside the karst hexes"**: while
+    a navigable hex keyed its seams on id 37 it carried the bank's 2.6 profile, and a karst pocket walled in
+    by river hexes stepped along those lines — HORIZONTAL from the centre to its E/W edge midpoints, meeting
+    the vertical E/W edges in a rectangle (`blend_probe` state 28, `NAVBASE_karst*`: pocket straddle ratios
+    up to **5.27** before, **≤ 1.37** after). It went with the keying fix below, not with any change here.
   The **wobble** (world `vnoise`, cell `blend_noise_cell`) gives an organic, meandering boundary instead
   of the straight hex line, and carries **low-variance pairs** (smooth sand ↔ smooth soil) where there is
   little detail to follow. The **height term** is a *detail-following NUDGE*: with no height maps each
@@ -225,14 +229,14 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
     few brightness points apart that share a hue. Their visible ramp is only ~`0.35·r` wide and the wobble
     displaces it by a fraction of that, so the boundary still essentially **traces the hex polyline** — which
     is invisible between two tan grasslands and *glaring* between two textures far apart in **both tone and
-    hue**. The `NavigableRiver` **bank** (id 37) is exactly that: grey, low-contrast gravel (mean luma **89**)
+    hue**. The `NavigableRiver` **bank** (id 37) was exactly that: grey, low-contrast gravel (mean luma **89**)
     whose neighbours in a river corridor are prairie/scrub (**112–127**) on one side and floodplain/alluvial
-    (**55–58**) on the other. Under the global levers alone the corridor renders as a **chain of grey
+    (**55–58**) on the other. Under the global levers alone the corridor rendered as a **chain of grey
     hexagons** — the blend fires correctly, it is simply far too narrow and too straight to read as an
     ecotone at that contrast. **This is NOT fixable with the global levers** (widening them to suit the bank
     would move every biome seam main tuned), so a terrain entry may carry an optional block scaling the seams
     **it** is on, along three axes — the flat↔flat twin of the water side's `shore_profile`:
-    `{ "id": 37, …, "blend_profile": { "width_scale": 2.6, "noise_scale": 2.2, "noise_cell_scale": 2.6 } }`
+    `{ "id": 10, …, "blend_profile": { "width_scale": 2.2, "noise_scale": 1.9, "noise_cell_scale": 2.2 } }`
     * `width_scale` multiplies `blend_band` — the ecotone's **REACH**.
     * `noise_scale` multiplies `blend_noise_amount` — the boundary wobble's **AMPLITUDE**, so the boundary
       leaves the hexagon instead of tracing it.
@@ -258,12 +262,14 @@ speckle, and the height term is a no-op on smooth low-variance water anyway.
       survives) — that is how `blend_probe` states **17 (BANK)** and **22 (ECO)** sweep it. Fallbacks are the
       `BLEND_PROFILE_DEFAULT_*` consts; `BLEND_PROFILE_MAX_SCALE` (4.0) guard-rails the reach, since the
       apothem is only 0.866·r and a wider band would collide with the opposite seam.
-    * **Shipped:** `navigable_river` (2.6 / 2.2 / 2.6) — chosen on `blend_probe` state 17, which renders
-      the corridor against a **dark** field and a **bright** one in ONE frame. `1.8/1.6/2.0` still traced the
-      hexagon; `3.4/2.8/3.2` started dissolving the bank's identity as a distinct silty corridor. Judge any
-      new profile there, **including the isolated-hex shred crops** — a corridor seam cannot show a torn
-      interior. That choice was made while the wobble was still symmetric (see the invariant above); the
-      `BANK_*` frames moved with the fix and read softer, with the hex-edge cut gone.
+    * **RETIRED: `navigable_river` (2.6 / 2.2 / 2.6).** It was chosen on `blend_probe` state 17 while a
+      navigable hex rendered as a whole hex of grey bank and keyed its seams on id 37. Neither is true now:
+      the hex renders its VALLEY biome and every seam keys on that (see Rivers → "A navigable hex is a
+      VALLEY"), so nothing reads a navigable hex's profile — in a live game `underlying_terrain` is never 37
+      (`core_sim` hydrology captures the biome before the overwrite). The corridor's contrast problem went
+      with the grey hex; the bank is a slim annulus with its own soft alpha. State 17's fixture carries no
+      `underlying_terrain`, so its hexes still key on the bank layer and its sweep still bites — judge a
+      profile there only for that reason; `BANK_shipped` now renders as `BANK_off`.
     * **Shipped:** `alluvial_plain` (id 10) **(2.2 / 1.9 / 2.2)** — the dark outlier (mean luma ~55) that is
       high-contrast against most of its neighbours, prairie (~112) above all. Chosen on `blend_probe` state
       **22 (ECO)**, AFTER the antisymmetric-wobble fix (with the step gone, the global ecotone still left an
@@ -875,6 +881,17 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
       **only on a navigable hex** (`own_navigable`); everywhere else `base_layer == own_layer`, a no-op.
       **The `id_map` R channel STAYS terrain id 37** — that is the navigability signal the shader keys
       `own_navigable`/the channel pass on; only the *base texture* is swapped, never the id.
+    - ⛔ **EVERY CROSS-HEX COMPARISON KEYS ON THE BASE LAYER, NEVER ON THE ID** (`base_layer_of(uv, layer)`
+      in the shader, the one place the swap is spelled). The flat↔flat interlock's "different layer" test,
+      its `blend_profile`, height term (`mean_luma`), wobble sign and neighbour texture, the corner triple,
+      the shore's land sand field and its waterline `land_base` all read a NEIGHBOUR's layer, and they read
+      it off the id-map. Swapping only the own hex's base left each of them seeing every navigable hex as
+      terrain 37: two valleys of different biome met on a razor hex edge (37 == 37, no seam to blend —
+      the "brown wedges with straight edges between the bends" report), and every land neighbour blended
+      the BANK texture in at the bank's 2.6 profile (the grey hex-edged silt patches beside the river, and
+      grey wedges eating a lake's ring on `map_rivers_lake_alongside`). Measured on `blend_probe` state
+      **28 (NAVBASE)** with the straddle-pixel ratio (≈1 continuous): nav↔land edges **1.00–2.33** before,
+      **0.80–1.39** after; the valley hand-over (4,5)|(5,5) **2.88 → 1.43**.
     - **The bank is a thin annulus riding the channel's distance field.** In the navigable channel pass, the
       silty bank (`biome_array` layer for id 37 — resolved via `river_navigable_terrain_id`, never hard-coded)
       is composited OVER the underlying base across an annulus just outside the water, out to
@@ -886,9 +903,8 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
       uniform via `RIVER_DEFAULT_NAVIGABLE_BANK_WIDTH`).
     - The bank's base texture (`textures/base/37_navigable_river.png`) is still the **BANK ground**
       (placeholder: a copy of `09_floodplain`; real silty-bank art lands later) and its config `color` (the
-      fallback solid + minimap pixel) is a bank tone. **The id-37 layer ALSO carries a per-terrain
-      `blend_profile`** (`2.6 / 2.2 / 2.6` — see Edge Blending), retained for the bank's flat↔flat seams;
-      judge the bank contrast on `blend_probe` state **17 (BANK)**. **The `blend_class` G-channel code stays
+      fallback solid + minimap pixel) is a bank tone. The id-37 entry carries **no `blend_profile`** — its
+      2.6 one retired with the base-layer keying above (see Edge Blending). **The `blend_class` G-channel code stays
       "flat" (from terrain 37)** — since both the valley base and its flat neighbours are flat class, the
       flat↔flat blend fires and the navigable hex body merges seamlessly into the surrounding land with no
       hard hex seam (verified on `map_rivers_navigable.png`/`map_rivers_web.png`). Writing the underlying
@@ -988,11 +1004,29 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
   - It reuses the **same organic machinery** as the edge pass — the `river_meander_warp` domain warp, the
     low-frequency `river_width_mod` swell, the `river_bank_wobble` ragged bank (all three factored into
     shared shader functions rather than copied) — and `river_harmonize`, so the trunk reads as the same
-    river grown bigger. All noise is sampled in **WORLD space**, which is exactly what makes the channel
-    **continuous across adjacent navigable hexes**: both hexes warp the same point and read the same width
-    at their shared boundary, so the half-channels line up with no seam, pinch or gap. The **spurs ride the
-    same three**, which is why a tributary's band arrives at the vertex already warped exactly as the edge
-    pass warped it on the far side — the two meet without a notch.
+    river grown bigger. All noise is sampled in **WORLD space**, so every hex warps the same point and reads
+    the same width at it. The **spurs ride the same three**, which is why a tributary's band arrives at the
+    vertex already warped exactly as the edge pass warped it on the far side — the two meet without a notch.
+  - ⛔ **THE CHANNEL IS A UNION OVER THE RENDERING HEX AND ITS NAVIGABLE NEIGHBOURS** (`nav_hex_channel`,
+    evaluated for each navigable hex in {own + 6 neighbours}, `max` of the coverages). World-space noise
+    alone did NOT make the channel continuous, and the pass header claimed it did: a hex's strokes end at
+    its own boundary in UNWARPED space, but are measured from the WARPED point, so wherever the meander
+    carried a fragment across a shared edge, the hex it sat in measured it against the round CAP of its own
+    arm while the neighbour whose arm it now lay beside was never asked. The channel and its bank were CUT
+    along the hex line at every exit edge the meander displaced — the "brown wedge with straight edges
+    between the bends". **Proved by toggle** on `blend_probe` state **28 (NAVBASE)**: the warp off removes
+    the cut; nav↔nav straddle ratios **2.99 / 1.43 / 1.44 → 0.75 / 0.96 / 0.89** with the union.
+    * **Why 7 hexes suffice, and why it is exact.** A stroke reaches at most ~0.5·r past its own hex
+      (half-width + bank + softness + meander), and a point must be a full `r` from a hex before that hex
+      stops being one of its neighbours — so both hexes flanking any edge enumerate every hex whose water can
+      reach it and compute the same union. It runs on a LAND hex beside a navigable one too, which is what
+      lets the bank cross onto it.
+    * **Never on a WATER hex** (`own_class != CLASS_WATER`): the union would round the channel's cap out into
+      the sea at a mouth and ring it with silt, and spill bank into a lake the river runs beside. The water
+      hex keeps the channel's end at the shared edge, as the own-hex pass always did.
+    * The art follows the winner: the trunk stroke with the best coverage carries its tangent and — on a head
+      segment — its own tributary crossfade; the best spur carries its layer. With only the own hex in play
+      that is exactly the old single-hex pick.
 - **Config levers** (`terrain_config.json` → `rivers` block): `minor_width` / `major_width` /
   **`navigable_width`** (the channel HALF-width as a fraction of the hex radius — `0.14`: clearly the
   biggest water on the map, but **only somewhat** wider than Major's `0.09`. It shipped at `0.24` and read

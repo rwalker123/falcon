@@ -15,10 +15,11 @@ render_mode blend_mix;
 // ways, over a base that cross-fades across it) — see the shoreline block. See the id-map (splatmap) below.
 // RIVERS ride on top of all of that, as two further passes (see the river blocks): Minor/Major rivers run
 // along hex EDGES (the per-tile river_edges mask, keyed BY DIRECTION), and a NavigableRiver — a water
-// TERRAIN whose blend_class is deliberately "flat" — is a BANK hex with a water CHANNEL painted through it.
+// TERRAIN whose blend_class is deliberately "flat" — is a VALLEY hex (its underlying biome) with a water
+// CHANNEL and a slim silty bank painted through it.
 // Both composite AFTER the shoreline and BEFORE the canopy/peaks (trees overhang a river; mountains sit
 // above it) and before the FoW tint (a river in a Discovered tile dims rather than punching through).
-// A navigable hex's edges are EXCLUDED from the shore pass — a river meeting the sea is not a coast.
+// A navigable hex's true MOUTH edge is EXCLUDED from the shore pass — a river meeting the sea is not a coast.
 
 uniform sampler2DArray biome_array : filter_linear, repeat_enable;
 // Canopy overlay array: whole tree crowns on transparency (RGBA), sampled in MAP space (v_map, the
@@ -156,9 +157,8 @@ uniform sampler2D layer_luma_map : filter_nearest;
 uniform sampler2D layer_shore_map : filter_nearest;
 // PER-TERRAIN BLEND PROFILE, the same 1×N RGBA-float-by-layer-index table — the flat↔flat seam's twin of
 // layer_shore_map. The three global blend levers are ONE ecotone, tuned for biome pairs that are close in
-// tone and share a hue. Against a pair far apart in BOTH (the NavigableRiver BANK — grey, low-contrast
-// gravel at mean luma 89 — has prairie/scrub at 112–127 on one side of a river corridor and
-// floodplain/alluvial at 55–58 on the other) the very same ecotone reads as a HEXAGON WITH A BLURRED EDGE:
+// tone and share a hue. Against a pair far apart in BOTH (alluvial_plain, mean luma ~55, against prairie at
+// ~112) the very same ecotone reads as a HEXAGON WITH A BLURRED EDGE:
 // the ramp is only ~0.35·r wide and the wobble displaces it by a fraction of that, so the boundary still
 // traces the hex polyline and the eye locks onto it. These three scales let such a terrain widen and roughen
 // the seams IT is on, and nobody else's:
@@ -433,6 +433,9 @@ const float RIVER_NAVIGABLE_ORPHAN_BLOB = 0.9;  // blob radius, as a multiple of
 // chain's first (core_sim/CLAUDE.md → Rivers; docs/plan_rivers_drainage_network.md §A). Gating the head taper
 // on inflow would pinch a full-width trunk to the tributary's width at a mid-chain junction — an HOURGLASS.
 const int RIVER_CHANNEL_HEAD_MAX_EXITS = 1;
+// The navigable pass unions the channel over {6 neighbours + own}; bits 0..5 of its mask are the neighbour
+// directions and this bit is the rendering hex itself.
+const int NAV_UNION_OWN = 6;
 // Hex CORNER geometry, for the riverInflow mask (B/A of the river map): corner `i` is the vertex at angle
 // 60*i + 30 with +y DOWN — exactly MapView._hex_points' order (0 lower-right, 1 bottom, 2 lower-left,
 // 3 upper-left, 4 top, 5 upper-right), which is the wire contract the sim packs the mask against. So a
@@ -780,8 +783,199 @@ vec2 hex_center(int col, int row) {
 	return hex_origin + vec2(hex_radius * (SQRT3 * q + SQRT3 * 0.5 * r), hex_radius * 1.5 * r);
 }
 
+// THE BASE LAYER of a hex — the biome texture it actually RENDERS. A navigable hex keeps terrain id 37 in the
+// id-map (the navigability signal the channel pass keys on) but renders the UNDERLYING biome the river cut as its
+// base (navigable_underlying_map). Every pass that COMPARES or SAMPLES biomes across hexes — the flat↔flat
+// interlock's "different layer" test, its profile, height term and texture, the corner triple, the shore's
+// waterline base and land sand field — must key on THIS, never on the raw id: keyed on 37, every navigable hex
+// read as one terrain (two valleys of different biome met on a razor hex edge) and every land neighbour blended
+// the BANK texture in at the bank's wide profile (grey hex-edged patches beside the river). `uv` is the hex's
+// id-map texel; `layer` its id-map layer.
+int base_layer_of(vec2 uv, int layer) {
+	return layer == river_navigable_terrain_id
+		? int(texture(navigable_underlying_map, uv).r * 255.0 + 0.5)
+		: layer;
+}
+
 int wrap_col(int col) {
 	return col - grid_w * int(floor(float(col) / float(grid_w)));
+}
+
+// ONE NAVIGABLE HEX's channel geometry at the (meander-warped) point `rp`: its trunk arms (or, on a chain head fed
+// by a tributary, its direct inflow-corner → exit segments), its inflow spurs, and the orphan blob. Every input
+// is that hex's own river masks (`huv` = its id-map texel), its centre and the world point — NEVER which hex is
+// rendering — so the navigable pass can evaluate it for the rendering hex AND each navigable neighbour and take
+// the union (see the pass header for why that union is the whole continuity argument). The geometry and its
+// comments are the pass's own, moved here.
+// Outputs: `cov_trunk` (best arm / head segment / orphan blob coverage, px; > 0 inside the water), `cov_spur`
+// (best inflow spur), `spur_layer` (river-array layer of the winning spur — or, on a head, of the tributary its
+// segment starts as), `head_class_mix` (>= 0 only on a head segment: its own art crossfade), and the tangent of
+// the winning trunk stroke and of the winning spur.
+void nav_hex_channel(int hcol, int hrow, vec2 huv, vec2 rp, vec2 p_world, float width_mod, float width_px,
+		out float cov_trunk, out float cov_spur, out float spur_layer, out float head_class_mix,
+		out vec2 trunk_tangent, out vec2 spur_tangent) {
+	vec2 hc = hex_center(hcol, hrow);   // this hex's centre (raw, unwrapped column: pure math, right across the seam)
+	vec4 rvpx = texture(river_map, huv);
+	int inflow = int(rvpx.b * 255.0 + 0.5) | (int(rvpx.a * 255.0 + 0.5) << 8);
+	// The sim-authored channel-exit mask: 1 bit per odd-r direction, and the ONLY thing that arms a
+	// trunk arm (see the pass header — the terrain-inferred rule is what wove the web).
+	int channel = int(texture(river_channel_map, huv).r * 255.0 + 0.5);
+	float half_w = max(river_navigable_half_width * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
+	// How many sides the channel flows out through — the chain's TOPOLOGY at this hex, read off the
+	// very mask the trunk-arm loop below arms itself from (no new uniform, no new texture: the data is
+	// already on the GPU). A chain HEAD has only its downstream link (1 exit); a MID-CHAIN hex has its
+	// upstream one too (2); a confluence has 3. It is also the arm count the degenerate-blob fallback
+	// needs, so it is counted ONCE here rather than tallied inside the arm loop.
+	int exits = 0;
+	for (int dir = 0; dir < 6; dir++) {
+		exits += (channel >> dir) & 1;
+	}
+	// HEAD TAPER — the width the trunk's arms START at, at the hex CENTRE. On the FIRST hex of a
+	// chain (the only hex with <= RIVER_CHANNEL_HEAD_MAX_EXITS channel exits) the trunk used to spring
+	// to full navigable width the instant it left the centre: a hairline Minor arrived at a vertex and
+	// a few px later was a great river. A jump-cut, not a river. So on that hex the arms start at the
+	// half-width of the WIDEST tributary feeding in (max over the 6 inflow corners — two tributaries
+	// can land on the same head, and the sim already stores the widest class per corner) and SWELL to
+	// the channel's full width by the time they reach the hex EDGE (see the per-arm mix below).
+	// THE GATE IS THE CHANNEL EXIT COUNT, *NOT* `inflow != 0`. Since the drainage network landed,
+	// riverInflow means "a tributary hands over at this vertex" — true of ANY navigable hex, not just
+	// the chain's first (core_sim/CLAUDE.md → Rivers; docs/plan_rivers_drainage_network.md §A). Keying
+	// the taper off it would pinch a full-width trunk down to the tributary's width at a mid-chain
+	// junction's CENTRE and swell it back out on both sides: a visible HOURGLASS in mid-channel.
+	// A hex with >= 2 exits is MID-CHAIN and keeps the CONSTANT full width (head_base stays
+	// river_navigable_half_width and the mix is a no-op); only a genuine source hex tapers.
+	// The SPUR below stays UNCONDITIONAL — it carries the tributary from the hex centre out to its
+	// vertex, and a mid-chain junction needs it MORE, not less: without it the tributary's band would
+	// dead-end at the vertex (distance r from the centre), short of the trunk's arms, which only reach
+	// the edge MIDPOINTS.
+	// min() with the channel width guards a config where a class is somehow wider than the trunk —
+	// a head must never START wider than it ends.
+	float inflow_base = 0.0;
+	for (int c = 0; c < 6; c++) {
+		int icls = (inflow >> (2 * c)) & 3;
+		if (icls < RIVER_CLASS_MINOR || icls > RIVER_CLASS_MAX) { continue; } // 0 = none, 3 = reserved
+		inflow_base = max(inflow_base,
+			(icls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width);
+	}
+	bool is_chain_head = exits <= RIVER_CHANNEL_HEAD_MAX_EXITS;
+	float head_base = (is_chain_head && inflow_base > 0.0)
+		? min(inflow_base, river_navigable_half_width)
+		: river_navigable_half_width;
+	cov_trunk = -1e9;               // coverage = half_width - distance; > 0 inside the water
+	cov_spur = -1e9;                // best INFLOW spur, tracked apart so the two can crossfade
+	spur_layer = 0.0;               // river-array layer of the winning spur (class - 1)
+	head_class_mix = -1.0;          // >= 0 => a head-inflow DIRECT segment set the art crossfade itself
+	trunk_tangent = vec2(1.0, 0.0);
+	spur_tangent = vec2(1.0, 0.0);
+	// A CHAIN HEAD FED BY A TRIBUTARY flows STRAIGHT from the inflow corner to its single exit — NOT
+	// via the hex centre. The generic routing below draws the inflow as a centre→corner spur and the
+	// exit as a centre→edge-midpoint arm; when the inflow corner and the exit side sit on the same
+	// side of the centre, that union is inflow_corner → centre → exit_mid, which DOUBLES BACK and
+	// leaves a NOTCH / inverted-V at the corner (reads as "the tributary connects at the wrong
+	// corner"). Here there is exactly ONE exit, so the whole channel is one tapered segment per inflow
+	// corner: inflow_corner → exit-midpoint, narrow (the tributary's own width) at the corner and
+	// swelling to the full navigable width at the exit edge — the head taper, laid along the true flow
+	// line. It RIDES THE SAME best_cov the bank annulus reads, so the slim bank follows it for free.
+	bool is_head_with_inflow = (exits == 1) && (inflow != 0);
+	if (is_head_with_inflow) {
+		// Resolve the single exit's shared-edge midpoint (exits == 1, so the first set bit is it).
+		vec2 exit_mid = hc;
+		for (int dir = 0; dir < 6; dir++) {
+			if (((channel >> dir) & 1) == 0) { continue; }
+			ivec2 off = neighbor_offset(hrow, dir);
+			exit_mid = (hc + hex_center(hcol + off.x, hrow + off.y)) * 0.5;
+			break;
+		}
+		for (int c = 0; c < 6; c++) {
+			int cls = (inflow >> (2 * c)) & 3;
+			if (cls < RIVER_CLASS_MINOR || cls > RIVER_CLASS_MAX) { continue; } // 0 none, 3 reserved
+			float ang = RIVER_CORNER_ANGLE_STEP * float(c) + RIVER_CORNER_ANGLE_OFFSET;
+			vec2 corner_pt = hc + vec2(cos(ang), sin(ang)) * hex_radius; // the inflow VERTEX
+			vec2 seg = exit_mid - corner_pt;               // the flow line: corner → exit midpoint
+			float seg_len2 = max(dot(seg, seg), 1e-6);
+			float t = clamp(dot(rp - corner_pt, seg) / seg_len2, 0.0, 1.0);
+			// t_head from the UNWARPED point, exactly as the arm loop does and for the same reason:
+			// the exit edge must land on precisely river_navigable_half_width so the downstream hex
+			// (which draws its own half-channel at that constant width) meets it with no step.
+			float t_head = clamp(dot(p_world - corner_pt, seg) / seg_len2, 0.0, 1.0);
+			float swell = pow(smoothstep(0.0, 1.0, t_head), river_head_taper_curve); // 0 corner→1 exit
+			float trib_w = (cls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width;
+			// Narrow (the tributary's own width, never wider than the trunk) at the corner, swelling
+			// to full navigable width at the exit. Same organic width_mod/width_px on top as the arm.
+			float base_w = mix(min(trib_w, river_navigable_half_width), river_navigable_half_width, swell);
+			float w = max(base_w * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
+			float cov = w - distance(rp, corner_pt + seg * t);
+			if (cov > cov_trunk) {
+				cov_trunk = cov;
+				trunk_tangent = normalize(seg);
+				spur_layer = float(cls - RIVER_CLASS_MINOR); // tributary art at the corner end
+				head_class_mix = swell;                      // → navigable art by the exit
+			}
+		}
+	} else {
+	for (int dir = 0; dir < 6; dir++) {
+		// The exit bit IS the arm rule — no neighbour fetch, and none possible: the mask is
+		// asymmetric at the mouth, so the neighbour's opinion is not a substitute for the own hex's.
+		// Needing no neighbour texel, an arm also draws correctly at the map border / wrap seam (the
+		// geometry only wants the neighbour's CENTRE, and hex_center is pure math on the raw,
+		// unwrapped column — so the arm points the right way even across the seam).
+		if (((channel >> dir) & 1) == 0) { continue; }
+		ivec2 off = neighbor_offset(hrow, dir);
+		vec2 nb_c = hex_center(hcol + off.x, hrow + off.y);
+		// The arm SEGMENT: own centre → the shared edge's midpoint. Clamped to the segment (like the
+		// edge pass clamps to the edge), so the channel stops at the hex boundary instead of
+		// smearing along an infinite ray — the neighbour paints its own half.
+		vec2 ab = (hc + nb_c) * 0.5 - hc;
+		float t = clamp(dot(rp - hc, ab) / dot(ab, ab), 0.0, 1.0);
+		// The taper's progress along the arm, 0 at the centre → 1 at the edge midpoint. Taken from
+		// the UNWARPED point, unlike `t` above (which measures distance to the meandering
+		// centerline and so must use the warped one), and for one load-bearing reason: EVERY
+		// fragment on the shared edge projects to EXACTLY 1.0 on the arm's axis (the projection of
+		// that whole edge line onto the arm direction is the apothem, whatever the lateral offset),
+		// so the taper lands on exactly river_navigable_half_width at the boundary — which is the
+		// constant width the downstream hex draws its own half-channel at. The warped point's
+		// projection would wander by the meander amplitude and leave a visible STEP at the head
+		// hex's downstream edge. Width is a scalar field of world position here, same as
+		// river_width_mod / river_bank_wobble (both also sampled unwarped) — so this is the house
+		// idiom, not an exception to it.
+		float t_head = clamp(dot(p_world - hc, ab) / dot(ab, ab), 0.0, 1.0);
+		float swell = pow(smoothstep(0.0, 1.0, t_head), river_head_taper_curve); // 1.0 at t_head = 1
+		float arm_base = mix(head_base, river_navigable_half_width, swell);
+		// The organic machinery rides ON TOP of the tapered base width (world-sampled, so the
+		// downstream hex reads the same width_mod/width_px at the shared boundary → still no seam).
+		float arm_w = max(arm_base * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
+		float cov = arm_w - distance(rp, hc + ab * t);
+		if (cov > cov_trunk) {
+			cov_trunk = cov;
+			trunk_tangent = normalize(ab);
+		}
+	}
+	// INFLOW SPURS — centre → the named CORNER, at the arriving tributary's width (the same
+	// river_minor/major_half_width the edge pass uses, so it keeps its identity as it enters). This
+	// runs for the MID-CHAIN junction case (>= 2 exits with an inflow) — a head with an inflow took
+	// the direct-segment branch above and never reaches here.
+	for (int c = 0; c < 6; c++) {
+		int cls = (inflow >> (2 * c)) & 3;
+		if (cls < RIVER_CLASS_MINOR || cls > RIVER_CLASS_MAX) { continue; } // 0 = none, 3 = reserved
+		float ang = RIVER_CORNER_ANGLE_STEP * float(c) + RIVER_CORNER_ANGLE_OFFSET;
+		vec2 ab = vec2(cos(ang), sin(ang)) * hex_radius;  // centre → corner c
+		float t = clamp(dot(rp - hc, ab) / dot(ab, ab), 0.0, 1.0);
+		float base_w = (cls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width;
+		float spur_w = max(base_w * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
+		float cov = spur_w - distance(rp, hc + ab * t);
+		if (cov > cov_spur) {
+			cov_spur = cov;
+			spur_layer = float(cls - RIVER_CLASS_MINOR);   // layer = class - 1 (Minor 0, Major 1)
+			spur_tangent = normalize(ab);
+		}
+	}
+	}
+	if (exits == 0) {
+		// Degenerate — a navigable hex the river never leaves (a tributary may still feed it: an
+		// inflow spur is not an arm). The sim should never emit one (MapView push_warnings if it
+		// does); draw a blob at the centre rather than a hex of bare bank with no water in it.
+		cov_trunk = max(cov_trunk, half_w * RIVER_NAVIGABLE_ORPHAN_BLOB - distance(rp, hc));
+	}
 }
 
 void fragment() {
@@ -915,7 +1109,7 @@ void fragment() {
 			// terrain carries a `blend_profile` block). Each EDGE takes the per-axis max of the two terrains',
 			// which is commutative — so the neighbour across that edge derives the same band, and the seam is
 			// continuous exactly as it is under the plain global levers. See layer_blend_map.
-			vec3 own_bp = blend_profile(own_layer);
+			vec3 own_bp = blend_profile(base_layer);
 			vec3 best_bp = own_bp;
 			float best_p = 0.0;
 			int best_layer = -1;
@@ -934,7 +1128,7 @@ void fragment() {
 				if (!nb_in) { continue; }
 				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
 				vec4 npx = texture(id_map, nuv);
-				int nlayer = int(npx.r * 255.0 + 0.5);
+				int nlayer = base_layer_of(nuv, int(npx.r * 255.0 + 0.5));   // the BASE layer — see base_layer_of
 				int nclass = int(npx.g * 255.0 + 0.5);
 				// Eligibility: with blend_rugged_land (SHIPPED TRUE), ANY land neighbour (own is land here, so
 				// this is flat↔flat / flat↔rugged / rugged↔rugged); with the gate off, same class only. Water
@@ -943,7 +1137,7 @@ void fragment() {
 				bool nb_eligible = blend_rugged_land && own_land
 					? nclass != CLASS_WATER
 					: nclass == own_class;
-				if (!nb_eligible || nlayer == own_layer) { continue; }
+				if (!nb_eligible || nlayer == base_layer) { continue; }
 				vec2 nb_c = hex_center(ncol, nrow);
 				vec2 dir_v = normalize(nb_c - own_c);
 				float half_dist = 0.5 * distance(own_c, nb_c);
@@ -986,19 +1180,20 @@ void fragment() {
 				} else if (tcol < 0 || tcol >= grid_w) {
 					continue;
 				}
-				vec4 tpx = texture(id_map, (vec2(float(tcol_id), float(trow)) + 0.5) / grid_dim);
-				int tlayer = int(tpx.r * 255.0 + 0.5);
+				vec2 tuv = (vec2(float(tcol_id), float(trow)) + 0.5) / grid_dim;
+				vec4 tpx = texture(id_map, tuv);
+				int tlayer = base_layer_of(tuv, int(tpx.r * 255.0 + 0.5));
 				int tclass = int(tpx.g * 255.0 + 0.5);
 				bool t_eligible = blend_rugged_land && own_land ? tclass != CLASS_WATER : tclass == own_class;
 				if (!t_eligible) { continue; }
 				if (side == 0) { tri_layer_b = tlayer; tri_c_b = hex_center(tcol, trow); }
 				else { tri_layer_c = tlayer; tri_c_c = hex_center(tcol, trow); }
 			}
-			bool tri_corner = tri_layer_b >= 0 && tri_layer_c >= 0 && tri_layer_b != own_layer
-				&& tri_layer_c != own_layer && tri_layer_b != tri_layer_c;
+			bool tri_corner = tri_layer_b >= 0 && tri_layer_c >= 0 && tri_layer_b != base_layer
+				&& tri_layer_c != base_layer && tri_layer_b != tri_layer_c;
 			if (tri_corner) {
 				// Order the triple by layer: (l0, c0) < (l1, c1) < (l2, c2).
-				int l0 = own_layer; vec2 c0 = own_c;
+				int l0 = base_layer; vec2 c0 = own_c;
 				int l1 = tri_layer_b; vec2 c1 = tri_c_b;
 				int l2 = tri_layer_c; vec2 c2 = tri_c_c;
 				if (l1 < l0) { int tl = l0; l0 = l1; l1 = tl; vec2 tc = c0; c0 = c1; c1 = tc; }
@@ -1049,11 +1244,11 @@ void fragment() {
 				float seam_noise_amount = blend_noise_amount * best_bp.g;
 				float seam_noise_cell = max(blend_noise_cell * best_bp.b, BLEND_SOFT_MIN);
 				float n = vnoise(v_map / seam_noise_cell);
-				float wob_sign = own_layer < best_layer ? 1.0 : -1.0;
+				float wob_sign = base_layer < best_layer ? 1.0 : -1.0;
 				float wobble = wob_sign * (n - 0.5) * seam_noise_amount;
 				// positive when OWN is the taller/brighter texture here → push the boundary toward the
 				// neighbour (own keeps the pixel), i.e. SUBTRACT from the neighbour's weight.
-				float h = (luma(own_rgb) - mean_luma(own_layer)) - (luma(nb_rgb) - mean_luma(best_layer));
+				float h = (luma(own_rgb) - mean_luma(base_layer)) - (luma(nb_rgb) - mean_luma(best_layer));
 				float pw = clamp(best_p + (wobble - h * blend_height_influence) * perturb_env, 0.0, 1.0);
 
 				float soft = max(seam_soft, BLEND_SOFT_MIN);
@@ -1063,7 +1258,7 @@ void fragment() {
 		}
 
 		// A NAVIGABLE river hex, by terrain id. It is a water TERRAIN in the sim, but its blend_class is
-		// deliberately "flat" — it renders as a BANK with a channel painted on top (see the navigable pass) —
+		// deliberately "flat" — it renders as its VALLEY with a channel painted on top (see the navigable pass) —
 		// so the shore pass, which keys purely on blend_class, would otherwise treat every one of its edges
 		// against real water as a COAST. Hence the skip below; see there for why it cannot be a shore_profile.
 		bool own_navigable = own_layer == river_navigable_terrain_id;
@@ -1106,7 +1301,7 @@ void fragment() {
 			// and x / x is not exactly 1.0, so a mean of neutral 1.0s moved stray pixels by 1/255. A mean of
 			// zero deficits is exactly 0 however it is divided, so every land terrain without a shore_profile
 			// stays BIT-exact.
-			float land_deficit_sum = own_water ? 0.0 : 1.0 - shore_profile(own_layer).r;
+			float land_deficit_sum = own_water ? 0.0 : 1.0 - shore_profile(base_layer).r;
 			float land_sand_w = own_water ? 0.0 : 1.0;
 			for (int dir = 0; dir < 6; dir++) {
 				ivec2 off = neighbor_offset(row, dir);
@@ -1138,7 +1333,7 @@ void fragment() {
 					prof_w += w;
 				} else {
 					float lw = smoothstep(-half_dist * SHORE_PROFILE_REACH_APOTHEMS, 0.0, d);
-					land_deficit_sum += (1.0 - shore_profile(nlayer).r) * lw;
+					land_deficit_sum += (1.0 - shore_profile(base_layer_of(nuv, nlayer)).r) * lw;
 					land_sand_w += lw;
 				}
 				if (own_water == nb_water) { continue; } // the COAST edge: exactly one side must be water
@@ -1234,7 +1429,7 @@ void fragment() {
 				float wl_reach = max(waterline_band * wobble, SHORE_REACH_MIN_PX);
 				float wl_outer = wl_reach * (1.0 + SHORE_WATERLINE_FADE);
 				if (waterline_band > 0.0 && abs(u) < wl_outer) {
-					vec3 own_base = texture(biome_array, vec3(base_uv, float(own_layer))).rgb;
+					vec3 own_base = texture(biome_array, vec3(base_uv, float(base_layer))).rgb;
 					vec3 land_sum = own_water ? vec3(0.0) : own_base;   // own carries weight 1 by construction
 					float land_w = own_water ? 0.0 : 1.0;
 					vec3 water_sum = own_water ? own_base : vec3(0.0);
@@ -1261,7 +1456,7 @@ void fragment() {
 						// The SAME unwobbled weight as the profile field — a noise displacement here would
 						// break the exact cross-edge agreement the whole cross-fade rests on.
 						float w = smoothstep(-half_dist * SHORE_PROFILE_REACH_APOTHEMS, 0.0, d);
-						vec3 nb_base = texture(biome_array, vec3(base_uv, float(nlayer))).rgb;
+						vec3 nb_base = texture(biome_array, vec3(base_uv, float(base_layer_of(nuv, nlayer)))).rgb;
 						if (nb_water) {
 							water_sum += nb_base * w;
 							water_w += w;
@@ -1421,13 +1616,13 @@ void fragment() {
 			}
 		}
 
-		// --- navigable-river pass: a BANK hex with a wide water CHANNEL running through it ---
+		// --- navigable-river pass: a wide water CHANNEL, in a slim silty bank, running through a valley ---
 		// A NavigableRiver is a water TERRAIN in the sim (blocking, boats), but rendering it as one made it a
 		// hex-shaped puddle with a beach and surf — indistinguishable from a lake, and nothing like a river. So
-		// its BASE texture is the silty bank ground and its blend_class is "flat": the bank takes the ordinary
-		// land interlock into its neighbours (and, with blend_rugged_land, into rugged ones too), takes NO
-		// shore pass (see the `own_navigable || nb_navigable` skip above), and the water is painted ON TOP
-		// here, as a channel far narrower than the hex.
+		// its base renders the VALLEY biome the river cut (base_layer_of) and its blend_class is "flat": the
+		// valley takes the ordinary land interlock into its neighbours (and, with blend_rugged_land, into
+		// rugged ones too), takes no shore pass at a true mouth (see the mouth skip above), and the water is
+		// painted ON TOP here, as a channel far narrower than the hex, inside a slim silty-bank annulus.
 		//
 		// Two kinds of stroke, unioned by the same MAX-COVERAGE (== min-distance) pick the Minor/Major pass
 		// uses — which is what fuses them into one connected body with rounded joins, for free:
@@ -1455,216 +1650,132 @@ void fragment() {
 		//    all 6 corners are checked. It needs no neighbour fetch, so it spurs at the border/wrap seam too.
 		// Runs AFTER the Minor/Major pass so a Major feeding a navigable trunk composites into it, and
 		// before canopy/peaks/FoW like the rest of the water.
-		if (river_navigable_enabled && rivers_lod_enabled && own_navigable) {
-			vec4 rvpx = texture(river_map, id_uv);
-			int inflow = int(rvpx.b * 255.0 + 0.5) | (int(rvpx.a * 255.0 + 0.5) << 8);
-			// The sim-authored channel-exit mask: 1 bit per odd-r direction, and the ONLY thing that arms a
-			// trunk arm (see the pass header — the terrain-inferred rule is what wove the web).
-			int channel = int(texture(river_channel_map, id_uv).r * 255.0 + 0.5);
-			// The SAME organic machinery as the edge pass — meander warp, low-frequency swell along the
-			// reach, ragged banks — all sampled in WORLD space, which is what keeps the channel CONTINUOUS
-			// across adjacent navigable hexes: both hexes warp the same point and read the same width at
-			// their shared boundary, so the two half-channels line up exactly. No seam, no pinch, no gap.
-			// The spurs ride the same three, so a tributary's band arrives at the vertex already warped
-			// exactly as the edge pass warped it on the far side — the two meet without a notch.
-			vec2 rp = river_meander_warp(v_world, v_map);
-			float width_mod = river_width_mod(v_map);
-			float width_px = river_bank_wobble(v_map);
-			float half_w = max(river_navigable_half_width * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
-			// How many sides the channel flows out through — the chain's TOPOLOGY at this hex, read off the
-			// very mask the trunk-arm loop below arms itself from (no new uniform, no new texture: the data is
-			// already on the GPU). A chain HEAD has only its downstream link (1 exit); a MID-CHAIN hex has its
-			// upstream one too (2); a confluence has 3. It is also the arm count the degenerate-blob fallback
-			// needs, so it is counted ONCE here rather than tallied inside the arm loop.
-			int exits = 0;
+		// Never on a WATER hex: at a mouth the union would round the channel's cap out into the sea and ring it
+		// with a silt annulus, and beside a lake it would spill bank into the lake. The water hex keeps the
+		// channel's end exactly where the own-hex pass always left it — at the shared edge.
+		if (river_navigable_enabled && rivers_lod_enabled && own_class != CLASS_WATER) {
+			// THE CHANNEL IS A UNION OVER THIS HEX AND ITS NAVIGABLE NEIGHBOURS — not the own hex's strokes alone.
+			// Each hex's strokes stop at its own boundary in UNWARPED space (arms end at the edge midpoints), but
+			// they are measured from the MEANDER-WARPED point: wherever the warp carried a fragment across a shared
+			// edge, the hex it sits in measured it against the round CAP of its own arm while the hex it was warped
+			// toward — whose arm it now lay beside — was never asked. So the channel and its bank were CLIPPED at
+			// the hex polyline: a straight cut through the water and the silt at every exit edge the meander
+			// displaced, and (the pass ran on navigable hexes only) a bank stopping dead at the edge of any LAND
+			// hex the warp pushed it toward. `blend_probe` state 28 (NAVBASE): the cut vanishes with the warp off.
+			// So every navigable hex in {own + 6 neighbours} contributes its whole geometry (nav_hex_channel — a
+			// pure function of THAT hex's masks and the world point) and the pass takes the max, the same union
+			// the strokes within one hex already use. A stroke reaches at most ~0.5·r past its hex (half-width +
+			// bank + softness + meander), under the r a point must be from a hex before that hex stops being a
+			// neighbour — so both hexes flanking any edge enumerate every hex whose water can reach it, compute
+			// the same union, and the channel is continuous across the edge BY CONSTRUCTION. It also runs on a
+			// LAND hex beside a navigable one, which is what lets the bank cross onto it.
+			int nav_mask = 0;              // bit k set => hex k is navigable (k 0..5 = neighbour dir, NAV_UNION_OWN = own)
+			if (own_navigable) { nav_mask |= 1 << NAV_UNION_OWN; }
 			for (int dir = 0; dir < 6; dir++) {
-				exits += (channel >> dir) & 1;
-			}
-			// HEAD TAPER — the width the trunk's arms START at, at the hex CENTRE. On the FIRST hex of a
-			// chain (the only hex with <= RIVER_CHANNEL_HEAD_MAX_EXITS channel exits) the trunk used to spring
-			// to full navigable width the instant it left the centre: a hairline Minor arrived at a vertex and
-			// a few px later was a great river. A jump-cut, not a river. So on that hex the arms start at the
-			// half-width of the WIDEST tributary feeding in (max over the 6 inflow corners — two tributaries
-			// can land on the same head, and the sim already stores the widest class per corner) and SWELL to
-			// the channel's full width by the time they reach the hex EDGE (see the per-arm mix below).
-			// THE GATE IS THE CHANNEL EXIT COUNT, *NOT* `inflow != 0`. Since the drainage network landed,
-			// riverInflow means "a tributary hands over at this vertex" — true of ANY navigable hex, not just
-			// the chain's first (core_sim/CLAUDE.md → Rivers; docs/plan_rivers_drainage_network.md §A). Keying
-			// the taper off it would pinch a full-width trunk down to the tributary's width at a mid-chain
-			// junction's CENTRE and swell it back out on both sides: a visible HOURGLASS in mid-channel.
-			// A hex with >= 2 exits is MID-CHAIN and keeps the CONSTANT full width (head_base stays
-			// river_navigable_half_width and the mix is a no-op); only a genuine source hex tapers.
-			// The SPUR below stays UNCONDITIONAL — it carries the tributary from the hex centre out to its
-			// vertex, and a mid-chain junction needs it MORE, not less: without it the tributary's band would
-			// dead-end at the vertex (distance r from the centre), short of the trunk's arms, which only reach
-			// the edge MIDPOINTS.
-			// min() with the channel width guards a config where a class is somehow wider than the trunk —
-			// a head must never START wider than it ends.
-			float inflow_base = 0.0;
-			for (int c = 0; c < 6; c++) {
-				int icls = (inflow >> (2 * c)) & 3;
-				if (icls < RIVER_CLASS_MINOR || icls > RIVER_CLASS_MAX) { continue; } // 0 = none, 3 = reserved
-				inflow_base = max(inflow_base,
-					(icls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width);
-			}
-			bool is_chain_head = exits <= RIVER_CHANNEL_HEAD_MAX_EXITS;
-			float head_base = (is_chain_head && inflow_base > 0.0)
-				? min(inflow_base, river_navigable_half_width)
-				: river_navigable_half_width;
-			float cov_trunk = -1e9;         // coverage = half_width - distance; > 0 inside the water
-			float cov_spur = -1e9;          // best INFLOW spur, tracked apart so the two can crossfade
-			float spur_layer = 0.0;         // river-array layer of the winning spur (class - 1)
-			float head_class_mix = -1.0;    // >= 0 => a head-inflow DIRECT segment set the art crossfade itself
-			vec2 best_tangent = vec2(1.0, 0.0);
-			// A CHAIN HEAD FED BY A TRIBUTARY flows STRAIGHT from the inflow corner to its single exit — NOT
-			// via the hex centre. The generic routing below draws the inflow as a centre→corner spur and the
-			// exit as a centre→edge-midpoint arm; when the inflow corner and the exit side sit on the same
-			// side of the centre, that union is inflow_corner → centre → exit_mid, which DOUBLES BACK and
-			// leaves a NOTCH / inverted-V at the corner (reads as "the tributary connects at the wrong
-			// corner"). Here there is exactly ONE exit, so the whole channel is one tapered segment per inflow
-			// corner: inflow_corner → exit-midpoint, narrow (the tributary's own width) at the corner and
-			// swelling to the full navigable width at the exit edge — the head taper, laid along the true flow
-			// line. It RIDES THE SAME best_cov the bank annulus reads, so the slim bank follows it for free.
-			bool is_head_with_inflow = (exits == 1) && (inflow != 0);
-			if (is_head_with_inflow) {
-				// Resolve the single exit's shared-edge midpoint (exits == 1, so the first set bit is it).
-				vec2 exit_mid = own_c;
-				for (int dir = 0; dir < 6; dir++) {
-					if (((channel >> dir) & 1) == 0) { continue; }
-					ivec2 off = neighbor_offset(row, dir);
-					exit_mid = (own_c + hex_center(col + off.x, row + off.y)) * 0.5;
-					break;
+				ivec2 off = neighbor_offset(row, dir);
+				int ncol = col + off.x;
+				int nrow = row + off.y;
+				if (nrow < 0 || nrow >= grid_h) { continue; }
+				int ncol_id = ncol;
+				if (wrap_h) {
+					ncol_id = wrap_col(ncol);
+				} else if (ncol < 0 || ncol >= grid_w) {
+					continue;
 				}
-				for (int c = 0; c < 6; c++) {
-					int cls = (inflow >> (2 * c)) & 3;
-					if (cls < RIVER_CLASS_MINOR || cls > RIVER_CLASS_MAX) { continue; } // 0 none, 3 reserved
-					float ang = RIVER_CORNER_ANGLE_STEP * float(c) + RIVER_CORNER_ANGLE_OFFSET;
-					vec2 corner_pt = own_c + vec2(cos(ang), sin(ang)) * hex_radius; // the inflow VERTEX
-					vec2 seg = exit_mid - corner_pt;               // the flow line: corner → exit midpoint
-					float seg_len2 = max(dot(seg, seg), 1e-6);
-					float t = clamp(dot(rp - corner_pt, seg) / seg_len2, 0.0, 1.0);
-					// t_head from the UNWARPED point, exactly as the arm loop does and for the same reason:
-					// the exit edge must land on precisely river_navigable_half_width so the downstream hex
-					// (which draws its own half-channel at that constant width) meets it with no step.
-					float t_head = clamp(dot(v_world - corner_pt, seg) / seg_len2, 0.0, 1.0);
-					float swell = pow(smoothstep(0.0, 1.0, t_head), river_head_taper_curve); // 0 corner→1 exit
-					float trib_w = (cls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width;
-					// Narrow (the tributary's own width, never wider than the trunk) at the corner, swelling
-					// to full navigable width at the exit. Same organic width_mod/width_px on top as the arm.
-					float base_w = mix(min(trib_w, river_navigable_half_width), river_navigable_half_width, swell);
-					float w = max(base_w * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
-					float cov = w - distance(rp, corner_pt + seg * t);
-					if (cov > cov_trunk) {
-						cov_trunk = cov;
-						best_tangent = normalize(seg);
-						spur_layer = float(cls - RIVER_CLASS_MINOR); // tributary art at the corner end
-						head_class_mix = swell;                      // → navigable art by the exit
+				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
+				if (int(texture(id_map, nuv).r * 255.0 + 0.5) == river_navigable_terrain_id) {
+					nav_mask |= 1 << dir;
+				}
+			}
+			if (nav_mask != 0) {
+				// The organic machinery — meander warp, low-frequency swell along the reach, ragged banks — sampled in
+				// WORLD space ONCE per fragment and shared by every hex the union evaluates: every hex warps the same
+				// point and reads the same width there. The spurs ride the same three, so a tributary's band arrives
+				// at the vertex already warped exactly as the edge pass warped it on the far side.
+				vec2 rp = river_meander_warp(v_world, v_map);
+				float width_mod = river_width_mod(v_map);
+				float width_px = river_bank_wobble(v_map);
+				float cov_trunk = -1e9;         // union of every hex's trunk strokes (arms / head segments / blob)
+				float cov_spur = -1e9;          // union of every hex's inflow spurs
+				float spur_layer = 0.0;         // river-array layer of the winning spur
+				float head_class_mix = -1.0;    // >= 0 => the winning trunk stroke is a head segment with its own mix
+				float head_layer = 0.0;         // …and the tributary layer that segment starts as
+				vec2 trunk_tangent = vec2(1.0, 0.0);
+				vec2 spur_tangent = vec2(1.0, 0.0);
+				for (int k = 0; k <= NAV_UNION_OWN; k++) {
+					if (((nav_mask >> k) & 1) == 0) { continue; }
+					int hcol = col;
+					int hrow = row;
+					if (k != NAV_UNION_OWN) {
+						ivec2 off = neighbor_offset(row, k);
+						hcol += off.x;
+						hrow += off.y;
+					}
+					int hcol_id = wrap_h ? wrap_col(hcol) : hcol;
+					vec2 huv = (vec2(float(hcol_id), float(hrow)) + 0.5) / grid_dim;
+					float h_trunk;
+					float h_spur;
+					float h_spur_layer;
+					float h_head_mix;
+					vec2 h_trunk_tangent;
+					vec2 h_spur_tangent;
+					nav_hex_channel(hcol, hrow, huv, rp, v_world, width_mod, width_px,
+						h_trunk, h_spur, h_spur_layer, h_head_mix, h_trunk_tangent, h_spur_tangent);
+					if (h_trunk > cov_trunk) {
+						cov_trunk = h_trunk;
+						trunk_tangent = h_trunk_tangent;
+						head_class_mix = h_head_mix;
+						head_layer = h_spur_layer;
+					}
+					if (h_spur > cov_spur) {
+						cov_spur = h_spur;
+						spur_tangent = h_spur_tangent;
+						spur_layer = h_spur_layer;
 					}
 				}
-			} else {
-			for (int dir = 0; dir < 6; dir++) {
-				// The exit bit IS the arm rule — no neighbour fetch, and none possible: the mask is
-				// asymmetric at the mouth, so the neighbour's opinion is not a substitute for the own hex's.
-				// Needing no neighbour texel, an arm also draws correctly at the map border / wrap seam (the
-				// geometry only wants the neighbour's CENTRE, and hex_center is pure math on the raw,
-				// unwrapped column — so the arm points the right way even across the seam).
-				if (((channel >> dir) & 1) == 0) { continue; }
-				ivec2 off = neighbor_offset(row, dir);
-				vec2 nb_c = hex_center(col + off.x, row + off.y);
-				// The arm SEGMENT: own centre → the shared edge's midpoint. Clamped to the segment (like the
-				// edge pass clamps to the edge), so the channel stops at the hex boundary instead of
-				// smearing along an infinite ray — the neighbour paints its own half.
-				vec2 ab = (own_c + nb_c) * 0.5 - own_c;
-				float t = clamp(dot(rp - own_c, ab) / dot(ab, ab), 0.0, 1.0);
-				// The taper's progress along the arm, 0 at the centre → 1 at the edge midpoint. Taken from
-				// the UNWARPED point, unlike `t` above (which measures distance to the meandering
-				// centerline and so must use the warped one), and for one load-bearing reason: EVERY
-				// fragment on the shared edge projects to EXACTLY 1.0 on the arm's axis (the projection of
-				// that whole edge line onto the arm direction is the apothem, whatever the lateral offset),
-				// so the taper lands on exactly river_navigable_half_width at the boundary — which is the
-				// constant width the downstream hex draws its own half-channel at. The warped point's
-				// projection would wander by the meander amplitude and leave a visible STEP at the head
-				// hex's downstream edge. Width is a scalar field of world position here, same as
-				// river_width_mod / river_bank_wobble (both also sampled unwarped) — so this is the house
-				// idiom, not an exception to it.
-				float t_head = clamp(dot(v_world - own_c, ab) / dot(ab, ab), 0.0, 1.0);
-				float swell = pow(smoothstep(0.0, 1.0, t_head), river_head_taper_curve); // 1.0 at t_head = 1
-				float arm_base = mix(head_base, river_navigable_half_width, swell);
-				// The organic machinery rides ON TOP of the tapered base width (world-sampled, so the
-				// downstream hex reads the same width_mod/width_px at the shared boundary → still no seam).
-				float arm_w = max(arm_base * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
-				float cov = arm_w - distance(rp, own_c + ab * t);
-				if (cov > cov_trunk) {
-					cov_trunk = cov;
-					best_tangent = normalize(ab);
+				float best_cov = max(cov_trunk, cov_spur);
+				vec2 best_tangent = cov_spur > cov_trunk ? spur_tangent : trunk_tangent;
+				if (head_class_mix >= 0.0) { spur_layer = head_layer; }   // a head segment wears its tributary's art
+				// --- SLIM BANK SKIRT ---
+				// The base already renders the UNDERLYING valley biome; the silty bank is now just a thin band
+				// hugging the channel, not the whole hex. It RIDES THE SAME distance field as the water (best_cov,
+				// the max-coverage over every arm / inflow spur), so it follows every arm, taper, turn and mouth
+				// for free — an ANNULUS out to river_navigable_bank_half_width beyond the channel edge. Adding the
+				// bank half-width to the coverage shifts the whole field outward: bank_cov > 0 across water ∪ bank,
+				// fading to nothing at the outer edge. The bank texture is biome_array layer 37 (the same id the
+				// navigability signal uses — resolved by name, never hard-coded), sampled at the same world UV as
+				// the base. Composited OVER the underlying base; the water channel then paints OVER the bank below.
+				float bank_cov = best_cov + river_navigable_bank_half_width;
+				if (bank_cov > -river_softness) {
+					float bank_alpha = smoothstep(-river_softness, river_softness, bank_cov);
+					vec3 bank = texture(biome_array, vec3(base_uv, float(river_navigable_terrain_id))).rgb;
+					result = mix(result, bank, bank_alpha);
 				}
-			}
-			// INFLOW SPURS — centre → the named CORNER, at the arriving tributary's width (the same
-			// river_minor/major_half_width the edge pass uses, so it keeps its identity as it enters). This
-			// runs for the MID-CHAIN junction case (>= 2 exits with an inflow) — a head with an inflow took
-			// the direct-segment branch above and never reaches here.
-			for (int c = 0; c < 6; c++) {
-				int cls = (inflow >> (2 * c)) & 3;
-				if (cls < RIVER_CLASS_MINOR || cls > RIVER_CLASS_MAX) { continue; } // 0 = none, 3 = reserved
-				float ang = RIVER_CORNER_ANGLE_STEP * float(c) + RIVER_CORNER_ANGLE_OFFSET;
-				vec2 ab = vec2(cos(ang), sin(ang)) * hex_radius;  // centre → corner c
-				float t = clamp(dot(rp - own_c, ab) / dot(ab, ab), 0.0, 1.0);
-				float base_w = (cls == RIVER_CLASS_MINOR) ? river_minor_half_width : river_major_half_width;
-				float spur_w = max(base_w * width_mod + width_px, RIVER_MIN_HALF_WIDTH);
-				float cov = spur_w - distance(rp, own_c + ab * t);
-				if (cov > cov_spur) {
-					cov_spur = cov;
-					spur_layer = float(cls - RIVER_CLASS_MINOR);   // layer = class - 1 (Minor 0, Major 1)
-					if (cov > cov_trunk) { best_tangent = normalize(ab); }
+				if (best_cov > -river_softness) {
+					float alpha = smoothstep(-river_softness, river_softness, best_cov);
+					// Same continuous map-space UV + downstream TIME scroll as the edge classes, so a Major and
+					// the trunk it feeds flow as one body of water.
+					vec2 ruv = v_map / (2.0 * hex_radius) * river_scale
+						+ best_tangent * (TIME * river_flow_speed);
+					// The spur wears the TRIBUTARY's class art and dissolves into the channel over
+					// river_class_blend px — the same crossfade the edge pass runs at a Minor→Major change, for
+					// the same reason: the join must read as one river growing, not two waterways spliced. With
+					// no spur, cov_spur stays at -1e9 → class_mix == 1 → pure channel, exactly as before.
+					// A head-with-inflow drew ONE direct segment (no separate spur), so it hands the crossfade in
+					// explicitly via head_class_mix (0 = tributary art at the corner → 1 = navigable at the exit).
+					float class_mix = (head_class_mix >= 0.0)
+						? head_class_mix
+						: smoothstep(-river_class_blend, river_class_blend, cov_trunk - cov_spur);
+					vec3 water = mix(texture(river_tex, vec3(ruv, spur_layer)).rgb,
+						texture(river_tex, vec3(ruv, RIVER_NAVIGABLE_LAYER)).rgb, class_mix);
+					// Harmonized like the edge classes (shared hue / depth pivot, luma order preserved), so the
+					// trunk reads as the SAME river grown bigger rather than a third, unrelated waterway.
+					water = river_harmonize(water);
+					if (river_highlight) {
+						water = mix(water, RIVER_HIGHLIGHT_COLOR, RIVER_HIGHLIGHT_MIX);
+					}
+					result = mix(result, water, alpha);
 				}
-			}
-			}
-			float best_cov = max(cov_trunk, cov_spur);
-			if (exits == 0) {
-				// Degenerate — a navigable hex the river never leaves (a tributary may still feed it: an
-				// inflow spur is not an arm). The sim should never emit one (MapView push_warnings if it
-				// does); draw a blob at the centre rather than a hex of bare bank with no water in it.
-				best_cov = max(best_cov, half_w * RIVER_NAVIGABLE_ORPHAN_BLOB - distance(rp, own_c));
-			}
-			// --- SLIM BANK SKIRT ---
-			// The base already renders the UNDERLYING valley biome; the silty bank is now just a thin band
-			// hugging the channel, not the whole hex. It RIDES THE SAME distance field as the water (best_cov,
-			// the max-coverage over every arm / inflow spur), so it follows every arm, taper, turn and mouth
-			// for free — an ANNULUS out to river_navigable_bank_half_width beyond the channel edge. Adding the
-			// bank half-width to the coverage shifts the whole field outward: bank_cov > 0 across water ∪ bank,
-			// fading to nothing at the outer edge. The bank texture is biome_array layer 37 (the same id the
-			// navigability signal uses — resolved by name, never hard-coded), sampled at the same world UV as
-			// the base. Composited OVER the underlying base; the water channel then paints OVER the bank below.
-			float bank_cov = best_cov + river_navigable_bank_half_width;
-			if (bank_cov > -river_softness) {
-				float bank_alpha = smoothstep(-river_softness, river_softness, bank_cov);
-				vec3 bank = texture(biome_array, vec3(base_uv, float(river_navigable_terrain_id))).rgb;
-				result = mix(result, bank, bank_alpha);
-			}
-			if (best_cov > -river_softness) {
-				float alpha = smoothstep(-river_softness, river_softness, best_cov);
-				// Same continuous map-space UV + downstream TIME scroll as the edge classes, so a Major and
-				// the trunk it feeds flow as one body of water.
-				vec2 ruv = v_map / (2.0 * hex_radius) * river_scale
-					+ best_tangent * (TIME * river_flow_speed);
-				// The spur wears the TRIBUTARY's class art and dissolves into the channel over
-				// river_class_blend px — the same crossfade the edge pass runs at a Minor→Major change, for
-				// the same reason: the join must read as one river growing, not two waterways spliced. With
-				// no spur, cov_spur stays at -1e9 → class_mix == 1 → pure channel, exactly as before.
-				// A head-with-inflow drew ONE direct segment (no separate spur), so it hands the crossfade in
-				// explicitly via head_class_mix (0 = tributary art at the corner → 1 = navigable at the exit).
-				float class_mix = (head_class_mix >= 0.0)
-					? head_class_mix
-					: smoothstep(-river_class_blend, river_class_blend, cov_trunk - cov_spur);
-				vec3 water = mix(texture(river_tex, vec3(ruv, spur_layer)).rgb,
-					texture(river_tex, vec3(ruv, RIVER_NAVIGABLE_LAYER)).rgb, class_mix);
-				// Harmonized like the edge classes (shared hue / depth pivot, luma order preserved), so the
-				// trunk reads as the SAME river grown bigger rather than a third, unrelated waterway.
-				water = river_harmonize(water);
-				if (river_highlight) {
-					water = mix(water, RIVER_HIGHLIGHT_COLOR, RIVER_HIGHLIGHT_MIX);
-				}
-				result = mix(result, water, alpha);
 			}
 		}
 
