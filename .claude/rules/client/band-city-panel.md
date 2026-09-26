@@ -2367,7 +2367,7 @@ new jobs are declared*.
   `KEEPING_ZONE_READOUT_FORMAT` deliberately counted two. That is not a widened definition of keeping —
   it is a different question, asked by a block that now holds all three pools.
 - **THE CARDS ARE COMPACT, and the prose became a tooltip.** `_build_pool_card` is a name and a stepper
-  and nothing else; the three role hints survive verbatim as each card's `tooltip_text`. The band tab's
+  and nothing else; each role's hint is the first line of the card's `tooltip_text`. The band tab's
   cards could afford a description because that zone SCROLLS; this one CLIPS, and a description read
   once cannot cost height on a surface operated every turn.
 - **The Builders card's read-only gear line did NOT come along**, and its fact was not lost: the BUILD
@@ -2625,7 +2625,15 @@ it only makes each worker do less. That is what splits the card's states:
 | fine | none | `INK` | the coverage line, if the pool has a bill |
 | work short, tools filled | `⚠` `WARN` | `WARN` | the coverage line |
 | work short **and** tools short | `⚠` `WARN` | `WARN` | the coverage line, then `Short of tools.` |
-| work covered, tools short | `ⓘ` `INK_DIM` | `INK` | the coverage line, then `Tools would get more done per worker — short of tools.` |
+| work covered, tools short | `ⓘ` `INK_DIM` | `INK` | the coverage line, then `More tools would speed this up.` |
+
+**The hover is terse, one short line per fact** (the user found the long form too wordy). The role
+hint names what the pool keeps (`Agriculture workers maintain improved fields.`, `Husbandry workers
+maintain tamed herds and pens.`, `Roadwork workers maintain built roads.`, `Groundwork workers
+maintain opened ground.`, `Builders work the build queue, top job first.`); every pool shares ONE
+coverage format, `Supplies %s of %s work a turn.` (`UPKEEP_POOL_COVERAGE_FORMAT`, supply then asked,
+in work units), so the hint is the only place a pool's holdings are named; the idle line is
+`%d idle worker(s)` with no remedy clause.
 
 - **The two sentences are `HudWorkVocab.POOL_TOOLS_SHORT_WARN_LINE` and `POOL_TOOLS_SHORT_INFO_LINE`**,
   chosen by `pool_tools_short_line(lines, work_short)` — `""` unless `pool_toe_is_short(lines)`. Under
@@ -2673,7 +2681,7 @@ arithmetic"*).
 **Frames:** `band_panel_pool_kit_short` — four cards, four answers, one frame: Agriculture short of
 WORK with its tools **FILLED** (`⚠`, no tool line), Husbandry short of BOTH (`⚠`, work line then
 `Short of tools.`), Roadwork short of **TOOLS ONLY on TWO items** with its work covered (`ⓘ`, calm
-title, the per-worker line) and Builders with **no TOE row at all** — the *not applicable* card. And
+title, the INFO tool line) and Builders with **no TOE row at all** — the *not applicable* card. And
 `band_panel_pool_kit_short_builders`, the same band with a builders TOE line short: the Builders card
 flies the `ⓘ`.
 

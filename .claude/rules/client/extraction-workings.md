@@ -876,11 +876,9 @@ that is the alarm. It rides the optional `POOL_COVERAGE_SHORTFALL_KEY` path, tes
 defaulted `0.0` would read as *this pool covers everything* and clear the mark on every card in the
 game.
 
-**Its hint and its coverage sentence name the workings the band OPENED**, not the ground it stands on,
-and **the two were written from one model in one pass** — which is the road pair's own lesson, where
-the identical correction landed in `ROADWORK_ROLE_HINT` and not in
-`UPKEEP_POOL_COVERAGE_ROUTE_FORMAT` eighty lines below it. There is no third copy.
-`QUARRYWORK_ROLE_HINT` and `UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT` are the whole set.
+**Its hint names the workings the band OPENED**, not the ground it stands on
+(`QUARRYWORK_ROLE_HINT`). The coverage sentence is the one format every pool shares
+(`UPKEEP_POOL_COVERAGE_FORMAT`) and names no holdings, so the hint is the only copy of that wording.
 
 **And it counts toward the fund-mode row's *is there anything to fund* gate**, for the road bill's
 reason on a fourth pool: a band whose only standing cost is a felling working it opened is exactly the

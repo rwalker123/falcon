@@ -494,30 +494,21 @@ const ROLE_NAME_AGRICULTURE := "Agriculture"
 
 const ROLE_NAME_HUSBANDRY := "Husbandry"
 
-## **THE HINTS NAME THE POOL, NOT A TILE.** The hands are measured against the SUM of what the band
-## holds on that web and split across every source of it, so a player reading the card must not go
-## looking for a per-source stepper — there is none, and this sentence is where that is said.
-const AGRICULTURE_ROLE_HINT := "Keeps every tended patch and Field this band works. Short of the sum, they rot."
+## **THE HINTS NAME WHAT THE POOL KEEPS**, each role's one line on its card's hover. They carry the
+## noun the coverage sentence no longer does (`UPKEEP_POOL_COVERAGE_FORMAT`), so a hint names the
+## band's own holdings — the roads it BUILT, the ground it OPENED — never the ground it stands on.
+const AGRICULTURE_ROLE_HINT := "Agriculture workers maintain improved fields."
 
-const HUSBANDRY_ROLE_HINT := "Keeps every tamed herd and pen this band works. Short of the sum, animals drift off."
+const HUSBANDRY_ROLE_HINT := "Husbandry workers maintain tamed herds and pens."
 
 ## **THE THIRD KEEPING ROLE** (arc #532) — the roads. Its card sits beside the two above because it
 ## is the same kind of control: a band-wide count of hands set by `assign_labor`, measured against a
 ## SUM rather than staffed on a tile.
 const ROLE_NAME_ROADWORK := "Roadwork"
 
-## ⛔ **IT NAMES THE ROADS THIS BAND BUILT, NOT THE GROUND IT IS STANDING ON, and the difference is
-## the whole catchment.** A road tile's keeper is the band that graded or paved it, wherever that band
-## now stands: `route_keeping_claims` walks the roads a band keeps and never reads that band's
-## position, so a camp four tiles away goes on paying and goes on being served. What distance costs is
-## a PRICE — the road's own `keeper_remoteness`, quoted when the job was taken on — and never whether
-## the bill exists.
-##
-## **The earlier wording said the opposite** (*"the roads this band is standing on"*), which was true
-## of a model where a road was a stored path and a band paid for whatever it stood over. Under the
-## per-tile model that reading would send a player to move camp in order to stop a bill that follows
-## them regardless.
-const ROADWORK_ROLE_HINT := "Keeps the roads this band built, however far it has since walked. Short of the bill, they wash out."
+## A road tile's keeper is the band that BUILT it, wherever that band now stands
+## (`route_keeping_claims` never reads the band's position), so the hint says *built*.
+const ROADWORK_ROLE_HINT := "Roadwork workers maintain built roads."
 
 ## **THE FOURTH KEEPING ROLE** (arc #583) — the workings, on both deposit branches at once. Same
 ## family again: a band-wide count of hands set by `assign_labor`, measured against a SUM.
@@ -541,30 +532,17 @@ const ROADWORK_ROLE_HINT := "Keeps the roads this band built, however far it has
 ## so a second card would be a distinction nothing in the game can express.
 const ROLE_NAME_QUARRYWORK := "Groundwork"
 
-## ⛔ **IT NAMES THE GROUND THIS BAND OPENED, NOT THE GROUND IT IS STANDING ON** — `ROADWORK_ROLE_HINT`'s
-## correction, written into this branch from the first line rather than after a slice of the wrong
-## reading. The catchment is the band's own `extract` ROW: a working is held by the band that works
-## it, worked or idle, wherever that band has since camped. **`opened` is what carries that** — ground
-## a band merely stands on has not been opened by anybody.
-##
-## **AND IT NAMES THE CONSEQUENCE.** An unheld working slides back down its ladder — the position is
-## the thing at risk, there being no crop to rot — which is what *going back* says.
-##
-## **THIS STRING AND `UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT` ARE WRITTEN FROM ONE MODEL.** The road
-## pair's correction landed in the hint and not in the tooltip eighty lines below it for a whole
-## slice; these two were composed together, and there is no third copy.
-const QUARRYWORK_ROLE_HINT := "Holds all the ground this band has opened, worked or idle. Short of the bill, it goes back."
+## A working is held by the band that OPENED it, worked or idle, wherever that band has since camped
+## — `ROADWORK_ROLE_HINT`'s rule, so the hint says *opened*.
+const QUARRYWORK_ROLE_HINT := "Groundwork workers maintain opened ground."
 
 ## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
 ## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
 const ROLE_NAME_BUILDERS := "Builders"
 
-## **IT NAMES THE QUEUE, BECAUSE THE QUEUE IS WHERE THE HANDS GO.** Unlike the keeping pair this pool
-## is NOT split across everything the band holds: the whole of it goes on the HEAD of the band's build
-## queue until that entry's meter fills, then on the next. A hint that said "keeps every build" would
-## promise a spread the model deliberately does not offer — and *"builders with nothing to do"* needs
-## no warning, a build demand ending when its meter fills.
-const BUILDERS_ROLE_HINT := "Raises whatever this band has queued, one job at a time, head of the queue first."
+## **IT NAMES THE QUEUE, BECAUSE THE QUEUE IS WHERE THE HANDS GO** — the whole pool goes on the head
+## entry until its meter fills, then the next; it is not spread across everything the band holds.
+const BUILDERS_ROLE_HINT := "Builders work the build queue, top job first."
 
 ## **THE FUND-MODE CONTROL** — how this band splits a keeping pool it cannot stretch, `spread` or
 ## `priority` (`upkeep_mode <faction> <band> …`). It renders under the three pool cards and ONLY
@@ -601,72 +579,13 @@ const UPKEEP_MODE_PRIORITY_HINT := "Fund the biggest investments in full and let
 ## is a role name and a stepper; a number wedged into it would be the retired line again, in less room.
 const UPKEEP_POOL_SHORT_MARK := HudSelectionVocab.RUNG_HAZARD_GLYPH
 
-## …and the figure it stands for, on the card's own `tooltip_text` — **ONE SENTENCE, whose numbers are
-## what the pool SUPPLIES against what it is ASKED FOR.**
-##
-## **THERE WERE TWO SENTENCES AND THEY WERE ONE STATEMENT ALL ALONG.** A live shortfall said *"Short 2
-## of 2"* and the declare-time warning said *"a queued job will need 3 work a turn, and nobody is on
-## this pool"* — different words, different subjects, the same glyph in the same slot — which read as
-## one warning misbehaving rather than as two facts. Both are now this shape at different numbers.
-##
-## **Per web, because the whole defect of the retired summed line was that it could not say which** —
-## the plant pool keeps ground and the animal pool keeps animals, and those are different decisions
-## with different remedies. Both name the band's own holdings rather than "sources", which is the noun
-## the player sees on the map, and both name the QUEUE beside them because a job not yet started is
-## exactly what the demand figure includes before the sim bills anything for it.
-##
-## **IN WORK, NEVER IN HANDS** — `DetailFormat.build_price_clause`'s rule, for its reason: the model is
-## denominated in work units end to end, and how many hands a rate takes depends on what they carry.
-## **And it never says *rung***, a word that appears on no control the player uses.
-const UPKEEP_POOL_COVERAGE_PLANT_FORMAT := "This pool supplies %s work a turn; this band's tended ground and queued jobs need %s."
+## …and the figure it stands for, on the card's own `tooltip_text` — **ONE SENTENCE: what the pool
+## SUPPLIES against what it is ASKED FOR**, in WORK and never in hands (how many hands a rate takes
+## depends on what they carry). One format for every pool: the role hint above it names what the pool
+## keeps, so the per-web variants and their nouns are retired.
+const UPKEEP_POOL_COVERAGE_FORMAT := "Supplies %s of %s work a turn."
 
-const UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT := "This pool supplies %s work a turn; this band's tamed animals and queued jobs need %s."
-
-## …and the ROUTE web's (arc #532).
-##
-## ⛔ **IT NAMES THE ROADS THIS BAND BUILT, NOT THE GROUND IT IS STANDING ON** — `ROADWORK_ROLE_HINT`
-## eighty lines up carries the long form of why, and this string was the copy that missed the
-## correction. A road tile's keeper is the band that graded or paved it, wherever that band has since
-## walked; `route_keeping_claims` never reads that band's position. *"The roads this band stands on"*
-## sends a player to move camp in order to stop a bill that follows them regardless — which is the
-## one remedy that cannot work.
-##
-## ⛔ **IT NAMES NO QUEUE, AND THE REASON IS THE FIGURE RATHER THAN THE LADDER.** It used to claim
-## that a route rung *"takes no builder and appends no build-queue entry"*, which is true of the free
-## floor alone: traffic wears a path and a trail in, and the two BUILT rungs are ordinary declarations
-## funded by the band's `builders` pool at the head of its queue, exactly like every rung on the other
-## two branches. What is actually true is that the number beside this sentence carries no queued
-## term — the road pool's `asked` is the cohort's published `roadwork_demand` verbatim
-## (`BandPanelController`'s road branch, which does NOT go through `_pool_coverage`), because the road
-## rows are fog-filtered and summing them client-side would understate a bill the band still owes. A
-## sentence promising a queued half the figure does not contain would be the worse error of the two.
-const UPKEEP_POOL_COVERAGE_ROUTE_FORMAT := "This pool supplies %s work a turn; the roads this band built need %s."
-
-## …and the two DEPOSIT branches' (arc #583).
-##
-## ⛔ **IT NAMES THE WORKINGS THIS BAND OPENED, and it is written from the same model as
-## `QUARRYWORK_ROLE_HINT`** — the road pair's own lesson, where the correction landed in the hint and
-## not in the tooltip eighty lines below it. These two are the whole set; there is no third copy.
-##
-## ⛔ **IT NAMES NO QUEUE, for the road sentence's corrected reason — the FIGURE.** The pool's `asked`
-## is the cohort's published `quarrywork_demand` verbatim (`BandPanelController` does NOT take the
-## deposit branch through `_pool_coverage`), because the `deposits` rows are fog-filtered and summing
-## them client-side would understate a bill the band still owes. A sentence promising a queued term
-## the number does not carry would be the worse of the two errors.
-const UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT := "This pool supplies %s work a turn; the ground this band opened needs %s."
-
-## Which of the set a card takes, off the role it staffs — one picker, for `under_kept_note`'s reason:
-## a card that reached for the wrong web's sentence would be a wrong answer that looks like a right one.
-static func upkeep_pool_coverage_format(role_name: String) -> String:
-    if role_name == ROLE_NAME_HUSBANDRY:
-        return UPKEEP_POOL_COVERAGE_ANIMAL_FORMAT
-    if role_name == ROLE_NAME_ROADWORK:
-        return UPKEEP_POOL_COVERAGE_ROUTE_FORMAT
-    if role_name == ROLE_NAME_QUARRYWORK:
-        return UPKEEP_POOL_COVERAGE_DEPOSIT_FORMAT
-    return UPKEEP_POOL_COVERAGE_PLANT_FORMAT
-
-## **THE POOL CARD'S ONE LINE, or `""` where the pool has NOTHING TO HOLD** — the ONE composer, so
+## **THE POOL CARD'S COVERAGE LINE, or `""` where the pool has NOTHING TO HOLD** — the ONE composer, so
 ## the card's marks and its hover cannot disagree about what the pool's hands are doing.
 ##
 ## **IT USED TO FALL SILENT ON AN ADEQUATE POOL, AND THAT IS THE SILENCE ISSUE #715 CLOSES.** A pool
@@ -679,14 +598,14 @@ static func upkeep_pool_coverage_format(role_name: String) -> String:
 ##
 ## **THE `asked` GUARD STAYS.** A pool with nothing to hold says nothing, which is correct — `0 work
 ## a turn` against `0` is a reading about nothing.
-static func upkeep_pool_coverage_line(role_name: String, cover: Dictionary) -> String:
+static func upkeep_pool_coverage_line(cover: Dictionary) -> String:
     var asked := maxf(float(cover.get(POOL_COVERAGE_ASKED_KEY, SourceForecast.NO_UPKEEP_DEMAND)),
         SourceForecast.NO_UPKEEP_DEMAND)
     var supply := maxf(float(cover.get(POOL_COVERAGE_SUPPLY_KEY, SourceForecast.NO_UPKEEP_DEMAND)),
         SourceForecast.NO_UPKEEP_DEMAND)
     if asked < SourceForecast.UPKEEP_WORK_MIN:
         return ""
-    return upkeep_pool_coverage_format(role_name) % [
+    return UPKEEP_POOL_COVERAGE_FORMAT % [
         DetailFormat.format_work_units(supply), DetailFormat.format_work_units(asked)]
 
 ## **IS THIS POOL SHORT OF HANDS** — the coverage test, extracted so the SENTENCE and the MARK can
@@ -750,11 +669,9 @@ const UPKEEP_POOL_IDLE_KEEPERS_MIN := 1.0
 ## can take that below none.
 const UPKEEP_POOL_IDLE_KEEPERS_NONE := 0.0
 
-## …and the reading it stands for, on the same hover as the coverage sentence and BELOW it: what the
-## player can take back, and the control that takes it. The noun is the client's existing `worker`
-## (`HudRouteVocab.ROAD_UPKEEP_WORKER_SINGULAR`'s word) rather than `keeper`, which appears on no
-## control in this game — the retired summed line's own mistake.
-const UPKEEP_POOL_IDLE_FORMAT := "%d %s on this pool found nothing to do — step it down to send them out."
+## …and the reading it stands for, on the same hover as the coverage sentence and BELOW it. The noun
+## is the client's existing `worker`, never `keeper`, which appears on no control in this game.
+const UPKEEP_POOL_IDLE_FORMAT := "%d idle %s"
 const UPKEEP_POOL_IDLE_WORKER_SINGULAR := "worker"
 const UPKEEP_POOL_IDLE_WORKER_PLURAL := "workers"
 
@@ -1302,7 +1219,7 @@ const POOL_TOOLS_SHORT_WARN_LINE := "Short of tools."
 
 ## **A POOL THAT COVERS ITS WORK BUT IS SHORT OF TOOLS** — the reason the info mark flies. Nothing is
 ## being lost, so it is said as an opportunity: the tools would stretch each worker further.
-const POOL_TOOLS_SHORT_INFO_LINE := "Tools would get more done per worker — short of tools."
+const POOL_TOOLS_SHORT_INFO_LINE := "More tools would speed this up."
 
 ## ⛔ **RETIRED — THE COUNTED TOOL LINE (`4 of 6 hoes · 0 of 2 dressing hammers`)**, with
 ## `POOL_TOE_TERM_FORMAT`, `POOL_TOE_SHORT_UNIT_GAP` and its ceil/floor + `kit_item_count_word` term

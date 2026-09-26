@@ -252,8 +252,7 @@ something a pool can be staffed with.
   every tier the roster adds. Two marks:
   - **⚠ — the work falls short.** The hover's work-units sentence, followed by `Short of tools.`
     when the pool's TOE is also short.
-  - **ⓘ — the work is covered but the TOE is short:** `Tools would get more done per worker —
-    short of tools.` Every pool tool is productivity, not a requirement, so a tool shortfall alone
+  - **ⓘ — the work is covered but the TOE is short:** `More tools would speed this up.` Every pool tool is productivity, not a requirement, so a tool shortfall alone
     loses no work; it is shown anyway because bare hands stop being viable early in a game.
 
   A pool whose tools are all filled shows no tool line. This replaces `2 of 6 Tillage kits

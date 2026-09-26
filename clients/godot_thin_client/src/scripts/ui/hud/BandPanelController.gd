@@ -2349,8 +2349,8 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     # ⛔ **NOT because a route rung takes no builder** — that claim was false and is retired with the
     # tooltip that carried it. `grade` / `pave` append an ordinary `BuildQueueEntry` funded by the
     # band's `builders` pool; it is only the FREE FLOOR that traffic wears in. The queued half is
-    # absent from this dict because the published demand carries none, and
-    # `HudWorkVocab.UPKEEP_POOL_COVERAGE_ROUTE_FORMAT` is worded to promise exactly what is here.
+    # absent from this dict because the published demand carries none; the coverage sentence
+    # (`HudWorkVocab.UPKEEP_POOL_COVERAGE_FORMAT`) names no queue, so it promises nothing more.
     var road_pool := _band_labor.roadwork_pool_state(band)
     var road_cover := {
         HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: float(road_pool.get("supplied",
@@ -2403,7 +2403,7 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     # ⛔ **IT CAN STILL BE SHORT OF TOOLS, AND IT FLIES THE INFO MARK FOR THAT.** A builders pool has a
     # TABLE OF EQUIPMENT like any other — the wire carries a `builders`/`hoes` row — so `_build_pool_card`
     # resolves its `tool_line` on this branch too. With no `cover` it is never work-short, so a tool
-    # shortfall here is always the `ⓘ` and the per-worker line (issue #716), never the `⚠`.
+    # shortfall here is always the `ⓘ` and the INFO tool line (issue #716), never the `⚠`.
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_BUILDERS,
         HudWorkVocab.BUILDERS_ROLE_HINT, HudConst.LABOR_KIND_BUILDERS, builders_eff, idle,
         queued))
@@ -2716,8 +2716,7 @@ func _build_workings_roster_head(band: Dictionary) -> HBoxContainer:
         HudWorkVocab.POOL_COVERAGE_SHORTFALL_KEY: float(pool.get("shortfall",
             SourceForecast.NO_UPKEEP_DEMAND)),
     }
-    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(
-        HudWorkVocab.ROLE_NAME_QUARRYWORK, cover)
+    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(cover)
     var effective := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_QUARRYWORK)
     # ⛔ **THE FOURTH KEEPING POOL REPORTS ITS SPARE HANDS TOO** (issue #715). This head IS the
     # `quarrywork` pool, so leaving the idle reading to the three cards would make the one pool with
@@ -3270,7 +3269,7 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         cover: Dictionary = {}) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
-    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(role_name, cover)
+    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(cover)
     # **AND WHETHER ITS TOOLS REACHED THE HANDS ON IT** — a SECOND, independent shortfall on the same
     # card, and since `docs/plan_pool_toe.md` it is the pool's own TABLE OF EQUIPMENT rather than one
     # kit's reach: a pool's tools follow from its SITES' rungs, so a Roadwork pool keeping a dirt road
@@ -3338,7 +3337,7 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     #
     # **THE HOVER IS ORDERING, NOT REWORDING.** The work-units sentence first
     # (`upkeep_pool_coverage_line`, which carries every number), then the tool line
-    # (`HudWorkVocab.pool_tools_short_line` — `Short of tools.` under the `⚠`, the per-worker form
+    # (`HudWorkVocab.pool_tools_short_line` — `Short of tools.` under the `⚠`, the INFO form
     # under the info mark), then the idle reading (issue #715): what the band is LOSING before what it
     # can gain. `join_tooltip_lines` drops whichever is empty.
     card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line, tool_line, idle_line])
@@ -3441,7 +3440,7 @@ func _pool_card_mark(glyph: String, ink: Color) -> Label:
     return mark
 
 ## **WHETHER THIS POOL'S TOOLS CAME UP SHORT, IN THE FORM ITS MARK TAKES** — `Short of tools.` under
-## the `⚠` (`work_short`), the per-worker form under the info mark, or `""` (issue #716). The card
+## the `⚠` (`work_short`), the INFO form under the info mark, or `""` (issue #716). The card
 ## never names or counts a tool; see `HudWorkVocab.pool_tools_short_line`.
 ##
 ## > #### ⛔ RETIRED — `_pool_kit_short_line`, WHICH READ THE POOL ROW'S OWN KIT COVERAGE

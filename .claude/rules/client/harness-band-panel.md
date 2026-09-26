@@ -178,7 +178,8 @@ the harness's ONLY tally.**
 (`band_panel_pool_kit_short_builders` and its pair, the per-card state claims, the driven fork),
 measured A/B against the pre-change tree in ONE session: 191 / 1436 / 556 → 192 / 1447 / 559. Both
 runs carried the same four pointer-custody failures (the auto-scroll trio and the foreign-event
-guard), so those are the like-for-like figures and the headline above is not a re-measurement.
+guard), so those are the like-for-like figures and the headline above is not a re-measurement. The wording pass that followed added one more `PASS` (the tool-count needle's own positive and
+negative, needed once the coverage sentence itself read `Supplies N of M work a turn.`).
 
 **THE POINTER-CUSTODY GUARD MOVED IT 1438 → 1440 `PASS`**, frames and `assert OK` unchanged: the
 pushed-event liveness claim and the *nothing foreign reached the viewport* claim, asked once at
@@ -2756,7 +2757,7 @@ TOOLS". What belongs here is the fixture and what each claim can tell apart.
 |---|---|---|
 | Agriculture | hoes **4 of 4** | `⚠`, the work line only — the tools are **FILLED** and say nothing |
 | Husbandry | crook **0 of 2** | `⚠`, the work line, then `Short of tools.` on the next line |
-| Roadwork | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | `ⓘ` in `INK_DIM`, calm title, the per-worker tool line — its work is covered |
+| Roadwork | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | `ⓘ` in `INK_DIM`, calm title, the INFO tool line — its work is covered |
 | Builders | none at all | nothing — **NOT APPLICABLE** |
 
 **`_assert_pool_card_state` makes every card's claims together**: the `SHORT` meta, the ONE glyph it

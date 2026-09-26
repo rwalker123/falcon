@@ -4701,15 +4701,15 @@ func _assert_pool_card_marks(where: String, hands_short_roles: Array, calm_roles
 			continue
 		_assert_band_panel("%s: the %s card flies the triangle" % [where, role],
 			bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)))
-		# …and the FIGURE is on that card's hover, in ITS OWN WEB'S words — the plant card must not
+		# …and the FIGURE is on that card's hover, under ITS OWN WEB'S hint — the plant card must not
 		# describe the animal one, which is exactly what one summed line could not avoid doing. Both
-		# halves: its own web's tail AND not the other's, since a card quoting both webs' sentences
-		# would satisfy a lone positive.
+		# halves: its own hint AND not the other's, since a card quoting both would satisfy a lone
+		# positive.
 		_assert_band_panel("%s: …and quotes its own web's shortfall on its hover (%s)"
 				% [where, card.tooltip_text],
 			card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE)
-			and card.tooltip_text.contains(_pool_short_tail(role))
-			and not card.tooltip_text.contains(_pool_short_tail(_other_keeping_role(role))))
+			and card.tooltip_text.contains(_pool_role_hint(role))
+			and not card.tooltip_text.contains(_pool_role_hint(_other_keeping_role(role))))
 	for role_variant in calm_roles:
 		var role := String(role_variant)
 		var card := _find_pool_card(role)
@@ -4722,28 +4722,25 @@ func _assert_pool_card_marks(where: String, hands_short_roles: Array, calm_roles
 			and not card.tooltip_text.contains(POOL_SHORT_TOOLTIP_NEEDLE)
 			and String(card.get_meta(HudWorkVocab.POOL_CARD_TOOL_SHORT_META, "")) == "")
 
-## **THE SHORTFALL SENTENCE'S OWN MIDDLE, AND THE TAIL THAT NAMES ITS WEB.** The lead was `"Short "`
-## for one run and it was VACUOUS in both directions: the Agriculture card's ordinary role HINT reads
-## *"Keeps every tended patch and Field this band works. Short of the sum, they rot."*, so a calm card
-## failed the negative and a short one passed the positive on the hint alone. This phrase appears in
-## the shortfall sentences and in no hint.
-const POOL_SHORT_TOOLTIP_NEEDLE := "work a turn; this band's"
+## **THE COVERAGE SENTENCE'S OWN TAIL** (`UPKEEP_POOL_COVERAGE_FORMAT`), which appears in the
+## coverage sentence and in no role hint, so a calm card cannot pass the negative on its hint alone.
+## One format serves every pool, so the retired per-web middle and the shared-clause needle are one.
+const POOL_SHORT_TOOLTIP_NEEDLE := " work a turn."
+const POOL_COVERAGE_TOOLTIP_NEEDLE := POOL_SHORT_TOOLTIP_NEEDLE
 
-## …and the same sentence's middle with the WEB taken off, which is what the ROUTE and DEPOSIT
-## branches share with the two food webs. `POOL_SHORT_TOOLTIP_NEEDLE` above names *this band's*
-## holdings and so matches the plant and animal formats ALONE — a probe asking whether the roadwork
-## or quarrywork pool stated its bill has to stop at the shared clause or it asserts an absence on
-## every frame. It appears in all four coverage sentences and in no hint.
-const POOL_COVERAGE_TOOLTIP_NEEDLE := "work a turn; "
-
-## …and the two webs' tails, which is what makes the per-web claim a claim: the whole point of moving
-## the figure onto the cards is that a summed line could not say WHICH web was short.
-const POOL_SHORT_TAIL_PLANT := "tended ground and queued jobs need"
-const POOL_SHORT_TAIL_ANIMAL := "tamed animals and queued jobs need"
-
-func _pool_short_tail(role: String) -> String:
-	return POOL_SHORT_TAIL_ANIMAL if role == HudWorkVocab.ROLE_NAME_HUSBANDRY \
-		else POOL_SHORT_TAIL_PLANT
+## Which web a card's hover belongs to is named by its ROLE HINT now — the coverage sentence names
+## no web — so the per-web claims ask for the card's own hint and not the other web's.
+func _pool_role_hint(role: String) -> String:
+	match role:
+		HudWorkVocab.ROLE_NAME_HUSBANDRY:
+			return HudWorkVocab.HUSBANDRY_ROLE_HINT
+		HudWorkVocab.ROLE_NAME_ROADWORK:
+			return HudWorkVocab.ROADWORK_ROLE_HINT
+		HudWorkVocab.ROLE_NAME_QUARRYWORK:
+			return HudWorkVocab.QUARRYWORK_ROLE_HINT
+		HudWorkVocab.ROLE_NAME_BUILDERS:
+			return HudWorkVocab.BUILDERS_ROLE_HINT
+	return HudWorkVocab.AGRICULTURE_ROLE_HINT
 
 func _other_keeping_role(role: String) -> String:
 	return HudWorkVocab.ROLE_NAME_AGRICULTURE if role == HudWorkVocab.ROLE_NAME_HUSBANDRY \
@@ -4914,7 +4911,7 @@ const POOL_GEAR_ROADWORK_CREW := 2
 ## |---|---|---|
 ## | `agriculture` | hoes **4 of 4** | no tool line — **FILLED**, and a row is present so this is not *not applicable* |
 ## | `husbandry` | crook **0 of 2** | `Short of tools.` under the `⚠`, beside its work shortfall |
-## | `roadwork` | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | the `ⓘ` and the per-worker line — its work is covered; its own share of a SHARED item |
+## | `roadwork` | earthmoving tools **4 of 6**, stone-dressing tools **0 of 2** | the `ⓘ` and the INFO tool line — its work is covered; its own share of a SHARED item |
 ## | `builders` | none at all | nothing — **NOT APPLICABLE** |
 ##
 ## The card counts none of these numbers (issue #716); they decide only whether each pool is short.
@@ -5641,8 +5638,9 @@ func _pool_hands_line_index(lines: Array) -> int:
 
 ## ⛔ **A TOOL COUNT, ANYWHERE ON THE HOVER — the shape issue #716 retired.** `0 of 1 hoe` under a
 ## worker stepper read as a head count, so the card may not count a tool on ANY line. Spelled as a
-## shape rather than as one item's word, so a stray count naming a different item is caught too.
-const POOL_TOOL_COUNT_PATTERN := "[0-9]+ of [0-9]+ [a-z]"
+## shape rather than as one item's word, so a stray count naming a different item is caught too. It
+## excludes `work`, since the coverage sentence is itself `Supplies N of M work a turn.`
+const POOL_TOOL_COUNT_PATTERN := "[0-9]+ of [0-9]+ (?!work\\b)[a-z]"
 
 ## Which of a hover's lines count something in the retired `N of M <item>` shape.
 func _pool_tool_count_lines(lines: Array) -> Array:
@@ -5698,7 +5696,7 @@ func _assert_pool_card_state(label: String, role: String, answers: Dictionary, w
 	_assert_band_panel("pool gear — %s: …its hover %s the WORK shortfall in its own web's words (%s)"
 			% [label, "states" if want_hands else "does NOT state", lines],
 		(hands_at != POOL_HOVER_LINE_ABSENT) == want_hands
-			and (not want_hands or String(lines[hands_at]).contains(_pool_short_tail(role))))
+			and (not want_hands or lines.has(_pool_role_hint(role))))
 	if want_gear != "":
 		# BY EQUALITY OVER A WHOLE LINE: its own line, the shipped wording.
 		_assert_band_panel("pool gear — %s: …and states the TOOL shortfall as a line of its own, \"%s\" (%s)"
@@ -5729,7 +5727,7 @@ func _assert_pool_card_state(label: String, role: String, answers: Dictionary, w
 ## |---|---|---|
 ## | Agriculture | hoes FILLED | `⚠`, the work sentence only — **FILLED tools say nothing** |
 ## | Husbandry | crook short | `⚠`, the work sentence, then `Short of tools.` |
-## | Roadwork | both items short | `ⓘ` in INK_DIM, calm title, the per-worker tool line |
+## | Roadwork | both items short | `ⓘ` in INK_DIM, calm title, the INFO tool line |
 ## | Builders | — | nothing at all — **NOT APPLICABLE** |
 func _assert_pool_kit_marks() -> void:
 	var hands := _pool_card_answers(HudWorkVocab.ROLE_NAME_AGRICULTURE)
@@ -5807,6 +5805,8 @@ const POOL_TOE_NEAR_FILLED := 2.9
 ## …and a FILLED row, so "it is short" is a claim rather than a predicate that always says yes.
 const POOL_TOE_FILLED_REQUIRED := 4.0
 const POOL_TOE_FILLED_FILLED := 4.0
+## The retired counted line's played reading, as the needle's positive.
+const POOL_TOE_RETIRED_COUNT_SAMPLE := "0 of 1 hoe"
 func _assert_pool_tools_line_forks_on_work() -> void:
 	var pool := HudConst.LABOR_KIND_AGRICULTURE
 	var live := [_pool_toe_row(pool, POOL_TOE_SHORT_TEST_ITEM, POOL_TOE_LIVE_REQUIRED,
@@ -5824,6 +5824,14 @@ func _assert_pool_tools_line_forks_on_work() -> void:
 	_assert_band_panel("pool gear — …with the work covered it is \"%s\" (got \"%s\")"
 			% [HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE, HudWorkVocab.pool_tools_short_line(live, false)],
 		HudWorkVocab.pool_tools_short_line(live, false) == HudWorkVocab.POOL_TOOLS_SHORT_INFO_LINE)
+	# …and the no-count needle still bites: the retired count reads as one, the coverage sentence not.
+	var coverage := HudWorkVocab.UPKEEP_POOL_COVERAGE_FORMAT % [
+		DetailFormat.format_work_units(POOL_TOE_LIVE_FILLED),
+		DetailFormat.format_work_units(POOL_TOE_LIVE_REQUIRED)]
+	_assert_band_panel("pool gear — the tool-count needle catches `%s` and passes \"%s\""
+			% [POOL_TOE_RETIRED_COUNT_SAMPLE, coverage],
+		_pool_tool_count_lines([POOL_TOE_RETIRED_COUNT_SAMPLE]).size() == 1
+			and _pool_tool_count_lines([coverage]).is_empty())
 	_assert_band_panel("pool gear — …while a FILLED row is short of nothing and states nothing either way",
 		not HudWorkVocab.pool_toe_is_short(filled)
 			and HudWorkVocab.pool_tools_short_line(filled, true) == ""
@@ -23937,7 +23945,7 @@ func _assert_declare_time_keeping(where: String, want_mark: bool, keepers: int) 
 		bool(card.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) == want_mark)
 	# The pool carries no keeping gear on this roster, so its supply is the bare rate every source
 	# publishes times the hands on it — composed here rather than asked of the code under test.
-	var wanted := HudWorkVocab.upkeep_pool_coverage_format(HudWorkVocab.ROLE_NAME_HUSBANDRY) % [
+	var wanted := HudWorkVocab.UPKEEP_POOL_COVERAGE_FORMAT % [
 		DetailFormat.format_work_units(float(keepers) * KEEPING_DECLARE_PER_WORKER_TURN),
 		DetailFormat.format_work_units(KEEPING_DECLARE_UPKEEP)]
 	# ⛔ **THE SENTENCE IS NOT THE TRIGGER ANY MORE, SO IT IS ASSERTED ON BOTH SIDES** (issue #715).
