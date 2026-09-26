@@ -1521,6 +1521,33 @@ table PopulationCohortState {
   // `quarrywork` | `builders`, the same spelling `LaborAssignment.kind` publishes for the row, so a
   // client joins a line to its pool card without a table of its own.
   poolToe:[PoolToeLine];
+  // --- WHAT EACH KEEPING POOL DID NOT USE (appended last, issue #715) ---------------------------
+  // HOW MANY OF EACH KEEPING POOL'S ASSIGNED KEEPERS THE TURN'S BILL DID NOT CONSUME. One row per
+  // keeping pool, and the number a "step this pool down" mark is drawn off.
+  //
+  // *** THE SIM SAYS IT AND A CLIENT MUST NOT WORK IT OUT. *** A client projecting a pool's supply
+  // off a NOTIONAL kit knows neither which tools the band's settlement actually handed this pool,
+  // nor that leftover hands are put back onto sites still carrying a deficit (the bare-hand top-up,
+  // `docs/plan_pool_toe.md` section 2.3 step 5). A client-side "this keeper is idle" is wrong in
+  // exactly the cases the top-up exists for - the sim has that keeper working.
+  //
+  // *** FOUR POOLS, AND `builders` IS NOT ONE OF THEM. *** `agriculture` | `husbandry` | `roadwork`
+  // | `quarrywork`. The builders are not a keeping pool: the WHOLE head count goes on the build
+  // queue's head (section 2.4), so no builder is ever left standing by a plan that wanted fewer. A
+  // builders pool with an EMPTY QUEUE is idle in a different sense and is deliberately not measured
+  // here.
+  //
+  // *** A POOL WITH A HEAD COUNT AND NO SITES STATES ITS WHOLE HEAD COUNT *** - three keepers on
+  // `agriculture` with no tended ground are three idle keepers, and that is the commonest reading
+  // there is. A row therefore exists for every keeping pool THIS COHORT CAN HOLD, filled or not,
+  // unlike `poolToe`'s.
+  //
+  // *** WHICH IS FOUR ON A BAND AND THREE ON AN ANONYMOUS COHORT *** - one with no band id keeps no
+  // roads, because a road's keeper IS a band (`routes::road_keeping_basis`), so it publishes
+  // `agriculture`, `husbandry` and `quarrywork` and has no `roadwork` pool to report on. An ABSENT
+  // row therefore reads "this cohort has no such pool" - the same answer `builders`' absence
+  // already gives, needing no separate branch on the reading side.
+  poolCrew:[PoolCrewLine];
   // --- WHAT CROSSED THIS BAND'S STORE, BY CAUSE (appended last, issue #731) ---------------------
   // The detail beneath the eight `transfer*Turn` / `fodderTransfer*Turn` arms above: one row per
   // (good, rating, direction, cause, counterparty, party), on the same per-turn window. For food and
@@ -3714,6 +3741,12 @@ table LadderKnowledgeState {
   // hanging off the bottom of its column when it does not. `foddering` is the shipped `false`: it
   // changes what a pen may draw on rather than opening a further rung. DERIVED, never declared.
   isStep:bool = false;
+  // --- THE SUBJECT AREA (appended last) ---------------------------------------------------------
+  // The subject area of the branch that TEACHES it: "food", "making", "works". WHICH HEADING, one
+  // level above `branch`. Off `intensification_ladder.json`'s `branches` table, never a client-side
+  // list — a hard-coded area table is the `LADDER_DOMAINS` bug one level up. "" when the branch's
+  // descriptor names none, which the client draws under a fallback heading rather than dropping.
+  area:string;
 }
 
 // One faction's progress on ONE ladder knowledge, 0..1 (1.0 = known). The row's join key is
@@ -5532,6 +5565,9 @@ table BenchState {
 // stamps no grade must not appear to promise one.
 table CraftOffer {
   recipeId:string;
+  // THE ROW'S NAME, not the recipe's: the output ITEM's own `display_name` ("Spears"), or the
+  // material's title for a stock recipe ("Hurdles"). Two offers for one item carry the SAME string —
+  // the item owns its name, and `recipeLabel` below is what tells its recipes apart.
   displayName:string;
   // "kit" (a party carries it) | "tool" (it bounds one material at the bench) | "stock" (it makes a
   // material). The design's ledger is one table in exactly these three groups.
@@ -5557,19 +5593,43 @@ table CraftOffer {
   //     recipe only that half applies.
   outputGrade:string;
   onBench:bool;          // this recipe is the running job — the row's button is spent
-  // --- THE LEDGER'S GROUP HEAD, AND WHAT THE BAND ACTUALLY CARRIES (appended last) --------------
-  // THE TIER A CRAFT WOULD PRODUCE RIGHT NOW — `ItemDefinition::craftable_tier`, the best tier the
-  // faction knows. This is the ledger's GROUP HEAD, not a column: a head says it once and can fold
-  // away, which is what a column can never do. "" on a material (stock) recipe.
-  outputTierName:string;
-  // Index of that tier within the item's own `tiers` list. The head order is by RANK DESCENDING —
-  // newest first — because the client has no other honest way to order two tier heads, and
-  // alphabetical would put Iron above Bronze.
-  outputTierRank:uint;
-  // RENDER IT VERBATIM, "" when there is no news. What the band CARRIES, said only when it
-  // disagrees with what it could now make: "carrying flint · poor", "last flint set wore out".
-  // The tier word reaches the Owned cell ONLY through this field and only when it is news.
-  ownedNote:string;
+  // Three unused slots. The ledger groups by item rather than under tier heads, and which tier a band
+  // holds is `ownedAtTier` below. Deprecated rather than deleted because slots are positional.
+  outputTierName:string (deprecated);
+  outputTierRank:uint (deprecated);
+  ownedNote:string (deprecated);
+  // --- ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK (appended last) -----------------------
+  // Several offers can share one `outputItemId` (a spear pointed with bone, a spear knapped from
+  // stone). The ledger shows ONE row per item; these five fields are what its recipe popup and its
+  // Make-picker read. All of them are RESOLVED SIM-SIDE — the client never picks, never spells a
+  // stat, never divides a durability.
+  //
+  // The recipe's own short name among its siblings — "Bone", "Flint", "Withy". "" on a recipe that is
+  // the ONLY one making its output (a label is rejected there: nothing could show it).
+  recipeLabel:string;
+  // WHAT THIS RECIPE WOULD MAKE, from this band's store right now, as one resolved headline:
+  // "26 attack", "8 carry", "40 haul", "+0.7 build work", "2 tile vantage". A graded recipe states
+  // the grade effect at `outputGrade`; an ungraded one its output tier's own effect; a stat whose
+  // equipped value lives in another config (a scout's vantage) is resolved there. "" for a material
+  // output and for a bench tool.
+  makes:string;
+  // HOW LONG ONE FRESH UNIT AT THIS RECIPE'S TIER LASTS, in the item's headline wear quantum and the
+  // same wording `EquipmentBatchState.life` counts in: "175 blows", "2500 biomass gathered". So a
+  // flint spear reads shorter than a bone one — the brittleness is the point. "" for a material output.
+  lasts:string;
+  // EXACTLY ONE offer per row is true — a row is one thing made: every offer sharing an
+  // `outputItemId`, or, for a stock recipe, every offer making the same output MATERIAL. It is the
+  // recipe the row's Costs cell shows and the picker opens on. The sim decides, in order: the offer
+  // that is `onBench` (a running job keeps the row even after its own draw leaves it unaffordable),
+  // else the recipe this band LAST STARTED for the row if it is available now, else the first
+  // available in book order, else the last started, else the first in book order.
+  suggested:bool;
+  // HOW MANY UNITS OF THIS ITEM THE BAND OWNS AT THIS RECIPE'S TIER — or -1 when every recipe making
+  // the item makes the SAME tier (a fibre basket and a withy basket are one item at one tier, and the
+  // ledger never recorded which recipe made a unit, so a count per recipe there would be invented).
+  // So spears/clubs/hoes publish counts and baskets/sled/traps/crook/wayfinding publish -1 on BOTH
+  // offers. -1 is not "none": 0 is a real count.
+  ownedAtTier:int = -1;
 }
 
 // ONE BATCH OF ONE ITEM a band owns, plus the CONFIG's items it owns none of (one row each, count 0)
@@ -5635,6 +5695,8 @@ table RecipeOutputState {
 
 table RecipeDefState {
   id:string;
+  // The OUTPUT's name — the item's own `display_name`, or the material's title — shared by every
+  // recipe making that output. `label` below is the recipe's own word.
   displayName:string;
   craft:string;
   group:string;   // "kit" | "tool" | "stock", the same three the ledger groups by
@@ -5642,6 +5704,9 @@ table RecipeDefState {
   requiresKnowledge:[string];  // empty on every ordinary kit recipe — TOOLS ARE EARNED, NEVER A PREREQUISITE
   inputs:[RecipeInputState];
   outputs:[RecipeOutputState];
+  // The recipe's short name among the recipes that make the same output — "Bone", "Flint". "" on a
+  // recipe that is the only one making its output. Appended last (append-only).
+  label:string;
 }
 
 // One craft track per faction: whether it is known and how far along it is. The lesson is charged
@@ -5990,6 +6055,16 @@ table SubsistenceSection {
   // The live half is `deposits` above, which is per-working and per-frame; this is what a working
   // could BECOME, including on ground where nothing has been opened at all.
   depositRungs:[DepositRungState];
+  // --- THE SUBJECT AREAS' DISPLAY ORDER, once per world (appended last) --------------------------
+  // The order the knowledge screen's headings are drawn in, off `intensification_ladder.json`'s
+  // `areas` — "food", "making", "works", ... A per-world constant, so it is diffed whole exactly
+  // like `ladderKnowledge`, and it rides beside it because the two are the same kind of thing: the
+  // DECLARATION of what the ladder holds, carrying no faction and no tile.
+  //
+  // IT RIDES RATHER THAN BEING INFERRED FROM THE ROSTER. Areas are peers, so first-seen order off
+  // the rows would reshuffle the whole screen whenever a rung was added — the same defect that made
+  // column order unstable before the roster carried it. An area with no domains is never drawn.
+  ladderAreas:[string];
 }
 
 table KnowledgeSection {
@@ -6723,6 +6798,49 @@ table PoolToeLine {
   // Tools are settled BAND-WIDE per item by the player's own row priority, so two pools reaching for
   // one stock - a paved road and a quarry both want stone-dressing gear - divide it here.
   filled:float;
+}
+
+// ONE KEEPING POOL'S CREW ACCOUNT - a row of `PopulationCohortState.poolCrew`, where the rules that
+// govern the vector are stated. Appended last (append-only discipline).
+table PoolCrewLine {
+  // Which pool the line belongs to, in the labor-role vocabulary: `agriculture`, `husbandry`,
+  // `roadwork` or `quarrywork`. NEVER `builders` - see `PopulationCohortState.poolCrew`.
+  pool:string;
+  // Keepers this pool employed on nothing at all this turn.
+  //
+  // *** IN KEEPERS, AND MAY BE FRACTIONAL *** - a pool's share arithmetic is continuous, so `1.68`
+  // keepers left standing is an ordinary reading and not a rounding artefact. Keepers rather than
+  // work units deliberately: the control the player presses is a stepper in KEEPERS, and a client
+  // that wants work multiplies by a rate it already publishes.
+  //
+  // *** STRUCK AFTER THE BARE-HAND TOP-UP, NOT BEFORE IT. *** The plan leaves hands standing, then
+  // step 5 (`docs/plan_pool_toe.md` section 2.3) puts as many of them as it can onto the sites
+  // still carrying a deficit, BARE. What is published here is what step 5 could not place - so it
+  // means "these people did nothing at all this turn" and NOT "the geared plan had no use for
+  // them". The pre-top-up figure would tell a player to step down a keeper the sim has working.
+  //
+  // `0` is a pool that employed every hand it was given.
+  //
+  // *** IT IS MEANINGLESS WITHOUT `keepers` BELOW. *** It was struck against THAT head count, which
+  // is the one the turn settled and not necessarily the one the band's row carries now.
+  idleKeepers:float;
+  // THE HEAD COUNT `idleKeepers` WAS STRUCK AGAINST - the keepers this pool held when the turn
+  // settled it.
+  //
+  // *** IT IS THE BASIS OF THE FIGURE ABOVE, AND A READER THAT IGNORES IT IS READING A NUMBER WHOSE
+  // BASIS HAS MOVED. *** A labor row is edited the instant the player presses the stepper, outside
+  // the turn; this whole line is stamped only when the turn settles the pool. So between a press
+  // and the next turn resolution the row already carries the new head count while `idleKeepers`
+  // still describes the old one.
+  //
+  // A reader projecting a live edit therefore takes `idleKeepers + (its own current head count -
+  // keepers)`, floored at zero - the added hand is BARE (`docs/plan_pool_toe.md` section 2.3 step
+  // 5), so the client can price the CHANGE even though it cannot price the absolute. Reading
+  // `idleKeepers` alone answers with the staffing the player has already left behind.
+  //
+  // IN KEEPERS AND A FLOAT, like every other hand quantity on this wire, so a reader that divides
+  // and subtracts against it casts nothing.
+  keepers:float;
 }
 
 table WorldSnapshot {

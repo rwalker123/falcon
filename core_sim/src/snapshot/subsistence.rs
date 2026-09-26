@@ -2269,10 +2269,23 @@ pub(crate) fn snapshot_ladder_knowledge(ladder: &LadderConfig) -> Vec<LadderKnow
             knowledge_id: entry.knowledge.to_string(),
             display_name: knowledge_title_from_id(entry.knowledge),
             branch: entry.branch.as_str().to_string(),
+            area: entry.area.to_string(),
             order: entry.order,
             is_step: entry.is_step,
         })
         .collect()
+}
+
+/// **THE SUBJECT AREAS, IN DISPLAY ORDER** — `intensification_ladder.json`'s `areas`, once per
+/// world and beside the roster above.
+///
+/// ⛔ **PUBLISHED RATHER THAN INFERRED FROM THE ROSTER.** Areas are peers, so first-seen order read
+/// off the rows would reshuffle the whole knowledge screen whenever a rung was added — the same
+/// defect that made column order unstable before the roster carried it. An area with no domains is
+/// never drawn, which is why the list may name areas no branch sits under yet: the order has to be
+/// right already on the day a branch lands in one.
+pub(crate) fn snapshot_ladder_areas(ladder: &LadderConfig) -> Vec<String> {
+    ladder.areas.clone()
 }
 
 /// **A RUNG NOBODY BUILDS COSTS NOTHING TO REACH** — the `work_cost` a rung with no `build` block

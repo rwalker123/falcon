@@ -503,9 +503,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // people and their gear and never by what they are standing on.
             let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
             // **THE BUILD AXIS AT THIS BAND'S LIVE WEAR, IN WORK UNITS** — the EXTRA work one
-            // equipped worker DELIVERS per turn (neutral `0`; the crook's and the hoes' flint tiers
-            // each declare 0.5, so an equipped builder banks `1.0 + 0.5 = 1.5` where a bare one banks
-            // `1.0`), so spent gear steps back to neutral here the way every other axis does.
+            // equipped worker DELIVERS per turn (neutral `0`; the crook's and the hoes' `plain`
+            // tiers each declare 0.5, so an equipped builder banks `1.0 + 0.5 = 1.5` where a bare
+            // one banks `1.0` — the hoes' second tier, `flint`, declares 0.7 instead, which is what
+            // makes naming the TIER load-bearing here), so spent gear steps back to neutral here the
+            // way every other axis does.
             //
             // ⛔ **AN ADDEND, NOT A DISCOUNT.** This read *"what one equipped worker takes off an
             // improvement's cost"* with the retired subtraction's **8.5** beside it. **A job's work
@@ -1387,15 +1389,28 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("shortfalls", &shortfalls_to_array(offer.shortfalls()));
             let _ = row.insert("output_grade", offer.outputGrade().unwrap_or(""));
             let _ = row.insert("on_bench", offer.onBench());
-            // **THE LEDGER'S GROUP HEAD** — the tier a craft would produce right now, and its rank
-            // in the item's own list. The heads run rank-DESCENDING (newest first), which is the
-            // client's only honest ordering: alphabetical would put Iron above Bronze.
-            let _ = row.insert("output_tier_name", offer.outputTierName().unwrap_or(""));
-            let _ = row.insert("output_tier_rank", offer.outputTierRank() as i64);
-            // **RENDER IT VERBATIM, and only this carries a tier word into the Owned cell.** `""`
-            // when there is no news — what the band carries is said only when it disagrees with
-            // what the band could now make.
-            let _ = row.insert("owned_note", offer.ownedNote().unwrap_or(""));
+            // `outputTierName` / `outputTierRank` and `ownedNote` are deprecated on the wire and not
+            // decoded: the ledger groups by group and item, never by tier, its Owned cell carries no
+            // tier word, and which tier the band holds is the recipe popup's `owned_at_tier`.
+            // **ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK.** Several offers share one
+            // `output_item_id`; the client groups them into one row and these five are what that
+            // row's recipe popup and its Make picker read. All RESOLVED SIM-SIDE — the client never
+            // picks the suggested recipe, never spells a stat and never divides a durability.
+            //
+            // The recipe's short name among its siblings ("Bone", "Flint"); `""` on a sole recipe.
+            let _ = row.insert("recipe_label", offer.recipeLabel().unwrap_or(""));
+            // What this recipe would make from this band's store ("26 attack"); `""` for a bench
+            // tool and for a material output.
+            let _ = row.insert("makes", offer.makes().unwrap_or(""));
+            // How long one fresh unit at this recipe's tier lasts ("175 blows"); `""` on a material.
+            let _ = row.insert("lasts", offer.lasts().unwrap_or(""));
+            // EXACTLY ONE offer per row is true: the recipe the row's cells show and the picker
+            // opens on.
+            let _ = row.insert("suggested", offer.suggested());
+            // Units owned at THIS recipe's tier, or `-1` when every recipe for the item makes the
+            // same tier and no count per recipe exists (`OWNED_AT_TIER_UNATTRIBUTED`). `-1` is not
+            // "none": `0` is a real count.
+            let _ = row.insert("owned_at_tier", offer.ownedAtTier() as i64);
             craft_offers.push(&row.to_variant());
         }
     }
@@ -1517,6 +1532,50 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     }
     let _ = dict.insert("pool_toe", &pool_toe);
 
+    // --- WHAT EACH KEEPING POOL DID NOT USE (issue #715) ------------------------------------------
+    // One row per KEEPING pool, stating how many of the keepers assigned to it the turn's bill did
+    // not consume — the number a *step this pool down* mark is drawn off.
+    //
+    // ⛔ **THE SIM SAYS IT AND THE CLIENT MUST NOT WORK IT OUT.** A card's own `supply` figure is a
+    // projection off a NOTIONAL kit: it knows neither which tools the band's settlement actually
+    // handed this pool, nor that leftover hands are put back BARE onto sites still carrying a
+    // deficit. A client-side *this keeper is idle* is wrong in exactly the cases that top-up exists
+    // for — the sim has that keeper working. `idle_keepers` is struck AFTER the top-up, so it means
+    // *these people did nothing at all this turn*.
+    //
+    // **IN KEEPERS, AND FRACTIONAL** — `1.68` keepers left standing is an ordinary reading, not a
+    // rounding artefact, because a pool's share arithmetic is continuous.
+    //
+    // **FOUR POOLS, AND `builders` IS NEVER ONE OF THEM** — `agriculture` | `husbandry` | `roadwork`
+    // | `quarrywork`. The whole builders head count goes on the build queue's head, so no builder is
+    // ever left standing by a plan that wanted fewer; a builders pool with an EMPTY QUEUE is idle in
+    // a different sense and is deliberately not measured.
+    //
+    // **A ROW EXISTS FOR EVERY KEEPING POOL, STAFFED OR NOT** — unlike `pool_toe`'s, which exists
+    // only where something is required. Three keepers on `agriculture` with no tended ground are
+    // three idle keepers, and that is the commonest reading there is, so a reader never has to tell
+    // an absent row from a zero one.
+    //
+    // ⛔ **`idle_keepers` IS MEANINGLESS WITHOUT `keepers`, SO BOTH RIDE OUT TOGETHER.** The idle
+    // figure was struck against the head count this pool held when the TURN SETTLED it, and a labor
+    // row is edited the instant the player presses the stepper, OUTSIDE the turn — so between a
+    // press and the next resolution the band's row already carries the new count while
+    // `idle_keepers` still describes the old one. A reader projecting a live edit takes
+    // `idle_keepers + (its own current head count - keepers)`, floored at zero, and one that reads
+    // the band's row as the basis instead subtracts the pending count from itself and projects
+    // nothing at all. `keepers` is the anchor that makes the projection possible; the two are
+    // written at one seam in the sim and are decoded at one seam here.
+    let mut pool_crew = VarArray::new();
+    if let Some(lines) = cohort.poolCrew() {
+        for line in lines.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("pool", line.pool().unwrap_or_default());
+            let _ = row.insert("idle_keepers", line.idleKeepers() as f64);
+            let _ = row.insert("keepers", line.keepers() as f64);
+            pool_crew.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("pool_crew", &pool_crew);
     // --- WHAT CROSSED THIS BAND'S STORE, BY CAUSE (issue #731) -------------------------------------
     // One row per (good, rating, direction, cause, counterparty, party), on the per-turn window the
     // eight `transfer_*_turn` arms are on. For `provisions` and `fodder` the rows summed per

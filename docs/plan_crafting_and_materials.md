@@ -262,19 +262,32 @@ Quality tiers moved here from #493 deliberately: a tier is **unobtainable in a g
 can craft it**.
 
 - **Upgrades nest inside an item; they are not separate items.** A kit's `uses` list keeps naming
-  `spears`, never `flint_spears`.
+  `spears`, never `flint_spears` — the *recipe* ids (`spears` / `spears_flint`) carry that
+  distinction, because a recipe is what names the material a tier is made of.
 - **What is SHARED stays on the item, what the MATERIAL buys sits on the tier.** A spear is a thrown
   weapon whatever it is tipped with (`dispersion` on the item), while `attack` and
   `starting_durability` are what the material changes.
-- **Tiers are knowledge-gated, and flint ships known**, so nothing is locked at the start and the
-  gate has a real job the day bronze exists.
-- **Flint IS today's spear** — `starting_durability 100`, `attack 20`, verbatim. The migration is a
-  pure re-homing and not one number changes value, which preserves `equipment.md`'s "the shipped
-  opening is unchanged" invariant.
+- **WHICH TIER A CRAFT MAKES IS THE RECIPE'S TO SAY** (`RecipeOutput::tier`), and it is **mandatory
+  on any item declaring more than one. That is what lets ONE ITEM HAVE TWO RECIPES** — `spears` from
+  bone at `plain` and `spears_flint` from knapped stone at `flint`, different inputs and different
+  stats, both craftable at once. This bullet read *"tiers are knowledge-gated, and flint ships
+  known"*; knowledge-gating survives as `EquipmentTier::requires_knowledge` and the fallback
+  `craftable_tier`, but **nothing shipped uses either** — a faction-wide gate can answer only one
+  tier per item, so it could never have expressed the pair.
+- **THE OPENING TIER IS `plain`, AND IT IS TODAY'S SPEAR** — `starting_durability 100`, `attack 20`,
+  verbatim. The migration was a pure re-homing and not one number changed value, which preserves
+  `equipment.md`'s *"the shipped opening is unchanged"* invariant. **It was called `flint` until
+  issue #736** and the rename moved no value either: the name was a lie (the tier is bone, hide and
+  fibre) and it became unusable the moment a real knapped tier existed.
+- **`flint` IS a shipped row now, on `spears` / `clubs` / `hoes`** — harder-hitting and **brittle**
+  (`attack` 26 / 9 and `build_work` 0.7, all at `starting_durability` **70** against 100), which is
+  the first use of this file's own *durability and performance are orthogonal axes*: a straight
+  upgrade retires the bone path one rung up, and a brittle one keeps both alive permanently.
 - **Ship no bronze row in the config.** An unreachable tier is the same objection #493 used to defer
   tiers here, and `SubsistenceSection.equipmentConfigJson` publishes the whole config to the Workbench,
-  so it would be *visible* dead content. Cover tier switching with a test fixture; bronze becomes a
-  config row the day #325 lands.
+  so it would be *visible* dead content — metal has no producer. **`flint` ships because it IS
+  reachable**: stone has a producer and the book carries a recipe that makes it. A
+  **knowledge-gated** tier is still fixture-only; bronze becomes a config row the day #325 lands.
 
 **This is what forces the equipped rates out of `labor_config.json`.** It owns the equipped haul rates
 (`40.0` hunt, `8.0` forage) and several telemetry sites read them as the equipped reference. Once
@@ -360,22 +373,21 @@ that split.
   rule for *which*, and every candidate misleads: the best flatters, the worst alarms, and the batch
   currently in service is chosen by **wear, not quality** — so it would move for a reason that has
   nothing to do with what the row claims.
-- **TIER IS A GROUP HEAD, NOT A COLUMN.** A column spends its width saying `flint` on every row for
-  the whole early game; a head says it once and can **fold away**, which is what a column can never
-  do. The head is the tier a row would be **made** at — a recipe produces the best tier the faction
-  knows and upgrades nest inside the item, so a row *moves* rather than splitting. The **cell** is
-  what the band actually **has**, so the two can disagree, and that disagreement is the readout: a
-  Clubs row under **Bronze** whose cell says *carrying flint · poor* is telling you something worth
-  knowing. **The tier word appears in the cell only then** — only when it is news.
+- **ONE ROW PER THING MADE, AND NO TIER IS SPOKEN.** The ledger is one short row per item — or per
+  material, for a stock recipe — under **Kit · Bench tools · Materials**: name, Owned, Costs, Make.
+  An item with more than one recipe carries a **"2 recipes" link** that opens a small read-only table
+  (recipe, costs, what it makes, how long it lasts, and how many the band holds where the recipes make
+  different tiers), and **Make** on it drops a picker in under the row. **The recipe is fixed once the
+  build starts.** A row per recipe was built first and rejected from play — Spears appeared twice —
+  and so were three richer single-row layouts (recipe chips, every recipe on its own line, fold-out
+  lines), as overloading a row that must stay short.
 
-  **The heads are the tier, and the ledger's other two groups join them as one family** — `Flint`,
-  `Bench tools`, `Materials` today; `Bronze` above `Flint` once minerals land. All three are the same
-  head: a caret and a name, nothing else. A purpose-named axis (*Metalwork* / *Woven & tanned*) was
-  considered against it and **rejected**, on the ground that the head is answering *"what would this
-  be made at"* rather than *"is this superseded"* — so it makes no claim about recency, and an item
-  that will only ever be flint simply never gains a second head to be sorted under. Folding **Flint**
-  does put baskets away with the spears; that is the reader choosing to stop looking at a group, and
-  it is what a head buys that a column cannot.
+  **There is no tier column and there are no tier heads.** An item with two recipes holds both of its
+  tiers in one row, so there is nothing to sort it under, and a head saying `plain` over most of the
+  kit said nothing the player needed. The **Owned cell names no tier** either: it says how many the
+  band holds and at what grades, and which tier those units are is answered per recipe in the recipes
+  popup (`CraftOffer.ownedAtTier`), where the tier is already the subject. The tier still decides every
+  number an offer quotes; it is simply never printed as a word.
 - **The life meter is a fuel gauge, not a performance meter** — the rule still governs every surface
   that *does* show condition. A spear at 34% is exactly as deadly as one at 100%, so condition is a
   discrete chip and is read in **turns left**, never as a percentage: a single percentage bar would

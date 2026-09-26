@@ -97,8 +97,14 @@ section first — it is the obvious fix and it does not work.
 ## 4. Selection is a toggle, and the payload already supports it
 
 `PAYLOAD_SELECTED` is a knowledge key, and the empty string already means *nothing selected* — the
-detail pane renders its placeholder for it. **So a toggle is "set the key, or set it back to empty",
-with no new state.**
+detail block is mounted empty for it. **So a toggle is "set the key, or set it back to empty", with
+no new state.**
+
+**THE EMPTY BLOCK CARRIES NO WORDS.** It held *"Pick anything above to see what it lets your hands
+do, and how it is learned."* until Ray took it out — *"the label at the bottom isn't needed, it is
+obvious, players will click on things."* What the block is there for is the **reserve** — mounting it
+in both states at one minimum height is what stops the card resizing on every click ("THE CARD MUST
+NOT RESIZE AS ROWS OPEN", below). It is a reserve, not a prompt, so do not put a sentence back in it.
 
 - Clicking the **open** knowledge closes it. Clicking a **different** one moves the detail.
 - **Only one is ever open**, and this is not fussiness. Several open at once makes the panel's height

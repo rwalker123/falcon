@@ -49,6 +49,30 @@ become identical. Prints the edge match (0.00 = perfectly seamless).
 which reads far worse than the seam it was fixing. On those, get seamlessness from the
 generator instead, and re-roll if it won't.
 
+### The gate: `make_seamless.py --check` — run after dropping in ANY base art
+
+Where `seamless_edges.py` works on one file you name, `make_seamless.py` works on the whole shipped
+roster: every base texture `terrain_config.json` registers (exactly the files the shader's
+`biome_array` loads, in `clients/godot_thin_client/assets/terrain/textures/base/`). It runs from any
+working directory.
+
+- `--check` measures each texture's **wrap ratio** per axis — the mean luma step between the last and
+  first column (the pair a repeat puts side by side) over the mean step between adjacent interior
+  columns, rows likewise. Seamless scores ~1; the bar is `SEAM_RATIO_MAX` = 1.3. Exits 1 if any
+  texture is over it.
+- Without `--check` it rewrites IN PLACE only the textures over the bar, cross-fading each wrap edge
+  with the image rolled by half its size (variance-preserving, so the band keeps its grain).
+  Idempotent: a fixed texture measures under the bar and is skipped next time.
+
+**The same ghosting caveat as `seamless_edges.py` applies**, and it was measured: on the first pass
+the fade doubled glacier cracks and desert ripples inside the band, and left a vignette or colour
+cast (woodland, rolling hills, snowfield) repeating as a grid. Those were regenerated. Check a
+generation BEFORE fixing it: an image under the bar after the 512² resize needs no fade at all.
+
+**Why the gate exists at all:** the shader samples base textures in continuous world space, so a
+texture whose edges do not meet draws a straight line across the map at every repeat — through the
+middle of hexes, and no blend setting can hide it.
+
 ### 4. `cool_grade.py <in> <out> [r_gain] [g_gain] [b_gain] [sat]`
 
 Hue-shifts a warm tile toward cool blue-green while restoring chroma around luminance.
@@ -74,4 +98,14 @@ which are fully opaque.
   streak visibly rotates at the seams. Swirls, not arrows.
 - Base terrain is RGB 512×512 in `textures/base/`, named `%02d_%s.png` by terrain id. The
   filename *is* the registration — `TerrainTextureManager` derives it from the id and name in
-  `terrain_config.json` and loads via `Image.load_from_file`, bypassing Godot's import cache.
+  `terrain_config.json`.
+- **New art does not appear until the project is RE-IMPORTED.** `TerrainTextureManager._load_asset_image`
+  tries `ResourceLoader` first (so exported builds, where the PNG is a `.ctex` in the `.pck`, work), and
+  in the editor tree that serves the IMPORTED copy in `.godot/imported/` — which a client launch does
+  not refresh. `Image.load_from_file` is only the fallback for a path the loader does not know.
+  `scripts/run_stack.sh` re-imports on launch when any importable asset is newer than its own stamp
+  (`ensure_godot_import`, both the full stack and `--client-only`), so restarting through it is enough.
+  A bare `godot` launch or a harness run (`scripts/preview.sh`) does NOT — run
+  `godot --headless --path clients/godot_thin_client --import` first. Symptom of skipping it: the build
+  stamp is current and the map still draws the old art. A replaced texture's
+  `.godot/imported/<name>.png-*.md5` carries a `source_md5` that must equal the PNG's.

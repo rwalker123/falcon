@@ -205,6 +205,102 @@ A/B in one worktree, wrapper against bare `godot`: `menu_preview` 3/3 frames ide
 both ways, `workbench_preview` 9/9 identical. Do not re-derive that from the window mode; it was
 inferred once and was wrong.
 
+## A SIMULATED GESTURE IS NOT HERMETIC — the run shares one pointer with the human
+
+**A pixel harness must open a REAL window** (see the section above: `--headless` gives it the dummy
+rendering driver and no viewport texture to read back), and a real window is an ordinary citizen of
+the window server. **While it is the foreground window, macOS delivers the physical pointer's motion
+into its viewport as genuine `InputEventMouseMotion`**, interleaved with whatever the harness is
+pushing through `Viewport.push_input`. The machine has one mouse, and the run does not own it.
+
+**WHAT THAT COSTS, AND WHY IT NEVER LOOKS LIKE AN INPUT PROBLEM.** Two independent couplings, one
+per kind of gesture:
+
+| a foreign mouse EVENT reaches… | and the damage is |
+|---|---|
+| a `BaseButton` holding a simulated press | `BaseButton::gui_input` recomputes `status.pressing_inside` from EVERY motion routed to it while pressed, so a motion outside the button makes the RELEASE cancel the click instead of emitting `pressed` — *"a REAL click … emitted no build_order at all"* |
+| a live drag | Godot re-picks the drag-over control on motion, so the drop mark and the drop itself re-target — *"the drop mark MOVED under a stationary pointer"* |
+
+…and a third that is not an event at all:
+
+| a foreign pointer MOVE | and the damage is |
+|---|---|
+| anywhere, at any time | drag-and-drop localization and any edge auto-scroll read `DisplayServer.mouse_get_position()` — **a direct OS query, not an event** — so a physical pointer that is not where the gesture put it reads as a dead pump and an empty drop mark: *"the pointer held STILL in the hot band and the engine's own pump carried the list 1 → 0px"* |
+
+**Every one of those fails as a plausible-looking assertion about the panel**, on a run whose only
+variable is where the human's hand was. Nothing errors, nothing warns, and it does not repeat — it
+was reported on `band_panel_preview` as 3, 2, 9, 0, 0, 0 failures over six consecutive runs of an
+unchanged tree, and ~half those runs named the WITHDRAW pair while the other half named a drag.
+
+### The three things that make a gesture hermetic
+
+**1. SEAL THE WINDOW FROM REAL MOUSE INPUT — `tools/harness_window.gd`.** One `static func` called
+from every pixel harness's `_ready`, setting a degenerate (zero-area) `mouse_passthrough_polygon` so
+the window accepts no mouse events at all and they pass through to whatever is behind it. **An EMPTY
+polygon is the opposite** — Godot documents that as *disabling* passthrough, i.e. the default where
+the window intercepts everything — so the three coincident points are load-bearing. `push_input`
+injects straight into the viewport and never goes near the window server, so every simulated gesture
+runs exactly as before; the window simply stops hearing the hand resting on the desk. **This is the
+`scripts/preview.sh` decision one layer in**: the wrapper stops the window taking FOCUS, and this
+stops it taking MOUSE — neither touches `project.godot`, so the game is unaffected.
+
+**2. A PRESS AND ITS RELEASE GO IN WITH NO AWAITED FRAME BETWEEN THEM.** Awaiting a frame is
+precisely what yields to the main loop and lets the OS event queue be pumped, so the gap between a
+simulated press and its release WAS the exposure. `push_input` is processed synchronously, so two
+pushes in one call stack cannot be interleaved with anything. It is not a longer settle and costs no
+frames — only the order changes.
+
+**3. A HELD GESTURE RE-ASSERTS THE PHYSICAL POINTER EVERY FRAME.** The seal cannot protect a direct
+`mouse_get_position()` read, so a hold that means *the player is not moving the mouse* has to keep
+putting the pointer where it says it is. **Drift detection against a sampled anchor is not enough**,
+and that was measured rather than reasoned: sampling the anchor from the current reading means a
+pointer already stolen when the sample is taken BECOMES the anchor, after which nothing ever drifts
+and the whole hold runs against a cursor outside the hot band. Re-warp unconditionally; keep the
+drift count as a DIAGNOSTIC and warn on it, so a contested run says so.
+
+> **THE OBJECTION TO RE-WARPING EVERY FRAME DIED WITH THE SEAL, and it is worth knowing why it was a
+> real objection first.** Each warp emits an OS motion event, and a motion event mid-drag is exactly
+> what makes Godot re-pick the drag-over control — so before the seal, a harness generating one per
+> frame would have satisfied *"the drop mark moved under a stationary pointer"* by itself and stopped
+> testing the panel's own hover re-resolve. With no OS mouse event reaching the viewport at all, the
+> only motion during a hold is the panel's own, and the claim keeps its teeth.
+
+### The guard: nothing but the harness puts mouse input in
+
+`Viewport.push_input` dispatches SYNCHRONOUSLY, so a flag set around the call is an **exact**
+discriminator rather than a heuristic: an `_input` notification seen while it is up came from this
+harness, and one seen while it is down came from somewhere else. `band_panel_preview` routes every
+pushed event through one `_push_input` wrapper and counts the rest, asserting once at `_finish` that
+the count is **zero** — paired with the pushed count, since zero foreign events is free on a run that
+drove no input. The one legitimate foreign source is excused **by condition, not by shape**: the
+panel's own `_resolve_queue_drag_hover` pushes through `Input.parse_input_event`, and only ever
+between `NOTIFICATION_DRAG_BEGIN` and `DRAG_END`, so `gui_is_dragging()` is the exemption.
+
+**That guard is what turns this whole class from an intermittent flake into one named failure on the
+run that suffers it** — it reports the first foreign event and the state it landed in.
+
+### How each half was falsified
+
+- **The click half.** A motion event injected between a simulated press and its release reproduces
+  **29 failures**, including four of the reported ones verbatim (*"a REAL click on row 0's `▼`
+  emitted no build_order at all"*, the withdraw pair's *"3 rows → 3"* and *"the source's effective
+  improvement is blank again (got \"cultivate\")"*, and *"pressing it sends `abandon 0 72 18` … (got
+  \"\")"*). With the window foregrounded and the real cursor moved during a run, foreign events
+  reaching the viewport went **41 → 163** and the run failed; with the seal in place the same
+  adversary delivers **zero** and the run is green.
+- **The hold half.** With the physical pointer held elsewhere for the duration, dropping the
+  per-frame re-warp fails **4 runs out of 4** with *"the pump carried the list 1 → 4px"*, *"the drop
+  mark MOVED under a stationary pointer"* and a drop that named the wrong wire index; with it, **12
+  runs out of 12** are clean under the identical adversary.
+
+⛔ **`Input.warp_mouse` IS NOT A REPRODUCTION ON ITS OWN, AND THAT COST AN AFTERNOON.** Under
+`scripts/preview.sh` the window is `no_focus`, so macOS delivers it no `mouseMoved` at all — moving
+the real cursor, by warp or by hand, produced **zero** foreign events and **zero** failures across 16
+consecutive runs. The delivery needs the window to be FOREGROUND, which is itself intermittent
+(`DisplayServer.window_move_to_foreground()` on a no-focus window is granted only sometimes). So a
+quiet machine cannot reproduce this by moving the mouse, and **"I ran it sixteen times and it was
+clean" is not evidence the class is gone** — the counter above is.
+
 ## A harness renders the IMPORT CACHE, not the art on disk
 
 Godot never loads a bundled PNG: it loads the `.ctex` under `.godot/imported/` that the file's

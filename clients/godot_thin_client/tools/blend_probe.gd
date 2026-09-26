@@ -693,13 +693,242 @@ const BANK_BRIGHT_CROP := Vector2i(10, 5)   # a corridor hex sitting in the prai
 # (×blend_noise_amount), noise_cell_scale = its WAVELENGTH (×blend_noise_scale). BANK_OFF is the NEUTRAL
 # profile — i.e. exactly the shipped global levers, so it is the BEFORE frame the fix is judged against, in
 # the same camera. Amplitude without wavelength is a fringe on a straight line, so the two noise axes move
-# together.
+# together. v2 shipped on navigable_river until the blend keyed on a navigable hex's VALLEY biome rather than
+# its id (state 28, NAVBASE); nothing ships it now, so BANK_shipped renders as BANK_off. This fixture's tiles
+# carry no underlying_terrain, so its hexes still render and key on the bank layer and the sweep still bites.
 const BANK_VARIANTS := [
 	{"name": "BANK_off", "width_scale": 1.0, "noise_scale": 1.0, "noise_cell_scale": 1.0},
 	{"name": "BANK_v1", "width_scale": 1.8, "noise_scale": 1.6, "noise_cell_scale": 2.0},
 	{"name": "BANK_v2", "width_scale": 2.6, "noise_scale": 2.2, "noise_cell_scale": 2.6},
 	{"name": "BANK_v3", "width_scale": 3.4, "noise_scale": 2.8, "noise_cell_scale": 3.2},
 ]
+
+# --- state 22 (ECO): ALLUVIAL ↔ PRAIRIE — the dark/bright flat pair tracing the hexagon, at r ≈ 75 ---------
+# The report (live play): a prairie_steppe hex sitting between two alluvial_plain hexes, the seams reading as
+# razor-straight hexagon edges — the two VERTICAL (E/W) ones worst. Both are `flat`, neither carried a
+# blend_profile, so the seam ran on the GLOBAL ecotone only: the same failure class as the bank (state 17) —
+# a pair far apart in tone (alluvial mean luma ~55, prairie ~112) where a ~0.35·r ramp wobbled by a fraction
+# of itself still traces the hex polyline. One frame carries:
+#   · an ISOLATED alluvial hex in a prairie field and an ISOLATED prairie hex in an alluvial field — the
+#     mandatory SHRED checks, and (since an isolated hex meets its field across all SIX edges) the frame where
+#     the two vertical E/W edges sit beside the four diagonals of the same hex, so orientations compare
+#     directly. The isolated prairie hex IS the screenshot's configuration (alluvial on its E and W).
+#   · the field SPLIT at ECO_FIELD_SPLIT_COL — in odd-r a column split alternates a vertical E/W edge (every
+#     row) with a diagonal NE/SE pair (odd rows), so the long boundary zigzags through both orientations.
+# Isolated hexes sit in the TOP rows, clear of the bottom-right minimap (see BANK_ISO_*).
+const ECO_GRID_W := ISO_GRID_W
+const ECO_GRID_H := ISO_GRID_H
+const ECO_HEX_RADIUS := ISO_HEX_RADIUS
+const ECO_ALLUVIAL_ID := 10          # alluvial_plain — dark soil, the high-contrast outlier being profiled
+const ECO_PRAIRIE_ID := 11           # prairie_steppe — bright golden grass (no profile of its own)
+const ECO_FIELD_SPLIT_COL := 7       # cols < this are the prairie field, the rest alluvial
+const ECO_ISO_ALLUVIAL := Vector2i(2, 1)   # alluvial hex, all six neighbours prairie
+const ECO_ISO_PRAIRIE := Vector2i(11, 1)   # prairie hex, all six neighbours alluvial (the screenshot)
+# An ODD-row hex on the split: its E, NE and SE neighbours are all across it, so one crop holds a vertical
+# edge and both diagonals of the long boundary.
+const ECO_SPLIT_CROP := Vector2i(6, 5)
+const ECO_CROP_RADII := 1.7
+const ECO_SHEET_NAME := "ECO_sheet_iso_prairie"
+# The sweep — the same three axes and the same kind of ladder the bank was chosen on (see BANK_VARIANTS).
+# ECO_off is the NEUTRAL profile: the global levers exactly, i.e. the BEFORE frame in the same camera.
+# v2 SHIPS on alluvial_plain: v1 still leaves the isolated alluvial hex a soft-rimmed hexagon, v3 hazes the
+# alluvial hex into a smear and starts dissolving its identity.
+const ECO_VARIANTS := [
+	{"name": "ECO_off", "width_scale": 1.0, "noise_scale": 1.0, "noise_cell_scale": 1.0},
+	{"name": "ECO_v1", "width_scale": 1.6, "noise_scale": 1.4, "noise_cell_scale": 1.8},
+	{"name": "ECO_v2", "width_scale": 2.2, "noise_scale": 1.9, "noise_cell_scale": 2.2},
+	{"name": "ECO_v3", "width_scale": 2.6, "noise_scale": 2.2, "noise_cell_scale": 2.6},
+]
+
+# --- state 23 (ICE): a LAND terrain switches its beach off — glacier → tundra → prairie along ONE coast ---
+# The report: the tan beach ran along glacier coasts, where ice meets water with no sand. A LAND terrain's
+# `shore_profile.sand_scale` now gates the beach as a continuous land-side field (terrain-blend-shader.md →
+# shore), so the claim this state carries is that the beach GROWS IN along a coastline that runs from ice to
+# grass — no hard line of sand switching on at a land↔land bisector — on BOTH kinds of water: an inland_sea
+# lake (rows ICE_LAKE_ROWS) and a continental_shelf coast (rows ICE_SHELF_ROWS). Land is striped by column
+# (ICE_LAND_BANDS), so every coast crosses glacier → tundra → prairie. `ICE_before` is the same frame with
+# the three land profiles neutralised — the beach as it was drawn before the gate existed.
+const ICE_GRID_W := ISO_GRID_W
+const ICE_GRID_H := ISO_GRID_H
+const ICE_HEX_RADIUS := ISO_HEX_RADIUS
+const ICE_LAKE_ID := 2               # inland_sea
+const ICE_SHELF_ID := 1              # continental_shelf
+const ICE_LAKE_ROWS := [1, 2]
+const ICE_SHELF_ROWS := [6, 7]
+# Water columns: the lake and the shelf leave a land margin at both ends so each is a closed body of water.
+const ICE_WATER_COL_START := 1
+const ICE_WATER_COL_END := 13        # exclusive
+# Land stripes by column: [first col, terrain id]. glacier (22) → tundra (20) → prairie (11).
+const ICE_LAND_BANDS := [[0, 22], [5, 20], [9, 11]]
+const ICE_SANDLESS_IDS := [22, 20, 23]   # the three land terrains that ship sand_scale 0
+# Crops (native res): each coast at the glacier→tundra and tundra→prairie hand-overs. Kept left of the
+# bottom-right minimap.
+const ICE_CROPS := [
+	{"suffix": "lake_ice_tundra", "hex": Vector2i(5, 3)},
+	{"suffix": "lake_tundra_prairie", "hex": Vector2i(9, 3)},
+	{"suffix": "shelf_ice_tundra", "hex": Vector2i(5, 5)},
+	{"suffix": "shelf_tundra_prairie", "hex": Vector2i(9, 5)},
+]
+const ICE_CROP_RADII := 2.2
+
+# --- state 24 (PKLAKE): a lake beside MOUNTAINS — the relief's footline over water, at r ≈ 75 ---------------
+# The report: where an inland_sea lake meets alpine_mountain hexes, the boundary rendered as a ragged
+# staircase of small SQUARE blocks of mountain art out over the water. The screenshot's neighbourhood: a lake
+# with alpine relief along its north and east shores and glacier along the south and west. It ships a real
+# elevation raster (the G idiom — without one every hex reads PEAK_ELEV_FALLBACK and prominence cannot be
+# judged). Crops sit on the lake↔alpine shores (the defect) and the lake↔glacier shore (the control: no peak
+# pass there at all).
+const PKLAKE_GRID_W := ISO_GRID_W
+const PKLAKE_GRID_H := ISO_GRID_H
+const PKLAKE_HEX_RADIUS := ISO_HEX_RADIUS
+const PKLAKE_LAKE_ID := 2          # inland_sea
+const PKLAKE_ALPINE_ID := 26       # alpine_mountain — carries a peak overlay
+const PKLAKE_GLACIER_ID := 22      # glacier — flat, no relief
+# The lake: rows 3..6, cols 4..8. Alpine fills everything north of LAKE_ROW_MIN and east of LAKE_COL_MAX;
+# glacier the rest.
+const PKLAKE_LAKE_ROW_MIN := 3
+const PKLAKE_LAKE_ROW_MAX := 6
+const PKLAKE_LAKE_COL_MIN := 4
+const PKLAKE_LAKE_COL_MAX := 8
+const PKLAKE_ELEVATION_BY_ID := {
+	2: 0.20,    # inland_sea — below sea level
+	22: 0.40,   # glacier
+	26: 0.95,   # alpine_mountain — the high relief
+}
+const PKLAKE_SEA_LEVEL := 0.30
+const PKLAKE_CROPS := [
+	{"suffix": "north", "hex": Vector2i(6, 3)},   # lake hex under the alpine north shore
+	{"suffix": "east", "hex": Vector2i(8, 4)},    # lake hex under the alpine east shore
+	{"suffix": "glacier", "hex": Vector2i(5, 6)}, # lake hex on the glacier south shore — the control
+]
+const PKLAKE_CROP_RADII := 1.8
+
+# --- state 25 (CORNER): three DIFFERENT biomes meeting at a hex vertex, at r ≈ 75 ------------------------------
+# The report: a white fumarole_basin hex with dark floodplain grass to its NE, alluvial_plain (the wide 2.2
+# blend_profile) to its E and a green marsh to its SE; at the upper-right and lower-right vertices a hard
+# angled NOTCH cut into the blend. The flat↔flat interlock used to pick ONE neighbour — the nearest edge — so
+# where a hex meets two DIFFERENT neighbours the pick switched along the corner bisector: the neighbour texture
+# swapped there, and (with alluvial's wider band against a neutral one) the weight jumped too. The frame
+# carries the report's neighbourhood in a prairie field, plus a CONTROL three-biome corner with no profile on
+# any side (desert hex, scrub to its E, prairie around), so a fix is judged on both the profiled and the
+# neutral case. Grid OFF.
+const CORNER_GRID_W := ISO_GRID_W
+const CORNER_GRID_H := ISO_GRID_H
+const CORNER_HEX_RADIUS := ISO_HEX_RADIUS
+const CORNER_FIELD_ID := 11               # prairie_steppe — the field
+# The report's hex and its three right-hand neighbours (even row: NE = (0,-1), E = (+1,0), SE = (0,+1)).
+const CORNER_SUBJECT := Vector2i(4, 4)
+const CORNER_SUBJECT_ID := 32             # fumarole_basin — white, rugged (blends via blend_rugged_land)
+const CORNER_NE := Vector2i(4, 3)
+const CORNER_NE_ID := 9                   # floodplain — dark grass
+const CORNER_E := Vector2i(5, 4)
+const CORNER_E_ID := 10                   # alluvial_plain — the profiled (2.2 / 1.9 / 2.2) neighbour
+const CORNER_SE := Vector2i(4, 5)
+const CORNER_SE_ID := 8                   # freshwater_marsh — green
+# The control: a desert hex with scrub to its E; its NE/SE neighbours are the prairie field, so its two
+# right-hand vertices are desert / prairie / scrub — three biomes, no blend_profile on any of them.
+const CORNER_CONTROL := Vector2i(9, 4)
+const CORNER_CONTROL_ID := 15             # hot_desert_erg
+const CORNER_CONTROL_E := Vector2i(10, 4)
+const CORNER_CONTROL_E_ID := 17           # semi_arid_scrub
+const CORNER_CROP_RADII := 1.6            # the hex plus its collar — both right-hand vertices in frame
+
+# --- state 26 (TREELINE): a forest edge at r ≈ 75 — the canopy treeline's wobble at play zoom ----------------
+# The peak footline shredded into cell-sized square blocks because its wobble's noise cell was a fixed px size
+# against a radius-relative amplitude (state 24). The canopy treeline shares that construction, so this frame
+# puts a mixed_woodland block (whose crowns are the canopy overlay) and one ISOLATED woodland hex in a prairie
+# field at the user's zoom, grid OFF, to show whether the treeline does the same.
+const TREELINE_GRID_W := ISO_GRID_W
+const TREELINE_GRID_H := ISO_GRID_H
+const TREELINE_HEX_RADIUS := ISO_HEX_RADIUS
+const TREELINE_FIELD_ID := 11          # prairie_steppe
+const TREELINE_FOREST_ID := 12         # mixed_woodland — canopy crowns over a grass floor
+const TREELINE_BLOCK_COL_MIN := 6      # the forest block: cols 6..11, rows 2..7
+const TREELINE_BLOCK_COL_MAX := 11
+const TREELINE_BLOCK_ROW_MIN := 2
+const TREELINE_BLOCK_ROW_MAX := 7
+const TREELINE_ISO := Vector2i(2, 2)   # an isolated woodland hex — every edge a treeline
+const TREELINE_CROPS := [
+	{"suffix": "edge", "hex": Vector2i(6, 4)},   # the block's west treeline
+	{"suffix": "iso", "hex": TREELINE_ISO},
+]
+const TREELINE_CROP_RADII := 1.7
+
+# --- state 27 (HILLFIELD): seams along hex edges INSIDE a field of one relief biome, at r ≈ 75 ----------------
+# The report: inside a field of rolling_hills — every hex the SAME terrain — straight faint darker lines ran
+# exactly along the hex polylines, mounds were cut off where they crossed one, and one hex's mounds were visibly
+# fainter than its neighbour's. A live map gives every hex its OWN elevation, so the field ships a real
+# elevation raster that VARIES hex to hex (HILLFIELD_ELEVATIONS, cycled) — without it every hex reads
+# PEAK_ELEV_FALLBACK and nothing per-hex can differ. The field (rows 3–5, cols 5–8: a centre plus its ring and
+# more) sits between a prairie field (west) and an alluvial field (east), as in the shot. `HILLFIELD_flat` is
+# the same ids at ONE elevation — the control that says whether the seams track elevation at all.
+const HILLFIELD_GRID_W := ISO_GRID_W
+const HILLFIELD_GRID_H := ISO_GRID_H
+const HILLFIELD_HEX_RADIUS := ISO_HEX_RADIUS
+const HILLFIELD_HILLS_ID := 24            # rolling_hills — carries the peak (mound) overlay
+const HILLFIELD_WEST_ID := 11             # prairie_steppe
+const HILLFIELD_EAST_ID := 10             # alluvial_plain
+const HILLFIELD_SPLIT_COL := 7            # field west of this col is prairie, the rest alluvial
+const HILLFIELD_ROW_MIN := 3
+const HILLFIELD_ROW_MAX := 5
+const HILLFIELD_COL_MIN := 5
+const HILLFIELD_COL_MAX := 8
+const HILLFIELD_SEA_LEVEL := 0.30
+const HILLFIELD_FIELD_ELEVATION := 0.36
+# Per-hills-hex elevations, cycled over the field in row-major order — the spread a live hills field has.
+const HILLFIELD_ELEVATIONS := [0.52, 0.66, 0.44, 0.71, 0.58, 0.48, 0.63, 0.55, 0.69, 0.46, 0.60, 0.50]
+const HILLFIELD_FLAT_ELEVATION := 0.58
+# Crops (native res): the field's centre hex with all six internal edges (incl. its vertical E and W edges).
+const HILLFIELD_CROP := Vector2i(6, 4)
+const HILLFIELD_CROP_RADII := 1.6
+const HILLFIELD_PEAKS_OFF_MIN_RADIUS := 100000.0   # peak LOD pushed above the render radius: no relief pass
+const HILLFIELD_NO_SHADOW_STRENGTH := 0.0
+const HILLFIELD_FULL_PROMINENCE := 1.0             # min_prominence 1 → every hex draws at full prominence
+
+# --- state 28 (NAVBASE): a navigable river whose VALLEY biome changes along its length, at r ≈ 75 -------------
+# The report: around a meandering navigable river, brown wedges with straight hex edges between the bends, and
+# grey semi-transparent bank-silt patches with straight edges spilling into the land beside it. A navigable hex
+# renders the UNDERLYING biome the river cut as its base, while its id-map layer stays the navigable id (37) —
+# so any pass that compares or samples by id-map layer sees every navigable hex as the same terrain, with the
+# bank's own texture. The chain here walks, bending, across a field that is prairie (west), alluvial (middle)
+# and mixed_woodland (east), each navigable hex taking the field biome under it as its valley — so the chain's
+# own hexes change biome along it — and runs alongside an inland_sea lake. It bends at every other hex, so the
+# meander warp carries the channel across exit edges: the frame that showed the channel and its bank CUT at
+# the hex line while each hex drew only its own strokes. Grid OFF.
+const NAVBASE_GRID_W := ISO_GRID_W
+const NAVBASE_GRID_H := ISO_GRID_H
+const NAVBASE_HEX_RADIUS := ISO_HEX_RADIUS
+const NAVBASE_WEST_ID := 11             # prairie_steppe
+const NAVBASE_MID_ID := 10              # alluvial_plain
+const NAVBASE_EAST_ID := 12             # mixed_woodland
+const NAVBASE_MID_COL := 5              # cols from here are alluvial…
+const NAVBASE_EAST_COL := 9             # …and from here woodland
+const NAVBASE_LAKE_ID := 2              # inland_sea
+# Directly below the chain hexes (4, 5) and (5, 5) — the river runs ALONGSIDE the lake without draining into it.
+const NAVBASE_LAKE_HEXES := [Vector2i(4, 6), Vector2i(5, 6)]
+const NAVBASE_START := Vector2i(0, 4)
+# A bending walk in the sim's direction order (BANK_DIR_OFFSETS): E SE E NE E SE E NE E SE E E E.
+const NAVBASE_WALK := [0, 1, 0, 5, 0, 1, 0, 5, 0, 1, 0, 0, 0]
+const NAVBASE_CROP_RADII := 1.8
+# Crop centres by CHAIN INDEX (the hex the walk reached after that many steps): the bend at (4, 4), whose
+# west exit edge the meander carried the channel across; (4, 5), where the chain runs alongside the lake and
+# hands over from prairie to alluvial; and (9, 5), the alluvial→woodland hand-over.
+const NAVBASE_CROP_CHAIN_INDEX := [5, 6, 12]
+# KARST POCKETS inside two of the river's bends — the third report, a rectangular block beside the karst
+# hexes: a karst_cavern_mouth hex walled by navigable hexes on four sides, with a salt_flat on a fifth, as in
+# the reported frame. A pocket's vertex with the salt flat is a three-biome corner and its vertex beside it is
+# not, so the line between them — the centre → edge-midpoint line where the nearest vertex switches — is
+# where a residual neighbour weight would step. One pocket sits in prairie, one in alluvial (the widest
+# shipped profile a valley can carry). Keyed {hex: terrain id}; each is also cropped.
+const NAVBASE_KARST_CAVERN_ID := 34     # karst_cavern_mouth
+const NAVBASE_SALT_FLAT_ID := 18        # salt_flat
+const NAVBASE_POCKETS := {
+	Vector2i(2, 4): NAVBASE_KARST_CAVERN_ID,
+	Vector2i(1, 3): NAVBASE_SALT_FLAT_ID,
+	Vector2i(6, 5): NAVBASE_KARST_CAVERN_ID,
+	Vector2i(6, 6): NAVBASE_SALT_FLAT_ID,
+}
+const NAVBASE_POCKET_CROPS := [Vector2i(2, 4), Vector2i(6, 5)]
 
 # --- states 18–21: THE ROADS IN THE GROUND (arc #532) ---------------------------------------------
 # ⛔ **EVERY ROAD FRAME IS RENDERED AT `ISO_HEX_RADIUS`, ON THE ISOLATED-HEXES GRID's DIMENSIONS.** This
@@ -882,6 +1111,9 @@ var _failures := 0
 
 
 func _ready() -> void:
+	# ⛔ **THE RUN OWNS THE POINTER** — a pixel harness must open a REAL window, and a
+	# real window receives the human's mouse. See `tools/harness_window.gd`.
+	HarnessWindow.seal_from_real_mouse(get_window())
 	# FREEZE ANIMATION TIME (the `map_preview` treatment — see that harness's _ready). What it buys:
 	# with the canvas already pinned below, animated content was the ONLY remaining run-to-run
 	# difference here, so this is what makes the set a STRICT BIT-IDENTITY REFERENCE (230/230
@@ -1109,6 +1341,34 @@ func _ready() -> void:
 	if _want("21/ATRISK"):
 		# --- state 21 (ATRISK): paved GEOMETRY, own SURFACE, DANGER tint (see the ROAD_RISK_* consts) ---
 		await _render_road_at_risk_state()
+
+	if _want("22/ECO"):
+		# --- state 22 (ECO): alluvial ↔ prairie, every edge orientation + both shred checks (see ECO_*) ---
+		await _render_ecotone_state()
+
+	if _want("23/ICE"):
+		# --- state 23 (ICE): land terrains switch the beach off — glacier → tundra → prairie coasts ---
+		await _render_ice_coast_state()
+
+	if _want("24/PKLAKE"):
+		# --- state 24 (PKLAKE): a lake beside alpine relief — the footline over water (see PKLAKE_*) ---
+		await _render_peak_lake_state()
+
+	if _want("25/CORNER"):
+		# --- state 25 (CORNER): three different biomes at one vertex — the notch report (see CORNER_*) ---
+		await _render_corner_state()
+
+	if _want("26/TREELINE"):
+		# --- state 26 (TREELINE): a forest edge at play zoom — the canopy wobble (see TREELINE_*) ---
+		await _render_treeline_state()
+
+	if _want("27/HILLFIELD"):
+		# --- state 27 (HILLFIELD): seams inside a one-biome relief field (see HILLFIELD_*) ---
+		await _render_hillfield_state()
+
+	if _want("28/NAVBASE"):
+		# --- state 28 (NAVBASE): a navigable river whose valley biome changes along it (see NAVBASE_*) ---
+		await _render_navbase_state()
 
 	_finish()
 
@@ -1837,6 +2097,332 @@ func _bank_neighbor(hex: Vector2i, dir: int) -> Vector2i:
 	var dx: int = int(off[1] if (hex.y % 2) != 0 else off[0])
 	return Vector2i(hex.x + dx, hex.y + int(off[2]))
 
+
+func _render_ecotone_state() -> void:
+	## State 22 (ECO): alluvial ↔ prairie at the game's r ≈ 75. One camera across the sweep, so ECO_off (the
+	## neutral profile — the BEFORE) and every rung compare directly; config's own profile renders last. The
+	## sheet puts the isolated-prairie crop (the screenshot's hex) of every rung side by side. Grid OFF: the
+	## report is from a map with no grid drawn, and a drawn hexagon would answer the very question under test.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_ecotone())
+	await _refit(ECO_HEX_RADIUS)
+	var sheet_names: Array[String] = []
+	var sheet_labels: Array[String] = []
+	for variant: Dictionary in ECO_VARIANTS:
+		var name: String = String(variant["name"])
+		_set_blend_profile(ECO_ALLUVIAL_ID, {
+			"width_scale": float(variant["width_scale"]),
+			"noise_scale": float(variant["noise_scale"]),
+			"noise_cell_scale": float(variant["noise_cell_scale"]),
+		})
+		await _render_ecotone_frame(name)
+		sheet_names.append("%s_iso_prairie" % name)
+		sheet_labels.append("%s — width ×%.1f · noise ×%.1f · cell ×%.1f" % [
+			name, float(variant["width_scale"]), float(variant["noise_scale"]),
+			float(variant["noise_cell_scale"]),
+		])
+	_restore_blend_profiles()
+	await _render_ecotone_frame("ECO_shipped")
+	sheet_names.append("ECO_shipped_iso_prairie")
+	sheet_labels.append("ECO_shipped — terrain_config.json")
+	await _save_contact_sheet(sheet_names, sheet_labels, ECO_SHEET_NAME)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _render_ecotone_frame(name: String) -> void:
+	## The full frame + the three native-res crops: each isolated hex (shred check, all six orientations) and
+	## the zigzag split (vertical + diagonal edges of a long boundary).
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save(name)
+	for crop: Array in [
+		["iso_alluvial", ECO_ISO_ALLUVIAL], ["iso_prairie", ECO_ISO_PRAIRIE], ["split", ECO_SPLIT_CROP],
+	]:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop[1]
+		await _save_crop("%s_%s" % [name, String(crop[0])], hex.x, hex.y, ECO_CROP_RADII)
+
+
+func _snapshot_ecotone() -> Dictionary:
+	## A prairie field (west) meeting an alluvial field (east) along a column split, with one ISOLATED hex of
+	## the other biome dropped into each field.
+	var arr: Array = []
+	arr.resize(ECO_GRID_W * ECO_GRID_H)
+	for y in range(ECO_GRID_H):
+		for x in range(ECO_GRID_W):
+			arr[y * ECO_GRID_W + x] = ECO_PRAIRIE_ID if x < ECO_FIELD_SPLIT_COL else ECO_ALLUVIAL_ID
+	arr[ECO_ISO_ALLUVIAL.y * ECO_GRID_W + ECO_ISO_ALLUVIAL.x] = ECO_ALLUVIAL_ID
+	arr[ECO_ISO_PRAIRIE.y * ECO_GRID_W + ECO_ISO_PRAIRIE.x] = ECO_PRAIRIE_ID
+	return _snapshot(arr, ECO_GRID_W, ECO_GRID_H)
+
+
+func _render_ice_coast_state() -> void:
+	## State 23 (ICE): `ICE_before` (the three sand-less land profiles neutralised — the beach as drawn before
+	## the land gate) then `ICE_shipped` (config's), one camera, grid OFF. See the ICE_* const block.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_ice_coast())
+	await _refit(ICE_HEX_RADIUS)
+	for terrain_id: int in ICE_SANDLESS_IDS:
+		_set_shore_profile(terrain_id, {})
+	await _render_ice_coast_frame("ICE_before")
+	_restore_shore_profiles()
+	await _render_ice_coast_frame("ICE_shipped")
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _render_ice_coast_frame(name: String) -> void:
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save(name)
+	for crop: Dictionary in ICE_CROPS:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop["hex"]
+		await _save_crop("%s_%s" % [name, String(crop["suffix"])], hex.x, hex.y, ICE_CROP_RADII)
+
+
+func _snapshot_ice_coast() -> Dictionary:
+	## Column-striped land (glacier → tundra → prairie) with an inland_sea lake and a continental_shelf coast
+	## cut across every stripe.
+	var arr: Array = []
+	arr.resize(ICE_GRID_W * ICE_GRID_H)
+	for y in range(ICE_GRID_H):
+		for x in range(ICE_GRID_W):
+			var id: int = int(ICE_LAND_BANDS[0][1])
+			for band: Array in ICE_LAND_BANDS:
+				if x >= int(band[0]):
+					id = int(band[1])
+			var in_water_cols: bool = x >= ICE_WATER_COL_START and x < ICE_WATER_COL_END
+			if in_water_cols and ICE_LAKE_ROWS.has(y):
+				id = ICE_LAKE_ID
+			elif in_water_cols and ICE_SHELF_ROWS.has(y):
+				id = ICE_SHELF_ID
+			arr[y * ICE_GRID_W + x] = id
+	return _snapshot(arr, ICE_GRID_W, ICE_GRID_H)
+
+func _render_peak_lake_state() -> void:
+	## State 24 (PKLAKE): the lake-beside-mountains neighbourhood, grid OFF, one frame + three crops.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_peak_lake())
+	await _refit(PKLAKE_HEX_RADIUS)
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save("PKLAKE")
+	for crop: Dictionary in PKLAKE_CROPS:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop["hex"]
+		await _save_crop("PKLAKE_%s" % String(crop["suffix"]), hex.x, hex.y, PKLAKE_CROP_RADII)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _snapshot_peak_lake() -> Dictionary:
+	## Alpine north + east of the lake, glacier south + west, with an elevation raster (the G idiom).
+	var arr: Array = []
+	arr.resize(PKLAKE_GRID_W * PKLAKE_GRID_H)
+	var elev := PackedFloat32Array()
+	elev.resize(PKLAKE_GRID_W * PKLAKE_GRID_H)
+	for y in range(PKLAKE_GRID_H):
+		for x in range(PKLAKE_GRID_W):
+			var tid: int = PKLAKE_GLACIER_ID
+			if y < PKLAKE_LAKE_ROW_MIN or x > PKLAKE_LAKE_COL_MAX:
+				tid = PKLAKE_ALPINE_ID
+			elif (y <= PKLAKE_LAKE_ROW_MAX and x >= PKLAKE_LAKE_COL_MIN):
+				tid = PKLAKE_LAKE_ID
+			arr[y * PKLAKE_GRID_W + x] = tid
+			elev[y * PKLAKE_GRID_W + x] = float(PKLAKE_ELEVATION_BY_ID[tid])
+	var snap: Dictionary = _snapshot(arr, PKLAKE_GRID_W, PKLAKE_GRID_H)
+	var overlays: Dictionary = snap["overlays"]
+	var channels: Dictionary = overlays.get("channels", {})
+	channels["elevation"] = {"raw": elev, "normalized": elev, "label": "Elevation"}
+	overlays["channels"] = channels
+	overlays["elevation_sea_level"] = PKLAKE_SEA_LEVEL
+	return snap
+
+func _render_corner_state() -> void:
+	## State 25 (CORNER): the report's fumarole neighbourhood + a neutral-profile control corner, grid OFF.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_corner())
+	await _refit(CORNER_HEX_RADIUS)
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save("CORNER")
+	for crop: Array in [["report", CORNER_SUBJECT], ["control", CORNER_CONTROL]]:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop[1]
+		await _save_crop("CORNER_%s" % String(crop[0]), hex.x, hex.y, CORNER_CROP_RADII)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _snapshot_corner() -> Dictionary:
+	## A prairie field holding the report's four-hex neighbourhood and the control pair.
+	var arr: Array = []
+	arr.resize(CORNER_GRID_W * CORNER_GRID_H)
+	arr.fill(CORNER_FIELD_ID)
+	for placed: Array in [
+		[CORNER_SUBJECT, CORNER_SUBJECT_ID], [CORNER_NE, CORNER_NE_ID], [CORNER_E, CORNER_E_ID],
+		[CORNER_SE, CORNER_SE_ID], [CORNER_CONTROL, CORNER_CONTROL_ID], [CORNER_CONTROL_E, CORNER_CONTROL_E_ID],
+	]:
+		var hex: Vector2i = placed[0]
+		arr[hex.y * CORNER_GRID_W + hex.x] = int(placed[1])
+	return _snapshot(arr, CORNER_GRID_W, CORNER_GRID_H)
+
+func _render_treeline_state() -> void:
+	## State 26 (TREELINE): a woodland block + an isolated woodland hex in prairie, grid OFF.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_treeline())
+	await _refit(TREELINE_HEX_RADIUS)
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save("TREELINE")
+	for crop: Dictionary in TREELINE_CROPS:
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = crop["hex"]
+		await _save_crop("TREELINE_%s" % String(crop["suffix"]), hex.x, hex.y, TREELINE_CROP_RADII)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _snapshot_treeline() -> Dictionary:
+	var arr: Array = []
+	arr.resize(TREELINE_GRID_W * TREELINE_GRID_H)
+	for y in range(TREELINE_GRID_H):
+		for x in range(TREELINE_GRID_W):
+			var in_block: bool = (x >= TREELINE_BLOCK_COL_MIN and x <= TREELINE_BLOCK_COL_MAX
+				and y >= TREELINE_BLOCK_ROW_MIN and y <= TREELINE_BLOCK_ROW_MAX)
+			arr[y * TREELINE_GRID_W + x] = TREELINE_FOREST_ID if in_block else TREELINE_FIELD_ID
+	arr[TREELINE_ISO.y * TREELINE_GRID_W + TREELINE_ISO.x] = TREELINE_FOREST_ID
+	return _snapshot(arr, TREELINE_GRID_W, TREELINE_GRID_H)
+
+func _render_hillfield_state() -> void:
+	## State 27 (HILLFIELD): the shipped frame, the ONE-elevation control, and one toggle per suspect term of
+	## the relief pass (peaks off, cast shadow off, prominence pinned), each with the centre-hex crop.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_hillfield(false))
+	await _refit(HILLFIELD_HEX_RADIUS)
+	await _render_hillfield_frame("HILLFIELD")
+	for variant: Array in [
+		["HILLFIELD_nopeaks", _peak_overrides({"peak_min_radius": HILLFIELD_PEAKS_OFF_MIN_RADIUS})],
+		["HILLFIELD_noshadow", _peak_overrides({"shadow_strength": HILLFIELD_NO_SHADOW_STRENGTH})],
+		["HILLFIELD_fullprom", _peak_overrides({"min_prominence": HILLFIELD_FULL_PROMINENCE})],
+	]:
+		var token: Array = _override_config(variant[1])
+		await _render_hillfield_frame(String(variant[0]))
+		_restore_config(token)
+	_map.display_snapshot(_snapshot_hillfield(true))
+	await _refit(HILLFIELD_HEX_RADIUS)
+	await _render_hillfield_frame("HILLFIELD_flat")
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _render_hillfield_frame(name: String) -> void:
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save(name)
+	# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+	await _settle()
+	await _save_crop("%s_centre" % name, HILLFIELD_CROP.x, HILLFIELD_CROP.y, HILLFIELD_CROP_RADII)
+
+
+func _snapshot_hillfield(flat_elevation: bool) -> Dictionary:
+	## A rolling_hills field between prairie (west) and alluvial (east), with a per-hex elevation raster.
+	var arr: Array = []
+	arr.resize(HILLFIELD_GRID_W * HILLFIELD_GRID_H)
+	var elev := PackedFloat32Array()
+	elev.resize(HILLFIELD_GRID_W * HILLFIELD_GRID_H)
+	var hills_index := 0
+	for y in range(HILLFIELD_GRID_H):
+		for x in range(HILLFIELD_GRID_W):
+			var i: int = y * HILLFIELD_GRID_W + x
+			var in_field: bool = (y >= HILLFIELD_ROW_MIN and y <= HILLFIELD_ROW_MAX
+				and x >= HILLFIELD_COL_MIN and x <= HILLFIELD_COL_MAX)
+			if in_field:
+				arr[i] = HILLFIELD_HILLS_ID
+				elev[i] = HILLFIELD_FLAT_ELEVATION if flat_elevation else float(
+					HILLFIELD_ELEVATIONS[hills_index % HILLFIELD_ELEVATIONS.size()])
+				hills_index += 1
+			else:
+				arr[i] = HILLFIELD_WEST_ID if x < HILLFIELD_SPLIT_COL else HILLFIELD_EAST_ID
+				elev[i] = HILLFIELD_FIELD_ELEVATION
+	var snap: Dictionary = _snapshot(arr, HILLFIELD_GRID_W, HILLFIELD_GRID_H)
+	var overlays: Dictionary = snap["overlays"]
+	var channels: Dictionary = overlays.get("channels", {})
+	channels["elevation"] = {"raw": elev, "normalized": elev, "label": "Elevation"}
+	overlays["channels"] = channels
+	overlays["elevation_sea_level"] = HILLFIELD_SEA_LEVEL
+	return snap
+
+
+func _render_navbase_state() -> void:
+	## State 28 (NAVBASE): the full frame + one crop per NAVBASE_CROP_CHAIN_INDEX and per karst pocket, grid OFF.
+	_map._show_grid_lines = false
+	var built: Dictionary = _snapshot_navbase()
+	_map.display_snapshot(built["snap"])
+	await _refit(NAVBASE_HEX_RADIUS)
+	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
+	await _settle()
+	await _save("NAVBASE")
+	var chain: Array = built["chain"]
+	for i in range(NAVBASE_CROP_CHAIN_INDEX.size()):
+		# Re-settle between captures: a second get_image() in the same frame reads back a stale viewport.
+		await _settle()
+		var hex: Vector2i = chain[int(NAVBASE_CROP_CHAIN_INDEX[i])]
+		await _save_crop("NAVBASE_crop%d" % i, hex.x, hex.y, NAVBASE_CROP_RADII)
+	for i in range(NAVBASE_POCKET_CROPS.size()):
+		await _settle()
+		var pocket: Vector2i = NAVBASE_POCKET_CROPS[i]
+		await _save_crop("NAVBASE_karst%d" % i, pocket.x, pocket.y, NAVBASE_CROP_RADII)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _navbase_field_id(x: int) -> int:
+	if x >= NAVBASE_EAST_COL:
+		return NAVBASE_EAST_ID
+	if x >= NAVBASE_MID_COL:
+		return NAVBASE_MID_ID
+	return NAVBASE_WEST_ID
+
+
+func _snapshot_navbase() -> Dictionary:
+	## The field, the lake, and a bending navigable chain whose every hex's valley is the field biome under it.
+	## Returns {snap, chain} so the crops can be placed on chain hexes.
+	var arr: Array = []
+	arr.resize(NAVBASE_GRID_W * NAVBASE_GRID_H)
+	for y in range(NAVBASE_GRID_H):
+		for x in range(NAVBASE_GRID_W):
+			arr[y * NAVBASE_GRID_W + x] = _navbase_field_id(x)
+	for lake: Vector2i in NAVBASE_LAKE_HEXES:
+		arr[lake.y * NAVBASE_GRID_W + lake.x] = NAVBASE_LAKE_ID
+	for pocket: Vector2i in NAVBASE_POCKETS:
+		arr[pocket.y * NAVBASE_GRID_W + pocket.x] = int(NAVBASE_POCKETS[pocket])
+	var channel: Dictionary = {}
+	var hex: Vector2i = NAVBASE_START
+	var chain: Array = [hex]
+	for dir: int in NAVBASE_WALK:
+		var nb: Vector2i = _bank_neighbor(hex, dir)
+		if nb.x < 0 or nb.x >= NAVBASE_GRID_W or nb.y < 0 or nb.y >= NAVBASE_GRID_H:
+			break
+		channel[hex] = int(channel.get(hex, 0)) | (1 << dir)
+		channel[nb] = int(channel.get(nb, 0)) | (1 << ((dir + 3) % 6))
+		hex = nb
+		chain.append(hex)
+	var tiles: Array = []
+	for cell: Vector2i in chain:
+		arr[cell.y * NAVBASE_GRID_W + cell.x] = BANK_ID
+		tiles.append({
+			"entity": cell.y * NAVBASE_GRID_W + cell.x,
+			"x": cell.x,
+			"y": cell.y,
+			"river_edges": 0,
+			"river_inflow": 0,
+			"river_channel": int(channel.get(cell, 0)),
+			"underlying_terrain": _navbase_field_id(cell.x),
+		})
+	var snap: Dictionary = _snapshot(arr, NAVBASE_GRID_W, NAVBASE_GRID_H)
+	snap["tiles"] = tiles
+	return {"snap": snap, "chain": chain}
 
 func _shore_profile_of(variant: Dictionary) -> Dictionary:
 	## The three-scale `shore_profile` block a sweep variant carries. Keys match terrain_config's exactly.

@@ -242,6 +242,40 @@ ensure_godot_class_cache() {
   fi
 }
 
+# Godot never loads a bundled PNG/font/sound directly: it loads the converted copy under
+# .godot/imported/, and only an import pass refreshes it -- launching the client does not. So
+# after ART changes (a regenerated texture, a new icon) a plain client run keeps drawing the OLD
+# asset under a current build stamp. ensure_godot_class_cache above only re-scans when a *.gd
+# changed, so an art-only change slipped past it. Re-import when any importable asset is newer
+# than this function's own stamp (a stamp of its own, because an import does not necessarily
+# touch the class cache, and keying on that would re-import on every launch).
+GODOT_IMPORTABLE_EXTENSIONS=(png jpg jpeg webp svg ttf otf woff2 wav ogg mp3 glb gltf)
+ensure_godot_import() {
+  local client_dir="$ROOT_DIR/clients/godot_thin_client"
+  local stamp="$client_dir/.godot/run_stack_import.stamp"
+  local name_args=() ext
+  for ext in "${GODOT_IMPORTABLE_EXTENSIONS[@]}"; do
+    [[ ${#name_args[@]} -gt 0 ]] && name_args+=(-o)
+    name_args+=(-iname "*.$ext")
+  done
+
+  if [[ -f "$stamp" ]] \
+      && ! find "$client_dir" -path "$client_dir/.godot" -prune -o \
+             \( "${name_args[@]}" \) -newer "$stamp" -print -quit \
+             2>/dev/null | grep -q .; then
+    return 0
+  fi
+
+  echo "[run_stack] Re-importing Godot assets (art changed since last import)..."
+  # Godot 4.7's headless import can crash on SHUTDOWN after it has written everything, so a
+  # non-zero exit is a warning, not a failure -- the same stance as the class-cache scan above.
+  if ! godot --headless --path "$client_dir" --import >/dev/null 2>&1; then
+    echo "[run_stack] Warning: asset import exited non-zero; continuing." >&2
+  fi
+  mkdir -p "$(dirname "$stamp")"
+  touch "$stamp"
+}
+
 if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
   echo "[run_stack] Building Godot package..."
   cargo xtask godot-build
@@ -249,6 +283,8 @@ if [[ "$RUN_CLIENT" == true || "$RUN_GODOT" == true ]]; then
   "$ROOT_DIR/scripts/build_terrain_textures.sh"
   # Refresh the global class-name cache if scripts changed since it was built.
   ensure_godot_class_cache
+  # Re-import art that changed since the last import (textures load via the import cache).
+  ensure_godot_import
   # Stamp the client build id (mirrors core_sim/build.rs' CORE_SIM_BUILD_ID): the
   # git <commit-date>-<short-hash>, plus -dirty when the tree has uncommitted edits.
   # ClientBuild.gd reads this into the build overlay, so the shown cli build can never

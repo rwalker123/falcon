@@ -98,6 +98,7 @@ impl WorldSnapshot {
             forage_patches,
             intensification_knowledge,
             ladder_knowledge,
+            ladder_areas,
             kits,
             default_hunt_kit_id,
             default_forage_kit_id,
@@ -231,6 +232,7 @@ impl WorldSnapshot {
             intensification_knowledge,
         );
         replace_if_some(&mut self.ladder_knowledge, ladder_knowledge);
+        replace_if_some(&mut self.ladder_areas, ladder_areas);
         replace_if_some(&mut self.kits, kits);
         replace_if_some(&mut self.default_hunt_kit_id, default_hunt_kit_id);
         replace_if_some(&mut self.default_forage_kit_id, default_forage_kit_id);
@@ -548,6 +550,7 @@ mod tests {
         delta.forage_patches = Some(Vec::new());
         delta.intensification_knowledge = Some(Vec::new());
         delta.ladder_knowledge = Some(Vec::new());
+        delta.ladder_areas = Some(Vec::new());
         delta.kits = Some(Vec::new());
         delta.default_hunt_kit_id = Some(String::new());
         delta.default_forage_kit_id = Some(String::new());

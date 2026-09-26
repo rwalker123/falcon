@@ -127,6 +127,12 @@ pub const EVERY_SOURCE_PRIORITY: [SourcePriorityState; 3] = [
 /// verbatim — see the roster in `seed_snapshot`.
 const LADDER_DISPLAY_NAME_PREFIX: &str = "the knowledge of ";
 
+/// The **shipped** subject areas, in `intensification_ladder.json`'s own display order — restated
+/// here rather than imported, for the reason [`REGROWTH_CURVE_SAMPLES`] is: `core_sim` depends on
+/// this crate and not the other way round. The fixture seeds the real order because the order *is*
+/// the field's content, and a defaulted list is one the decode guard cannot exercise.
+const LADDER_AREAS: [&str; 6] = ["food", "making", "works", "reach", "lore", "war"];
+
 /// The length of the seeded `regrowthSamples` curve — the **shipped** sample count
 /// (`core_sim::snapshot::REGROWTH_CURVE_SAMPLES`), restated here rather than imported because
 /// `core_sim` depends on this crate and not the other way round. It only has to be a plausible
@@ -557,6 +563,21 @@ fn seed_snapshot() -> WorldSnapshot {
             filled: *filled,
         })
         .collect();
+        // **THE FOUR KEEPING POOLS' CREW ACCOUNTS** (issue #715) — spelled out rather than `rows()`
+        // for `pool_toe`'s reason: the list is keyed by pool and a duplicate key is not something
+        // the server can emit. `builders` is deliberately absent — it is not a keeping pool.
+        //
+        // The saturation pass rewrites the floats, so the counts below do not reach the artifact;
+        // what survives is the KEYING, which is what a decode has to carry.
+        cohort.pool_crew = ["agriculture", "husbandry", "roadwork", "quarrywork"]
+            .iter()
+            .enumerate()
+            .map(|(rank, pool)| PoolCrewLineState {
+                pool: (*pool).to_string(),
+                idle_keepers: rank as f32,
+                keepers: rank as f32,
+            })
+            .collect();
         // **WHAT CROSSED THE STORE, BY CAUSE** — a repeated field inside a repeated field (a
         // material row's readings), so both levels need elements, as `material_batches` above.
         cohort.transfer_crossings = rows_of(TransferCrossingState {
@@ -746,17 +767,29 @@ fn seed_snapshot() -> WorldSnapshot {
     // **THE LADDER'S KNOWLEDGE ROSTER** (what there is to learn) and the per-faction PROGRESS list
     // beside it. Both are seeded with real ids rather than defaulted rows, because the roster's
     // whole job is to name knowledges and a column of empty strings cannot show the join working.
-    s.ladder_knowledge = ["cultivation", "herding", "roadbuilding"]
+    // Two of the three areas are seeded, so the `area` leaf carries a value a swapped decode could
+    // not reproduce off `branch` beside it — which is one literal on every row.
+    s.ladder_knowledge = [
+        ("cultivation", "food"),
+        ("herding", "food"),
+        ("roadbuilding", "works"),
+    ]
+    .iter()
+    .map(|(knowledge, area)| LadderKnowledgeState {
+        knowledge_id: (*knowledge).to_string(),
+        // **Not the id.** Two string leaves carrying the same literal are one wire path
+        // between them: swapping `knowledgeId` and `displayName` in the decoder would round
+        // trip clean. The prefix keeps them apart while still reading as this row's name.
+        display_name: format!("{LADDER_DISPLAY_NAME_PREFIX}{knowledge}"),
+        branch: "plant".to_string(),
+        area: (*area).to_string(),
+        ..Default::default()
+    })
+    .collect();
+    // **THE SUBJECT AREAS' DISPLAY ORDER**, beside the roster and seeded with the shipped list.
+    s.ladder_areas = LADDER_AREAS
         .iter()
-        .map(|knowledge| LadderKnowledgeState {
-            knowledge_id: (*knowledge).to_string(),
-            // **Not the id.** Two string leaves carrying the same literal are one wire path
-            // between them: swapping `knowledgeId` and `displayName` in the decoder would round
-            // trip clean. The prefix keeps them apart while still reading as this row's name.
-            display_name: format!("{LADDER_DISPLAY_NAME_PREFIX}{knowledge}"),
-            branch: "plant".to_string(),
-            ..Default::default()
-        })
+        .map(|area| (*area).to_string())
         .collect();
     s.intensification_knowledge = rows();
     for row in &mut s.intensification_knowledge {

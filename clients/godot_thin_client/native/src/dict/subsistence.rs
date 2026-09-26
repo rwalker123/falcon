@@ -361,10 +361,12 @@ pub(crate) fn herds_to_array(
         // ⛔ **IT IS AN ADDEND, NOT A DISCOUNT, and it meant the opposite until
         // `docs/plan_standing_upkeep.md` §4.8** — a kit raises what a worker DELIVERS per turn and a
         // job's work requirement never changes, so nothing subtracts this from a cost and nothing
-        // divides by it. **A figure here belongs to an ITEM**: the shipped flint hoes deliver
-        // +0.5 build work per equipped worker per turn on a PLANT build and nothing on an animal
-        // one; hurdles mirror them on the animal side. A reader phrasing the number as *what the
-        // tools took off the job* states the opposite of what the sim sends —
+        // divides by it. **A figure here belongs to an ITEM AND TO ONE OF ITS TIERS**: the shipped
+        // hoes' `plain` tier delivers +0.5 build work per equipped worker per turn on a PLANT build
+        // and nothing on an animal one (their `flint` tier delivers +0.7, at a starting durability
+        // of 70 rather than 100); hurdles mirror the `plain` figure on the animal side. A reader
+        // phrasing the number as *what the tools took off the job* states the opposite of what the
+        // sim sends —
         // `DetailFormat.build_gear_lines` renders it as `+1.0 work a turn` for exactly that reason.
         let _ = dict.insert("build_work_from_gear", herd.buildWorkFromGear());
         // **THE SOURCE'S HALF OF THE ESTIMATE'S TERMS**, beside the sim's own answer above rather
@@ -1461,9 +1463,29 @@ pub(crate) fn ladder_knowledge_to_array(
         // the shipped `false` -- it changes what a pen may draw on rather than opening a further
         // rung, which is why it hangs off the bottom of its column rather than sitting in the chain.
         let _ = dict.insert("is_step", state.isStep());
+        // **THE SUBJECT AREA of the branch that teaches it** -- "food" | "making" | "works", one
+        // level above `branch`. WHICH HEADING the knowledge's row is gathered under. Read off
+        // `intensification_ladder.json`'s `branches` table sim-side, never a client list: a
+        // hard-coded area table is the `LADDER_DOMAINS` bug one level up, where the first branch
+        // added without a client edit falls out of the screen. `""` when the branch's descriptor
+        // names no area, which the client draws under a fallback heading rather than dropping.
+        let _ = dict.insert("area", state.area().unwrap_or_default());
         array.push(&dict.to_variant());
     }
     array
+}
+
+/// **THE SUBJECT AREAS' DISPLAY ORDER** (`SubsistenceSection.ladderAreas`) -- the order the
+/// knowledge screen draws its headings in, off `intensification_ladder.json`'s own `areas` list.
+/// A per-world constant carrying no faction and no tile, which is why it rides beside the roster
+/// above: the two are the same kind of thing, the DECLARATION of what the ladder holds.
+///
+/// ⛔ **IT RIDES RATHER THAN BEING INFERRED FROM THE ROWS.** Areas are PEERS -- nothing about
+/// `food` says it comes before `making` -- so first-seen order taken off the roster would reshuffle
+/// the whole screen whenever a rung was added, which is the same defect that made column order
+/// unstable before the roster carried it.
+pub(crate) fn ladder_areas_to_array(areas: Vector<'_, ForwardsUOffset<&str>>) -> VarArray {
+    crate::dict::strings_to_variant_array(areas)
 }
 
 pub(crate) fn food_modules_to_array(
@@ -1614,6 +1636,9 @@ pub(crate) fn recipes_to_array(
             .map(recipe_outputs_to_array)
             .unwrap_or_default();
         let _ = dict.insert("outputs", &outputs);
+        // The recipe's short name among the recipes making the same output ("Bone", "Flint"); `""`
+        // on a recipe that is the only one making its output.
+        let _ = dict.insert("label", recipe.label().unwrap_or(""));
         array.push(&dict.to_variant());
     }
     array

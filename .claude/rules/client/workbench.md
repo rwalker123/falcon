@@ -214,6 +214,24 @@ So **a new manifest row is not done until that assertion has run.** The lever wh
 label text or `CONTROL_WIDTH` — the number fields hold at most six characters, so control width is
 usually where the slack is.
 
+> **AND IT HAS TRIPPED, ON A RENAME RATHER THAN A NEW ROW.** `38d78625` widened one label to
+> `Forage throughput (bare-handed)` and the harness went red — `content column is 15.0px wider than
+> the surface allows (375.0 > 360.0)` — and stayed red on `main`. The qualifier was already in that
+> row's own `hint` ("Biomass one BARE-HANDED forager can take per turn"), so the label went back to
+> `Forage throughput` and nothing became unreachable.
+>
+> ⛔ **THE MESSAGE NAMES A ROW AND THE PER-ROW CHECKS ALL PASS, WHICH IS NOT A CONTRADICTION** — and
+> it cost four probes to see why. The column check measures the `ScrollContainer`, whose minimum is
+> its child's **plus the vertical scrollbar**, and the section `PanelContainer` adds its own chrome
+> around the row inside it. Measured at the failure: widest row `343`, section panel `367`, scroll
+> `375`, against a nominal `360`. So the budget a label spends against is **not** the nominal — it is
+> the nominal less the section chrome and the scrollbar, and a row can be comfortably inside its own
+> limit while the column is over. Read the chain, not the row.
+>
+> **The whole budget is hostage to the single longest label**, since the label column has no width of
+> its own — it is whatever the widest one needs. After the revert the widest row has **24px** of
+> slack, which is what the next long label spends.
+
 **Every page owes the same measurement, and the column check is the part that transfers.** The
 per-row checks above are shaped around a parameter row; `_assert_equipment_fits` is the config pages'
 version, measuring the same content column and then walking every label the page draws with autowrap

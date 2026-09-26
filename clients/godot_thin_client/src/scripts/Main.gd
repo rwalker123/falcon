@@ -930,6 +930,13 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # rebuild and the `changed` gate skips it every other turn.
     if snapshot.has("ladder_knowledge") and SnapshotSections.changed(snapshot, "ladder_knowledge"):
         _hud_invoke("update_ladder_knowledge", [snapshot["ladder_knowledge"]])
+    # …and the SUBJECT AREAS' display order beside it — the same per-world declaration one level up.
+    # The roster says which BRANCH teaches a knowledge; this says which HEADING that branch is
+    # gathered under, and in what order the headings are drawn. It rides rather than being inferred
+    # from the rows, because areas are peers: first-seen order off the roster would reshuffle the
+    # whole screen whenever a rung was added.
+    if snapshot.has("ladder_areas") and SnapshotSections.changed(snapshot, "ladder_areas"):
+        _hud_invoke("update_ladder_areas", [snapshot["ladder_areas"]])
     # …and the ROUTE branch's rung catalog beside it, another per-world constant. It is what lets the
     # tile card's road action open a whole ladder rather than one button per verb, so a rung added to
     # `intensification_ladder.json` reaches the player with no client edit.

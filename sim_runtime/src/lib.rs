@@ -448,6 +448,7 @@ pub mod knowledge {
                 forage_patches: Vec::new(),
                 intensification_knowledge: Vec::new(),
                 ladder_knowledge: Vec::new(),
+                ladder_areas: Vec::new(),
                 route_rungs: Vec::new(),
                 deposit_rungs: Vec::new(),
                 moisture_raster: FloatRasterState::default(),

@@ -3388,11 +3388,10 @@ pub struct BandEquipment {
     /// a player. Without this the panel's `Worn out` wording is unrepresentable and every count of
     /// zero has to read as *never made*, which is wrong for exactly the item the player just lost.
     ///
-    /// **The TIER is part of the key because the readout names it out loud.** *"last flint set wore
-    /// out"* is a claim about which tier was lost, and an item-wide tally could only *infer* one —
-    /// the day iron ships beside bronze and flint, inferring *"the tier below what I can now make"*
-    /// names bronze for a flint set that actually wore out. A published string asserting the wrong
-    /// tier is worse than saying nothing.
+    /// **The TIER is part of the key because it is the fact `wear_item` actually holds**, and a
+    /// per-tier record can always be summed where an item-wide one could never be split again. The
+    /// one reader, [`Self::retired_of`], sums it: the `Worn out` / `Never made` split asks only
+    /// *whether* anything broke. The saved shape is this map, so it rides `BandRecord::equipment`.
     ///
     /// An item with no entry has retired none. **Not gameplay**: nothing in the sim branches on it,
     /// and it must not become a repair discount or a durability bonus — it is the readout's memory.
@@ -3458,8 +3457,8 @@ impl BandEquipment {
     /// ([`crate::recipes_config::RecipesConfig::anchor_grade_for_item`]).
     ///
     /// **A start-stocked unit IS an anchor-grade craft, so it says so.** A spawn stocks the item's
-    /// default tier (`equipment.md` → *"flint is today's spear, verbatim"*) and `validate` requires
-    /// the anchor grade to agree with that tier for every stat it declares — the two perform
+    /// default tier (`equipment.md` → *"every item's opening tier is `plain`"*) and `validate`
+    /// requires the anchor grade to agree with the tier each recipe makes — the two perform
     /// identically, and the ledger simply was not saying which. An unstamped batch published a bare
     /// `×1` beside rows reading `×3 good`, which is indistinguishable from a panel that failed to
     /// draw something.
@@ -3878,19 +3877,6 @@ impl BandEquipment {
             .unwrap_or(0)
     }
 
-    /// **Which TIERS of `item` this band has worn out, and how many of each** — in tier-id order,
-    /// empty for an item it has never retired.
-    ///
-    /// The readout's join: *"last flint set wore out"* names a tier, and this is the only record of
-    /// which one it was. [`Self::retired_of`] is the same tally summed for a caller that only asks
-    /// *whether* anything broke.
-    pub fn retired_tiers_of(&self, item: &str) -> impl Iterator<Item = (&str, u32)> {
-        self.retired
-            .get(item)
-            .into_iter()
-            .flat_map(|tiers| tiers.iter().map(|(tier, count)| (tier.as_str(), *count)))
-    }
-
     /// **Charge every item in `kit` whose quantum is `quantum`.** The seam every wear site calls, and
     /// the reason a site cannot forget an item: it names the *quantum* it just spent, not the items,
     /// so an item added to a kit is charged without editing a single call site.
@@ -4029,9 +4015,41 @@ pub struct BandBench {
     /// `bench_crew`) is addressed `<faction> <band>` with no source, and squeezing the bench into
     /// `work_priority`'s source grammar would make the bare token `bench` ambiguous with a herd id.
     pub priority: SourcePriority,
+    /// **WHICH RECIPE THIS BAND LAST STARTED, PER THING IT MAKES** — row key
+    /// ([`crate::recipes_config::RecipeDef::row_key`], the item or material id) → recipe id.
+    ///
+    /// It is what the crafting ledger **suggests** on an item's row when the item has more than one
+    /// recipe: the one this band chose last time, if it can still be made
+    /// (`snapshot::crafting`'s suggestion rule). A band that knaps its spears keeps being offered the
+    /// knapped recipe, and one that points them with bone keeps being offered bone, without the
+    /// player re-choosing every time.
+    ///
+    /// ⛔ **Written ONLY when a job starts** ([`Self::record_started`], called by `set_bench`) and
+    /// **never by a readout** — the capture reads it and must not decide it, or the panel would be
+    /// choosing on the player's behalf. It **outlives the job**: clearing the bench does not clear it
+    /// ([`Self::clear_job`]), because *"what did I last make spears from"* is a standing fact about the
+    /// band rather than about the thing on the bench now.
+    ///
+    /// **Persisted** with the rest of the bench (`BandRecord::bench`), so a save or a rollback does
+    /// not forget a band's habits — and that changed the bench's encoded shape, which is why
+    /// `SAVE_FORMAT_VERSION` moved. `BTreeMap` so the checkpoint and any readout iterate in a stable
+    /// order.
+    pub last_started: BTreeMap<String, String>,
 }
 
 impl BandBench {
+    /// **Remember that this band started `recipe_id` for `row`** — see [`Self::last_started`].
+    /// Overwrites the previous choice for that row; every other row is untouched.
+    pub fn record_started(&mut self, row: &str, recipe_id: &str) {
+        self.last_started
+            .insert(row.to_string(), recipe_id.to_string());
+    }
+
+    /// The recipe this band last started for `row`, if it has started one.
+    pub fn last_started_for(&self, row: &str) -> Option<&str> {
+        self.last_started.get(row).map(String::as_str)
+    }
+
     /// **Put a recipe on the bench**, discarding whatever was there. Progress and the drawn pile go
     /// with it: a job swapped out mid-pass has to draw again, because the materials it drew were for
     /// the thing it is no longer making.
@@ -4050,8 +4068,16 @@ impl BandBench {
     /// default()` drops [`Self::drawn`] on the floor rather than returning it to the store, so a
     /// band that lost people would silently lose the materials it had already cut. The shed uses
     /// [`Self::shed_one_worker`] instead.
+    ///
+    /// **[`Self::last_started`] survives it**, deliberately: which recipe a band last chose for an item
+    /// is a fact about the band, not about the job being taken off the bench, and a bench cleared
+    /// between two batches of spears must still suggest the recipe it was making them from.
     pub fn clear_job(&mut self) {
-        *self = Self::default();
+        let last_started = std::mem::take(&mut self.last_started);
+        *self = Self {
+            last_started,
+            ..Self::default()
+        };
     }
 
     /// **TAKE ONE HAND OFF THE BENCH AND LEAVE EVERYTHING ELSE STANDING** — what the shedding order
@@ -4369,6 +4395,32 @@ pub struct LaborAllocation {
     /// must stop republishing last turn's tools. **Excluded from equality** below, like the rest of
     /// the per-turn telemetry.
     pub last_pool_toe: Vec<PoolToeLine>,
+    /// **HOW MANY OF EACH KEEPING POOL'S KEEPERS THE TURN'S BILL DID NOT CONSUME** (issue #715) —
+    /// one line per **keeping** pool, exported as `PopulationCohortState.pool_crew`.
+    ///
+    /// ⛔ **REPORTED, NEVER RECOMPUTED** — [`Self::last_pool_toe`]'s discipline. The figure is the
+    /// one `systems::labor::pool_rates` struck for this pool this turn, *after* the bare-hand
+    /// top-up spent what it could, so it says *"these people did nothing at all"* and not *"the
+    /// geared plan had no use for them"*. A client re-deriving it from the pool's published TOE
+    /// would report hands the sim has working (issue #714's own case).
+    ///
+    /// ⛔ **FOUR POOLS, AND `builders` IS NOT ONE OF THEM.** `agriculture`, `husbandry`,
+    /// `roadwork`, `quarrywork` — the pools that hold sites. The builders put their **whole** head
+    /// count on the queue head (`docs/plan_pool_toe.md` §2.4), so no builder is ever left standing
+    /// by a plan that wanted fewer; a builders pool with an empty *queue* is idle in a different
+    /// sense and has no line here.
+    ///
+    /// **A pool with a head count and no sites states its whole head count**, which is the common
+    /// case — a line exists for every keeping pool the cohort can hold, unlike `last_pool_toe`'s.
+    /// That is **four on a band and three on an anonymous cohort**: `settle_bands_roadwork` is the
+    /// one keeping seat `advance_labor_allocation` runs under a [`BandId`], because a road's keeper
+    /// *is* a band, so a cohort without one keeps no roads and has no `roadwork` line to state. An
+    /// absent line reads *"this cohort has no such pool"*, exactly as `builders`' absence does.
+    ///
+    /// Held in pool-token order, cleared before every early exit out of the band's turn and
+    /// rewritten from the turn that settled, on [`Self::last_pool_toe`]'s rule. **Excluded from
+    /// equality** below, like the rest of the per-turn telemetry.
+    pub last_pool_crew: Vec<PoolCrewLine>,
     /// **THE MATERIALS THIS BAND HAS ALREADY BEEN WARNED ABOUT**, in id order — the edge gate on the
     /// `material_shortfall` alert, so a standing famine pushes one line rather than one a turn.
     ///
@@ -4458,6 +4510,37 @@ pub struct PoolToeLine {
     /// A positive `filled` short of `required` is what the priority settlement left the pool after
     /// the tiers above it were served; `0` is a pool it reached with nothing.
     pub filled: f32,
+}
+
+/// **ONE KEEPING POOL'S CREW ACCOUNT** — a row of [`LaborAllocation::last_pool_crew`], and the
+/// shape the wire's `poolCrew` is written from (issue #715).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PoolCrewLine {
+    /// Which pool, as the job it is staffed on — published through
+    /// [`crate::equipment_config::KitJob::as_str`], the same token [`LaborTarget::kind`] answers
+    /// for the row. Only the four **keeping** pools appear; see
+    /// [`LaborAllocation::last_pool_crew`] for why `builders` does not.
+    pub pool: crate::equipment_config::KitJob,
+    /// **Keepers the turn's bill left standing**, in keepers and fractional — struck **after** the
+    /// bare-hand top-up (`systems::labor::PoolRates::idle_keepers`). `0` is a pool that employed
+    /// every hand it was given.
+    ///
+    /// ⛔ **IT MEANS NOTHING WITHOUT [`Self::keepers`]**, which is the head count it was struck
+    /// against.
+    pub idle_keepers: f32,
+    /// **THE HEAD COUNT [`Self::idle_keepers`] WAS STRUCK AGAINST** — the keepers this pool held
+    /// when the turn settled it (`systems::labor::PoolRates::keepers`), in keepers and a float for
+    /// the neighbour's reason: every hand quantity on this wire is one, and a reader subtracting
+    /// its own head count from this casts nothing.
+    ///
+    /// ⛔ **IT IS WHAT MAKES THE FIGURE ABOVE READABLE AFTER AN EDIT.** `assign_labor` writes the
+    /// band's row the instant the player presses the stepper, **outside** the turn, while this line
+    /// is stamped only where the turn settles the pool — so from that press until the next turn
+    /// resolution the row carries the new head count and `idle_keepers` still describes the old
+    /// one. A reader projecting the pending edit takes `idle_keepers + (the row's current head
+    /// count − keepers)`; one that reads `idle_keepers` alone answers with staffing the player has
+    /// already left behind.
+    pub keepers: f32,
 }
 
 /// **WHICH SOURCE A BUILD QUEUE ENTRY NAMES** — a patch by its tile, a herd by its id.
@@ -4763,6 +4846,33 @@ impl LaborAllocation {
             .filter(|a| a.target.same_source(target))
             .map(|a| a.workers)
             .sum()
+    }
+
+    /// **STAMP ONE KEEPING POOL'S CREW ACCOUNT FOR THIS TURN** — a row of
+    /// [`Self::last_pool_crew`], written by the seat that just paid the pool.
+    ///
+    /// **Held in pool-token order rather than in the order the four seats run**, which is
+    /// `systems::labor::pool_toe_lines`' rule and for its reason: a frame's rows are then stable,
+    /// so a delta diffs them out when nothing moved and a reader's row order does not depend on
+    /// which pools a band happens to staff.
+    ///
+    /// **Replaces rather than appends** where a pool is stamped twice in one turn, so the last word
+    /// on a pool is the only one on the wire.
+    ///
+    /// ⛔ **IT TAKES THE WHOLE LINE, NEVER ONE TERM OF IT.** [`PoolCrewLine::idle_keepers`] is only
+    /// readable against the [`PoolCrewLine::keepers`] it was struck from, so a seam that could set
+    /// one without the other would publish a figure whose basis came from a different moment —
+    /// which is the defect this pair exists to close. The line is built in exactly one place
+    /// (`systems::labor::PoolRates::crew`), off the rates the pool was just paid at.
+    pub fn record_pool_crew(&mut self, line: PoolCrewLine) {
+        let token = line.pool.as_str();
+        match self
+            .last_pool_crew
+            .binary_search_by(|held| held.pool.as_str().cmp(token))
+        {
+            Ok(at) => self.last_pool_crew[at] = line,
+            Err(at) => self.last_pool_crew.insert(at, line),
+        }
     }
 
     /// **Total workers staffed on a JOB**, summed across every source of it — the head count a

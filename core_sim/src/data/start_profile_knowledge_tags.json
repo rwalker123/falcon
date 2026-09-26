@@ -47,5 +47,8 @@
   },
   "quarrying": {
     "discovery_id": 2016
+  },
+  "knapping": {
+    "discovery_id": 2017
   }
 }

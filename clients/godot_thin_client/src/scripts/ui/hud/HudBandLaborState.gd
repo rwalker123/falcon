@@ -1325,7 +1325,7 @@ func effective_role_workers(band: Dictionary, kind: String) -> Dictionary:
 ## > `pool_toe_for`'s now.
 ## >
 ## > **Its pending caveat outlived it and is stated where it is still true**
-## > (`BandPanelController._pool_toe_short_line`): a settled per-pool reading describes the staffing
+## > (`BandPanelController._pool_toe_settled_rows`): a settled per-pool reading describes the staffing
 ## > the TURN resolved, so the caller gates on `effective_role_workers`' `pending` flag rather than
 ## > quoting a requirement the `+` just moved.
 
@@ -1500,6 +1500,78 @@ static func pool_toe_for(band: Dictionary, pool: String) -> Array:
 		if String(row.get(POOL_TOE_POOL_KEY, "")) == pool:
 			lines.append(row)
 	return lines
+
+## The wire's per-keeping-pool CREW row (issue #715), decoded onto the band dict by
+## `native/src/dict/population.rs` as `pool_crew`.
+const POOL_CREW_KEY := "pool_crew"
+const POOL_CREW_POOL_KEY := "pool"
+const POOL_CREW_IDLE_KEY := "idle_keepers"
+## **THE HEAD COUNT THE IDLE FIGURE WAS STRUCK AGAINST** — the keepers this pool held when the turn
+## SETTLED it, which is not necessarily the number the band's labor row carries now.
+const POOL_CREW_KEEPERS_KEY := "keepers"
+
+## **ONE KEEPING POOL'S CREW ACCOUNT — `{idle_keepers, keepers}`, BOTH TERMS OR NEITHER.** `{}` for a
+## pool the wire states nothing about, which is the answer and not a zero: see the absent-row rule
+## below.
+##
+## ⛔ **THE TWO ARE ONE READING AND THIS CLIENT MAY NOT SEPARATE THEM.** `idle_keepers` is *how many
+## keepers this pool employed on nothing at all this turn*, struck against `keepers` — the staffing
+## the TURN resolved. A labor row is edited the instant the player presses the stepper, OUTSIDE the
+## turn, so between a press and the next resolution the row already carries the new count while
+## `idle_keepers` still describes the old one. A reader holding the idle figure alone cannot tell
+## which of those two worlds it is in. The sim writes the pair at one seam deliberately; a
+## convenience reader for the idle half alone is how a caller comes to anchor its projection on the
+## band's own row and subtract the pending count from itself — the live-game defect that returned
+## `0` on the frame the player staffed a pool (issue #715 follow-up). It was exactly that shape and
+## it is why `pool_crew_idle_for` is retired below.
+##
+## ⛔ **IT IS READ, NEVER DERIVED.** The card's own `supply` figure is a projection off a NOTIONAL
+## kit — it knows neither which tools the settlement actually handed this pool nor that the sim puts
+## leftover hands back BARE onto sites still carrying a deficit — so a client-side *this keeper is
+## idle* is wrong in exactly the cases that top-up exists for. `idle_keepers` is struck AFTER the
+## top-up, which is what makes it mean *these people did nothing at all*.
+##
+## **BOTH ARE IN KEEPERS AND BOTH ARE FLOATS**, a pool's share arithmetic being continuous: `1.68`
+## keepers left standing is an ordinary reading rather than a rounding artefact, and a caller
+## subtracting against the head count casts nothing.
+##
+## ⛔ **`pool` IS THE LABOR-ROLE TOKEN**, `pool_toe_for`'s rule verbatim, so a card resolves its crew
+## row and its table of equipment off the one `kind` token it already holds. The vocabulary is the
+## FOUR keeping pools — `agriculture` / `husbandry` / `roadwork` / `quarrywork` — and NEVER
+## `builders`, which is not a keeping pool and publishes no row here.
+##
+## ⛔ **AN ABSENT ROW IS `{}` AND IT IS NOT A PAIR OF ZEROES.** A row exists for every keeping pool
+## the cohort CAN HOLD — four for a band, three for an anonymous cohort, which keeps no roads and so
+## has no `roadwork` pool to report on — whether or not it staffs them, so within that set
+## `0.0 / 0.0` genuinely means *this pool employed every hand it was given*. An absent row therefore
+## reads *this cohort has no such pool*, the same answer `builders` already gets and needing no
+## separate branch; so does any frame the wire never wrote. Answering those with zeroes would hand a
+## projecting caller an anchor of `0` and a whole head count of phantom idle keepers; the empty dict
+## makes the caller say so.
+static func pool_crew_for(band: Dictionary, pool: String) -> Dictionary:
+	var v: Variant = band.get(POOL_CREW_KEY, [])
+	if not (v is Array):
+		return {}
+	for row_variant in (v as Array):
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if String(row.get(POOL_CREW_POOL_KEY, "")) == pool:
+			return {
+				POOL_CREW_IDLE_KEY: maxf(float(row.get(POOL_CREW_IDLE_KEY, 0.0)), 0.0),
+				POOL_CREW_KEEPERS_KEY: maxf(float(row.get(POOL_CREW_KEEPERS_KEY, 0.0)), 0.0),
+			}
+	return {}
+
+## > ### ⛔ RETIRED — `pool_crew_idle_for`, THE IDLE HALF ON ITS OWN
+## >
+## > It answered `idle_keepers` alone, defaulting to `0.0` for a pool with no row, and its one caller
+## > (`BandPanelController._projected_pool_idle`) then took its delta against the band's own labor
+## > row. That row moves the instant the player presses the stepper — the server applies an assign
+## > OUTSIDE the turn — so in the live game both sides of that subtraction had already moved and the
+## > projection collapsed to the stale figure. `pool_crew_for` above hands back the ANCHOR with the
+## > figure so the delta can be struck where it belongs, and there is no longer a way to ask for one
+## > without the other.
 
 # ---- Player band roster + per-source labor readers -----------------------------------------------
 

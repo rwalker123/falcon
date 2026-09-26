@@ -272,6 +272,9 @@ pub(crate) struct SeatPublishState {
     /// The ladder's knowledge ROSTER — a per-world constant, so it diffs out on every turn after the
     /// first exactly as `kits` does.
     ladder_knowledge: Whole<Vec<LadderKnowledgeState>>,
+    /// The subject areas' DISPLAY ORDER — a per-world constant beside the roster above, and diffed
+    /// whole for the same reason.
+    ladder_areas: Whole<Vec<String>>,
     campaign_profiles: Whole<Vec<CampaignProfileState>>,
     /// The event log's baseline is a **cursor**, not a copy of the ring: the highest `seq` the
     /// client has been sent. See `snapshot::diff_appended`.
@@ -623,6 +626,7 @@ struct CampaignParts {
     demographics: Option<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: Option<Vec<LadderKnowledgeState>>,
+    ladder_areas: Option<Vec<String>>,
     start_marker: Option<StartMarkerState>,
 }
 
@@ -643,6 +647,7 @@ struct CampaignBaselines<'a> {
     demographics: &'a mut Whole<Vec<SchemaPopulationDemographicsState>>,
     intensification_knowledge: &'a mut Whole<Vec<IntensificationKnowledgeState>>,
     ladder_knowledge: &'a mut Whole<Vec<LadderKnowledgeState>>,
+    ladder_areas: &'a mut Whole<Vec<String>>,
     start_marker: &'a mut Whole<Option<StartMarkerState>>,
 }
 
@@ -682,6 +687,7 @@ fn diff_campaign(
             write,
         ),
         ladder_knowledge: diff_whole(baseline.ladder_knowledge, &snapshot.ladder_knowledge, write),
+        ladder_areas: diff_whole(baseline.ladder_areas, &snapshot.ladder_areas, write),
         // `Option` on both sides, so the delta carries the INNER option: `None` here means
         // unchanged, and a marker that was cleared arrives as `Some(None)` flattened to `None` —
         // the same conflation this field has always had.
@@ -896,6 +902,7 @@ impl SeatPublishState {
             deposits: Whole::default(),
             intensification_knowledge: Whole::default(),
             ladder_knowledge: Whole::default(),
+            ladder_areas: Whole::default(),
             campaign_profiles: Whole::default(),
             // A fresh world has sent nothing, so every event ever pushed is "appended since".
             command_events: 0,
@@ -1053,6 +1060,7 @@ impl SeatPublishState {
             demographics,
             intensification_knowledge,
             ladder_knowledge,
+            ladder_areas,
             start_marker,
             herds,
             forage_patches,
@@ -1167,6 +1175,7 @@ impl SeatPublishState {
                             demographics,
                             intensification_knowledge,
                             ladder_knowledge,
+                            ladder_areas,
                             start_marker,
                         },
                         captured,
@@ -1270,6 +1279,7 @@ impl SeatPublishState {
             demographics: campaign_parts.demographics,
             intensification_knowledge: campaign_parts.intensification_knowledge,
             ladder_knowledge: campaign_parts.ladder_knowledge,
+            ladder_areas: campaign_parts.ladder_areas,
             start_marker: campaign_parts.start_marker,
             herds: subsistence_parts.herds,
             forage_patches: subsistence_parts.forage_patches,
@@ -1475,6 +1485,7 @@ impl SeatPublishState {
             .reset(entry.snapshot.intensification_knowledge.clone());
         self.ladder_knowledge
             .reset(entry.snapshot.ladder_knowledge.clone());
+        self.ladder_areas.reset(entry.snapshot.ladder_areas.clone());
         self.campaign_profiles
             .reset(entry.snapshot.campaign_profiles.clone());
         // Rewind the cursor to the newest event the restored frame carries — a rollback un-sends
@@ -1691,6 +1702,7 @@ impl SeatPublishState {
             deposits: None,
             intensification_knowledge: None,
             ladder_knowledge: None,
+            ladder_areas: None,
             knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1834,6 +1846,7 @@ impl SeatPublishState {
             deposits: None,
             intensification_knowledge: None,
             ladder_knowledge: None,
+            ladder_areas: None,
             knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -1961,6 +1974,7 @@ impl SeatPublishState {
             deposits: None,
             intensification_knowledge: None,
             ladder_knowledge: None,
+            ladder_areas: None,
             knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
@@ -3081,6 +3095,13 @@ pub fn capture_snapshot(
                             // life gauge quotes a build's wear in *gardens' worth*, not in bare work
                             // units, and the garden is the `plant:tended` rung's own `work_cost`.
                             reference_build_cost: ladder_config.reference_build_cost(),
+                            // **The two equipped values the item table does not hold**, off the same
+                            // levers the role cards resolve the wayfinding gear's reach from — so a
+                            // craft offer's `makes` and a Scout card quote one number.
+                            equipped_elsewhere: crate::snapshot::crafting::EquippedElsewhere {
+                                scout_vantage_range: kit_levers.equipped_vantage_range,
+                                expedition_sight_range: kit_levers.equipped_expedition_sight_range,
+                            },
                         },
                         build_sources: &crate::snapshot::population::BuildSourceInputs {
                             forage: &forage_registry,
@@ -3608,6 +3629,9 @@ pub fn capture_snapshot(
         let intensification_knowledge_state =
             snapshot_intensification_knowledge(&discovery_progress, &ladder_config, viewer);
         let ladder_knowledge_state = snapshot_ladder_knowledge(&ladder_config);
+        // **THE SUBJECT AREAS' DISPLAY ORDER** — beside the roster and on the same per-world seam,
+        // published rather than inferred from the rows (see `snapshot_ladder_areas`).
+        let ladder_areas_state = snapshot_ladder_areas(&ladder_config);
         // **THE ROUTE BRANCH'S RUNG CATALOG** — what a road may become, beside what there is to learn.
         // A per-world constant like the roster above, so it diffs out after the first frame.
         let route_rung_state = snapshot_route_rungs(&ladder_config);
@@ -3725,6 +3749,7 @@ pub fn capture_snapshot(
             deposits: deposit_states.clone(),
             intensification_knowledge: intensification_knowledge_state.clone(),
             ladder_knowledge: ladder_knowledge_state.clone(),
+            ladder_areas: ladder_areas_state.clone(),
             route_rungs: route_rung_state.clone(),
             deposit_rungs: deposit_rung_state.clone(),
             command_events: command_events_state.clone(),

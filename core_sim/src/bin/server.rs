@@ -8355,6 +8355,9 @@ fn handle_set_bench(
         .get()
         .knowledge
         .completion_threshold;
+    // **The recipe's name in a sentence is the ROW's name plus its label** — *Spears (Flint)* —
+    // because the item owns its name and a recipe owns only the word that tells it from its siblings.
+    let display_name = recipe.full_name(&app.world.resource::<EquipmentConfigHandle>().get());
     let unknown_craft = {
         let ledger = app.world.resource::<DiscoveryProgressLedger>();
         recipe
@@ -8372,14 +8375,14 @@ fn handle_set_bench(
             event_kind,
             faction,
             format!(
-                "set_bench: {} needs {craft}, which this people has not learned — a craft is \
-                 learned by practising it bare-handed.",
-                recipe.display_name
+                "set_bench: {display_name} needs {craft}, which this people has not learned — a \
+                 craft is learned by practising it bare-handed."
             ),
         );
         return;
     }
-    let display_name = recipe.display_name.clone();
+    // **Which row this job belongs to** — what the ledger's per-item suggestion is keyed by.
+    let row_key = recipe.row_key().map(str::to_string);
 
     let Some(band) = select_starting_band(app, faction, band_id, "set_bench", event_kind) else {
         return;
@@ -8404,6 +8407,12 @@ fn handle_set_bench(
     {
         let mut bench = band_bench_mut(app, band.entity);
         bench.set_job(recipe_id, applied);
+        // **Written HERE and nowhere else** — a job starting is the one event that says which of an
+        // item's recipes this band chose, and the ledger suggests that one again next time. A
+        // readout must never write it: it would be the panel deciding what the player picked.
+        if let Some(row) = row_key.as_deref() {
+            bench.record_started(row, recipe_id);
+        }
     }
     let tick = app.world.resource::<SimulationTick>().0;
     let clamp_note = if applied < workers {
@@ -20695,6 +20704,60 @@ mod tests {
             BENCH_IDLE_CREW,
             "the crew already at the bench stays put across the swap — an absent number is not an \
              order to send them home"
+        );
+    }
+
+    /// **STARTING A JOB RECORDS WHICH OF THE ITEM'S RECIPES THE BAND CHOSE — and clearing the bench
+    /// does not forget it.**
+    ///
+    /// The crafting ledger suggests the recipe a band last started for an item
+    /// (`BandBench::last_started`), and `set_bench` is the ONE writer. Paired: the map is empty
+    /// before the command (so a map filled by something else could not pass), the knapped recipe is
+    /// recorded against the item's row key, a second start for the same item overwrites it, and a
+    /// `clear_bench` — which drops the job — keeps the choice, because what a band last made its
+    /// spears from is a fact about the band rather than about the job on the bench.
+    #[test]
+    fn starting_a_job_records_the_recipe_and_clearing_the_bench_keeps_it() {
+        const SPEARS_ROW: &str = "spears";
+        const KNAPPED: &str = "spears_flint";
+        const BONE: &str = "spears";
+        let mut app = build_test_app();
+        app.update();
+        let faction = FactionId(0);
+        let band = first_resident_band(&mut app);
+        let last_started = |app: &bevy::prelude::App| {
+            app.world
+                .get::<BandBench>(band)
+                .and_then(|bench| bench.last_started_for(SPEARS_ROW))
+                .map(str::to_string)
+        };
+        assert_eq!(last_started(&app), None, "a fresh band has started nothing");
+
+        handle_set_bench(&mut app, faction, None, KNAPPED, BENCH_CREW_UNSPECIFIED);
+        assert_eq!(
+            last_started(&app).as_deref(),
+            Some(KNAPPED),
+            "starting the knapped recipe records it against the spears row"
+        );
+
+        handle_set_bench(&mut app, faction, None, BONE, BENCH_CREW_UNSPECIFIED);
+        assert_eq!(
+            last_started(&app).as_deref(),
+            Some(BONE),
+            "a second start for the same item overwrites the first — it is the LAST started"
+        );
+
+        handle_clear_bench(&mut app, faction, None);
+        assert!(
+            app.world
+                .get::<BandBench>(band)
+                .is_some_and(|bench| !bench.is_running()),
+            "the clear really took the job off the bench"
+        );
+        assert_eq!(
+            last_started(&app).as_deref(),
+            Some(BONE),
+            "…and the band still remembers which recipe it makes its spears from"
         );
     }
 

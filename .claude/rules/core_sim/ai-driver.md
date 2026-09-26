@@ -414,7 +414,7 @@ more)` is what a rule may *send* — rule 1's single-source candidate, the row-t
 **A herd is forecast by the sim's crew take, never by its row's rate.** The herd row's
 `per_worker_yield` is the kit's **carry** (the big-game sled, `40 biomass × 0.02` = 0.8 on every
 herd in view), not a kill rate: ranked on it, seed 54 put hunters on a boar, read a full carry a
-hunter, and the sim paid 0.24 once in four turns — one boar at a time, about what flint spears do
+hunter, and the sim paid 0.24 once in four turns — one boar at a time, about what bone spears do
 (`engage 0.33, retreat 0.25`). The sim already answers the real question:
 `QueryPayload::HuntCrewTake` is, per crew size `1..=max_workers`, the low / likely / high
 **animals** a *resident* band brings down per turn at the base tuning, with the band's live wear
@@ -967,8 +967,10 @@ per-patch quotes are species-blind: they read whatever the patch is already comm
 rate)` like the wild one, plus the keeping crew `ceil(*_upkeep_demand /
 build_work_per_worker_turn)` bare-handed and, as a second number, hoed at
 `build_work_per_worker_turn + HOE_BUILD_WORK_PER_WORKER` (`0.5`, restated in `rules.rs`'s hoe
-block from `equipment.json` → `items.hoes`, the `flint` tier's `build_work` effect, and pinned to
-it by `config_pins`); `tended_keepers_hoed` is that hoed keeping crew alone
+block from `equipment.json` → `items.hoes`, the **`plain`** tier's `build_work` effect, and pinned
+to it by `config_pins`. **The OPENING tier, deliberately** — the hoes' knapped `flint` tier is worth
+`0.7`, and pricing a crew at it would quote the brain a rate its faction cannot reach until it has
+found a stone deposit); `tended_keepers_hoed` is that hoed keeping crew alone
 (`0` where no plant can climb), the number the hoe estimate counts — `tended_hands_hoed` includes
 the take crew, who gather and need no hoe. A herd site also carries `kit_needed`
 (`herd_kit_id`), `kit_units_held`, and **`unforecast`** — `true` for a herd the sim has not

@@ -116,8 +116,9 @@ const KIT_EXPEDITION_SIGHT_KEY := "expedition_sight_range"
 ## **THE BUILD AXIS — the WORK UNITS one equipped worker DELIVERS per turn, over and above its bare
 ## hands.** Neutral `0.0`, so `unequipped_tier` (the roster's MINIMUM on an axis) answers `0.0` off
 ## the `none` kit and `kit_uses` reads *"declares more than neutral"* with no special case. The value
-## belongs to the ITEM the kit carries: flint hoes deliver +0.5 a turn on a PLANT build and hurdles
-## the same on an ANIMAL one, which is why the branch below is read with it and never without.
+## belongs to the ITEM **and to the TIER of it the band holds**: the hoes' `plain` tier delivers +0.5
+## a turn on a PLANT build and their `flint` tier +0.7, with hurdles matching the `plain` figure on an
+## ANIMAL one — which is why the branch below is read with it and never without.
 ##
 ## ⛔ **IT IS NOT SUBTRACTED FROM ANYTHING, AND IT WAS UNTIL `docs/plan_standing_upkeep.md` §4.8.**
 ## The axis shipped as *"work units taken off an improvement's cost"* — a lump against the pile,
@@ -169,8 +170,8 @@ const KIT_BUILD_SATURATING_CREW_KEY := "build_work_saturating_crew"
 ## and a spent tool declares nothing.
 ##
 ## **THE THREE BUILD FIELDS ARE ONE READING** (`equipment.md` → "A `build_work` EFFECT MUST DECLARE
-## ITS `branch`"). Flint hoes add +0.5 a turn to a worker raising a Cultivate and NOTHING to one
-## raising a Tame; hurdles do the reverse. So
+## ITS `branch`"). Hoes add to a worker raising a Cultivate — +0.5 a turn at their `plain` tier, +0.7
+## at `flint` — and NOTHING to one raising a Tame; hurdles do the reverse. So
 ## a worth read without its branch is a number that is real and simply not real HERE — the same
 ## discipline `attack_max_body_mass` imposes on `attack`, and the same failure if it is skipped: a
 ## sheet quoting the hurdles' contribution against a garden promises a build that cannot land.

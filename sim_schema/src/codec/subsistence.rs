@@ -24,6 +24,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let intensification_knowledge =
         create_intensification_knowledge(builder, &snapshot.intensification_knowledge);
     let ladder_knowledge = create_ladder_knowledge(builder, &snapshot.ladder_knowledge);
+    let ladder_areas = create_ladder_areas(builder, &snapshot.ladder_areas);
     let food_modules = create_food_modules(builder, &snapshot.food_modules);
     let kits = create_kits(builder, &snapshot.kits);
     let default_hunt_kit_id = builder.create_string(&snapshot.default_hunt_kit_id);
@@ -66,6 +67,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
             routeRungs: Some(route_rungs),
             deposits: Some(deposits),
             depositRungs: Some(deposit_rungs),
+            ladderAreas: Some(ladder_areas),
         },
     )
 }
@@ -94,6 +96,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .ladder_knowledge
         .as_ref()
         .map(|entries| create_ladder_knowledge(builder, entries));
+    let ladder_areas = delta
+        .ladder_areas
+        .as_ref()
+        .map(|areas| create_ladder_areas(builder, areas));
     let food_modules = delta
         .food_modules
         .as_ref()
@@ -177,6 +183,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             routeRungs: route_rungs,
             deposits,
             depositRungs: deposit_rungs,
+            ladderAreas: ladder_areas,
         },
     )
 }
@@ -246,6 +253,7 @@ fn create_recipes<'a>(
         let display_name = builder.create_string(&state.display_name);
         let craft = builder.create_string(&state.craft);
         let group = builder.create_string(&state.group);
+        let label = builder.create_string(&state.label);
         let requires_knowledge: Vec<_> = state
             .requires_knowledge
             .iter()
@@ -297,6 +305,7 @@ fn create_recipes<'a>(
                 requiresKnowledge: Some(requires_knowledge),
                 inputs: Some(inputs),
                 outputs: Some(outputs),
+                label: Some(label),
             },
         ));
     }
@@ -998,6 +1007,7 @@ fn create_ladder_knowledge<'a>(
         let knowledge_id = builder.create_string(&state.knowledge_id);
         let display_name = builder.create_string(&state.display_name);
         let branch = builder.create_string(&state.branch);
+        let area = builder.create_string(&state.area);
         entries.push(fb::LadderKnowledgeState::create(
             builder,
             &fb::LadderKnowledgeStateArgs {
@@ -1006,9 +1016,23 @@ fn create_ladder_knowledge<'a>(
                 branch: Some(branch),
                 order: state.order,
                 isStep: state.is_step,
+                area: Some(area),
             },
         ));
     }
+    builder.create_vector(&entries)
+}
+
+/// **THE SUBJECT AREAS' DISPLAY ORDER**, once per world and beside the roster above. A per-world
+/// constant, so it is written whole on a snapshot and only when it moved on a delta.
+fn create_ladder_areas<'a>(
+    builder: &mut FbBuilder<'a>,
+    areas: &[String],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<&'a str>>> {
+    let entries: Vec<_> = areas
+        .iter()
+        .map(|area| builder.create_string(area))
+        .collect();
     builder.create_vector(&entries)
 }
 
@@ -1274,6 +1298,7 @@ pub(crate) fn decode_subsistence_section(
         decode_intensification_knowledge,
     );
     snapshot.ladder_knowledge = map_rows(section.ladderKnowledge(), decode_ladder_knowledge);
+    snapshot.ladder_areas = decode_strings(section.ladderAreas());
     snapshot.food_modules = map_rows(section.foodModules(), decode_food_module);
     snapshot.kits = map_rows(section.kits(), decode_kit);
     snapshot.default_hunt_kit_id = text(section.defaultHuntKitId());
@@ -1305,6 +1330,9 @@ pub(crate) fn decode_subsistence_section_delta(
     );
     delta.ladder_knowledge =
         map_rows_if_present(section.ladderKnowledge(), decode_ladder_knowledge);
+    delta.ladder_areas = section
+        .ladderAreas()
+        .map(|areas| areas.iter().map(str::to_owned).collect());
     delta.food_modules = map_rows_if_present(section.foodModules(), decode_food_module);
     delta.kits = map_rows_if_present(section.kits(), decode_kit);
     delta.default_hunt_kit_id = section.defaultHuntKitId().map(str::to_owned);
@@ -1360,6 +1388,7 @@ fn decode_recipe(state: fb::RecipeDefState<'_>) -> RecipeDefState {
             material_id: text(output.materialId()),
             amount: output.amount(),
         }),
+        label: text(state.label()),
     }
 }
 
@@ -1645,6 +1674,7 @@ fn decode_ladder_knowledge(state: fb::LadderKnowledgeState<'_>) -> LadderKnowled
         branch: text(state.branch()),
         order: state.order(),
         is_step: state.isStep(),
+        area: text(state.area()),
     }
 }
 

@@ -2237,6 +2237,15 @@ pub struct LadderKnowledgeState {
     /// shipped `false` — it changes what a pen may draw on rather than opening a further rung.
     #[serde(default)]
     pub is_step: bool,
+    /// **The subject area of the branch that teaches it** (`"food"` | `"making"` | `"works"`): which
+    /// *heading*, one level above [`Self::branch`]. Off `intensification_ladder.json`'s `branches`
+    /// table and never a client-side list — a hard-coded area table is the retired `LADDER_DOMAINS`
+    /// bug one level up.
+    ///
+    /// `""` when the branch's descriptor names none, which the client draws under a fallback
+    /// heading rather than dropping the row.
+    #[serde(default)]
+    pub area: String,
 }
 
 /// One faction's progress on one ladder knowledge, `0..1` (`1.0` = known). Joined to the roster above
@@ -2832,6 +2841,8 @@ pub struct RecipeOutputState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RecipeDefState {
     pub id: String,
+    /// **The output's name** — the item's own `display_name`, or the material's title — shared by
+    /// every recipe making that output. [`Self::label`] is the recipe's own word.
     pub display_name: String,
     pub craft: String,
     /// `kit` | `tool` | `stock` — the same three groups the ledger is drawn in.
@@ -2843,6 +2854,9 @@ pub struct RecipeDefState {
     pub requires_knowledge: Vec<String>,
     pub inputs: Vec<RecipeInputState>,
     pub outputs: Vec<RecipeOutputState>,
+    /// **The recipe's short name among the recipes making the same output** — *Bone*, *Flint*. `""`
+    /// on a recipe that is the only one making its output.
+    pub label: String,
 }
 
 /// **One faction's standing in one craft.** The lesson is charged **per item completed**, so this

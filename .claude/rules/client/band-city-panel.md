@@ -2378,7 +2378,7 @@ new jobs are declared*.
   `KEEPING_ZONE_READOUT_FORMAT` deliberately counted two. That is not a widened definition of keeping —
   it is a different question, asked by a block that now holds all three pools.
 - **THE CARDS ARE COMPACT, and the prose became a tooltip.** `_build_pool_card` is a name and a stepper
-  and nothing else; the three role hints survive verbatim as each card's `tooltip_text`. The band tab's
+  and nothing else; each role's hint is the first line of the card's `tooltip_text`. The band tab's
   cards could afford a description because that zone SCROLLS; this one CLIPS, and a description read
   once cannot cost height on a surface operated every turn.
 - **The Builders card's read-only gear line did NOT come along**, and its fact was not lost: the BUILD
@@ -2595,31 +2595,74 @@ publishes a **TOE** per band (`PopulationCohortState.poolToe`, `docs/plan_pool_t
 >
 > **`docs/plan_pool_toe.md` §4 publishes `kitId ""` and `kitWorkersHolding == workers` on EVERY pool
 > row**, which is the *nothing to be short of* reading — so that equality now silences every pool in
-> the game and a card short of tools said **nothing at all**, with the triangle merged in #672 having
-> nothing to fire on. The producer had to move, not be re-gated.
+> the game and a card short of tools said **nothing at all**. The producer had to move, not be
+> re-gated.
 
-- **The producer is `_pool_toe_short_line`, and it joins on a string the card already holds.**
+- **The producer is `_pool_tools_short_line`, and it joins on a string the card already holds.**
   `HudBandLaborState.pool_toe_for(band, kind)` filters the vector to this pool — `pool` is
   `KitJob::as_str()`, the same spelling as `LaborAssignment.kind` and therefore the same `kind`
-  `_build_pool_card` was handed — and `HudWorkVocab.pool_toe_short_line` renders the short rows.
-  **No second table maps a card to a pool.**
+  `_build_pool_card` was handed — and `HudWorkVocab.pool_tools_short_line` turns the rows into the
+  card's one tool sentence. **No second table maps a card to a pool.**
 - ⛔ **PENDING IS STILL THE ONE GATE THIS PATH ADDS.** The TOE is resolved against the CONFIRMED
   staffing, so a `+` the player just pressed would be answered with the coverage of the crew they
-  left behind; `_pool_toe_short_line` answers `""` on a pending row, exactly as its predecessor did.
+  left behind; `_pool_toe_settled_rows` answers `[]` on a pending row, and every reader goes through
+  it.
 - ⛔ **A POOL WHOSE TOOLS ARE ALL FILLED SHOWS NO LINE — not a satisfied one, not a zero.** A row is
   present at `filled == required` precisely so a reader can tell *satisfied* from *not applicable*;
   both render nothing on the card, and only one of them is a line. **The filter is in the CLIENT and
   not in the decoder** for that reason — collapsing them on the way in would destroy the distinction
   the vector exists to carry.
-- ⛔ **`POOL_CARD_SHORT_META` MEANS *THE TRIANGLE IS FLYING*, FOR EITHER REASON.** The dead claim:
-  *"`POOL_CARD_KIT_SHORT_META` carries the SENTENCE, not a flag, and is a second meta rather than a
-  value on `POOL_CARD_SHORT_META` for that meta's own stated reason: it is read as a boolean meaning
-  'is this pool short of HANDS', and a gear shortfall wearing it would answer yes to a question about
-  the work bill."* The triangle widened to both shortfalls, so the boolean is the triangle and
-  nothing narrower. **`POOL_CARD_TOOL_SHORT_META`** (the kit having gone out of the name with the
-  kit) still carries the tool LINE, or `""`; the hands reason has no meta at all — it is the hover's
-  coverage line — so a harness asking WHICH reason reads the tool meta and the hover, never the
-  triangle's.
+- ⛔ **`POOL_CARD_SHORT_META` MEANS *THE `⚠` IS FLYING*, AND ONLY A WORK SHORTFALL FLIES IT** (issue
+  #716). It meant *either shortfall* while a tool shortfall alone flew the triangle.
+  **`POOL_CARD_TOOL_SHORT_META`** carries the tool SENTENCE — whichever of the two forms below the
+  card is showing — or `""`; the work reason has no meta, being the hover's coverage line. A harness
+  asking WHICH reason reads the tool meta and the hover, never this boolean.
+
+#### ⛔ THE CARD NEVER NAMES OR COUNTS A TOOL (issue #716)
+
+> ⛔ **RETIRED — THE COUNTED TOOL LINE**, `4 of 6 hoes · 0 of 2 stone-dressing tools`, composed from
+> `POOL_TOE_TERM_FORMAT` (`KIT_SHORTFALL_FORMAT` less its trailing word), a ceil/floor pair clamped by
+> `POOL_TOE_SHORT_UNIT_GAP`, and `DetailFormat.kit_item_count_word` over `KIT_ITEM_COUNTED_NAMES` —
+> all deleted with it. Two reasons, both from play: the line sat under a WORKER stepper, so players
+> read `0 of 1 hoe` as a head count (*"with a hoe I only need one worker"*); and a list of tool names
+> cannot scale as the roster grows from hoes to ploughs to tractors. The work-unit coverage sentence
+> carries the numbers now.
+
+**Every pool tool is PRODUCTIVITY, not a requirement**, so a tool shortfall on its own loses no work —
+it only makes each worker do less. That is what splits the card's states:
+
+| Pool state | Mark | Name | Hover, after the role hint |
+|---|---|---|---|
+| fine | none | `INK` | the coverage line, if the pool has a bill |
+| work short, tools filled | `⚠` `WARN` | `WARN` | the coverage line |
+| work short **and** tools short | `⚠` `WARN` | `WARN` | the coverage line, then `Short of tools.` |
+| work covered, tools short | `ⓘ` `INK_DIM` | `INK` | the coverage line, then `More tools would speed this up.` |
+
+**The hover is terse, one short line per fact** (the user found the long form too wordy). The role
+hint names what the pool keeps (`Agriculture workers maintain improved fields.`, `Husbandry workers
+maintain tamed herds and pens.`, `Roadwork workers maintain built roads.`, `Groundwork workers
+maintain opened ground.`, `Builders work the build queue, top job first.`); every pool shares ONE
+coverage format, `Supplies %s of %s work a turn.` (`UPKEEP_POOL_COVERAGE_FORMAT`, supply then asked,
+in work units), so the hint is the only place a pool's holdings are named; the idle line is
+`%d idle worker(s)` with no remedy clause.
+
+- **The two sentences are `HudWorkVocab.POOL_TOOLS_SHORT_WARN_LINE` and `POOL_TOOLS_SHORT_INFO_LINE`**,
+  chosen by `pool_tools_short_line(lines, work_short)` — `""` unless `pool_toe_is_short(lines)`. Under
+  the `⚠` the tools are a second reason and the sentence is terse; under the `ⓘ` they are the only
+  reason and the sentence says what the tools would buy.
+- **The info mark is the idle mark's glyph and ink** (`UPKEEP_POOL_IDLE_MARK`, issue #715), because it
+  makes the same claim — nothing is being lost — and the one slot has room for one glyph. A pool
+  covered, short of tools AND carrying a spare hand flies one `ⓘ`; its hover carries both sentences,
+  tools before idle, and `POOL_CARD_IDLE_META` still carries the idle sentence.
+- **The Builders card is never work-short** (`_build_pools_block` passes it no `cover`), so a builders
+  pool short of tools always takes the `ⓘ`.
+- **THE SHORT TEST IS ON THE WIRE'S FLOATS** — `HudWorkVocab.pool_toe_row_is_short`,
+  `required − filled > POOL_TOE_SHORT_MIN` — and a pool short by any amount over that floor is short;
+  see "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY" below.
+- ⛔ **A SHARED ITEM IS JUDGED ON THIS POOL'S OWN ROWS.** Roadwork and Quarrywork both want
+  stone-dressing tools, and each is a row of its own in the vector; the card joins on the POOL, so the
+  other gang's shortfall on the shared item never marks this card. (**Quarrywork has no card** — its
+  stepper rides the WORKINGS ROSTER head, which carries no tool line.)
 
 #### ⛔ THE `◆` MARK DOES NOT FIT THIS BLOCK — THREE PLACEMENTS, ALL MEASURED
 
@@ -2636,107 +2679,31 @@ row is already at that ceiling with one mark:
 
 **The block may not grow to make room.** Four cards already ran 42px over at the shared name size —
 which is what drove `POOL_CARD_NAME_FONT_SIZE` to 10 and trimmed every `POOL_STEPPER_*` metric — and
-a second row costs 62px the work zone's floor cannot find.
+a second row costs 62px the work zone's floor cannot find. **So the tool reason rides the one mark the
+card already has**, and which reasons hold is on the hover — the rule the work-bill mark on this card
+follows for its own figures (*"the card is a role name over a stepper and has no room for
+arithmetic"*).
 
-**So the reason is on the HOVER, and what the card says at a glance is its `⚠` and its TITLE'S
-INK**, neither of which costs width: the triangle that already sat beside a hands-short name widened
-to a tool shortfall, and the name takes the WARN amber with it. That is the same rule the work-bill
-mark on this card follows for its own figures (*"the card is a role name over a stepper and has no
-room for arithmetic"*).
+> ⛔ **RETIRED — THE TRIANGLE FLEW ON EITHER SHORTFALL.** It meant *short of hands* first, then widened
+> to *short of hands or tools* so a tool-short card was not an amber name with nothing to explain it.
+> Issue #716 narrowed it back: a tool shortfall alone loses nothing, and spending the `⚠` and the WARN
+> title on it told the player the band was losing something it was not.
 
-> ⛔ **RETIRED — THE TRIANGLE MEANT SHORT OF HANDS.** The dead note: *"Short of hands and short of
-> tools have opposite remedies — a stepper against the bench — and on this block they are not
-> distinguishable without hovering: a gear-short card and a hands-short card are both an amber name,
-> and only the `⚠` (hands) separates them."* It separated nothing a player could read: a card short
-> of BOTH drew exactly the card short of hands, and a card short of tools alone drew an amber name
-> with no triangle to explain it.
-
-**As built — the triangle flies on all three shortfall states, and the hover says why:**
-
-| Pool state | Name | `⚠` | Hover, after the role hint |
-|---|---|---|---|
-| fine | white | none | nothing |
-| short of hands | amber | yes | the coverage line |
-| short of tools | amber | yes | the tool line |
-| short of both | amber | yes | the coverage line, then the tool line |
-
-- **Two facts, two lines, in their existing words.** The hands line is
-  `HudWorkVocab.upkeep_pool_coverage_line`; the tool line is the pool's SHORT TOE rows in the
-  client's own `N of M` phrasing — `4 of 6 earthmoving tools · 0 of 2 stone-dressing tools`. Neither
-  is reworded, and `HudFormat.join_tooltip_lines` drops whichever is empty — so the two are ORDERED
-  on the hover, not composed into one sentence.
-  - ⛔ **THE TERM IS `KIT_SHORTFALL_FORMAT` LESS ITS TRAILING WORD** (`HudWorkVocab.POOL_TOE_TERM_FORMAT`,
-    `"%d of %d %s"`). That sentence states ONE shortfall and closes with ` available`; a pool states a
-    LIST, and repeating the word on every term reads as a run of sentences rather than as one line.
-    **This replaces `2 of 6 Tillage kits available` on POOL CARDS ONLY** — a take row (hunt, forage,
-    extract) is about ONE kit and keeps that sentence exactly as it reads today.
-  - ⛔ **THE ITEM'S WORD HAS ONE HOME, AND IT IS `DetailFormat.KIT_ITEM_LABELS`.** A raw underscored
-    wire id must never reach the screen (`stone_dressing`, `earthmoving`), so those two have rows in
-    that table like every other item; `DetailFormat.kit_item_word` is the mid-sentence form, a
-    **derivation** of the one table (`kit_item_label().to_lower()`) and never a second table of names.
-    Its `replace("_", " ")` is a structural guarantee against a future unlabelled id rather than a
-    naming rule.
-    - ⛔ **NEITHER ROAD TOOL IS ONE TOOL, AND THE CONFIG NAMED THEM BEFORE THIS ARC DID.**
-      `equipment.json._comment_road_tools` calls `earthmoving` *"the PICK AND SPADE a GRADE is cut
-      with"* and `stone_dressing` *"the maul, wedges and dressing hammer"*, so a label naming one of
-      the three narrows the item; the labels take the phrasing
-      `.claude/rules/core_sim/routes.md` already uses for exactly these two ids. **`Mattocks` shipped
-      for one pass and that comment refuses it outright** — *"a mattock beside them would blur the
-      exact plant/route line the rung bound below exists to draw"*, `hoes` holding the agricultural
-      register.
-  - ⛔ **AND THE WORD IS INFLECTED, BECAUSE THE LABEL TABLE IS MIXED.** `Hoes` is already plural and
-    `Crook` is not, so *append an `s`* gives `Spearss` and *leave it* gives `0 of 2 crook`.
-    `DetailFormat.KIT_ITEM_COUNTED_NAMES` holds `[one, many]` beside the label it inflects — the
-    counted form of the SAME name, never a second source of the name — and
-    `kit_item_count_word(id, n)` is the one place it is read. **The noun agrees with the
-    DENOMINATOR**: `N of M` names the M, which is what makes `1 of 2 crooks` and `0 of 1 hoe` both
-    read. An item with no row falls back to its label at every count, appending nothing, so a new
-    item a pool can require needs a row rather than a rule.
-    - ⛔ **THE TAKE ROW'S SUFFIX RULE CANNOT BE BORROWED.**
-      `HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX` appends a bare `s` because it counts KIT names,
-      which are uniformly singular by roster convention; this counts ITEM labels, which are not.
-      That const's own doc anticipates it: *"a roster whose names ever went plural would need a
-      different rule."* The take row also does not inflect at one (`1 of 1 Harvesting kits
-      available`, Ray's own wording) and is **left exactly as it is**.
-  - ⛔ **THE SHORT TEST IS ON THE WIRE'S FLOATS; THE ROUNDING ONLY DECIDES HOW THE NUMBERS READ.**
-    Two different questions, and conflating them is what let a sub-unit shortfall read as covered —
-    see "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY" below for the playtest numbers and the
-    retired arithmetic. `HudWorkVocab.pool_toe_row_is_short` answers the first
-    (`required − filled > POOL_TOE_SHORT_MIN`, this client's family floor for a rate that is nothing
-    to state); the term then CEILS the requirement and FLOORS what is held, each with that same
-    tolerance, and clamps the denominator to at least `held + POOL_TOE_SHORT_UNIT_GAP` so a short row
-    can never print `N of N`.
-- **ONE triangle, never two.** A card short of both draws a single `⚠`; a second glyph is the
-  measured-and-refused placement above.
-- **The gating underneath is otherwise unchanged**: nothing flies for a fine pool, an unstaffed pool
-  or a pending row. **What changed is which pools can fly for TOOLS** — `roadwork` and `quarrywork`
-  are ordinary pools with ordinary sites, so they are short of their items like any other, where the
-  retired kit path silenced them on an equality.
-- ⛔ **A SHARED ITEM IS STATED AS THIS POOL'S SHARE.** Roadwork and Quarrywork both want dressing
-  hammers, and each is a row of its own in the vector; the card joins on the POOL, so it states
-  neither the other gang's figures nor the two added up. (**Quarrywork has no card** — its stepper
-  rides the WORKINGS ROSTER head — so the shared case is visible on the Roadwork card.)
-- **What the triangle cannot say at a glance is WHICH remedy.** Hands and tools are told apart on the
-  hover alone; that is the width budget's price.
-
-**Frame:** `band_panel_pool_kit_short` — four cards, four different answers, one frame, because a
-client that marks every card and one that marks none are the same picture at a glance, and presence
-alone cannot tell the shortfall states apart: each card's triangle (its meta AND the one `⚠` it drew)
-and each hover's lines are asserted together. Agriculture is short of HANDS with its tools **FILLED**,
-Husbandry of BOTH (its hands line asserted BEFORE its tool line), Roadwork of **TOOLS ONLY on TWO
-items** — including its own share of the shared stone-dressing tools — and Builders of **nothing at all**,
-carrying no TOE row, which is the *not applicable* card and the one that can never be short of hands
-(`_build_pools_block` passes it no `cover`).
+**Frames:** `band_panel_pool_kit_short` — four cards, four answers, one frame: Agriculture short of
+WORK with its tools **FILLED** (`⚠`, no tool line), Husbandry short of BOTH (`⚠`, work line then
+`Short of tools.`), Roadwork short of **TOOLS ONLY on TWO items** with its bill staged PAID IN FULL
+(`ⓘ`, calm title, `Supplies 2 of 2 work a turn.` then the INFO tool line) and Builders with **no TOE row at all** — the *not applicable* card. And
+`band_panel_pool_kit_short_builders`, the same band with a builders TOE line short: the Builders card
+flies the `ⓘ`.
 
 ⛔ **THE FILLED CARD AND THE NOT-APPLICABLE CARD RENDER IDENTICALLY, so the distinction between them
 is asserted against the FIXTURE and not against the card.** That pairing is also what makes the set a
-set: a tooltip builder that always renders a tool line passes the two SHORT cards on its own, and one
-that never renders passes the two silent ones. The state re-pushes the fund-mode band afterwards: the
-dock states below it re-render this block and push no band of their own, so leaving the fixture
-standing failed the BOTTOM-dock and TWO-COLUMN claims several hundred lines from the state that
-changed.
+set: a tooltip builder that always renders a tool line passes the SHORT cards on its own, and one that
+never renders passes the two silent ones. The state re-pushes the fund-mode band afterwards: the dock
+states below it re-render this block and push no band of their own, so leaving the fixture standing
+failed the BOTTOM-dock and TWO-COLUMN claims several hundred lines from the state that changed.
 
-### ⛔ A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY — the triangle flies at any magnitude
+### ⛔ A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY — the tool line speaks at any magnitude
 
 Reported from a live playtest. Band `Teasel`, one plant site at (72,28) mid-Cultivate, straight off
 the wire:
@@ -2750,62 +2717,244 @@ labor rows: agriculture 2 workers, builders 2 workers
 ```
 
 The band owns two hoes and both pools bid at Normal priority, so the settlement splits them pro-rata
-and **both pools are genuinely short**. The **Builders card warned and the Agriculture card said
-nothing at all** — so the pools panel was silent about the exact shortage the tile was complaining
-about, which is what the player reported.
+and **both pools are genuinely short**. The Builders card warned and the Agriculture card said nothing
+at all: the retired counted line rounded `0.7906` up to a denominator of one and apportioned the
+numerator up to one as well, printed `1 of 1 hoe`, and treated the equality as covered.
 
-**THE ROUNDING SWALLOWED IT.** `round(0.7906)` floored UP to a denominator of one, the apportion then
-drove the numerator to one as well, and `parts[0] >= units` skipped the row: `1 of 1 hoe` — a 28%
-shortfall printed as complete, no line, no triangle. Builders' `1.4334 of 2.0` survived as `1 of 2`
-purely because its numbers are bigger.
-
-> #### ⛔ RETIRED — *BOTH HALVES ARE APPORTIONED, NOT ROUNDED APART*
->
-> The dead rule: *"`filled` and the shortfall behind it PARTITION `required`, so rounding each on its
-> own gives a `4 of 6` whose remainder is 3; `HudFormat.apportion_people_to` is that one arithmetic,
-> and the target it sums to is `round(required)`, floored at `POOL_TOE_MIN_UNITS`."*
->
-> **`apportion_people_to`'s premise does not hold on this account.** It divides WHOLE PEOPLE by a
-> share the player chose — the target is a real count and the parts must sum to it exactly — whereas
-> here the target is itself a rounding of a float, and the card prints `N of M` rather than `N + S`,
-> so nothing is partitioned on screen. What the apportion actually does to a sub-unit row is round
-> the numerator UP to the denominator, which is the whole defect. `POOL_TOE_MIN_UNITS` went with it;
-> the floor it provided is structural now.
-
-**THE RULE THAT REPLACED IT — one predicate, one rendering, and they answer different questions.**
-
-| question | answered by | how |
-|---|---|---|
-| is this pool short of this tool? | `HudWorkVocab.pool_toe_row_is_short` / `pool_toe_is_short` | `required − filled > POOL_TOE_SHORT_MIN`, on the WIRE'S OWN FLOATS |
-| what do the numbers say? | `pool_toe_short_line` | CEIL the requirement, FLOOR what is held, both with that tolerance |
-
-- ⛔ **THE SHORT TEST IS NEVER MADE ON THE DISPLAY PAIR.** The sim settled `required` and `filled`
-  and published them; the card's whole numbers are downstream of that answer and may not be the
-  basis for it. A pool short of a tool flies the triangle **whatever the magnitude** — that is the
-  whole point of the mark.
-- **CEIL AND FLOOR ARE EACH THE CONSERVATIVE ANSWER TO THEIR OWN QUESTION.** You cannot buy 0.4 of a
-  hoe, so `0.79` wants one; `0.5666` of a hoe's service is no whole hoe, so the pool holds none. The
-  playtest row reads **`0 of 1 hoe`**. It is still a rounding, and one that can only ever OVERSTATE
-  the gap by less than a unit — where the retired pair understated it to nothing.
-- **`POOL_TOE_SHORT_UNIT_GAP` MAKES *ALMOST NEVER* INTO *NEVER*.** The pair above satisfies
-  `held < units` at essentially every input on its own; the clamp is what guarantees a short row
-  cannot print `N of N` at any tolerance, which is the exact reading the retired arithmetic produced.
+- ⛔ **THE SHORT TEST IS NEVER MADE ON A ROUNDED PAIR.** `HudWorkVocab.pool_toe_row_is_short` /
+  `pool_toe_is_short` answer on the sim's own floats, `required − filled > POOL_TOE_SHORT_MIN`. A pool
+  short of a tool states its tool line **whatever the magnitude**, and `3.0 / 2.9` is short.
 - **The tolerance is `POOL_TOE_SHORT_MIN` = 0.005**, this client's family floor for a rate that is
   nothing to state (`SourceForecast.UPKEEP_WORK_MIN`, `MATERIAL_FLOW_MIN`), one account over: a gap
   under it is float noise in the sim's own `f32` sums over a pool's sites rather than a tool anybody
-  is missing. It is applied to the ceil and the floor as well, so an `f32` sum landing a hair either
-  side of a whole unit cannot invent a denominator (`6.0000005 → 7`) or lose a held one.
-- ⛔ **A POOL ROUNDING *UP* TO COVERED IS NO LONGER COVERED.** `required 3.0 / filled 2.9` used to
-  render nothing and now reads `2 of 3 hoes`. That reversal is the rule, not a side effect: the old
-  reading is the playtest defect one order of magnitude up.
+  is missing.
+- **The display half of this fix went with the counted line** (issue #716): the card prints no tool
+  count, so there is no rounding left to get wrong. What survives is the predicate, which the card's
+  tool line and the work row's remedy both fork on.
 
-**Driven, PNG-less, in `_assert_pool_toe_rounding` + `_assert_pool_toe_sub_unit_shortfall`** — a card
-quoting `1 of 1` renders a perfectly ordinary card, which is why the whole class was invisible to the
-frames. The playtest row is transcribed verbatim and **both producers are asserted**, because a fix
-that made the line print while leaving the boolean rounding would fly no triangle, and one that flew
-the triangle over an empty hover would say nothing. The `3.0 / 2.9` row is the case that tells the
-raw-float test apart from a comparison of the printed pair, and a FILLED row is paired against both,
-or *"it states a line"* passes on a builder that states one for everything.
+**Driven, PNG-less, in `_assert_pool_tools_line_forks_on_work`** — the playtest row transcribed
+verbatim and a row short by a tenth are both SHORT, the line takes the WARN form beside a work
+shortfall and the INFO form without one, and a FILLED row states nothing either way.
+
+### ⛔ ONE MARK SLOT, THREE STATES — a pool with a worker who has nothing to do (issue #715)
+
+A pool that covered its bill exactly and a pool carrying an idle keeper rendered as the **same calm
+card**: no mark, no ink, no reading. Reported as *"the user will not know a worker can be freed up
+and doing other things."*
+
+The name row holds **exactly one glyph** — that is the measured constraint above, not a preference
+— so the slot carries three states and **a WORK shortfall wins it**:
+
+| state | glyph | mark ink | title |
+|---|---|---|---|
+| short of work (tools short or not) | `⚠` | `HudStyle.WARN` | WARN |
+| work covered; short of tools and/or a whole worker spare (issue #716) | `ⓘ` | `HudStyle.INK_DIM` | calm `INK` |
+| neither | — | — | `INK` |
+
+- ⛔ **THE AMBER KEEPS MEANING *SOMETHING IS BEING LOST*.** A road washing out and a patch rotting
+  are losses; an idle worker is waste the player clears with a stepper press. So the info state
+  **leaves the title alone** — colouring it would spend the panel's one alarm ink on the least
+  urgent thing the card can say. `pending` keeps its existing precedence over the title colour.
+- ⛔ **AND IT IS `INK_DIM`, NOT `SIGNAL` — WHICH IT WAS FOR ONE PASS, WRONGLY, ON BOTH COUNTS.**
+  `SIGNAL`'s documented meaning is *calm, nothing needs you* (`HudStyle.READY`'s comment states it
+  outright), which is the **opposite** of this mark: a spare worker is precisely something that
+  needs the player. And on the shipped default theme it is not even legible — `ember` is the
+  `DEFAULT_THEME`, its `SIGNAL` is `efe3cd` against an `INK` of `f4ead7`, so the mark would have
+  been cream on cream and told apart by glyph shape alone.
+- **THERE IS NO EXISTING *NOTICE, BUT LESSER THAN WARN* INK, AND THAT IS WHY THIS ONE MAKES NO
+  SEVERITY CLAIM.** The attention model has two rungs and `FactionRollup._severity_color` maps
+  `info` onto `WARN` itself; `READY` means *a requirement the player has FINISHED meeting* and
+  `HEALTHY` means *well-supplied*. Each would be a second meaning on a token that already has one.
+  `INK_DIM` is ordinary secondary ink — separable from `INK` and from `WARN` on every palette,
+  and it asserts nothing about severity.
+- **`ⓘ` (U+24D8) RENDERS in the project's font stack**, verified by cropping
+  `band_panel_pool_idle.png` rather than by the `Label.text` having been set — a missing glyph draws
+  as tofu or as nothing, and neither is visible from the assignment.
+- **The mark's ink is an ARGUMENT to `_pool_card_mark`, never derived from its glyph**, which would
+  be a second lookup free to disagree with the caller's own fork.
+- ⛔ **`POOL_CARD_SHORT_META` STILL MEANS *MARKED SHORT*, NARROWLY.** Several probes read it as
+  *short*; widening it to *marked at all* would silently change what each of them asserts. The idle
+  state gets **`HudWorkVocab.POOL_CARD_IDLE_META`**, a third meta carrying the **sentence** rather
+  than a flag — `POOL_CARD_TOOL_SHORT_META`'s rule verbatim, so a harness asking *which reason is
+  this mark for* does not re-compose the wording it is checking. It is `""` on a card that is also
+  short, where the reading is still on the hover but the slot went to the triangle.
+- **The hover order is work, tools, then idle**, and `HudFormat.join_tooltip_lines` drops the empty
+  ones: the work shortfall is what the band is LOSING, and the tools and the spare hand are what it
+  can gain.
+- ⛔ **A PENDING EDIT ADJUSTS THE READING; IT USED TO SILENCE IT, AND THAT WAS A TURN LATE.** The
+  gate was `_pool_toe_settled_rows`' rule verbatim — the crew account is the settlement the turn
+  RESOLVED, so a `+` just pressed must not be answered with the idleness of the staffing left behind,
+  which would tell the player to step down a pool they have just stepped up. **That reason bites in
+  ONE direction only and the gate over-applied it.** Answering with a stale figure is wrong;
+  answering with nothing is also wrong, and it is what play found: *"On Turn 1, I just assigned two
+  Agriculture workers. It wasn't until I advanced to turn 2 that the information icon showed."*
+  Removing the gate alone would not have fixed it either — `poolCrew` is struck from the settlement,
+  so a pool with no keepers last turn publishes `0` however the player staffs it this turn.
+  `_projected_pool_idle` adjusts the wire's own number by the change the sim has not seen:
+
+  ```
+  projected_idle = max(0, idleKeepers + (current_head_count − keepers) − queued_demand_in_hands)
+  ```
+
+  **EVERY TERM IS UNCONDITIONAL**, and `delta` is naturally zero on a SETTLED frame — the turn
+  stamps the crew line and the labor row from the same staffing. So a band that has changed nothing
+  since the turn resolved reads the wire's figure WHOLE, exactly as before; a band that has
+  QUEUED a job reads it less that job's claim, whether or not a stepper was touched.
+  - ⛔ **THE DELTA IS ANCHORED ON THE WIRE'S `PoolCrewLine.keepers`, NEVER ON THE BAND'S LABOR
+    ROW, AND THAT DISTINCTION IS THE WHOLE READING.** The delta shipped for one pass as
+    `effective.workers − workers_for_role(band, kind)` — the pending-aware count less the band's
+    published row — which is non-zero only while the client's optimistic overlay is ahead of that
+    row. **It never is.** `handle_assign_labor` applies a stepper press to the row IMMEDIATELY,
+    outside the turn, and the next snapshot carries it; `poolCrew` is stamped only when a turn
+    settles. So by the time the card draws, both sides of that subtraction hold the new count, the
+    delta is `0`, and the projection collapses to a stale `idleKeepers` struck against a staffing
+    the player has already changed. Play reported it at its plainest: turn 1, three `agriculture`
+    keepers assigned, **no sources at all**, and a blank card. `keepers` is the head count the sim
+    struck `idleKeepers` against — the two are written at one seam — so it is the only honest basis
+    for *how much has changed since*, and the pending FLAG plays no part in the arithmetic at all.
+  - ⛔ **AND THE CLIENT READS THE PAIR THROUGH ONE READER.** `HudBandLaborState.pool_crew_for`
+    returns `{idle_keepers, keepers}`; the idle-only `pool_crew_idle_for` is RETIRED. An idle figure
+    on its own cannot say which of the two worlds it describes, and a convenience reader for it is
+    how a caller comes to anchor on the nearest number that looks like a head count. The sim writes
+    the two together on purpose and the client does not re-separate them.
+  - **AN ABSENT ROW IS `{}` AND NOT A PAIR OF ZEROES.** A crew line exists for every keeping pool
+    the cohort can **hold**, whether or not the band staffs it — `systems::labor` stamps one before
+    the claims are zipped — so within the vocabulary `0.0 / 0.0` genuinely means *this pool employed
+    every hand it was given*, while `builders` and any frame the wire never wrote state nothing.
+    ⛔ **"Every pool" is FOUR for a band and THREE for an anonymous cohort**, which is the one place
+    the phrase used to overclaim: `record_pool_crew(Roadwork)` is reached only through
+    `settle_bands_roadwork`, which `advance_labor_allocation` calls under `if let Some(band_id)`, and
+    that is correct rather than a hole — a road's keeper **is** a band (`routes::road_keeping_basis`),
+    so a cohort with no `BandId` keeps no roads and has no `roadwork` pool to report on. The reading
+    a client takes from an absent row is therefore *this cohort has no such pool*, which is the same
+    answer `builders` gets and needs no separate branch. Answering those with
+    zeroes would hand the projection an anchor of `0` and mark a whole head count of phantom idle
+    keepers.
+  - ⛔ **IT IS AN ADJUSTMENT AND NEVER A RE-DERIVATION FROM `{supply, asked}`.** That projection
+    prices hands at a NOTIONAL kit off the band's roster, blind both to the tools the settlement
+    handed the pool and to the sim's step-5 top-up — being blind to those is the whole reason this
+    reading moved to the wire, and re-deriving it in the one place a player looks would undo it.
+  - **WHAT MAKES THE ADJUSTMENT SOUND IS THAT THE MARGINAL HAND IS BARE.** `docs/plan_pool_toe.md`
+    §2.3 step 5 fixes that a top-up hand claims no tool, so a hand added by a stepper press works at
+    the BARE rate — the same unit the sim counts its leftover in. The client can price the CHANGE
+    correctly even where it cannot price the ABSOLUTE.
+  - **THE TWO BRANCHES.** Removing hands shrinks the leftover 1:1 down to none. Adding them is sound
+    because the sim already proved that whatever it published as idle had nowhere to go, so a further
+    hand is idle too — *unless* the player has queued work this turn, which the third term absorbs.
+    `max(0, …)` is a FLOOR, not a fudge: *how many keepers are doing nothing* cannot go below none.
+  - ⛔ **AND ONE TRANSITION IS STILL SILENCED: a pool SHORT at the settled staffing that the edit
+    COVERS.** The `+` branch's justification rests on the published figure having proved the leftover
+    had nowhere to go — and on a SHORT pool that figure is `0` because every hand went into the
+    deficit, so the added hand goes there too and **how much of it the deficit swallowed is exactly
+    what this client cannot price**. A pool short by 0.5 of a hand's work, stepped up by one, honestly
+    has half a worker spare and the projection would claim a whole one: a mark whose promise is *you
+    can step this pool down by one* telling the player to undo the `+` that just fixed their
+    shortfall. **The gate is not *pending is unknowable* — that was the over-application Ray reported
+    — it is that the ABSORBED REMAINDER is unknowable across this one transition**, one frame, and it
+    self-corrects the moment the turn resolves. A pool still short AFTER the edit needs no gate, the
+    card's own `is_short` taking the slot, so the test is the settled half alone
+    (`HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY`, stamped by `_pool_coverage`, which re-strikes
+    only the SUPPLY through the same `pool_work_supply` and gear).
+    ⛔ **THE RE-STRIKE TAKES THE WIRE'S `keepers` TOO, AND READ OFF THE LABOR ROW THIS GATE WAS
+    INERT.** It asked `upkeep_pool_is_short` at `pool_work_supply(workers_for_role(…))` — the row
+    the sim had already moved — so it compared short-at-N with short-at-N and could not fire for
+    any edit, which is the only thing it exists to catch. `_settled_pool_keepers` reads the crew
+    line's anchor instead (rounded to a whole worker, since `pool_work_supply` prices bodies). That
+    it now fires is a fixture, not a claim: pointing the re-strike back at the labor row fails
+    `band_panel_pool_idle_pending_flip` in exactly the way deleting the gate does.
+    ⛔ **AND THE REMAINDER IS NOT SUBTRACTED FROM THE COVER DICT INSTEAD** — `supply` there is the
+    notional-kit projection this reading was moved off the wire to stop consulting, so pricing the
+    absorbed part with it would trade a bounded over-claim for an unbounded wrong one.
+  - ⛔ **THE QUEUED TERM IS UNCONDITIONAL, AND SCOPING IT TO THE PENDING BRANCH WAS A BUG.** It
+    shipped that way for one pass, on the reading that *nothing pending* means *nothing changed* —
+    and a job queued this turn is precisely something changed. **Queueing without touching a stepper
+    is the ORDINARY way to set a job up**, so a band with four spare keepers that queued a 3-work Sow
+    went on reading *4 workers … found nothing to do* until the player happened to poke a stepper,
+    which is the *"impacts based on jobs setup that turn"* half of Ray's ask not working. **The card
+    also contradicted itself on one hover**: `_pool_coverage`'s `asked` already carries queued demand,
+    so the tooltip read *"…tended ground and queued jobs need 3.0"* directly above *"3 workers on this
+    pool found nothing to do."*
+    **It never double-counts.** `poolCrew`'s account runs over BILLED claims and a queued job owes
+    nothing until its first work is banked, and `_queued_keeping_load` skips any entry the sim is
+    already billing (`live_upkeep_demand >= UPKEEP_WORK_MIN`) — so the term is exactly as legitimate
+    on a calm frame as on a pending one.
+  - ⛔ **THE GATE ABOVE STAYS PENDING-ONLY, AND THE ASYMMETRY IS THE POINT.** The two answer different
+    questions: the TERM is a commitment the wire has not seen, which is true with or without an edit;
+    the GATE guards a short→covered COVERAGE TRANSITION, which only a stepper edit can cause. Widening
+    the gate to calm frames would silence a card whose reading nothing had moved.
+  - **THE QUEUED TERM IS `_queued_keeping_load`'S DEMAND IN BARE HANDS** — the same load that makes
+    the coverage sentence answer at declare time, divided by the bare rate through
+    `SourceForecast.workers_for_work`, this client's one work→hands conversion. It is the *"impacts
+    based on jobs setup that turn"* half of the ask and it is not optional: without it, staffing a
+    pool and queueing the job that pool will keep — one decision, two presses — reports the new hand
+    as idle on the frame the job was declared.
+  - ⛔ **`roadwork` AND `quarrywork` HAVE NO QUEUED TERM, SO THEIR PROJECTION IS THE STEPPER DELTA
+    ALONE.** Both publish their `asked` as a band-level roll-up with no queued half — their rows are
+    fog-filtered and the client must not sum them — so `HudWorkVocab.keeping_source_kind` names no
+    web for them and `queued_demand_in_hands` is `0`. That is correct as far as it goes; what those
+    two lose is the declare-time half, which the wire gives this client no honest way to state.
+  - **The card's TITLE keeps the pending WARN amber**, which outranks the idle mark's own
+    leave-the-title-alone rule: *the number under this title is not the sim's yet* is the newer news.
+    It is also what `band_panel_preview._assert_pending_pool_mark` asserts as its precondition, since
+    the other probe requires the calm `INK` on a card that is not short.
+- **The `builders` card answers `""` off the WIRE, not off a special case.** The builders are not a
+  keeping pool and publish no `pool_crew` row, so the reader finds nothing — no row, no anchor,
+  nothing to project; a builders pool with an empty queue is idleness of another kind and is out of
+  this mark's scope.
+- ⛔ **A PENDING EDIT IS A MOVED LABOR ROW BESIDE AN UNMOVED CREW ROW, AND A FIXTURE THAT STAGES IT
+  ANY OTHER WAY TESTS A STATE THE CLIENT NEVER SEES.** This is the trap that let the blank card
+  above pass every fixture in `band_panel_preview.gd`: the pending states were staged by writing
+  the client's optimistic overlay on top of a labor row left at its OLD value, so `settled` really
+  was the old number and a delta taken against it really was non-zero. That reproduces the SHAPE of
+  a pending edit and not the way the system arrives at one — the server applies the assign outside
+  the turn, so the row has already moved and only `keepers` still holds the old count. The band's
+  row therefore stood in as a settled anchor the live client does not have. **The staging rule is
+  now in the fixtures**: `_stamp_settled_crew` derives each crew row's `keepers` from the band's own
+  labor row (exact, because on a settled frame the sim wrote both from one staffing), and
+  `_press_role_stepper` is the ONLY way a pool fixture goes pending — it records the overlay, moves
+  the labor row, and leaves the crew row alone, after which the caller re-PUSHES the band rather
+  than re-rendering it.
+
+**Frames:** `band_panel_pool_idle` (all three states beside the bare card) ·
+`band_panel_pool_idle_fraction` (0.6 of a worker is not a worker) ·
+**`band_panel_pool_idle_pending`** (three pending edits
+on one frame — a `+` on a covered pool marked, a `+` on a SHORT one not, a `−` clearing a mark the
+settled card is flying) · **`band_panel_pool_idle_queued`** (the CALM half of the queued term: four
+keepers, nothing pending, a Sow queued this turn owing three — the card reads ONE where the wire says
+four) · **`band_panel_pool_idle_pending_queued`** (the same band with a `+` beside it, reading TWO) ·
+**`band_panel_pool_idle_bare`** (the reported case: three keepers pressed onto a pool with no
+sources whatever, against a crew row of `0` idle / `0` keepers — the mark and *3 workers…* come from
+the anchor alone, and the frame is blank without it) · **`band_panel_pool_idle_pending_flip`**
+(the silenced transition: a pool short by under one hand's work that the `+` covers, `⚠` on the
+settled frame and NOTHING on the pending one, against an honest 0.5 of a worker). The settled
+readings are asserted on the same band ahead of the pending ones — and the settled claim is staged
+with **nothing pending AND nothing queued**, since the queued term adjusts a calm frame too, so
+*nothing pending* alone would no longer pin *"the wire's figure whole"*. Without that pair, *"the
+projection answers"* is satisfied by a client that had stopped reading the wire at all.
+
+> ⛔ **A FIXTURE FOR THE QUEUED TERM MUST NOT BE SHORT AT THE SETTLED STAFFING.** The first cut of
+> `band_panel_pool_idle_pending_queued` staged one keeper against a 1-work bill plus a 1-work queued
+> job — which IS short by three-quarters of a hand, so the GATE above silenced the card and dropping
+> the queued term changed nothing: the state went green under its own sabotage. Keepers covering the
+> queued bill exactly is what keeps the gate out of it, and the claim then lands where it belongs, on
+> the figure.
+>
+> ⛔ **AND ITS SABOTAGE MUST FAIL BOTH BRANCHES.** Dropping `- _queued_keeping_hands(…)` fails the
+> calm fixture *and* the pending one — the first reading four where it should read one, the second
+> five where it should read two. If only one of the two fails, the other is vacuous.
+
+#### The WORKINGS ROSTER head is the fourth keeping pool, so it reports too
+
+There is no fifth card (the row of four is full — see the measurements above), so `quarrywork`'s
+stepper and coverage sentence ride the roster block's own head. It carries **the same predicate, the
+same composers, the same one-slot rule and the same pair of metas**: leaving the idle reading to the
+three cards would have made the one pool with no card the one pool that still could not tell a
+player a worker was free, which is the defect rather than a lesser version of it.
+
+The head's glyph is asserted **by its text**, uniquely in `band_panel_preview` — `HudWidgets.zone_head`
+builds its readout as a plain `Label` with no handle of its own, so *which of the two marks stands in
+the readout* is the subject rather than a restatement of what the builder was handed. The metas
+beside it are what keep the decision and the render from disagreeing.
 
 ## RETIRED — THE KEEPING BLOCK on the band tab, and the rules that outlived its mount point
 
@@ -5162,9 +5311,9 @@ So this is a **fork**, not a replacement, and `HudWorkVocab.under_kept_note` gai
   is already on this card: the PRIORITY section sits two rows under the note in the same work-row
   inspector. A second clause naming it would say what the control beneath it already offers.
 - **ONE PREDICATE, TWO SURFACES.** The fork reads `HudWorkVocab.pool_toe_is_short` over the pool's own
-  TOE — the same predicate `_pool_toe_short_line` composes the pool CARD's hover from — so the
-  triangle on the Agriculture card and the remedy on the row it is failing to keep cannot disagree
-  about which shortfall this is. That was the reported defect's other half.
+  TOE — the same predicate `_pool_tools_short_line` composes the pool CARD's tool line from — so the
+  card's tool line and the remedy on the row it is failing to keep cannot disagree about which
+  shortfall this is. That was the reported defect's other half.
 - **`HudWorkVocab.keeping_pool_kind` is the one labor-kind → pool-token picker**, `keeping_role_name`'s
   twin: that one answers the display NAME off a SOURCE kind, this one the token `pool_toe_for` joins
   on. A caller that reached for the other web's pool would read a TOE that is a wrong answer looking

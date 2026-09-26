@@ -114,6 +114,7 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 items_completed: 0,
                 last_output_grade: None,
                 priority: bench_priority,
+                last_started: Default::default(),
             },
         ))
         .id();

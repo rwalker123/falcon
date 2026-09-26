@@ -2058,12 +2058,15 @@ corner.
 
 ### `chapters/knowledge_panel.gd` — the knowledge screen (slice B)
 
-**Appended LAST in `CHAPTERS`**, so no existing frame moves. Nine frames and 136 assertions (its
+**Appended LAST in `CHAPTERS`**, so no existing frame moves. Thirteen frames and 181 assertions (its
 `EXPECTED_CHECKPOINTS` floor is the measured **145** — frames count too, so the three launcher-face
 frames the cairn arc appended moved it 75 → 85, the loaded-world block moved it to 96, the ROW
 layout (`docs/plan_knowledge_rows.md` slice A) moved it to 133 on two added frames, and the row
 layout's review pass added the gutter-cap and narrow-room blocks and two height claims to the stress
-block, taking it to 145 with NO new frame;
+block, taking it to 145 with NO new frame, **slice C's SUBJECT AREAS took it to 181 on four
+added frames**, and that slice's review pass took it to **194** with NO new frame — the hand-fold
+hand-over claims, the completed roster's Making/Forestry claims, and the folded-area-closes-the-
+reading block;
 the floor is RE-MEASURED, never the old number plus the claims anyone remembers adding, and the
 surplus over that arithmetic is the drift that says why. **Two branches each raising this number is
 a merge conflict whose answer is neither side** — take the measurement of the merged file), and **most
@@ -2122,7 +2125,28 @@ still at its fixed width — `knowledge-panel.md` → "DOMAINS ARE ROWS") ·
 earned it — the PLACEMENT is the claim a picture answers, every height claim beside it being about
 the card not moving) · `knowledge_launcher_mark` / `_rail` / `_bar` (the launcher's bundled cairn at
 each of the three action mounts, captured inside the pip block because that block is the only one
-standing a REAL `BandCityPanel` up).
+standing a REAL `BandCityPanel` up) · **the four SUBJECT-AREA states** appended last —
+`knowledge_panel_areas` (everything open, the default), `knowledge_panel_area_filtered` (a filter
+folding the area it does not match, which still says what is inside it),
+`knowledge_panel_area_hand_fold` (a hand-made fold still shut on the way back to `All` beside the
+filter-folded area that has reopened) and `knowledge_panel_area_fallbacks` (both degenerate branches
+drawing, under `Husbandry` and `Other`).
+
+**THE GROUPING AND THE FOLD RULE ARE ASKED OF `KnowledgeRoster`, NOT OF THE PICTURE** — a folded
+heading and an open one are both perfectly ordinary frames, and only the SET says which is which.
+`fixtures_knowledge.gd` gained `ladder_areas()` (the config's whole `areas` list, the three areas
+nothing teaches under INCLUDED, so *"an area with no domains is never drawn"* is falsifiable) and
+`ladder_roster_with_fallbacks()`, one row per fallback.
+
+⛔ **THREE EXISTING CLAIMS WERE RE-AIMED BECAUSE A FILTER NOW FOLDS**, and each was asserting
+something the arc deliberately changed. `_assert_filter_dims_rather_than_hides` read `8 of 10` —
+its scope is the OPEN areas now, with the folded area's heading asserted present beside it so the
+narrowing cannot become a hole. `_assert_the_empty_filter_note_does_not_move_the_card` read
+`(820, 518) → (820, 390)` — a zero-match filter folds every area, so the CARD legitimately shortens
+and the claim moved to `panel._header_height()`, which is the term the note could actually break.
+And the STRESS block opens through `open_on_filter(FILTER_ALL)`: it inherited the previous state's
+filter, which matches none of the synthetic tracks, so it was measuring a card holding two folded
+headings and no rows — `vertical mode 0`, a claim about nothing.
 
 **THE ROW LAYOUT'S OWN CLAIMS ARE RELATIONS BETWEEN TWO RENDERS, never magnitudes.** *The card does
 not resize* is `panel.size` before and after a press, on BOTH axes and on the toggle back — and then
@@ -2177,12 +2201,26 @@ that `card().size.y` stays inside the room AND the vertical scroll is live.
 > really looks like: not a clipped last row, but a card that SPILLS past the room it was fitted to
 > with the vertical scroll switched off. Measured on the sabotaged build at **463 in a 459 room**.
 
-**A clean run is 453 frames / 2220 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 461 frames / 2308 `PASS`, exit 0 — RE-MEASURED on the tree that merged #731's Trade
+tab with main**: main's 457 / 2265 plus `supply_network.gd`'s two issue-#731 states
+(`supply_food_party_rows`, `supply_food_headline_sums`) and the `trade.gd` crossing fixture, with main's
+own additions landing in the same run. Measure; do not sum. The
 figure recorded when this chapter landed was 353 / 1405; the loaded-world block added eleven claims
 and no frame, the ROW layout added `knowledge_panel_stress`, `knowledge_panel_empty_filter` and their
-claims, and its review pass added twelve claims and no frame (453 / 2208 → 453 / 2220). Everything
-else between them is drift accumulated un-recorded, exactly as it had been the times before.
-Measure; do not sum.
+claims, its review pass added twelve claims and no frame (453 / 2208 → 453 / 2220), slice C's
+subject areas added four frames and thirty-two net claims, and slice C's own review pass added
+thirteen claims and no frame (457 / 2252 → 457 / 2265). Everything else between them is drift
+accumulated un-recorded, exactly as it had been the times before. Measure; do not sum.
+
+⛔ **COMPLETING THE KNOWLEDGE FIXTURE TO ALL FIVE LADDER BRANCHES MOVED NO NUMBER ANYWHERE ELSE, and
+that is the finding rather than the absence of one.** `fixtures_knowledge.gd` grew from seven
+knowledges to the shipped ten — so the header's `All N` went 10 → 13, the untouched-faction claim
+7 → 10, the tally partition 10 → 13 and the folded heading's own count 2 of 5 → 2 of 7 — and **every
+one of those claims recomputes its expectation from the roster, so not a single one had to be
+edited**. `band_panel_preview` is untouched at exit 0 (`tracks_all_at` walks the roster, so its
+fixtures simply grew three tracks nothing on that surface reads). The claims that DID have to move
+were the two written against the fixture's shape rather than against its content: `Making ==
+[craft]`, which is false of the shipped config, and the domain-row count under each heading.
 
 **NINE SABOTAGES, each failing a DISJOINT subset and each naming what it caught:**
 
@@ -2347,6 +2385,74 @@ the control are independent, so a defect in one must leave the other's claims st
 
 None passed vacuously: each restoration was named by at least one assertion that reads the RENDER and
 one that reads the table.
+
+## One ledger row per thing made, its recipes behind a link (`chapters/crafting_bench.gd`)
+
+Two frames and the recipe block's claims, appended LAST in the chapter (`_recipe_states`) so no
+earlier frame moves in count. The behaviour is `crafting-panel.md`'s — "ONE SHORT ROW PER THING
+MADE"; what belongs here is the shape of the drive.
+
+| frame | what only IT can say |
+|---|---|
+| `crafting_panel` (existing) | the ledger at rest: `Kit` · `Bench tools` · `Materials`, and `2 recipes` under Baskets and Spears only |
+| `crafting_recipes_popup` | the popup under Spears' link, `Bone` / `Flint` with an Owned column of `×6` / `—` |
+| `crafting_make_picker` | the picker under the Spears row: the short bone recipe's radio disabled with its reason, the flint one lit |
+
+**The fixtures are the new wire shape**: one offer per recipe, one `suggested` per row, and two items
+chosen as the two popup cases — Spears (bone makes `plain`, knapping makes `flint`, so each offer states
+its own `owned_at_tier`) and Baskets (reed and withy make ONE tier, so both publish `-1`). The store
+gained wood and stone, because the flint offer is published AVAILABLE and a band holding no stone
+could not make it. The two-tier fixture moved off the invented `bronze` onto the shipped `flint`, and
+both spear recipes can be made there, which is what makes Start's claim about the CHOICE: it presses
+the non-suggested radio, so "sends the chosen one" and "sends the suggested one" answer differently.
+
+**Every claim is a pair and every press is real pointer input** (`_press_control`, which now FAILS a
+claim on a null control instead of raising — a raise aborts the chapter and surfaces only as the
+checkpoint guard's short count). `Esc` is a real `InputEventKey` pushed through the viewport, and the
+outside click lands on the card's own chrome. **The block opens by CLOSING the card**: the rank picker
+the state above it leaves open is VIEW state the card carries until dismissal, and it sat over both
+new frames on the first run.
+
+⛔ **ONE STATE IS A SHAPE THE SHIPPED SIM DOES NOT SEND.** *Make is live when only the non-suggested
+recipe can be made* stages a suggested recipe that cannot be made beside one that can; the sim's own
+pick prefers an available recipe, so that never arrives. It is staged because the client's rule is
+"any offer available" and nothing else can tell that from "the suggested one available" — paired with
+the clubs row, whose only recipe is short and whose Make must stay disabled.
+
+**Sabotage-verified in two runs.** Three disjoint mutations together — the popup's Owned column shown
+unconditionally, Start sending the suggested recipe, Make gated on the suggested offer alone — fail
+**exactly three** claims, one each, naming `["spears_flint"]` for the Start one. Then Make on a
+two-recipe row sending its suggested recipe directly, plus the link drawn on every row: **fifteen** —
+the whole picker chain (with three *the control to press was rendered* guards where the picker's
+controls were never built) and the single-recipe link claim with the two role-line claims it took
+down, while *Make on a single-recipe row sends that recipe* and *…opens no picker* correctly stay green.
+
+### …and no tier word reaches an Owned cell
+
+**No tier word reaches an Owned cell at all** (`crafting-panel.md` → "NO TIER WORD REACHES THE OWNED
+CELL AT ALL"). The fixtures publish a `tier_id` on every batch they own, exactly as the sim does, which
+is what gives the negative something to catch: *no Owned cell carries any tier word*, behind a
+precondition that the band really publishes tier ids, asked of the two-tier band and of the reference
+band. Beside it, *an Owned cell carries nothing beside its grades* is asked of the Spears cell as
+*everything that is not a count or a legend word*, so a line composed client-side fails it. The
+positive half is the popup's per-tier Owned column above (`×6` / `—` on Spears). Sabotage-verified by
+rendering each batch's `tier_id` in the Owned cell: exactly **three** claims fail — the tier-word
+negative on both bands and the nothing-beside-its-grades claim — while the popup's `×6` / `—` column
+stays green. The fixture offers carry no `output_tier_name` / `output_tier_rank`: those fields are
+deprecated and the sim publishes neither.
+
+### …and a material is a thing made
+
+`_assert_one_row_per_material_made`, PNG-less, at the end of `_recipe_states`. It pushes a recipe book
+carrying two stock recipes that both make `hurdles` (labelled `Wood` and `Withy`, since the sim
+requires labels on sibling recipes) and a band publishing an offer for each, one of them `suggested`,
+and asks for exactly **one** `Hurdles` row carrying the `2 recipes` link — **paired** with the
+reference band's single-recipe `Cordage` row, which must stay one row with NO link, or the first claim
+passes on a panel that links every stock row. The recipe book and the band are handed back
+afterwards, so no frame after it moves. Sabotage-verified by keying a stock row by its recipe again:
+exactly **one** claim fails, naming `2 rows, no link`, while the Cordage half stays green.
+**MEASURED ON THIS TREE: `455 / 2256`**, exit 0; `EXPECTED_CHECKPOINTS` **187**, RE-MEASURED by raising
+the const to an impossible number and reading `reached 187` back.
 
 ## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
 

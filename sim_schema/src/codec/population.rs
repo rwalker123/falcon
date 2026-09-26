@@ -12,8 +12,9 @@ use crate::state::population::{
     CharacteristicReadingState, CohortStoreState, CraftOfferState, DrawnInputState,
     EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState,
     LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PendingMigrationState,
-    PoolToeLineState, PoolingLinkState, PopulationCohortState, PopulationDemographicsState,
-    ScoutTaskState, SettlementStageViewState, SourcePriorityState, TransferCrossingState,
+    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
+    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
+    TransferCrossingState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -520,6 +521,37 @@ fn create_populations<'a>(
                     .collect();
                 Some(builder.create_vector(&rows))
             };
+            // **EACH KEEPING POOL'S CREW ACCOUNT** — nested vector, built before the parent table
+            // like the one above, and **absent rather than empty** on the same `buildQueue`
+            // convention: a band that staffs no keeping pool at all writes no rows.
+            //
+            // ⛔ **A ZERO IS A ROW.** Unlike `poolToe`, a line is not a requirement — a pool that
+            // employed every hand it has says so with `0`, and dropping it would be
+            // indistinguishable from a pool the band does not staff.
+            let pool_crew = if cohort.pool_crew.is_empty() {
+                None
+            } else {
+                let rows: Vec<_> = cohort
+                    .pool_crew
+                    .iter()
+                    .map(|line| {
+                        let pool = builder.create_string(&line.pool);
+                        fb::PoolCrewLine::create(
+                            builder,
+                            &fb::PoolCrewLineArgs {
+                                pool: Some(pool),
+                                // **After the top-up, in keepers** — see
+                                // `PoolCrewLineState::idle_keepers`.
+                                idleKeepers: line.idle_keepers,
+                                // **The head count it was struck against**, without which the
+                                // figure above has no basis — see `PoolCrewLineState::keepers`.
+                                keepers: line.keepers,
+                            },
+                        )
+                    })
+                    .collect();
+                Some(builder.create_vector(&rows))
+            };
             // **WHAT CROSSED THIS BAND'S STORE, BY CAUSE, and ITS OWN POOLING LINKS** — nested
             // vectors, built before the parent table like the one above.
             let transfer_crossings = create_transfer_crossings(builder, &cohort.transfer_crossings);
@@ -680,8 +712,9 @@ fn create_populations<'a>(
                         let reason = builder.create_string(&offer.reason);
                         let severity = builder.create_string(&offer.severity);
                         let output_grade = builder.create_string(&offer.output_grade);
-                        let output_tier_name = builder.create_string(&offer.output_tier_name);
-                        let owned_note = builder.create_string(&offer.owned_note);
+                        let recipe_label = builder.create_string(&offer.recipe_label);
+                        let makes = builder.create_string(&offer.makes);
+                        let lasts = builder.create_string(&offer.lasts);
                         let shortfalls = create_shortfalls(builder, &offer.shortfalls);
                         fb::CraftOffer::create(
                             builder,
@@ -696,9 +729,11 @@ fn create_populations<'a>(
                                 shortfalls: Some(shortfalls),
                                 outputGrade: Some(output_grade),
                                 onBench: offer.on_bench,
-                                outputTierName: Some(output_tier_name),
-                                outputTierRank: offer.output_tier_rank,
-                                ownedNote: Some(owned_note),
+                                recipeLabel: Some(recipe_label),
+                                makes: Some(makes),
+                                lasts: Some(lasts),
+                                suggested: offer.suggested,
+                                ownedAtTier: offer.owned_at_tier,
                             },
                         )
                     })
@@ -1048,6 +1083,9 @@ fn create_populations<'a>(
                     // `kitId` publishes empty and this is where its tools are stated instead; a
                     // line exists only where the pool requires something.
                     poolToe: pool_toe,
+                    // WHAT EACH KEEPING POOL DID NOT USE — appended last. The sim's own reading,
+                    // struck after the bare-hand top-up; a client must not derive it.
+                    poolCrew: pool_crew,
                     // THE CAUSE-KEYED CROSSINGS, THE BAND'S OWN POOLING LINKS AND ITS NETWORK'S
                     // SPAN — appended last (issue #731).
                     transferCrossings: Some(transfer_crossings),
@@ -1453,9 +1491,11 @@ fn decode_population(
             shortfalls: decode_shortfalls(offer.shortfalls()),
             output_grade: text(offer.outputGrade()),
             on_bench: offer.onBench(),
-            output_tier_name: text(offer.outputTierName()),
-            output_tier_rank: offer.outputTierRank(),
-            owned_note: text(offer.ownedNote()),
+            recipe_label: text(offer.recipeLabel()),
+            makes: text(offer.makes()),
+            lasts: text(offer.lasts()),
+            suggested: offer.suggested(),
+            owned_at_tier: offer.ownedAtTier(),
         }),
         equipment_batches: map_rows(cohort.equipmentBatches(), |batch| EquipmentBatchState {
             item_id: text(batch.itemId()),
@@ -1510,6 +1550,12 @@ fn decode_population(
             item_id: text(line.itemId()),
             required: line.required(),
             filled: line.filled(),
+        }),
+        // The keeping pools' crew accounts (issue #715) — what each pool's bill left standing.
+        pool_crew: map_rows(cohort.poolCrew(), |line| PoolCrewLineState {
+            pool: text(line.pool()),
+            idle_keepers: line.idleKeepers(),
+            keepers: line.keepers(),
         }),
         transfer_local_received_turn: cohort.transferLocalReceivedTurn(),
         transfer_local_sent_turn: cohort.transferLocalSentTurn(),

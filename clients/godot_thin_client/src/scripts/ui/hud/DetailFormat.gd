@@ -379,14 +379,13 @@ const KIT_ROLE_CROOK := "keeping and raising animals"
 const KIT_LABEL_HOES := "Hoes"
 const KIT_DURABILITY_KEY_HOES := "hoes"
 
-## **THE ROUTE BRANCH'S TWO BUILD TOOLS**, keyed here for the reason the table exists: a pool's TOE
-## names its items on screen (`HudWorkVocab.pool_toe_short_line`), and both of these are POOL tools —
-## `earthmoving` serves `route:dirt_road`, `stone_dressing` serves `route:paved_road` and
-## `extraction:quarry`, which is the shared stock the whole TOE settlement exists to ration.
+## **THE ROUTE BRANCH'S TWO BUILD TOOLS**, keyed here for the reason the table exists: wherever a
+## band's items are listed they are named, and both of these are POOL tools — `earthmoving` serves
+## `route:dirt_road`, `stone_dressing` serves `route:paved_road` and `extraction:quarry`, which is the
+## shared stock the whole TOE settlement exists to ration.
 ##
 ## ⛔ **WITHOUT A ROW HERE THE FALLBACK PUTS A WIRE ID ON SCREEN.** `kit_item_label` answers the id
-## itself for an item it has no name for — honest on a ledger row, and on a SENTENCE it reads as a
-## leaked database key (`0 of 2 stone_dressing`).
+## itself for an item it has no name for, which reads as a leaked database key (`stone_dressing`).
 ##
 ## ⛔ **NEITHER IS ONE TOOL, AND THE CONFIG SAYS SO IN ITS OWN WORDS.**
 ## `equipment.json._comment_road_tools`: *"`earthmoving` is the PICK AND SPADE a GRADE is cut with …
@@ -430,59 +429,10 @@ const KIT_ITEM_LABELS := {
 static func kit_item_label(item_id: String) -> String:
     return String(KIT_ITEM_LABELS.get(item_id, item_id))
 
-## **THE SAME WORD, MID-SENTENCE** — `kit_item_label` lowercased, for a clause that names an item
-## inside a sentence rather than heading a row with it (`4 of 6 hoes`).
-##
-## ⛔ **IT IS A DERIVATION OF THE ONE TABLE, NEVER A SECOND TABLE OF NAMES.** A row header wants
-## `Hoes` and a clause wants `hoes`; spelling the pair out twice is how one surface comes to call an
-## item something the other does not, which is precisely what `KIT_ITEM_LABELS` exists to prevent.
-##
-## **THE UNDERSCORE SUBSTITUTION IS A STRUCTURAL GUARANTEE, not a second naming rule.** `kit_item_label`
-## falls back to the raw wire id, and an id this build has no word for is exactly the case a sentence
-## must not leak — so the sentence form spends a `replace` rather than trusting every future roster
-## addition to have been keyed above. A labelled item never reaches it.
-static func kit_item_word(item_id: String) -> String:
-    return kit_item_label(item_id).to_lower().replace("_", " ")
-
-## ⛔ **THE COUNTED FORMS OF THE SAME NAME — `[one, many]`, BESIDE THE LABEL THEY INFLECT.**
-##
-## **`KIT_ITEM_LABELS` IS MIXED and no single rule can inflect it.** `spears` and `hoes` are already
-## plural, `crook` and `sled` are singular — so appending an `s` gives `Spearss` and leaving it alone
-## gives `0 of 2 crook`. This is **not** a second table of item NAMES: `kit_item_label` remains the one
-## place an item is named, and a row here only says how that one name counts.
-##
-## ⛔ **THE TAKE ROW'S RULE CANNOT BE BORROWED, AND THAT IS A FACT ABOUT WHAT IT COUNTS.**
-## `HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX` appends a bare `s` because it counts **KIT** names,
-## which are uniformly singular and unsuffixed by roster convention; this counts **ITEM** labels,
-## which are not. That const's own doc anticipates exactly this: *"a roster whose names ever went
-## plural would need a different rule."*
-##
-## ⛔ **AN UNLISTED ITEM FALLS BACK TO ITS LABEL FOR BOTH FORMS, AND APPENDS NOTHING.** That is
-## today's reading unchanged and it is structurally incapable of producing `Spearss` — the cost is
-## that an unlisted item reads `0 of 1 spears`, which is why a NEW ITEM A POOL CAN REQUIRE NEEDS A ROW
-## HERE. Only the items a pool's rungs actually want are listed; the rest of the roster is counted
-## nowhere.
-const KIT_ITEM_COUNTED_NAMES := {
-    KIT_DURABILITY_KEY_HOES: ["hoe", "hoes"],
-    KIT_DURABILITY_KEY_CROOK: ["crook", "crooks"],
-    "earthmoving": ["earthmoving tool", "earthmoving tools"],
-    "stone_dressing": ["stone-dressing tool", "stone-dressing tools"],
-}
-
-## Index into a `KIT_ITEM_COUNTED_NAMES` row.
-const KIT_ITEM_COUNT_ONE := 0
-const KIT_ITEM_COUNT_MANY := 1
-
-## **THE ITEM'S NAME AGREEING WITH A COUNT** — `0 of 1 hoe`, `0 of 2 crooks`.
-##
-## ⛔ **THE COUNT IT AGREES WITH IS THE ONE THE CALLER PASSES, AND FOR `N of M` THAT IS `M`.** English
-## agrees with the quantity being NAMED — *one of two crooks* names the two — which is also what makes
-## `1 of 2` read correctly rather than as a singular. A caller counting one thing passes that one.
-static func kit_item_count_word(item_id: String, count: int) -> String:
-    var row: Array = KIT_ITEM_COUNTED_NAMES.get(item_id, [])
-    if row.size() <= KIT_ITEM_COUNT_MANY:
-        return kit_item_word(item_id)
-    return String(row[KIT_ITEM_COUNT_ONE if absi(count) == 1 else KIT_ITEM_COUNT_MANY])
+## ⛔ **RETIRED — `kit_item_word`, `KIT_ITEM_COUNTED_NAMES` and `kit_item_count_word`** (issue #716).
+## They inflected an item label against a count for the pool card's `N of M <item>` tool line, their
+## one reader. That line is gone — a tool count under a worker stepper read as a head count, and a list
+## of tool names cannot scale with the roster — so the pool card names no item and counts none.
 
 # The RESOLVED tiers each kit sets. **`hunt_carry_per_worker_biomass` and
 # `forage_carry_per_worker_biomass` ARE NOT TWO READINGS OF ONE NUMBER** — a band can be out of
