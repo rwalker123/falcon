@@ -707,9 +707,11 @@ pub struct EquipmentTier {
     /// Condition a fresh unit of this tier carries, on the shared 0–100 scale. A batch is equipped
     /// while its accumulated wear is **strictly below** this.
     pub starting_durability: f32,
-    /// **The craft a faction must know before a bench can make this tier.** Absent on the first tier
-    /// of every item — that one ships known, so nothing is locked at the start and the gate has a
-    /// real job the day bronze exists. Validated against the crafts the materials table declares.
+    /// **A craft named as this tier's gate.** Forbidden on the first tier of every item and declared
+    /// by no shipped tier, so it has **no shipped reader**: which tier a bench makes is the recipe's
+    /// declared `tier`, and [`ItemDefinition::craftable_tier`] — the one place that reads a gate —
+    /// only answers for a single-tier item, whose one tier cannot carry one. Validated against the
+    /// crafts the materials table declares; exercised by a test fixture only.
     #[serde(default)]
     pub requires_knowledge: Option<String>,
     /// What a unit of this tier sets while it is intact — overriding anything the item declares for
@@ -776,8 +778,10 @@ pub struct ItemDefinition {
     /// **default tier** — what a spawn stocks, what every reference rate resolves through, and the
     /// one tier that may not be knowledge-gated.
     ///
-    /// A `Vec` rather than a map because the **order is the model**: a bench makes the best tier the
-    /// faction knows, and a map has no order to ask.
+    /// A `Vec` rather than a map because the **order is the model**: `tiers[0]` is the default, and
+    /// the ages stack after it worst-first. **Which tier a bench makes is not read off this order** —
+    /// it is the recipe's declared `tier` ([`crate::recipes_config::RecipeOutput::tier`]), which
+    /// `validate_against` makes mandatory on any item with more than one tier.
     pub tiers: Vec<EquipmentTier>,
     /// **The ONE material this item is a bench tool for.** Absent on everything a party carries.
     ///
@@ -905,9 +909,13 @@ impl ItemDefinition {
         self.tier(id).unwrap_or_else(|| self.default_tier())
     }
 
-    /// **The best tier this item can be made at by a faction that knows `known`** — the last in file
-    /// order whose gate is satisfied, so the order is the upgrade ladder. The default tier requires
+    /// **The last tier in file order whose gate `known` satisfies** — the default tier requires
     /// nothing, so there is always an answer.
+    ///
+    /// **It answers only for a SINGLE-TIER item**: every recipe making a multi-tier item must declare
+    /// its `tier`, so no multi-tier item reaches this fallback, and a single-tier item's only tier is
+    /// `tiers[0]`, which may not carry a gate. On shipped config it therefore always returns the
+    /// default tier, and nothing escalates to a knowledge-gated tier through it.
     pub fn craftable_tier(&self, known: impl Fn(&str) -> bool) -> &EquipmentTier {
         self.tiers
             .iter()

@@ -891,7 +891,7 @@ func _build_ledger(payload: Dictionary) -> void:
 	table.add_child(_build_column_heads())
 	table.add_child(_rule(HudStyle.LINE))
 
-	for section in _ledger_sections(band):
+	for section in _ledger_sections(band, payload):
 		var head_name := String(section["head"])
 		table.add_child(_build_group_head(head_name))
 		table.add_child(_rule(HudStyle.LINE))
@@ -919,9 +919,9 @@ func _build_ledger(payload: Dictionary) -> void:
 
 ## **THE SECTIONS, IN THE ORDER THEY RENDER: `Kit`, `Bench tools`, `Materials`** — the three
 ## published groups, one head each. Each section holds ROWS, not offers (`_ledger_rows`).
-func _ledger_sections(band: Dictionary) -> Array:
+func _ledger_sections(band: Dictionary, payload: Dictionary) -> Array:
 	var by_group := {}
-	for row in _ledger_rows(band):
+	for row in _ledger_rows(band, payload):
 		var group := String(row["group"])
 		if not by_group.has(group):
 			by_group[group] = []
@@ -934,21 +934,23 @@ func _ledger_sections(band: Dictionary) -> Array:
 		sections.append({"head": String(HudCraftingVocab.GROUP_HEADS[group]), "rows": rows})
 	return sections
 
-## **ONE ROW PER ITEM.** The band's offers grouped by `outputItemId` — a spear pointed with bone and a
-## spear knapped from stone are one row — and a MATERIAL recipe (empty `outputItemId`) is a row of its
-## own keyed by its recipe. Rows come out in the order each item's FIRST offer appears on the wire.
+## **ONE ROW PER THING MADE.** The band's offers grouped by what they make — the sim's own row key: an
+## equipment recipe by its `outputItemId` (a spear pointed with bone and a spear knapped from stone are
+## one row), a MATERIAL recipe by the material its first material output names, read off the recipe
+## book (two recipes that twist cordage are one row). Rows come out in the order each thing's FIRST
+## offer appears on the wire.
 ##
 ## Each row is `{key, group, name, offers, offer}`: `offer` is the SUGGESTED one — the sim marks exactly
 ## one per row — and it is what the row's cost and refusal are read off. The row's name is
 ## that offer's `displayName`, which the sim publishes as the ITEM's name on every one of its offers.
-func _ledger_rows(band: Dictionary) -> Array:
+func _ledger_rows(band: Dictionary, payload: Dictionary) -> Array:
 	var rows: Array = []
 	var by_key := {}
 	for offer_variant in band.get(HudCraftingVocab.BAND_CRAFT_OFFERS_KEY, []):
 		if not (offer_variant is Dictionary):
 			continue
 		var offer: Dictionary = offer_variant
-		var key := _row_key_of(offer)
+		var key := _row_key_of(offer, payload)
 		if not by_key.has(key):
 			var row := {
 				"key": key,
@@ -964,19 +966,25 @@ func _ledger_rows(band: Dictionary) -> Array:
 			held["offer"] = offer
 	return rows
 
-## The row an offer belongs to: its item, or — for a recipe that makes a material — its own recipe.
-func _row_key_of(offer: Dictionary) -> String:
+## The row an offer belongs to: its item, or — for a recipe that makes a material — that material,
+## resolved through the recipe book because the offer carries no material id. A recipe the book does
+## not hold (the catalogues not yet ingested) keys by its own id, so it still gets a row of its own.
+func _row_key_of(offer: Dictionary, payload: Dictionary) -> String:
 	var item_id := String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, ""))
 	if item_id != "":
 		return item_id
-	return HudCraftingVocab.LEDGER_STOCK_ROW_KEY_FORMAT % String(
-		offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+	var recipe_id := String(offer.get(HudCraftingVocab.OFFER_RECIPE_ID_KEY, ""))
+	var material_id := String(_stock_output(_recipe_of(recipe_id, payload)).get(
+		HudCraftingVocab.RECIPE_OUTPUT_MATERIAL_ID_KEY, ""))
+	if material_id != "":
+		return HudCraftingVocab.LEDGER_MATERIAL_ROW_KEY_FORMAT % material_id
+	return HudCraftingVocab.LEDGER_STOCK_ROW_KEY_FORMAT % recipe_id
 
 ## The row named `key` in the payload's band, `{}` when it is gone.
 func _row_in(payload: Dictionary, key: String) -> Dictionary:
 	if key == NO_ROW:
 		return {}
-	for row in _ledger_rows(payload.get(PAYLOAD_BAND, {})):
+	for row in _ledger_rows(payload.get(PAYLOAD_BAND, {}), payload):
 		if String(row["key"]) == key:
 			return row
 	return {}

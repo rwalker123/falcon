@@ -676,7 +676,6 @@ fn create_populations<'a>(
                         let reason = builder.create_string(&offer.reason);
                         let severity = builder.create_string(&offer.severity);
                         let output_grade = builder.create_string(&offer.output_grade);
-                        let output_tier_name = builder.create_string(&offer.output_tier_name);
                         let recipe_label = builder.create_string(&offer.recipe_label);
                         let makes = builder.create_string(&offer.makes);
                         let lasts = builder.create_string(&offer.lasts);
@@ -694,8 +693,6 @@ fn create_populations<'a>(
                                 shortfalls: Some(shortfalls),
                                 outputGrade: Some(output_grade),
                                 onBench: offer.on_bench,
-                                outputTierName: Some(output_tier_name),
-                                outputTierRank: offer.output_tier_rank,
                                 recipeLabel: Some(recipe_label),
                                 makes: Some(makes),
                                 lasts: Some(lasts),
@@ -1450,8 +1447,6 @@ fn decode_population(
             shortfalls: decode_shortfalls(offer.shortfalls()),
             output_grade: text(offer.outputGrade()),
             on_bench: offer.onBench(),
-            output_tier_name: text(offer.outputTierName()),
-            output_tier_rank: offer.outputTierRank(),
             recipe_label: text(offer.recipeLabel()),
             makes: text(offer.makes()),
             lasts: text(offer.lasts()),

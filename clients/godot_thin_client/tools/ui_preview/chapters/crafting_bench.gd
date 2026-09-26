@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 186
+const EXPECTED_CHECKPOINTS := 187
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -48,6 +48,14 @@ const HEAD_KIT := "Kit"
 const HEAD_TOOLS := "Bench tools"
 const HEAD_MATERIALS := "Materials"
 
+## Two stock recipes making ONE material, for the one-row-per-thing-made pair. The sim requires a
+## label on sibling recipes, so both carry one.
+const HURDLES_NAME := "Hurdles"
+const HURDLES_MATERIAL := "hurdles"
+const HURDLES_WOOD_RECIPE := "hurdles_wood"
+const HURDLES_WOOD_LABEL := "Wood"
+const HURDLES_WITHY_RECIPE := "hurdles_withy"
+const HURDLES_WITHY_LABEL := "Withy"
 ## **THE TIER WORDS THAT MAY NOT REACH AN OWNED CELL AT ALL.** The popup and the picker name tiers by
 ## design, so this claim is scoped to the CELLS; the fixtures publish a `tier_id` on every batch they
 ## own, which is what stops the negative being vacuous.
@@ -1157,14 +1165,10 @@ func _assert_panel_renders() -> void:
 			and texts.has(HudCraftingVocab.LEDGER_COLUMN_OWNED.to_upper())
 			and texts.has(HudCraftingVocab.LEDGER_COLUMN_COST.to_upper()))
 	# **THE THREE SECTIONS ARE THE THREE GROUPS** — `Kit`, `Bench tools`, `Materials`, all carrying the
-	# open caret — and NO tier heads a section: this fixture carries both a plain and a flint spear
-	# recipe, and a panel still splitting the kit by tier would draw a `Plain` and a `Flint` head.
+	# open caret.
 	h._assert_hud("crafting — the three group heads read as one foldable family",
 		texts.has(_head_face(HEAD_KIT, false)) and texts.has(_head_face(HEAD_TOOLS, false))
 			and texts.has(_head_face(HEAD_MATERIALS, false)))
-	h._assert_hud("crafting — …and no TIER heads a section, over a fixture carrying two tiers",
-		not texts.has(_head_face(TIER_PLAIN.capitalize(), false))
-			and not texts.has(_head_face(TIER_FLINT.capitalize(), false)))
 	# The running row's button is SPENT — one job at a time, so it has nothing left to ask for.
 	h._assert_hud("crafting — the running row reads On the bench",
 		texts.has(HudCraftingVocab.ON_BENCH_LABEL))
@@ -1935,8 +1939,7 @@ func _craft_offers() -> Array:
 		_offer(SPEARS_FLINT_RECIPE, "Spears", HudCraftingVocab.GROUP_KIT, "spears", true,
 			"Flint → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
 			{"recipe_label": SPEARS_FLINT_LABEL, "output_grade": "good", "makes": SPEARS_FLINT_MAKES,
-				"lasts": SPEARS_FLINT_LASTS, "owned_at_tier": 0,
-				"output_tier_name": TIER_FLINT, "output_tier_rank": 1}),
+				"lasts": SPEARS_FLINT_LASTS, "owned_at_tier": 0}),
 		_offer("crook", "Crook", HudCraftingVocab.GROUP_KIT, "crook", true,
 			"Long bone → good", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("sled", "Sled", HudCraftingVocab.GROUP_KIT, "sled", true,
@@ -1961,9 +1964,9 @@ func _craft_offers() -> Array:
 	]
 
 ## **ONE OFFER PER RECIPE, IN THE WIRE'S OWN SHAPE.** The defaults are a SOLE recipe's: suggested (the
-## only one in its row), no label, nothing it `makes` or `lasts` worth stating, `owned_at_tier` -1, the
-## opening `plain` tier. `recipe` overrides any of those for a recipe that is one of several — the
-## label, the headline stats and the count at its own tier.
+## only one in its row), no label, nothing it `makes` or `lasts` worth stating, `owned_at_tier` -1.
+## `recipe` overrides any of those for a recipe that is one of several — the label, the headline
+## stats and the count at its own tier.
 func _offer(recipe_id: String, display_name: String, group: String, output_item_id: String,
 		available: bool, reason: String, severity: String, shortfalls: Array = [],
 		on_bench: bool = false, recipe: Dictionary = {}) -> Dictionary:
@@ -1971,8 +1974,6 @@ func _offer(recipe_id: String, display_name: String, group: String, output_item_
 		"recipe_id": recipe_id, "display_name": display_name, "group": group,
 		"output_item_id": output_item_id, "available": available, "reason": reason,
 		"severity": severity, "shortfalls": shortfalls, "output_grade": "", "on_bench": on_bench,
-		"output_tier_name": TIER_PLAIN if output_item_id != "" else "",
-		"output_tier_rank": 0,
 		"recipe_label": "", "makes": "", "lasts": "", "suggested": true,
 		"owned_at_tier": HudCraftingVocab.OWNED_AT_TIER_UNATTRIBUTED,
 	}
@@ -2028,8 +2029,7 @@ func _two_tier_offers() -> Array:
 			"Flint → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
 			{"recipe_label": SPEARS_FLINT_LABEL, "output_grade": "good", "makes": SPEARS_FLINT_MAKES,
 				"lasts": SPEARS_FLINT_LASTS,
-				"owned_at_tier": TWO_TIER_SPEARS_GOOD_A + TWO_TIER_SPEARS_GOOD_B + TWO_TIER_SPEARS_EXCELLENT,
-				"output_tier_name": TIER_FLINT, "output_tier_rank": 1}),
+				"owned_at_tier": TWO_TIER_SPEARS_GOOD_A + TWO_TIER_SPEARS_GOOD_B + TWO_TIER_SPEARS_EXCELLENT}),
 		_offer(CLUBS_BONE_RECIPE, "Clubs", HudCraftingVocab.GROUP_KIT, "clubs", true,
 			"Bone → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
 			{"recipe_label": CLUBS_BONE_LABEL, "output_grade": "good", "makes": "6.0 attack",
@@ -2037,8 +2037,7 @@ func _two_tier_offers() -> Array:
 		_offer(CLUBS_STONE_RECIPE, "Clubs", HudCraftingVocab.GROUP_KIT, "clubs", true,
 			"Stone → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
 			{"recipe_label": CLUBS_STONE_LABEL, "output_grade": "good", "makes": "9.0 attack",
-				"lasts": "35 blows", "owned_at_tier": 0,
-				"output_tier_name": TIER_FLINT, "output_tier_rank": 1}),
+				"lasts": "35 blows", "owned_at_tier": 0}),
 		_offer("traps", "Traps", HudCraftingVocab.GROUP_KIT, "traps", true,
 			"Reed → fair", HudCraftingVocab.SEVERITY_NEUTRAL),
 		_offer("loom", "Loom", HudCraftingVocab.GROUP_TOOL, "loom", true,
@@ -2583,6 +2582,7 @@ func _recipe_states() -> void:
 	await _start_sends_the_chosen_recipe()
 	await _make_is_live_when_any_recipe_is()
 	await _assert_a_single_recipe_bench_names_no_recipe()
+	await _assert_one_row_per_material_made()
 	h._hud.close_crafting_panel()
 	await h._settle()
 
@@ -2780,6 +2780,73 @@ func _assert_a_single_recipe_bench_names_no_recipe() -> void:
 	h._assert_hud("crafting/recipes — a single-recipe job's bench title is the item and the craft (%s)"
 			% BENCH_ONE_RECIPE_TITLE,
 		panel != null and _label_texts(panel).has(BENCH_ONE_RECIPE_TITLE))
+
+## **ONE ROW PER THING MADE, AND A MATERIAL IS A THING.** The sim keys a row by what it makes — the
+## equipment, or else the first material — and marks one `suggested` offer per such row, so two stock
+## recipes twisting one material are ONE row under a `2 recipes` link, exactly like Spears. A client
+## keying a stock row by its recipe draws two Hurdles rows, one of them describing an offer the sim did
+## not suggest. Paired with the reference band's single-recipe Cordage row, which must stay one row with
+## NO link — without it the first claim passes on a panel that links every stock row. PNG-less, and the
+## recipe book is handed back afterwards, so no frame after it moves.
+func _assert_one_row_per_material_made() -> void:
+	var recipes := _recipes()
+	recipes.append(_stock_recipe(HURDLES_WOOD_RECIPE, HURDLES_WOOD_LABEL, [["wood", 4.0, ""],
+		["hide", 2.0, ""]]))
+	recipes.append(_stock_recipe(HURDLES_WITHY_RECIPE, HURDLES_WITHY_LABEL, [["fibre", 6.0, ""],
+		["hide", 2.0, ""]]))
+	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), recipes,
+		_craft_knowledge())
+	var band := _crafting_band()
+	var offers: Array = band["craft_offers"]
+	offers.append(_offer(HURDLES_WOOD_RECIPE, HURDLES_NAME, HudCraftingVocab.GROUP_STOCK, "", true,
+		"Wood", HudCraftingVocab.SEVERITY_NEUTRAL, [], false, {"recipe_label": HURDLES_WOOD_LABEL}))
+	offers.append(_offer(HURDLES_WITHY_RECIPE, HURDLES_NAME, HudCraftingVocab.GROUP_STOCK, "", true,
+		"Withy", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+		{"recipe_label": HURDLES_WITHY_LABEL, "suggested": false}))
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/recipes — the material-rows panel is open", false)
+	else:
+		var hurdles_rows := _rows_named(panel, HURDLES_NAME)
+		var link := _recipes_link(hurdles_rows[0]) if hurdles_rows.size() == 1 else null
+		h._assert_hud("crafting/recipes — two stock recipes making one material are ONE row with a "
+				+ "`2 recipes` link (%d rows, %s)" % [hurdles_rows.size(),
+					link.text if link != null else "no link"],
+			hurdles_rows.size() == 1 and link != null and link.text == "2 recipes")
+		var cordage_rows := _rows_named(panel, "Cordage")
+		h._assert_hud("crafting/recipes — …while the single-recipe Cordage row is one row with no link "
+				+ "(%d rows)" % cordage_rows.size(),
+			cordage_rows.size() == 1 and _recipes_link(cordage_rows[0]) == null)
+	h._hud.update_crafting_catalogues(_materials(), _characteristic_bands(), _recipes(),
+		_craft_knowledge())
+	h._hud.update_band_alerts([_crafting_band()])
+
+## A material recipe: its output is `material_id`, which is what the ledger keys its row by.
+func _stock_recipe(id: String, label: String, inputs: Array) -> Dictionary:
+	var rows: Array = []
+	for input in inputs:
+		rows.append({"material_id": String(input[0]), "amount": float(input[1]),
+			"reads_axis": String(input[2])})
+	return {
+		"id": id, "display_name": HURDLES_NAME, "craft": "shaping",
+		"group": HudCraftingVocab.GROUP_STOCK, "work": 3.0, "requires_knowledge": [],
+		"inputs": rows, "label": label,
+		"outputs": [{"equipment_id": "", "material_id": HURDLES_MATERIAL, "amount": 1.0}],
+	}
+
+## Every ledger row whose Item cell carries `item_name` — the rows, not the first match, since the
+## claim is how MANY there are. A row is an `HBoxContainer` whose own direct children include the
+## Item cell, so a match is kept only where no descendant row already matched.
+func _rows_named(node: Node, item_name: String) -> Array:
+	var found: Array = []
+	for child in node.get_children():
+		found.append_array(_rows_named(child, item_name))
+	if found.is_empty() and node is HBoxContainer and _label_texts(node).has(item_name):
+		found.append(node)
+	return found
 
 ## The `N recipes` link under ONE row, found by the meta the panel stamps — `null` on a row without one.
 func _recipes_link(node: Node) -> LinkButton:

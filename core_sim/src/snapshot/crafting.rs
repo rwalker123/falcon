@@ -590,13 +590,9 @@ fn craft_offer(
     let available = refusals.is_empty();
     let output_grade =
         preview_grade(store, plan.recipe, tiers, inputs.materials).unwrap_or_default();
-    // **The tier this recipe makes is resolved once and read four times** — the head, the invitation
-    // (which quotes what that tier would unlock), `makes`/`lasts`, and `ownedAtTier`.
+    // **The tier this recipe makes is resolved once and read three ways** — the invitation (which
+    // quotes what that tier would unlock), `makes`/`lasts`, and `ownedAtTier`.
     let made = made_tier(plan, inputs);
-    let craftable = made.map(|(_, tier, rank)| (tier.id.as_str(), rank));
-    let (output_tier_name, output_tier_rank) = craftable
-        .map(|(id, rank)| (id.to_string(), rank))
-        .unwrap_or_default();
     let (reason, severity) = if available {
         invitation(
             plan,
@@ -604,21 +600,21 @@ fn craft_offer(
             wear,
             &output_grade,
             inputs,
-            craftable.map(|(id, _)| id),
+            made.map(|(_, tier)| tier.id.as_str()),
         )
     } else {
         (refusals.join(REASON_JOIN), SEVERITY_DANGER)
     };
-    // **The popup's three per-recipe readings**, each off the SAME tier the head names, so a row that
-    // says *flint* makes a flint spear's number and lasts a flint spear's life.
+    // **The popup's three per-recipe readings**, each off the SAME tier this recipe makes, so the
+    // knapped recipe quotes a flint spear's number and a flint spear's life.
     let makes = made
-        .map(|(def, tier, _)| makes(plan, def, tier, &output_grade, inputs))
+        .map(|(def, tier)| makes(plan, def, tier, &output_grade, inputs))
         .unwrap_or_default();
     let lasts = made
-        .map(|(def, tier, _)| one_fresh_unit_lasts(def, tier, inputs.reference_build_cost))
+        .map(|(def, tier)| one_fresh_unit_lasts(def, tier, inputs.reference_build_cost))
         .unwrap_or_default();
     let owned_at_tier = match (plan.counts_by_tier, plan.output_item, made) {
-        (true, Some(item), Some((_, tier, _))) => units_at_tier(wear, item, &tier.id),
+        (true, Some(item), Some((_, tier))) => units_at_tier(wear, item, &tier.id),
         _ => OWNED_AT_TIER_UNATTRIBUTED,
     };
     CraftOfferState {
@@ -633,8 +629,6 @@ fn craft_offer(
         shortfalls,
         output_grade,
         on_bench: running == Some(plan.id),
-        output_tier_name,
-        output_tier_rank,
         recipe_label: plan.label.clone(),
         makes,
         lasts,
@@ -658,16 +652,20 @@ fn units_at_tier(wear: &BandEquipment, item: &str, tier: &str) -> i32 {
 
 /// **WHICH RECIPE EACH LEDGER ROW SUGGESTS — exactly one per row, and the sim decides it.**
 ///
-/// A row is every offer sharing a [`CraftOfferPlan::row_key`] (one item, several recipes); a recipe
-/// with no key is its own row. Per row, in order:
+/// A row is every offer sharing a [`CraftOfferPlan::row_key`] (one item or one material, several
+/// recipes); a recipe with no key is its own row. Per row, in order:
 ///
-/// 1. the recipe this band **last started** for it ([`BandBench::last_started`]), if it is
+/// 1. the recipe **on the bench** (`on_bench`), if any — a running job is the row's answer whatever
+///    the store says next. Its own draw is what emptied the pile it reads, so without this rung a
+///    flint job would publish flint unavailable and hand the row to bone, and the row would read
+///    *On the bench* beside the costs of a recipe nobody is making;
+/// 2. the recipe this band **last started** for it ([`BandBench::last_started`]), if it is
 ///    `available` right now — a band that knaps its spears keeps being offered the knapped recipe;
-/// 2. else the **first available** recipe in book order — last time's choice has run short, so the
+/// 3. else the **first available** recipe in book order — last time's choice has run short, so the
 ///    row offers what the band can actually make;
-/// 3. else the last-started one, even unavailable — nothing can be made, so keep the choice the
+/// 4. else the last-started one, even unavailable — nothing can be made, so keep the choice the
 ///    player made rather than jump to an arbitrary one;
-/// 4. else the **first in book order**.
+/// 5. else the **first in book order**.
 ///
 /// **Available is the offer's own `available`**, the one reading of *"could a pass make progress
 /// now"*; a second test here would be a second authority over that question. It reads the bench's
@@ -692,7 +690,12 @@ fn mark_suggested(
         let is_available = |index: &&usize| offers[**index].available;
         let pick = indices
             .iter()
-            .find(|index| is_last_started(index) && is_available(index))
+            .find(|index| offers[**index].on_bench)
+            .or_else(|| {
+                indices
+                    .iter()
+                    .find(|index| is_last_started(index) && is_available(index))
+            })
             .or_else(|| indices.iter().find(is_available))
             .or_else(|| indices.iter().find(is_last_started))
             .or_else(|| indices.first())
@@ -798,23 +801,22 @@ fn one_fresh_unit_lasts(
     quanta_phrase(tier.starting_durability / per_noun, def.headline_wear().per)
 }
 
-/// **The tier a craft would produce right now, and its rank in the item's own list** — the ledger's
-/// group head. `None` for a recipe that makes a material rather than an item, which has no tier to
-/// be grouped under.
+/// **The tier a craft of this recipe would produce, and the item it belongs to** — what the
+/// invitation's unlock band, `makes`, `lasts` and `ownedAtTier` are all read at. `None` for a recipe
+/// that makes a material rather than an item, which has no tier.
 ///
 /// **THE RECIPE'S OWN TIER WHERE IT DECLARES ONE** ([`RecipeDef::output_tier_id`]), which is every
-/// row whose item has a choice: a recipe is what names the material, and the tier is what the
-/// material buys — so the Spears row that reads bone heads `plain` and the one that reads stone
-/// heads `flint`, on the same item, on the same frame.
+/// recipe whose item has more than one tier — `validate_against` makes the declaration mandatory
+/// there. A recipe is what names the material and the tier is what the material buys, so `spears`
+/// makes `plain` and `spears_flint` makes `flint` on the same frame.
 ///
-/// The `craftable_tier` fallback survives for an item with exactly **one** tier, where it is that
-/// tier. It is resolved **per band** rather than in the [`CraftOfferPlan`] because it reads what the
-/// *faction* knows, and the plan is a per-capture constant. The walk is over one item's tiers — at
-/// most two on the shipped roster — so it costs nothing.
+/// `craftable_tier` answers only for a **single-tier** item, where its answer is that tier whatever
+/// the faction knows. It is resolved per band rather than in the [`CraftOfferPlan`] because it takes
+/// the faction's known crafts, and the walk is over one item's tiers, so it costs nothing.
 fn made_tier<'a>(
     plan: &CraftOfferPlan<'a>,
     inputs: &BandCraftInputs<'a>,
-) -> Option<(&'a ItemDefinition, &'a EquipmentTier, u32)> {
+) -> Option<(&'a ItemDefinition, &'a EquipmentTier)> {
     let def = inputs.equipment.item(plan.output_item?)?;
     let known = |craft: &str| inputs.known_crafts.get(craft).copied().unwrap_or(false);
     let tier = plan
@@ -822,13 +824,12 @@ fn made_tier<'a>(
         .output_tier_id()
         .and_then(|id| def.tier(id))
         .unwrap_or_else(|| def.craftable_tier(known));
-    let rank = def.tiers.iter().position(|row| row.id == tier.id)?;
-    Some((def, tier, rank as u32))
+    Some((def, tier))
 }
 
 /// **THE BAND A TOOL WOULD UNLOCK — its own `craft_quality_ceiling`, never the top of the ladder.**
 ///
-/// Resolved off the tier the bench would actually make (`made_tier`, the faction's `craftable_tier`),
+/// Resolved off the tier the bench would actually make (`made_tier` — the recipe's declared tier),
 /// through the **same** `band_index` lookup `fix_grade` runs, so the invitation names exactly the
 /// grade the bench will then produce. Quoting the top band instead is right only while every tool
 /// happens to declare `0.90`: a tool with a ceiling of `0.70` would advertise `excellent` work while

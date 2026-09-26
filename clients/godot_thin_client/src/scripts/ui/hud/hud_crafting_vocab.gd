@@ -402,8 +402,11 @@ const PICKER_OPTION_META := "crafting_make_picker_option"
 const PICKER_START_META := "crafting_make_picker_start"
 const PICKER_CANCEL_META := "crafting_make_picker_cancel"
 ## The ledger key of a row made by a MATERIAL recipe. An equipment row is keyed by its item id; a
-## material recipe has no item, so it is its own row, and the prefix keeps its key out of the item
-## ids' namespace.
+## material row by the material it makes, so two recipes making one material share a row — the sim's
+## own one-row-per-thing-made key. The prefix keeps it out of the item ids' namespace.
+const LEDGER_MATERIAL_ROW_KEY_FORMAT := "material:%s"
+## The key of a material recipe the recipe book does not hold, so its material cannot be resolved:
+## a row of its own, keyed by the recipe.
 const LEDGER_STOCK_ROW_KEY_FORMAT := "recipe:%s"
 ## How a row's Make button is found by IDENTITY, valued the row key — a face search finds every Make
 ## on the ledger, and the picker's claims are about ONE row's button.

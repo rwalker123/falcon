@@ -2348,13 +2348,11 @@ the control are independent, so a defect in one must leave the other's claims st
 None passed vacuously: each restoration was named by at least one assertion that reads the RENDER and
 one that reads the table.
 
-## One ledger row per item, its recipes behind a link (`chapters/crafting_bench.gd`)
+## One ledger row per thing made, its recipes behind a link (`chapters/crafting_bench.gd`)
 
-Two frames and thirty-three claims, appended LAST in the chapter (`_recipe_states`) so no earlier
-frame moves in count, plus one on state 1: *no TIER heads a section*, over a fixture carrying two. The behaviour is `crafting-panel.md`'s — "ONE SHORT ROW PER ITEM"; what belongs here
-is the shape of the drive. **MEASURED, BEFORE AND AFTER, ON THIS TREE: `453 / 2220` → `455 / 2254`**,
-exit 0 both. `EXPECTED_CHECKPOINTS` 149 → **185**, RE-MEASURED by raising the const to an impossible
-number and reading `reached 185` back.
+Two frames and the recipe block's claims, appended LAST in the chapter (`_recipe_states`) so no
+earlier frame moves in count. The behaviour is `crafting-panel.md`'s — "ONE SHORT ROW PER THING
+MADE"; what belongs here is the shape of the drive.
 
 | frame | what only IT can say |
 |---|---|
@@ -2399,11 +2397,24 @@ is what gives the negative something to catch: *no Owned cell carries any tier w
 precondition that the band really publishes tier ids, asked of the two-tier band and of the reference
 band. Beside it, *an Owned cell carries nothing beside its grades* is asked of the Spears cell as
 *everything that is not a count or a legend word*, so a line composed client-side fails it. The
-positive half is the popup's per-tier Owned column above (`×6` / `—` on Spears). **MEASURED ON THIS
-TREE: `455 / 2255`**, exit 0; `EXPECTED_CHECKPOINTS` **186**, RE-MEASURED by raising the const to an
-impossible number and reading `reached 186` back. Sabotage-verified by rendering each batch's `tier_id` in
-the Owned cell: exactly **three** claims fail — the tier-word negative on both bands and the
-nothing-beside-its-grades claim — while the popup's `×6` / `—` column stays green.
+positive half is the popup's per-tier Owned column above (`×6` / `—` on Spears). Sabotage-verified by
+rendering each batch's `tier_id` in the Owned cell: exactly **three** claims fail — the tier-word
+negative on both bands and the nothing-beside-its-grades claim — while the popup's `×6` / `—` column
+stays green. The fixture offers carry no `output_tier_name` / `output_tier_rank`: those fields are
+deprecated and the sim publishes neither.
+
+### …and a material is a thing made
+
+`_assert_one_row_per_material_made`, PNG-less, at the end of `_recipe_states`. It pushes a recipe book
+carrying two stock recipes that both make `hurdles` (labelled `Wood` and `Withy`, since the sim
+requires labels on sibling recipes) and a band publishing an offer for each, one of them `suggested`,
+and asks for exactly **one** `Hurdles` row carrying the `2 recipes` link — **paired** with the
+reference band's single-recipe `Cordage` row, which must stay one row with NO link, or the first claim
+passes on a panel that links every stock row. The recipe book and the band are handed back
+afterwards, so no frame after it moves. Sabotage-verified by keying a stock row by its recipe again:
+exactly **one** claim fails, naming `2 rows, no link`, while the Cordage half stays green.
+**MEASURED ON THIS TREE: `455 / 2256`**, exit 0; `EXPECTED_CHECKPOINTS` **187**, RE-MEASURED by raising
+the const to an impossible number and reading `reached 187` back.
 
 ## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
 

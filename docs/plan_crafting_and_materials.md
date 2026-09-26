@@ -373,22 +373,21 @@ that split.
   rule for *which*, and every candidate misleads: the best flatters, the worst alarms, and the batch
   currently in service is chosen by **wear, not quality** — so it would move for a reason that has
   nothing to do with what the row claims.
-- **TIER IS A GROUP HEAD, NOT A COLUMN.** A column spends its width saying `plain` on almost every
-  row for the whole early game; a head says it once and can **fold away**, which is what a column can
-  never do. The head is the tier a row would be **made** at — **the tier that row's own recipe
-  declares**, so a row does not *move* between heads as knowledge arrives: an item with two recipes
-  has a row under each. The **Owned cell names no tier**: it says how many the band holds and at
-  what grades, and which tier those units are is answered per recipe in the recipes popup
-  (`CraftOffer.ownedAtTier`), where the tier is already the subject.
+- **ONE ROW PER THING MADE, AND NO TIER IS SPOKEN.** The ledger is one short row per item — or per
+  material, for a stock recipe — under **Kit · Bench tools · Materials**: name, Owned, Costs, Make.
+  An item with more than one recipe carries a **"2 recipes" link** that opens a small read-only table
+  (recipe, costs, what it makes, how long it lasts, and how many the band holds where the recipes make
+  different tiers), and **Make** on it drops a picker in under the row. **The recipe is fixed once the
+  build starts.** A row per recipe was built first and rejected from play — Spears appeared twice —
+  and so were three richer single-row layouts (recipe chips, every recipe on its own line, fold-out
+  lines), as overloading a row that must stay short.
 
-  **The heads are the tier, and the ledger's other two groups join them as one family** — `Plain`,
-  `Flint`, `Bench tools`, `Materials` today; `Bronze` above `Flint` once minerals land. All are the
-  same head: a caret and a name, nothing else. A purpose-named axis (*Metalwork* / *Woven & tanned*)
-  was considered against it and **rejected**, on the ground that the head is answering *"what would
-  this be made at"* rather than *"is this superseded"* — so it makes no claim about recency, and an
-  item with only a `plain` recipe (the sled, the baskets, the traps) simply never gains a second head
-  to be sorted under. Folding **Plain** does put baskets away with the bone spears; that is the
-  reader choosing to stop looking at a group, and it is what a head buys that a column cannot.
+  **There is no tier column and there are no tier heads.** An item with two recipes holds both of its
+  tiers in one row, so there is nothing to sort it under, and a head saying `plain` over most of the
+  kit said nothing the player needed. The **Owned cell names no tier** either: it says how many the
+  band holds and at what grades, and which tier those units are is answered per recipe in the recipes
+  popup (`CraftOffer.ownedAtTier`), where the tier is already the subject. The tier still decides every
+  number an offer quotes; it is simply never printed as a word.
 - **The life meter is a fuel gauge, not a performance meter** — the rule still governs every surface
   that *does* show condition. A spear at 34% is exactly as deadly as one at 100%, so condition is a
   discrete chip and is read in **turns left**, never as a percentage: a single percentage bar would

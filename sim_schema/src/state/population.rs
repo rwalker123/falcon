@@ -1819,8 +1819,9 @@ pub struct DrawnInputState {
 ///
 /// **`Default` is written by hand** because [`Self::owned_at_tier`]'s default is
 /// [`OWNED_AT_TIER_UNATTRIBUTED`] (`-1`), not `0`: the FlatBuffers schema says `= -1`, and a derived
-/// `Default` would answer `0` — *"owns none at this tier"*, a real count — for a field that failed to
-/// arrive.
+/// `Default` would answer `0` — *"owns none at this tier"*, a real count — on every row a fixture
+/// builds with `..Default::default()`. Serde takes no default for it: a missing field fails to
+/// deserialize like every other field here.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CraftOfferState {
     pub recipe_id: String,
@@ -1849,17 +1850,6 @@ pub struct CraftOfferState {
     pub output_grade: String,
     /// This recipe is the running job — the row's button is spent (*"On the bench"*).
     pub on_bench: bool,
-    /// **The tier a craft would produce right now** — the tier **this row's own recipe** declares
-    /// (`RecipeOutput::tier`), falling back to `ItemDefinition::craftable_tier` for a single-tier
-    /// item. It is the ledger's **group head**, not a column: a head says *plain* once and can fold
-    /// away, which is what a column spending its width on every row can never do. So the bone
-    /// `spears` offer heads *plain* and the knapped `spears_flint` offer heads *flint*, on the same
-    /// item, on the same frame. `""` on a material (stock) recipe.
-    pub output_tier_name: String,
-    /// Index of that tier within the item's own `tiers` list. **Heads order by rank descending** —
-    /// newest first — because there is no other honest ordering for two tier heads and alphabetical
-    /// would put Iron above Bronze.
-    pub output_tier_rank: u32,
     /// **The recipe's own short name among its siblings** — *Bone*, *Flint*, *Withy*. `""` on a
     /// recipe that is the only one making its output.
     pub recipe_label: String,
@@ -1872,14 +1862,15 @@ pub struct CraftOfferState {
     /// and the wording [`EquipmentBatchState::life`] counts in — `175 blows`,
     /// `2500 biomass gathered`. `""` for a material output.
     pub lasts: String,
-    /// **The recipe this row suggests** — exactly one offer per row is `true`. The recipe this band
-    /// last started for the item if it is available now, else the first available in book order,
-    /// else the last started, else the first in book order.
+    /// **The recipe this row suggests** — exactly one offer per row is `true`, a row being every
+    /// offer that makes the same item or, for a stock recipe, the same material. The offer that is
+    /// [`Self::on_bench`] if any, else the recipe this band last started for the row if it is
+    /// available now, else the first available in book order, else the last started, else the
+    /// first in book order.
     pub suggested: bool,
     /// **Units of this item the band owns at this recipe's tier**, or [`OWNED_AT_TIER_UNATTRIBUTED`]
     /// when every recipe making the item makes the **same** tier — the ledger never recorded which
     /// recipe made a unit, so a count per recipe there would be invented. `0` is a real count.
-    #[serde(default = "owned_at_tier_unattributed")]
     pub owned_at_tier: i32,
 }
 
@@ -1887,11 +1878,6 @@ pub struct CraftOfferState {
 /// every recipe making the item makes the same tier, so there is nothing to attribute a unit to.
 /// Matches the schema's `ownedAtTier:int = -1`.
 pub const OWNED_AT_TIER_UNATTRIBUTED: i32 = -1;
-
-/// Serde's default for [`CraftOfferState::owned_at_tier`] — see [`OWNED_AT_TIER_UNATTRIBUTED`].
-fn owned_at_tier_unattributed() -> i32 {
-    OWNED_AT_TIER_UNATTRIBUTED
-}
 
 impl Default for CraftOfferState {
     fn default() -> Self {
@@ -1906,8 +1892,6 @@ impl Default for CraftOfferState {
             shortfalls: Vec::new(),
             output_grade: String::new(),
             on_bench: false,
-            output_tier_name: String::new(),
-            output_tier_rank: 0,
             recipe_label: String::new(),
             makes: String::new(),
             lasts: String::new(),

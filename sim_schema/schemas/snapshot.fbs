@@ -5542,15 +5542,10 @@ table CraftOffer {
   //     recipe only that half applies.
   outputGrade:string;
   onBench:bool;          // this recipe is the running job — the row's button is spent
-  // --- THE TIER THIS RECIPE MAKES (appended last) ------------------------------------------------
-  // THE TIER THIS RECIPE MAKES — the tier the recipe's own output row declares (a bone spear is
-  // "plain", a knapped one "flint"), falling back to the best tier the faction knows for an item
-  // with only one tier. "" on a material (stock) recipe.
-  outputTierName:string;
-  // Index of that tier within the item's own `tiers` list — 0 is the opening tier.
-  outputTierRank:uint;
-  // Unused. The Owned cell carries no tier word; which tier a band holds is `ownedAtTier` below.
-  // Deprecated rather than deleted because slots are positional.
+  // Three unused slots. The ledger groups by item rather than under tier heads, and which tier a band
+  // holds is `ownedAtTier` below. Deprecated rather than deleted because slots are positional.
+  outputTierName:string (deprecated);
+  outputTierRank:uint (deprecated);
   ownedNote:string (deprecated);
   // --- ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK (appended last) -----------------------
   // Several offers can share one `outputItemId` (a spear pointed with bone, a spear knapped from
@@ -5571,10 +5566,12 @@ table CraftOffer {
   // same wording `EquipmentBatchState.life` counts in: "175 blows", "2500 biomass gathered". So a
   // flint spear reads shorter than a bone one — the brittleness is the point. "" for a material output.
   lasts:string;
-  // EXACTLY ONE offer per row (per `outputItemId`, or per recipe for a stock row) is true: the recipe
-  // the row's Costs cell shows and the picker opens on. The sim decides — the recipe this band LAST
-  // STARTED for the item if it is available now, else the first available in book order, else the
-  // last started, else the first in book order.
+  // EXACTLY ONE offer per row is true — a row is one thing made: every offer sharing an
+  // `outputItemId`, or, for a stock recipe, every offer making the same output MATERIAL. It is the
+  // recipe the row's Costs cell shows and the picker opens on. The sim decides, in order: the offer
+  // that is `onBench` (a running job keeps the row even after its own draw leaves it unaffordable),
+  // else the recipe this band LAST STARTED for the row if it is available now, else the first
+  // available in book order, else the last started, else the first in book order.
   suggested:bool;
   // HOW MANY UNITS OF THIS ITEM THE BAND OWNS AT THIS RECIPE'S TIER — or -1 when every recipe making
   // the item makes the SAME tier (a fibre basket and a withy basket are one item at one tier, and the

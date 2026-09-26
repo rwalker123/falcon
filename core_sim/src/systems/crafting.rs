@@ -391,9 +391,9 @@ pub fn advance_crafting(
             continue;
         }
 
-        // **The tier a craft comes out at is the best this faction knows** — resolved here, at the
-        // moment of delivery, off the same ledger and the same completion threshold `set_bench`
-        // gates a recipe on, so one reading of "does this people know that craft" serves both.
+        // **The faction's known crafts, for the single-tier fallback below** — resolved off the same
+        // ledger and the same completion threshold `set_bench` gates a recipe on, so one reading of
+        // "does this people know that craft" serves both.
         let known = |craft: &str| {
             craft_discovery_id(craft)
                 .is_some_and(|id| knows(&discovery, faction, id, knowledge_threshold))
@@ -494,8 +494,7 @@ fn emit_outputs(
             // and a tier is what the material buys: the bone row makes a `plain` spear and the
             // knapped row a `flint` one out of the same item definition. `validate_against` makes
             // the declaration mandatory on any item with more than one tier, so the fallback below
-            // answers only for an item with exactly one — where it is the best tier this faction can
-            // reach, which is that one.
+            // answers only for an item with exactly one — and that one is its ungated default.
             let tier = output
                 .tier
                 .clone()

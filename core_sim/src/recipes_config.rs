@@ -262,10 +262,12 @@ impl RecipeDef {
         self.outputs.iter().find_map(|output| output.equipment_id())
     }
 
-    /// **The thing this recipe's row is about** — its equipment output if it has one, else its first
-    /// material output. Two recipes with the same key make the same thing, and are two rows of one
-    /// ledger line: the key is what the [`Self::label`] rule counts siblings by and what the crafting
-    /// ledger groups offers by.
+    /// **The ledger row this recipe belongs to: ONE ROW PER THING MADE.** The key is the recipe's
+    /// equipment output if it has one, else its first **material** output — so an item's recipes
+    /// share a row, and a stock recipe's row is its output material, exactly as an item's is its
+    /// item. Two recipes with the same key make the same thing and are two recipes behind one
+    /// ledger row: the key is what the [`Self::label`] rule counts siblings by, what the crafting
+    /// wire groups offers by for `suggested`, and what `BandBench::last_started` is keyed by.
     ///
     /// An item id and a material id share one namespace here, which is safe because the two tables
     /// never share an id (`hurdles` left the item table when it became a material) and harmless if
@@ -303,7 +305,8 @@ impl RecipeDef {
     /// fallback and has only one answer).
     ///
     /// The join key for every reader that has to know *which* tier a row would produce: the bench's
-    /// delivery, the wire's group head, and the grade anchor. One accessor, so a second reading of
+    /// delivery, the craft offer's per-recipe readings (`makes`, `lasts`, `ownedAtTier`), and the grade
+    /// anchor. One accessor, so a second reading of
     /// `outputs.iter().find_map(...)` cannot come to disagree with it — the same reason
     /// [`Self::output_equipment_id`] exists.
     pub fn output_tier_id(&self) -> Option<&str> {

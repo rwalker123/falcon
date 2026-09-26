@@ -252,12 +252,14 @@ than reading a "jumpy" flag, and `max_body_mass` reads `body_mass` rather than a
   snare that dropped `max_body_mass` would quietly become a mammoth trap. **The scan is one tier
   wide, not the whole ladder** — it walked `def.tiers.iter()` until issue #736, which was
   indistinguishable while every item had one tier.
-- **A recipe with no `grades` block at all is a real statement**, not a missing value: seven ship
-  that way (`crook`, `crook_wood`, `hoes`, `hoes_flint`, `wayfinding`, `wayfinding_wood`, and the
-  four bench tools), because their payload is *shared* rather than tier-bought (the wayfinding gear's
-  vantage, a build tool's `build_work`) or is a bench stat nothing yet grades. The old shape spelled
-  that as three empty rungs each — fifteen inert config rows saying by convention what absence now
-  says outright.
+- **A recipe with no `grades` block at all is a real statement**, not a missing value: twelve ship
+  that way (`crook`, `crook_wood`, `hoes`, `hoes_flint`, `wayfinding`, `wayfinding_wood`, the two
+  road tools `earthmoving` and `stone_dressing`, and the four bench tools), because their payload is
+  *shared* rather than tier-bought (the wayfinding gear's vantage, a build tool's `build_work`) or is
+  a bench stat nothing yet grades. `hurdles` is ungraded too, but not by choice: it outputs a
+  material, and `validate` rejects grades on a material-only output. The old shape spelled absence
+  as three empty rungs per recipe — inert config saying by convention what absence now says
+  outright.
 
 ## A RECIPE NAMES THE TIER IT MAKES — which is what lets ONE ITEM have TWO recipes
 
@@ -280,14 +282,15 @@ never express two at once.
   single-tier item and the mechanism a knowledge-gated tier will need. On the shipped book no item
   with a choice reaches them, so the knowledge-gated path is covered by a fixture only.
 - **Three readers, one accessor** (`RecipeDef::output_tier_id`): the bench's delivery
-  (`systems::crafting::emit_outputs`), the wire's group head (`snapshot::crafting::craftable_tier`)
-  and the grade anchor. A second `outputs.iter().find_map(…)` is how they come to disagree.
+  (`systems::crafting::emit_outputs`), the offer's per-recipe readings (`snapshot::crafting::made_tier`,
+  which `makes`, `lasts`, `ownedAtTier` and the invitation's unlock band all resolve through) and the
+  grade anchor. A second `outputs.iter().find_map(…)` is how they come to disagree.
 
-**On the wire this is what makes the tier head a property of the ROW.** `CraftOffer.outputTierName`
-is the tier *that row's* recipe makes, so the Spears row reading bone heads `plain` and the one
-reading stone heads `flint`, on the same item, on the same frame.
-`crafting_wire::a_rows_tier_head_is_the_tier_its_own_recipe_makes` pins the pair on a four-tier
-fixture, so the iron head sits at rank 3 beside a bone row at rank 0.
+**On the wire the tier is never published as a word — it is what the recipe's readings are TAKEN
+AT.** A bone spear's offer quotes `250 blows` and the knapped one's `175 blows` because each reads
+its own recipe's tier, not the item's default and not the best tier the faction knows.
+`crafting_wire::each_recipes_readings_are_taken_at_the_tier_that_recipe_makes` pins that on a
+four-tier fixture, where those three answers all differ.
 
 ### The anchor is DERIVED from the bench material's bare hand
 
@@ -860,7 +863,7 @@ number, a grade or a step-down.**
 |---|---|
 | `materialBatches:[MaterialBatchState]` | *what have I got* — one row per (material, band key) batch: `amount`, plus a `CharacteristicReading` per axis carrying **both** the exact value and its band name, in the material's **declared** axis order |
 | `bench:BenchState` | *what am I making* — `recipeId` (`""` = idle), crew, `progress` against `work`, `teaches` (the recipe's craft), `itemsCompleted`, whether the pile is `drawn` and the grade it fixed, `blockedReason` with its `blockedSeverity`, the `ratePerTurn` a turn adds, and the `drawnInputs` a clear would destroy |
-| `craftOffers:[CraftOffer]` | *what could I make* — **one row per recipe, always**, with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId`, `onBench`, the tier head (`outputTierName` / `outputTierRank`), and the one-row-per-item fields (`recipeLabel` / `makes` / `lasts` / `suggested` / `ownedAtTier`) |
+| `craftOffers:[CraftOffer]` | *what could I make* — **one entry per recipe, always**, which the ledger folds into one row per thing made; with `available`, a resolved `reason` + `severity`, the `shortfalls`, the `outputGrade` a draw would select, `group`, `outputItemId`, `onBench`, and the one-row-per-item fields (`recipeLabel` / `makes` / `lasts` / `suggested` / `ownedAtTier`) |
 | `equipmentBatches:[EquipmentBatchState]` | *what have I got, and how long will it last* — one row per **batch**, plus one `count: 0` row per config item the band owns none of, so the ledger is never missing a row |
 
 **`craftOffers` is the field that keeps the refusal out of the client**, and the reason vocabulary is
@@ -951,24 +954,25 @@ sits between the book and the withdrawal, so a tooled sled cuts 4.8 hide against
 against the store's own before/after totals on a **tooled** bench (so the book's number would fail) and
 reads the same bench before its draw publishing an empty list.
 
-## TIER IS A GROUP HEAD, NOT A COLUMN — and the Owned cell names no tier
+## THE LEDGER SPEAKS NO TIER WORD — a tier is what a recipe's readings are taken at
 
-The ledger's columns are **Item · Owned · Rebuild costs · action**; there is no Tier column, because
-a column spends its width saying `plain` on almost every row for the whole early game while a
-**head** says it once and can **fold away**. Two `CraftOffer` fields carry it, both resolved
-sim-side for the reason `kitTiers` exists: a client that re-derived a tier would be a second copy of
-a join it cannot make correctly.
+The ledger is **one row per thing made** — an item, or a material for a stock recipe — under three
+heads, **Kit · Bench tools · Materials**, with the columns **Item · Owned · Costs · action**. There is
+no Tier column and there are no tier heads: an item with two recipes carries both of its tiers in one
+row, so there is nothing to sort it under. **The sim publishes no tier word on an offer.**
+`CraftOffer.outputTierName`, `outputTierRank` and `ownedNote` are `(deprecated)` slots in
+`snapshot.fbs` — kept so the fields appended after them keep their ids — and nothing writes or reads
+them.
 
-| Field | Answers |
-|---|---|
-| `outputTierName` | **The head** — the tier **this offer's own recipe** declares (`RecipeDef::output_tier_id`), falling back to `ItemDefinition::craftable_tier` for a single-tier item. It is still resolved per band rather than in the per-capture `CraftOfferPlan`, because the fallback reads what the *faction* knows. `""` on a material (stock) recipe |
-| `outputTierRank` | that tier's index in the item's own `tiers` list. **Heads order by rank descending** — newest first — because there is no other honest ordering for two heads and alphabetical would put Iron above Bronze |
+**What the tier still decides is every number an offer quotes.** `makes`, `lasts`, `ownedAtTier` and
+the invitation's unlock band are all read at the tier **this offer's own recipe** makes
+(`snapshot::crafting::made_tier`, through `RecipeDef::output_tier_id`, falling back to
+`ItemDefinition::craftable_tier` for a single-tier item), resolved sim-side for the reason `kitTiers`
+exists: a client that re-derived a tier would be a second copy of a join it cannot make correctly.
 
 **The Owned cell carries no tier word.** It states how many the band holds and at what grades;
 *which tier* those units are is answered per recipe in the recipes popup, by `ownedAtTier` (see
-"THE LEDGER ROW'S FOUR ANSWERS"), where the tier is already the row's subject. `CraftOffer.ownedNote`
-is a `(deprecated)` slot in `snapshot.fbs` — kept so the fields appended after it keep their ids —
-and nothing writes or reads it.
+"THE LEDGER ROW'S FOUR ANSWERS").
 
 **`BandEquipment::retired` stays keyed by (item, tier)**, because that is the fact `wear_item` holds
 when it destroys a unit and a per-tier record can always be summed. Its one reader is `retired_of`,
@@ -1035,19 +1039,29 @@ different tiers, so each offer's count is its own. `baskets` / `baskets_withy` b
 *"2 at this tier"* would be the same two baskets claimed by both offers — and a batch records its
 tier, not which recipe made it. So an item whose recipes declare **fewer distinct tiers than
 recipes** publishes `-1` on every one of its offers (`CraftOfferPlan::counts_by_tier`, decided per
-capture from the book), and the client falls back to the item's total. The rule is by declared tier
-rather than by recipe count so a two-recipe item at two tiers still counts, and the `-1` rides all
-three defaulting doors (fbs `= -1`, a serde default fn and a hand-written `Default`) because a
-defaulted `0` would read as *"owns none at this tier"*.
+capture from the book), and the recipes popup then **omits its Owned column** rather than repeating
+the row's own total on each recipe line — which would claim identical baskets came from different
+recipes. The rule is by declared tier rather than by recipe count so a two-recipe item at two tiers
+still counts. The `-1` is the default at both doors that construct an offer — the fbs `= -1` and the
+hand-written `Default` — because a defaulted `0` would read as *"owns none at this tier"*. **Serde
+takes no default for it**: a serialized `CraftOfferState` missing the field fails like any other
+missing field, rather than decoding silently as *unattributed*.
 
-### The suggestion: last started if it can be made, else the first that can
+### The suggestion: the running job, else last started if it can be made, else the first that can
 
 `mark_suggested` runs after a band's offers are built and picks, **per row**:
 
-1. the recipe the band **last started** on that row, if it is `available`;
-2. else the **first available** recipe in book order;
-3. else the last started one, even unavailable;
-4. else the first in book order.
+1. the offer that is **`on_bench`**, if any;
+2. else the recipe the band **last started** on that row, if it is `available`;
+3. else the **first available** recipe in book order;
+4. else the last started one, even unavailable;
+5. else the first in book order.
+
+**The running job comes first because its own draw makes it unavailable.** A flint-spear job takes
+the store's stone when the pile is drawn, so on the next capture `spears_flint` reads short while the
+bone recipe is affordable. Without the first rung the suggestion moved to bone, and the Spears row
+read *On the bench* beside bone's costs while a flint spear was being made
+(`crafting_wire::a_running_job_stays_the_suggested_recipe_after_its_draw_empties_the_pile`).
 
 **The history is `BandBench::last_started`** — a `BTreeMap` from row key to recipe id, written
 **only** by `set_bench` (`record_started`, beside `set_job`), so a suggestion reflects a choice the
@@ -1055,7 +1069,7 @@ player made and never one the sim inferred. `clear_job` **keeps** it — a clear
 job, not the band's habits — and it rides `BandRecord::bench`, so it survives rollback and a save
 (`SAVE_FORMAT_VERSION` 10; `save_round_trip::a_bands_last_started_recipes_survive_the_round_trip`).
 The rule lives in the sim because *"available"* is the sim's resolution and a client choosing the
-default would be the second copy of it; `crafting_wire` pins each of the four arms.
+default would be the second copy of it; `crafting_wire` pins each of the five arms.
 
 **The grade an offer quotes is the grade the bench will fix.** `systems::crafting::preview_grade`
 runs the same two steps the draw runs, in the same order — the store's own worst-first spend order
@@ -1117,8 +1131,8 @@ Five wordings: `Untouched` · `48 blows left` · `~1 blow left` · **`Worn out`*
 > A batch that runs out of units is **removed** from `BandEquipment`, so *"the sled broke"* and
 > *"we have never had a sled"* were the same empty ledger — and they are not the same sentence to a
 > player. `BandEquipment::retired` is the readout's memory, incremented by `wear_item` — the one seam
-> that destroys a unit — and summed here by `retired_of`. It is keyed by **(item, tier)** — see "TIER IS A GROUP
-> HEAD, NOT A COLUMN". **Nothing in the sim branches on it** and nothing may — it must not become a repair
+> that destroys a unit — and summed here by `retired_of`. It is keyed by **(item, tier)** — see "THE LEDGER
+> SPEAKS NO TIER WORD". **Nothing in the sim branches on it** and nothing may — it must not become a repair
 > discount. The checkpoint carries it for free, because `BandRecord::equipment` clones the whole
 > component.
 >

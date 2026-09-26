@@ -42,7 +42,6 @@ const SPEARS_RECIPE: &str = "spears";
 /// published tier head is its OWN recipe's declared tier.
 const SPEARS_BRONZE_RECIPE: &str = "spears_bronze";
 const SPEARS_IRON_RECIPE: &str = "spears_iron";
-const CLUBS_RECIPE: &str = "clubs";
 const SLED_ITEM: &str = "sled";
 const SPEARS_ITEM: &str = "spears";
 const TANNING_FRAME_ITEM: &str = "tanning_frame";
@@ -491,8 +490,6 @@ struct PublishedOffer {
     shortfalls: Vec<(String, f32, f32, f32)>,
     output_grade: String,
     on_bench: bool,
-    output_tier_name: String,
-    output_tier_rank: u32,
     /// The five fields the one-row-per-item ledger reads, decoded off the envelope like the rest.
     recipe_label: String,
     makes: String,
@@ -636,8 +633,6 @@ fn publish(app: &mut App, band: Entity) -> Published {
                         .unwrap_or_default(),
                     output_grade: offer.outputGrade().unwrap_or_default().to_string(),
                     on_bench: offer.onBench(),
-                    output_tier_name: offer.outputTierName().unwrap_or_default().to_string(),
-                    output_tier_rank: offer.outputTierRank(),
                     recipe_label: offer.recipeLabel().unwrap_or_default().to_string(),
                     makes: offer.makes().unwrap_or_default().to_string(),
                     lasts: offer.lasts().unwrap_or_default().to_string(),
@@ -2231,18 +2226,25 @@ fn the_per_world_catalogues_round_trip() {
     );
 }
 
-/// **A ROW'S TIER HEAD IS THE TIER ITS OWN RECIPE MAKES, not the item's and not the faction's best.**
+/// Two plain spears, stocked by [`restock`] as one unit per batch.
+const TWO_PLAIN_SPEARS: i32 = 2;
+/// None held at a tier the band has never made.
+const NONE_AT_THAT_TIER: i32 = 0;
+
+/// **EACH RECIPE'S READINGS ARE TAKEN AT THE TIER THAT RECIPE MAKES — not the item's default and not
+/// the best tier the faction knows.**
 ///
-/// Exercised on a **four-tier fixture**, so the head read off the iron row sits at rank 3 while the
-/// bone row of the same item, on the same frame, off the same ledger, sits at rank 0. A head resolved
-/// from the ITEM (or from what the faction knows) would make the two equal.
+/// Exercised on a **four-tier fixture**, which is what separates the three candidate rules: the band
+/// knows both crafts the metal tiers are gated on, so `craftable_tier` (the faction's best) answers
+/// **iron** for every spears recipe, and the item's default answers **plain** for every one. Only the
+/// recipe's own tier gives the bone recipe a plain reading and the iron recipe an iron one on the
+/// same frame. The two-tier shipped case is `makes_and_lasts_quote_each_recipes_tier_and_a_substitute_pair_agrees`.
 ///
-/// Pinned as a **pairing** twice over — against the bone spears row and against `clubs` beside it —
-/// because asserting one row's head alone would pass on a wire that published one tier everywhere.
-/// What the band HOLDS at each tier is the other half of the popup, and
-/// `owned_at_tier_counts_per_tier_on_spears_and_is_unattributed_on_both_baskets` pins it.
+/// Pinned on two readings at once — `lasts` (the tier's durability) and `ownedAtTier` (the units the
+/// band holds at that tier) — as a **pairing** of the two recipes, because either one alone passes
+/// on a wire that quoted one tier everywhere.
 #[test]
-fn a_rows_tier_head_is_the_tier_its_own_recipe_makes() {
+fn each_recipes_readings_are_taken_at_the_tier_that_recipe_makes() {
     let (mut app, band) = world();
     give_spears_two_metal_tiers(&mut app, |_| {});
     learn(&mut app, band, "bone_working");
@@ -2255,38 +2257,21 @@ fn a_rows_tier_head_is_the_tier_its_own_recipe_makes() {
     );
     let published = publish(&mut app, band);
 
-    let upgraded = offer(&published, SPEARS_IRON_RECIPE);
+    let iron = offer(&published, SPEARS_IRON_RECIPE);
+    let bone = offer(&published, SPEARS_RECIPE);
     assert_eq!(
-        (
-            upgraded.output_tier_name.as_str(),
-            upgraded.output_tier_rank
-        ),
-        (IRON_TIER, 3),
-        "the head is the tier THIS ROW makes, and heads order by rank descending"
+        (bone.lasts.as_str(), bone.owned_at_tier),
+        ("250 blows", TWO_PLAIN_SPEARS),
+        "the bone recipe makes plain: a plain spear's life, and the two plain spears the band holds"
     );
-
-    // THE PAIRING ON THE SAME ITEM: the bone spears row makes `plain` and heads there, however many
-    // tiers the item gains.
-    let bone_row = offer(&published, SPEARS_RECIPE);
     assert_eq!(
-        (
-            bone_row.output_tier_name.as_str(),
-            bone_row.output_tier_rank
-        ),
-        (PLAIN_TIER, 0),
-        "the bone spears row makes the tier it always made, however many tiers the item gains"
+        (iron.lasts.as_str(), iron.owned_at_tier),
+        ("450 blows", NONE_AT_THAT_TIER),
+        "the iron recipe makes iron: the fixture's 180 durability at 0.4 a blow, and no iron held"
     );
     assert_ne!(
-        upgraded.output_tier_name, bone_row.output_tier_name,
-        "one item, one frame, two recipes - two heads"
-    );
-
-    // AND BESIDE IT: `clubs` gained a knapped tier with #736, so its bone row heads `plain` too.
-    let clubs = offer(&published, CLUBS_RECIPE);
-    assert_eq!(
-        (clubs.output_tier_name.as_str(), clubs.output_tier_rank),
-        (PLAIN_TIER, 0),
-        "the bone clubs row makes the opening tier"
+        bone.lasts, iron.lasts,
+        "one item, one frame, two recipes - two tiers read"
     );
 }
 
@@ -3069,5 +3054,68 @@ fn with_nothing_makeable_a_row_keeps_the_last_started_recipe_else_the_first() {
     assert!(
         offer(&kept, SPEARS_FLINT_RECIPE).suggested && !offer(&kept, SPEARS_RECIPE).suggested,
         "a choice on record is kept when nothing can be made"
+    );
+}
+
+/// One knapped spear's worth of stone: the recipe's own `amount`, so the draw leaves the pile empty.
+const ONE_KNAPPED_SPEAR_OF_STONE: f32 = 1.0;
+/// What "the stone is gone" means on the store — the draw is exact, so anything above a crumb of
+/// float noise is stone the fixture forgot to spend.
+const NO_STONE_LEFT: f32 = 1e-4;
+
+/// **CASE 0 — THE RUNNING JOB KEEPS THE ROW.** A knapped spear is on the bench, and its own draw took
+/// the last stone, so the knapped recipe now publishes unavailable while bone is to hand. Without the
+/// `on_bench` rung the row hands its suggestion to bone, and the Spears row reads *On the bench*
+/// beside the costs and reason of a recipe nobody is making.
+///
+/// The draw is a real `advance_crafting` pass rather than a hand-emptied store, because the defect is
+/// that the job's OWN withdrawal is what flips its offer to unavailable.
+#[test]
+fn a_running_job_stays_the_suggested_recipe_after_its_draw_empties_the_pile() {
+    let (mut app, band) = world();
+    stock_every_pile(&mut app, band, A_GOOD_READING);
+    strip(&mut app, band, STONE);
+    deposit(
+        &mut app,
+        band,
+        STONE,
+        ONE_KNAPPED_SPEAR_OF_STONE,
+        &[
+            ("hardness", A_GOOD_READING),
+            ("workability", A_GOOD_READING),
+        ],
+    );
+    {
+        let mut bench = app
+            .world
+            .get_mut::<BandBench>(band)
+            .expect("a spawned band carries a bench");
+        bench.set_job(SPEARS_FLINT_RECIPE, BENCH_CREW);
+        bench.record_started(SPEARS_ITEM, SPEARS_FLINT_RECIPE);
+    }
+    app.world.run_system_once(advance_crafting);
+
+    assert!(
+        app.world
+            .get::<BandBench>(band)
+            .expect("a spawned band carries a bench")
+            .drawn
+            .is_some(),
+        "the premise: the knapped job has cut its pile"
+    );
+    assert!(
+        held(&app, band, STONE) < NO_STONE_LEFT,
+        "the premise: that draw took the last of the stone"
+    );
+    let published = publish(&mut app, band);
+    let flint = offer(&published, SPEARS_FLINT_RECIPE);
+    let bone = offer(&published, SPEARS_RECIPE);
+    assert!(
+        flint.on_bench && !flint.available && bone.available,
+        "the premise: the knapped recipe is running and cannot be started again; bone can"
+    );
+    assert!(
+        flint.suggested && !bone.suggested,
+        "the recipe on the bench keeps the row, even though its own draw made it unaffordable"
     );
 }
