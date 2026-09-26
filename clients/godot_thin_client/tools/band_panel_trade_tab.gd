@@ -66,6 +66,8 @@ const WOOD_SHIPPED_OUT := 1.1
 const FOOD_PARTY_HOME := 3.1
 const FOOD_DOWRY_OUT := 18.0
 const BARROWMERE_BONE_OUT := 0.8
+## Food the outlook state's band pools away each turn — past its surplus, so its larder empties.
+const OUTLOOK_POOLED_OUT := 4.0
 const IMPORT_PARTY := 7001
 const EXPORT_PARTY := 7002
 ## The busiest turn: every good the busy turn moves plus four more, and fifteen shipments.
@@ -381,6 +383,28 @@ func run(harness) -> void:
 		trade.is_short_tier() and _find_named(zone, TradeZoneController.SHORT_TIER_NAME) != null)
 	h._assert_zone_content_fits()
 
+	# ---- 8. THE FOOD OUTLOOK CHART EMPTIES WHEN THE RUNWAY SAYS IT DOES ---------------------------
+	# The sim's runway carries this turn's POOLED food as a standing rate on every step of its walk;
+	# the chart walks the same arrivals and must carry it too, or on a pooling turn the dashed
+	# `empty` marker lands on a different turn than the `(N turns)` beside it. The fixture's
+	# `turns_of_food` is DERIVED here the sim's way (`_sim_runway`), never typed.
+	await h._pin_canvas(SIDE_CANVAS)
+	panel.set_dock(SIDE_LEFT)
+	var pooling_band := _outlook_pooling_band()
+	h._push_bands([pooling_band])
+	panel.set_active_tab(BandCityPanel.ZONE_BAND)
+	await h._settle()
+	await h._save("trade_tab_outlook_pooling")
+	var band_zone: Control = panel._zones.get(BandCityPanel.ZONE_BAND)
+	var charts := _find_all(band_zone, "FoodOutlookChart")
+	var runway := int(float(pooling_band["turns_of_food"]))
+	var without := _sim_runway(pooling_band, 0.0)
+	h._assert_band_panel("precondition: the pooled food moves the runway (%d turns with it, %.1f without), so this state tests the term"
+			% [runway, without], runway < BandFoodStatus.UNLIMITED_TURNS and not is_equal_approx(float(runway), without))
+	h._assert_band_panel("the FOOD OUTLOOK chart empties on the turn `turns_of_food` names (%d; chart %s)"
+			% [runway, str((charts[0] as FoodOutlookChart).empty_turn()) if not charts.is_empty() else "none"],
+		charts.size() == 1 and (charts[0] as FoodOutlookChart).empty_turn() == runway)
+
 	# **EVERY COUNT ON THE TAB, AT ONE AND AT TWO** — the pairs themselves, so a count no fixture
 	# reaches at 1 (a 1-tile link, a single import) is still claimed.
 	var singular_ok := true
@@ -581,6 +605,35 @@ func _shipments_only(list: Array) -> Array:
 ## Does `node` draw a section head for `label` (`HudWidgets.zone_head` upper-cases its title)?
 func _has_heading(node: Node, label: String) -> bool:
 	return _text_of(node).contains(label.to_upper())
+
+## **THE SIM'S RUNWAY, TRANSCRIBED** (`snapshot::population::larder_runway_turns`): walk the larder
+## over the merged arrivals with `standing_net` on every step, the first turn at zero is the answer;
+## else the smooth `larder / (drain − (steady + standing_net))`, else not food-limited. The fixture's
+## own `food_consumption` stands for the sim's demand, and its steady income is the rows' realized sum.
+func _sim_runway(band: Dictionary, standing_net: float) -> float:
+	var larder := DetailFormat.band_provisions(band)
+	var drain := float(band.get("food_consumption", 0.0))
+	var arrivals := DetailFormat.merged_arrival_schedule(band)
+	var food := maxf(larder, 0.0)
+	for i in range(arrivals.size()):
+		food = maxf(food + arrivals[i] + standing_net - drain, 0.0)
+		if food <= 0.0:
+			return float(i + 1)
+	var net_drain := drain - (DetailFormat.band_food_income(band) + standing_net)
+	if net_drain <= 0.0:
+		return BandFoodStatus.UNLIMITED_TURNS
+	return minf(larder / net_drain, BandFoodStatus.UNLIMITED_TURNS)
+
+## The harness's arrivals band (a net-POSITIVE larder on its own) pooling food AWAY this turn, enough
+## that its larder now empties inside the horizon — with `turns_of_food` derived the sim's way.
+func _outlook_pooling_band() -> Dictionary:
+	var band: Dictionary = h._arrivals_band_fixture()
+	band[DetailFormat.TRANSFER_LOCAL_SENT_TURN_KEY] = OUTLOOK_POOLED_OUT
+	band[HudTradeVocab.CROSSINGS_KEY] = [
+		_x(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_OUT, HudTradeVocab.CAUSE_POOLED,
+			OUTLOOK_POOLED_OUT)]
+	band["turns_of_food"] = _sim_runway(band, DetailFormat.band_pooled_food_net(band))
+	return band
 
 func _x(commodity: String, direction: int, cause: int, amount: float, readings: Array = []) -> Dictionary:
 	return BandFx.transfer_crossing(commodity, direction, cause, amount, readings)

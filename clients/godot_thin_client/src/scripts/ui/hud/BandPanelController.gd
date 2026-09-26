@@ -805,9 +805,12 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     # STEADY debit the Food breakdown itemizes, so the two readouts cannot disagree. **The pens' feed
     # is no longer a term** — a pen eats its fenced pasture and its keeper's hay, never the larder — and
     # raids stay out for the reason they always did: an episodic past loss is not a steady drain.
+    # **This turn's POOLED food rides every step** as the sim's runway walk carries it
+    # (`larder_runway_turns`' `standing_net`), so the empty marker and the `(N turns)` agree.
     chart.set_projection(
         DetailFormat.band_provisions(band), arrivals,
-        float(band.get("food_consumption", 0.0)), _band_labor.current_turn())
+        float(band.get("food_consumption", 0.0)), _band_labor.current_turn(),
+        DetailFormat.band_pooled_food_net(band))
     # A short zone gets a COMPACT chart — same series, same empty marker, less height. This is the
     # whole of what the band zone's tier now buys: the chart is built either way, and drawing it
     # denser is cheaper for the reader than pushing the blocks below it under the scroll.

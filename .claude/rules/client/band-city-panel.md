@@ -159,7 +159,10 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     block** (`_build_food_outlook_block`, appended right after the summary block, headed `FOOD OUTLOOK`;
     BBCode can't host a drawn chart, so it is NOT a summary line). Composed CLIENT-SIDE: start from the
     band's larder (`stores.provisions`), walk `food += Σ arrival_schedule[i] over the band's assignments
-    − food_consumption`, clamped at 0, over the 20-turn horizon (drain held flat). **The pens' feed is
+    + pooled food net − food_consumption`, clamped at 0, over the 20-turn horizon (drain and pooled net
+    held flat). The pooled net (`DetailFormat.band_pooled_food_net`, this turn's `pooled` crossings on
+    `provisions`, signed) is the sim's `standing_net` in `larder_runway_turns`, so the empty marker
+    lands on the turn `turnsOfFood` names; `trade_tab_outlook_pooling` asserts it. **The pens' feed is
     not a term** — a pen eats its fenced pasture and its keeper's hay, never the larder — and raids stay
     out for the reason they always did: an episodic past loss is not a steady drain.
     Draws a `SIGNAL` filled area + line, a `HEALTHY` dot on each haul turn, a faint `LINE_SOFT` baseline,

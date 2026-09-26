@@ -1244,7 +1244,10 @@ Local ARM's four terms, and that arm carries a split's dowry as well as pooling 
 the rows differ from the headline by the dowry. The `(N turns)` runway beside the rate is the
 sim's `turnsOfFood`, whose income term includes the same POOLED food net and no other transfer, so
 the rate and the runway on one row are on one basis (the fodder runway, `turnsOfFodder`, includes the
-local arm's whole net).
+local arm's whole net). The FOOD OUTLOOK chart (`FoodOutlookChart.set_projection`) adds the same
+pooled net to every step of its walk — the sim's `standing_net` in `larder_runway_turns` — so its
+empty marker lands on the turn `turnsOfFood` names; the chart has no mark for the sim's smooth arm
+(a walk that never empties draws no marker).
 
 A shipment is bounded only by the manifest the player builds — up to the whole larder — unlike
 `raidForfeit`, which is capped at a fraction of one turn's income. A band with income 6 and
