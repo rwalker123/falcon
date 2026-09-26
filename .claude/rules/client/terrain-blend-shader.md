@@ -345,9 +345,11 @@ flat↔flat interlock, every **land↔water** edge gets a coastal treatment in t
 signed-distance-to-shared-edge machinery. It fires for any edge where **exactly one side is water**
 (`blend_class` code 0) — so it's independent of the land side's class (**both flat-land and rugged-land**
 coasts get it) and never touches inland edges (flat↔flat interlock and rugged↔* inland edges stay exactly
-as before — both sides non-water → skipped). **The one exception is a `NavigableRiver` hex, whose edges are
-excluded from the pass entirely — a river meeting the sea is not a coast; see Rivers → NavigableRiver for why
-it cannot be expressed as a `shore_profile`.** Seaward read: **land → sand → surf → open water**, and the
+as before — both sides non-water → skipped). **The one exception is a `NavigableRiver` hex's true MOUTH edge — the
+edge its channel exits through into the water (`is_mouth`: the channel bit toward that neighbour, from either
+side) — which is excluded from the pass: a river meeting the sea is not a coast. Its OTHER water edges keep
+their coast, so a navigable hex running alongside a lake gets the lake's normal beach and surf; see Rivers →
+NavigableRiver for why the mouth cannot be expressed as a `shore_profile`.** Seaward read: **land → sand → surf → open water**, and the
 requirement is that **NO boundary in that chain is a hard line** — not sand↔land, not sand↔foam, not
 foam↔water.
 - **THE SIGNED COAST COORDINATE `u` — why this can't step at the hex edge.** The shore pass computes

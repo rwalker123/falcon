@@ -122,9 +122,10 @@ Every terrain entry also carries a `"blend_class"` (`flat` | `water` | `rugged`)
 source of truth for edge-blend eligibility, which is **same-class** (flat↔flat and water↔water blend;
 land↔water and rugged stay hard — see Edge Blending below) — and may carry an optional
 **`"blend_profile"`** block (`width_scale` / `noise_scale` / `noise_cell_scale`) scaling the flat↔flat seams
-**it** is on, for a texture too far from its neighbours in tone+hue for the global ecotone (shipped on the
-NavigableRiver bank only; neutral and bit-exact everywhere else — see Edge Blending → per-terrain
-`blend_profile`). The top-level `blend_*` keys are the
+**it** is on, for a texture too far from its neighbours in tone+hue for the global ecotone (shipped on
+`alluvial_plain` only — the dark outlier against bright neighbours; neutral and bit-exact everywhere
+else. The NavigableRiver bank's profile is retired: seams key on a navigable hex's valley biome, so
+nothing read it — see Edge Blending → per-terrain `blend_profile`). The top-level `blend_*` keys are the
 **seam** levers, tuned for LAND (`blend_width` = the ecotone's reach, `blend_soft` = the feather
 softness, `blend_height_influence` = the detail-following nudge, `blend_noise_scale`/`blend_noise_amount`
 = the boundary wobble); the `water_blend` block **overrides width/soft/noise_amount for water↔water
