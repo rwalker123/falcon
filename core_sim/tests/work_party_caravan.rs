@@ -48,6 +48,19 @@ const TURNS_TO_SEE_A_PORTER: usize = 60;
 /// draw is what puts a surplus into the load; it changes nothing the assertions compare, because
 /// the turn and the query read the same configured draw.
 const A_LIGHT_EATER: f32 = 0.1;
+/// **The shipped roster's own draw** — what the thin-take case below needs, because the deficit it
+/// pins is the one Ray met in play: a small party on boar eating its whole take and still short.
+const THE_SHIPPED_DRAW: f32 = 1.0;
+/// Turns to step a far posting past its walk out and onto its steady footing. A bound, not a
+/// prediction.
+const TURNS_TO_SETTLE: usize = 12;
+/// ⛔ **How close the sheet's deficit must sit to the row's.** Not bit-equal, and for a stated
+/// reason: the row's `partyDeficit` is *this turn's* shortfall against the turn's whole-animal take,
+/// while the reply's is the **mean** over the forecast horizon, stepped through the smooth
+/// (unquantised) projection every forecast in the sim uses. At a steady footing the two agree to the
+/// float noise between a quantised take and its smooth expectation — measured at `3e-7` food on
+/// this fixture — so the bound is four orders tighter than any deficit it has to tell apart.
+const DEFICIT_TOLERANCE: f32 = 1e-4;
 
 /// The whole of what one row publishes about its party, read back out of the ENCODED buffer.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -58,9 +71,16 @@ struct PublishedParty {
     walk_out_remaining: u32,
     next_load_home_in: u32,
     net_rate_home: f32,
+    party_deficit: f32,
 }
 
 fn world_hunting_at(distance: u32) -> (App, Entity) {
+    world_hunting_with(distance, A_LIGHT_EATER)
+}
+
+/// [`world_hunting_at`] with the hunters' food draw stated — `A_LIGHT_EATER` puts a surplus on the
+/// road, `THE_SHIPPED_DRAW` leaves a thin take short of its upkeep.
+fn world_hunting_with(distance: u32, draw: f32) -> (App, Entity) {
     let mut app = build_test_app();
     app.update();
     app.world
@@ -72,7 +92,7 @@ fn world_hunting_at(distance: u32) -> (App, Entity) {
             .resource::<core_sim::DemographicsConfigHandle>()
             .get())
         .clone();
-        demographics.consumption.per_capita_draw *= A_LIGHT_EATER;
+        demographics.consumption.per_capita_draw *= draw;
         app.world
             .resource_mut::<core_sim::DemographicsConfigHandle>()
             .replace(std::sync::Arc::new(demographics));
@@ -206,6 +226,7 @@ fn published_party(app: &App) -> PublishedParty {
         walk_out_remaining: row.walkOutRemaining(),
         next_load_home_in: row.nextLoadHomeIn(),
         net_rate_home: row.netRateHome(),
+        party_deficit: row.partyDeficit(),
     }
 }
 
@@ -303,6 +324,54 @@ fn the_query_quotes_exactly_the_rate_the_row_publishes() {
     assert!(
         published.next_load_home_in > 0,
         "a hunter carrying a pack publishes when it lands"
+    );
+    assert!(
+        (answer.deficit - published.party_deficit).abs() < DEFICIT_TOLERANCE,
+        "the sheet's deficit is the one the row publishes: {} against {}",
+        answer.deficit,
+        published.party_deficit
+    );
+}
+
+/// ⛔ **A THIN TAKE AGAINST A REAL UPKEEP: THE SHEET SEES THE DEFICIT THE ROW WILL PRINT.**
+///
+/// The case Ray met in play — a small party on boar at the shipped draw eats its whole take, no pack
+/// ever fills, and the committed row reads *"needs food from home"*. The compose sheet can warn
+/// about that only if the query says so, so this pins the reply's `deficit` against the row's
+/// published `partyDeficit` off the **encoded** snapshot, at a steady footing past the walk out.
+///
+/// **The liveness half is the point**: a reply that always answered `0.0` would pass the equality in
+/// the surplus case above, so here the deficit has to be genuinely positive on both sides, and
+/// nothing may be on the road.
+#[test]
+fn a_thin_take_quotes_the_deficit_the_row_will_publish() {
+    let (mut app, _) = world_hunting_with(5, THE_SHIPPED_DRAW);
+    for _ in 0..TURNS_TO_SETTLE {
+        resolve_a_turn(&mut app);
+    }
+    let published = published_party(&app);
+    assert_eq!(
+        published.walk_out_remaining, 0,
+        "fixture: the party has finished walking out"
+    );
+    assert_eq!(
+        published.hunters_on_the_road, 0,
+        "a party that eats its whole take never fills a pack"
+    );
+    assert!(
+        published.party_deficit > 0.0,
+        "liveness: the row publishes a real deficit ({published:?})"
+    );
+    let answer = ask_the_socket(&mut app);
+    assert!(
+        answer.deficit > 0.0,
+        "liveness: the sheet warns about it ({answer:?})"
+    );
+    assert!(
+        (answer.deficit - published.party_deficit).abs() < DEFICIT_TOLERANCE,
+        "the sheet's deficit is the one the row publishes: {} against {}",
+        answer.deficit,
+        published.party_deficit
     );
 }
 

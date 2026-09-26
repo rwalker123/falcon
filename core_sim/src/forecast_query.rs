@@ -1032,6 +1032,9 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
         walk_turns,
         hunters_on_the_road: forecast.mean_on_the_road,
         first_load_turn: forecast.first_load_turn,
+        // **The deficit the committed row will publish** — stepped by the same close, averaged
+        // over the same horizon as `rate_home`, never recomputed from a rate.
+        deficit: forecast.mean_deficit,
     })
 }
 

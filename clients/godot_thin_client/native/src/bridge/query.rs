@@ -548,6 +548,10 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
             let _ = dict.insert("hunters_on_the_road", f64::from(reply.hunters_on_the_road));
             // 1-based; `0` = no load lands within the forecast's horizon.
             let _ = dict.insert("first_load_turn", i64::from(reply.first_load_turn));
+            // What the party's upkeep still wants a turn after its own take, as a horizon mean of
+            // the row's `partyDeficit` — `0.0` when the take covers the party, and inside the apron.
+            // The sheet shows the SAME danger line the committed row will, from this.
+            let _ = dict.insert("deficit", f64::from(reply.deficit));
         }
         Ok(QueryReply::ListSaves(slots)) => {
             let _ = dict.insert("ok", true);

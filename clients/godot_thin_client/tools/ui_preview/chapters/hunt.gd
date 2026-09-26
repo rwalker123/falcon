@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 338
+const EXPECTED_CHECKPOINTS := 347
 
 ## The countdown verdict's opening, as a needle — the precondition every claim about that sentence
 ## rests on ("this model reached the reaching branch at all").
@@ -163,6 +163,15 @@ const FAR_PARTY_RATE_HOME := 0.08
 ## The party walks OUT before it hunts, so the first load cannot land before the walk out, plus one
 ## pack's fill, plus the walk home: 6 + ~7 + 6.
 const FAR_PARTY_FIRST_LOAD := 19
+## **RAY'S PLAYTEST CASE (`herd_hunt_far_party_deficit`): a party that eats its whole catch.** Three
+## hunters take about 0.17 food a turn against an upkeep of 3 × 0.16 = 0.48, so the committed row says
+## `Needs 0.31 food a turn from home` — and the reply's `deficit` is that horizon mean. No pack ever
+## fills, so `first_load_turn` is `0`, and nobody walks the road.
+const DEFICIT_PARTY_HUNTERS := 3
+const DEFICIT_PARTY_RATE_HOME := 0.17
+const DEFICIT_PARTY_DEFICIT := 0.31
+const DEFICIT_PARTY_WALK_TILES := 2
+const DEFICIT_PARTY_WALK_TURNS := 2
 ## The retired expedition sheet's own words — each the needle for a line that must not come back.
 const RETIRED_EXPEDITION_HINT_NEEDLE := "Detach a party"
 const RETIRED_TRIP_VERDICT_NEEDLE := "Away "
@@ -245,6 +254,21 @@ func _far_boar_herd() -> Dictionary:
 		"hunters_on_the_road": FAR_PARTY_ON_ROAD, "first_load_turn": FAR_PARTY_FIRST_LOAD,
 	}
 	return herd
+
+## …and the same boar carrying Ray's deficit reply — see `DEFICIT_PARTY_*`.
+func _far_boar_deficit_herd() -> Dictionary:
+	var herd := HerdFx.raid_boar_herd()
+	herd[ForecastFx.WORK_PARTY_FORECAST_KEY] = {
+		"posts_a_party": true, "rate_home": DEFICIT_PARTY_RATE_HOME,
+		"walk_tiles": DEFICIT_PARTY_WALK_TILES, "walk_turns": DEFICIT_PARTY_WALK_TURNS,
+		"hunters_on_the_road": 0.0, "first_load_turn": 0, "deficit": DEFICIT_PARTY_DEFICIT,
+	}
+	return herd
+
+## The texts of `DrawerComposeController.work_party_section_lines`' `[text, is_shortfall]` pairs.
+func _section_texts(lines: Array) -> Array:
+	return lines.map(func(entry: Array) -> String:
+		return String(entry[DrawerComposeController.WORK_PARTY_LINE_TEXT]))
 
 ## The oracle band for the carry-aware delivered/waste preview: per-worker 0.8, output 1.0 (so the
 ## rendered numbers match the spec oracle EXACTLY — no morale modifier muddying them), sitting ON the
@@ -760,12 +784,13 @@ func run(harness) -> void:
 		far_food == SourceForecast.format_magnitude(FAR_PARTY_RATE_HOME))
 	h._assert_hud("…stated once, with no `now → after` walk beside it",
 		not Readout.yields_show_a_transition(far_sheet))
-	# ⛔ **AND THE CAPTION OVER IT DESCRIBES THAT NUMBER.** `next turn` would be false: next turn a new
-	# posting is still walking out and delivers nothing. No likely-take suffix — the rate home is the
-	# caravan forecast's mean, not a point of the curve's band.
-	h._assert_hud("…under a caption naming the rate home, not next turn (got \"%s\")"
+	# ⛔ **AND THE CAPTION OVER IT IS NEUTRAL: `ONCE RUNNING · PER TURN`.** `next turn` would be false:
+	# next turn a new posting is still walking out and delivers nothing. Nor does it name home — the
+	# figure counts the share the party eats too, and the section's lines say where the food goes. No
+	# likely-take suffix: the figure is the caravan forecast's mean, not a point of the curve's band.
+	h._assert_hud("…under the caravan's `once running · per turn` caption, not next turn (got \"%s\")"
 			% Readout.yields_header(far_sheet),
-		Readout.yields_header(far_sheet) == HudComposeVocab.YIELD_HEADER_HOME_RATE.to_upper())
+		Readout.yields_header(far_sheet) == HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
 	# …and no WASTE note: that is the resident take's whole-animal overflow, and a caravan walks away
 	# from nothing — the sim publishes a far row's `wasted` as `0`.
 	h._assert_hud("…and no waste note, which a caravan never incurs (%s)" % Readout.yields_text(far_sheet),
@@ -782,6 +807,14 @@ func run(harness) -> void:
 		not str(far_lines).to_lower().contains("trip")
 			and not str(far_lines).to_lower().contains("away")
 			and not str(far_lines).contains("Send"))
+	# **A PARTY WHOSE TAKE COVERS IT STATES NO SHORTFALL** — the identity half of the deficit pair
+	# `herd_hunt_far_party_deficit` makes below: no deficit line, no eats-everything line, nothing in
+	# DANGER ink.
+	h._assert_hud("…and a party that feeds itself states no deficit and no eats-everything line — got %s"
+			% str(far_lines),
+		not str(far_lines).contains(HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT.split("%")[0])
+			and not far_lines.has(HudComposeVocab.WORK_PARTY_EATS_EVERYTHING_HUNT)
+			and Readout.work_party_danger_lines(far_sheet).is_empty())
 	# **THE BRANCHES OF THE COPY THE FRAME CANNOT REACH**, driven through the one producer: a road
 	# covering the run, a road that is rarely walked, a first load at one turn, and none within the
 	# horizon. Each is the sentence the section renders for that reply, and each was a separate way
@@ -789,30 +822,79 @@ func run(harness) -> void:
 	var road_lines := DrawerComposeController.work_party_section_lines({
 		"posts_a_party": true, "walk_tiles": 0, "walk_turns": 0,
 		"hunters_on_the_road": 0.2, "rate_home": FAR_PARTY_RATE_HOME, "first_load_turn": 1},
-		HudComposeVocab.HUNT_CREW_LABEL)
+		HudComposeVocab.HUNT_CREW_LABEL, ForecastQuery.WORK_PARTY_SOURCE_HUNT)
+	var road_texts := _section_texts(road_lines)
 	h._assert_hud("a road covering the run states no walk, and the rest of the copy's edges hold — got %s"
-			% str(road_lines),
-		road_lines.size() == 3
-			and road_lines[0] == HudComposeVocab.WORK_PARTY_NO_WALK
-			and road_lines[1] == HudComposeVocab.WORK_PARTY_ON_ROAD_RARELY
-			and road_lines[2] == HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT
-				% HudComposeVocab.WORK_PARTY_TURNS_ONE)
+			% str(road_texts),
+		road_texts == [HudComposeVocab.WORK_PARTY_NO_WALK, HudComposeVocab.WORK_PARTY_ON_ROAD_RARELY,
+			HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT % HudComposeVocab.WORK_PARTY_TURNS_ONE])
 	var never_lines := DrawerComposeController.work_party_section_lines({
 		"posts_a_party": true, "walk_tiles": 1, "walk_turns": 1,
 		"hunters_on_the_road": 2.4, "rate_home": 0.0, "first_load_turn": 0},
-		HudComposeVocab.HUNT_CREW_LABEL)
-	h._assert_hud("…and a one-tile walk, a plural road and no load in the horizon read as English — got %s"
-			% str(never_lines),
-		never_lines.size() == 3
-			and never_lines[0] == HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
-				HudComposeVocab.WORK_PARTY_TILES_ONE, HudComposeVocab.WORK_PARTY_TURNS_ONE, 1]
-			and never_lines[1] == HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [2, "hunters"]
-			and never_lines[2] == HudComposeVocab.WORK_PARTY_NO_FIRST_LOAD)
+		HudComposeVocab.HUNT_CREW_LABEL, ForecastQuery.WORK_PARTY_SOURCE_HUNT)
+	var never_texts := _section_texts(never_lines)
+	# `deficit` 0 with no first load is a REAL surplus too thin to fill a pack soon — the slow-fill
+	# reason, never the eats-everything one, and never the developer's *within the forecast*.
+	h._assert_hud("…and a one-tile walk, a plural road and a slow-filling surplus read as English — got %s"
+			% str(never_texts),
+		never_texts == [
+			HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
+				HudComposeVocab.WORK_PARTY_TILES_ONE, HudComposeVocab.WORK_PARTY_TURNS_ONE, 1],
+			HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [2, "hunters"],
+			HudComposeVocab.WORK_PARTY_SLOW_FILL]
+			and not str(never_texts).to_lower().contains("forecast"))
 	# **WHERE THE SIM SAYS THERE IS NO PARTY, THERE IS NO SECTION** — even on a source the client
 	# measured past the apron. `herd_hunt_band_far` below is a far band with an unauthored reply
 	# (`posts_a_party: false`) and carries that claim; this one is its liveness companion.
 	h._assert_hud("…the section mounts only because the reply posts a party",
 		Q.find_meta_node(far_sheet, HudWidgets.WORK_PARTY_SECTION_META) != null)
+
+	# State 3h' — **RAY'S CASE: THE PARTY EATS ITS WHOLE CATCH** (`DEFICIT_PARTY_*`). The sheet used to
+	# say `Rarely anyone on the road` over `No load reaches home within the forecast` — two lines that
+	# read as separate facts and one in the tool's own words. It now says the SHORTFALL, in the
+	# committed row's own format and DANGER ink, and the one reason no load lands.
+	_last_work_party_ask = {}
+	var deficit_boar := _far_boar_deficit_herd()
+	h._show_herd(deficit_boar)
+	h._compose_herd(deficit_boar, DEFICIT_PARTY_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_far_party_deficit")
+	h._assert_compose_sheet_fits("herd_hunt_far_party_deficit")
+	var deficit_sheet: Control = h._hud._drawercompose._compose_sheet
+	var deficit_line := HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT \
+		% SourceForecast.format_magnitude(DEFICIT_PARTY_DEFICIT)
+	var deficit_lines := Readout.work_party_lines(deficit_sheet)
+	var want_deficit := [
+		HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
+			HudComposeVocab.WORK_PARTY_TILES_FORMAT % DEFICIT_PARTY_WALK_TILES,
+			HudComposeVocab.WORK_PARTY_TURNS_FORMAT % DEFICIT_PARTY_WALK_TURNS,
+			DEFICIT_PARTY_WALK_TURNS],
+		deficit_line,
+		HudComposeVocab.WORK_PARTY_EATS_EVERYTHING_HUNT,
+	]
+	h._assert_hud("a party that eats its catch states the walk, the row's deficit line and the reason — want %s, got %s"
+			% [str(want_deficit), str(deficit_lines)],
+		deficit_lines == want_deficit)
+	h._assert_hud("…and the deficit line, alone, takes the committed row's DANGER ink — got %s"
+			% str(Readout.work_party_danger_lines(deficit_sheet)),
+		Readout.work_party_danger_lines(deficit_sheet) == [deficit_line])
+	# The verb is pinned by its WORD, not by the constant: the line-equality claim above compares to
+	# `WORK_PARTY_EATS_EVERYTHING_HUNT` itself, which a swapped pair of constants would still satisfy.
+	h._assert_hud("…with neither the slow-fill reason nor `Rarely anyone on the road` beside it, in the hunt verb",
+		not deficit_lines.has(HudComposeVocab.WORK_PARTY_SLOW_FILL)
+			and not deficit_lines.has(HudComposeVocab.WORK_PARTY_ON_ROAD_RARELY)
+			and not str(deficit_lines).to_lower().contains("forecast")
+			and str(deficit_lines).contains("catch") and not str(deficit_lines).contains("gather"))
+	h._assert_hud("…priced at Ray's crew (%d)" % DEFICIT_PARTY_HUNTERS,
+		int(_last_work_party_ask.get("workers", -1)) == DEFICIT_PARTY_HUNTERS)
+	# The headline stays the figure the committed row prints; the caption stays neutral over it.
+	h._assert_hud("…under the same headline figure the row prints (want %s, got %s) and the neutral caption"
+			% [SourceForecast.format_magnitude(DEFICIT_PARTY_RATE_HOME),
+				Readout.yields_account_number(deficit_sheet, SourceForecast.YIELD_ACCOUNT_FOOD)],
+		Readout.yields_account_number(deficit_sheet, SourceForecast.YIELD_ACCOUNT_FOOD)
+				== SourceForecast.format_magnitude(DEFICIT_PARTY_RATE_HOME)
+			and Readout.yields_header(deficit_sheet)
+				== HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
 	ForecastFx.install(h._hud)
 	h._hud._compose.reset_hunt_source()
 
@@ -831,7 +913,7 @@ func run(harness) -> void:
 	var near_caption := Readout.yields_header(h._hud._drawercompose._compose_sheet)
 	h._assert_hud("inside the apron the yields caption still reads `next turn` (got \"%s\")" % near_caption,
 		near_caption.begins_with(SourceForecast.YIELD_ROW_HEADER.to_upper())
-			and near_caption != HudComposeVocab.YIELD_HEADER_HOME_RATE.to_upper())
+			and near_caption != HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
 	# **A SOURCE INSIDE THE APRON GROWS NO SECTION** — the identity half of the work party's pair.
 	h._assert_hud("a herd inside the picked band's apron shows no work-party section",
 		Q.find_meta_node(h._hud._drawercompose._compose_sheet,

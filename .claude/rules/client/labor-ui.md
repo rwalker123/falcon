@@ -8412,6 +8412,16 @@ About 1 hunter on the road at a time
 First load home in 19 turns
 ```
 
+…and a party whose upkeep outruns its take — Ray's playtest case, three hunters catching about 0.17
+against an upkeep of 0.48:
+
+```text
+WORK PARTY
+Walks 2 tiles each way — 2 turns out, 2 back
+Needs 0.31 food a turn from home                                  ← DANGER ink
+They eat everything they catch — nothing left to carry home
+```
+
 - ⛔ **IT IS A STANDING ASSIGNMENT, NOT A TRIP, and the copy is in that register.** No *this trip*, no
   *away N turns*, no *Send Anyway*, no one-shot totals — the party walks out once and the source is
   then worked every turn, one hunter at a time walking a full pack home and back. Asserted, not just
@@ -8419,12 +8429,27 @@ First load home in 19 turns
 - **Each line states one fact the sheet has nowhere else, and none argues** — this file's rule for a
   limit line. The walk; the road; the first load. **There is no rate line**: the rate home is the
   sheet's PER TURN headline (below), and a section restating it would say one number twice.
+- ⛔ **A PARTY THAT EATS ITS WHOLE TAKE STATES THE SHORTFALL, IN THE ROW'S OWN WORDS.** The reply's
+  `deficit` is the horizon mean of the row's `partyDeficit`; where it is above zero the section prints
+  `HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT` in `HudStyle.DANGER` — the committed row's format and
+  ink, so the sheet and the row cannot word it differently. `work_party_section_lines` returns
+  `[text, is_shortfall]` pairs, the row's `_work_row_party_lines_text` shape, and only that line
+  carries the flag.
+- ⛔ **NO LOAD LANDING IS STATED AS ITS REASON — two cases, never both, never *the forecast*.**
+  `deficit > 0` reads `They eat everything they catch — nothing left to carry home` on a hunt and
+  `…everything they gather…` on a forage party (`WORK_PARTY_EATS_EVERYTHING_HUNT` / `_FORAGE`, picked
+  off the `source_kind` the mount is handed): there is never a surplus to walk. `deficit` 0 with `first_load_turn`
+  0 is a real surplus too thin to fill a pack soon, and reads `What they don't eat builds up too
+  slowly to fill a pack soon` (`WORK_PARTY_SLOW_FILL`). The retired `No load reaches home within the
+  forecast` was the tool talking. The line is stated rather than dropped, being the answer that most
+  changes whether the posting is worth making.
+- **Beside the deficit there is no on-the-road line.** An empty road is the eats-everything line's
+  consequence, and `Rarely anyone on the road` beside it read as a second, separate fact.
 - **The edges are English.** `1 tile` / `1 turn` fork on the number (`WORK_PARTY_COUNT_SINGULAR`); a
   road covering the whole run reads `A road covers the walk — each load lands home the turn it fills`
-  rather than a `0-tile` walk; a mean road below half a person reads `Rarely anyone on the road` rather
-  than `About 0 hunters`; and no load inside the horizon reads `No load reaches home within the
-  forecast` — stated rather than dropped, being the answer that most changes whether the posting is
-  worth making. The on-the-road count is the reply's MEAN, rounded, which is why it says *about*.
+  rather than a `0-tile` walk; and a mean road below half a person reads `Rarely anyone on the road`
+  rather than `About 0 hunters`. The on-the-road count is the reply's MEAN, rounded, which is why it
+  says *about*.
 - **The crew noun is the sheet's own resolved label** (`Hunters` / `Herders` / `Harvesters`), with its
   singular off `WORK_PARTY_CREW_SINGULAR`, keyed by that label the `HUNT_NOOP_HINTS` way.
 - **`posts_a_party: false` renders NOTHING**, even on a source the client measured past the apron — the
@@ -8439,7 +8464,7 @@ First load home in 19 turns
 - **`kit_id` is the sheet's resolved kit, never defaulted by the ask** — the rule every forecast query
   follows.
 
-### ⛔ ONE FOOD NUMBER: PAST THE APRON THE PER TURN HEADLINE IS THE RATE ARRIVING HOME
+### ⛔ ONE FOOD NUMBER: PAST THE APRON THE PER TURN HEADLINE IS THE COMMITTED ROW'S FIGURE
 
 Ray's rule for the arc is that a near row and a far row show comparable figures — ONE food number per
 source — and this file's is that a compose sheet promises exactly what the committed row will print.
@@ -8453,10 +8478,13 @@ The committed row prints `netRateHome`, so past the apron `_with_home_rate` subs
   to the floor to key, and the waste note is the resident take's whole-animal overflow — a caravan
   walks away from nothing (a carcass too big for one pack goes home a pack at a time), which is why the
   sim publishes a far row's `wasted` as `0`.
-- ⛔ **AND THE CAPTION OVER IT SAYS WHAT IT IS: `ONCE RUNNING · ARRIVING HOME`**
-  (`HudComposeVocab.YIELD_HEADER_HOME_RATE`, set off the model's `YIELD_MODEL_HOME_RATE` flag).
+- ⛔ **AND THE CAPTION OVER IT IS NEUTRAL: `ONCE RUNNING · PER TURN`**
+  (`HudComposeVocab.YIELD_HEADER_ONCE_RUNNING`, set off the model's `YIELD_MODEL_HOME_RATE` flag).
   `next turn` would be false past the apron — next turn a new posting is still walking out and
-  delivers nothing. **It takes no `· at the likely take` suffix**: that names a point of the crew-take
+  delivers nothing. **It does not say *arriving home***: the figure counts the share the party eats
+  where it works as well as what walks home, so a caption naming home overstated what reaches the
+  larder — on Ray's eats-everything party it promised food that never arrives. The section's lines
+  say where the food goes. **It takes no `· at the likely take` suffix**: that names a point of the crew-take
   curve's low/likely/high band, and `rate_home` is not drawn from that band — it is the caravan
   forecast's MEAN over its horizon (`work_party::forecast_caravan` averages the turns it steps), one
   expectation with no band beside it. The caption spans every account on the row, and it is honest

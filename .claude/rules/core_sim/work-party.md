@@ -192,7 +192,7 @@ It is read in three places, and must stay one function:
 |---|---|---|
 | the turn | the take site, from the state the turn leaves | the row's `netRateHome`, `realized` and arrival schedule (`publish_caravan_projection`) |
 | the assign-time seed | `bin/server.rs::seed_source_yield` | the same three, plus `actual` = what lands next turn (`0` while walking out) |
-| the compose-sheet query | `forecast_query::answer_work_party_forecast` | `rate_home`, the walk, the mean hunters on the road, the first landing |
+| the compose-sheet query | `forecast_query::answer_work_party_forecast` | `rate_home`, the walk, the mean hunters on the road, the first landing, the mean `deficit` |
 
 **The row's projections are what arrives home, not what is taken.** `realized` is the headline the
 food runway and the work board read, so a far row publishing its gross take would promise a larder
@@ -237,6 +237,31 @@ seat-gated like the other faction-bearing questions: band, `Hunt { herd_id }` or
 take_species }`, kit (named, never defaulted), crew and floor. It is refused with a `query_error`
 token for an unknown band, herd (`unknown_herd`) or patch (`unknown_patch`), an unknown or wrong-job
 kit, an invalid floor or an oversized crew.
+
+**The reply** is `posts_a_party`, `rate_home`, `walk_tiles`, `walk_turns`, `hunters_on_the_road` (a
+mean, so a float), `first_load_turn` (1-based, `0` = none within the horizon) and **`deficit`** — every
+walk field and the deficit read `0` inside the apron.
+
+> #### ⛔ `deficit` IS WHAT LETS THE SHEET WARN BEFORE THE ROW DOES
+>
+> A small party on thin game eats its whole take: no pack ever fills, and the committed row prints
+> its `partyDeficit` as food the home larder must send every turn. Without the figure on the reply the
+> compose sheet had no way to say so before the player committed — reported from play on a
+> three-hunter boar sheet (`0.17` food a turn taken against `0.48` of upkeep).
+>
+> It is `CaravanForecast::mean_deficit` — `WorkParty::deficit` averaged over the **same** turns and
+> the **same** stepping `rate_home` is, never recomputed from a rate. It is **not** bit-equal to the
+> row's published `partyDeficit`, and cannot be: the row's figure is *this turn's* shortfall against
+> the whole-animal take, the reply's is the horizon mean through the smooth projection every forecast
+> uses. At a steady footing the two differ by the float noise between a quantised take and its
+> expectation (measured `2.7e-7` food), which `work_party_caravan`'s `DEFICIT_TOLERANCE` bounds. A
+> posting still walking out averages its walk-out turns in, where the party eats and takes nothing,
+> so its mean reads **higher** than the row's first figures — the honest reading for a sheet quoting
+> a posting that has not yet reached its source.
+
+Pinned by `work_party_caravan::a_thin_take_quotes_the_deficit_the_row_will_publish` (a genuinely
+positive deficit, at the shipped draw, with nothing on the road and liveness on both sides) and, for
+the surplus case, the same comparison inside `::the_query_quotes_exactly_the_rate_the_row_publishes`.
 
 ## Fold-back, unassign, abandon — everything comes home
 
@@ -285,3 +310,4 @@ the arm reach this row"* is the question the settlements must go on asking.
 | `work_party::tests::a_carcass_heavier_than_one_pack_goes_home_over_several_porters` | the big carcass: nothing wasted that the resident take would waste |
 | `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home` | the road comes home, on the larder and the route arm |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes` | forecast == actual on the encoded snapshot |
+| `work_party_caravan::a_thin_take_quotes_the_deficit_the_row_will_publish` | the sheet's `deficit` is the row's `partyDeficit`, genuinely positive |

@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 19
+const EXPECTED_CHECKPOINTS := 20
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -28,6 +28,9 @@ const FAR_PATCH_ON_ROAD := 0.7
 const FAR_PATCH_ON_ROAD_ROUNDED := 1
 const FAR_PATCH_RATE_HOME := 0.12
 const FAR_PATCH_FIRST_LOAD := 42
+## The plant web's eats-everything reply, driven PNG-less through the producer: a harvester whose
+## gather does not cover them, so the section states the row's deficit line in the forage verb.
+const FAR_PATCH_DEFICIT := 0.09
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -178,13 +181,32 @@ func run(harness) -> void:
 	h._assert_hud("…and it states the party's walk, road and first load in the harvesters' own noun — want %s, got %s"
 			% [str(want_patch), str(got_patch)],
 		got_patch == want_patch)
-	# **AND ITS FOOD HEADLINE IS THE RATE ARRIVING HOME**, the plant web's half of the one-number rule.
+	# **AND ITS FOOD HEADLINE IS THE FIGURE THE COMMITTED ROW PRINTS**, the plant web's half of the
+	# one-number rule.
 	var patch_food := Readout.yields_account_number(patch_sheet, SourceForecast.YIELD_ACCOUNT_FOOD)
 	h._assert_hud("…with the PER TURN food headline reading the rate home (want %s, got %s)"
 			% [SourceForecast.format_magnitude(FAR_PATCH_RATE_HOME), patch_food],
 		patch_food == SourceForecast.format_magnitude(FAR_PATCH_RATE_HOME))
-	h._assert_hud("…under a caption naming the rate home (got \"%s\")" % Readout.yields_header(patch_sheet),
-		Readout.yields_header(patch_sheet) == HudComposeVocab.YIELD_HEADER_HOME_RATE.to_upper())
+	h._assert_hud("…under the caravan's neutral `once running · per turn` caption (got \"%s\")"
+			% Readout.yields_header(patch_sheet),
+		Readout.yields_header(patch_sheet) == HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
+	# **THE FORAGE TWIN OF THE DEFICIT FRAME** (`hunt.gd`'s `herd_hunt_far_party_deficit`), PNG-less
+	# through the one producer: a gather that eats its whole take states the committed row's deficit
+	# line and the eats-everything reason in the GATHER verb — a forage party never reads as a hunt.
+	var eaten := DrawerComposeController.work_party_section_lines({
+		"posts_a_party": true, "walk_tiles": FAR_PATCH_WALK_TILES, "walk_turns": FAR_PATCH_WALK_TURNS,
+		"hunters_on_the_road": 0.0, "rate_home": FAR_PATCH_RATE_HOME, "first_load_turn": 0,
+		"deficit": FAR_PATCH_DEFICIT},
+		HudComposeVocab.HARVEST_CREW_LABEL, ForecastQuery.WORK_PARTY_SOURCE_FORAGE)
+	var eaten_texts := eaten.map(func(entry: Array) -> String:
+		return String(entry[DrawerComposeController.WORK_PARTY_LINE_TEXT]))
+	h._assert_hud("a gather that eats its take states the deficit and the reason in the gather verb — got %s"
+			% str(eaten_texts),
+		eaten_texts.has(HudWorkVocab.WORK_ROW_PARTY_DEFICIT_FORMAT
+				% SourceForecast.format_magnitude(FAR_PATCH_DEFICIT))
+			and eaten_texts.has(HudComposeVocab.WORK_PARTY_EATS_EVERYTHING_FORAGE)
+			and str(eaten_texts).contains("gather")
+			and not str(eaten_texts).contains("catch"))
 
 	# State 2c — TWO bands at DIFFERENT distances from ONE food tile, NEAR band selected (821, 1 tile
 	# away ≤ range 2): an ordinary gather with no party section. The band-picker selection — not the
@@ -201,7 +223,7 @@ func run(harness) -> void:
 	h._assert_hud("inside the apron the forage caption still reads `next turn` (got \"%s\")"
 			% near_patch_caption,
 		near_patch_caption.begins_with(SourceForecast.YIELD_ROW_HEADER.to_upper())
-			and near_patch_caption != HudComposeVocab.YIELD_HEADER_HOME_RATE.to_upper())
+			and near_patch_caption != HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
 
 	# State 2d — same two bands, FAR band selected via the picker (822, ~21 tiles away): the SAME tile
 	# is measured past THAT band's apron, so the sheet asks the caravan forecast — the band picker

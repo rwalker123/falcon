@@ -760,6 +760,10 @@ pub struct WorkPartyForecastReply {
     pub hunters_on_the_road: f32,
     /// The 1-based turn the first load lands, or `0` for none within the horizon.
     pub first_load_turn: u32,
+    /// **The upkeep the party's own take leaves unmet, food per turn** — the mean of the committed
+    /// row's `partyDeficit` over the same horizon as [`Self::rate_home`]. `0.0` when the take covers
+    /// the upkeep, and inside the band's work range.
+    pub deficit: f32,
 }
 
 /// The grid the player is **configuring**, not the one the server is running: the ceiling is a
@@ -2831,6 +2835,7 @@ impl QueryReplyEnvelope {
                     walk_turns: answer.walk_turns,
                     hunters_on_the_road: answer.hunters_on_the_road,
                     first_load_turn: answer.first_load_turn,
+                    deficit: answer.deficit,
                 })
             }
             QueryReply::SaveOp(reply) => {
@@ -2911,6 +2916,7 @@ impl QueryReplyEnvelope {
                     walk_turns: answer.walk_turns,
                     hunters_on_the_road: answer.hunters_on_the_road,
                     first_load_turn: answer.first_load_turn,
+                    deficit: answer.deficit,
                 })
             }
             pb::query_reply_envelope::Reply::ListSaves(reply) => QueryReply::ListSaves(
@@ -3254,6 +3260,7 @@ mod tests {
                 walk_turns: 7,
                 hunters_on_the_road: 1.5,
                 first_load_turn: 11,
+                deficit: 0.625,
             }),
         };
         let bytes = reply.encode_to_vec().expect("encode");

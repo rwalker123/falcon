@@ -564,6 +564,11 @@ pub struct CaravanForecast {
     pub mean_on_the_road: f32,
     /// **The 1-based turn the first load lands**, or [`NO_LOAD_WITHIN_HORIZON`].
     pub first_load_turn: u32,
+    /// **The party's upkeep its own take leaves unmet, per turn** — [`WorkParty::deficit`] averaged
+    /// over the same turns [`Self::rate_home`] is, stepped by the same close. It is the figure the
+    /// committed row publishes as `partyDeficit`, read forward rather than recomputed; `0` when the
+    /// take covers the upkeep.
+    pub mean_deficit: f32,
 }
 
 /// ⛔ **THE CARAVAN, STEPPED FORWARD `horizon` TURNS FROM `start`** — the one function the turn's
@@ -584,6 +589,7 @@ pub fn forecast_caravan(
     let mut party = start.clone();
     let mut forecast = CaravanForecast::default();
     let mut on_the_road = 0u32;
+    let mut deficit = NO_DEFICIT;
     for turn in 1..=horizon {
         let mut spent = false;
         let (home, load_landed) = party.step(upkeep, pack_biomass, |present| {
@@ -594,6 +600,7 @@ pub fn forecast_caravan(
         });
         forecast.home_by_turn.push(home);
         on_the_road += party.hunters_on_the_road();
+        deficit += party.deficit;
         if load_landed && forecast.first_load_turn == NO_LOAD_WITHIN_HORIZON {
             forecast.first_load_turn = turn;
         }
@@ -605,6 +612,7 @@ pub fn forecast_caravan(
     if turns > 0 {
         forecast.rate_home = forecast.home_by_turn.iter().sum::<f32>() / turns as f32;
         forecast.mean_on_the_road = on_the_road as f32 / turns as f32;
+        forecast.mean_deficit = deficit / turns as f32;
     }
     forecast
 }

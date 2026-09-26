@@ -175,7 +175,7 @@ static func work_party_answer(hud: Node, request_id: int, ask: Dictionary) -> Di
 			authored = patch.get(WORK_PARTY_FORECAST_KEY, {})
 	var reply := {"request_id": request_id, "ok": true, "kind": ForecastQuery.KIND_WORK_PARTY,
 		"posts_a_party": false, "rate_home": 0.0, "walk_tiles": 0, "walk_turns": 0,
-		"hunters_on_the_road": 0.0, "first_load_turn": 0}
+		"hunters_on_the_road": 0.0, "first_load_turn": 0, "deficit": 0.0}
 	for key in authored:
 		reply[key] = authored[key]
 	return reply

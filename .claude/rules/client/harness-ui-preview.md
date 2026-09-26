@@ -3174,14 +3174,32 @@ is held to the same rule (19 tiles / 19 turns, one harvester, first load at 42).
 | the section's three lines, by EQUALITY through the shipped formats | the walk (`6 tiles` each way, `6 turns` out), the rounded road (`0.8` → one hunter, singular noun) and the first load — and NO rate line |
 | the PER TURN food headline EQUALS the reply's `rate_home` | one food number per source: the sheet promises the `netRateHome` the committed row prints |
 | …with no `now → after` and no waste note | a steady rate home has no walk to the floor, and a caravan walks away from nothing |
-| the caption reads `ONCE RUNNING · ARRIVING HOME`, with no likely-take suffix | the caption describes the number shown — `next turn` a far party delivers nothing |
+| the caption reads `ONCE RUNNING · PER TURN`, with no likely-take suffix | the caption fits the number shown — `next turn` a far party delivers nothing, and the figure counts what the party eats, so it names no home |
+| no deficit line, no eats-everything line, nothing in DANGER ink | the identity half of the deficit pair below: a party its take covers states no shortfall |
 | (on `herd_hunt_band_near` / `food_forage_band_near`) the caption still begins `NEXT TURN` | inside the apron the caption is untouched |
 | (PNG-less, on `herd_hunt_band_far`) `_with_home_rate` is the identity on an empty view and on a no-party reply | inside the apron nothing changes |
 | the recorded ASK carries the stepper's crew and `source_kind: hunt` | the section is priced at the crew being composed — the fixture's reply ignores the crew, so the rendered lines cannot say this |
 | the section speaks no `trip` / `away` / `Send` | the standing-assignment register |
-| the producer's edges (PNG-less, `work_party_section_lines`) | a road covering the run, a rarely-walked road, a first load at one turn, a one-tile walk, a plural road, no load within the horizon |
+| the producer's edges (PNG-less, `work_party_section_lines`) | a road covering the run, a rarely-walked road, a first load at one turn, a one-tile walk, a plural road, and a thin surplus reading the SLOW-FILL reason with no `forecast` in it |
 | the section mounts | the liveness companion to the two absences below |
 | the far spine EQUALS the local hunt's | the far sheet is the same sheet plus a section, never a second grammar |
+
+**`herd_hunt_far_party_deficit` is Ray's playtest case**: three hunters (`DEFICIT_PARTY_*`) on the
+same boar, whose reply carries `rate_home` 0.17, `deficit` 0.31 and `first_load_turn` 0 — the take
+below the 3 × 0.16 upkeep, so the committed row says `Needs 0.31 food a turn from home`. Its claims:
+
+| claim | what only IT can say |
+|---|---|
+| the section's three lines by EQUALITY: the walk, the row's deficit line, the eats-everything reason | the sheet states the shortfall in the committed row's own format |
+| `Readout.work_party_danger_lines` EQUALS `[the deficit line]` | the deficit line alone takes `HudStyle.DANGER`, read off the label's resolved `font_color` |
+| no slow-fill line, no `Rarely anyone on the road`, no `forecast`; the WORD `catch`, not `gather` | the two reasons never both appear, the road line is dropped beside the deficit, and the verb is the hunt's — pinned by the word, since the equality claim compares to the constant itself |
+| the ask carries the three hunters | the frame is priced at Ray's crew |
+| the headline is `0.17` under `ONCE RUNNING · PER TURN` | the headline stays the committed row's figure; the lines say where it goes |
+
+**Its forage twin is PNG-less** (`chapters/sight_fog.gd`, after `food_forage_far_party`'s caption
+claim): `work_party_section_lines` driven with a `FAR_PATCH_DEFICIT` reply on the forage web must
+carry the deficit line and `WORK_PARTY_EATS_EVERYTHING_FORAGE`, with `gather` and no `catch`.
+`sight_fog.gd`'s checkpoints 19 → **20**.
 
 **The absences ride the two-band pair**: `herd_hunt_band_near` (the band on the herd, inside its
 apron) mounts NO section, and `herd_hunt_band_far` (a far band whose herd authors no reply — the sim's
@@ -3191,7 +3209,7 @@ apron) mounts NO section, and `herd_hunt_band_far` (a far band whose herd author
 band and tile, re-aimed from the refusal to the party section: the commit is live, the retired
 refusal's words are absent, and the section's four lines match the tile's authored reply in the
 harvesters' own noun, and its PER TURN food headline reads the reply's rate home under the
-`ONCE RUNNING · ARRIVING HOME` caption.
+`ONCE RUNNING · PER TURN` caption.
 `food_forage_band_far` keeps its frame as the unauthored twin. **The deposit
 refusal is still asserted** (`chapters/workings.gd`'s `workings_out_of_range`), in the shared
 sentence the forage sheet used to refuse in.
@@ -3201,7 +3219,7 @@ failure-class guards are about the seam's bookkeeping, not about any one questio
 the hunting raid's; the plateau-direction guard (`expedition_useful_cap`) is retired with the cap it
 tested. `EXPECTED_CHECKPOINTS` 16 → 14.
 
-**Checkpoints**: `hunt.gd` 374 → **338**, `band_expedition.gd` 127 → **125**, `sight_fog.gd` 14 →
+**Checkpoints**: `hunt.gd` 374 → 338 → **347** (the deficit frame and its claims), `band_expedition.gd` 127 → **125**, `sight_fog.gd` 14 →
 **19**, `forecast_seam.gd` 16 → **14** — each RE-MEASURED off the harness's own `reached N` rather than
 subtracted.
 
@@ -3219,7 +3237,13 @@ subtracted.
   claims (the far boar reading `0.12 → 0.00` against `0.08`, the far patch `0.32` against `0.12`), the
   no-transition claim and the no-waste claim (`⚠ 60% WASTED` back); the identity claim stays green;
 - the caption forced back to the default past the apron → **EXIT=1, exactly 2 failures**, both webs'
-  caption claims reading `NEXT TURN`; the two inside-the-apron caption claims stay green.
+  caption claims reading `NEXT TURN`; the two inside-the-apron caption claims stay green;
+- the deficit gate in `work_party_section_lines` forced false → **EXIT=1, exactly 3 failures**: the
+  deficit frame's line equality, its DANGER-ink claim and its no-slow-fill / no-road claim (the section
+  reverting to the road and slow-fill lines); the surplus frame's no-deficit claim stays green;
+- the two `WORK_PARTY_EATS_EVERYTHING_*` values swapped → **EXIT=1, exactly 2 failures**: the forage
+  producer check and the hunt frame's verb claim. Before the hunt claim pinned the word, only the
+  forage check failed — the hunt frame's equality compares to the constant, which a swap satisfies.
 
-**A clean run is 438 frames / 2253 `PASS`, exit 0 — RE-MEASURED windowed on this tree.**
+**A clean run is 439 frames / 2262 `PASS`, exit 0 — RE-MEASURED windowed on this tree.**
 
