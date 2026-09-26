@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 185
+const EXPECTED_CHECKPOINTS := 190
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 
@@ -48,9 +48,10 @@ const HEAD_KIT := "Kit"
 const HEAD_TOOLS := "Bench tools"
 const HEAD_MATERIALS := "Materials"
 
-## **THE TIER WORDS THAT MAY NOT REACH AN OWNED CELL EXCEPT INSIDE `ownedNote`.** The popup and the
-## picker name tiers by design, so this claim is scoped to the CELLS; the second-tier fixture publishes
-## a `tier_id` on every batch it owns, which is what stops the negative being vacuous.
+## **THE TIER WORDS THAT MAY NOT REACH AN OWNED CELL AT ALL.** The popup and the picker name tiers by
+## design, so this claim is scoped to the CELLS; the fixtures publish a `tier_id` on every batch they
+## own and the sim's `owned_note` on the offers it would carry one, which is what stops the negative
+## being vacuous.
 const TIER_WORDS: Array[String] = [TIER_PLAIN, TIER_FLINT]
 
 ## **THE RECIPES OF A TWO-RECIPE ITEM, spelled as the sim publishes them.** Spears are pointed with
@@ -750,15 +751,15 @@ func _crafting_states() -> void:
 
 ## **THE SUGGESTED RECIPE IS WHAT A ROW WOULD BE MADE AT; THE CELL IS WHAT THE BAND HAS.** A band that
 ## can knap flint but still carries plain clubs is the shape in which the two disagree — the Clubs row
-## suggests its `Stone` recipe (flint) while its cell says *carrying plain · poor* — and it is the only
-## shape in which the sim publishes an `ownedNote` at all. Everything downstream of the disagreement is
-## asserted against this fixture.
+## suggests its `Stone` recipe (flint) over four plain clubs — and the sim publishes an `ownedNote`
+## (*carrying plain · poor*) there. The cell renders count and grade and NOT that note; which tier the
+## band holds is the recipe popup's to say.
 func _two_tier_states() -> void:
 	h._hud.update_band_alerts([_two_tier_band()])
 	h._hud.open_crafting_panel(_two_tier_band())
 	await h._settle()
 	_assert_owned_cell_reads_what_the_band_has()
-	_assert_no_tier_word_reaches_a_cell()
+	_assert_no_tier_word_reaches_a_cell(_two_tier_offers(), _two_tier_equipment_batches(), "two-tier")
 	await h._save("crafting_panel_two_tiers")
 
 	await _assert_folding_a_head_hides_only_its_own_rows()
@@ -935,10 +936,10 @@ func _assert_a_material_the_band_lacks_says_so() -> void:
 		row != null and _label_texts(row).has(
 			HudCraftingVocab.COST_YIELD_FORMAT % [str(int(STOCK_CORDAGE_YIELD)), "cordage"]))
 
-## **THE GRADE LINES AND THE NOTE, EACH AS A PAIR.** A one-sided claim passes on a panel that lost the
-## thing entirely: "two lines" is satisfied by a cell that lists every batch, so the single-grade row
-## is asserted beside it; and "the note is rendered" is satisfied by a panel printing it on every row,
-## so the row WITHOUT one is asserted beside that.
+## **THE GRADE LINES AS A PAIR, AND THE NOTE'S ABSENCE OVER A FIXTURE THAT PUBLISHES ONE.** "Two lines"
+## is satisfied by a cell that lists every batch, so the single-grade row is asserted beside it. The
+## note is published by the sim and rendered nowhere; its positive half moved to the recipe popup's
+## per-tier Owned column (`_popup_states`), which is where which tier the band holds is now answered.
 func _assert_owned_cell_reads_what_the_band_has() -> void:
 	var panel: CraftingPanel = h._hud.crafting_panel().panel()
 	if panel == null:
@@ -959,43 +960,53 @@ func _assert_owned_cell_reads_what_the_band_has() -> void:
 	h._assert_hud("crafting — …while a single-grade item renders exactly one (%s)" % [clubs],
 		_count_matching(clubs, HudCraftingVocab.OWNED_COUNT_FORMAT % TWO_TIER_CLUBS_POOR) == 1
 			and _count_starting_with(clubs, "×") == 1)
-	# **THE NOTE, VERBATIM AND ALONE, on the row whose stock disagrees with its head.** Asked as
-	# "everything in the cell that is not a count or a grade", rather than as `has(the note)`: a panel
-	# COMPOSING a note of its own — the defect the published field exists to prevent — satisfies a
-	# `has` on the row that has one, and satisfies "…and does not carry the OTHER row's note" too.
-	h._assert_hud("crafting — the owned note is rendered verbatim on the row that has one (%s)"
-			% [_non_grade_texts(clubs)],
-		_non_grade_texts(clubs) == [TWO_TIER_CLUBS_NOTE])
-	# …and the row the sim published no note for carries NOTHING beside its grade lines, which is the
-	# half a panel printing a note on every row fails.
-	h._assert_hud("crafting — …and the row that has none carries nothing beside its grades (%s)"
+	# **THE CELL IS COUNT AND GRADE, AND NOTHING ELSE — EVEN WHERE THE SIM PUBLISHED A NOTE.** The Clubs
+	# row's suggested offer carries `carrying plain · poor`, and the cell must still hold nothing beyond
+	# its grade lines. Asked as "everything that is not a count or a legend word" rather than as a
+	# `has` of the note, so a note COMPOSED client-side fails it too. The precondition is what keeps it
+	# honest: a fixture that stopped publishing the note would pass this with the render restored.
+	h._assert_hud("crafting — precondition: the Clubs row's suggested offer publishes an owned note",
+		_published_owned_notes(_two_tier_offers()).has(TWO_TIER_CLUBS_NOTE))
+	h._assert_hud("crafting — the owned note does NOT render, though published: the cell is count and "
+			+ "grade alone (%s)" % [_non_grade_texts(clubs)],
+		_non_grade_texts(clubs).is_empty())
+	# …and the row with no note is the same shape, so the cell's contents do not depend on the field.
+	h._assert_hud("crafting — …and a row with no note carries nothing beside its grades either (%s)"
 			% [_non_grade_texts(spears)],
 		_non_grade_texts(spears).is_empty())
 
-## **NO TIER WORD REACHES A CELL EXCEPT THROUGH `ownedNote`.** Scoped to the Owned CELLS rather than to
-## the ledger, because the popup and the picker name a recipe's tier by design and a panel-wide scan
-## cannot tell those apart from a cell. Non-vacuous by construction: every batch this band owns publishes a `tier_id`, so there
-## is a tier word sitting one field away from every cell asserted about.
-func _assert_no_tier_word_reaches_a_cell() -> void:
+## **NO TIER WORD REACHES AN OWNED CELL AT ALL, AND NEITHER DOES A PUBLISHED NOTE.** Two negatives,
+## scoped to the Owned CELLS rather than to the ledger, because the popup and the picker name a
+## recipe's tier by design and a panel-wide scan cannot tell those apart from a cell. Non-vacuous by
+## construction, and the preconditions say so: every batch the band owns publishes a `tier_id`, and the
+## band's offers publish at least one `owned_note` — so a tier word and a whole note sit one field away
+## from every cell asserted about. Asked of whichever band is open, `offers` and `batches` being that
+## band's own. Its positive half is the recipe popup's per-tier Owned column (`_popup_states`).
+func _assert_no_tier_word_reaches_a_cell(offers: Array, batches: Array, which: String) -> void:
 	var panel: CraftingPanel = h._hud.crafting_panel().panel()
 	if panel == null:
-		h._assert_hud("crafting — the tier-word panel is open", false)
+		h._assert_hud("crafting — the tier-word panel is open (%s)" % which, false)
 		return
-	var notes := _published_owned_notes()
+	var notes := _published_owned_notes(offers)
 	var cells := _all_owned_cell_texts(panel)
-	h._assert_hud("crafting — precondition: the fixture publishes a tier id on every batch it owns",
-		_batches_carrying_a_tier(_two_tier_equipment_batches()) > 0 and not cells.is_empty())
-	var leaked: Array = []
+	h._assert_hud("crafting — precondition: the %s fixture publishes tier ids and an owned note (%s)"
+			% [which, notes],
+		_batches_carrying_a_tier(batches) > 0 and not notes.is_empty() and not cells.is_empty())
+	var leaked_notes: Array = []
+	var leaked_words: Array = []
 	for text_variant in cells:
 		var text := String(text_variant)
-		if notes.has(text):
-			continue
+		for note in notes:
+			if text.contains(String(note)):
+				leaked_notes.append(text)
 		for word in TIER_WORDS:
 			if text.to_lower().contains(word):
-				leaked.append(text)
-	h._assert_hud("crafting — no tier word reaches an Owned cell except through the owned note (%s)"
-			% [leaked],
-		leaked.is_empty())
+				leaked_words.append(text)
+	h._assert_hud("crafting — no Owned cell carries a published owned note (%s: %s)"
+			% [which, leaked_notes],
+		leaked_notes.is_empty())
+	h._assert_hud("crafting — …and no Owned cell carries any tier word (%s: %s)" % [which, leaked_words],
+		leaked_words.is_empty())
 
 ## **FOLDING A HEAD HIDES ITS OWN ROWS AND NOTHING ELSE, AND THE HEAD STAYS.** Both halves, and the
 ## reverse toggle: a panel that hid the whole table satisfies the first alone, and one that never
@@ -1606,11 +1617,12 @@ func _count_starting_with(texts: Array, prefix: String) -> int:
 			found += 1
 	return found
 
-## Every note the two-tier fixture publishes — the whitelist the tier-word negative subtracts, since a
-## note is the one place a tier word is meant to reach a cell.
-func _published_owned_notes() -> Array:
+## Every note `offers` publishes — what the negative scans the Owned cells for. The fixtures keep
+## publishing the sim's `owned_note` exactly as it does, which is what gives that negative something to
+## catch.
+func _published_owned_notes(offers: Array) -> Array:
 	var notes: Array = []
-	for offer in _two_tier_offers():
+	for offer in offers:
 		var note := String((offer as Dictionary).get("owned_note", ""))
 		if note != "" and not notes.has(note):
 			notes.append(note)
@@ -2600,6 +2612,9 @@ func _recipe_states() -> void:
 		return
 	_assert_the_link_marks_a_choice(panel)
 	_assert_the_row_describes_its_suggested_recipe(panel)
+	# The Spears row's suggested flint offer publishes `carrying plain · good` over six plain spears —
+	# the note the popup's per-tier Owned column below replaces, and the one no cell may carry.
+	_assert_no_tier_word_reaches_a_cell(band["craft_offers"], band["equipment_batches"], "reference")
 	_assert_the_bench_names_the_recipe_verbatim(panel)
 	await _popup_states(panel)
 	await _make_states(panel)

@@ -2391,6 +2391,21 @@ the whole picker chain (with three *the control to press was rendered* guards wh
 controls were never built) and the single-recipe link claim with the two role-line claims it took
 down, while *Make on a single-recipe row sends that recipe* and *…opens no picker* correctly stay green.
 
+### …and the owned note left the row
+
+The sim's `ownedNote` (`carrying plain · good`) is no longer rendered or decoded, and **no tier word
+reaches an Owned cell at all** (`crafting-panel.md` → "NO TIER WORD REACHES THE OWNED CELL AT ALL").
+The fixtures keep publishing `owned_note` and `tier_id` exactly as the sim does, which is what gives
+the negatives something to catch: *no Owned cell carries a published note* **and** *no Owned cell
+carries any tier word*, each behind a precondition that the band really publishes both, asked of the
+two-tier band and of the reference band. The retired *the note is verbatim on the row that has one*
+became *the Clubs cell carries nothing beside its grades, though its suggested offer publishes a
+note*. The positive that moved is the popup's per-tier Owned column above (`×6` / `—` on Spears).
+**MEASURED ON THIS TREE: `455 / 2254` → `455 / 2259`**, exit 0 both; `EXPECTED_CHECKPOINTS` 185 →
+**190**, RE-MEASURED. Sabotage-verified by restoring the note's render: exactly **five** claims
+fail — the Clubs cell claim and both negatives on both bands — naming `carrying plain · poor` and
+`carrying plain · good`.
+
 ## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
 
 Four frames and twenty-five `PASS`, appended to the event-dock chapter before it frees its panel —

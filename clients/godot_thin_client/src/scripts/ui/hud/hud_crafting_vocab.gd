@@ -108,11 +108,6 @@ const OFFER_ON_BENCH_KEY := "on_bench"
 ## The grade the draw would select right now, a `characteristic_bands` name, `""` on a recipe that
 ## resolves none. The recipe popup and the Make picker show it beside what the recipe `makes`.
 const OFFER_OUTPUT_GRADE_KEY := "output_grade"
-## **WHAT THE BAND CARRIES, SAID ONLY WHEN IT IS NEWS** — `carrying plain · poor`, `last plain set
-## wore out`, `""` the rest of the time. It is the ONE route by which a tier word reaches the Owned
-## cell: resolved sim-side, rendered verbatim, never composed and never re-derived here. The row reads
-## it off its SUGGESTED offer, the recipe its other cells describe.
-const OFFER_OWNED_NOTE_KEY := "owned_note"
 ## **ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK.** Several offers share one `output_item_id`
 ## (a spear pointed with bone, a spear knapped from stone); the ledger groups them into ONE row, and
 ## these five are what that row's recipe popup and its Make picker read. Every one is RESOLVED
@@ -129,7 +124,7 @@ const OFFER_MAKES_KEY := "makes"
 const OFFER_LASTS_KEY := "lasts"
 ## **EXACTLY ONE offer per row is `true`, and the SIM picks it**: the recipe this band last started
 ## for the item if it is available now, else the first available, else the last started, else the
-## first in book order. The row's Costs cell, its refusal line and its owned note all come from it,
+## first in book order. The row's Costs cell and its refusal line both come from it,
 ## and the picker opens on it.
 const OFFER_SUGGESTED_KEY := "suggested"
 ## Units owned at THIS recipe's tier, or `OWNED_AT_TIER_UNATTRIBUTED` when every recipe for the item
@@ -157,11 +152,12 @@ const SHORTFALL_SHORT_KEY := "short"
 ## rebuild costs, so `life`, `quanta_left` and `quantum_noun` have no key here. The two condition
 ## numbers below are read as a RANKING and as a threshold, never printed.
 ##
-## **`tier_id` HAS NO KEY HERE EITHER.** The tier a recipe makes is named by its `recipe_label` in
-## the row's recipe popup, and the tier the band CARRIES reaches the Owned cell only through the sim's
-## resolved `ownedNote` — and only when the two disagree. A cell rendering this field would say
-## `plain` on almost every row of the early game — eleven of the fourteen shipped items have no second
-## tier at all.
+## **`tier_id` HAS NO KEY HERE EITHER — NO TIER WORD REACHES THE OWNED CELL AT ALL.** The tier a
+## recipe makes is named by its `recipe_label` in the row's recipe popup, and which tier the band
+## CARRIES is answered by that popup's Owned column, on an item whose recipes make different tiers. The
+## sim's `ownedNote` (`carrying plain · poor`) still rides the wire and has no key here either: it put
+## the internal word `plain` in front of the player and cost a short row a line. A cell rendering
+## `tier_id` would say `plain` on almost every row of the early game.
 const BAND_EQUIPMENT_BATCHES_KEY := "equipment_batches"
 const EQUIPMENT_ITEM_ID_KEY := "item_id"
 const EQUIPMENT_GRADE_KEY := "grade"
@@ -460,7 +456,7 @@ const OWNED_NONE := "Not made"
 ## answer the same question about different kinds of thing.
 const OWNED_COUNT_FORMAT := "×%d"
 ## How the Owned cell is found by IDENTITY. It carries the row's own item id, so a claim about what
-## reaches the CELL (a tier word, an owned note) can be scoped to the cell rather than to the ledger —
+## reaches the CELL (a tier word, the sim's owned note) can be scoped to the cell rather than to the ledger —
 ## the recipe popup and the Make picker name tiers by design, and a panel-wide text scan cannot tell
 ## them apart from a cell.
 const OWNED_CELL_META := "crafting_owned_cell"
@@ -518,10 +514,6 @@ static var OWNED_GRADE_HIGH_COLOR: Color = Color()
 static var OWNED_GRADE_LOW_COLOR: Color = Color()
 static var OWNED_GRADE_MID_COLOR: Color = Color()
 
-## The `ownedNote`'s own tint. It is news rather than an alarm — the band is carrying something older
-## than what it could now make — so it reads in the warn ink, one step short of a refusal's danger.
-static var OWNED_NOTE_COLOR: Color = Color()
-
 ## Install the current `HudStyle` palette into this file's tints. Called by `HudPalette.apply()` after
 ## `HudStyle.apply_palette`; it takes no palette of its own, because none of these is a colour in its
 ## own right — each is one HUD ink re-stated in the crafting panel's vocabulary.
@@ -538,7 +530,6 @@ static func apply_palette() -> void:
 	OWNED_GRADE_HIGH_COLOR = HudStyle.SIGNAL
 	OWNED_GRADE_LOW_COLOR = HudStyle.INK_FAINT
 	OWNED_GRADE_MID_COLOR = HudStyle.INK_DIM
-	OWNED_NOTE_COLOR = HudStyle.WARN
 
 # ---- geometry, measured off the prototype -------------------------------------------------------
 ## The panel's NOMINAL width. It is a floor, not a cap: the card refits to its content through
@@ -570,7 +561,7 @@ const BAND_PICKER_MIN_WIDTH := 150.0
 ## reads as columns rather than as four independently-wrapping stacks.
 const COLUMN_ITEM_MIN_WIDTH := 150.0
 ## The prototype's OWNED column. It is wider than the 104 the retired Tier column took because it
-## carries a count and a grade chip on one line, and `ownedNote` — a whole clause — under them.
+## carries a count and a grade chip on one line, and a `Not made` chip on a row that owns none.
 const COLUMN_OWNED_WIDTH := 172.0
 const COLUMN_COST_WIDTH := 140.0
 ## **THE ACTION COLUMN IS SIZED BY THE REFUSAL, NOT BY THE BUTTON.** `Make` is 40-odd pixels wide;
@@ -618,7 +609,6 @@ const OWNED_CHIP_FONT_SIZE := 10
 ## The `×3` beside the chip — the count is the number the eye goes to, so it reads a size up from the
 ## grade chip rather than matching it.
 const OWNED_COUNT_FONT_SIZE := 13
-const OWNED_NOTE_FONT_SIZE := 10
 const EMPTY_CELL_FONT_SIZE := 11
 const COST_FONT_SIZE := 12
 const ACTION_FONT_SIZE := 12

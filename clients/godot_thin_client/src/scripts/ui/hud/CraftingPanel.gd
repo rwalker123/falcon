@@ -31,9 +31,10 @@ class_name CraftingPanel
 ## sections are the three groups — `Kit` · `Bench tools` · `Materials` — and nothing sorts a row under
 ## a tier any more: a row carrying both a plain and a flint recipe has no one tier to be sorted under.
 ##
-## **THE TIER WORD REACHES THE OWNED CELL ONLY THROUGH THE PUBLISHED `ownedNote`**, read off the
-## suggested offer and only when it is news: nothing here composes one, re-derives one, or renders a
-## row's `tier_id`. A recipe's own tier is named by its `recipeLabel`, in the popup and the picker.
+## **NO TIER WORD REACHES THE OWNED CELL AT ALL.** It states count and grade, nothing else: no
+## `tier_id`, and not the sim's `ownedNote` (still published, rendered nowhere). Which tier the band
+## holds is answered in the recipe popup's Owned column, on an item whose recipes make different tiers,
+## and a recipe's own tier is named by its `recipeLabel` there and in the picker.
 ##
 ## **OWNERSHIP IS `count`, NEVER `remaining == 0`.** A batch that runs out of units is removed, so a
 ## worn-out item and one the band never made both read `remaining 0` — which is why the Owned cell is
@@ -875,7 +876,7 @@ func _build_crew_stepper(bench: Dictionary, payload: Dictionary, running: bool) 
 ## **ONE TABLE IN FOLDABLE SECTIONS, ONE ROW PER ITEM, AND EVERY ROW IS A JOIN.** `CraftOffer.
 ## outputItemId` is the key twice over: it groups an item's offers into ONE row, and it joins that row
 ## onto `equipment_batches` for the grades and the counts. The suggested offer supplies the row's
-## cost, refusal and note. Neither the offers nor the batches can answer alone — which is why the
+## cost and refusal. Neither the offers nor the batches can answer alone — which is why the
 ## ledger is built here rather than off either array on its own.
 func _build_ledger(payload: Dictionary) -> void:
 	var band: Dictionary = payload.get(PAYLOAD_BAND, {})
@@ -938,7 +939,7 @@ func _ledger_sections(band: Dictionary) -> Array:
 ## own keyed by its recipe. Rows come out in the order each item's FIRST offer appears on the wire.
 ##
 ## Each row is `{key, group, name, offers, offer}`: `offer` is the SUGGESTED one — the sim marks exactly
-## one per row — and it is what the row's cost, refusal and owned note are read off. The row's name is
+## one per row — and it is what the row's cost and refusal are read off. The row's name is
 ## that offer's `displayName`, which the sim publishes as the ITEM's name on every one of its offers.
 func _ledger_rows(band: Dictionary) -> Array:
 	var rows: Array = []
@@ -1239,8 +1240,11 @@ func _role_line(offer: Dictionary, payload: Dictionary) -> String:
 ##   service is chosen by wear rather than by quality, so it would move for a reason unrelated to what
 ##   the row claims.
 ##
-## Under the lines, `ownedNote` VERBATIM when the sim published one. **It is the only route by which a
-## tier word reaches this cell**, it arrives only when it is news, and no `tier_id` is rendered here.
+## **NO TIER WORD REACHES THIS CELL AT ALL** — no `tier_id`, and not the sim's `ownedNote` either,
+## though it still rides the wire: that note was written for the retired tier heads, it cost a row that
+## must stay short a line, and it put the internal word `plain` in front of the player. Which tier the
+## band holds is answered in the recipe popup's Owned column, on an item whose recipes make different
+## tiers.
 func _build_owned_cell(offer: Dictionary, batches: Array, group: String, payload: Dictionary,
 		batches_by_material: Dictionary) -> Control:
 	if group == HudCraftingVocab.GROUP_STOCK:
@@ -1259,16 +1263,6 @@ func _build_owned_cell(offer: Dictionary, batches: Array, group: String, payload
 	for line_variant in lines:
 		var line: Dictionary = line_variant
 		column.add_child(_owned_line(int(line["count"]), String(line["grade"]), payload))
-
-	var note := String(offer.get(HudCraftingVocab.OFFER_OWNED_NOTE_KEY, ""))
-	if note != "":
-		var note_label := Label.new()
-		note_label.text = note
-		note_label.add_theme_font_size_override("font_size", HudCraftingVocab.OWNED_NOTE_FONT_SIZE)
-		note_label.add_theme_color_override("font_color", HudCraftingVocab.OWNED_NOTE_COLOR)
-		note_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		note_label.custom_minimum_size = Vector2(HudCraftingVocab.COLUMN_OWNED_WIDTH, 0.0)
-		column.add_child(note_label)
 	return column
 
 ## **THE BAND'S TOTAL OF THE MATERIAL THIS ROW MAKES — ONE NUMBER, summed across its batches.**
