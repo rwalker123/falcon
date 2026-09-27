@@ -417,6 +417,16 @@ fn spawn_shipment(
     destination_pos: bevy::math::UVec2,
     food: f32,
 ) -> Entity {
+    // The destination's faction, fixed at launch the way the launch command fixes it — the other
+    // half of the counterparty the shipment's rows name.
+    let destination_faction = {
+        let mut query = app.world.query::<(&BandId, &PopulationCohort)>();
+        query
+            .iter(&app.world)
+            .find(|(id, _)| **id == destination)
+            .map(|(_, cohort)| cohort.faction)
+            .expect("a shipment is launched at a live band")
+    };
     let mut cohort = app
         .world
         .get::<PopulationCohort>(home)
@@ -443,6 +453,7 @@ fn spawn_shipment(
                 home_band: home,
                 mission: ExpeditionMission::Trade {
                     destination_band: destination,
+                    destination_faction,
                     destination_name: "the neighbours".to_string(),
                 },
                 phase: ExpeditionPhase::Outbound,
@@ -896,4 +907,371 @@ fn walk_out_of_reach(app: &mut bevy::prelude::App, band: Entity) {
         .expect("the band exists");
     cohort.current_tile = tile;
     cohort.home = tile;
+}
+
+// ---------------------------------------------------------------------------------------------
+// WHY IT MOVED: the cause-keyed crossings beneath the arms (issue #731)
+// ---------------------------------------------------------------------------------------------
+
+/// The wire's link and direction codes (`TransferCrossingState` in `snapshot.fbs`).
+const LINK_LOCAL: u8 = 0;
+const LINK_ROUTE: u8 = 1;
+const DIRECTION_IN: u8 = 0;
+const DIRECTION_OUT: u8 = 1;
+/// The wire's cause codes this file reads.
+const CAUSE_POOLED: u8 = 0;
+const CAUSE_DOWRY_OUT: u8 = 1;
+const CAUSE_DOWRY_IN: u8 = 2;
+const CAUSE_SHIPMENT_IN: u8 = 4;
+
+/// One `transferCrossings` row, read off the **encoded envelope**.
+#[derive(Debug, Clone)]
+struct CrossingRow {
+    commodity: String,
+    direction: u8,
+    link: u8,
+    cause: u8,
+    counterparty: u64,
+    counterparty_name: String,
+    counterparty_faction: u32,
+    party: u64,
+    amount: f32,
+}
+
+/// The encoded row a client reads for `band`, handed to `read` — the accessor chain, not the
+/// capture struct, so a field that never reached the codec fails here.
+fn with_published_row<T>(
+    app: &bevy::prelude::App,
+    band: BandId,
+    read: impl FnOnce(
+        &shadow_scale_flatbuffers::generated::shadow_scale::sim::PopulationCohortState<'_>,
+    ) -> T,
+) -> T {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section is published")
+        .iter()
+        .find(|cohort| cohort.bandId() == band.0)
+        .expect("the band's row is published");
+    read(&row)
+}
+
+fn published_crossings(app: &bevy::prelude::App, band: BandId) -> Vec<CrossingRow> {
+    with_published_row(app, band, |row| {
+        row.transferCrossings()
+            .map(|rows| {
+                rows.iter()
+                    .map(|crossing| CrossingRow {
+                        commodity: crossing.commodity().unwrap_or_default().to_string(),
+                        direction: crossing.direction(),
+                        link: crossing.link(),
+                        cause: crossing.cause(),
+                        counterparty: crossing.counterpartyBandId(),
+                        counterparty_name: crossing
+                            .counterpartyName()
+                            .unwrap_or_default()
+                            .to_string(),
+                        counterparty_faction: crossing.counterpartyFaction(),
+                        party: crossing.partyId(),
+                        amount: crossing.amount(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// ⛔ **THE ROWS ARE THE LEDGER, SPLIT FINER** — for each account, the published crossings summed
+/// per `(link, direction)` equal that account's four published arms. And a pooled row names nobody,
+/// wherever it appears.
+fn assert_crossings_are_the_ledger(app: &bevy::prelude::App, band: BandId, label: &str) {
+    let rows = published_crossings(app, band);
+    let (food, hay) = published_link_splits(app, band);
+    for (commodity, split) in [(FOOD, food), (core_sim::FODDER, hay)] {
+        let sum = |link: u8, direction: u8| -> f32 {
+            rows.iter()
+                .filter(|row| {
+                    row.commodity == commodity && row.link == link && row.direction == direction
+                })
+                .map(|row| row.amount)
+                .sum()
+        };
+        for (arm, rows_sum, published) in [
+            (
+                "local in",
+                sum(LINK_LOCAL, DIRECTION_IN),
+                split.local_received,
+            ),
+            (
+                "local out",
+                sum(LINK_LOCAL, DIRECTION_OUT),
+                split.local_sent,
+            ),
+            (
+                "route in",
+                sum(LINK_ROUTE, DIRECTION_IN),
+                split.route_received,
+            ),
+            (
+                "route out",
+                sum(LINK_ROUTE, DIRECTION_OUT),
+                split.route_sent,
+            ),
+        ] {
+            assert!(
+                (rows_sum - published).abs() < EPSILON,
+                "{label} {commodity} {arm}: the crossings sum to {rows_sum}, the arm reads \
+                 {published} ({rows:?})"
+            );
+        }
+    }
+    for row in rows.iter().filter(|row| row.cause == CAUSE_POOLED) {
+        assert_eq!(
+            (row.counterparty, row.party),
+            (0, 0),
+            "{label}: a pooled row never names a counterparty or a party: {row:?}"
+        );
+    }
+}
+
+/// **On a turn that pools AND lands a shipment, the rows add up to all sixteen arms**, the identity
+/// still holds, and the shipment's row names the band that sent it and the party that carried it.
+#[test]
+fn the_crossings_add_up_to_the_ledger_on_a_pooling_and_shipping_turn() {
+    let mut app = world();
+    let (fed, hungry) = two_networked_bands(&mut app);
+    set_hay(&mut app, fed, FED_HAY);
+    let (fed_id, hungry_id) = (band_id(&app, fed), band_id(&app, hungry));
+    let hungry_pos = {
+        let tile = app
+            .world
+            .get::<PopulationCohort>(hungry)
+            .expect("the band")
+            .current_tile;
+        app.world.get::<Tile>(tile).expect("a real tile").position
+    };
+    let party = spawn_shipment(&mut app, fed, hungry_id, hungry_pos, CARGO_FOOD);
+    let party_id = band_id(&app, party);
+    let fed_faction = app
+        .world
+        .get::<PopulationCohort>(fed)
+        .expect("the band")
+        .faction;
+    let fed_name = app
+        .world
+        .get::<core_sim::BandName>(fed)
+        .map(|name| name.0.clone())
+        .unwrap_or_default();
+
+    let (fed_before, hungry_before) = (larder(&app, fed), larder(&app, hungry));
+    run_turn(&mut app);
+
+    for (label, band, entity, before) in [
+        ("the sender", fed_id, fed, fed_before),
+        ("the receiver", hungry_id, hungry, hungry_before),
+    ] {
+        assert_crossings_are_the_ledger(&app, band, label);
+        let ledger = ledger_of(&app, band);
+        let delta = larder(&app, entity) - before;
+        assert!(
+            (delta - ledger.expected_delta()).abs() < EPSILON,
+            "{label}: the identity still holds beside the crossings: delta={delta} vs {} \
+             ({ledger:?})",
+            ledger.expected_delta()
+        );
+    }
+
+    let landed: Vec<_> = published_crossings(&app, hungry_id)
+        .into_iter()
+        .filter(|row| row.cause == CAUSE_SHIPMENT_IN)
+        .collect();
+    assert_eq!(
+        landed.len(),
+        1,
+        "one shipment of one good lands as one row: {landed:?}"
+    );
+    let row = &landed[0];
+    assert!(
+        (row.commodity == FOOD) && (row.amount - CARGO_FOOD).abs() < EPSILON,
+        "the row is the cargo, in full: {row:?}"
+    );
+    assert_eq!(
+        (
+            row.counterparty,
+            row.counterparty_faction,
+            row.counterparty_name.as_str(),
+            row.party
+        ),
+        (fed_id.0, fed_faction.0, fed_name.as_str(), party_id.0),
+        "a landed shipment names its sender, the sender's people and the party that carried it"
+    );
+    assert!(
+        published_crossings(&app, hungry_id)
+            .iter()
+            .any(|row| row.cause == CAUSE_POOLED && row.direction == DIRECTION_IN),
+        "liveness: the receiver also pooled in on the same turn, so both arms are exercised"
+    );
+}
+
+/// **A split's dowry books on both ends, each naming the other**, and the rows are still the ledger.
+#[test]
+fn the_dowry_rows_name_each_side_of_the_split() {
+    let mut app = world();
+    let parent = first_band(&mut app);
+    stock_workers(&mut app, parent);
+    set_larder(&mut app, parent, FED_LARDER);
+    let parent_id = band_id(&app, parent);
+    run_turn(&mut app);
+
+    let split = split_band_from_parent(&mut app.world, parent, SPLIT_WORKERS, &permissive_settle())
+        .expect("a stocked parent can split");
+    run_turn(&mut app);
+
+    assert_crossings_are_the_ledger(&app, parent_id, "the parent");
+    assert_crossings_are_the_ledger(&app, split.band, "the splinter");
+    let dowry = split.provisions.to_f32();
+    let food_of = |band: BandId, cause: u8| -> Vec<CrossingRow> {
+        published_crossings(&app, band)
+            .into_iter()
+            .filter(|row| row.cause == cause && row.commodity == FOOD)
+            .collect()
+    };
+    let out = food_of(parent_id, CAUSE_DOWRY_OUT);
+    let into = food_of(split.band, CAUSE_DOWRY_IN);
+    assert!(
+        out.len() == 1
+            && (out[0].amount - dowry).abs() < EPSILON
+            && out[0].counterparty == split.band.0,
+        "the parent's row is the dowry, naming the splinter: {out:?} (dowry {dowry})"
+    );
+    assert!(
+        into.len() == 1
+            && (into[0].amount - dowry).abs() < EPSILON
+            && into[0].counterparty == parent_id.0,
+        "the splinter's row is the same dowry, naming its parent: {into:?}"
+    );
+    assert!(
+        dowry > EPSILON,
+        "liveness: food walked out with the splinter"
+    );
+}
+
+/// **The rows survive a command's refresh**, for the ledger arms' reason: they are read off the
+/// cohort's per-turn twin, never the accumulator the turn's reset clears.
+#[test]
+fn a_recapture_still_publishes_the_crossings() {
+    let mut app = world();
+    let (fed, hungry) = a_pooling_and_shipping_turn(&mut app);
+    let (fed_id, hungry_id) = (band_id(&app, fed), band_id(&app, hungry));
+    let before = [
+        published_crossings(&app, fed_id).len(),
+        published_crossings(&app, hungry_id).len(),
+    ];
+
+    recapture_snapshot_in_place(&mut app.world);
+
+    let after = [
+        published_crossings(&app, fed_id).len(),
+        published_crossings(&app, hungry_id).len(),
+    ];
+    assert_eq!(before, after, "the refreshed frame keeps every row");
+    assert!(
+        before.iter().all(|rows| *rows > 0),
+        "liveness: both bands published rows before the refresh: {before:?}"
+    );
+    assert_crossings_are_the_ledger(&app, fed_id, "the sender, refreshed");
+    assert_crossings_are_the_ledger(&app, hungry_id, "the receiver, refreshed");
+}
+
+/// **The two networked camps publish their link to each other**, on the wire, and a recapture keeps
+/// it. They stand on one tile, so the link is `0` tiles long and holds on no rung.
+#[test]
+fn networked_camps_publish_their_pooling_link() {
+    let mut app = world();
+    let (fed, hungry) = two_networked_bands(&mut app);
+    let (fed_id, hungry_id) = (band_id(&app, fed), band_id(&app, hungry));
+    run_turn(&mut app);
+
+    let links_of = |app: &bevy::prelude::App, band: BandId| -> Vec<(u64, u32, String)> {
+        with_published_row(app, band, |row| {
+            row.poolingLinks()
+                .map(|links| {
+                    links
+                        .iter()
+                        .map(|link| {
+                            (
+                                link.bandId(),
+                                link.distanceTiles(),
+                                link.rungId().unwrap_or_default().to_string(),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    };
+    for (band, other) in [(fed_id, hungry_id), (hungry_id, fed_id)] {
+        let links = links_of(&app, band);
+        assert!(
+            links.contains(&(other.0, 0, String::new())),
+            "each camp publishes its link to the other: {links:?}"
+        );
+    }
+    let before = links_of(&app, fed_id);
+    recapture_snapshot_in_place(&mut app.world);
+    assert_eq!(
+        links_of(&app, fed_id),
+        before,
+        "a command's refresh re-reads the turn's links rather than blanking them"
+    );
+}
+
+/// `turnsOfFood` off the encoded envelope.
+fn published_runway(app: &bevy::prelude::App, band: BandId) -> f32 {
+    with_published_row(app, band, |row| row.turnsOfFood())
+}
+
+/// **The runway counts pooled food, and a command's refresh republishes the same runway** — it reads
+/// the cohort's per-turn crossings, never the accumulator the turn's reset clears, so a recapture
+/// cannot drop the pooled term and move the number.
+#[test]
+fn a_recapture_publishes_the_same_food_runway() {
+    let mut app = world();
+    let (fed, hungry) = two_networked_bands(&mut app);
+    let (fed_id, hungry_id) = (band_id(&app, fed), band_id(&app, hungry));
+    run_turn(&mut app);
+
+    assert!(
+        published_crossings(&app, hungry_id)
+            .iter()
+            .any(|row| row.cause == CAUSE_POOLED && row.commodity == FOOD),
+        "liveness: the turn pooled food, so the runway carries a pooled term"
+    );
+    let before = [
+        published_runway(&app, fed_id),
+        published_runway(&app, hungry_id),
+    ];
+    recapture_snapshot_in_place(&mut app.world);
+    let after = [
+        published_runway(&app, fed_id),
+        published_runway(&app, hungry_id),
+    ];
+    assert_eq!(
+        before, after,
+        "the refreshed frame republishes the turn's runway"
+    );
 }

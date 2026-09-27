@@ -664,10 +664,15 @@ fn the_published_allocation_expands_to_what_the_splinter_holds() {
 
 /// ⛔ **A BENCH TOOL STAYS WITH THE WORKSHOP THAT BUILT IT.**
 ///
-/// `bone_awl`, `loom` and `tanning_frame` are the only three items no kit `uses`, and the picker is
-/// kit-denominated — so they can never appear in a take. That is a design statement rather than a
+/// `billet`, `bone_awl`, `loom` and `tanning_frame` are the only items no kit `uses`, and the picker
+/// is kit-denominated — so they can never appear in a take. That is a design statement rather than a
 /// limitation: shop equipment is not a pair of hands' gear, and the alternative is an item that moves
 /// invisibly and cannot be seen, adjusted or kept.
+///
+/// **The list grows with the roster and the rule does not.** `validate` rejects a kit that names a
+/// bench tool, so *"un-kitted"* and *"bench tool"* are the same set by construction; the assertion
+/// below is what makes a **non**-tool falling out of every kit fail loudly instead of quietly
+/// leaving the loadout.
 ///
 /// **The pair is the test.** A bench tool staying put proves nothing on its own — a split that moved
 /// nothing at all would pass — so the ordinary gear beside it must still cross.
@@ -690,12 +695,13 @@ fn a_bench_tool_does_not_walk_out_with_a_splinter() {
     assert_eq!(
         bench_tools,
         vec![
+            "billet".to_string(),
             "bone_awl".to_string(),
             "loom".to_string(),
             "tanning_frame".to_string()
         ],
-        "the roster's un-kitted items are the three knowledge-gated bench tools; a fourth means the \
-         rule needs restating rather than the list extending"
+        "the roster's un-kitted items are exactly its bench tools; anything else here is an item \
+         that fell out of every kit, which the loadout would silently stop carrying"
     );
 
     // Put a real bench tool in the parent's hands — nothing stocks one at spawn.

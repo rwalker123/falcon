@@ -28,7 +28,8 @@ use crate::{
         LaborTarget, LocalStore, MoraleCause, MoraleContributions, MountainMetadata,
         PendingMigration, PopulationCohort, PowerNode, ResidentBand, ShedCrew, ShedFacts,
         SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile,
-        TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
+        TransferCause, TransferCounterparty, TransferCrossing, TransferDirection, YieldRange,
+        DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
     },
     connections::ConnectionLedger,
     creatures_config::CreaturesConfigHandle,
@@ -167,6 +168,11 @@ pub fn publish_turn_transfers(mut bands: Query<(&mut PopulationCohort, Option<&L
         cohort.last_turn_fodder_transfers = allocation
             .map(|a| a.last_fodder_transfers)
             .unwrap_or_default();
+        // **The cause detail rides the same pass**, so a frame never carries crossings from one
+        // window beside ledger arms from another.
+        cohort.last_turn_transfer_crossings = allocation
+            .map(|a| a.last_transfer_crossings.clone())
+            .unwrap_or_default();
     }
 }
 
@@ -192,6 +198,7 @@ pub fn reset_transfer_ledger(mut allocations: Query<&mut LaborAllocation>) {
         // intent, not telemetry, and must survive.
         allocation.last_food_transfers.clear();
         allocation.last_fodder_transfers.clear();
+        allocation.last_transfer_crossings.clear();
     }
 }
 

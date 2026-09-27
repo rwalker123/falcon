@@ -16,7 +16,8 @@ use crate::band_names::BandNameCatalogHandle;
 use crate::components::{
     available_workers, BandEquipment, BandId, DemographicFlowAccumulator, LaborAllocation,
     LocalStore, MaterialDraw, MoraleCause, MoraleContributions, PopulationCohort, ResidentBand,
-    StartingUnit, Tile, TransferLedger, TransferLink,
+    StartingUnit, Tile, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    TransferLedger,
 };
 use crate::culture::CultureManager;
 use crate::equipment_config::{EquipmentConfig, EquipmentConfigHandle};
@@ -264,6 +265,8 @@ pub fn split_band_from_parent(
         }
     }
     let provisions = child_stores.get(crate::components::FOOD);
+    // The hay share, for the fodder ledger's dowry term — the same crossing on the second account.
+    let dowry_fodder = child_stores.get(crate::components::FODDER);
     child.stores = child_stores;
 
     // ---- What this band's own life starts as ----
@@ -285,6 +288,7 @@ pub fn split_band_from_parent(
     // reporting a transfer it was not party to.
     child.last_turn_food_transfers = TransferLedger::default();
     child.last_turn_fodder_transfers = TransferLedger::default();
+    child.last_turn_transfer_crossings = Vec::new();
     child.last_morale_delta = scalar_zero();
     child.last_morale_cause = MoraleCause::default();
     child.last_morale_contributions = MoraleContributions::default();
@@ -390,28 +394,6 @@ pub fn split_band_from_parent(
         taken_materials.insert(material.clone(), moved);
     }
 
-    // **The food that walked out with them is booked as a transfer, on both ends.** A split is a
-    // command applied *between* two captures, so the parent publishes a frame whose larder fell by
-    // the share it handed over — food that passed through neither `food_income` nor
-    // `food_consumption`. Without this the published identity
-    // (`LaborAllocation::last_food_transfers`) is simply false on the turn a band splits, short
-    // by exactly the provisions.
-    //
-    // **FOOD only**, and the same ledger `balance_supply_networks` and a trade shipment write:
-    // the identity is the food one, and materials deliberately have no identity of their own.
-    //
-    // **The link is [`TransferLink::Local`]**: a splinter is camped where its parent is and nothing
-    // carried the dowry anywhere — the same *standing together* crossing supply-network pooling is,
-    // and not the [`TransferLink::Route`] a party's pack takes.
-    if provisions > scalar_zero() {
-        if let Some(mut allocation) = world.get_mut::<LaborAllocation>(parent) {
-            // Added, never assigned — a band can split, ship and balance inside one snapshot window.
-            allocation
-                .last_food_transfers
-                .debit(TransferLink::Local, provisions.to_f32());
-        }
-    }
-
     // ---- Divide the KIT ----
     //
     // **The kit is inherited WORN** (`docs/plan_band_fission.md` §Q4). `BandEquipment` is a wear
@@ -477,17 +459,69 @@ pub fn split_band_from_parent(
         .cloned()
         .unwrap_or_else(|| StartingUnit::new("band".to_string(), Vec::new()));
 
-    // The receiving half of the dowry, on the same [`TransferLink::Local`] arm the parent's debit
-    // took — the two ends of one crossing, so a reader summing the faction's arms sees them cancel.
-    let mut dowry_received = TransferLedger::default();
-    dowry_received.credit(TransferLink::Local, provisions.to_f32());
-
     let band = world.resource_mut::<BandIdAllocator>().allocate();
+
+    // **The dowry is booked as a transfer, on both ends** — what walked out with the splinter, food,
+    // hay and every material batch. A split is a command applied *between* two captures, so the
+    // parent publishes a frame whose larder fell by the share it handed over — food that passed
+    // through neither `food_income` nor `food_consumption`. Without this the published identity
+    // (`LaborAllocation::last_food_transfers`) is simply false on the turn a band splits, short by
+    // exactly the provisions; and the hay runway would read the parent's fallen store as a drain.
+    //
+    // **The cause is [`TransferCause::DowryOut`] / [`TransferCause::DowryIn`], on the
+    // `TransferLink::Local` arm**: a splinter is camped where its parent is and nothing carried the
+    // dowry anywhere — the same *standing together* crossing supply-network pooling is, and not the
+    // route arm a party's pack takes. **Each end names the other** — the split is between two known
+    // bands, unlike the anonymous pool. Booked here, after the splinter's id exists, so the parent's
+    // row can name it.
+    let parent_band = world.get::<BandId>(parent).copied();
+    let child_faction = child.faction;
+    let dowry_goods = [
+        (crate::components::FOOD, provisions),
+        (crate::components::FODDER, dowry_fodder),
+    ];
+    let moved_draws: Vec<(String, MaterialDraw)> = moved_materials
+        .into_iter()
+        .flat_map(|(material, draws)| draws.into_iter().map(move |draw| (material.clone(), draw)))
+        .collect();
+    let book_dowry = |allocation: &mut LaborAllocation,
+                      direction: TransferDirection,
+                      cause: TransferCause,
+                      other: Option<BandId>| {
+        let counterparty = other.map(|band| TransferCounterparty {
+            band,
+            faction: child_faction,
+        });
+        for (commodity, amount) in dowry_goods {
+            allocation.book_crossing(
+                TransferCrossing::goods(commodity, direction, cause, amount.to_f32())
+                    .with_counterparty(counterparty),
+            );
+        }
+        allocation.book_material_draws(&moved_draws, direction, cause, counterparty, None);
+    };
+    if let Some(mut allocation) = world.get_mut::<LaborAllocation>(parent) {
+        // Added, never assigned — a band can split, ship and balance inside one snapshot window.
+        book_dowry(
+            &mut allocation,
+            TransferDirection::Out,
+            TransferCause::DowryOut,
+            Some(band),
+        );
+    }
+    // The receiving half opens on the splinter's own allocation: its first published frame is the
+    // one that has to account for what it walked out holding.
+    let mut dowry_received = LaborAllocation::default();
+    book_dowry(
+        &mut dowry_received,
+        TransferDirection::In,
+        TransferCause::DowryIn,
+        parent_band,
+    );
     // **A splinter is a NEW band, so it mints a fresh name rather than inheriting the parent's.**
     // It walks out with the parent's food, kit and culture, but its identity is its own from the
     // first turn — the parent is still standing, and two living bands may not answer to one name.
     // Resolved before the spawn because minting borrows the world mutably.
-    let child_faction = child.faction;
     let map_seed = world
         .get_resource::<SimulationConfig>()
         .map(|config| config.map_seed)
@@ -515,10 +549,7 @@ pub fn split_band_from_parent(
             // starts idle and the player staffs it. The **receiving** half of the food ledger's
             // transfer terms opens on it, though: the dowry is food that crossed between larders, and
             // the new band's first published frame is the one that has to account for it.
-            LaborAllocation {
-                last_food_transfers: dowry_received,
-                ..LaborAllocation::default()
-            },
+            dowry_received,
             equipment,
             unit,
         ))

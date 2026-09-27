@@ -2201,7 +2201,10 @@ that `card().size.y` stays inside the room AND the vertical scroll is live.
 > really looks like: not a clipped last row, but a card that SPILLS past the room it was fitted to
 > with the vertical scroll switched off. Measured on the sabotaged build at **463 in a 459 room**.
 
-**A clean run is 457 frames / 2265 `PASS`, exit 0 — RE-MEASURED**, as this file's own rule says. The
+**A clean run is 461 frames / 2308 `PASS`, exit 0 — RE-MEASURED on the tree that merged #731's Trade
+tab with main**: main's 457 / 2265 plus `supply_network.gd`'s two issue-#731 states
+(`supply_food_party_rows`, `supply_food_headline_sums`) and the `trade.gd` crossing fixture, with main's
+own additions landing in the same run. Measure; do not sum. The
 figure recorded when this chapter landed was 353 / 1405; the loaded-world block added eleven claims
 and no frame, the ROW layout added `knowledge_panel_stress`, `knowledge_panel_empty_filter` and their
 claims, its review pass added twelve claims and no frame (453 / 2208 → 453 / 2220), slice C's
@@ -2382,6 +2385,74 @@ the control are independent, so a defect in one must leave the other's claims st
 
 None passed vacuously: each restoration was named by at least one assertion that reads the RENDER and
 one that reads the table.
+
+## One ledger row per thing made, its recipes behind a link (`chapters/crafting_bench.gd`)
+
+Two frames and the recipe block's claims, appended LAST in the chapter (`_recipe_states`) so no
+earlier frame moves in count. The behaviour is `crafting-panel.md`'s — "ONE SHORT ROW PER THING
+MADE"; what belongs here is the shape of the drive.
+
+| frame | what only IT can say |
+|---|---|
+| `crafting_panel` (existing) | the ledger at rest: `Kit` · `Bench tools` · `Materials`, and `2 recipes` under Baskets and Spears only |
+| `crafting_recipes_popup` | the popup under Spears' link, `Bone` / `Flint` with an Owned column of `×6` / `—` |
+| `crafting_make_picker` | the picker under the Spears row: the short bone recipe's radio disabled with its reason, the flint one lit |
+
+**The fixtures are the new wire shape**: one offer per recipe, one `suggested` per row, and two items
+chosen as the two popup cases — Spears (bone makes `plain`, knapping makes `flint`, so each offer states
+its own `owned_at_tier`) and Baskets (reed and withy make ONE tier, so both publish `-1`). The store
+gained wood and stone, because the flint offer is published AVAILABLE and a band holding no stone
+could not make it. The two-tier fixture moved off the invented `bronze` onto the shipped `flint`, and
+both spear recipes can be made there, which is what makes Start's claim about the CHOICE: it presses
+the non-suggested radio, so "sends the chosen one" and "sends the suggested one" answer differently.
+
+**Every claim is a pair and every press is real pointer input** (`_press_control`, which now FAILS a
+claim on a null control instead of raising — a raise aborts the chapter and surfaces only as the
+checkpoint guard's short count). `Esc` is a real `InputEventKey` pushed through the viewport, and the
+outside click lands on the card's own chrome. **The block opens by CLOSING the card**: the rank picker
+the state above it leaves open is VIEW state the card carries until dismissal, and it sat over both
+new frames on the first run.
+
+⛔ **ONE STATE IS A SHAPE THE SHIPPED SIM DOES NOT SEND.** *Make is live when only the non-suggested
+recipe can be made* stages a suggested recipe that cannot be made beside one that can; the sim's own
+pick prefers an available recipe, so that never arrives. It is staged because the client's rule is
+"any offer available" and nothing else can tell that from "the suggested one available" — paired with
+the clubs row, whose only recipe is short and whose Make must stay disabled.
+
+**Sabotage-verified in two runs.** Three disjoint mutations together — the popup's Owned column shown
+unconditionally, Start sending the suggested recipe, Make gated on the suggested offer alone — fail
+**exactly three** claims, one each, naming `["spears_flint"]` for the Start one. Then Make on a
+two-recipe row sending its suggested recipe directly, plus the link drawn on every row: **fifteen** —
+the whole picker chain (with three *the control to press was rendered* guards where the picker's
+controls were never built) and the single-recipe link claim with the two role-line claims it took
+down, while *Make on a single-recipe row sends that recipe* and *…opens no picker* correctly stay green.
+
+### …and no tier word reaches an Owned cell
+
+**No tier word reaches an Owned cell at all** (`crafting-panel.md` → "NO TIER WORD REACHES THE OWNED
+CELL AT ALL"). The fixtures publish a `tier_id` on every batch they own, exactly as the sim does, which
+is what gives the negative something to catch: *no Owned cell carries any tier word*, behind a
+precondition that the band really publishes tier ids, asked of the two-tier band and of the reference
+band. Beside it, *an Owned cell carries nothing beside its grades* is asked of the Spears cell as
+*everything that is not a count or a legend word*, so a line composed client-side fails it. The
+positive half is the popup's per-tier Owned column above (`×6` / `—` on Spears). Sabotage-verified by
+rendering each batch's `tier_id` in the Owned cell: exactly **three** claims fail — the tier-word
+negative on both bands and the nothing-beside-its-grades claim — while the popup's `×6` / `—` column
+stays green. The fixture offers carry no `output_tier_name` / `output_tier_rank`: those fields are
+deprecated and the sim publishes neither.
+
+### …and a material is a thing made
+
+`_assert_one_row_per_material_made`, PNG-less, at the end of `_recipe_states`. It pushes a recipe book
+carrying two stock recipes that both make `hurdles` (labelled `Wood` and `Withy`, since the sim
+requires labels on sibling recipes) and a band publishing an offer for each, one of them `suggested`,
+and asks for exactly **one** `Hurdles` row carrying the `2 recipes` link — **paired** with the
+reference band's single-recipe `Cordage` row, which must stay one row with NO link, or the first claim
+passes on a panel that links every stock row. The recipe book and the band are handed back
+afterwards, so no frame after it moves. Sabotage-verified by keying a stock row by its recipe again:
+exactly **one** claim fails, naming `2 rows, no link`, while the Cordage half stays green.
+**MEASURED ON THIS TREE: `455 / 2256`**, exit 0; `EXPECTED_CHECKPOINTS` **187**, RE-MEASURED by raising
+the const to an impossible number and reading `reached 187` back.
 
 ## The event dock's long detail, and the compose layer (`chapters/event_dock.gd`)
 
@@ -2659,9 +2730,9 @@ elsewhere in the suite**, which is the rung table's own guards catching a kind p
 
 ## `chapters/supply_network.gd` — which link the goods crossed (issue #548)
 
-**Appended LAST in `CHAPTERS`**, after `knowledge_panel`, so no existing frame moves. Four frames and
-sixteen assertions (`EXPECTED_CHECKPOINTS` **20** — frames count too; COUNTED off the source, `16 +
-4`, because the guard only fails on `reached < expected` and a const set above the truth is the one
+**Appended LAST in `CHAPTERS`**, after `knowledge_panel`, so no existing frame moves. Six frames and
+twenty-three assertions (`EXPECTED_CHECKPOINTS` **29** — frames count too; COUNTED off the source,
+`23 + 6`, because the guard only fails on `reached < expected` and a const set above the truth is the one
 error it cannot catch). It
 ends by handing the reference band back, so a chapter appended after it starts where every other one
 does. The behaviour is `band-readouts.md`'s; what belongs here is the shape of the fixtures and of the
@@ -2678,6 +2749,8 @@ what stop the states being four plausible pictures.
 | `supply_quiet` | **the negative case** — a camp where nothing crossed either link carries its ordinary flows and NOT ONE transfer row, on EITHER account. Claimed on the `⇄` glyph rather than the two labels, so a row naming some third link kind cannot slip past |
 | `supply_food_links` | both kinds as their own rows among `Gathered` / `Hunted` / `Consumed`, and the breakdown is rows ONLY — no sentence, no footer, no radius |
 | `supply_food_route_both_ways` | both directions on one link netted into **ONE** `⇄ Trade route +1.00` row, with BOTH gross figures asserted absent — plus, PNG-less, the consequence of netting: a kind whose arrivals and departures cancel exactly renders no row |
+| `supply_food_party_rows` | (issue #731) `⇄ Trade route` is the SHIPMENT alone; a party's haul reads `Brought home` and its launch larder `Party rations`, beside Hunted — and the three sum to the route arm the wire carries |
+| `supply_food_headline_sums` | (issue #731) a camp that pooled food out and nothing else crossed: the rendered popover rows sum to the rendered `/turn` headline, which is the steady net PLUS the pooled net |
 | `supply_fodder_links` | the Fodder popover keeps `Grown` / `Pens` and gains the identical pair at its own one-decimal resolution — held beside `supply_food_links`, which is the consistency proof |
 
 **THE CONSISTENCY CLAIM IS MECHANICAL, not two frames side by side.** `_transfer_phrases` strips both
@@ -3221,5 +3294,7 @@ subtracted.
   `herd_hunt_far_party_small`; every section-equality claim stays green, which is why the claim reads
   every label rather than the section.
 
-**A clean run is 439 frames / 2257 `PASS`, exit 0 — RE-MEASURED windowed on this tree.**
+**A clean run is 443 frames / 2300 `PASS`, exit 0 — RE-MEASURED windowed on the merge of the
+work-party branch with `main`**, not summed from either side; it read 439 / 2257 on the work-party
+branch alone.
 

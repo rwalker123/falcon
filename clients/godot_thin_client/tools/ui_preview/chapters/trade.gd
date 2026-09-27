@@ -365,8 +365,8 @@ func run(harness) -> void:
 
 	# **STATE — THE FOOD LINE WITH A TRANSFER IN IT.** Not a trade readout: the supply network moves
 	# food between neighbouring larders every turn, so any co-networked band carries these two terms.
-	# They are itemized in the BREAKDOWN and deliberately absent from the `/turn` headline, which is
-	# the STEADY rate on the sim's own basis — see `DetailFormat.band_net_food`.
+	# They are itemized in the BREAKDOWN. The `/turn` headline carries the POOLED one and not the
+	# shipment — see `DetailFormat.band_headline_food_rate`.
 	h._hud._bandpanel._close_party_compose()
 	panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	var transferring := _shipper_band()
@@ -382,6 +382,14 @@ func run(harness) -> void:
 	transferring["transfer_sent_turn"] = TRANSFER_ROUTE_OUT
 	transferring[DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY] = TRANSFER_LOCAL_IN
 	transferring[DetailFormat.TRANSFER_ROUTE_SENT_TURN_KEY] = TRANSFER_ROUTE_OUT
+	# …and the CROSSINGS behind those two terms (issue #731): the route row states SHIPMENTS, read off
+	# the per-cause list, so the launch that sent this food is booked as the shipment it is.
+	transferring[HudTradeVocab.CROSSINGS_KEY] = [
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_POOLED, TRANSFER_LOCAL_IN),
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_OUT,
+			HudTradeVocab.CAUSE_SHIPMENT_OUT, TRANSFER_ROUTE_OUT),
+	]
 	h._hud.update_band_alerts([transferring, _neighbour_band()])
 	h._hud.show_unit_selection(transferring)
 	await h._settle()

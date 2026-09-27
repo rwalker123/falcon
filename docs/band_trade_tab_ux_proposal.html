@@ -1,0 +1,2192 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Band Trade Tab</title>
+
+<style>
+  /* ============================================================
+     Tokens. The DOCUMENT shell is theme-aware; the PROTOTYPE keeps
+     the game's own dark console palette in both themes on purpose —
+     the HUD is dark and stays dark. The `--g-*` set is lifted from
+     clients/.../ui/HudStyle.gd.
+     ============================================================ */
+  :root {
+    color-scheme: light dark;
+
+    --ground:      #eef2f1;
+    --panel:       #ffffff;
+    --panel-2:     #e6ecea;
+    --line:        #ccd8d6;
+    --line-soft:   #dee6e4;
+    --ink:         #0d1719;
+    --dim:         #47595a;
+    --faint:       #6d807e;
+    --signal:      #0c766c;
+    --signal-wash: rgba(12, 118, 108, 0.10);
+    --warn:        #9a6708;
+    --healthy:     #2f7a3c;
+    --danger:      #b03c33;
+
+    /* The game palette — fixed across both document themes. */
+    --g-ground:    #0b1114;
+    --g-panel:     #111a1e;
+    --g-panel-2:   #0e161a;
+    --g-line:      #26363c;
+    --g-line-soft: #1b282d;
+    --g-ink:       #e9efe9;
+    --g-dim:       #9db0ad;
+    --g-faint:     #6f8380;
+    --g-signal:    #4fe0cf;
+    --g-signal-deep: #1f9c8e;
+    --g-signal-wash: rgba(79, 224, 207, 0.14);
+    --g-warn:      #f2b13f;
+    --g-danger:    #e8746a;
+    --g-healthy:   #76cd80;
+    --g-pigment:   #c89c66;
+    --g-ghost:     #13211f;
+    --g-primary:   #163a34;
+    --g-primary-t: #d8fff8;
+
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --measure: 72ch;
+    --r: 3px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+    }
+  }
+  :root[data-theme="dark"] {
+      --ground:      #080e10;
+      --panel:       #111a1e;
+      --panel-2:     #0e161a;
+      --line:        #26363c;
+      --line-soft:   #1b282d;
+      --ink:         #e9efe9;
+      --dim:         #9db0ad;
+      --faint:       #6f8380;
+      --signal:      #4fe0cf;
+      --signal-wash: rgba(79, 224, 207, 0.12);
+      --warn:        #f2b13f;
+      --healthy:     #76cd80;
+      --danger:      #e8746a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px 96px; }
+  .prose { max-width: var(--measure); }
+
+  header.top {
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    padding: 34px 0 24px;
+  }
+  header.top .wrap { padding-bottom: 0; }
+  header.top h1 { font-size: 27px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.01em; max-width: 26ch; }
+  header.top .sub { color: var(--dim); margin: 0; max-width: var(--measure); }
+  header.top .kicker {
+    font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--faint); margin: 0 0 12px;
+  }
+
+  section { margin-top: 10px; }
+
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin: 54px 0 10px;
+    padding-top: 18px; border-top: 1px solid var(--line-soft); }
+  .sec-num { font: 600 11px/1 var(--mono); color: var(--faint); letter-spacing: .09em; }
+  .sec-head h2 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+
+  h3 { font-size: 15px; margin: 26px 0 4px; }
+  p { margin: 0 0 12px; max-width: var(--measure); }
+  .lede { color: var(--dim); max-width: var(--measure); }
+
+  code, .mono { font-family: var(--mono); font-size: 0.87em; }
+  code { background: var(--panel-2); padding: 1px 4px; border-radius: 2px; }
+  b, strong { font-weight: 640; }
+
+  .callout {
+    border-left: 2px solid var(--signal); background: var(--signal-wash);
+    padding: 12px 14px; margin: 16px 0; border-radius: 0 var(--r) var(--r) 0;
+    max-width: var(--measure);
+  }
+  .callout.warn { border-left-color: var(--warn); background: rgba(154, 103, 8, 0.08); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .nk {
+    display: block; font: 600 10px/1 var(--mono); letter-spacing: .1em;
+    text-transform: uppercase; color: var(--faint); margin-bottom: 6px;
+  }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 14px 0 6px; }
+  th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font: 600 10px/1.4 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+  td .who { display: block; font: 500 11px/1.4 var(--mono); color: var(--faint); margin-top: 2px; }
+  .table-scroll { overflow-x: auto; }
+
+  /* ---------- the stage ---------- */
+  .stage {
+    margin: 22px 0 8px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--r); overflow: hidden;
+  }
+  .controls {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    padding: 12px 14px; border-bottom: 1px solid var(--line-soft); background: var(--panel-2);
+  }
+  .ctl-label { font: 600 10px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  .seg button {
+    font: 500 12px/1 var(--sans); padding: 7px 11px; border: 0; background: transparent;
+    color: var(--dim); cursor: pointer; border-right: 1px solid var(--line);
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--signal); color: #fff; }
+  .seg button:hover:not([aria-pressed="true"]) { background: var(--panel); color: var(--ink); }
+
+  .screen {
+    background: var(--g-ground); padding: 22px; min-height: 560px;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    background-image:
+      radial-gradient(circle at 26% 30%, rgba(31,156,142,0.10), transparent 46%),
+      radial-gradient(circle at 74% 66%, rgba(200,156,102,0.07), transparent 44%);
+  }
+  /* A horizontal dock is drawn at its REAL pixel width and scaled to fit the page,
+     because the whole point of §06 is how wide the strip has to be. The caption
+     under it states the true width, never the drawn one. */
+  .screen.wide { justify-content: flex-end; min-height: 780px; }
+  .strip-scale { transform-origin: top center; }
+  .strip-cap {
+    margin-top: 12px; text-align: center; font: 500 11px/1.5 var(--mono); color: var(--g-faint);
+  }
+  .strip-cap b { color: var(--g-signal); font-weight: 600; }
+  .strip-cap .bad { color: var(--g-warn); }
+
+  /* ---------- the panel ---------- */
+  .bp {
+    background: var(--g-panel); border: 1px solid var(--g-line); border-radius: 2px;
+    color: var(--g-ink); font-family: var(--sans); font-size: 12px; line-height: 1.42;
+    width: 380px; padding: 10px 12px; box-shadow: 0 10px 34px rgba(0,0,0,.34);
+  }
+  .screen.wide .bp { width: var(--strip-w); }
+
+  .bp-head { border-bottom: 1px solid var(--g-line); padding-bottom: 7px; margin-bottom: 8px; }
+  .bp-subject { display: flex; align-items: center; gap: 7px; }
+  .bp-glyph { color: var(--g-pigment); font-size: 13px; }
+  .bp-name { font-weight: 640; font-size: 13px; letter-spacing: .01em; }
+  .bp-cycler { margin-left: auto; color: var(--g-faint); font: 500 11px/1 var(--mono); }
+  .bp-where { color: var(--g-faint); font-size: 11px; margin-top: 1px; }
+
+  .bp-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--g-line); margin-bottom: 9px; }
+  .bp-tab {
+    font: 600 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--g-faint); padding: 7px 9px 6px; border-bottom: 2px solid transparent;
+    cursor: default; white-space: nowrap;
+  }
+  .bp-tab.on { color: var(--g-signal); border-bottom-color: var(--g-signal); }
+  .bp-tab .badge {
+    display: inline-block; margin-left: 5px; padding: 0 4px; border-radius: 6px;
+    background: var(--g-ghost); color: var(--g-dim); font-size: 9px; letter-spacing: 0;
+  }
+  .bp-tab .badge.hot { background: rgba(242,177,63,.18); color: var(--g-warn); }
+
+  /* zones abreast, bottom dock */
+  .bp-zones { display: flex; gap: 12px; }
+  .bp-zone { width: 354px; flex: 0 0 auto; }
+  .bp-zone.band { width: 380px; }
+  .bp-zone.work { flex: 1 1 auto; width: auto; min-width: 380px; }
+  .bp-zone .sec-gap { height: 10px; border-top: 1px solid var(--g-line-soft); margin: 10px 0 0; }
+
+  /* THE ZONE'S REAL HEIGHT BUDGET, enforced so an overrun is visible rather than
+     merely long. A horizontal dock's body is PANEL_HEIGHT_WIDE (418); a 380px side
+     dock's interior is the window less the panel's own chrome. The panel is
+     no-scroll by design, so whatever falls past this line is content the player
+     cannot reach. */
+  .roomed { position: relative; overflow: hidden; }
+  .roomed::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 46px;
+    background: linear-gradient(transparent, var(--g-panel));
+    pointer-events: none;
+  }
+  /* ---------- THE OVERFLOW PANEL ----------------------------------------------
+     A list too long for the zone does NOT grow the zone — it opens over it, the
+     `WorkInspectorDialog` idiom: an AutoSizingPanel on its own CanvasLayer, NOT a
+     Popup (which auto-hides on an outside click), non-modal with no catcher and no
+     scrim so every pixel it does not draw stays live map, centred in the room the
+     dock leaves, and carrying the one ScrollContainer the zone itself may not have. */
+  .stage-screen { position: relative; }
+  .ovl {
+    position: absolute; z-index: 5; width: 372px; max-width: calc(100% - 48px);
+    background: var(--g-panel); border: 1px solid var(--g-line); border-radius: 2px;
+    box-shadow: 0 16px 48px rgba(0,0,0,.55);
+    display: flex; flex-direction: column; max-height: calc(100% - 48px);
+    color: var(--g-ink); font-family: var(--sans); font-size: 12px; line-height: 1.42;
+  }
+  /* Beside the card on a side dock, above the strip on a horizontal one — the
+     map-facing side in both cases, so it never covers what it came from. */
+  /* **It never overlaps the card it came from, structurally rather than by a clamp** —
+     the panel is 380 wide and centred, so its map-facing edge is at 50% + 190, and the
+     sheet starts one ANCHOR_GAP past that. */
+  .stage-screen:not(.wide) .ovl { top: 24px; left: calc(50% + 202px); }
+  .stage-screen.wide .ovl { top: 24px; left: 50%; transform: translateX(-50%); }
+  .ovl-head {
+    display: flex; align-items: baseline; gap: 8px; padding: 9px 11px 8px;
+    border-bottom: 1px solid var(--g-line);
+  }
+  .ovl-head .t { font-weight: 640; font-size: 12.5px; }
+  .ovl-head .n { color: var(--g-faint); font: 500 10.5px/1 var(--mono); }
+  .ovl-head .x {
+    margin-left: auto; color: var(--g-faint); cursor: pointer; padding: 0 3px;
+    font-size: 13px; line-height: 1;
+  }
+  .ovl-head .x:hover { color: var(--g-ink); }
+  .ovl-sub { padding: 6px 11px 0; color: var(--g-faint); font-size: 10.5px; }
+  .ovl-body { overflow-y: auto; padding: 6px 11px 11px; }
+  .ovl-body .row { padding: 3px 0; }
+
+  .row.opens .lab { color: var(--g-signal); font-size: 11px; }
+  .row.opens.tier { margin-top: 7px; border-top: 1px solid var(--g-line-soft); padding-top: 6px; }
+  .row.opens.tier .lab { font: 600 10px/1.6 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+  .row.opens { cursor: pointer; }
+  .row.opens:hover .lab { text-decoration: underline; }
+
+  .overflow-mark {
+    margin-top: 6px; padding: 5px 7px; border: 1px dashed var(--g-warn); border-radius: 2px;
+    color: var(--g-warn); font: 500 10.5px/1.4 var(--mono); text-align: center;
+  }
+  .bp-zone + .bp-zone { border-left: 1px solid var(--g-line-soft); padding-left: 12px; }
+  .bp-zone.ghosted { opacity: .30; }
+  .zone-title {
+    font: 600 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--g-faint); margin-bottom: 7px;
+  }
+
+  /* ---------- trade zone internals ---------- */
+  .net-head {
+    background: var(--g-panel-2); border: 1px solid var(--g-line-soft); border-radius: 2px;
+    padding: 6px 8px; margin-bottom: 9px;
+  }
+  .net-head .l1 { display: flex; align-items: baseline; gap: 6px; }
+  .net-head .l1 .k { font: 600 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--g-faint); }
+  .net-head .l1 .v { font-size: 11.5px; color: var(--g-dim); }
+  .net-head .span { margin-left: auto; font: 500 11px/1 var(--mono); color: var(--g-signal); }
+
+  .grp { margin-bottom: 9px; }
+  .grp-head {
+    display: flex; align-items: baseline; gap: 6px;
+    font: 600 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--g-faint); border-bottom: 1px solid var(--g-line-soft);
+    padding-bottom: 4px; margin-bottom: 5px;
+  }
+  .grp-head .sub { letter-spacing: 0; text-transform: none; font-family: var(--sans); font-size: 10.5px; }
+  .grp-head .cnt { margin-left: auto; letter-spacing: 0; font-family: var(--sans); font-size: 10.5px; }
+
+  .row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; }
+  .row.click { cursor: pointer; border-radius: 2px; }
+  .row.click:hover { background: var(--g-ghost); }
+  .row.on { background: var(--g-ghost); }
+  .row .lab { color: var(--g-ink); }
+  .row .lab.dim { color: var(--g-dim); }
+  .row .sub { color: var(--g-faint); font-size: 10.5px; }
+  .row .fill { flex: 1 1 auto; min-width: 4px; }
+  .row .amt { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  .row.sub-row { padding-left: 12px; }
+  .row.sub-row .lab { color: var(--g-dim); font-size: 11px; }
+  .row.sub-sub { padding-left: 24px; }
+  .row.sub-sub .lab { color: var(--g-faint); font-size: 10.5px; }
+  .in  { color: var(--g-healthy); }
+  .out { color: var(--g-warn); }
+  .caret { color: var(--g-faint); font-size: 9px; width: 9px; display: inline-block; }
+
+  .chip {
+    display: inline-block; border: 1px solid var(--g-line); border-radius: 2px;
+    padding: 0 4px; font: 500 9.5px/1.55 var(--mono); color: var(--g-dim); background: var(--g-panel-2);
+    white-space: nowrap;
+  }
+  .chips { display: inline-flex; gap: 3px; flex-wrap: wrap; }
+  /* A foreign counterparty. It can appear ONLY on the route arm — `pools_freely`
+     gates the pooling union on faction, so the roster is always your own bands. */
+  /* THE FACTION MARK — the slot a faction's flag fills (#647). Until factions carry a
+     flag it is a flag-shaped glyph in the faction's MAP colour, so a counterparty reads
+     the same here as its banner does on the map. */
+  .fmark { display: inline-flex; vertical-align: -1px; margin-left: 5px; cursor: default; }
+  .fmark svg { display: block; }
+  .row.more .lab { color: var(--g-signal); font-size: 11px; }
+  /* A DIRECTION UNDER THE TRADE ROUTE SECTION — content, not a second section. It was
+     styled as a section head (mono caps over a rule, flush left), so IMPORTS read as a
+     sibling of TRADE ROUTE rather than a part of it. Indented and in sentence case, the
+     party rows step in again beneath it: section › direction › party › goods. */
+  .row.sub-head { margin-top: 5px; padding-left: 10px; }
+  .row.sub-head .lab { font: 600 11.5px/1.5 var(--sans); color: var(--g-ink); }
+  .row.sub-head .amt { color: var(--g-faint); }
+  .row.rt-party { padding-left: 24px; }
+  .row.rt-party .lab { color: var(--g-dim); font-size: 11px; }
+  .row.rt-goods { padding-left: 38px; }
+  .row.rt-goods .lab { color: var(--g-faint); font-size: 10.5px; }
+  .row.opens.rt-more { padding-left: 24px; }
+  .rt-cargo { font-size: 10.5px; color: var(--g-faint); white-space: nowrap; }
+  .rt-cargo .amt { font-size: 11px; }
+  .row.more { padding-left: 0; }
+
+  .quiet { color: var(--g-faint); font-size: 11px; padding: 10px 2px; }
+  .quiet b { color: var(--g-dim); font-weight: 600; }
+
+  .roster { margin-top: 9px; border-top: 1px solid var(--g-line-soft); padding-top: 7px; }
+  .roster .scope { font-size: 10.5px; color: var(--g-faint); margin-bottom: 4px; }
+  .roster .scope em { color: var(--g-signal); font-style: normal; }
+  .roster .me .lab, .ovl .row.me .lab { color: var(--g-signal); }
+
+  /* The network line's camp count is the way into the full list. */
+  .net-head .v.link { color: var(--g-signal); cursor: pointer; }
+  .net-head .v.link:hover { text-decoration: underline; }
+
+  /* A good whose line has something behind it — its ratings, or the several places it
+     came from — says so with a dotted rule, the one cue a hover target needs. */
+  .gname.hov { border-bottom: 1px dotted var(--g-faint); }
+
+  /* A camp's link rung — the glyph in the rung's own weight, then its word. */
+  .lk { display: inline-flex; align-items: center; gap: 5px; margin-right: 8px; cursor: default; }
+  .lk svg { display: block; }
+  .lk-w { font-size: 10.5px; color: var(--g-dim); }
+  .lk-path { color: var(--g-faint); }
+  .lk-trail { color: var(--g-dim); }
+  .lk-dirt_road { color: var(--g-pigment); }
+  .lk-paved_road { color: var(--g-ink); }
+
+  /* ---------- THE HOVER CARD ---------------------------------------------------
+     The summary row states the good once; this states what the row is made of. It
+     never takes a click and never covers the row it describes. */
+  .tip {
+    position: absolute; z-index: 9; display: none; pointer-events: none;
+    min-width: 230px; max-width: 400px; padding: 7px 9px 6px;
+    background: var(--g-panel-2); border: 1px solid var(--g-line); border-radius: 2px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    color: var(--g-ink); font-family: var(--sans); font-size: 11.5px; line-height: 1.45;
+  }
+  .tip .th { display: flex; align-items: baseline; gap: 7px; font-weight: 640; margin-bottom: 4px; }
+  .tip .th .n { color: var(--g-faint); font: 500 10px/1 var(--mono); font-weight: 500; }
+  .tip .tr { display: flex; align-items: baseline; gap: 6px; padding: 1.5px 0; }
+  .tip .chips { flex-wrap: nowrap; }
+  .tip .fill { flex: 1 1 auto; min-width: 8px; }
+  .tip .amt { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  .tip .sub { color: var(--g-faint); font-size: 10.5px; }
+
+  .legdot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--g-faint); margin-right: 5px; vertical-align: middle; }
+
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(258px, 1fr)); gap: 12px; padding: 14px; background: var(--panel-2); border-top: 1px solid var(--line-soft); }
+  .note { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--r); padding: 10px 12px; }
+  .note .nk { display: block; font: 600 10px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); margin-bottom: 5px; }
+  .note p { font-size: 13px; margin: 0; color: var(--dim); }
+  .note p + p { margin-top: 7px; }
+
+  ul.tight { max-width: var(--measure); padding-left: 20px; }
+  ul.tight li { margin-bottom: 7px; }
+
+  .verdict {
+    border: 1px solid var(--line); border-left: 3px solid var(--signal);
+    border-radius: var(--r); padding: 12px 14px; margin: 14px 0; max-width: var(--measure);
+    background: var(--panel);
+  }
+  .verdict .nk { display: block; font: 600 10px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+  .verdict p:last-child { margin-bottom: 0; }
+
+  .ask { counter-reset: ask; }
+  .ask .q { border-top: 1px solid var(--line-soft); padding-top: 14px; margin-top: 18px; max-width: var(--measure); }
+  .ask .q h3 { margin-top: 0; }
+  .ask .q h3::before {
+    counter-increment: ask; content: "Q" counter(ask) " ";
+    font: 600 11px/1 var(--mono); color: var(--signal); margin-right: 6px;
+  }
+  .rec { color: var(--healthy); font-weight: 600; }
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">Issue #731 · arc #527 · UX proposal</p>
+    <h1>Your bone went somewhere and the game never mentioned it.</h1>
+    <p class="sub">
+      A band's larder is rebalanced with its neighbours every turn, parties land cargo in it, and a
+      splinter walks off with a dowry — and the only surface that says so is two rows buried in the
+      Food and Fodder popovers. Materials, which is where the interesting movement is, have no
+      account at any layer. This is a fourth dock tab that states what crossed, and three shapes it
+      could take.
+    </p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section>
+  <div class="sec-head"><span class="sec-num">01</span><h2>What exists today, and exactly where it stops</h2></div>
+
+  <p>
+    #548 shipped two rows — <code>⇄ Local exchange</code> and <code>⇄ Trade route</code> — inside the
+    <b>Food</b> and <b>Fodder</b> disclosures. They name the <em>link</em> the goods crossed, ▲ green
+    for in and ▼ amber for out, and that is the whole of the surface.
+  </p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Layer</th><th>Food</th><th>Fodder</th><th>Materials</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>The sim books it</b><span class="who">TransferLedger</span></td>
+        <td class="fix">Yes — <code>last_food_transfers</code></td>
+        <td class="fix">Yes — <code>last_fodder_transfers</code></td>
+        <td class="fix"><b>No.</b> <code>supply.rs:670</code> gates the ledger write on <code>FOOD</code>/<code>FODDER</code></td>
+      </tr>
+      <tr>
+        <td><b>The wire carries it</b></td>
+        <td class="fix">Yes, ×4 magnitudes</td>
+        <td class="fix">Yes, ×4 magnitudes</td>
+        <td class="fix">No</td>
+      </tr>
+      <tr>
+        <td><b>A screen says it</b></td>
+        <td class="fix">Two rows in a popover</td>
+        <td class="fix">Two rows in a popover</td>
+        <td class="fix">Nothing, anywhere</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <span class="nk">The numbers already exist and are thrown away</span>
+    <p>
+      The material half of <code>balance_supply_networks</code> (<code>supply.rs:604–655</code>) runs
+      one <code>balance_commodity</code> pass per <code>(material, rating)</code> pile and computes
+      each member's signed delta — then applies it to the store and drops it on the floor. The tab
+      does not need a new measurement; it needs the existing one booked.
+    </p>
+  </div>
+
+  <p>
+    And the reason the retired <code>Trade:</code> scalar row was never replaced with another row is
+    still true: <code>BandDetailLines.gd:160</code> — <em>"what a band holds beyond food and fodder
+    is MATERIALS — one pile per material per rating — and that is a LIST, not a vitals row."</em>
+    A tab has the room a row did not.
+  </p>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">02</span><h2>Two levels are honest. A third would be invented.</h2></div>
+
+  <p>
+    <code>balance_commodity</code> is a <b>pooled equalization, not pairwise routing</b>: every node
+    above its per-capita fair share ships into one anonymous pot, friction comes off the top, and
+    every node below draws from what is left in proportion to how short it is. There is no fact of
+    the form <em>"Ashfell's bone went to Barrowmere"</em> to render.
+  </p>
+
+  <div class="callout warn">
+    <span class="nk">⛔ But that is true of the LOCAL arm only — and this changes the design</span>
+    <p>
+      A <b>route</b> crossing is a party, and a party has a name at both ends. A shipment carries
+      <code>ExpeditionMission::Trade { destination_band, destination_name }</code>
+      (<code>server.rs:6630</code>); the band it lands on knows the party's <code>home_band</code>
+      (<code>expeditions.rs:868</code>). So <em>"12.0 food left for Bitterbrook"</em> is a fact the
+      sim already holds, while <em>"0.8 bone came from Barrowmere"</em> never will be.
+    </p>
+    <p>
+      The issue states the no-attribution constraint flat across both arms. It is exact for
+      <code>Local</code> and too strong for <code>Route</code>, and <b>Option C below is the layout
+      that spends the difference</b> instead of levelling down to the weaker arm.
+    </p>
+  </div>
+
+  <p>So the tab reads at:</p>
+  <ul class="tight">
+    <li><b>This band's own net, per commodity, per link kind</b> — exact, per-node, already booked for food and fodder.</li>
+    <li><b>The network roster, each member with its own net</b> — also exact; every member's delta is computed in the same loop.</li>
+    <li><b>A route crossing's counterparty, by name</b> — exact, because a party went there.</li>
+    <li><s>A quantity on a local edge</s> — invented. If one is ever wanted it is a balancer change, not a readout.</li>
+  </ul>
+
+  <div class="callout">
+    <span class="nk">Bands have names now</span>
+    <p>
+      <code>DetailFormat.gd:174</code> says naming the counterparty was built and rejected because
+      <em>"bands genuinely have no names in this game (issue #615)"</em>. <b>#615 is closed</b> —
+      <code>core_sim/src/data/band_names.json</code> ships the curated list and every band carries a
+      real name. The second half of that objection still stands for a <em>row</em> (a variable-length
+      name wraps in a 354px vitals line); it does not stand for a tab. That comment needs correcting
+      whichever option wins.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">03</span><h2>The prototype</h2></div>
+  <p class="lede">
+    Three shapes for the same facts, live. Switch the <b>Layout</b> to compare them; switch the
+    <b>Turn</b> to see a busy turn, a quiet one, and the empty state that is most turns. The
+    <b>Dock</b> toggle shows what a fourth zone does to the wide shell — see §06.
+  </p>
+
+  <div class="stage">
+    <div class="controls">
+      <span class="ctl-label">Layout</span>
+      <div class="seg" role="group" aria-label="Layout">
+        <button type="button" data-layout="a" aria-pressed="false">A · By commodity</button>
+        <button type="button" data-layout="b" aria-pressed="false">B · In &amp; Out</button>
+        <button type="button" data-layout="c" aria-pressed="true">C · By link</button>
+      </div>
+      <span class="ctl-label">Turn</span>
+      <div class="seg" role="group" aria-label="Turn">
+        <button type="button" data-turn="busy" aria-pressed="true">Busy</button>
+        <button type="button" data-turn="quiet" aria-pressed="false">Quiet</button>
+        <button type="button" data-turn="empty" aria-pressed="false">Nothing crossed</button>
+      </div>
+      <span class="ctl-label">Network</span>
+      <div class="seg" role="group" aria-label="Network size">
+        <button type="button" data-net="small" aria-pressed="true">3 camps</button>
+        <button type="button" data-net="large" aria-pressed="false">15 camps</button>
+      </div>
+      <span class="ctl-label">Shipments</span>
+      <div class="seg" role="group" aria-label="Route traffic">
+        <button type="button" data-routes="few" aria-pressed="true">2</button>
+        <button type="button" data-routes="many" aria-pressed="false">15</button>
+      </div>
+      <span class="ctl-label">Dock</span>
+      <div class="seg" role="group" aria-label="Dock">
+        <button type="button" data-dock="side" aria-pressed="true">Side · tabbed</button>
+        <button type="button" data-dock="bottom4" aria-pressed="false">Bottom · 4 flanks (i)</button>
+        <button type="button" data-dock="bottom3" aria-pressed="false">Bottom · under Parties (iii)</button>
+      </div>
+    </div>
+
+    <div class="screen stage-screen" id="screen">
+      <div class="strip-scale" id="scaler"><div class="bp" id="panel"></div></div>
+      <div class="strip-cap" id="cap"></div>
+      <div class="overflow-mark" id="overflow" style="display:none"></div>
+      <div id="ovl"></div>
+      <div class="tip" id="tip"></div>
+    </div>
+
+    <div class="notes">
+      <div class="note">
+        <span class="nk">Try it — hover, then click</span>
+        <p>One line per good. <b>Hover</b> a good with a dotted rule for what it is made of — bone's
+          six ratings, each with its own amount. <b>Click</b> it for each camp's share of it.
+          <b>Click</b> <em>15 camps ›</em> on the network line for the whole network and how far off
+          each camp sits — the answer to <em>why is that camp not pooling with me</em>.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Try it — Nothing crossed</span>
+        <p>Most turns are that one. All three layouts have to answer it without reading as broken,
+          and without the player concluding the network is gone. The empty state states the network
+          and the span, then says plainly that nothing moved.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Summed within a material, never across two</span>
+        <p><em>bone ▲ 0.8</em> is bone's net across its own ratings, which is the kind of sum the
+          Crafting panel's <em>Owned</em> column already makes for a band's batches. <em>hide</em>
+          and <em>bone</em> stay two lines: a hide-plus-bone scalar is the retired trade axis (#527).
+          Which ratings went which way is the hover card.</p>
+      </div>
+      <div class="note">
+        <span class="nk">The flag's slot (#647)</span>
+        <p>Every counterparty carries a <b>faction mark</b> — yours and theirs alike, so <em>is this
+          us?</em> has an answer on every row. Factions have no flag yet, so the mark is a flag-shaped
+          glyph in the faction's <b>map colour</b> (<code>MapView.SEEDED_FACTION_COLORS</code>), the tint
+          the map already paints its band banners in. When #647 lands, the flag replaces the glyph and
+          nothing else about the row. Hover a mark to see it say so.</p>
+      </div>
+      <div class="note">
+        <span class="nk">Try it — 15 camps</span>
+        <p><b>Network</b> swaps in a fifteen-camp pool; <b>Shipments</b> puts 15 on the turn.
+          The goods list does not grow — it is bounded by the materials catalog. Click
+          <em>"5 more shipments"</em> or <em>15 camps ›</em>: each opens a panel beside the card rather
+          than growing the zone. Then flip <b>Dock</b> to a horizontal one and watch the tab drop to
+          its SHORT tier. §04 has the reasoning.</p>
+      </div>
+      <div class="note">
+        <span class="nk">The roster does not balance to zero</span>
+        <p>Click <b>food</b>: two camps shipped 6.7 and this band drew 6.4. The missing 0.3 is
+          <code>friction</code>, taken off the top of the pot by <code>balance_commodity</code> — the
+          cost of the distance, and the one figure on the tab nobody received. A party's cargo has no
+          such list, which is why route rows do not click: a party carried it, from a band that need
+          not be pooling with us.</p>
+      </div>
+      <div class="note">
+        <span class="nk">The span is a floor, not the rule</span>
+        <p>The header says <em>within 4 tiles</em>, not <em>within 3</em>: since slice 13b the link
+          forms at <code>max(reach_tiles, the route's own reading)</code>, so a road extends pooling
+          past the config lever. Copy that hard-codes 3 is already wrong.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>What each layout puts first</h3>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Layout</th><th>Organizing axis</th><th>Good at</th><th>Costs</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>A · By commodity</b><span class="who">the ledger</span></td>
+        <td class="fix">Commodity → link → cause</td>
+        <td class="fix">Answers <em>"where did my bone go"</em> directly. Extends the two #548 rows without
+          inventing a new idiom — the same words in the same order, one level out.</td>
+        <td class="fix">Deepest nesting of the three (three levels), and the material list dominates the
+          zone on any turn where more than two piles move.</td>
+      </tr>
+      <tr>
+        <td><b>B · In &amp; Out</b><span class="who">the manifest</span></td>
+        <td class="fix">Direction → everything else on one line</td>
+        <td class="fix">Flattest, scans fastest, and the two halves are the question the tab is named
+          for. Works identically at any list length.</td>
+        <td class="fix">Splits one commodity across two places — food in and food out never appear
+          together, so <em>net</em> is arithmetic the player does.</td>
+      </tr>
+      <tr>
+        <td><b>C · By link</b><span class="who">the mechanism</span> <span class="rec">recommended</span></td>
+        <td class="fix">Link kind → what crossed on it</td>
+        <td class="fix">The one axis the player can <em>act</em> on (#548's own finding), and the only
+          layout where the two arms are allowed to say different things: Local states a roster and no
+          peers, Route names every counterparty and its turn.</td>
+        <td class="fix">A material moving on both arms appears twice. The two sections are unequal in
+          size on most turns — Local is usually the whole of it.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="verdict">
+    <span class="nk">My recommendation</span>
+    <p>
+      <b>C.</b> The asymmetry in §02 is the deciding fact: a route crossing knows its counterparty and
+      a local crossing structurally cannot, and C is the only layout whose shape survives that being
+      true. In A and B the two arms sit in the same list and have to be rendered to the weaker one's
+      standard — every row either omits the peer, or shows it on some rows and not others with no
+      structure explaining why.
+    </p>
+    <p>
+      C also inherits #548's reasoning rather than re-deciding it: <em>one of these two links the
+      player built, the other happens whether they look or not</em>. That is the sentence the top-level
+      split should make.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">04</span><h2>At fifteen camps</h2></div>
+
+  <p class="lede">
+    Switch the prototype to <b>15 camps</b> and <b>15 shipments</b>. Two of the three things on the
+    tab do not grow with the network at all — but they have their own axes, the tab has a fixed
+    height budget, and the line under the stage measures what is rendered against it on every
+    setting.
+  </p>
+
+  <div class="callout warn">
+    <span class="nk">⛔ First, the premise: fifteen camps cannot be a mixed-faction network</span>
+    <p>
+      <code>supply::pools_freely</code> gates the union of the component on
+      <code>a.faction == b.faction</code>, and it gates the <b>union</b> rather than the balancing of
+      an already-built component — deliberately, so bands A and C of one people cannot pool
+      <em>through</em> a foreign band B camped between them. So a pooling network of fifteen is
+      fifteen of <b>your own</b> bands, and the roster can never contain a stranger.
+    </p>
+    <p>
+      A foreign band reaches this tab by exactly one door: <code>resolve_shipment</code> gates a
+      shipment on the connection tie and <em>never asks faction</em> —
+      <em>"a destination in another faction works by construction rather than by a clause someone
+      has to remember to add."</em> <b>So the Route arm is where other peoples appear, and the
+      Local arm structurally cannot show one.</b> In the prototype's large network the shipments run
+      to and from <span class="mono">Duskwater</span>, whose faction mark is Obsidian's orange.
+    </p>
+  </div>
+
+  <h3>What actually grows</h3>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Part of the tab</th><th>Grows with</th><th>At 15 camps</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Route section</b></td>
+        <td class="fix">Parties landing or leaving this turn — <b>not</b> the pool's size</td>
+        <td class="fix">Independent of the network, but <b>not bounded</b>. The <b>Shipments</b> control
+          puts 15 on the turn, from 12 counterparties, several of them shipping both ways. At that
+          size a flat list of every shipment is the problem.</td>
+      </tr>
+      <tr>
+        <td><b>Roster</b></td>
+        <td class="fix">Members — linearly</td>
+        <td class="fix"><b>Nothing, in the zone.</b> The camps are behind <em>15 camps ›</em> on
+          the network line; the zone states the count and the list opens over the map.</td>
+      </tr>
+      <tr>
+        <td><b>Local section</b></td>
+        <td class="fix"><b>Distinct goods that moved</b> — at most the materials catalog plus food
+          and fodder, however many camps pool</td>
+        <td class="fix"><b>8 lines.</b> Per <code>(material, rating)</code> pile it was 17 and
+          unbounded — bone alone makes 8 off the shipped fauna roster. One line per good, the ratings
+          on hover, is what bounds it.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="verdict">
+    <span class="nk">The answer to "how does C scale" — measured in the prototype, not argued</span>
+    <p>
+      <b>C's top-level split survives.</b> Set <b>15 camps</b> + <b>15 shipments</b> and the tab
+      renders <b>475px</b> of content: the local arm as one line per good (8), the route arm split
+      into <em>Imports</em> and <em>Exports</em> with each folded to three shipments, and the camps behind
+      the network line.
+    </p>
+    <p>
+      <b>Nothing expands in place.</b> A fold row opens a <b>panel over the zone</b> — the
+      <code>WorkInspectorDialog</code> idiom: an <code>AutoSizingPanel</code> on its own layer,
+      non-modal, no catcher and no scrim, cut back to the map-facing side of the card so it never
+      covers what it came from, and carrying the one <code>ScrollContainer</code> the zone itself may
+      not have. The zone's height therefore does not depend on what the player opened, which is the
+      whole reason the tab can have a fixed budget at all.
+    </p>
+    <p>
+      <b>At 15 camps and 15 shipments the tab is 475px, and that fits a side dock.</b> A 380px side
+      dock's zone has about 1030px to give. A horizontal dock's body is
+      <code>PANEL_HEIGHT_WIDE</code> — <b>418px</b>, whatever the window height, because the cross
+      axis is the reserved one — so the same content would run <b>57px past the end</b>. That is
+      close enough that a tighter cap might close it, which is now a real choice — see §08.
+    </p>
+  </div>
+
+  <h3>The devices the prototype uses, all of them already idioms in this client</h3>
+
+  <ul class="tight">
+    <li><b>One line per good; what it is made of on hover.</b> <em>bone ▲ 0.8 · 6 ratings</em> is
+      the row — the good's net this turn; the six ratings, each with its own amount and direction,
+      are the hover card, beside the row and never under the pointer. The row states what a player
+      scans for; the card states what they check.</li>
+    <li><b>The route half splits into Imports and Exports before it folds.</b> <em>What came in</em>
+      and <em>what went out</em> are two different questions and a player asks one at a time, so 15
+      shipments become two ranked lists of three plus two fold rows. Each shipment is <b>one line</b> —
+      the counterparty and its faction mark, then its cargo on the right where every amount on the
+      tab sits — with no date: every row on the tab crossed this turn. Its goods' ratings are its
+      hover.</li>
+    <li><b>The camps are a click, not a block.</b> The network line already says <em>15 camps</em>;
+      that count opens the list, and clicking a good opens the same list scoped to it — each camp's
+      in and out, the ones that moved first, the ones that sat even last, and the friction.</li>
+    <li><b>A height-starved dock re-authors the zone rather than trimming it.</b> Under ~600px the
+      tab drops to a SHORT tier: the network line, then one row per arm stating what happened —
+      <em>8 goods · 15 shipments (7 imports · 8 exports)</em> — each opening the full list over the map.
+      <b>115px</b>, and it fits 418 with room to spare. This is the band zone's own idiom:
+      when the height is not there the blocks are re-authored, never generically reflowed.</li>
+  </ul>
+
+  <div class="callout">
+    <span class="nk">Why the camps list leads with a count</span>
+    <p>
+      With 3 camps, <em>who gave me this</em> is nearly determinate. With 15 it is a
+      <b>distribution</b>: the pot is anonymous, and every contributor's share was decided by its own
+      surplus. So the scoped list opens with what stays useful at that size —
+      <em>"10 camps moved it; 4 sat within a tenth of their fair share"</em> — then the camps by how
+      much they moved, then the friction. Every camp's figure is still there; the order is what
+      makes fifteen of them readable.
+    </p>
+  </div>
+
+  <div class="callout warn">
+    <span class="nk">The one thing 15 camps genuinely breaks</span>
+    <p>
+      <b>The panel is no-scroll by design</b> — two <code>ScrollContainer</code>s are sanctioned (the
+      band zone and the parties zone) and the harness asserts that no other zone has grown one.
+      <b>The Trade zone does not need a third.</b> Its lists are capped, nothing expands in place,
+      and the overflow panel brings its own scroll on its own layer, where a real viewport ceiling
+      makes one legitimate — exactly the exemption <code>BandComposeFloat</code> already holds.
+      <br><br>
+      What the horizontal dock needs instead is the <b>SHORT tier</b>: 475px does not fit 418, so the
+      zone becomes two rows and a way in. That is a second authored tier to
+      build and keep working, which is the real cost of this answer.
+      <br><br>
+      The 418 and 1030 are the shipped <code>PANEL_HEIGHT_WIDE</code> and a side dock at a 1200px
+      window — close enough to decide the shape, but the figure to build against is the live
+      <code>zone_size()</code>, measured, not an HTML mock's <code>scrollHeight</code>.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">05</span><h2>The producer split has seven causes, not three</h2></div>
+
+  <p>
+    The issue scopes a producer split — <em>local pooling, an arriving shipment, an expedition's
+    launch draw</em> — because one counter covers several different events. Grepping every writer of
+    the ledger turns up <b>seven</b>, and they do not collapse to three:
+  </p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Cause</th><th>Link</th><th>Direction</th><th>Counterparty</th><th>Writer</th></tr></thead>
+    <tbody>
+      <tr><td><b>Pooled with neighbours</b></td><td>Local</td><td>both</td><td class="fix">None — anonymous pot</td><td><code>supply.rs:687</code></td></tr>
+      <tr><td><b>Dowry to a splinter</b></td><td>Local</td><td>out</td><td class="fix">The new band, by name — <b>not trade</b>; see below</td><td><code>fission.rs:411</code></td></tr>
+      <tr><td><b>Dowry from a parent</b></td><td>Local</td><td>in</td><td class="fix">The parent, by name — <b>not trade</b></td><td><code>fission.rs:483</code></td></tr>
+      <tr><td><b>Shipment loaded</b></td><td>Route</td><td>out</td><td class="fix">Destination, by name</td><td><code>server.rs:6619</code></td></tr>
+      <tr><td><b>Shipment landed</b></td><td>Route</td><td>in</td><td class="fix">Sender, by name</td><td><code>expeditions.rs:895</code></td></tr>
+      <tr><td><b>Party dropped off / came home</b></td><td>Route</td><td>in</td><td class="fix">Own party — <b>not trade</b>; see below</td><td><code>expeditions.rs:1449, 989</code></td></tr>
+      <tr><td><b>Party's launch larder</b></td><td>Route</td><td>out</td><td class="fix">Own party's rations — <b>not trade</b></td><td><code>server.rs:5183</code>; the provisions half of <code>server.rs:6619</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout warn">
+    <span class="nk">A band's own party coming home is not trade — and the Band panel says it is</span>
+    <p>
+      The drop-off and the fold-back book on the <code>Route</code> arm because a party carried the
+      goods, which keeps the ledger consistent. But to a player they are the band's <b>own hunting and
+      foraging</b>, not a trade route, so <b>the Trade tab never shows them</b>: it states crossings
+      with somebody else.
+    </p>
+    <p>
+      <b>The Band panel has the same problem today.</b> Its Food popover renders the whole Route arm
+      as <code>⇄ Trade route</code> (<code>DisclosureController.gd:245</code>), so a hunt's haul
+      coming home is labelled as trade — and it is not in the hunting income either, since the sim
+      books it as <em>"neither income nor consumption"</em>. The cause split is what fixes both:
+      with a cause key on each crossing, the homecoming moves out of <code>⇄ Trade route</code> and
+      into the Food popover beside the hunts and forages it came from.
+    </p>
+  </div>
+
+  <div class="callout">
+    <span class="nk">Nor is a split's dowry</span>
+    <p>
+      When a band splits, the parent hands the splinter a share of its stores. It books on the
+      <code>Local</code> arm because the splinter starts in its parent's camp — but it is a one-off the
+      player chose by splitting, not an exchange, so the Trade tab leaves it out too. Its place is the
+      split's own announcement and the new band's panel.
+    </p>
+  </div>
+
+  <div class="callout warn">
+    <span class="nk">A defect the split will expose</span>
+    <p>
+      <code>server.rs:6618</code> debits the launch as <code>cargo + provisions</code> — the shipment's
+      goods <em>and the party's own walking rations</em>, in one number. Under a cause split those are
+      two different events: the cargo is a transfer to another band, the rations are a larder the party
+      carries and folds back home if unspent. A row reading <em>"Shipment to Bitterbrook — 12.0"</em>
+      would be overstating the shipment by whatever the party is eating on the way.
+    </p>
+    <p>
+      I will split that term when I implement it, unless you want it left alone. It is a one-line change
+      at the debit and a second cause key on the wire; nothing downstream reads the combined figure
+      except the row that is being replaced.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">06</span><h2>A fourth zone is not free on a bottom dock</h2></div>
+
+  <p>
+    <code>BandCityPanel</code> picks its shell off the panel's own width against
+    <code>wide_shell_min_width()</code>, which is <b>derived from the live zone list</b>: each zone's
+    flank, plus one separator span per gap, plus the card chrome. A band declares three today:
+  </p>
+
+  <table>
+    <tbody>
+      <tr><td><b>Today — 3 zones</b></td><td class="mono">380 + 380 + 354 + 2×25 + 26 = <b>1190</b></td></tr>
+      <tr><td><b>With a Trade zone</b></td><td class="mono">380 + 380 + 354 + 354 + 3×25 + 26 = <b>1569</b></td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    So <b>a bottom dock between 1190 and 1569px would stop showing its zones abreast and start
+    tabbing</b> — a regression at 1366, 1440 and 1536, which is most laptops. The Trade zone is the
+    one zone whose content is empty on most turns, so it would be buying that with the least.
+  </p>
+
+  <div class="callout">
+    <span class="nk">Three ways out, and what each costs</span>
+    <p>
+      <b>(i) Declare it anyway</b> — simplest, honest, and the wide shell degrades for a band of
+      window widths. <b>(ii) Declare it only when something crossed</b> — the threshold moves per
+      turn, which means the shell can flip mid-game on a turn tick; that is the map-flicker failure
+      the fixed cross-axis size exists to prevent, so I would not. <b>(iii) Declare it on the narrow
+      shell only</b>, and on a wide shell append the Trade content as a section under Parties — one
+      extra section in an existing scrolling zone, no new flank, threshold unchanged at 1190.
+    </p>
+  </div>
+
+  <p>
+    <b>I would take (iii)</b>, and it is a small change to <code>BandPanelController</code>'s two
+    layout branches, which already differ. But it is a genuine trade — under (iii) the Trade content
+    is one scroll down on a bottom dock rather than its own column — so it is yours to call.
+    <b>The prototype's Dock toggle draws both</b>, each at the real strip width its zone list
+    demands, so the difference is something to look at rather than to take on arithmetic.
+  </p>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">07</span><h2>What the sim has to publish</h2></div>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Fact</th><th>Where it is now</th><th>What is needed</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Material transfers</b></td>
+        <td class="fix">Computed in <code>supply.rs:604–655</code>, discarded</td>
+        <td class="fix">A <code>TransferLedger</code> per <code>(material, BandKey)</code> beside the food
+          and fodder ones, <b>published per rating</b>. The client sums one material's ratings for its
+          summary row and keeps them for the hover; the wire never sums anything</td>
+      </tr>
+      <tr>
+        <td><b>The cause</b></td>
+        <td class="fix">Six writers, one <code>TransferLink</code> each</td>
+        <td class="fix">A cause key per crossing (§05), and the <code>cargo + provisions</code> debit split.
+          The client reads the key twice: the Trade tab drops <em>party home</em> and the dowry, and the Band
+          panel's Food popover moves it from <code>⇄ Trade route</code> to the hunt and forage rows</td>
+      </tr>
+      <tr>
+        <td><b>The counterparty</b></td>
+        <td class="fix">Held at every Route writer, published by none</td>
+        <td class="fix">Band id + name on a Route crossing. <b>Nothing on a Local one</b> — that is the
+          invariant, not an omission</td>
+      </tr>
+      <tr>
+        <td><b>The effective span</b></td>
+        <td class="fix">Server-side only; the client has never seen <code>reach_tiles</code></td>
+        <td class="fix">The span the links actually formed at — <code>max(reach_tiles, route reading)</code>,
+          not the config lever</td>
+      </tr>
+      <tr>
+        <td><b>The network roster</b></td>
+        <td class="fix">Members resolved per turn in the same loop</td>
+        <td class="fix">Member band ids + each one's signed delta, per commodity</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="ask">
+  <div class="sec-head"><span class="sec-num">08</span><h2>Decisions</h2></div>
+
+  <p class="lede">Settled through review of the prototype, 2026-09-20 → 25. The prototype is the
+    spec for the tab's shape; this list is what it cannot show on its own.</p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Question</th><th>Settled as</th></tr></thead>
+    <tbody>
+      <tr><td><b>Layout</b></td><td class="fix"><b>C — by link.</b> Local exchange, then Trade route.</td></tr>
+      <tr><td><b>Route crossings name the other band</b></td><td class="fix"><b>Yes</b>, with a faction mark;
+        a Local crossing never names one (§02).</td></tr>
+      <tr><td><b>A good's row</b></td><td class="fix"><b>One line per good, stating its NET</b> this turn
+        (<em>bone ▲ 0.8 · 6 ratings</em>). The ratings — each pile with its own amount and direction —
+        are the hover card. Summed within a material, never across two. <b>Only what moved is
+        shown:</b> a good whose net reads even has no row, and an arm with nothing in it has no
+        heading. <i>Revised after playtest, 2026-09-26.</i></td></tr>
+      <tr><td><b>The camps</b></td><td class="fix"><b>Behind the network line.</b> <em>15 camps ›</em> opens
+        them with each link's rung (path / trail / dirt road / paved road — an icon, hovering to what it
+        buys) and distance; clicking a good opens the same list as each camp's net of it.</td></tr>
+      <tr><td><b>Long lists</b></td><td class="fix"><b>Never grow the zone.</b> A fold row opens a popover
+        anchored to the row that opened it — the Band tab's disclosure idiom — with its own scroll,
+        opening upward where there is no room below. <i>Revised after playtest, 2026-09-25: a panel
+        in the middle of the map was too far from the row that opened it.</i></td></tr>
+      <tr><td><b>Route wording</b></td><td class="fix"><b>Imports / Exports</b> as the two directions, counted in
+        <b>shipments</b> (<em>4 more shipments</em>). No date on a shipment: every row crossed this turn.</td></tr>
+      <tr><td><b>Not trade — never on this tab</b></td><td class="fix">A party coming home, a party's launch larder,
+        and a split's dowry. The first two belong with the band's own hunting and foraging on the Band
+        panel; the dowry with the split's announcement.</td></tr>
+      <tr><td><b>Faction mark</b></td><td class="fix">On every counterparty, ours and theirs. Fallback until #647's
+        flags: a flag glyph in the faction's map colour. #647 records the slot.</td></tr>
+      <tr><td><b>Captions</b></td><td class="fix"><b>None.</b> Both section glosses and the network box's
+        <em>"… sits at 3 of 6"</em> line are gone.</td></tr>
+      <tr><td><b>A horizontal dock</b></td><td class="fix"><b>The SHORT tier</b> — the network line and one row
+        per arm, each opening its list. The full tab is 475px against 418 at its busiest, and the panel must
+        not grow taller.</td></tr>
+      <tr><td><b>Where it lives on a wide shell</b></td><td class="fix"><b>(iii)</b> — under Parties, no fourth
+        flank, the 1190 threshold unchanged (§06). The recommendation, adopted with the SHORT tier.</td></tr>
+      <tr><td><b>The <code>cargo + provisions</code> debit</b></td><td class="fix"><b>Split</b> — the rations are
+        the party's own launch larder, the same not-trade class as a party coming home.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------------------
+  // Names are from core_sim/src/data/band_names.json; rating chips are
+  // `axis: band` per CraftingPanel's CHARACTERISTIC_CHIP_FORMAT, over the shipped
+  // characteristic_bands (poor / fair / good / excellent).
+  //
+  // ⛔ THE POOL IS SINGLE-FACTION BY CONSTRUCTION. `supply::pools_freely` gates the
+  // UNION on `a.faction == b.faction`, so every member of the roster is one of YOUR
+  // bands however large the network grows. A foreign band can only ever appear as a
+  // ROUTE counterparty — `resolve_shipment` gates on the connection tie and never
+  // asks faction ("THE TIE IS THE GATE, AND FACTION IS NEVER ASKED").
+  // ---------------------------------------------------------------------------
+  var BAND = { name: "Ashfell", stage: "Camp", pos: "(71, 18)" };
+
+  var NAMES = ["Ashfell", "Barrowmere", "Bitterbrook", "Alderfen", "Amberhollow",
+               "Applewater", "Bearhollow", "Beechhollow", "Birchmoor", "Blackfen",
+               "Blackthorn", "Bleakhearth", "Bogreach", "Aldergrove", "Briarholt"];
+
+  function member(name, dist, opts) {
+    var m = { name: name, you: name === BAND.name, dist: dist };
+    if (opts) { Object.keys(opts).forEach(function (k) { m[k] = opts[k]; }); }
+    return m;
+  }
+
+  // Two worlds: the three-camp network the tab was designed against, and a
+  // fifteen-camp one. Only the SECOND answers "does the shape survive".
+  // `supply_network_config.json`'s `reach_tiles` — the span a bare path pools across.
+  var WORLD_REACH = 3;
+
+  // **THE ROUTE BRANCH'S FOUR RUNGS**, mirrored from `intensification_ladder.json`
+  // (`route_payoff.holds_link_to_tiles` / `friction_multiplier`). The shipped client
+  // must read them off the wire rather than carry a copy — a fifth rung then gets a
+  // row and an icon with no client change but the icon itself.
+  var LINK_RUNGS = {
+    path:       { label: "path",       holds: 0,  friction: 1.0,
+                  how: "worn in by traffic, free to hold" },
+    trail:      { label: "trail",      holds: 6,  friction: 0.85,
+                  how: "worn in by traffic, free to hold" },
+    dirt_road:  { label: "dirt road",  holds: 10, friction: 0.6,
+                  how: "built, and kept with work every turn" },
+    paved_road: { label: "paved road", holds: 16, friction: 0.35,
+                  how: "built with stone, kept with stone" }
+  };
+
+  // **THE FACTIONS, AND THEIR MAP COLOURS** — `MapView.SEEDED_FACTION_COLORS`, the tint
+  // the map already paints every band's banner in. That colour is the faction mark's
+  // FALLBACK; the flag #647 adds replaces it and nothing else changes.
+  var FACTIONS = [
+    { name: "Aurora",   color: "#8cd9ff", you: true },   // 0 — the player's own
+    { name: "Obsidian", color: "#f29e33" },               // 1
+    { name: "Verdant",  color: "#66e68c" }                // 2
+  ];
+  // Which people each foreign counterparty in the mock belongs to.
+  var PEER_FACTION = { Duskwater: 1, Hollowmere: 1, Coldharrow: 1, Stonebeck: 2, Mossgate: 2 };
+
+  var WORLD = {
+    small: {
+      span: 4, reach: 3,
+      members: [
+        member("Ashfell", 0),
+        member("Barrowmere", 2, { link: "path" }),
+        member("Bitterbrook", 4, { link: "trail" })
+      ],
+      turns: {
+        busy: [
+          { good: "food",   dir: "in",  link: "local", cause: "pooled",       amt: 6.4 },
+          { good: "food",   dir: "out", link: "route", cause: "shipment_out", amt: 12.0, peer: "Bitterbrook", when: "left turn 139" },
+          { good: "food",   dir: "in",  link: "route", cause: "party_home",   amt: 3.1 },
+          { good: "fodder", dir: "out", link: "local", cause: "pooled",       amt: 2.0 },
+          { good: "bone",   dir: "in",  link: "local", cause: "pooled",       amt: 0.8,
+            chips: [["density","good"],["length","fair"]] },
+          { good: "bone",   dir: "out", link: "local", cause: "pooled",       amt: 0.4,
+            chips: [["density","fair"],["length","fair"]] },
+          { good: "hide",   dir: "in",  link: "route", cause: "shipment_in",  amt: 1.5, peer: "Barrowmere", when: "landed this turn",
+            chips: [["toughness","excellent"],["suppleness","good"]] },
+          { good: "wood",   dir: "out", link: "route", cause: "shipment_out", amt: 1.1, peer: "Bitterbrook", when: "left turn 139",
+            chips: [["hardness","good"],["pliancy","fair"]] }
+        ],
+        quiet: [
+          { good: "food", dir: "in", link: "local", cause: "pooled", amt: 2.1 },
+          { good: "bone", dir: "in", link: "local", cause: "pooled", amt: 0.2,
+            chips: [["density","fair"],["length","poor"]] }
+        ],
+        empty: [],
+        // No set of its own: the dense route set is the LARGE world's, and it applies
+        // here unchanged — a trading partner is not a network member, so how many camps
+        // pool and how many shipments cross are independent. (It was `null` for a slice,
+        // and the Routes control then did nothing at all on a three-camp network.)
+        routesMany: null
+      }
+    },
+
+    large: {
+      span: 6, reach: 3,
+      members: NAMES.map(function (n, i) {
+        var dist = i === 0 ? 0 : 1 + (i % 6);
+        // A camp past the free reach is only in the network because something better
+        // than a path holds the link — so its rung is drawn from the ones that can.
+        var near = ["path", "path", "trail", "dirt_road"];
+        var far = ["trail", "dirt_road", "paved_road"];
+        return member(n, dist, i === 0 ? null
+          : { link: dist <= WORLD_REACH ? near[i % near.length] : far[i % far.length] });
+      }),
+      // Fifteen camps hold a wider union of goods, so what MOVES is a longer list of
+      // (material, rating) piles — that, not the member count, is what lengthens the
+      // tab. The route arm does not grow with the network: it grows with parties,
+      // which are expensive and few.
+      turns: {
+        busy: [
+          { good: "food",   dir: "in",  link: "local", cause: "pooled", amt: 9.2 },
+          { good: "fodder", dir: "out", link: "local", cause: "pooled", amt: 3.4 },
+          { good: "bone",   dir: "in",  link: "local", cause: "pooled", amt: 1.4, chips: [["density","good"],["length","fair"]] },
+          { good: "bone",   dir: "out", link: "local", cause: "pooled", amt: 0.9, chips: [["density","fair"],["length","fair"]] },
+          { good: "bone",   dir: "in",  link: "local", cause: "pooled", amt: 0.7, chips: [["density","excellent"],["length","good"]] },
+          { good: "bone",   dir: "out", link: "local", cause: "pooled", amt: 0.5, chips: [["density","poor"],["length","poor"]] },
+          { good: "bone",   dir: "in",  link: "local", cause: "pooled", amt: 0.3, chips: [["density","fair"],["length","good"]] },
+          { good: "bone",   dir: "out", link: "local", cause: "pooled", amt: 0.2, chips: [["density","good"],["length","poor"]] },
+          { good: "hide",   dir: "in",  link: "local", cause: "pooled", amt: 2.1, chips: [["toughness","good"],["suppleness","fair"]] },
+          { good: "hide",   dir: "out", link: "local", cause: "pooled", amt: 1.2, chips: [["toughness","fair"],["suppleness","good"]] },
+          { good: "hide",   dir: "in",  link: "local", cause: "pooled", amt: 0.4, chips: [["toughness","excellent"],["suppleness","excellent"]] },
+          { good: "fibre",  dir: "in",  link: "local", cause: "pooled", amt: 1.8, chips: [["fineness","good"],["strength","good"]] },
+          { good: "fibre",  dir: "out", link: "local", cause: "pooled", amt: 0.6, chips: [["fineness","poor"],["strength","fair"]] },
+          { good: "wood",   dir: "in",  link: "local", cause: "pooled", amt: 3.3, chips: [["hardness","fair"],["pliancy","good"]] },
+          { good: "wood",   dir: "out", link: "local", cause: "pooled", amt: 0.8, chips: [["hardness","good"],["pliancy","poor"]] },
+          { good: "stone",  dir: "in",  link: "local", cause: "pooled", amt: 2.7, chips: [["hardness","good"],["workability","fair"]] },
+          { good: "hurdles",dir: "out", link: "local", cause: "pooled", amt: 0.3, chips: [["stoutness","fair"],["span","fair"]] },
+          // The dowry — a Local crossing that DOES name its counterparty, because a
+          // splinter is a specific band and `fission.rs` knows which.
+          { good: "food",   dir: "out", link: "local", cause: "dowry_out", amt: 18.0, peer: "Briarholt", when: "split off this turn" },
+          // The route arm, unchanged in size by the network growing.
+          { good: "food",   dir: "out", link: "route", cause: "shipment_out", amt: 14.0, peer: "Duskwater", foreign: true, when: "left turn 204" },
+          { good: "hide",   dir: "in",  link: "route", cause: "shipment_in", amt: 2.2, peer: "Duskwater", foreign: true, when: "landed this turn",
+            chips: [["toughness","excellent"],["suppleness","good"]] },
+          { good: "food",   dir: "in",  link: "route", cause: "party_home", amt: 4.6 }
+        ],
+        quiet: [
+          { good: "food", dir: "in",  link: "local", cause: "pooled", amt: 3.0 },
+          { good: "wood", dir: "out", link: "local", cause: "pooled", amt: 0.4, chips: [["hardness","fair"],["pliancy","good"]] },
+          { good: "bone", dir: "in",  link: "local", cause: "pooled", amt: 0.2, chips: [["density","fair"],["length","poor"]] }
+        ],
+        empty: [],
+
+        // ---- TWENTY PARTIES IN ONE TURN --------------------------------------
+        // Swapped in for the three above by the `Routes` control. This is the case
+        // the route arm has to survive: twelve counterparties, some of them two
+        // crossings in opposite directions, some carrying two goods.
+        routesMany: [
+          { good: "food",  dir: "out", link: "route", cause: "shipment_out", amt: 14.0, peer: "Duskwater",  foreign: true, when: "left t204" },
+          { good: "hide",  dir: "in",  link: "route", cause: "shipment_in",  amt: 2.2,  peer: "Duskwater",  foreign: true, when: "landed t206",
+            chips: [["toughness","excellent"],["suppleness","good"]] },
+          { good: "bone",  dir: "in",  link: "route", cause: "shipment_in",  amt: 0.6,  peer: "Duskwater",  foreign: true, when: "landed t206",
+            chips: [["density","good"],["length","good"]] },
+          { good: "food",  dir: "in",  link: "route", cause: "shipment_in",  amt: 8.4,  peer: "Fernmoor",   when: "landed t206" },
+          { good: "stone", dir: "in",  link: "route", cause: "shipment_in",  amt: 3.1,  peer: "Hollowmere", foreign: true, when: "landed t205",
+            chips: [["hardness","excellent"],["workability","fair"]] },
+          { good: "food",  dir: "out", link: "route", cause: "shipment_out", amt: 11.5, peer: "Hollowmere", foreign: true, when: "left t203" },
+          { good: "wood",  dir: "out", link: "route", cause: "shipment_out", amt: 6.2,  peer: "Ravensedge", when: "left t205",
+            chips: [["hardness","good"],["pliancy","fair"]] },
+          { good: "fibre", dir: "in",  link: "route", cause: "shipment_in",  amt: 2.8,  peer: "Stonebeck",  foreign: true, when: "landed t206",
+            chips: [["fineness","excellent"],["strength","good"]] },
+          { good: "food",  dir: "out", link: "route", cause: "shipment_out", amt: 9.0,  peer: "Stonebeck",  foreign: true, when: "left t202" },
+          { good: "hide",  dir: "out", link: "route", cause: "shipment_out", amt: 4.4,  peer: "Thornwood",  when: "left t205",
+            chips: [["toughness","good"],["suppleness","good"]] },
+          { good: "bone",  dir: "out", link: "route", cause: "shipment_out", amt: 1.9,  peer: "Thornwood",  when: "left t205",
+            chips: [["density","fair"],["length","good"]] },
+          { good: "food",  dir: "in",  link: "route", cause: "shipment_in",  amt: 5.7,  peer: "Willowbank", when: "landed t206" },
+          { good: "fodder",dir: "out", link: "route", cause: "shipment_out", amt: 7.3,  peer: "Grimsfen",   when: "left t204" },
+          { good: "stone", dir: "out", link: "route", cause: "shipment_out", amt: 2.6,  peer: "Mossgate",   foreign: true, when: "left t201",
+            chips: [["hardness","good"],["workability","good"]] },
+          { good: "hide",  dir: "in",  link: "route", cause: "shipment_in",  amt: 1.7,  peer: "Elderbrook", when: "landed t206",
+            chips: [["toughness","fair"],["suppleness","excellent"]] },
+          { good: "wood",  dir: "in",  link: "route", cause: "shipment_in",  amt: 1.3,  peer: "Coldharrow", foreign: true, when: "landed t206",
+            chips: [["hardness","fair"],["pliancy","excellent"]] },
+          { good: "food",  dir: "out", link: "route", cause: "shipment_out", amt: 6.8,  peer: "Netherfield", when: "left t205" },
+          { good: "fibre", dir: "out", link: "route", cause: "shipment_out", amt: 0.9,  peer: "Netherfield", when: "left t205",
+            chips: [["fineness","fair"],["strength","fair"]] },
+          { good: "food",  dir: "in",  link: "route", cause: "party_home",   amt: 4.6 },
+          { good: "hide",  dir: "in",  link: "route", cause: "party_home",   amt: 3.2,
+            chips: [["toughness","good"],["suppleness","fair"]] }
+        ]
+      }
+    }
+  };
+
+  var CAUSE_WORD = {
+    pooled:       "Pooled with neighbours",
+    dowry_out:    "Dowry to a splinter",
+    dowry_in:     "Dowry from the parent",
+    shipment_out: "Shipment loaded",
+    shipment_in:  "Shipment landed",
+    party_home:   "Party came home"
+  };
+
+  var LINK_WORD  = { local: "⇄ Local exchange", route: "⇄ Trade route" };
+  var LINK_SHORT = { local: "local", route: "route" };
+
+  // How much of the pot the distance eats, illustrative — the real figure is
+  // `friction × component_friction(roads…)`, resolved per component per turn.
+  var FRICTION = 0.047;
+
+  // What a capped list shows before it folds. The work board's own idiom: rank by
+  // magnitude, state the remainder, never silently truncate.
+  // Past this many parties in ONE direction, that direction is capped and its tail
+  // moves to the panel. Under it the half is short enough to state whole.
+  var CAP_ROUTES = 4;
+  var CAP_ROUTE_GROUPS = 3;   // parties shown per direction before the fold
+
+  // ⛔ NOTHING EXPANDS IN PLACE. A fold row OPENS a panel over the zone (`state.sheet`)
+  // rather than growing it, because the zone's height is fixed and a list that grows it
+  // either overruns the strip or re-emits the reservation the fixed cross-axis exists to
+  // prevent. `state.open` is the roster's scope and is a different thing.
+  var state = { layout: "c", turn: "busy", dock: "side", net: "small", routes: "few",
+                open: null, sheet: null };
+
+  // ---------------------------------------------------------------------------
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function amt(n) { return n.toFixed(1); }
+  function mark(dir) { return dir === "in" ? "▲" : "▼"; }
+  function cls(dir) { return dir === "in" ? "in" : "out"; }
+  function isMaterial(x) { return x.good !== "food" && x.good !== "fodder"; }
+  function world() { return WORLD[state.net]; }
+  function members() { return world().members; }
+  /** The turn's crossings, with the dense route set swapped in for the sparse one when
+      the `Routes` control asks for it. Only the busy turn has both. */
+  var NOT_TRADE = ["party_home", "party_provisions", "dowry_out", "dowry_in"];
+
+  function crossings() {
+    var t = world().turns;
+    var list = t[state.turn];
+    var many = t.routesMany || WORLD.large.turns.routesMany;
+    if (state.turn === "busy" && state.routes === "many") {
+      list = list.filter(function (x) { return x.link === "local"; }).concat(many);
+    }
+    // ⛔ TWO CAUSES THE LEDGER BOOKS AS TRANSFERS ARE NOT TRADE, AND NEVER REACH THIS TAB.
+    //  * A band's own party coming home — a hunt's drop-off, a party's fold-back — books
+    //    on the Route arm because a party carried it; to the player it is the band's own
+    //    hunting and foraging, and belongs with those on the Band panel.
+    //  * A split's dowry books on the Local arm because the splinter starts in its
+    //    parent's camp; to the player it is the split, a one-off the player chose, and
+    //    belongs with the split's own announcement.
+    // The Trade tab states what crossed with SOMEBODY ELSE, turn on turn.
+    return list.filter(function (x) { return NOT_TRADE.indexOf(x.cause) < 0; });
+  }
+  function big() { return state.net === "large"; }
+
+  /** The key a crossing's roster scope is taken on: the commodity for food/fodder,
+      the (material, rating) pile for a material. Two ratings of one material are two
+      different things and never share a key. */
+  function scopeKey(x) {
+    var k = x.good;
+    (x.chips || []).forEach(function (c) { k += " " + c[0] + ": " + c[1]; });
+    return k;
+  }
+
+  /** `from Barrowmere` / `to Bitterbrook`, and nothing at all on an anonymous pooling
+      crossing — the direction decides the preposition. */
+  function peerClause(x) {
+    if (!x.peer) { return ""; }
+    return (x.dir === "in" ? " from " : " to ") + esc(x.peer) + factionMark(x);
+  }
+  /** **THE FACTION MARK** — one glyph per counterparty, ours and theirs alike, so the
+      question *is this us?* has an answer on every row rather than only on a stranger's.
+      It is a WORD's worth of meaning in an icon's worth of width: the chip it replaced
+      (`another people`) spent ~90px of a 354px row saying it.
+      ⛔ THIS IS WHERE THE FACTION'S FLAG GOES (#647). Until factions carry one, the
+      fallback is a flag-shaped glyph in the faction's map colour; the flag replaces the
+      glyph and nothing else about the row. */
+  function factionMark(x) {
+    if (!x || !x.peer) { return ""; }
+    var f = x.foreign ? (PEER_FACTION[x.peer] || 1) : 0;
+    var fac = FACTIONS[f];
+    var id = "faction:" + f;
+    TIPS[id] = '<div class="th">' + fac.name + '<span class="n">' +
+      (fac.you ? "your people" : "another people") + "</span></div>" +
+      '<div class="tr"><span class="sub">the faction\'s flag goes here (#647); until factions ' +
+      "carry one, this is its map colour</span></div>";
+    return '<span class="fmark" data-tip="' + id + '">' +
+      '<svg viewBox="0 0 12 12" width="12" height="12">' +
+      '<line x1="1.6" y1="1" x2="1.6" y2="11.2" stroke="#9db0ad" stroke-width="1.1"/>' +
+      '<rect x="2.4" y="1.4" width="8.4" height="5.6" rx="0.8" fill="' + fac.color +
+      '" stroke="#0b1114" stroke-width="0.7"/></svg></span>';
+  }
+
+  function chips(x) {
+    if (!x.chips) { return ""; }
+    return '<span class="chips">' + x.chips.map(function (c) {
+      return '<span class="chip">' + esc(c[0]) + ": " + esc(c[1]) + "</span>";
+    }).join("") + "</span>";
+  }
+
+  function row(opts) {
+    var c = ["row"];
+    if (opts.cls) { c.push(opts.cls); }
+    if (opts.key) {
+      c.push("click");
+      if (state.open === opts.key) { c.push("on"); }
+    }
+    return '<div class="' + c.join(" ") + '"' +
+      (opts.key ? ' data-key="' + esc(opts.key) + '"' : "") +
+      (opts.toggle ? ' data-toggle="' + esc(opts.toggle) + '"' : "") + ">" +
+      (opts.caret ? '<span class="caret">' + opts.caret + "</span>" : "") +
+      '<span class="lab' + (opts.dimLabel ? " dim" : "") + '">' + opts.label + "</span>" +
+      (opts.sub ? '<span class="sub">' + opts.sub + "</span>" : "") +
+      '<span class="fill"></span>' +
+      (opts.amt || "") +
+      "</div>";
+  }
+
+  function amtCell(dir, n) {
+    return '<span class="amt ' + cls(dir) + '">' + mark(dir) + " " + amt(n) + "</span>";
+  }
+
+  /** The row that OPENS the rest of a list in a panel over the zone. `word` is
+      [singular, plural] — deriving a plural with an `s` rendered "5 smaller partys",
+      and this row is read more often than almost any other here. */
+  function opensRow(n, sheet, word, cls) {
+    return '<div class="row opens' + (cls ? " " + cls : "") + '" data-sheet="' + esc(sheet) + '">' +
+      '<span class="caret">›</span>' +
+      '<span class="lab">' + n + " more " + (n === 1 ? word[0] : word[1]) + "</span></div>";
+  }
+
+  /** Rank by magnitude and fold the tail — never drop it. */
+  function ranked(list) {
+    return list.slice().sort(function (a, b) { return b.amt - a.amt; });
+  }
+
+  // ---------------------------------------------------------------------------
+  // The roster, DERIVED from the crossing so the two can never disagree. Positive =
+  // this band drew; the counterparties' total is larger than what landed by exactly
+  // `friction`, which is the one figure on the tab nobody received.
+  // ---------------------------------------------------------------------------
+  function hash(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) { h = (h ^ s.charCodeAt(i)) * 16777619 >>> 0; }
+    return h;
+  }
+
+  /** One pooled pile's distribution across the camps — the balancer's own per-member
+      delta, mocked. Keyed on the PILE, because the balancer runs once per
+      `(material, rating)` and each rating's pot has its own senders. */
+  function pileNets(x) {
+    var mine = x.dir === "in" ? x.amt : -x.amt;
+    var other = mine > 0 ? mine * (1 + FRICTION) : -mine * (1 - FRICTION);
+    var friction = Math.round(Math.abs(mine * FRICTION) * 10) / 10;
+
+    var pool = members().filter(function (m) { return !m.you; });
+    var h = hash(scopeKey(x));
+    var k = big() ? 3 + (h % 4) : Math.min(2, pool.length);
+    // **Distinct members, or the shares stop adding up.** A fixed stride over the pool
+    // collides whenever the stride and the pool size share a factor (7 over 14 camps
+    // picked the same band twice), and the second pick then overwrote the first one's
+    // share — so the column silently lost a contributor and no longer summed to the
+    // pot. Walking forward from the hash cannot repeat.
+    var picked = [];
+    for (var i = 0; picked.length < k && i < pool.length; i++) {
+      picked.push(pool[(h + i) % pool.length]);
+    }
+    var nets = {};
+    var left = Math.round(other * 10) / 10;
+    picked.forEach(function (m, i) {
+      var share = i === picked.length - 1
+        ? left
+        : Math.round(left * (0.52 - i * 0.07) * 10) / 10;
+      left = Math.round((left - share) * 10) / 10;
+      nets[m.name] = mine > 0 ? -share : share;
+    });
+    nets[BAND.name] = mine;
+    return { nets: nets, friction: friction };
+  }
+
+  /** Each camp's net of one good this turn, summed over that good's pooled piles —
+      the same figure the good's summary row states, so the band's own line in this
+      list and its row in the zone are one number by construction. */
+  function rosterFor(key) {
+    var good = key.slice(GOOD_KEY.length);
+    var piles = crossings().filter(function (x) {
+      return x.good === good && x.link === "local" && !x.peer;
+    });
+    if (!piles.length) { return null; }
+    var camps = {}, friction = 0;
+    piles.forEach(function (x) {
+      var r = pileNets(x);
+      friction += r.friction;
+      Object.keys(r.nets).forEach(function (n) {
+        var c = camps[n] || (camps[n] = { inn: 0, out: 0 });
+        if (r.nets[n] > 0) { c.inn += r.nets[n]; } else { c.out -= r.nets[n]; }
+      });
+    });
+    Object.keys(camps).forEach(function (n) {
+      var c = camps[n];
+      if (n !== BAND.name && c.inn < SHOWN_MIN && c.out < SHOWN_MIN) { delete camps[n]; }
+    });
+    var moved = Object.keys(camps).length - 1;
+    return { good: good, camps: camps, friction: Math.round(friction * 10) / 10,
+             moved: moved, even: members().length - 1 - moved };
+  }
+
+  // ---------------------------------------------------------------------------
+  // ONE LINE PER GOOD. Food, fodder, and each material once, with its total in and
+  // its total out — never one line per `(material, rating)` pile.
+  //
+  // ⛔ THE SUM IS WITHIN ONE MATERIAL, NEVER ACROSS TWO. `hide` and `bone` stay two
+  // lines, because a scalar of hide-plus-bone is the retired trade axis under a new
+  // name (arc #527, `supply.rs`). Summing one material's own ratings is what the
+  // Crafting panel's `Owned` column already does for a band's batches; the ratings are
+  // the hover, where they are one gesture away and cost the zone nothing.
+  //
+  // And it is what makes the list BOUNDED: one row per good is at most the materials
+  // catalog plus food and fodder, however many camps pool and however many ratings
+  // they hold — so the local section needs no fold at all.
+  // ---------------------------------------------------------------------------
+  var LINK_ICON = {
+    path:       '<line x1="1" y1="5" x2="23" y2="5" stroke-dasharray="0.1 3.4" stroke-width="1.8" stroke-linecap="round"/>',
+    trail:      '<line x1="1" y1="5" x2="23" y2="5" stroke-dasharray="4 2.5" stroke-width="1.4"/>',
+    dirt_road:  '<line x1="1" y1="5" x2="23" y2="5" stroke-width="2.6"/>',
+    paved_road: '<line x1="1" y1="3" x2="23" y2="3" stroke-width="1.3"/>' +
+                '<line x1="1" y1="7" x2="23" y2="7" stroke-width="1.3"/>' +
+                '<line x1="1" y1="5" x2="23" y2="5" stroke-width="0.8" stroke-dasharray="2 2" opacity=".6"/>'
+  };
+
+  /** A camp's link as an icon (and its word, where the row has room), hovering to
+      what the rung is and what it buys. */
+  function linkMark(m, withWord) {
+    var r = LINK_RUNGS[m.link];
+    if (!r) { return ""; }
+    var id = "link:" + m.link;
+    TIPS[id] = '<div class="th">' + r.label + '<span class="n">route rung</span></div>' +
+      '<div class="tr"><span class="sub">' + r.how + "</span></div>" +
+      '<div class="tr"><span class="sub">pools out to</span><span class="fill"></span>' +
+        '<span class="amt">' + Math.max(r.holds, WORLD_REACH) + " tiles</span></div>" +
+      '<div class="tr"><span class="sub">friction</span><span class="fill"></span>' +
+        '<span class="amt">\u00d7' + r.friction.toFixed(2) + "</span></div>" +
+      '<div class="tr"><span class="sub">a link is as good as the weakest tile on it</span></div>';
+    return '<span class="lk lk-' + m.link + '" data-tip="' + id + '">' +
+      '<svg viewBox="0 0 24 10" width="24" height="10" fill="none" stroke="currentColor">' +
+      LINK_ICON[m.link] + "</svg>" +
+      (withWord ? '<span class="lk-w">' + r.label + "</span>" : "") + "</span>";
+  }
+
+  var GOOD_KEY = "good:";
+  // The smallest amount the readout's one decimal can state. Below it a move is not a
+  // move as far as any row here can say.
+  var SHOWN_MIN = 0.05;
+  var TIPS = {};
+
+  function byGood(list) {
+    var order = [], map = {};
+    list.forEach(function (x) {
+      var g = map[x.good];
+      if (!g) { g = map[x.good] = { good: x.good, inn: 0, out: 0, piles: [] }; order.push(g); }
+      if (x.dir === "in") { g.inn += x.amt; } else { g.out += x.amt; }
+      g.piles.push(x);
+    });
+    // Food and fodder lead, as they do on every other surface; materials follow by
+    // how much of each moved.
+    return order.sort(function (a, b) {
+      var am = isMaterial(a) ? 1 : 0, bm = isMaterial(b) ? 1 : 0;
+      if (am !== bm) { return am - bm; }
+      return (b.inn + b.out) - (a.inn + a.out);
+    });
+  }
+
+  function ratingsOf(g) {
+    var seen = {};
+    g.piles.forEach(function (x) { if (x.chips) { seen[scopeKey(x)] = 1; } });
+    return Object.keys(seen).length;
+  }
+
+  function contextsOf(g) {
+    var seen = {};
+    g.piles.forEach(function (x) { seen[x.link + "|" + x.cause + "|" + (x.peer || "")] = 1; });
+    return Object.keys(seen).length;
+  }
+
+  /** **ONE FIGURE: THE GOOD'S NET THIS TURN.** A summary row answers *did we gain or
+      lose bone*; which ratings went which way is the hover card's job, where every
+      pile is stated with its own direction. A net that rounds to nothing at the
+      readout's one decimal says so rather than printing an arrow on 0.0. */
+  function goodAmt(g) {
+    var net = g.inn - g.out;
+    if (Math.abs(net) < SHOWN_MIN) {
+      return '<span class="amt" style="color:var(--g-faint)">even</span>';
+    }
+    return amtCell(net > 0 ? "in" : "out", Math.abs(net));
+  }
+
+  /** A party's card: everything it carried, each good at its own rating. The row
+      states the party and its goods by name; the card is where the grades are. */
+  function partyTipHtml(g) {
+    var head = g.own ? "our own party"
+                     : (g.dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer) + factionMark(g.items[0]);
+    var rows = g.items.map(function (x) {
+      return '<div class="tr"><span>' + esc(x.good) + "</span>" + (x.chips ? chips(x) : "") +
+        '<span class="fill"></span>' + amtCell(x.dir, x.amt) + "</div>";
+    }).join("");
+    return '<div class="th">' + head + "</div>" + rows;
+  }
+
+  /** What the hover card says: the good's piles, largest first, each with its
+      rating; and where they came from only when that differs between them. */
+  function tipHtml(g) {
+    var mixed = contextsOf(g) > 1;
+    var rows = ranked(g.piles).map(function (x) {
+      var where = LINK_SHORT[x.link] + (x.cause === "pooled" ? "" : " · " + CAUSE_WORD[x.cause]) +
+                  peerClause(x);
+      return '<div class="tr">' + (x.chips ? chips(x) : "") +
+        (mixed ? '<span class="sub">' + where + "</span>" : "") +
+        '<span class="fill"></span>' + amtCell(x.dir, x.amt) + "</div>";
+    }).join("");
+    var n = g.piles.length;
+    return '<div class="th">' + esc(g.good) +
+      '<span class="n">' + n + (n === 1 ? " pile" : " piles") +
+      (ratingsOf(g) ? " by rating" : "") + "</span></div>" + rows;
+  }
+
+  /** The summary row for one good. `pool` rows are clickable — they open each camp's
+      share of that good — because only a pooled good HAS a per-camp distribution; a
+      row that mixes in party cargo would be quoting one against the other. */
+  function goodRow(g, ctx) {
+    var hasTip = ratingsOf(g) > 0 || contextsOf(g) > 1;
+    var tipId = hasTip ? ctx + ":" + g.good : null;
+    if (tipId) { TIPS[tipId] = tipHtml(g); }
+    var key = ctx === "pool" ? GOOD_KEY + g.good : null;
+    var r = ratingsOf(g);
+    return '<div class="row' + (key ? " click" : "") + (key && state.open === key ? " on" : "") + '"' +
+      (key ? ' data-key="' + esc(key) + '"' : "") +
+      (tipId ? ' data-tip="' + esc(tipId) + '"' : "") + ">" +
+      '<span class="lab"><span class="gname' + (tipId ? " hov" : "") + '">' + esc(g.good) +
+      "</span></span>" +
+      (r > 1 ? '<span class="sub">' + r + " ratings</span>" : "") +
+      '<span class="fill"></span>' + goodAmt(g) + "</div>";
+  }
+
+  // ---------------------------------------------------------------------------
+  function networkHead() {
+    var w = world();
+    var h = '<div class="net-head"><div class="l1">' +
+      '<span class="k">Network</span>' +
+      '<span class="v link" data-sheet="roster" title="every camp in the network">' +
+        w.members.length + " camps \u203a</span>" +
+      '<span class="span" title="reach_tiles is ' + w.reach +
+        '; a road carries a link past it">within ' + w.span + " tiles</span>" +
+      "</div>";
+    return h + "</div>";
+  }
+
+  function emptyState() {
+    return '<div class="quiet"><b>Nothing crossed this turn.</b><br>' +
+      "Every camp in the network is within a tenth of its fair share of everything it holds, " +
+      "and no party landed or left.</div>";
+  }
+
+  function netOf(list) {
+    var inn = 0, out = 0;
+    list.forEach(function (x) { if (x.dir === "in") { inn += x.amt; } else { out += x.amt; } });
+    return { inn: inn, out: out };
+  }
+
+  // ---------------------------------------------------------------------------
+  // A — BY COMMODITY. commodity → link → cause.
+  // ---------------------------------------------------------------------------
+  function layoutA() {
+    var list = crossings();
+    if (!list.length) { return networkHead() + emptyState(); }
+    var h = networkHead();
+
+    ["food", "fodder"].forEach(function (good) {
+      var mine = list.filter(function (x) { return x.good === good; });
+      if (!mine.length) { return; }
+      var n = netOf(mine);
+      h += '<div class="grp"><div class="grp-head">' + esc(good) +
+        '<span class="cnt">' +
+          (n.inn ? '<span class="in">▲ ' + amt(n.inn) + "</span>  " : "") +
+          (n.out ? '<span class="out">▼ ' + amt(n.out) + "</span>" : "") +
+        "</span></div>";
+      ["local", "route"].forEach(function (link) {
+        var arm = mine.filter(function (x) { return x.link === link; });
+        if (!arm.length) { return; }
+        var an = netOf(arm);
+        h += row({
+          cls: "sub-row", label: LINK_WORD[link], key: scopeKey(arm[0]),
+          amt: (an.inn ? amtCell("in", an.inn) + " " : "") + (an.out ? amtCell("out", an.out) : "")
+        });
+        arm.forEach(function (x) {
+          h += row({
+            cls: "sub-sub",
+            label: "· " + CAUSE_WORD[x.cause] + peerClause(x),
+            amt: amtCell(x.dir, x.amt)
+          });
+        });
+      });
+      h += "</div>";
+    });
+
+    var mats = byGood(list.filter(isMaterial));
+    if (mats.length) {
+      h += '<div class="grp"><div class="grp-head">Materials' +
+        '<span class="cnt">' + mats.length + (mats.length === 1 ? " good" : " goods") +
+        "</span></div>";
+      mats.forEach(function (g) { h += goodRow(g, "a"); });
+      h += "</div>";
+    }
+
+    return h;
+  }
+
+  // ---------------------------------------------------------------------------
+  // B — IN & OUT. Direction first, one line per crossing.
+  // ---------------------------------------------------------------------------
+  function layoutB() {
+    var list = crossings();
+    if (!list.length) { return networkHead() + emptyState(); }
+    var h = networkHead();
+
+    [["in", "Arrived"], ["out", "Left"]].forEach(function (pair) {
+      var dir = pair[0];
+      var mine = byGood(list.filter(function (x) { return x.dir === dir; }));
+      h += '<div class="grp"><div class="grp-head"><span class="' + cls(dir) + '">' +
+        mark(dir) + "</span> " + pair[1] +
+        '<span class="cnt">' + mine.length + (mine.length === 1 ? " good" : " goods") +
+        "</span></div>";
+      if (!mine.length) {
+        h += '<div class="quiet" style="padding:4px 2px">nothing</div>';
+      }
+      mine.forEach(function (g) { h += goodRow(g, "b" + dir); });
+      h += "</div>";
+      // ⛔ No subtotal under either half. They are different goods and different
+      // ratings of one good, and nothing in this game may sum those into a figure.
+      if (mine.length) {
+        h += '<div class="row"><span class="sub">no total — these are different goods</span></div>';
+      }
+    });
+
+    return h;
+  }
+
+  // ---------------------------------------------------------------------------
+  // C — BY LINK. The mechanism first. The Local arm states a roster and no peers;
+  // the Route arm names every counterparty, because a party has a name at both ends.
+  // ---------------------------------------------------------------------------
+  function layoutC() {
+    var list = crossings();
+    var h = networkHead();
+
+    // --- LOCAL
+    var loc = list.filter(function (x) { return x.link === "local"; });
+    var pooledGoods = byGood(loc.filter(function (x) { return !x.peer; }));
+    var locCount = Object.keys(loc.reduce(function (acc, x) {
+      acc[x.good] = 1; return acc;
+    }, {})).length;
+    h += '<div class="grp"><div class="grp-head">' + LINK_WORD.local +
+      '<span class="cnt">' + (loc.length ? locCount + (locCount === 1 ? " good" : " goods") : "nothing") +
+      "</span></div>";
+    if (!loc.length) {
+      h += '<div class="quiet" style="padding:6px 2px">Every camp is within a tenth of its fair ' +
+        "share — nothing needed to move.</div>";
+    }
+
+    // A dowry is Local and DOES name its counterparty; it is not pooling and is
+    // lifted out so the pooled list stays one kind of thing.
+    var named = loc.filter(function (x) { return x.peer; });
+    pooledGoods.forEach(function (g) { h += goodRow(g, "pool"); });
+    named.forEach(function (x) {
+      h += row({
+        label: esc(x.good) + " " + chips(x),
+        sub: CAUSE_WORD[x.cause] + peerClause(x),
+        amt: amtCell(x.dir, x.amt)
+      });
+    });
+    h += "</div>";
+
+    // --- ROUTE
+    var rt = list.filter(function (x) { return x.link === "route"; });
+    // **COUNTED IN PARTIES, NOT CROSSINGS** — one party carrying hide and bone is one
+    // journey and two crossings, and a heading that says 20 over two sub-heads that say
+    // 8 and 8 is two units wearing one word.
+    var partyCount = Object.keys(rt.reduce(function (acc, x) {
+      acc[(x.peer || "\u0000own") + "\u0001" + x.dir] = 1; return acc;
+    }, {})).length;
+    h += '<div class="grp"><div class="grp-head">' + LINK_WORD.route +
+      '<span class="cnt">' + (rt.length ? partyCount + (partyCount === 1 ? " shipment" : " shipments") : "none") +
+      "</span></div>";
+    if (!rt.length) {
+      h += '<div class="quiet" style="padding:6px 2px">No party landed here and none left carrying.</div>';
+    }
+    // ⛔ GROUPED BY (COUNTERPARTY, DIRECTION), never by counterparty alone. A band you
+    // ship to is usually a band that ships back, and folding an arrival and a departure
+    // under one `→ Duskwater` heading gives both the wrong arrow and the wrong date —
+    // they are two parties, on two journeys, on two turns.
+    var byPeer = {};
+    rt.forEach(function (x) {
+      var k = (x.peer || "\u0000own") + "\u0001" + x.dir;
+      (byPeer[k] = byPeer[k] || []).push(x);
+    });
+    var groups = Object.keys(byPeer).map(function (k) {
+      var g = byPeer[k];
+      return { key: k, own: k.indexOf("\u0000own") === 0, dir: g[0].dir,
+               peer: g[0].peer, when: g[0].when, items: g,
+               weight: g.reduce(function (a, x) { return a + x.amt; }, 0) };
+    });
+
+    // Writes ONE party's crossing. `tight` puts the goods on the heading row as a
+    // clause instead of a row each — the same trade the parties strip makes at seven
+    // lines: two facts that read as one sentence cost one row.
+    function writeGroup(g, tight) {
+      var head = g.own ? "our own party"
+                       : (g.dir === "in" ? "← " : "→ ") + esc(g.peer) + factionMark(g.items[0]);
+      if (tight) {
+        var goods = g.items.map(function (x) {
+          return '<span class="amt ' + cls(x.dir) + '">' + amt(x.amt) + "</span> " + esc(x.good);
+        }).join(" · ");
+        var partyTip = "party:" + g.key;
+        TIPS[partyTip] = partyTipHtml(g);
+        // ⛔ NO DATE. Every row on this tab crossed THIS TURN — the ledger books an export
+        // on the turn it leaves and an import on the turn it lands — so a `left t204` on
+        // turn 206 contradicted the window it sat in. With the date gone, the cargo takes
+        // its place on the right, where every amount on the tab already is: one line per
+        // shipment.
+        h += '<div class="row rt-party" data-tip="' + esc(partyTip) + '">' +
+          '<span class="lab' + (g.own ? " dim" : "") + '">' + head + "</span>" +
+          '<span class="fill"></span>' +
+          '<span class="rt-cargo">' + goods + "</span></div>";
+        return;
+      }
+      h += row({ cls: "sub-row", label: head, sub: g.own ? "came home" : esc(g.when || ""),
+                 dimLabel: g.own });
+      g.items.forEach(function (x) {
+        h += row({ cls: "sub-sub",
+                   label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
+      });
+    }
+
+    // ⛔ IT SPLITS BY DIRECTION AT THREE PARTIES EXACTLY AS AT TWENTY. An
+    // undifferentiated run of party headings under one `TRADE ROUTE` rule reads as a
+    // blob at any length — nothing on it says which way anything went except an arrow
+    // inside each row — and a section that changes shape once the turn gets busy makes
+    // the player re-learn it. *What came in* and *what went out* are two questions and a
+    // player asks one at a time, so they are two sub-heads, always, each ranked by size
+    // with its tail behind a row that OPENS the rest rather than growing the zone.
+    [["in", "Imports"], ["out", "Exports"]].forEach(function (pair) {
+      var dir = pair[0];
+      var half = groups.filter(function (g) { return g.dir === dir; })
+                       .sort(function (a, b) { return b.weight - a.weight; });
+      if (!half.length) { return; }
+      var cap = half.length > CAP_ROUTES ? CAP_ROUTE_GROUPS : half.length;
+      h += '<div class="row sub-head"><span class="lab">' +
+        '<span class="' + cls(dir) + '">' + mark(dir) + "</span> " + pair[1] +
+        "</span>" + '<span class="fill"></span>' +
+        '<span class="amt" style="color:var(--g-faint)">' +
+        half.length + (half.length === 1 ? " shipment" : " shipments") + "</span></div>";
+      half.slice(0, cap).forEach(function (g) { writeGroup(g, true); });
+      if (half.length > cap) {
+        h += opensRow(half.length - cap, "rt" + dir, ["shipment", "shipments"], "rt-more");
+      }
+    });
+    h += "</div>";
+
+    return h;
+  }
+
+  var LAYOUTS = { a: layoutA, b: layoutB, c: layoutC };
+
+  // ---------------------------------------------------------------------------
+  // THE PANEL A FOLD ROW OPENS. Its own scroll, so the zone keeps none; its own
+  // height, so the strip keeps its budget; and it draws only its own rect, so the
+  // map under it stays live (`BandComposeFloat`'s rule, one layer down).
+  // ---------------------------------------------------------------------------
+  function sheetContent(kind) {
+    var list = crossings();
+
+    if (kind === "piles") {
+      var goods = byGood(list.filter(function (x) { return x.link === "local" && !x.peer; }));
+      return {
+        title: "Pooled this turn",
+        count: goods.length + (goods.length === 1 ? " good" : " goods"),
+        sub: "one line per good. Hover one for its ratings; click it for each camp's share.",
+        body: goods.map(function (g) { return goodRow(g, "pool"); }).join("")
+      };
+    }
+
+    if (kind === "rt" || kind === "rtin" || kind === "rtout") {
+      // `rt` is BOTH halves — the one way in from the SHORT tier, which has a single
+      // Trade route row. It opened `rtin` alone for one slice, which left every party
+      // that LEFT unreachable on a horizontal dock.
+      var dirs = kind === "rt" ? ["in", "out"] : [kind === "rtin" ? "in" : "out"];
+      var out = "", total = 0;
+      dirs.forEach(function (dir) {
+        var by = {};
+        list.filter(function (x) { return x.link === "route" && x.dir === dir; })
+            .forEach(function (x) { (by[x.peer || "\u0000own"] = by[x.peer || "\u0000own"] || []).push(x); });
+        var groups = Object.keys(by).map(function (k) {
+          var g = by[k];
+          return { own: k === "\u0000own", dir: dir, peer: g[0].peer, when: g[0].when, items: g,
+                   weight: g.reduce(function (a, x) { return a + x.amt; }, 0) };
+        }).sort(function (a, b) { return b.weight - a.weight; });
+        total += groups.length;
+        if (dirs.length > 1 && groups.length) {
+          out += '<div class="row sub-head"><span class="lab"><span class="' + cls(dir) + '">' +
+            mark(dir) + "</span> " + (dir === "in" ? "Imports" : "Exports") + "</span>" +
+            '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
+            groups.length + (groups.length === 1 ? " shipment" : " shipments") + "</span></div>";
+        }
+        groups.forEach(function (g) {
+          out += row({ cls: "rt-party",
+                       label: g.own ? "our own party"
+                                    : (dir === "in" ? "\u2190 " : "\u2192 ") + esc(g.peer) + factionMark(g.items[0]),
+                       dimLabel: g.own });
+          g.items.forEach(function (x) {
+            out += row({ cls: "rt-goods",
+                         label: esc(x.good) + " " + chips(x), amt: amtCell(x.dir, x.amt) });
+          });
+        });
+      });
+      return {
+        title: kind === "rt" ? "Trade this turn" : kind === "rtin" ? "Imports this turn" : "Exports this turn",
+        count: total + (total === 1 ? " shipment" : " shipments"),
+        sub: "one line per shipment, largest first. Hover one for its goods' ratings.",
+        body: out
+      };
+    }
+
+    // THE CAMPS. Unscoped: every camp and how far off it sits. Scoped to a good (a
+    // click on its row): each camp's net of it, the band first, the camps that
+    // moved by how much, and the ones that sat even last.
+    var entry = state.open ? rosterFor(state.open) : null;
+    if (!entry) {
+      return {
+        title: "The pooling network", count: members().length + " camps",
+        sub: "every camp this band pools with, what holds the link, and how far off it " +
+             "sits. Hover a link for what it buys.",
+        body: members().map(function (m) {
+          return '<div class="row' + (m.you ? " me" : "") + '">' +
+            '<span class="lab">' + esc(m.name) + "</span>" +
+            '<span class="fill"></span>' + (m.you ? "" : linkMark(m, true)) +
+            '<span class="amt" style="color:var(--g-faint)">' +
+            (m.you ? "you" : m.dist + " tiles") + "</span></div>";
+        }).join("")
+      };
+    }
+    var ordered = members().slice().sort(function (a, b) {
+      if (a.you !== b.you) { return a.you ? -1 : 1; }
+      var ca = entry.camps[a.name], cb = entry.camps[b.name];
+      return (cb ? cb.inn + cb.out : 0) - (ca ? ca.inn + ca.out : 0);
+    });
+    var body = ordered.map(function (m) {
+      var c = entry.camps[m.name];
+      var right = c
+        ? goodAmt(c)
+        : '<span class="amt" style="color:var(--g-faint)">even</span>';
+      return '<div class="row' + (m.you ? " me" : "") + '">' +
+        '<span class="lab">' + esc(m.name) + "</span>" +
+        '<span class="fill"></span>' + (m.you ? "" : linkMark(m, false)) + right + "</div>";
+    }).join("");
+    if (entry.friction) {
+      body += '<div class="row"><span class="sub">lost in transit \u2014 friction over the ' +
+        "pooling links</span>" +
+        '<span class="fill"></span><span class="amt" style="color:var(--g-faint)">' +
+        amt(entry.friction) + "</span></div>";
+    }
+    return {
+      title: esc(entry.good) + " across the network", count: members().length + " camps",
+      sub: entry.moved + " camps moved it; " + entry.even + " sat within a tenth of their " +
+           "fair share. The column does not balance \u2014 friction is what the distance ate.",
+      body: body
+    };
+  }
+
+  function renderSheet() {
+    var host = document.getElementById("ovl");
+    if (!state.sheet) { host.innerHTML = ""; return; }
+    var c = sheetContent(state.sheet);
+    host.innerHTML =
+      '<div class="ovl"><div class="ovl-head">' +
+        '<span class="t">' + c.title + "</span>" +
+        '<span class="n">' + c.count + "</span>" +
+        '<span class="x" data-sheet-close="1">\u2715</span>' +
+      "</div>" +
+      '<div class="ovl-sub">' + c.sub + "</div>" +
+      '<div class="ovl-body">' + c.body + "</div></div>";
+
+    // On a horizontal dock the map-facing side is ABOVE the strip, so the popup is
+    // anchored to the strip's top edge and takes the room above it — never the strip
+    // itself (`BandComposeFloat._room()`'s rule).
+    var screen = document.getElementById("screen");
+    var ovl = host.querySelector(".ovl");
+    if (ovl && screen.classList.contains("wide")) {
+      var scaler = document.getElementById("scaler");
+      ovl.style.top = "auto";
+      ovl.style.bottom = (screen.clientHeight - scaler.offsetTop + ANCHOR_GAP) + "px";
+      ovl.style.maxHeight = (scaler.offsetTop - STAGE_PAD - ANCHOR_GAP) + "px";
+    }
+  }
+
+  // The clearance between the popup and the card it came from, and the stage's own
+  // padding it must stay inside.
+  var ANCHOR_GAP = 12;
+  var STAGE_PAD = 22;
+
+  // ---------------------------------------------------------------------------
+  function tradeZone() {
+    var body = ROOM[state.dock] < TIER_FULL ? compactTier() : LAYOUTS[state.layout]();
+    return '<div class="tradezone">' + body + "</div>";
+  }
+
+  // Under this much room the zone cannot hold three sections at any cap, so it drops
+  // to the SHORT tier below. Measured, not chosen: the full tab is ~475px and a
+  // horizontal dock's body is 418.
+  var TIER_FULL = 600;
+
+  /** **THE SHORT TIER — the zone becomes a way in, not a readout.** The band zone
+      already does this: when the height is not there the blocks are re-authored, never
+      generically reflowed. Three sections at ~250px each do not fit 418px however hard
+      the lists are capped, so a height-starved dock states WHAT HAPPENED per arm and
+      opens the detail over the map, where there is room for it. */
+  function compactTier() {
+    var list = crossings();
+    var loc = list.filter(function (x) { return x.link === "local"; });
+    var rt = list.filter(function (x) { return x.link === "route"; });
+    var landed = 0, left = 0, seen = {};
+    rt.forEach(function (x) {
+      var k = (x.peer || "\u0000own") + "\u0001" + x.dir;
+      if (seen[k]) { return; }
+      seen[k] = 1;
+      if (x.dir === "in") { landed++; } else { left++; }
+    });
+
+    var h = networkHead();
+    if (!list.length) { return h + emptyState(); }
+
+    function opener(label, gloss, count, sheet) {
+      return '<div class="row opens tier" data-sheet="' + sheet + '">' +
+        '<span class="lab">' + label + "</span>" +
+        '<span class="fill"></span>' +
+        '<span class="amt" style="color:var(--g-dim)">' + count + "</span>" +
+        '<span class="caret" style="margin-left:6px">\u203a</span></div>' +
+        (gloss ? '<div class="row"><span class="sub">' + gloss + "</span></div>" : "");
+    }
+
+    var goodsMoved = byGood(loc.filter(function (x) { return !x.peer; })).length;
+    h += opener(LINK_WORD.local, "",
+                goodsMoved + (goodsMoved === 1 ? " good" : " goods"), "piles");
+    h += opener(LINK_WORD.route,
+                landed + (landed === 1 ? " import" : " imports") + " \u00b7 " +
+                left + (left === 1 ? " export" : " exports"),
+                (landed + left) + ((landed + left) === 1 ? " shipment" : " shipments"), "rt");
+    return h;
+  }
+
+  // **THE ROOM THE ZONE ACTUALLY HAS.** A horizontal dock's body is
+  // `PANEL_HEIGHT_WIDE` (418) whatever the window height — the cross axis is the
+  // RESERVED one, and growing it re-insets the map. A 380px side dock's long axis is
+  // the window, so its zone gets the viewport less the card's header and tab bar;
+  // 1030 is that for a 1200px-tall window.
+  var ROOM = { side: 1030, bottom4: 418, bottom3: 418 };
+
+  /** Clip each rendered trade zone to its budget and say what fell past the end.
+      MEASURED after layout, never predicted — the whole reason this is in a browser. */
+  function markRoom() {
+    var room = ROOM[state.dock];
+    var mark = document.getElementById("overflow");
+    var worst = 0, full = 0;
+    document.querySelectorAll(".tradezone").forEach(function (zone) {
+      zone.classList.remove("roomed");
+      zone.style.maxHeight = "";
+      full = zone.scrollHeight;
+      var over = full - room;
+      if (over > worst) { worst = over; }
+      if (over > 0) {
+        zone.style.maxHeight = room + "px";
+        zone.classList.add("roomed");
+      }
+    });
+    if (!mark) { return; }
+    mark.style.display = "";
+    mark.innerHTML = worst > 0
+      ? "\u26a0 " + full + "px of content in " + room + "px of zone \u2014 <b>" + worst +
+        "px past the end</b>, and this panel does not scroll"
+      : full + "px of content in " + room + "px of zone \u2014 it fits";
+    mark.style.borderStyle = worst > 0 ? "dashed" : "solid";
+    mark.style.borderColor = worst > 0 ? "var(--g-warn)" : "var(--g-line)";
+    mark.style.color = worst > 0 ? "var(--g-warn)" : "var(--g-faint)";
+  }
+
+  function ghostZone(title, lines) {
+    var h = '<div class="zone-title">' + title + "</div>";
+    lines.forEach(function (l) {
+      h += '<div class="row"><span class="lab dim">' + l[0] + "</span>" +
+        '<span class="fill"></span><span class="amt">' + l[1] + "</span></div>";
+    });
+    return h;
+  }
+
+  // Both numbers are `wide_shell_min_width()` over the zone list beneath them: each
+  // flank, plus one RAIL_SEPARATOR_SPAN (25) per gap, plus PANEL_CHROME_H (26).
+  var STRIPS = { bottom4: { w: 1569 }, bottom3: { w: 1190 } };
+  var STAGE_W = 1120;
+
+  var BAND_GHOST = [["Food", "128.4 · +2.1"], ["Fodder", "31.0 · −2.0"],
+                    ["Upkeep", "0.4 /turn"], ["Morale", "0.62"]];
+  var WORK_GHOST = [["Foraging · Birch stand", "4"], ["Hunting · Red deer", "3"],
+                    ["Fodder field", "2"], ["Idle", "1"]];
+  var PARTY_GHOST = [["Shipment → Duskwater", "3 turns"], ["Hunt · Aurochs", "home"]];
+
+  function render() {
+    TIPS = {};
+    hideTip();
+    var moved = crossings().length;
+    var head =
+      '<div class="bp-head"><div class="bp-subject">' +
+        '<span class="bp-glyph">⌂</span>' +
+        '<span class="bp-name">' + BAND.name + "</span>" +
+        '<span class="bp-cycler">◀ 2/' + members().length + " ▶</span>" +
+      "</div>" +
+      '<div class="bp-where">' + BAND.stage + "  " + BAND.pos + "</div></div>";
+
+    var panel = document.getElementById("panel");
+    var screen = document.getElementById("screen");
+    var scaler = document.getElementById("scaler");
+    var cap = document.getElementById("cap");
+    var wide = state.dock !== "side";
+
+    screen.classList.toggle("wide", wide);
+
+    if (wide) {
+      var strip = STRIPS[state.dock];
+      var zones =
+        '<div class="bp-zone band ghosted">' + ghostZone("Band", BAND_GHOST) + "</div>" +
+        '<div class="bp-zone work ghosted">' + ghostZone("Work", WORK_GHOST) + "</div>";
+
+      if (state.dock === "bottom4") {
+        zones +=
+          '<div class="bp-zone ghosted">' + ghostZone("Parties", PARTY_GHOST) + "</div>" +
+          '<div class="bp-zone"><div class="zone-title" style="color:var(--g-signal)">Trade</div>' +
+            tradeZone() + "</div>";
+      } else {
+        zones +=
+          '<div class="bp-zone">' +
+            ghostZone("Parties", PARTY_GHOST) +
+            '<div class="sec-gap"></div>' +
+            '<div class="zone-title" style="color:var(--g-signal)">Trade</div>' +
+            tradeZone() +
+          "</div>";
+      }
+
+      panel.innerHTML = head + '<div class="bp-zones">' + zones + "</div>";
+      // Clip FIRST — it changes the panel's height, and the scaler below measures it.
+      markRoom();
+
+      var s = Math.min(1, STAGE_W / strip.w);
+      scaler.style.setProperty("--strip-w", strip.w + "px");
+      scaler.style.transform = "scale(" + s.toFixed(3) + ")";
+      scaler.style.width = strip.w + "px";
+      scaler.style.height = (panel.offsetHeight * s) + "px";
+      cap.innerHTML = state.dock === "bottom4"
+        ? 'strip must be <b>1569px</b> for 4 zones abreast — ' +
+          '<span class="bad">a 1366 or 1440 laptop tabs instead</span>'
+        : 'strip must be <b>1190px</b> — unchanged from today; Trade rides the parties column';
+    } else {
+      var badge = moved
+        ? '<span class="badge' + (moved > 4 ? " hot" : "") + '">' + moved + "</span>"
+        : "";
+      panel.innerHTML = head +
+        '<div class="bp-tabs">' +
+          '<div class="bp-tab">Band</div>' +
+          '<div class="bp-tab">Work<span class="badge hot">1</span></div>' +
+          '<div class="bp-tab">Parties<span class="badge">2</span></div>' +
+          '<div class="bp-tab on">Trade' + badge + "</div>" +
+        "</div>" + tradeZone();
+      scaler.style.transform = "";
+      scaler.style.width = "";
+      scaler.style.height = "";
+      cap.innerHTML = "side dock \u00b7 380px \u00b7 " + members().length + " camps";
+      markRoom();
+    }
+    renderSheet();
+  }
+
+  // ---------------------------------------------------------------------------
+  function bindSeg(attr, key) {
+    document.querySelectorAll("button[data-" + attr + "]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        state[key] = b.getAttribute("data-" + attr);
+        if (key !== "dock") { state.open = null; state.sheet = null; }
+        document.querySelectorAll("button[data-" + attr + "]").forEach(function (o) {
+          o.setAttribute("aria-pressed", String(o === b));
+        });
+        render();
+      });
+    });
+  }
+  bindSeg("layout", "layout");
+  bindSeg("turn", "turn");
+  bindSeg("dock", "dock");
+  bindSeg("net", "net");
+  bindSeg("routes", "routes");
+
+  // One handler for the zone and the panel over it, so a row behaves the same in both.
+  var screenEl = document.getElementById("screen");
+  screenEl.addEventListener("click", function (ev) {
+    if (!ev.target.closest) { return; }
+    if (ev.target.closest("[data-sheet-close]")) {
+      state.sheet = null; state.open = null; render(); return;
+    }
+    var opener = ev.target.closest("[data-sheet]");
+    if (opener) {
+      state.sheet = opener.getAttribute("data-sheet"); state.open = null; render(); return;
+    }
+    var t = ev.target.closest(".row.click");
+    if (!t) { return; }
+    var k = t.getAttribute("data-key");
+    if (!k || k.indexOf(GOOD_KEY) !== 0) { return; }
+    // A good's row opens its per-camp share; clicking the same row again closes it.
+    if (state.open === k && state.sheet === "roster") { state.open = null; state.sheet = null; }
+    else { state.open = k; state.sheet = "roster"; }
+    render();
+  });
+
+  function hideTip() {
+    var tip = document.getElementById("tip");
+    if (tip) { tip.style.display = "none"; }
+  }
+
+  // The hover card sits beside the row it describes and never under the pointer —
+  // on the side AWAY from an open popup, so it cannot land on the list the player
+  // just opened; with none open it prefers the right, and flips where there is no room.
+  screenEl.addEventListener("mouseover", function (ev) {
+    var r = ev.target.closest ? ev.target.closest("[data-tip]") : null;
+    var tip = document.getElementById("tip");
+    var html = r ? TIPS[r.getAttribute("data-tip")] : null;
+    if (!html) { hideTip(); return; }
+    tip.innerHTML = html;
+    tip.style.display = "block";
+    var sr = screenEl.getBoundingClientRect(), rr = r.getBoundingClientRect();
+    var w = tip.offsetWidth;
+    var rightSide = rr.right - sr.left + 10;
+    var leftSide = rr.left - sr.left - w - 10;
+    var inSheet = !!r.closest(".ovl");
+    var left = state.sheet && !inSheet ? leftSide : rightSide;
+    if (left === rightSide && left + w > sr.width - 8) { left = leftSide; }
+    if (left === leftSide && left < 8) { left = rightSide; }
+    tip.style.left = Math.max(8, left) + "px";
+    tip.style.top = Math.max(8, rr.top - sr.top - 6) + "px";
+  });
+  screenEl.addEventListener("mouseleave", hideTip);
+
+  render();
+})();
+</script>

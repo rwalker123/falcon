@@ -1548,6 +1548,24 @@ table PopulationCohortState {
   // row therefore reads "this cohort has no such pool" - the same answer `builders`' absence
   // already gives, needing no separate branch on the reading side.
   poolCrew:[PoolCrewLine];
+  // --- WHAT CROSSED THIS BAND'S STORE, BY CAUSE (appended last, issue #731) ---------------------
+  // The detail beneath the eight `transfer*Turn` / `fodderTransfer*Turn` arms above: one row per
+  // (good, rating, direction, cause, counterparty, party), on the same per-turn window. For food and
+  // fodder the rows summed per (link, direction) equal those arms exactly - one call books both.
+  // Materials have no arms; these rows are their only transfer account, one per RATING and never
+  // summed across ratings or materials. See `TransferCrossingState`.
+  transferCrossings:[TransferCrossingState];
+  // --- THIS BAND'S OWN POOLING LINKS (appended last, issue #731) --------------------------------
+  // Every supply-network link the balancer formed with this band this turn - its direct links, not
+  // every member of its network (a network is a chain as often as a star). Empty for a band in no
+  // network. What a rung buys (`holdsLinkToTiles`, `frictionMultiplier`) is on `RouteRungState`,
+  // joined by `rungId`; it is not repeated here.
+  poolingLinks:[PoolingLinkState];
+  // THE SPAN THIS BAND'S NETWORK FORMED AT - the longest hex distance among the links of its whole
+  // network this turn, 0 for a band in no network. The "within N tiles" figure: the distance the
+  // links actually reached, free reach and road-held reach alike, and NOT the `reach_tiles` lever.
+  // A network whose camps all share one tile also reads 0; `supplyNetworkId` tells the two apart.
+  supplyNetworkSpanTiles:uint = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -5587,6 +5605,9 @@ table BenchState {
 // stamps no grade must not appear to promise one.
 table CraftOffer {
   recipeId:string;
+  // THE ROW'S NAME, not the recipe's: the output ITEM's own `display_name` ("Spears"), or the
+  // material's title for a stock recipe ("Hurdles"). Two offers for one item carry the SAME string —
+  // the item owns its name, and `recipeLabel` below is what tells its recipes apart.
   displayName:string;
   // "kit" (a party carries it) | "tool" (it bounds one material at the bench) | "stock" (it makes a
   // material). The design's ledger is one table in exactly these three groups.
@@ -5612,19 +5633,43 @@ table CraftOffer {
   //     recipe only that half applies.
   outputGrade:string;
   onBench:bool;          // this recipe is the running job — the row's button is spent
-  // --- THE LEDGER'S GROUP HEAD, AND WHAT THE BAND ACTUALLY CARRIES (appended last) --------------
-  // THE TIER A CRAFT WOULD PRODUCE RIGHT NOW — `ItemDefinition::craftable_tier`, the best tier the
-  // faction knows. This is the ledger's GROUP HEAD, not a column: a head says it once and can fold
-  // away, which is what a column can never do. "" on a material (stock) recipe.
-  outputTierName:string;
-  // Index of that tier within the item's own `tiers` list. The head order is by RANK DESCENDING —
-  // newest first — because the client has no other honest way to order two tier heads, and
-  // alphabetical would put Iron above Bronze.
-  outputTierRank:uint;
-  // RENDER IT VERBATIM, "" when there is no news. What the band CARRIES, said only when it
-  // disagrees with what it could now make: "carrying flint · poor", "last flint set wore out".
-  // The tier word reaches the Owned cell ONLY through this field and only when it is news.
-  ownedNote:string;
+  // Three unused slots. The ledger groups by item rather than under tier heads, and which tier a band
+  // holds is `ownedAtTier` below. Deprecated rather than deleted because slots are positional.
+  outputTierName:string (deprecated);
+  outputTierRank:uint (deprecated);
+  ownedNote:string (deprecated);
+  // --- ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK (appended last) -----------------------
+  // Several offers can share one `outputItemId` (a spear pointed with bone, a spear knapped from
+  // stone). The ledger shows ONE row per item; these five fields are what its recipe popup and its
+  // Make-picker read. All of them are RESOLVED SIM-SIDE — the client never picks, never spells a
+  // stat, never divides a durability.
+  //
+  // The recipe's own short name among its siblings — "Bone", "Flint", "Withy". "" on a recipe that is
+  // the ONLY one making its output (a label is rejected there: nothing could show it).
+  recipeLabel:string;
+  // WHAT THIS RECIPE WOULD MAKE, from this band's store right now, as one resolved headline:
+  // "26 attack", "8 carry", "40 haul", "+0.7 build work", "2 tile vantage". A graded recipe states
+  // the grade effect at `outputGrade`; an ungraded one its output tier's own effect; a stat whose
+  // equipped value lives in another config (a scout's vantage) is resolved there. "" for a material
+  // output and for a bench tool.
+  makes:string;
+  // HOW LONG ONE FRESH UNIT AT THIS RECIPE'S TIER LASTS, in the item's headline wear quantum and the
+  // same wording `EquipmentBatchState.life` counts in: "175 blows", "2500 biomass gathered". So a
+  // flint spear reads shorter than a bone one — the brittleness is the point. "" for a material output.
+  lasts:string;
+  // EXACTLY ONE offer per row is true — a row is one thing made: every offer sharing an
+  // `outputItemId`, or, for a stock recipe, every offer making the same output MATERIAL. It is the
+  // recipe the row's Costs cell shows and the picker opens on. The sim decides, in order: the offer
+  // that is `onBench` (a running job keeps the row even after its own draw leaves it unaffordable),
+  // else the recipe this band LAST STARTED for the row if it is available now, else the first
+  // available in book order, else the last started, else the first in book order.
+  suggested:bool;
+  // HOW MANY UNITS OF THIS ITEM THE BAND OWNS AT THIS RECIPE'S TIER — or -1 when every recipe making
+  // the item makes the SAME tier (a fibre basket and a withy basket are one item at one tier, and the
+  // ledger never recorded which recipe made a unit, so a count per recipe there would be invented).
+  // So spears/clubs/hoes publish counts and baskets/sled/traps/crook/wayfinding publish -1 on BOTH
+  // offers. -1 is not "none": 0 is a real count.
+  ownedAtTier:int = -1;
 }
 
 // ONE BATCH OF ONE ITEM a band owns, plus the CONFIG's items it owns none of (one row each, count 0)
@@ -5690,6 +5735,8 @@ table RecipeOutputState {
 
 table RecipeDefState {
   id:string;
+  // The OUTPUT's name — the item's own `display_name`, or the material's title — shared by every
+  // recipe making that output. `label` below is the recipe's own word.
   displayName:string;
   craft:string;
   group:string;   // "kit" | "tool" | "stock", the same three the ledger groups by
@@ -5697,6 +5744,9 @@ table RecipeDefState {
   requiresKnowledge:[string];  // empty on every ordinary kit recipe — TOOLS ARE EARNED, NEVER A PREREQUISITE
   inputs:[RecipeInputState];
   outputs:[RecipeOutputState];
+  // The recipe's short name among the recipes that make the same output — "Bone", "Flint". "" on a
+  // recipe that is the only one making its output. Appended last (append-only).
+  label:string;
 }
 
 // One craft track per faction: whether it is known and how far along it is. The lesson is charged
@@ -6707,6 +6757,62 @@ table RouteState {
 
 table RouteSection {
   routes:[RouteState];
+}
+
+// ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE - a row of `PopulationCohortState.transferCrossings`.
+// Appended last (append-only discipline).
+table TransferCrossingState {
+  // The store key: "provisions" (FOOD), "fodder", or a `materials.json` material id.
+  commodity:string;
+  // The pile's rating, for a material: the exact amount-weighted reading of what crossed, per axis,
+  // in the material's declared axis order - the `MaterialBatchState.readings` shape. Empty for
+  // provisions and fodder.
+  readings:[CharacteristicReading];
+  // 0 = in (into this band's store), 1 = out.
+  direction:ubyte;
+  // 0 = local (bands standing together), 1 = route (a party carried it). Always the cause's link.
+  link:ubyte;
+  // WHY IT CROSSED. Append-only, like the table:
+  //   0 = pooled            supply-network pooling            local  in|out  no counterparty
+  //   1 = dowry_out         a split's share, parent side      local  out     the splinter
+  //   2 = dowry_in          a split's share, splinter side    local  in      the parent
+  //   3 = shipment_out      a trade shipment's CARGO          route  out     the destination
+  //   4 = shipment_in       a trade shipment landing          route  in      the sender
+  //   5 = party_home        own party's drop-off / fold-back  route  in      none
+  //   6 = party_provisions  own party's launch larder         route  out     none
+  //   7 = shipment_returned a shipment's UNDELIVERED cargo    route  in      the destination
+  //                         coming home (turned back, or cancelled in camp) - it answers the
+  //                         launch's shipment_out: same counterparty, same partyId
+  // 1, 2, 5 and 6 are not trade: the band's own split and the band's own people. 5 is the party's
+  // own PACK only; a trade party's cargo coming home is 7, never 5.
+  // *** A POOLED ROW NEVER NAMES A COUNTERPARTY *** - an invariant, not an omission: pooling pays a
+  // band out of one per-capita pot every surplus member put into, so there is no "who" to name.
+  cause:ubyte;
+  // The other band's durable `bandId`, 0 = none (pooled, party_home, party_provisions).
+  counterpartyBandId:ulong = 0;
+  // Its name and faction, carried here because a foreign counterparty may have no row on the
+  // client's roster (fog, another faction). An empty name with a non-zero id is a band the sim can no
+  // longer name (it has since died); render the `Band #<id>` fallback. Faction is meaningful only
+  // when `counterpartyBandId != 0`.
+  counterpartyName:string;
+  counterpartyFaction:uint;
+  // The `bandId` of the party that carried it - the key one shipment's goods group under, and the
+  // `bandId` that party's own cohort row carries while it is on the map. 0 = no party (pooled, dowry).
+  partyId:ulong = 0;
+  // A positive magnitude; `direction` carries the sign.
+  amount:float;
+}
+
+// ONE SUPPLY-NETWORK LINK OF ONE BAND - a row of `PopulationCohortState.poolingLinks`. Appended last.
+table PoolingLinkState {
+  // The band at the other end of the link.
+  bandId:ulong;
+  // Hex distance between the two camps this turn.
+  distanceTiles:uint;
+  // The rung holding the run - the weakest tile of the path between the camps, as a
+  // `RouteRungState.rungKey` wire key ("route:trail"). "" = some tile on the path has no kept road,
+  // which is every link held by the free reach over open ground.
+  rungId:string;
 }
 
 // ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT - a row of `PopulationCohortState.poolToe`,

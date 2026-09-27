@@ -334,7 +334,7 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 	var path: Array = order.get("path", [])
 	if path.is_empty():
 		return
-	var color: Color = _view.faction_color(order.get("faction", ""), ROUTE_FALLBACK_COLOR)
+	var color: Color = MapView.faction_color(order.get("faction", ""), ROUTE_FALLBACK_COLOR)
 	var tiles: Array = []
 	for waypoint in path:
 		if waypoint.size() != COORD_PAIR_SIZE:

@@ -155,6 +155,10 @@ static func apply_palette(p: Dictionary) -> void:
 	_checkbox_unchecked_disabled = null
 	_checkbox_checked = null
 	_checkbox_checked_disabled = null
+	_radio_checked = null
+	_radio_unchecked = null
+	_radio_checked_disabled = null
+	_radio_unchecked_disabled = null
 	_slider_grabber = null
 
 # ---- card chrome -----------------------------------------------------------
@@ -806,9 +810,10 @@ static func apply_dialog(dialog: AcceptDialog) -> void:
 ##       them on the invisible stock art would be a hole waiting for the next caller.
 ##
 ## Called per control rather than through a project theme because the improvement control is the
-## client's ONLY `CheckBox` — the Options pane's toggles are `CheckButton`s, a different widget with
-## its own art — and the client applies no theme resource to hang it on anyway. If a second checkbox
-## ever appears it calls this; that is what keeps the treatment in one place.
+## client's ONLY checkbox — the crafting picker's radios are `CheckBox`es too, styled by `apply_radio`,
+## and the Options pane's toggles are `CheckButton`s, a different widget with its own art — and the
+## client applies no theme resource to hang it on anyway. If a second checkbox ever appears it calls
+## this; that is what keeps the treatment in one place.
 
 ## The generated indicator matches the stock icon's 16px exactly, so swapping it moves no metrics.
 const CHECKBOX_INDICATOR_SIZE := 16
@@ -900,6 +905,60 @@ static func apply_checkbox(box: CheckBox) -> void:
 	box.add_theme_color_override("font_hover_pressed_color", INK)
 	box.add_theme_color_override("font_focus_color", INK)
 	box.add_theme_color_override("font_disabled_color", INK_FAINT)
+
+## The four RADIO indicator textures, built once like the checkbox's. A `CheckBox` in a `ButtonGroup`
+## draws the `radio_*` theme icons instead of the `checked` / `unchecked` pair, so `apply_checkbox`'s
+## overrides never reach it.
+static var _radio_checked: ImageTexture = null
+static var _radio_unchecked: ImageTexture = null
+static var _radio_checked_disabled: ImageTexture = null
+static var _radio_unchecked_disabled: ImageTexture = null
+
+## The radio indicator's ring: its stroke and the lit dot's radius, in indicator pixels, on the
+## checkbox's own 16px so swapping it moves no metrics.
+const RADIO_INDICATOR_BORDER := 2.0
+const RADIO_INDICATOR_DOT_RADIUS := 3.5
+
+## A radio indicator DRAWN rather than recoloured: an outlined ring, with a filled dot when `lit`.
+## **Drawn, unlike the checkbox's tick**, because the stock radio art is the checkbox's trap twice over
+## — the unlit disc is filled near-black and vanishes on `PANEL_SOLID`, and the lit one is a light disc
+## with a DARK dot, which recoloured reads as a hollow ring: the opposite of chosen.
+static func _radio_indicator(tint: Color, lit: bool) -> ImageTexture:
+	var img := Image.create_empty(CHECKBOX_INDICATOR_SIZE, CHECKBOX_INDICATOR_SIZE, false,
+		Image.FORMAT_RGBA8)
+	var samples := CHECKBOX_INDICATOR_SUPERSAMPLE
+	var per_pixel := float(samples * samples)
+	var centre := float(CHECKBOX_INDICATOR_SIZE) * 0.5
+	var outer := centre
+	var inner := outer - RADIO_INDICATOR_BORDER
+	for y in CHECKBOX_INDICATOR_SIZE:
+		for x in CHECKBOX_INDICATOR_SIZE:
+			var covered := 0.0
+			for sy in samples:
+				for sx in samples:
+					var r := Vector2(x + (sx + 0.5) / float(samples) - centre,
+						y + (sy + 0.5) / float(samples) - centre).length()
+					if (r <= outer and r >= inner) or (lit and r <= RADIO_INDICATOR_DOT_RADIUS):
+						covered += 1.0
+			img.set_pixel(x, y, Color(tint.r, tint.g, tint.b, tint.a * covered / per_pixel))
+	return ImageTexture.create_from_image(img)
+
+## The console's RADIO treatment — a drawn ring, lit with a dot in `SIGNAL` and unlit in `INK_DIM`, both
+## disabled twins in `INK_FAINT` so a recipe that cannot be picked reads as unavailable. The face takes
+## `apply_checkbox`'s inks, the two widgets being one control kind with a different indicator.
+static func apply_radio(box: CheckBox) -> void:
+	if box == null:
+		return
+	if _radio_checked == null:
+		_radio_checked = _radio_indicator(SIGNAL, true)
+		_radio_unchecked = _radio_indicator(INK_DIM, false)
+		_radio_checked_disabled = _radio_indicator(INK_FAINT, true)
+		_radio_unchecked_disabled = _radio_indicator(INK_FAINT, false)
+	apply_checkbox(box)
+	box.add_theme_icon_override("radio_checked", _radio_checked)
+	box.add_theme_icon_override("radio_unchecked", _radio_unchecked)
+	box.add_theme_icon_override("radio_checked_disabled", _radio_checked_disabled)
+	box.add_theme_icon_override("radio_unchecked_disabled", _radio_unchecked_disabled)
 
 # ---- inline link buttons ---------------------------------------------------
 # Padding around an inline link's text. Deliberately far tighter than the boxed

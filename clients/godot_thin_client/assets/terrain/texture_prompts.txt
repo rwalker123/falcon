@@ -7,11 +7,23 @@
 #   - Adobe Firefly
 #   - Leonardo.ai, Runway, or similar services
 #
+# Leonardo.ai: turn ON the "Tiling" toggle — the words "Seamless tileable" alone do not make a
+# tile (23 shipped base textures did not wrap). Base-texture negative prompt:
+#   vignette, darker edges, darker corners, spotlight, directional lighting, shadows, gradient,
+#   perspective, horizon, sky, border, frame, text, watermark, photorealistic, oversaturated
+# A vignette or a large-scale colour cast survives any seam fix and repeats across the map as a
+# grid of squares, so base prompts ask for even flat lighting and uniform tone.
+#
 # After generating:
-#   1. Ensure textures are seamless/tileable (use Photoshop/GIMP offset filter if needed)
+#   1. Ensure textures are seamless/tileable: `python3 scripts/texture/make_seamless.py --check`
+#      must pass (without --check it cross-fades the wrap edges of any texture over the bar).
+#      The rest of the post-processing toolchain is in scripts/texture/README.md.
 #   2. Resize to 512x512 PNG
 #   3. Save to assets/terrain/textures/base/ with naming format: XX_terrain_name.png
-#   4. Restart Godot - textures load automatically
+#   4. Restart through scripts/run_stack.sh, which re-imports changed art on launch. Textures load
+#      through Godot's import cache (.godot/imported/), which a bare `godot` launch or a preview
+#      harness does not refresh — for those, run
+#      `godot --headless --path clients/godot_thin_client --import` first.
 #
 # ============================================================================
 
@@ -42,14 +54,14 @@
 # Temperate (11-14)
 11_prairie_steppe: Seamless tileable prairie steppe texture, top-down view, tall golden grass, windswept patterns, painterly style, warm yellows and tans, 512x512 game asset
 
-12_mixed_woodland: Seamless tileable mixed woodland texture, top-down view, deciduous tree canopy, dappled light, greens and browns, painterly style, 512x512 game asset
+12_mixed_woodland: Seamless tileable forest floor texture, top-down view, grass, moss, leaf litter and fallen twigs under trees, NO trees and NO canopy, even flat overhead lighting, no vignette, no darker edges, uniform brightness across the whole image, evenly scattered detail, painterly hand-painted game-art style, muted dark greens and browns, 512x512 game asset
 
 13_boreal_taiga: Seamless tileable boreal taiga texture, top-down view, conifer forest canopy, dark green spruce, painterly style, muted colors, 512x512 game asset
 
 14_peat_heath: Seamless tileable peat heath texture, top-down view, boggy moorland, heather and moss, purple and brown tones, painterly style, 512x512 game asset
 
 # Arid (15-19)
-15_hot_desert_erg: Seamless tileable sand dune desert texture, top-down view, golden sand waves, erg patterns, painterly style, warm orange-yellow, 512x512 game asset
+15_hot_desert_erg: Seamless tileable desert sand texture, top-down view, soft golden sand with small wind ripples curving in varied directions, gently swirling, no dominant direction, no large dunes, no dune shadows, uniform brightness, no vignette, even flat overhead lighting, painterly hand-painted game-art style, pale warm muted sand beige, 512x512 game asset
 
 16_rocky_reg: Seamless tileable rocky desert reg texture, top-down view, gravel and stone pavement, sparse rocks, painterly style, grey-brown tones, 512x512 game asset
 
@@ -64,12 +76,12 @@
 
 21_periglacial_steppe: Seamless tileable periglacial steppe texture, top-down view, frost-heaved ground, polygon patterns, sparse vegetation, painterly style, 512x512 game asset
 
-22_glacier: Seamless tileable glacier ice texture, top-down view, blue-white ice, crevasse patterns, painterly style, cold blues and whites, 512x512 game asset
+22_glacier: Seamless tileable glacier ice texture, top-down view, blue-white ice with a network of fine crevasses that run continuously off all four edges, no single large crack, evenly distributed detail, uniform brightness, no vignette, even flat overhead lighting, painterly hand-painted game-art style, cold muted blues and whites, 512x512 game asset
 
-23_seasonal_snowfield: Seamless tileable seasonal snowfield texture, top-down view, patchy snow on ground, melting edges, painterly style, white and brown, 512x512 game asset
+23_seasonal_snowfield: Seamless tileable seasonal snowfield texture, top-down view, mostly snow-covered ground with about one quarter showing through as small soft patches of brown earth and dead grass, large smooth snow areas, soft low-contrast edges between snow and earth, patches evenly distributed across the whole image, uniform brightness, no gradient, no vignette, even flat overhead lighting, painterly hand-painted game-art style, not photorealistic, cool white with muted brown, 512x512 game asset
 
 # Highland (24-28)
-24_rolling_hills: Seamless tileable rolling hills texture, top-down view, gentle grassy slopes, pastoral green, painterly style, soft greens, 512x512 game asset
+24_rolling_hills: Seamless tileable grassy meadow ground texture, top-down view, short pastoral grass with small clover and tufts, flat ground with no hills, no slopes and no shading, even flat overhead lighting, no vignette, no darker edges, uniform tone across the whole image, painterly hand-painted game-art style, muted soft greens, 512x512 game asset
 
 25_high_plateau: Seamless tileable high plateau texture, top-down view, flat rocky highland, sparse grass, painterly style, muted brown-green, 512x512 game asset
 

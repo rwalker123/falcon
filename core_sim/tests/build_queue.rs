@@ -243,6 +243,7 @@ fn world_with_a_queue_knowing(
                 last_food_consumption: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
+                last_turn_transfer_crossings: Vec::new(),
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
@@ -924,6 +925,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
                 last_food_consumption: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
+                last_turn_transfer_crossings: Vec::new(),
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
@@ -1867,6 +1869,7 @@ fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
         last_food_consumption: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
+        last_turn_transfer_crossings: Vec::new(),
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: Default::default(),
@@ -3527,6 +3530,45 @@ fn a_builders_pool_and_a_keeping_row_cannot_arm_more_hands_than_the_band_owns() 
         (armed_builders - A_WHOLE_TOOL).abs() < 1e-4 && (armed_keepers - A_WHOLE_TOOL).abs() < 1e-4,
         "a tool is a countable object, so each claim is armed in whole units — got \
          {armed_builders} builders and {armed_keepers} keepers off {HOES_FOR_A_SHORT_BAND} hoes"
+    );
+}
+
+/// **⛔ ONE HOE, A BUILD AND A KEEPING SITE AT ONE PRIORITY — THE KEEPING SITE IS ARMED.**
+///
+/// Within one `SourcePriority` tier every keeping pool's claim settles before the builders'
+/// (`docs/plan_pool_toe.md` §2.2): a short keeping site loses something already built, a short
+/// build is only finished later. The builders bid a whole hoe per builder and the lone keeper a
+/// single hand's worth, so largest remainder on the raw bid alone gave this hoe to the build — the
+/// rule this pins is that it no longer does. Read off the take, as the test above reads it.
+#[test]
+fn one_hoe_between_a_build_and_a_keeping_site_at_one_priority_arms_the_keeper() {
+    /// The single hoe the two claimants contend for.
+    const ONE_HOE: u32 = 1;
+    /// What one hoe arms — one hand, since a hoe crews one worker.
+    const ONE_ARMED_HAND: f32 = 1.0;
+    /// Nobody armed.
+    const NOBODY_ARMED: f32 = 0.0;
+    /// Float slack on the inverted take.
+    const TOLERANCE: f32 = 1e-4;
+
+    let (app, _, patch) =
+        a_band_whose_pool_and_keepers_share_the_tillage(ONE_HOE, KEEPERS_SHORT_OF_THE_BILL);
+    assert!(
+        the_keepers_are_short_of_their_bill(&app, patch),
+        "fixture: the keeping pool must fall short of its bill, or `upkeepSupplied` saturates at \
+         the demand and says nothing about the tool"
+    );
+    let armed_builders = builders_the_turn_armed(&app, patch);
+    let armed_keepers = keepers_the_turn_armed(&app, patch, KEEPERS_SHORT_OF_THE_BILL);
+    assert!(
+        (armed_keepers - ONE_ARMED_HAND).abs() < TOLERANCE,
+        "the keeping site is served before the build in its tier, so the hoe arms the keeper — got \
+         {armed_keepers} keepers armed"
+    );
+    assert!(
+        (armed_builders - NOBODY_ARMED).abs() < TOLERANCE,
+        "…and the build, which bid {BUILDERS} hoes against the keeper's one, waits — got \
+         {armed_builders} builders armed"
     );
 }
 

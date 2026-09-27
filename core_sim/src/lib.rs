@@ -128,9 +128,10 @@ pub use components::{
     Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
     MaterialBatch, MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
     ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
-    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferLedger,
-    TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY,
-    NO_RAID_FLOOR, STRIP_IT_BARE,
+    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR,
+    STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -363,7 +364,9 @@ pub use starting_loadout::{
     apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection, LoadoutSupply,
     LoadoutWindow, MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
 };
-pub use supply::{balance_supply_networks, free_pooling_reach_tiles, SupplyNetworkMembership};
+pub use supply::{
+    balance_supply_networks, free_pooling_reach_tiles, PoolingLink, SupplyNetworkMembership,
+};
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
     SupplyNetworkConfigMetadata,
@@ -433,7 +436,7 @@ pub use systems::{
     simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
     split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound,
     HuntTripForecast, MigrationKnowledgeEvent, PoolToolPlan, PowerSimParams, SplitBand,
-    SplitRefusal, SplitRefusals, TradeDiffusionEvent,
+    SplitRefusal, SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

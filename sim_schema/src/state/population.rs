@@ -1099,7 +1099,8 @@ pub struct PopulationCohortState {
     pub hunter_attack: f32,
     /// **This band's per-worker HUNT haul rate** (biomass/turn), sled resolved in — the term every
     /// hunt take, crew-size figure and hunt forecast is capped by. Equipped it is the sled's own
-    /// `flint` tier in `equipment.json` (`hunt_carry` 40); sledless it is `labor_config.json`'s
+    /// `plain` tier in `equipment.json` (`hunt_carry` 40, and the sled ships only that one tier);
+    /// sledless it is `labor_config.json`'s
     /// `hunt.per_worker_biomass_capacity` (12), which is the **no-equipment baseline** since the
     /// carries moved onto their tiers.
     ///
@@ -1646,6 +1647,64 @@ pub struct PopulationCohortState {
     /// Appended last (append-only).
     #[serde(default)]
     pub pool_crew: Vec<PoolCrewLineState>,
+    /// **WHAT CROSSED THIS BAND'S STORE THIS TURN, BY CAUSE** — the detail beneath the eight
+    /// `transfer_*_turn` / `fodder_transfer_*_turn` arms, one row per `(good, rating, direction,
+    /// cause, counterparty, party)`. For provisions and fodder the rows summed per `(link,
+    /// direction)` equal those arms exactly; for a material they are its only transfer account, one
+    /// row per rating. See [`TransferCrossingState`]. Appended last (append-only).
+    #[serde(default)]
+    pub transfer_crossings: Vec<TransferCrossingState>,
+    /// **This band's own supply-network links this turn** — its direct links, not every member of
+    /// its network. Empty for a band in no network. Appended last (append-only).
+    #[serde(default)]
+    pub pooling_links: Vec<PoolingLinkState>,
+    /// **The span this band's network formed at** — the longest hex distance among its network's
+    /// links this turn, `0` in no network. The distance the links actually reached, not the
+    /// `reach_tiles` lever. Appended last (append-only).
+    #[serde(default)]
+    pub supply_network_span_tiles: u32,
+}
+
+/// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of
+/// [`PopulationCohortState::transfer_crossings`]. The code tables are in `snapshot.fbs`'s
+/// `TransferCrossingState`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TransferCrossingState {
+    /// The store key — `"provisions"`, `"fodder"`, or a `materials.json` material id.
+    pub commodity: String,
+    /// A material's exact reading of what crossed, per axis in the material's declared order.
+    /// Empty for provisions and fodder.
+    pub readings: Vec<CharacteristicReadingState>,
+    /// `0` = in, `1` = out.
+    pub direction: u8,
+    /// `0` = local, `1` = route — always the cause's own link.
+    pub link: u8,
+    /// `0` pooled, `1` dowry_out, `2` dowry_in, `3` shipment_out, `4` shipment_in, `5` party_home,
+    /// `6` party_provisions, `7` shipment_returned (a shipment's undelivered cargo coming home,
+    /// naming the destination its `shipment_out` named). ⛔ A pooled row never names a counterparty.
+    pub cause: u8,
+    /// The other band's `band_id`, `0` = none.
+    pub counterparty_band_id: u64,
+    /// Its name; empty = the sim can no longer name it (render the `Band #<id>` fallback).
+    pub counterparty_name: String,
+    /// Its faction — meaningful only when [`Self::counterparty_band_id`] is non-zero.
+    pub counterparty_faction: u32,
+    /// The carrying party's `band_id`, `0` = no party. The key one shipment's goods group under.
+    pub party_id: u64,
+    /// A positive magnitude; [`Self::direction`] carries the sign.
+    pub amount: f32,
+}
+
+/// **ONE SUPPLY-NETWORK LINK OF ONE BAND** — a row of [`PopulationCohortState::pooling_links`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PoolingLinkState {
+    /// The band at the other end.
+    pub band_id: u64,
+    /// Hex distance between the two camps this turn.
+    pub distance_tiles: u32,
+    /// The rung holding the run, as a `RouteRungState.rung_key` (`"route:trail"`); `""` where any
+    /// tile on the path has no kept road.
+    pub rung_id: String,
 }
 
 /// **ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT** — a row of
@@ -1915,9 +1974,24 @@ pub struct DrawnInputState {
 /// different severities on this wire precisely because a client deriving both from a boolean cannot
 /// tell them apart. Render [`Self::reason`] verbatim; never substitute *"cannot craft"*, and never
 /// re-derive a reason, a shortfall or a grade.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+///
+/// # Several offers can be ONE ledger row
+///
+/// An item may have more than one recipe (a spear pointed with bone, a spear knapped from stone), so
+/// several offers share an [`Self::output_item_id`]. The ledger shows one row per item; the last five
+/// fields are what its recipe popup and Make-picker read, all resolved sim-side.
+///
+/// **`Default` is written by hand** because [`Self::owned_at_tier`]'s default is
+/// [`OWNED_AT_TIER_UNATTRIBUTED`] (`-1`), not `0`: the FlatBuffers schema says `= -1`, and a derived
+/// `Default` would answer `0` — *"owns none at this tier"*, a real count — on every row a fixture
+/// builds with `..Default::default()`. Serde takes no default for it: a missing field fails to
+/// deserialize like every other field here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CraftOfferState {
     pub recipe_id: String,
+    /// **The row's name, not the recipe's** — the output item's own `display_name`, or the material's
+    /// title for a stock recipe. Two offers for one item carry the same string; [`Self::recipe_label`]
+    /// tells them apart.
     pub display_name: String,
     /// `kit` (a party carries it) | `tool` (it bounds one material at the bench) | `stock` (it makes
     /// a material) — the three groups the design's ledger is drawn in.
@@ -1940,20 +2014,55 @@ pub struct CraftOfferState {
     pub output_grade: String,
     /// This recipe is the running job — the row's button is spent (*"On the bench"*).
     pub on_bench: bool,
-    /// **The tier a craft would produce right now** — `ItemDefinition::craftable_tier`, the best tier
-    /// the faction knows. It is the ledger's **group head**, not a column: a head says *flint* once
-    /// and can fold away, which is what a column spending its width on every row can never do. `""`
-    /// on a material (stock) recipe.
-    pub output_tier_name: String,
-    /// Index of that tier within the item's own `tiers` list. **Heads order by rank descending** —
-    /// newest first — because there is no other honest ordering for two tier heads and alphabetical
-    /// would put Iron above Bronze.
-    pub output_tier_rank: u32,
-    /// **What the band CARRIES, said only when it disagrees with what it could now make.** `""` when
-    /// there is no news, which is every row on the shipped one-tier roster. *"carrying flint ·
-    /// poor"*, *"last flint set wore out"* — **render it verbatim**; the tier word reaches the Owned
-    /// cell only through this field and only when it is news.
-    pub owned_note: String,
+    /// **The recipe's own short name among its siblings** — *Bone*, *Flint*, *Withy*. `""` on a
+    /// recipe that is the only one making its output.
+    pub recipe_label: String,
+    /// **What this recipe would make, from this band's store right now** — one resolved headline,
+    /// `26 attack`, `8 carry`, `+0.7 build work`, `2 tile vantage`. The grade effect at
+    /// [`Self::output_grade`] for a graded recipe, the output tier's own effect otherwise. `""` for a
+    /// material output and for a bench tool.
+    pub makes: String,
+    /// **How long one fresh unit at this recipe's tier lasts**, in the item's headline wear quantum
+    /// and the wording [`EquipmentBatchState::life`] counts in — `175 blows`,
+    /// `2500 biomass gathered`. `""` for a material output.
+    pub lasts: String,
+    /// **The recipe this row suggests** — exactly one offer per row is `true`, a row being every
+    /// offer that makes the same item or, for a stock recipe, the same material. The offer that is
+    /// [`Self::on_bench`] if any, else the recipe this band last started for the row if it is
+    /// available now, else the first available in book order, else the last started, else the
+    /// first in book order.
+    pub suggested: bool,
+    /// **Units of this item the band owns at this recipe's tier**, or [`OWNED_AT_TIER_UNATTRIBUTED`]
+    /// when every recipe making the item makes the **same** tier — the ledger never recorded which
+    /// recipe made a unit, so a count per recipe there would be invented. `0` is a real count.
+    pub owned_at_tier: i32,
+}
+
+/// **What [`CraftOfferState::owned_at_tier`] publishes when a per-recipe count would be invented** —
+/// every recipe making the item makes the same tier, so there is nothing to attribute a unit to.
+/// Matches the schema's `ownedAtTier:int = -1`.
+pub const OWNED_AT_TIER_UNATTRIBUTED: i32 = -1;
+
+impl Default for CraftOfferState {
+    fn default() -> Self {
+        Self {
+            recipe_id: String::new(),
+            display_name: String::new(),
+            group: String::new(),
+            output_item_id: String::new(),
+            available: false,
+            reason: String::new(),
+            severity: String::new(),
+            shortfalls: Vec::new(),
+            output_grade: String::new(),
+            on_bench: false,
+            recipe_label: String::new(),
+            makes: String::new(),
+            lasts: String::new(),
+            suggested: false,
+            owned_at_tier: OWNED_AT_TIER_UNATTRIBUTED,
+        }
+    }
 }
 
 /// **One batch of one item a band owns**, plus a `count: 0` row for every config item it owns none

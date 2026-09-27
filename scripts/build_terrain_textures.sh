@@ -7,4 +7,4 @@
 # The pre-built atlas approach was removed because Godot's Texture2DArray
 # doesn't serialize image data properly when saved via ResourceSaver.
 
-echo "[build_terrain_textures] Terrain textures loaded at runtime from PNGs (no pre-build needed)."
+echo "[build_terrain_textures] No pre-build needed; changed PNGs are re-imported by run_stack.sh (ensure_godot_import)."

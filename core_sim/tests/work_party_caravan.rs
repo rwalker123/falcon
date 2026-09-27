@@ -115,6 +115,7 @@ fn world_hunting_at(distance: u32) -> (App, Entity) {
                 last_food_consumption: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
+                last_turn_transfer_crossings: Vec::new(),
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
@@ -381,6 +382,24 @@ fn route_received(app: &App, band: Entity) -> f32 {
         .received()
 }
 
+/// The food this band's crossings list has booked as its own party coming home
+/// (`TransferCause::PartyHome`) — the cause the route arm's homecoming must carry, so a work party's
+/// caravan never reads as trade.
+fn party_home_booked(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .last_transfer_crossings
+        .iter()
+        .filter(|row| {
+            row.commodity == FOOD
+                && row.cause == core_sim::TransferCause::PartyHome
+                && row.direction == core_sim::TransferDirection::In
+        })
+        .map(|row| row.amount)
+        .sum()
+}
+
 /// ⛔ **A HERD THAT WANDERS BACK INSIDE THE APRON TAKES THE PARTY HOME, ONCE.** The row stops
 /// posting — the band's own hands reach the herd again — so its caravan has ended: the load and
 /// every walker's pack must reach the larder on that turn, on the route arm, and never again; the
@@ -458,9 +477,16 @@ fn a_vanished_herd_brings_its_caravan_home_as_the_row_lapses() {
     app.world.resource_mut::<HerdRegistry>().clear();
     let larder_before = larder(&app, band);
     let route_before = route_received(&app, band);
+    let party_home_before = party_home_booked(&app, band);
     resolve_a_turn(&mut app);
     let landed = larder(&app, band) - larder_before;
     let routed = route_received(&app, band) - route_before;
+    let booked = party_home_booked(&app, band) - party_home_before;
+    assert!(
+        (booked - carried).abs() < SAME_FOOD,
+        "the homecoming is booked as the band's own party coming home, not as trade: {booked} of \
+         {carried}"
+    );
     assert!(
         (landed - carried).abs() < SAME_FOOD,
         "the load and every pack land home as the row lapses: {landed} of {carried}"

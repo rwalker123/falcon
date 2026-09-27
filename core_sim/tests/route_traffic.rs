@@ -125,6 +125,7 @@ fn spawn_band(app: &mut App, (x, y): (u32, u32), food: i64) -> Entity {
                 last_food_consumption: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
+                last_turn_transfer_crossings: Vec::new(),
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: MoraleCause::None,
                 last_morale_contributions: Default::default(),
@@ -1512,5 +1513,69 @@ fn the_grade_gate_opens_once_the_connection_has_taught_roadbuilding() {
         ),
         "and a connection the players kept standing opens it: {} against a threshold of {threshold}",
         progress(&app, ROADBUILDING_DISCOVERY_ID)
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE RUNG A POOLING LINK IS HELD ON (issue #731)
+// ---------------------------------------------------------------------------------------------
+
+/// ⛔ **A LINK PUBLISHES THE RUNG HOLDING ITS RUN — THE WEAKEST TILE, AND NONE OVER A GAP.**
+///
+/// Three readings of one pair of camps: over bare ground the link holds on the free reach and names
+/// no rung; over a wholly trailed run it names `route:trail`; with one tile of that run taken back to
+/// a path it names `route:path`, because the run is only as good as its weakest tile — the reading
+/// `routes::path_lesson_rung` already takes for the lesson a connection teaches. The pair stands
+/// inside the free reach, so the link forms in all three and only its rung moves.
+#[test]
+fn a_pooling_link_names_the_weakest_rung_on_its_run() {
+    /// Inside `reach_tiles` (3), so the link forms whatever the roads are.
+    const INSIDE_THE_FREE_REACH: u32 = 2;
+
+    let rung_of_the_link = |road: Option<bool>| -> Option<RungKey> {
+        let mut app = spawn_world();
+        let (a, b) = two_camps_apart(&mut app, INSIDE_THE_FREE_REACH);
+        let run = tiles_between(&app, a, b);
+        if let Some(broken) = road {
+            seat_a_trail_along(&mut app, &run);
+            if broken {
+                break_one_tile_back_to_a_path(&mut app, run[run.len() / 2]);
+            }
+        }
+        app.world.run_system_once(balance_supply_networks);
+        let membership = app.world.resource::<SupplyNetworkMembership>();
+        let links = membership.pooling_links_of(a);
+        assert_eq!(
+            links.len(),
+            1,
+            "precondition: the pair holds exactly one link"
+        );
+        assert_eq!(
+            (links[0].band, links[0].distance_tiles),
+            (band_id(&app, b), INSIDE_THE_FREE_REACH),
+            "the link names the other camp and the distance between them"
+        );
+        assert_eq!(
+            membership.span_tiles_of(a),
+            INSIDE_THE_FREE_REACH,
+            "a two-camp network spans its one link"
+        );
+        links[0].rung
+    };
+
+    assert_eq!(
+        rung_of_the_link(None),
+        None,
+        "bare ground: the free reach holds the link, and no rung does"
+    );
+    assert_eq!(
+        rung_of_the_link(Some(false)),
+        Some(RungKey::RouteTrail),
+        "a wholly trailed run is held on the trail"
+    );
+    assert_eq!(
+        rung_of_the_link(Some(true)),
+        Some(RungKey::RoutePath),
+        "one path tile in the run and the run is a path — the weakest tile, never the best"
     );
 }

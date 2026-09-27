@@ -2193,6 +2193,7 @@ mod food_flow_tests {
             material_shortfall_warned: Vec::new(),
             last_food_transfers: Default::default(),
             last_fodder_transfers: Default::default(),
+            last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
             build_queue: Vec::new(),
         };
@@ -2244,6 +2245,7 @@ mod food_flow_tests {
             material_shortfall_warned: Vec::new(),
             last_food_transfers: Default::default(),
             last_fodder_transfers: Default::default(),
+            last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
             build_queue: Vec::new(),
         };
@@ -2603,6 +2605,7 @@ mod wellbeing_tests {
             last_food_consumption: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
+            last_turn_transfer_crossings: Vec::new(),
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),

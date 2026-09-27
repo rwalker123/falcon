@@ -3,7 +3,9 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/{BandCityPanel,BandFoodStatus,PenStatus}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/BandPanelController.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{BandComposeFloat,WorkInspectorDialog}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/{TradeZoneController,TradeLedger,TradeHoverCard,FactionMark,RungLinkIcon,hud_trade_vocab}.gd"
   - "clients/godot_thin_client/tools/band_panel_preview.gd"
+  - "clients/godot_thin_client/tools/band_panel_trade_tab.gd"
 ---
 
 <!-- Extracted verbatim from lines 182-182;192-192;194-194;3475-3912 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -22,6 +24,12 @@ paths:
 | `ui/hud/BandComposeFloat.gd` | **The parties compose sheet, floated off the panel when its zone cannot hold it** — see "A COMPOSE SHEET THE ZONE CANNOT HOLD LEAVES THE ZONE" for the trigger. An **`AutoSizingPanel`**, not `PanelCard` + `DockScrollFit`: this card is measured against the VIEWPORT rather than against a dock's remaining height, which is the free-floating half of that pair (`panel-framework.md`). Both axes are fitted explicitly, because the node is a plain `Control` and no child minimum ever reaches it. **It is the card and NOTHING more — there is deliberately no full-screen catcher.** `ComposeSheet`, the herd drawer's floating sheet, is a catcher with a card inside it so a click anywhere outside dismisses; that is exactly wrong here, because the DOCK's sheet stays open through a map pick — the targeting banner and the herd glow ride on the sheet still being open while the player clicks a herd — and a catcher would eat that click. `PanelRoot`'s autopsy applies in reverse: a `STOP` control the pointer finds makes the Viewport mark the press handled before `MapView._unhandled_input` sees it, so every pixel this node claims is a pixel of dead map, and it claims only its own rect (`band_panel_preview._assert_float_leaves_the_map_clickable` drives that through `Viewport.push_input`, never off a `mouse_filter` value). **It never overlaps the card it came from, structurally rather than by a clamp**: `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the MAP-FACING side of the panel card (`MAP_FACING_SIDE`, the opposite of the docked edge) with `ANCHOR_GAP` of clearance, and the width fit, the height fit and the placement all read that ONE rect — a card too tall for it scrolls, it does not creep back across the seam. **`target_width` is the ZONE width plus this card's own chrome**, never the zone width itself: `AutoSizingPanel`'s width is the OUTER one, and a sheet handed the zone width minus a border, two content margins and a scroll gutter re-wraps, which would falsify the very measurement that floated it. `mount` applies that width BEFORE the frame `refit` waits, or the height fit reads the previous width's wrapping and leaves the card ~100px taller than its content (measured). Its ONE `ScrollContainer` is not a breach of the panel's no-scroll rule — that rule is about content whose height feeds back into a FIXED reservation, and this ceiling is real viewport room — and it stays DISABLED unless `fit_to_content` finds the content taller than the room. It draws in `BandCityPanel.panel_card_stylebox()`, the panel's own, so it reads as the panel's surface rather than a second kind of card |
 | `ui/hud/WorkInspectorDialog.gd` | **The work board's inspector, rehosted OUT of the work zone** (`docs/plan_standing_upkeep.md` §4.9 item 12d) — see "THE WORK INSPECTOR IS A DIALOG" below. An **`AutoSizingPanel`** on its OWN `CanvasLayer` (`HudLayer.work_inspector_host()`, `WORK_INSPECTOR_LAYER_INDEX` = 105), holding the `PanelContainer` `BandPanelController._build_work_inspector` still builds — the head line, the conditional notes, the arrivals strip, and (since item 12d's SECOND pass) the POLICY / PRIORITY / KITS **sections** with their controls drawn, over a two-button actions row. **A `Control` on a layer and never a `Popup`**: `Popup` auto-hides on an outside click and on parent focus loss, which is precisely the dismissal this surface forbids (it RE-TARGETS when another board row is selected, so a stepper press elsewhere is ordinary use). **NON-MODAL — no catcher, no scrim**, `BandComposeFloat`'s rule for the same reason one layer down: every pixel it claims is a pixel of dead map, so it claims only the card. **Centred in the ROOM the dock leaves — one placement for all four dock edges**, no `room_bounds` (it is a surface you WRITE INTO, so it takes a layer above the docked ones rather than dodging them — `panel-framework.md`'s table). `_room()` is the viewport inside `VIEWPORT_MARGIN` cut back to the panel card's MAP-FACING side, `BandComposeFloat`'s own rect through `BandComposeFloat.map_facing_side`. It was centred in the raw viewport for one slice, which held only while the card was ~104–156px tall; the sections took it to 340 and a viewport centre then ran straight through a bottom dock's panel. `mount(strip, reserved, card_rect, map_facing)` is the whole API: `reserved` is `BandPanelController._work_inspector_height`'s answer for the same model and becomes the card's `min_height`, which is how *reserved ≥ drawn* survived the move. Rebuilt per render, never patched (the rung track's rule — every figure on the strip moves per snapshot), and the re-mount IS the re-target |
 | `ui/hud/FactionRollup.gd` | **All-`static`, stateless** builder of the FACTION PAGE's FOUR zones (issue #450) — the all-band rollup the cycler pins first. `build_band_zone` (the summed PEOPLE bar + the band page's own vitals rows — Food / **Fodder** / **Upkeep** / Morale / Growth; a sixth, Trade, went with arc #527's retired account, and the `Kit` row it sat beside went with `docs/plan_standing_upkeep.md` §4.9 item 12 — durabilities never aggregated, so that row was an alert and a drill-down, and the CRAFTING panel's kit ledger already states the items in full. The **`Upkeep`** row is the standing MATERIAL bill, folded PER BAND out of `DetailFormat.band_material_bill` and rendering only where some band on the roster owes a good — see `band-readouts.md` → "THE STANDING MATERIAL BILL". The `Fodder` row is the Food row beat for beat, sums the same way, and has the band row's DORMANT form on the same gate folded across the roster — see `band-readouts.md` → "THE FACTION PAGE'S `Fodder:` ROW". `build_band_zone` took the faction's `{track: progress}` row as a sixth parameter for that row's hover alone, and **takes no knowledge row at all now** — the dormant row's hover was retired (it reached the whole block, not the row), and the parameter went with its one reader. `_build_vitals_label` CLEARS the previous render's carets before building, which this page did not do until a dormant row inherited one), `build_work_zone` (the whole workforce as one bar and the per-band roster), **`build_knowledge_zone`** (SETTLING, the craft tracks, DISCOVERIES — the fourth column the panel's ordered-list body exists to hold, with a `full` HEIGHT TIER that drops the last of the three in a height-capped horizontal dock) and `build_parties_zone` (every party and the band it left, its NAME jumping to that band — see "THE PARTIES ROW NAMES THE HOME BAND" for why `_summary_row` binds a separate `jump_owner`), plus the `_stat_row` leaf they are built from. Its two new inputs are threaded in as PARAMETERS like every other: the player faction's sedentarization entry and its discovered-site array, read off `FactionReadouts` (`faction_sedentarization` / `faction_discovered_sites`), which is where the PLAYER-FACTION FILTER over those two per-faction wire arrays already lives — a second walk looking for `PLAYER_FACTION_ID` is a second chance to disagree about whose faction is being reported. **It is a shared LAYER rather than a controller because the page is a READOUT** — no steppers, no compose sheet, no open row, nothing that survives a snapshot — so it has no per-cluster state to own, which is the whole of what makes a controller one (`hud-modules.md`). The one thing it needs is threaded in as a PARAMETER: the `HudBandLaborState` instance, plus the caller's `herd_label_for_id` Callable (the treatment `HudFormat.panel_expedition_summary` already takes — a stateless layer must not reach for the roster/selection/herd-list state that resolver reads). **IT RE-DERIVES NOTHING**: every total is a SUM over answers the per-band surfaces already give (`DetailFormat.band_net_food` / `band_provisions` / `band_fodder_store` / `band_net_fodder` / `band_material_bill`, `HudBandLaborState.effective_idle` / `effective_worker_map` / `effective_role_workers` / `band_party_workers`, `FactionReadouts.faction_tracks`), so a band's own page and this one cannot disagree about a number — a rollup with its own food ledger would be a second source of truth for the identity `larder_delta == income − consumption − pen_feed − raid_forfeit` the food arc keeps closed. Dependency direction: it reads `HudWidgets` / `HudFormat` / `DetailFormat` / `SourceForecast` / `HudStyle` / the vocab leaves and `FactionReadouts`' track table, and none of them may read it back |
+| `ui/hud/TradeZoneController.gd` | `RefCounted` controller for the band page's **Trade tab** (issue #731) — builds the zone (FULL or SHORT tier, chosen by measurement), owns the list popover and the hover card. See "The Trade tab" |
+| `ui/hud/TradeLedger.gd` | **All-`static`** arithmetic for the Trade tab and the Food/Fodder popovers: which crossings are trade, one good's net across its ratings, shipments grouped by party, the network's camps and relays, one good across the network |
+| `ui/hud/TradeHoverCard.gd` | The Trade tab's hover card: a row's rating piles or a shipment's cargo, placed beside the row and never under the list panel |
+| `ui/hud/FactionMark.gd` | **The one faction mark** — a flag glyph in `MapView.faction_color`, on every counterparty; the slot a faction's flag (#647) fills |
+| `ui/hud/RungLinkIcon.gd` | A pooling link's rung as a glyph (path dotted, trail dashed, dirt road solid pigment, paved road double; open ground a faint dot) |
+| `ui/hud/hud_trade_vocab.gd` | `HudTradeVocab` — the crossing codes (direction / link / cause), the tab's thresholds, words and sizes |
 | `ui/PenStatus.gd` | Single source of truth for **"is this pen's herd starving?"** — `FULLY_FED` / `FED_EPSILON` + `fed_fraction(herd)` / `is_starving(fed)`, reading `HerdTelemetryState.penFedFraction` (`< 1` ⇒ the pen's own pasture plus the fodder carried in did not cover its demand, so the herd is SHRINKING every turn — it is never a bill the keeper failed to pay, human food not being animal feed). Plus `herd_is_starving(herd)` for a caller holding only the herd dict. The ONE test all three surfaces ask — the herd drawer's **`Fed:`** row (`DetailFormat.pen_feed_value`, which carries the mark, the fed share, the pasture/fodder split and the shortfall; the CORRAL row states the rung alone, see `herd-readouts.md`), the map's distress badge (`MapView._draw_herd`) and the turn orb's `starving_pen` producer — so they can never disagree about which pen is dying |
 ## Band/City dockable panel
 
@@ -151,7 +159,10 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     block** (`_build_food_outlook_block`, appended right after the summary block, headed `FOOD OUTLOOK`;
     BBCode can't host a drawn chart, so it is NOT a summary line). Composed CLIENT-SIDE: start from the
     band's larder (`stores.provisions`), walk `food += Σ arrival_schedule[i] over the band's assignments
-    − food_consumption`, clamped at 0, over the 20-turn horizon (drain held flat). **The pens' feed is
+    + pooled food net − food_consumption`, clamped at 0, over the 20-turn horizon (drain and pooled net
+    held flat). The pooled net (`DetailFormat.band_pooled_food_net`, this turn's `pooled` crossings on
+    `provisions`, signed) is the sim's `standing_net` in `larder_runway_turns`, so the empty marker
+    lands on the turn `turnsOfFood` names; `trade_tab_outlook_pooling` asserts it. **The pens' feed is
     not a term** — a pen eats its fenced pasture and its keeper's hay, never the larder — and raids stay
     out for the reason they always did: an episodic past loss is not a steady drain.
     Draws a `SIGNAL` filled area + line, a `HEALTHY` dot on each haul turn, a faint `LINE_SOFT` baseline,
@@ -2367,7 +2378,7 @@ new jobs are declared*.
   `KEEPING_ZONE_READOUT_FORMAT` deliberately counted two. That is not a widened definition of keeping —
   it is a different question, asked by a block that now holds all three pools.
 - **THE CARDS ARE COMPACT, and the prose became a tooltip.** `_build_pool_card` is a name and a stepper
-  and nothing else; the three role hints survive verbatim as each card's `tooltip_text`. The band tab's
+  and nothing else; each role's hint is the first line of the card's `tooltip_text`. The band tab's
   cards could afford a description because that zone SCROLLS; this one CLIPS, and a description read
   once cannot cost height on a surface operated every turn.
 - **The Builders card's read-only gear line did NOT come along**, and its fact was not lost: the BUILD
@@ -2529,7 +2540,9 @@ strip suggests.
 harness was run at twelve values of the constant and judged by exit status. **416** hands the zones a 356px
 box and `band_panel_build_queue_wide` fails with `needs 358px … short by 2`; 418 clips nothing at any dock
 or viewport in the matrix. Fund mode does not raise the floor — its 110px pools block buys the queue fewer
-rows, so the two move against each other.
+rows, so the two move against each other — **true only while the settings strip is 54px or less**: fund
+mode with a plant entry's strip open is the build queue's own worst case, stated under "THE WORK ZONE'S
+WORST CASE AT 418" with the queue's controls.
 
 **WHAT THE 38px COSTS IS ONE BUILD QUEUE ENTRY ROW, and nothing else.** A wide dock draws one entry and
 `+3 more` where it drew two and `+2 more` (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS` 2 → 1, which is
@@ -2584,31 +2597,82 @@ publishes a **TOE** per band (`PopulationCohortState.poolToe`, `docs/plan_pool_t
 >
 > **`docs/plan_pool_toe.md` §4 publishes `kitId ""` and `kitWorkersHolding == workers` on EVERY pool
 > row**, which is the *nothing to be short of* reading — so that equality now silences every pool in
-> the game and a card short of tools said **nothing at all**, with the triangle merged in #672 having
-> nothing to fire on. The producer had to move, not be re-gated.
+> the game and a card short of tools said **nothing at all**. The producer had to move, not be
+> re-gated.
 
-- **The producer is `_pool_toe_short_line`, and it joins on a string the card already holds.**
+- **The producer is `_pool_tools_short_line`, and it joins on a string the card already holds.**
   `HudBandLaborState.pool_toe_for(band, kind)` filters the vector to this pool — `pool` is
   `KitJob::as_str()`, the same spelling as `LaborAssignment.kind` and therefore the same `kind`
-  `_build_pool_card` was handed — and `HudWorkVocab.pool_toe_short_line` renders the short rows.
-  **No second table maps a card to a pool.**
+  `_build_pool_card` was handed — and `HudWorkVocab.pool_tools_short_line` turns the rows into the
+  card's one tool sentence. **No second table maps a card to a pool.**
 - ⛔ **PENDING IS STILL THE ONE GATE THIS PATH ADDS.** The TOE is resolved against the CONFIRMED
   staffing, so a `+` the player just pressed would be answered with the coverage of the crew they
-  left behind; `_pool_toe_short_line` answers `""` on a pending row, exactly as its predecessor did.
+  left behind; `_pool_toe_settled_rows` answers `[]` on a pending row, and every reader goes through
+  it.
 - ⛔ **A POOL WHOSE TOOLS ARE ALL FILLED SHOWS NO LINE — not a satisfied one, not a zero.** A row is
   present at `filled == required` precisely so a reader can tell *satisfied* from *not applicable*;
   both render nothing on the card, and only one of them is a line. **The filter is in the CLIENT and
   not in the decoder** for that reason — collapsing them on the way in would destroy the distinction
   the vector exists to carry.
-- ⛔ **`POOL_CARD_SHORT_META` MEANS *THE TRIANGLE IS FLYING*, FOR EITHER REASON.** The dead claim:
-  *"`POOL_CARD_KIT_SHORT_META` carries the SENTENCE, not a flag, and is a second meta rather than a
-  value on `POOL_CARD_SHORT_META` for that meta's own stated reason: it is read as a boolean meaning
-  'is this pool short of HANDS', and a gear shortfall wearing it would answer yes to a question about
-  the work bill."* The triangle widened to both shortfalls, so the boolean is the triangle and
-  nothing narrower. **`POOL_CARD_TOOL_SHORT_META`** (the kit having gone out of the name with the
-  kit) still carries the tool LINE, or `""`; the hands reason has no meta at all — it is the hover's
-  coverage line — so a harness asking WHICH reason reads the tool meta and the hover, never the
-  triangle's.
+- ⛔ **`POOL_CARD_SHORT_META` MEANS *THE `⚠` IS FLYING*, AND ONLY A WORK SHORTFALL FLIES IT** (issue
+  #716). It meant *either shortfall* while a tool shortfall alone flew the triangle.
+  **`POOL_CARD_TOOL_SHORT_META`** carries the tool SENTENCE — whichever of the two forms below the
+  card is showing — or `""`; the work reason has no meta, being the hover's coverage line. A harness
+  asking WHICH reason reads the tool meta and the hover, never this boolean.
+
+#### ⛔ THE CARD NEVER NAMES OR COUNTS A TOOL (issue #716)
+
+> ⛔ **RETIRED — THE COUNTED TOOL LINE**, `4 of 6 hoes · 0 of 2 stone-dressing tools`, composed from
+> `POOL_TOE_TERM_FORMAT` (`KIT_SHORTFALL_FORMAT` less its trailing word), a ceil/floor pair clamped by
+> `POOL_TOE_SHORT_UNIT_GAP`, and `DetailFormat.kit_item_count_word` over `KIT_ITEM_COUNTED_NAMES` —
+> all deleted with it. Two reasons, both from play: the line sat under a WORKER stepper, so players
+> read `0 of 1 hoe` as a head count (*"with a hoe I only need one worker"*); and a list of tool names
+> cannot scale as the roster grows from hoes to ploughs to tractors. The work-unit coverage sentence
+> carries the numbers now.
+
+**Every pool tool is PRODUCTIVITY, not a requirement**, so a tool shortfall on its own loses no work —
+it only makes each worker do less. That is what splits the card's states:
+
+| Pool state | Mark | Name | Hover, after the role hint |
+|---|---|---|---|
+| fine | none | `INK` | the coverage line, if the pool has a bill |
+| work short, tools filled | `⚠` `WARN` | `WARN` | the coverage line |
+| work short **and** tools short | `⚠` `WARN` | `WARN` | the coverage line, then `Short of tools.` |
+| work covered, tools short | `ⓘ` `INK_DIM` | `INK` | the coverage line, then `More tools would speed this up.` |
+
+**The hover is terse, one short line per fact** (the user found the long form too wordy). The role
+hint names what the pool keeps (`Agriculture workers maintain improved fields.`, `Husbandry workers
+maintain tamed herds and pens.`, `Roadwork workers maintain built roads.`, `Groundwork workers
+maintain opened ground.`, `Builders work the build queue, top job first.`); every pool shares ONE
+coverage format, `Supplies %s of %s work a turn.` (`UPKEEP_POOL_COVERAGE_FORMAT`, supply then asked,
+in work units), so the hint is the only place a pool's holdings are named; the idle line is
+`%d idle worker(s)` with no remedy clause.
+
+- **The two sentences are `HudWorkVocab.POOL_TOOLS_SHORT_WARN_LINE` and `POOL_TOOLS_SHORT_INFO_LINE`**,
+  chosen by `pool_tools_short_line(lines, work_short)` — `""` unless `pool_toe_is_short(lines)`. Under
+  the `⚠` the tools are a second reason and the sentence is terse; under the `ⓘ` they are the only
+  reason and the sentence says what the tools would buy.
+- **The info mark is the idle mark's glyph and ink** (`UPKEEP_POOL_IDLE_MARK`, issue #715), because it
+  makes the same claim — nothing is being lost — and the one slot has room for one glyph. A pool
+  covered, short of tools AND carrying a spare hand flies one `ⓘ`; its hover carries both sentences,
+  tools before idle, and `POOL_CARD_IDLE_META` still carries the idle sentence.
+- **The Builders card is never work-short** (`_build_pools_block` passes it no `cover`), so a builders
+  pool short of tools always takes the `ⓘ`.
+- **…AND ITS TOOL LINE NAMES THE JOB, NOT THE POOL** — `POOL_TOOLS_SHORT_BUILDERS_LINE`, *The top job
+  in the queue is short of tools.*, chosen by `pool_tools_short_line`'s `kind` argument whatever the
+  work reading. The builders' tool claim is the queue HEAD entry's alone (`docs/plan_pool_toe.md`
+  §2.4 — entries behind the head claim nothing), so *the builders are short of tools* and *the top
+  job is* are one fact, and only the second tells the player where to look. Reported from play: the
+  INFO form under this card left the player searching a queue whose rows said nothing about tools.
+  The head row states the same fact as an amber `◆` second line — see "THE HEAD CARRIES THE
+  BUILDERS' TOOL SHORTFALL" below.
+- **THE SHORT TEST IS ON THE WIRE'S FLOATS** — `HudWorkVocab.pool_toe_row_is_short`,
+  `required − filled > POOL_TOE_SHORT_MIN` — and a pool short by any amount over that floor is short;
+  see "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY" below.
+- ⛔ **A SHARED ITEM IS JUDGED ON THIS POOL'S OWN ROWS.** Roadwork and Quarrywork both want
+  stone-dressing tools, and each is a row of its own in the vector; the card joins on the POOL, so the
+  other gang's shortfall on the shared item never marks this card. (**Quarrywork has no card** — its
+  stepper rides the WORKINGS ROSTER head, which carries no tool line.)
 
 #### ⛔ THE `◆` MARK DOES NOT FIT THIS BLOCK — THREE PLACEMENTS, ALL MEASURED
 
@@ -2625,107 +2689,31 @@ row is already at that ceiling with one mark:
 
 **The block may not grow to make room.** Four cards already ran 42px over at the shared name size —
 which is what drove `POOL_CARD_NAME_FONT_SIZE` to 10 and trimmed every `POOL_STEPPER_*` metric — and
-a second row costs 62px the work zone's floor cannot find.
+a second row costs 62px the work zone's floor cannot find. **So the tool reason rides the one mark the
+card already has**, and which reasons hold is on the hover — the rule the work-bill mark on this card
+follows for its own figures (*"the card is a role name over a stepper and has no room for
+arithmetic"*).
 
-**So the reason is on the HOVER, and what the card says at a glance is its `⚠` and its TITLE'S
-INK**, neither of which costs width: the triangle that already sat beside a hands-short name widened
-to a tool shortfall, and the name takes the WARN amber with it. That is the same rule the work-bill
-mark on this card follows for its own figures (*"the card is a role name over a stepper and has no
-room for arithmetic"*).
+> ⛔ **RETIRED — THE TRIANGLE FLEW ON EITHER SHORTFALL.** It meant *short of hands* first, then widened
+> to *short of hands or tools* so a tool-short card was not an amber name with nothing to explain it.
+> Issue #716 narrowed it back: a tool shortfall alone loses nothing, and spending the `⚠` and the WARN
+> title on it told the player the band was losing something it was not.
 
-> ⛔ **RETIRED — THE TRIANGLE MEANT SHORT OF HANDS.** The dead note: *"Short of hands and short of
-> tools have opposite remedies — a stepper against the bench — and on this block they are not
-> distinguishable without hovering: a gear-short card and a hands-short card are both an amber name,
-> and only the `⚠` (hands) separates them."* It separated nothing a player could read: a card short
-> of BOTH drew exactly the card short of hands, and a card short of tools alone drew an amber name
-> with no triangle to explain it.
-
-**As built — the triangle flies on all three shortfall states, and the hover says why:**
-
-| Pool state | Name | `⚠` | Hover, after the role hint |
-|---|---|---|---|
-| fine | white | none | nothing |
-| short of hands | amber | yes | the coverage line |
-| short of tools | amber | yes | the tool line |
-| short of both | amber | yes | the coverage line, then the tool line |
-
-- **Two facts, two lines, in their existing words.** The hands line is
-  `HudWorkVocab.upkeep_pool_coverage_line`; the tool line is the pool's SHORT TOE rows in the
-  client's own `N of M` phrasing — `4 of 6 earthmoving tools · 0 of 2 stone-dressing tools`. Neither
-  is reworded, and `HudFormat.join_tooltip_lines` drops whichever is empty — so the two are ORDERED
-  on the hover, not composed into one sentence.
-  - ⛔ **THE TERM IS `KIT_SHORTFALL_FORMAT` LESS ITS TRAILING WORD** (`HudWorkVocab.POOL_TOE_TERM_FORMAT`,
-    `"%d of %d %s"`). That sentence states ONE shortfall and closes with ` available`; a pool states a
-    LIST, and repeating the word on every term reads as a run of sentences rather than as one line.
-    **This replaces `2 of 6 Tillage kits available` on POOL CARDS ONLY** — a take row (hunt, forage,
-    extract) is about ONE kit and keeps that sentence exactly as it reads today.
-  - ⛔ **THE ITEM'S WORD HAS ONE HOME, AND IT IS `DetailFormat.KIT_ITEM_LABELS`.** A raw underscored
-    wire id must never reach the screen (`stone_dressing`, `earthmoving`), so those two have rows in
-    that table like every other item; `DetailFormat.kit_item_word` is the mid-sentence form, a
-    **derivation** of the one table (`kit_item_label().to_lower()`) and never a second table of names.
-    Its `replace("_", " ")` is a structural guarantee against a future unlabelled id rather than a
-    naming rule.
-    - ⛔ **NEITHER ROAD TOOL IS ONE TOOL, AND THE CONFIG NAMED THEM BEFORE THIS ARC DID.**
-      `equipment.json._comment_road_tools` calls `earthmoving` *"the PICK AND SPADE a GRADE is cut
-      with"* and `stone_dressing` *"the maul, wedges and dressing hammer"*, so a label naming one of
-      the three narrows the item; the labels take the phrasing
-      `.claude/rules/core_sim/routes.md` already uses for exactly these two ids. **`Mattocks` shipped
-      for one pass and that comment refuses it outright** — *"a mattock beside them would blur the
-      exact plant/route line the rung bound below exists to draw"*, `hoes` holding the agricultural
-      register.
-  - ⛔ **AND THE WORD IS INFLECTED, BECAUSE THE LABEL TABLE IS MIXED.** `Hoes` is already plural and
-    `Crook` is not, so *append an `s`* gives `Spearss` and *leave it* gives `0 of 2 crook`.
-    `DetailFormat.KIT_ITEM_COUNTED_NAMES` holds `[one, many]` beside the label it inflects — the
-    counted form of the SAME name, never a second source of the name — and
-    `kit_item_count_word(id, n)` is the one place it is read. **The noun agrees with the
-    DENOMINATOR**: `N of M` names the M, which is what makes `1 of 2 crooks` and `0 of 1 hoe` both
-    read. An item with no row falls back to its label at every count, appending nothing, so a new
-    item a pool can require needs a row rather than a rule.
-    - ⛔ **THE TAKE ROW'S SUFFIX RULE CANNOT BE BORROWED.**
-      `HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX` appends a bare `s` because it counts KIT names,
-      which are uniformly singular by roster convention; this counts ITEM labels, which are not.
-      That const's own doc anticipates it: *"a roster whose names ever went plural would need a
-      different rule."* The take row also does not inflect at one (`1 of 1 Harvesting kits
-      available`, Ray's own wording) and is **left exactly as it is**.
-  - ⛔ **THE SHORT TEST IS ON THE WIRE'S FLOATS; THE ROUNDING ONLY DECIDES HOW THE NUMBERS READ.**
-    Two different questions, and conflating them is what let a sub-unit shortfall read as covered —
-    see "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY" below for the playtest numbers and the
-    retired arithmetic. `HudWorkVocab.pool_toe_row_is_short` answers the first
-    (`required − filled > POOL_TOE_SHORT_MIN`, this client's family floor for a rate that is nothing
-    to state); the term then CEILS the requirement and FLOORS what is held, each with that same
-    tolerance, and clamps the denominator to at least `held + POOL_TOE_SHORT_UNIT_GAP` so a short row
-    can never print `N of N`.
-- **ONE triangle, never two.** A card short of both draws a single `⚠`; a second glyph is the
-  measured-and-refused placement above.
-- **The gating underneath is otherwise unchanged**: nothing flies for a fine pool, an unstaffed pool
-  or a pending row. **What changed is which pools can fly for TOOLS** — `roadwork` and `quarrywork`
-  are ordinary pools with ordinary sites, so they are short of their items like any other, where the
-  retired kit path silenced them on an equality.
-- ⛔ **A SHARED ITEM IS STATED AS THIS POOL'S SHARE.** Roadwork and Quarrywork both want dressing
-  hammers, and each is a row of its own in the vector; the card joins on the POOL, so it states
-  neither the other gang's figures nor the two added up. (**Quarrywork has no card** — its stepper
-  rides the WORKINGS ROSTER head — so the shared case is visible on the Roadwork card.)
-- **What the triangle cannot say at a glance is WHICH remedy.** Hands and tools are told apart on the
-  hover alone; that is the width budget's price.
-
-**Frame:** `band_panel_pool_kit_short` — four cards, four different answers, one frame, because a
-client that marks every card and one that marks none are the same picture at a glance, and presence
-alone cannot tell the shortfall states apart: each card's triangle (its meta AND the one `⚠` it drew)
-and each hover's lines are asserted together. Agriculture is short of HANDS with its tools **FILLED**,
-Husbandry of BOTH (its hands line asserted BEFORE its tool line), Roadwork of **TOOLS ONLY on TWO
-items** — including its own share of the shared stone-dressing tools — and Builders of **nothing at all**,
-carrying no TOE row, which is the *not applicable* card and the one that can never be short of hands
-(`_build_pools_block` passes it no `cover`).
+**Frames:** `band_panel_pool_kit_short` — four cards, four answers, one frame: Agriculture short of
+WORK with its tools **FILLED** (`⚠`, no tool line), Husbandry short of BOTH (`⚠`, work line then
+`Short of tools.`), Roadwork short of **TOOLS ONLY on TWO items** with its bill staged PAID IN FULL
+(`ⓘ`, calm title, `Supplies 2 of 2 work a turn.` then the INFO tool line) and Builders with **no TOE row at all** — the *not applicable* card. And
+`band_panel_pool_kit_short_builders`, the same band with a builders TOE line short: the Builders card
+flies the `ⓘ`.
 
 ⛔ **THE FILLED CARD AND THE NOT-APPLICABLE CARD RENDER IDENTICALLY, so the distinction between them
 is asserted against the FIXTURE and not against the card.** That pairing is also what makes the set a
-set: a tooltip builder that always renders a tool line passes the two SHORT cards on its own, and one
-that never renders passes the two silent ones. The state re-pushes the fund-mode band afterwards: the
-dock states below it re-render this block and push no band of their own, so leaving the fixture
-standing failed the BOTTOM-dock and TWO-COLUMN claims several hundred lines from the state that
-changed.
+set: a tooltip builder that always renders a tool line passes the SHORT cards on its own, and one that
+never renders passes the two silent ones. The state re-pushes the fund-mode band afterwards: the dock
+states below it re-render this block and push no band of their own, so leaving the fixture standing
+failed the BOTTOM-dock and TWO-COLUMN claims several hundred lines from the state that changed.
 
-### ⛔ A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY — the triangle flies at any magnitude
+### ⛔ A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY — the tool line speaks at any magnitude
 
 Reported from a live playtest. Band `Teasel`, one plant site at (72,28) mid-Cultivate, straight off
 the wire:
@@ -2739,62 +2727,24 @@ labor rows: agriculture 2 workers, builders 2 workers
 ```
 
 The band owns two hoes and both pools bid at Normal priority, so the settlement splits them pro-rata
-and **both pools are genuinely short**. The **Builders card warned and the Agriculture card said
-nothing at all** — so the pools panel was silent about the exact shortage the tile was complaining
-about, which is what the player reported.
+and **both pools are genuinely short**. The Builders card warned and the Agriculture card said nothing
+at all: the retired counted line rounded `0.7906` up to a denominator of one and apportioned the
+numerator up to one as well, printed `1 of 1 hoe`, and treated the equality as covered.
 
-**THE ROUNDING SWALLOWED IT.** `round(0.7906)` floored UP to a denominator of one, the apportion then
-drove the numerator to one as well, and `parts[0] >= units` skipped the row: `1 of 1 hoe` — a 28%
-shortfall printed as complete, no line, no triangle. Builders' `1.4334 of 2.0` survived as `1 of 2`
-purely because its numbers are bigger.
-
-> #### ⛔ RETIRED — *BOTH HALVES ARE APPORTIONED, NOT ROUNDED APART*
->
-> The dead rule: *"`filled` and the shortfall behind it PARTITION `required`, so rounding each on its
-> own gives a `4 of 6` whose remainder is 3; `HudFormat.apportion_people_to` is that one arithmetic,
-> and the target it sums to is `round(required)`, floored at `POOL_TOE_MIN_UNITS`."*
->
-> **`apportion_people_to`'s premise does not hold on this account.** It divides WHOLE PEOPLE by a
-> share the player chose — the target is a real count and the parts must sum to it exactly — whereas
-> here the target is itself a rounding of a float, and the card prints `N of M` rather than `N + S`,
-> so nothing is partitioned on screen. What the apportion actually does to a sub-unit row is round
-> the numerator UP to the denominator, which is the whole defect. `POOL_TOE_MIN_UNITS` went with it;
-> the floor it provided is structural now.
-
-**THE RULE THAT REPLACED IT — one predicate, one rendering, and they answer different questions.**
-
-| question | answered by | how |
-|---|---|---|
-| is this pool short of this tool? | `HudWorkVocab.pool_toe_row_is_short` / `pool_toe_is_short` | `required − filled > POOL_TOE_SHORT_MIN`, on the WIRE'S OWN FLOATS |
-| what do the numbers say? | `pool_toe_short_line` | CEIL the requirement, FLOOR what is held, both with that tolerance |
-
-- ⛔ **THE SHORT TEST IS NEVER MADE ON THE DISPLAY PAIR.** The sim settled `required` and `filled`
-  and published them; the card's whole numbers are downstream of that answer and may not be the
-  basis for it. A pool short of a tool flies the triangle **whatever the magnitude** — that is the
-  whole point of the mark.
-- **CEIL AND FLOOR ARE EACH THE CONSERVATIVE ANSWER TO THEIR OWN QUESTION.** You cannot buy 0.4 of a
-  hoe, so `0.79` wants one; `0.5666` of a hoe's service is no whole hoe, so the pool holds none. The
-  playtest row reads **`0 of 1 hoe`**. It is still a rounding, and one that can only ever OVERSTATE
-  the gap by less than a unit — where the retired pair understated it to nothing.
-- **`POOL_TOE_SHORT_UNIT_GAP` MAKES *ALMOST NEVER* INTO *NEVER*.** The pair above satisfies
-  `held < units` at essentially every input on its own; the clamp is what guarantees a short row
-  cannot print `N of N` at any tolerance, which is the exact reading the retired arithmetic produced.
+- ⛔ **THE SHORT TEST IS NEVER MADE ON A ROUNDED PAIR.** `HudWorkVocab.pool_toe_row_is_short` /
+  `pool_toe_is_short` answer on the sim's own floats, `required − filled > POOL_TOE_SHORT_MIN`. A pool
+  short of a tool states its tool line **whatever the magnitude**, and `3.0 / 2.9` is short.
 - **The tolerance is `POOL_TOE_SHORT_MIN` = 0.005**, this client's family floor for a rate that is
   nothing to state (`SourceForecast.UPKEEP_WORK_MIN`, `MATERIAL_FLOW_MIN`), one account over: a gap
   under it is float noise in the sim's own `f32` sums over a pool's sites rather than a tool anybody
-  is missing. It is applied to the ceil and the floor as well, so an `f32` sum landing a hair either
-  side of a whole unit cannot invent a denominator (`6.0000005 → 7`) or lose a held one.
-- ⛔ **A POOL ROUNDING *UP* TO COVERED IS NO LONGER COVERED.** `required 3.0 / filled 2.9` used to
-  render nothing and now reads `2 of 3 hoes`. That reversal is the rule, not a side effect: the old
-  reading is the playtest defect one order of magnitude up.
+  is missing.
+- **The display half of this fix went with the counted line** (issue #716): the card prints no tool
+  count, so there is no rounding left to get wrong. What survives is the predicate, which the card's
+  tool line and the work row's remedy both fork on.
 
-**Driven, PNG-less, in `_assert_pool_toe_rounding` + `_assert_pool_toe_sub_unit_shortfall`** — a card
-quoting `1 of 1` renders a perfectly ordinary card, which is why the whole class was invisible to the
-frames. The playtest row is transcribed verbatim and **both producers are asserted**, because a fix
-that made the line print while leaving the boolean rounding would fly no triangle, and one that flew
-the triangle over an empty hover would say nothing. The `3.0 / 2.9` row is the case that tells the
-raw-float test apart from a comparison of the printed pair, and a FILLED row is paired against both,
-or *"it states a line"* passes on a builder that states one for everything.
+**Driven, PNG-less, in `_assert_pool_tools_line_forks_on_work`** — the playtest row transcribed
+verbatim and a row short by a tenth are both SHORT, the line takes the WARN form beside a work
+shortfall and the INFO form without one, and a FILLED row states nothing either way.
 
 ### ⛔ ONE MARK SLOT, THREE STATES — a pool with a worker who has nothing to do (issue #715)
 
@@ -2803,12 +2753,12 @@ card**: no mark, no ink, no reading. Reported as *"the user will not know a work
 and doing other things."*
 
 The name row holds **exactly one glyph** — that is the measured constraint above, not a preference
-— so the slot carries three states and **shortfall wins it**:
+— so the slot carries three states and **a WORK shortfall wins it**:
 
 | state | glyph | mark ink | title |
 |---|---|---|---|
-| short of hands or tools | `⚠` | `HudStyle.WARN` | WARN |
-| not short, a whole worker spare | `ⓘ` | `HudStyle.INK_DIM` | calm `INK` |
+| short of work (tools short or not) | `⚠` | `HudStyle.WARN` | WARN |
+| work covered; short of tools and/or a whole worker spare (issue #716) | `ⓘ` | `HudStyle.INK_DIM` | calm `INK` |
 | neither | — | — | `INK` |
 
 - ⛔ **THE AMBER KEEPS MEANING *SOMETHING IS BEING LOST*.** A road washing out and a patch rotting
@@ -2838,8 +2788,9 @@ The name row holds **exactly one glyph** — that is the measured constraint abo
   than a flag — `POOL_CARD_TOOL_SHORT_META`'s rule verbatim, so a harness asking *which reason is
   this mark for* does not re-compose the wording it is checking. It is `""` on a card that is also
   short, where the reading is still on the hover but the slot went to the triangle.
-- **The hover order is hands, tools, then idle**, and `HudFormat.join_tooltip_lines` drops the empty
-  ones: the two shortfalls are what the band is LOSING and the spare hand is what it can gain.
+- **The hover order is work, tools, then idle**, and `HudFormat.join_tooltip_lines` drops the empty
+  ones: the work shortfall is what the band is LOSING, and the tools and the spare hand are what it
+  can gain.
 - ⛔ **A PENDING EDIT ADJUSTS THE READING; IT USED TO SILENCE IT, AND THAT WAS A TURN LATE.** The
   gate was `_pool_toe_settled_rows`' rule verbatim — the crew account is the settlement the turn
   RESOLVED, so a `+` just pressed must not be answered with the idleness of the staffing left behind,
@@ -3264,9 +3215,9 @@ what order, or which entry the builders were funding. It is a block in the WORK 
 
 ```
 BUILD QUEUE                          3 builders · Tillage kit
-▸ 🌱 Cultivate (71, 18)    Cultivating 0% · turn 82            ✕
-  ◎ Tame Red Deer               Taming 0% · turn 101           ✕
-  ▦ Sow (72, 18)          ⚠ ∞ turns, losing ground…            ✕
+▸ 🌱 Cultivate (71, 18)    Cultivating 0% · turn 82           ▲▼
+  ◎ Tame Red Deer               Taming 0% · turn 101          ▲▼
+  ▦ Sow (72, 18)          ⚠ ∞ turns, losing ground…           ▲▼
 ```
 
 - **ABOVE THE CHIPS, DELIBERATELY.** The chips filter the BOARD; the queue is the band's own list
@@ -3306,10 +3257,11 @@ BUILD QUEUE                          3 builders · Tillage kit
 - **THE DATE COLUMN CLIPS AND THE ROW TOOLTIP CARRIES BOTH FACES IN FULL.**
   `RUNG_BLOCKED_FORMAT` is a whole sentence, and letting it size the row would squeeze the job face
   to nothing on a side dock.
-- **THE `✕` ASKS NOTHING.** `unqueue` withdraws a DECLARATION — the banked meter survives it, the row
-  keeps its crew and its kit, and re-declaring is one tick of the compose control — so it is the
-  parties zone's cancel-versus-recall rule read one surface over. It wears that zone's steady,
-  full-opacity `DANGER` treatment for the same reason: a destructive control reads as one.
+- **THE WITHDRAWAL ASKS NOTHING.** `unqueue` withdraws a DECLARATION — the banked meter survives it,
+  the row keeps its crew and its kit, and re-declaring is one tick of the compose control — so it is
+  the parties zone's cancel-versus-recall rule read one surface over. It wears that zone's steady,
+  full-opacity `DANGER` treatment for the same reason: a destructive control reads as one. It lives in
+  the row's settings strip and reads `Remove from queue` — see ④ and ⑤ below.
 - **IT EMITS THE CONTROLLER'S OWN `unqueue_requested`, RELAYED by `HudLayer`**, with a payload
   identical key-for-key to `DrawerComposeController`'s — so `Main.format_unqueue` serves both
   surfaces and there is no second command builder.
@@ -3538,8 +3490,9 @@ Two of them did, and the arithmetic is what made the placement decidable rather 
 worked at all: a grab handle that only reveals itself under a press is not a control a player finds.
 Four placements were prototyped; the one that ships is the only one costing **zero pixels** while
 still giving full-height targets — `▲` then `▼` side by side inside
-`BUILD_QUEUE_REORDER_WIDTH`, which is `BUILD_QUEUE_UNQUEUE_WIDTH` **stated as arithmetic** rather
-than re-typed as a second 32. The split is `(32 − 2) / 2 = 15` each with
+`BUILD_QUEUE_REORDER_WIDTH`, which is `BUILD_QUEUE_GLYPH_BUTTON_WIDTH` **stated as a name** rather
+than re-typed as a second 32 (it was defined from `BUILD_QUEUE_UNQUEUE_WIDTH`, retired when the
+withdrawal took words and its natural width — see ⑤ — so the arrows' column could not move with it). The split is `(32 − 2) / 2 = 15` each with
 `BUILD_QUEUE_REORDER_SEPARATION` between them, and both fill the row's content line (24px inside a
 28px row) — a *stacked* pair would have made two ~12px targets, which is the placement this one beat.
 Verified as a measurement: `band_panel_preview._assert_queue_reorder_arrows` prints the column at
@@ -3658,9 +3611,9 @@ can never draw on a line it was not paid for.
 > lines and stayed two, and the second column that would have made one line reachable was never
 > earned. With one control the strip is one line at every width, so the predicate, its width
 > expression and this term are all gone.
-- **THE BUTTON ITSELF IS UNCHANGED** — same glyph, same DANGER ink, same `BUILD_QUEUE_UNQUEUE_META`
-  valued the entry's rank, same `_emit_unqueue` and the same optimistic withdrawal below. **Only its
-  host moved**, which is why every harness that found it by that meta finds it in the strip.
+- **THE BUTTON KEPT EVERYTHING BUT ITS FACE** — same DANGER ink, same `BUILD_QUEUE_UNQUEUE_META`
+  valued the entry's rank, same `_emit_unqueue` and the same optimistic withdrawal below; its host
+  moved here, and its glyph became a word in ⑤. Every harness finds it by that meta, never by face.
 
 ⛔ **IT IS KEYED ON THE TURN, NOT ON THE NEXT SNAPSHOT.** The server re-captures and broadcasts after
 **every** command, so a "hide it until the next snapshot" rule flickers the row straight back a frame
@@ -3687,6 +3640,138 @@ withdrawal set lives in the same per-band record (beside `assign` / `move`) so i
   the withdrawal BEFORE emitting (this layer's standing rollback precondition — `Main` handles the
   signal synchronously) and `Main._on_hud_unqueue` hands the payload back to `drop_pending_unqueue`
   when the send does not go, exactly as `_on_hud_assign_labor` does.
+
+#### ⑤ THE STRIP OPENS ON THE JOB'S DETAIL LINE, AND THE WITHDRAWAL READS `Remove from queue`
+
+Reported from play: expanding a Tame or Corral row showed a bare red `✕` and nothing else, which read
+as *close this strip* or as *cancel and lose the progress* — neither of which it does. Two changes,
+one strip:
+
+```
+strip CLOSED                                                     strip OPEN
+▸ 🌱 Cultivate (71, 18)   Cultivating 0% · turn 82  ▲▼         ▸ 🌱 Cultivate (71, 18)   Cultivating 0% · turn 82  ▲▼
+  ◆ builders short of tools                                     ┌──────────────────────────────────────────────┐
+                                                                │ ◆ builders short of tools · …  [Remove from queue]│
+                                                                │ CROP [Sim picks        ⌄]                    │
+                                                                └──────────────────────────────────────────────┘
+```
+
+- **EVERY OPEN STRIP LEADS WITH ONE DETAIL LINE** (`_build_queue_detail_line`,
+  `HudWorkVocab.build_queue_detail_line`) — causes first, then the price, joined with ` · `: the
+  model's `build_blocked_lines` (the source card's own producer) and `DetailFormat.build_price_clause`
+  through `_queue_entry_price`, the same composition the row's hover quotes. **Nothing is
+  re-derived**. The label ELIDES and never wraps — `HudWidgets.build_status_part`'s elide form, the full
+  text on its hover and on `BUILD_QUEUE_DETAIL_META` — because the line's height is reserved and the
+  zone clips. A cause reads in the kit-short amber; a bare price in `INK_DIM`.
+- **The withdrawal rides the detail line**, right-aligned: `Remove from queue`, DANGER ink, tooltip
+  *"Take this job out of the build queue. The work already done on it is kept, and the source keeps
+  its crew — queue it again to carry on."* It is **150px** and does not fit beside the crop picker at
+  the tall LEFT dock (344px of strip content less key 30, picker 168 and three separations leaves
+  134), so the detail label is the child that gives (**190px** of it left at that dock). The detail
+  line has no key column.
+- **ON THE TOOL-SHORT HEAD, THE DETAIL LINE LEADS WITH `◆ builders short of tools`** (amber), before
+  the price. The head row drops its own `◆` second line while its strip is open, so this is the fact's
+  only statement in that state — one sentence visible in either state, never both. No other strip, and
+  no strip while the builders' TOE is filled, carries the clause.
+- **What each entry kind opened to before it**, for the record: a Tame/Corral (`legs 0`, no crop) —
+  the `✕` alone; a plant entry — the crop picker with the `✕` beside it (plus `CLIMB` and its leg lines
+  on a multi-leg climb); a road — `CLIMB`, its one leg line, and the `✕` on a line of its own.
+  **Workings are not queue entries** — the wire's `BuildQueueEntryState` kinds are forage, hunt and
+  roadwork — so there is no working strip to open.
+- **An entry the wire has not priced states an empty line**, never an invented one. The wire publishes
+  the rung prices unconditionally (`tame_work_cost` et al., `dict/subsistence.rs`), so this is a
+  fixture state rather than a play state.
+- **THE HEIGHT IS ONE ARITHMETIC.** `build_queue_settings_height(is_open, legs, has_crop)`: chrome 10
+  + the detail line 22 (unconditional) + legs + the crop line 22 (`has_crop`, read off the same
+  `_queue_settings_content` answer the builder draws). A Tame's strip is **32**, a plant entry's
+  **54**, and `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` is 54 — the plant strip, the worst case.
+- **THE CHROME IS 10, NOT THE ROLE CARD'S 12.** The strip wears `work_inspector_stylebox` with its top
+  and bottom content margins trimmed to `BUILD_QUEUE_SETTINGS_PADDING_V` (5); the sides keep 6. The
+  control and detail lines keep their full 22px, and the crop picker and `Remove from queue` draw
+  unclipped (reserved == drawn, asserted on every strip-open state). Those 2px are what the work
+  zone's worst case needed at 418 — see below.
+
+**The measured alternatives**, kept as the record of the trade Ray made for the words:
+
+| layout (at chrome 12) | crop strip | `ROOM_SETTINGS` | 1920 BOTTOM queue rows at 418 |
+|---|---|---|---|
+| detail own line, `Remove` (73px) on the control line | 52 | 52 | 2 |
+| detail + `Remove from queue` on one line, crop below — **ships, trimmed to 54** | 56 | 56 | 1 |
+| `Remove from queue` on a line of its own under the crop | 74 | 74 | floor 376 > 358 box |
+
+#### ⛔ THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL — a `◆` SECOND LINE while its strip is CLOSED
+
+The builders pool's tool claim is **the queue HEAD entry's alone** (`docs/plan_pool_toe.md` §2.4), so
+*the builders pool's TOE is short* means exactly *the head is short of tools*. The Builders card said
+so in the pool's words and nothing in the queue said which job.
+
+- **`_queue_entry_tools_short(band, model)` is the one verdict** — the wire head (rank
+  `BUILD_QUEUE_HEAD`), never a pending row, and `pool_toe_is_short` over `_pool_toe_settled_rows(band,
+  "builders", …)`: the same pending-aware gate and the same predicate the Builders card's line reads, so
+  the card and the row cannot disagree. Both the collapsed block and the expanded mode get it, since
+  both build through `_build_build_queue_row`.
+- **THE ROW GROWS A SECOND LINE: `◆ builders short of tools`** (`BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT`,
+  `_build_queue_row_tools_line`), the work rows' own `KIT_SHORT_MARK` in `KIT_SHORT_SEVERITY` amber,
+  indented past the marker column so it sits under the face. It is the board's two-line-row idiom
+  term for term — `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT` = `WORK_ROW_TWO_LINE_HEIGHT − WORK_ROW_HEIGHT` =
+  16 (the stepper gap and a note line at `ALLOC_SECTION_FONT_SIZE`). **A head that is not short stays
+  one line**, and no other row ever grows one.
+- **…AND ONLY WHILE ITS SETTINGS STRIP IS CLOSED.** With the head's strip open the row is one line
+  (28px) and the strip's detail line leads with the same words. `_head_row_wears_tools_line` (tool-short
+  AND `key != _queue_open_key`) is the ONE test both the row builder and the reservation read, in the
+  collapsed block and the expanded mode alike.
+- **THE SECOND LINE IS IN THE ONE RESERVATION ARITHMETIC.** `_queue_head_tools_height(band, queued)`
+  answers 16 when the queue's first entry wears the line (`_head_row_wears_tools_line`), else 0 — so a
+  head whose strip is open is never charged both its line and its strip. The first entry is
+  always drawn (`BUILD_QUEUE_ROWS_MIN` is one), so the row exists exactly when the term is charged. The
+  one value goes to `build_queue_rows_max` (held back before the rows are counted, so a tool-short head
+  costs the queue a row rather than the board 16px in silence), `build_queue_block_height` and
+  `_work_board_capacity`.
+- **The row's hover gains `BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP`**; `BUILD_QUEUE_ROW_TOOLS_SHORT_META`
+  (a bool on every row) and `BUILD_QUEUE_ROW_TOOLS_LINE_META` (on the drawn line) are the harness
+  handles.
+
+⛔ **THE FIRST LINE HAD NO WIDTH FOR THE MARK, WHICH IS WHY IT IS A SECOND LINE.** Measured at the tall
+LEFT dock with the `◆` at **10px**:
+
+| placement on line one | needs | has | verdict |
+|---|---|---|---|
+| a slot beside the face (mark + one separation) | 14 | 3 of slack | the face drops to 112 and `🌱 Cultivate (71, 18)`, asserted unclipped at 123, clips by 11 |
+| inside the date column, `◆ Cultivating 100% · turn 999` | 181 | 168 | the worst-case date clips by 13 — and what a clip takes off the end is the DATE |
+| the marker column | 10 | 10, holding `▸` (7) | the head marker is load-bearing (it names the funded entry) and is the drag handle |
+
+The second line costs none of the three: `band_panel_preview._assert_queue_head_tools_mark` asserts the
+face unclipped (123 of 126), the date at its 168, the `▸` in place, the mark amber and a
+text-presentation glyph, inside the head row and below its face, and the row drawing the 44px it
+reserved.
+
+#### ⛔ THE WORK ZONE'S WORST CASE AT 418 — and why the line and the strip never both draw
+
+`BandCityPanel.PANEL_HEIGHT_WIDE` is **418**, a 358px work-zone box on the 1920 BOTTOM dock, and the
+horizontal panel does not grow for this arc. The worst case there is the fund-mode POOLS block, a
+queued head short of the builders' tools, and that head's crop strip open — the queue at its one-row
+floor, with nothing left to give back:
+
+| term | px |
+|---|---|
+| `ZONE_HEAD_HEIGHT` + `WORK_CHIPS_HEIGHT` | 20 + 26 |
+| POOLS block, fund mode (`pools_block_height(true)`) | 110 |
+| BUILD QUEUE head 22 + one entry row 28 + a crop strip 54 (the head's `◆` line is NOT drawn — its strip is open) | 104 |
+| one board row 44 + `WORK_PAGER_HEIGHT` 24 + five gaps 30 | 98 |
+| **total** | **358** |
+
+- **358 of 358, asserted** (`band_panel_queue_head_tools_worst_case`). The two rules that make it fit:
+  the head's second line and its open strip are exclusive (16px it would otherwise cost), and the
+  strip's chrome is 10 rather than 12 — fund mode with a 56px crop strip needed 360 in this box before
+  either existed.
+- **The same band with the strip CLOSED** draws the `◆` line and reads **334 of 358**
+  (`band_panel_queue_head_tools_worst_case_closed`), the board taking two rows.
+- **The 1152×720 NARROW shell** (its one zone clamped to 337px by `MAX_WIDE_HEIGHT_FRACTION`, not by
+  `PANEL_HEIGHT_WIDE`) holds the strip-open worst case at **328 of 337, asserted**
+  (`band_panel_queue_head_tools_worst_case_tight`).
+- **Queue rows:** the tall LEFT dock draws 3; the 1920 BOTTOM dock draws **1** entry row with a strip's
+  54px held back (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS`, the trade Ray took for `Remove from
+  queue`), and 1 in the worst case, strip open or closed.
 
 #### ⛔ ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — and it was a live defect
 
@@ -3720,9 +3805,11 @@ subjects, and the mutual exclusion covers all of them through `_roster_expanded`
 - **`BUILD_QUEUE_UNQUEUE_WIDTH` 22 → 32.** `HudWidgets.compact` squeezes the type size and the
   VERTICAL padding — that is what keeps a control inside a 28px row — and leaves the ghost button its
   horizontal margins, so the reservation was 10px under what the `✕` draws and the row's expanding
-  face paid the difference. **That 32 is now the reorder pair's column** (`BUILD_QUEUE_REORDER_WIDTH`
-  is defined from it), and the same left-alone side padding is why the arrows are the one caller that
-  trims theirs.
+  face paid the difference. **That 32 is now `BUILD_QUEUE_GLYPH_BUTTON_WIDTH`**, the one-glyph
+  button column the reorder pair (`BUILD_QUEUE_REORDER_WIDTH`) and the road roster's own `✕`
+  (`ROADWORK_ROSTER_ABANDON_WIDTH`) are defined from; the withdrawal carries a word now and takes
+  its natural width. The same left-alone side padding is why the arrows are the one caller that trims
+  theirs.
 - **`BUILD_QUEUE_SETTINGS_HEIGHT` 30 → 34** — a 22px compact picker plus the strip's own 12px of
   `HudStyle.ROLE_CARD_PADDING` (it wears `work_inspector_stylebox`, which is the role card's). A live
   4px under-reserve every time a strip opened, and correcting it is what makes the flow arithmetic
@@ -5370,9 +5457,9 @@ So this is a **fork**, not a replacement, and `HudWorkVocab.under_kept_note` gai
   is already on this card: the PRIORITY section sits two rows under the note in the same work-row
   inspector. A second clause naming it would say what the control beneath it already offers.
 - **ONE PREDICATE, TWO SURFACES.** The fork reads `HudWorkVocab.pool_toe_is_short` over the pool's own
-  TOE — the same predicate `_pool_toe_short_line` composes the pool CARD's hover from — so the
-  triangle on the Agriculture card and the remedy on the row it is failing to keep cannot disagree
-  about which shortfall this is. That was the reported defect's other half.
+  TOE — the same predicate `_pool_tools_short_line` composes the pool CARD's tool line from — so the
+  card's tool line and the remedy on the row it is failing to keep cannot disagree about which
+  shortfall this is. That was the reported defect's other half.
 - **`HudWorkVocab.keeping_pool_kind` is the one labor-kind → pool-token picker**, `keeping_role_name`'s
   twin: that one answers the display NAME off a SOURCE kind, this one the token `pool_toe_for` joins
   on. A caller that reached for the other web's pool would read a TOE that is a wrong answer looking
@@ -7511,3 +7598,161 @@ detached way to hunt the same herd would be two answers to one question.
   button — because those were claims about the dock's compose surface that the hunt form happened to
   carry (`harness-band-panel.md` → "The work party's block").
 
+## The Trade tab (issue #731)
+
+The band page's fourth zone: what crossed this band's store with SOMEBODY ELSE this turn, by the link
+it crossed. The spec is `docs/band_trade_tab_ux_proposal.html` (layout C; §08 is the decision list).
+`TradeZoneController` builds it; `BandPanelController` hands it the band and the box.
+
+### Narrow-only: a tab on a side dock, a section under Parties on a wide shell
+
+`BAND_ZONE_LAYOUT` declares `trade` with **`BandCityPanel.ZONE_SPEC_NARROW_ONLY`**. Every wide-shell
+reader walks `BandCityPanel._wide_layout()` — the layout less the narrow-only zones — so the zone has
+no host, no separator and no term in `wide_shell_min_width()`, `_fixed_zone_span()` or
+`_wide_separator_span()`. **A band's shell threshold stays the three flanks' 1190**; a fourth flank
+would have made it 1569 and tabbed every laptop bottom dock between the two. `shows_zone()` answers
+`false` for a narrow-only zone in the wide shell.
+
+On a wide shell the SAME content is a section at the foot of the Parties zone's scrolling list
+(`build_parties_zone(band, with_trade)`), one scroll down, inside the scroll that zone is already
+sanctioned for — the Trade content adds no `ScrollContainer` in either shell. **The content moves
+between shells**, so `BandPanelController._trade_wide` records which shell a render authored it for,
+read once off `BandCityPanel.is_wide_shell()` before the builders run, and `_on_zones_resized`
+re-renders on a flip rather than re-paging. The drawer's flat host calls `build_parties_zone` without
+`with_trade`, so it never grows a Trade section.
+
+### Two tiers, chosen by measurement
+
+The FULL tier: the network line (`NETWORK  5 camps ›   within 5 tiles` — the span is
+`supply_network_span_tiles`, never `reach_tiles`), then `⇄ Local exchange` (one line per good that
+MOVED, its net summed across its own ratings and never across goods), then `⇄ Trade route`
+(`▲ Imports` / `▼ Exports`, one line per shipment, no date). The SHORT tier: the network line, then one
+row per arm stating its count and opening its list.
+
+**The tab shows only what is actually moving.** A good whose net is under
+`HudTradeVocab.EVEN_FLOOR` has no row and is not counted (`TradeLedger.moving_goods`), in both tiers
+and in the local list's popover, so no good row on the tab reads `even`. A section with nothing in
+it is not drawn, heading included — Local exchange with no moving good, Trade route with no shipment,
+an Imports or Exports sub-head with no shipment that way — and the SHORT tier drops an empty arm's
+row the same way. A turn with neither (including one whose pooled piles all net even) is the empty
+turn (`TradeLedger.has_trade` is false). The camps list scoped to a good is the roster, not the tab:
+it still lists every camp, the even ones included, with its `sat even` count.
+
+**The full tier is built, its combined minimum height measured, and compared against the room** — the
+Trade zone's own `zone_size()` in the narrow shell, the Parties list's viewport (the zone box less its
+head, hint, footer and gaps, `_trade_room()`) in the wide one. No height is hard-coded. A 1920 bottom
+dock's strip lands in the SHORT tier on a busy turn; the panel never grows for it. The empty turn is
+the network line and *"Nothing crossed this turn."* in either tier.
+
+**THE TIER IS RE-CHOSEN AFTER LAYOUT, ON ONE PATH.** A render and a resize both queue
+`BandPanelController._schedule_trade_refill`, which a frame later measures the room on the laid-out
+column and re-authors the tier in place (`TradeZoneController.refill`, a no-op when the room has not
+moved), at most once per frame. The Parties column's autowrap hints (the empty-parties hint, the
+no-idle reason) and an inline compose sheet report a word-per-line height while the column is
+detached mid-`build_parties_zone`, so a render measuring there took the section to SHORT while the
+resize path picked FULL; a detached column now answers with the last live measurement for the same
+box (`_trade_live_room`). `trade_tab_wide_full_after_render` asserts FULL after a render and after a
+resize, beside the empty-parties hint.
+
+### What counts as trade
+
+`TradeLedger.is_trade`: the Local arm is cause `pooled`, the Route arm is `shipment_in` /
+`shipment_out` / `shipment_returned`. `party_home`, `party_provisions`, `dowry_in` and `dowry_out`
+never reach the tab.
+
+**A RETURN UNDOES ITS EXPORT** (`TradeLedger.net_shipment_crossings`, the one place it is netted). A
+`shipment_returned` (wire code 7, Route/In) is a trade party's undelivered cargo folding home; it names
+the destination and carries the same `party_id` as the `shipment_out` it came from. It is taken off
+that party's export in the same window, good by good and rating by rating: a cancel in camp nets the
+export to nothing, so the shipment has no row and counts toward neither the badge nor "N shipments"; a
+partial return leaves the remainder on the export row; a return with no export in the window (it left
+on an earlier turn) lists under Imports as its own row, `↩ Bitterbrook ⚑ (returned) ····· 1.5 hide`,
+counted as a shipment. Frames: `trade_tab_shipment_cancelled`, `trade_tab_shipment_returned`. The
+tab badge is this turn's shipment count, both ways, and no badge on a turn with none — pooling never
+counts. A shipment is the crossings one party carried in one direction (`party_id`, falling back to
+the counterparty), cargo summed per good; a direction past `SHIPMENT_FOLD_TRIGGER` (4) shows the
+`SHIPMENT_FOLD_KEEP` (3) largest and a `N more shipments` row.
+
+### The list popover and the hover card
+
+**Nothing expands in place.** The network line, a good's row, a fold row and the SHORT tier's arm rows
+all open ONE list popover — the Band tab's disclosure idiom (`DisclosureController._open_popover`): a
+`PopupPanel` parented on the HUD, in `HudStyle.card_stylebox()`, so it is a window and changes no
+zone's height. It carries its own `ScrollContainer`; the Trade zone carries none.
+
+**It hangs from the row that opened it.** The drawn card's left edge and width are the Trade column's
+(its own zone narrow, the section under Parties wide), its top `POPOVER_GAP` under the row's bottom —
+when the whole list fits in the room from there to the bottom of the visible screen. When it does
+not, it opens on whichever side of the row has **more room** (above, for a long list off a bottom
+dock's row), capped to that room and scrolling inside itself past it. Every figure is measured off the
+live rects at each placement, and placed again a frame later once the rows have laid out. A
+`PopupPanel` draws its card inset from its window by the panel's shadow, so the window is grown by
+those insets and every rect the controller reports (`list_rect`) is the drawn card's.
+
+⛔ **ONE UNIT: THE MAIN WINDOW'S CANVAS.** An embedded popup's `position` / `size`, its content's
+minimum sizes, `get_global_rect()` and `get_visible_rect()` are all canvas units. The placement once
+took the anchor through `get_screen_transform()` and the room through the viewport's screen transform,
+which differ by the stretch — the interface scale times the window's ratio to the 1920×1080 base — so
+content and room were compared in two units.
+
+**THE HEIGHT IS BUILT FROM MINIMUM SIZES ONLY**, never a laid-out size read back: the content is the
+card stylebox, the head and summary, and the rows' minimum; the scroll viewport's own
+`custom_minimum_size` is set to the rows' share of the placed height. That makes the popup's natural
+size the placed size, so the `PopupPanel`'s wrap to its content minimum — which fires whenever a row
+relabels — cannot shrink the card to its head. A read-back of the popup's and the scroll's laid-out
+heights was the previous measure, and it answered from whatever layout was last on screen.
+
+The rows sit in a right gutter one scrollbar wide, reserved whether or not the list scrolls, so the
+bar never covers the value column. Every count on the tab is a `[one, many]` pair read through
+`HudTradeVocab.count_text` (`1 camp moved it`, `1 rating`, `1 tile`).
+
+**Dismissal is the popup's own**: a click away or ESC, as for the disclosure popover, which is on no
+`Main.escape_claimant` entry either. A click on the map or the work zone closes it by itself, so it
+needs no exclusion against the work inspector. The row that opened it closes it (a press on the same
+frame the popup hid, for the same list, is that close); another Trade row in the zone swaps the
+content and re-anchors under itself; a row INSIDE the popover (a good in the local list) swaps the
+content and keeps the anchor. A popover hidden this frame re-opens a frame later, because the main
+window regaining focus from the click that hid it would otherwise hide the re-opened one. A snapshot
+re-mounts the open list against the fresh band and re-anchors it under the rebuilt row; a band switch,
+the faction page, the tab leaving the screen and the panel hiding close it. **If the row it hangs from
+is gone after a re-render** — its good now nets even, the tier flipped FULL↔SHORT, its arm emptied —
+the list closes rather than re-anchoring elsewhere (`trade_tab_list_anchor_gone`).
+
+The camps list: this band first, its direct links (rung as icon + word, link distance, rung facts off
+the published `route_rungs` table), then the relay camps — `via <first hop>` on the shortest chain
+(BFS over every member's own `pooling_links`, ties on the hop's link distance then name) and the
+plain hex distance. Scoped to a good: each camp's net of it off its own pooled crossings, this band
+first, movers by `|net|`, then the even ones, and a `lost in transit — friction` row that is
+`-(Σ nets)` — the column does not sum to zero.
+
+The hover card (`TradeHoverCard`) is a plain `PanelContainer` on the work inspector's layer rather
+than a Godot tooltip, because a tooltip cannot be told which side to take: it sits beside the row. A
+row inside the open popover takes the popover's sides instead — the popover is a window drawn over
+that layer, so a card overlapping it would sit under it. Rects cross between the two windows through
+screen space. A good's card lists its rating piles with their signed amounts; a
+shipment's lists its cargo pile by pile.
+
+### The faction mark
+
+`FactionMark.make(faction, own_faction)` is the one mark every counterparty wears, ours and theirs: a
+flag glyph filled with `MapView.faction_color` (static, so a surface with no map asks the map's own
+question). It hovers to the faction's name and *your people* / *another people*. It is the slot a
+faction's flag (#647) replaces.
+
+### Frames
+
+`tools/band_panel_trade_tab.gd`, run last by `band_panel_preview`: `trade_tab_narrow_busy`,
+`trade_tab_hover_bone`, `trade_tab_camps`, `trade_tab_camps_food`, `trade_tab_folded`,
+`trade_tab_more_shipments`, `trade_tab_empty`, `trade_tab_wide` (asserts 1190, no Trade flank, the
+SHORT tier under Parties), `trade_tab_even_only` (only even-netting piles moved: the empty turn, no
+Local heading, no row), `trade_tab_pooling_only` (no Trade route heading), `trade_tab_shipments_only`
+(no Local exchange heading), `trade_tab_wide_route_list` (fifteen shipments do not fit below a bottom
+dock's row, so it opens ABOVE), `trade_tab_wide_short_below` (five camps off a row with more room
+above than below still fit below, so it opens BELOW), `trade_tab_wide_local_hover` (a hover card from
+a row inside the popover sits beside it) and
+`trade_tab_short` (the tabbed shell on a narrow bottom dock), then every list again at
+`ui_scale` 1.35 (`trade_tab_scaled_*`, side dock and wide canvas). Every list frame asserts the popover
+is ADJACENT to its anchor row — one gap under it, or over it when opened upward, spanning the row —
+not merely visible, and that a list which fits its room is drawn at its full content height with
+nothing to scroll (one that does not fills the room and scrolls). `trade_tab_camps_bone` asserts a
+count of one reads singular.

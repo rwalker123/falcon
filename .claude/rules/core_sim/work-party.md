@@ -277,8 +277,10 @@ ends a posting routes through it:
 > that reached the larder through neither `food_income` nor a transfer would break the pinned identity
 > `larder_delta == food_income − food_consumption − raid_forfeit + transfer_received − transfer_sent`.
 > A party carrying goods home is exactly what `TransferLink::Route` is for, so `bring_the_party_home`
-> credits it there. Food a **live** posting lands (a delivered pack) goes through the row's `actual`
-> like any other take.
+> books it there — through `LaborAllocation::book_crossing` as `TransferCause::PartyHome`, the one way
+> a crossing is written, so the route arm and the cause-keyed crossings row agree and the band's own
+> caravan never reads as trade (`campaign.md` → "The cause key and the crossings list"). Food a
+> **live** posting lands (a delivered pack) goes through the row's `actual` like any other take.
 
 Pinned by `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home`,
 `::a_herd_back_inside_the_apron_brings_its_caravan_home_once` and

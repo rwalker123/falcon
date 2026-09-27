@@ -1105,7 +1105,11 @@ const FACTION_GENERATED_VALUE := 0.95
 ## `faction` is the RAW wire value: an id, one of the legacy names, or nothing at all. `fallback` is
 ## what an ABSENT faction gets and is the caller's to choose (a band and a route disagree about it),
 ## which is why it is a parameter rather than a constant read in here. A real id never reaches it.
-func faction_color(faction, fallback: Color) -> Color:
+##
+## **STATIC**, because it reads nothing but the constants above: a HUD surface with no map in hand
+## (`FactionMark`, the Trade tab's counterparty glyph) asks the identical question and must get the
+## identical answer, and an instance call on `_view` still resolves here.
+static func faction_color(faction, fallback: Color) -> Color:
 	var index := -1
 	if faction is int:
 		index = faction

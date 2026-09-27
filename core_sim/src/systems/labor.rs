@@ -782,6 +782,16 @@ fn pool_toe_claims(
 /// builders and six keepers off six hoes. One [`settle_scarce_tools`] call per item id, over every
 /// pool's claims together: [`SourcePriority::High`] in full, then `Normal`, then `Low`.
 ///
+/// # ⛔ WITHIN ONE TIER, EVERY KEEPING POOL BEFORE THE BUILDERS
+///
+/// Each group's [`ToolClaimStage`] is [`ToolClaimStage::of_pool`] — the builders build, every
+/// standing pool keeps. A short keeping site loses something already built and a short build is
+/// only finished later, so inside one tier the keeping claims settle first and the builders take
+/// what is left; across tiers the player's mark still decides, so a `High` build outranks a
+/// `Normal` keeping site. Before this rule, largest remainder on the raw bid handed a tied tier's
+/// single tool to the build every time, because a build bids a whole tool per builder and a keeping
+/// site a fraction of a hand ([`settle_scarce_tools`] carries the full argument).
+///
 /// # ⛔ WHOLE UNITS **BETWEEN** POOLS, CONTINUOUSLY **WITHIN** ONE — the unit of a tool is a PERSON
 ///
 /// **Stage 1** settles whole tools across one bid per `(pool, priority tier)` group
@@ -833,11 +843,12 @@ fn settle_pool_tools(
     // iteration.
     let groups = tool_claim_groups(claims);
     for id in &ids {
-        let bids: Vec<(SourcePriority, f32)> = groups
+        let bids: Vec<(SourcePriority, ToolClaimStage, f32)> = groups
             .iter()
             .map(|group| {
                 (
                     group.priority,
+                    ToolClaimStage::of_pool(group.pool),
                     group
                         .members
                         .iter()
@@ -849,7 +860,7 @@ fn settle_pool_tools(
         // **STAGE 1** — whole tools, between the pools.
         let settled = settle_scarce_tools(&bids, band_kit.live_units(id, equipment));
         // `settled` is index-aligned with `bids`, which is index-aligned with `groups`.
-        for ((group, (_, wanted)), paid) in groups.iter().zip(&bids).zip(&settled) {
+        for ((group, (_, _, wanted)), paid) in groups.iter().zip(&bids).zip(&settled) {
             let paid = *paid;
             if paid <= NO_UNITS_SETTLED || *wanted <= NOTHING_DEMANDED {
                 continue;
@@ -3466,12 +3477,51 @@ fn whole_tools_wanted(demand: f32) -> u32 {
     demand.ceil() as u32
 }
 
+/// **WHICH SIDE OF A TIER A TOOL CLAIM SITS ON** — keeping something already built, or building
+/// something new. [`settle_scarce_tools`]'s second ordering dimension, beneath the
+/// [`SourcePriority`] tier (`docs/plan_pool_toe.md` §2.2).
+///
+/// A claim from any standing pool (Agriculture, Husbandry, Roadwork, Quarrywork) is
+/// [`ToolClaimStage::Keeping`]; the builders' claim ([`crate::equipment_config::KitJob::Builders`])
+/// is [`ToolClaimStage::Building`].
+///
+/// # ⛔ THE STAGE ORDERS CLAIMS **WITHIN** ONE TIER AND NEVER ACROSS TWO
+///
+/// A `High` build still outranks a `Normal` keeping site. See [`settle_scarce_tools`] for why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolClaimStage {
+    /// **Keeping something already built** — a short keeping site loses ground it holds.
+    Keeping,
+    /// **Building something new** — a short build is only finished later.
+    Building,
+}
+
+impl ToolClaimStage {
+    /// **THE ORDER ONE TIER'S CLAIMS ARE SERVED IN** — keeping first, the builders on what is left.
+    /// Spelled as an array for [`SourcePriority::SERVED_FIRST_TO_LAST`]'s reason: a reader of the
+    /// settlement sees the stages in the order they are actually served.
+    pub const SERVED_FIRST_TO_LAST: [ToolClaimStage; 2] =
+        [ToolClaimStage::Keeping, ToolClaimStage::Building];
+
+    /// **The stage of a pool's claim** — building is the builders' pool and nothing else; every
+    /// standing pool is keeping something.
+    pub fn of_pool(pool: crate::equipment_config::KitJob) -> Self {
+        if pool == crate::equipment_config::KitJob::Builders {
+            ToolClaimStage::Building
+        } else {
+            ToolClaimStage::Keeping
+        }
+    }
+}
+
 /// **SERVE ONE SCARCE STOCK OF *TOOLS* ACROSS EVERY POOL CLAIM ON IT AT ONCE** —
 /// [`settle_scarce_store`]'s sibling for a countable object: [`SourcePriority::High`] in full, then
-/// `Normal`, then `Low`, and **within a short tier by largest remainder** rather than pro-rata.
+/// `Normal`, then `Low`; **within a tier, every [`ToolClaimStage::Keeping`] claim before the
+/// [`ToolClaimStage::Building`] one**; and **within one `(tier, stage)` cell the stock cannot
+/// cover, by largest remainder** rather than pro-rata.
 ///
-/// Returns one settled count per input claim, index-aligned to `demands` and **whole** in every
-/// entry (`f32` only so [`ToeFill::units`] keeps its type).
+/// Each demand is `(tier, stage, bid)`. Returns one settled count per input claim, index-aligned to
+/// `demands` and **whole** in every entry (`f32` only so [`ToeFill::units`] keeps its type).
 ///
 /// # ⛔ WHY THIS IS NOT [`settle_scarce_store`], AND WHY THAT FUNCTION WAS NOT CHANGED
 ///
@@ -3484,9 +3534,21 @@ fn whole_tools_wanted(demand: f32) -> u32 {
 /// fixed-point fodder is not a countable object and must keep splitting pro-rata, so this is a
 /// second function rather than a flag on that one.
 ///
+/// # ⛔ WITHIN ONE TIER, KEEPING IS SERVED BEFORE BUILDING — AND ONLY WITHIN ONE TIER
+///
+/// The two shortfalls are different kinds of loss: a keeping site that goes short **loses something
+/// already built**; a build that goes short is **finished later**. Largest remainder on the raw bid
+/// alone hid a rule the other way round — a build bids a whole tool per builder and a keeping site
+/// bids the fraction of a hand its bill needs, so a single tool in a tied tier went to the build
+/// **every time**, maximising the tool's own utilisation invisibly.
+///
+/// Placing keeping above **every** tier was rejected: it would override a `High` mark the player put
+/// on a build, and break *"the priority decides where tools go"*. So the tiers are unchanged and the
+/// stage only orders claims inside one.
+///
 /// # ⛔ LARGEST REMAINDER, PROPORTIONAL TO THE **RAW** DEMAND
 ///
-/// Both halves of that rule are load-bearing:
+/// Both halves of that rule are load-bearing, inside one `(tier, stage)` cell:
 ///
 /// - **Proportional to the raw bid, never to `ceil`.** Two claims bidding `0.2` and `2.0` both want
 ///   whole tools; ranked on the ceil, the trivial claim ties with the large one for the single unit
@@ -3497,83 +3559,102 @@ fn whole_tools_wanted(demand: f32) -> u32 {
 ///
 /// Ties on the remainder go to the **earlier claim**, so one band's turn settles the same way on
 /// every run.
-pub fn settle_scarce_tools(demands: &[(SourcePriority, f32)], available: u32) -> Vec<f32> {
+pub fn settle_scarce_tools(
+    demands: &[(SourcePriority, ToolClaimStage, f32)],
+    available: u32,
+) -> Vec<f32> {
     let mut settled = vec![NO_UNITS_SETTLED; demands.len()];
     let mut remaining = available;
     for tier in SourcePriority::SERVED_FIRST_TO_LAST {
-        // A claim asking for nothing is skipped entirely, exactly as `settle_scarce_store` skips it.
-        let members: Vec<usize> = demands
-            .iter()
-            .enumerate()
-            .filter(|(_, (priority, demand))| *priority == tier && *demand > NOTHING_DEMANDED)
-            .map(|(index, _)| index)
-            .collect();
-        if members.is_empty() {
-            continue;
+        for stage in ToolClaimStage::SERVED_FIRST_TO_LAST {
+            // A claim asking for nothing is skipped entirely, exactly as `settle_scarce_store` skips
+            // it.
+            let members: Vec<usize> = demands
+                .iter()
+                .enumerate()
+                .filter(|(_, (priority, claim_stage, demand))| {
+                    *priority == tier && *claim_stage == stage && *demand > NOTHING_DEMANDED
+                })
+                .map(|(index, _)| index)
+                .collect();
+            remaining = settle_tool_cell(demands, &members, remaining, &mut settled);
         }
-        let wants: Vec<u32> = members
-            .iter()
-            .map(|index| whole_tools_wanted(demands[*index].1))
-            .collect();
-        let tier_want: u32 = wants.iter().sum();
-        // The remainder covers this tier's whole ask: every claim is armed and the next tier gets
-        // what is left.
-        if tier_want <= remaining {
-            for (index, want) in members.iter().zip(&wants) {
-                settled[*index] = *want as f32;
-            }
-            remaining -= tier_want;
-            continue;
-        }
-        // **The tier is short, so it consumes everything.** Each claim's proportional share of what
-        // is left, floored and capped at its own want, then the leftover handed out one tool at a
-        // time down the remainder ranking.
-        let tier_demand: f32 = members.iter().map(|index| demands[*index].1).sum();
-        let shares: Vec<f32> = members
-            .iter()
-            .map(|index| demands[*index].1 / tier_demand * remaining as f32)
-            .collect();
-        let mut base: Vec<u32> = shares
-            .iter()
-            .zip(&wants)
-            .map(|(share, want)| (share.floor() as u32).min(*want))
-            .collect();
-        let mut leftover = remaining - base.iter().sum::<u32>();
-        let mut ranking: Vec<usize> = (0..members.len()).collect();
-        ranking.sort_by(|left, right| {
-            let left_remainder = shares[*left] - base[*left] as f32;
-            let right_remainder = shares[*right] - base[*right] as f32;
-            right_remainder
-                .partial_cmp(&left_remainder)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(left.cmp(right))
-        });
-        while leftover > NO_UNITS_IN_STOCK {
-            let mut handed = NO_UNITS_IN_STOCK;
-            for slot in &ranking {
-                if leftover == NO_UNITS_IN_STOCK {
-                    break;
-                }
-                if base[*slot] < wants[*slot] {
-                    base[*slot] += ONE_WHOLE_TOOL;
-                    leftover -= ONE_WHOLE_TOOL;
-                    handed += ONE_WHOLE_TOOL;
-                }
-            }
-            // **The guard, and it must be here even though it cannot fire.** `Σ want > remaining` on
-            // this branch, so some claim is always below its want and a lap always hands something
-            // out — but a lap that handed nothing would spin the turn thread for ever, which is not
-            // a recoverable state.
-            if handed == NO_UNITS_IN_STOCK {
-                break;
-            }
-        }
-        for (index, paid) in members.iter().zip(&base) {
-            settled[*index] = *paid as f32;
-        }
-        remaining = NO_UNITS_IN_STOCK;
     }
     settled
+}
+
+/// **ONE `(tier, stage)` CELL OF [`settle_scarce_tools`]** — every member paid its whole want if the
+/// remainder covers the cell, otherwise the remainder apportioned by largest remainder on the raw
+/// bid. Writes each member's count into `settled` and returns what is left on the shelf.
+fn settle_tool_cell(
+    demands: &[(SourcePriority, ToolClaimStage, f32)],
+    members: &[usize],
+    remaining: u32,
+    settled: &mut [f32],
+) -> u32 {
+    if members.is_empty() {
+        return remaining;
+    }
+    let wants: Vec<u32> = members
+        .iter()
+        .map(|index| whole_tools_wanted(demands[*index].2))
+        .collect();
+    let cell_want: u32 = wants.iter().sum();
+    // The remainder covers this cell's whole ask: every claim is armed and the next cell gets what
+    // is left.
+    if cell_want <= remaining {
+        for (index, want) in members.iter().zip(&wants) {
+            settled[*index] = *want as f32;
+        }
+        return remaining - cell_want;
+    }
+    // **The cell is short, so it consumes everything.** Each claim's proportional share of what is
+    // left, floored and capped at its own want, then the leftover handed out one tool at a time down
+    // the remainder ranking.
+    let cell_demand: f32 = members.iter().map(|index| demands[*index].2).sum();
+    let shares: Vec<f32> = members
+        .iter()
+        .map(|index| demands[*index].2 / cell_demand * remaining as f32)
+        .collect();
+    let mut base: Vec<u32> = shares
+        .iter()
+        .zip(&wants)
+        .map(|(share, want)| (share.floor() as u32).min(*want))
+        .collect();
+    let mut leftover = remaining - base.iter().sum::<u32>();
+    let mut ranking: Vec<usize> = (0..members.len()).collect();
+    ranking.sort_by(|left, right| {
+        let left_remainder = shares[*left] - base[*left] as f32;
+        let right_remainder = shares[*right] - base[*right] as f32;
+        right_remainder
+            .partial_cmp(&left_remainder)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(left.cmp(right))
+    });
+    while leftover > NO_UNITS_IN_STOCK {
+        let mut handed = NO_UNITS_IN_STOCK;
+        for slot in &ranking {
+            if leftover == NO_UNITS_IN_STOCK {
+                break;
+            }
+            if base[*slot] < wants[*slot] {
+                base[*slot] += ONE_WHOLE_TOOL;
+                leftover -= ONE_WHOLE_TOOL;
+                handed += ONE_WHOLE_TOOL;
+            }
+        }
+        // **The guard, and it must be here even though it cannot fire.** `Σ want > remaining` on
+        // this branch, so some claim is always below its want and a lap always hands something out
+        // — but a lap that handed nothing would spin the turn thread for ever, which is not a
+        // recoverable state.
+        if handed == NO_UNITS_IN_STOCK {
+            break;
+        }
+    }
+    for (index, paid) in members.iter().zip(&base) {
+        settled[*index] = *paid as f32;
+    }
+    NO_UNITS_IN_STOCK
 }
 
 /// **WILL THE ASSIGNMENT LOOP ACTUALLY REACH THIS ROW THIS TURN?**
@@ -3733,11 +3814,7 @@ pub fn bring_the_dropped_party_home(world: &mut World, band: Entity, row: &Labor
     let mut band_parts = world.query::<(&mut PopulationCohort, &mut LaborAllocation)>();
     if let Ok((mut cohort, mut allocation)) = band_parts.get_mut(world, band) {
         let (cohort, allocation) = (&mut *cohort, &mut *allocation);
-        stand_down_party(
-            &mut cohort.stores,
-            &mut allocation.last_food_transfers,
-            party,
-        );
+        stand_down_party(&mut cohort.stores, allocation, party);
     }
 }
 
@@ -3751,11 +3828,11 @@ pub fn bring_the_dropped_party_home(world: &mut World, band: Entity, row: &Labor
 /// the road, and one settle step is what keeps any of those paths from settling it differently.
 pub(crate) fn stand_down_party(
     stores: &mut LocalStore,
-    ledger: &mut crate::components::TransferLedger,
+    allocation: &mut LaborAllocation,
     mut party: WorkParty,
 ) {
     let everything = party.hand_over_everything();
-    bring_the_party_home(stores, ledger, everything);
+    bring_the_party_home(stores, allocation, everything);
 }
 
 /// **FOOD A PARTY HANDS OVER OUTSIDE A ROW'S `actual`** — the load and the road when a posting ends
@@ -3768,14 +3845,21 @@ pub(crate) fn stand_down_party(
 /// `larder_delta == food_income − food_consumption − raid_forfeit + transfer_received −
 /// transfer_sent`. A party carrying goods home is exactly what
 /// [`crate::components::TransferLink::Route`] is for.
-fn bring_the_party_home(
-    stores: &mut LocalStore,
-    ledger: &mut crate::components::TransferLedger,
-    food: f32,
-) {
+///
+/// **It is booked through [`LaborAllocation::book_crossing`] as
+/// [`crate::components::TransferCause::PartyHome`]** — the one way a crossing is booked, so the
+/// route arm and the cause-keyed crossings row cannot disagree, and the cause says what it is: the
+/// band's own people bringing their take home, not trade. A work party is state on its row and has
+/// no `BandId` of its own, so the row names no party.
+fn bring_the_party_home(stores: &mut LocalStore, allocation: &mut LaborAllocation, food: f32) {
     if food > crate::work_party::NOTHING_CARRIED {
         stores.add(FOOD, scalar_from_f32(food));
-        ledger.credit(crate::components::TransferLink::Route, food);
+        allocation.book_crossing(crate::components::TransferCrossing::goods(
+            FOOD,
+            crate::components::TransferDirection::In,
+            crate::components::TransferCause::PartyHome,
+            food,
+        ));
     }
 }
 
@@ -4694,11 +4778,7 @@ pub fn advance_labor_allocation(
                         .find(|(held, _)| held.same_source(target))
                     {
                         let (cohort, allocation) = (&mut *cohort, &mut *allocation);
-                        stand_down_party(
-                            &mut cohort.stores,
-                            &mut allocation.last_food_transfers,
-                            party.clone(),
-                        );
+                        stand_down_party(&mut cohort.stores, allocation, party.clone());
                     }
                 }
             }
@@ -8855,11 +8935,7 @@ pub fn advance_labor_allocation(
                 let home =
                     std::mem::replace(&mut posting.pending_home, NOTHING_DEMANDED) + landed_now;
                 if row_lapsed {
-                    bring_the_party_home(
-                        &mut cohort.stores,
-                        &mut allocation.last_food_transfers,
-                        home,
-                    );
+                    bring_the_party_home(&mut cohort.stores, &mut allocation, home);
                 } else if home > NOTHING_DEMANDED {
                     cohort.stores.add(FOOD, scalar_from_f32(home));
                     if let Some(row) = yields.get_mut(idx) {
@@ -8870,11 +8946,7 @@ pub fn advance_labor_allocation(
             // **A row lapsing under its party brings the whole caravan home**, the load and the road
             // with the workers.
             if row_lapsed {
-                stand_down_party(
-                    &mut cohort.stores,
-                    &mut allocation.last_food_transfers,
-                    posting.party,
-                );
+                stand_down_party(&mut cohort.stores, &mut allocation, posting.party);
                 continue;
             }
             // ⛔ **THE ROW'S FORWARD PROJECTIONS ARE WHAT ARRIVES HOME, NOT WHAT IS TAKEN.**
@@ -8895,11 +8967,7 @@ pub fn advance_labor_allocation(
             // source and nobody to send, so the load and the road are settled into the band and
             // the party is stood down. The row itself survives as a holding.
             if allocation.assignments[idx].workers == NO_CREW_ON_THIS_ACTIVITY {
-                stand_down_party(
-                    &mut cohort.stores,
-                    &mut allocation.last_food_transfers,
-                    posting.party,
-                );
+                stand_down_party(&mut cohort.stores, &mut allocation, posting.party);
                 allocation.assignments[idx].party = None;
                 continue;
             }
@@ -8923,11 +8991,7 @@ pub fn advance_labor_allocation(
             .filter_map(|(_, assignment)| assignment.party.take())
             .collect();
         for party in unposted {
-            stand_down_party(
-                &mut cohort.stores,
-                &mut allocation.last_food_transfers,
-                party,
-            );
+            stand_down_party(&mut cohort.stores, &mut allocation, party);
         }
         // **THE REPAIRED TAKE SELECTIONS, written back** — before the `lapsed` removal shuffles the
         // indices they were collected against.
@@ -12025,6 +12089,7 @@ mod labor_yield_tests {
                     last_food_consumption: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
+                    last_turn_transfer_crossings: Vec::new(),
                     last_morale_delta: scalar_zero(),
                     last_morale_cause: MoraleCause::None,
                     last_morale_contributions: Default::default(),

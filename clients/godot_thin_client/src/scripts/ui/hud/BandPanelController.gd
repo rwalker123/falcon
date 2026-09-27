@@ -442,6 +442,14 @@ const BAND_ZONE_LAYOUT: Array[Dictionary] = [
     {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_PARTIES,
         BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_PARTIES,
         BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH},
+    # **TRADE IS NARROW-ONLY** (issue #731, option iii): a fourth tab on a side dock, and NO fourth
+    # flank on a wide shell — its content rides under Parties there (`build_parties_zone`), so the
+    # shell threshold stays the three flanks' 1190 rather than rising to 1569 and tabbing every laptop
+    # bottom dock between the two. The width is declared for completeness and summed by nothing.
+    {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_TRADE,
+        BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_TRADE,
+        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_PARTY_WIDTH,
+        BandCityPanel.ZONE_SPEC_NARROW_ONLY: true},
 ]
 
 ## **THE FACTION PAGE DECLARES THREE ZONES, THE SAME COUNT A BAND DOES.** It declared a fourth,
@@ -593,6 +601,23 @@ var _send_expedition_count: int = HudConst.WORKER_STEP
 ## request-id sequence.
 var _forecast_query: ForecastQuery = null
 
+## **THE TRADE TAB'S OWN CONTROLLER** (issue #731) — it owns the zone's content, its list popover
+## and its hover card; this controller asks it for the content and pushes the band. `_trade_wide` is
+## which shell the last render authored it for: the content MOVES between shells (a zone of its own
+## narrow, a section under Parties wide), so a flip is a re-render rather than a re-page.
+var _trade: TradeZoneController = null
+var _trade_wide: bool = false
+## The last Trade room measured on a LAID-OUT Parties column, and the box it was measured in — what a
+## render answers with while its own column is still detached (`_trade_room`).
+var _trade_live_room: Vector2 = Vector2.ZERO
+var _trade_live_box: Vector2 = Vector2.ZERO
+## A post-layout tier re-check is queued for the next frame (`_schedule_trade_refill`).
+var _trade_refill_pending: bool = false
+
+## The Trade tab's controller, for the harness and for nothing that decides anything.
+func trade_zone() -> TradeZoneController:
+    return _trade
+
 func set_forecast_query(query: ForecastQuery) -> void:
     _forecast_query = query
 
@@ -611,6 +636,8 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
     _emit_assign_labor_fn = emit_assign_labor
     _herd_label_for_id_fn = herd_label_for_id
     _targeting = targeting
+    _trade = TradeZoneController.new(band_labor, host)
+    _trade.set_topbar(topbar)
 
 ## `_topbar` is held for **the player faction's own three readouts and nothing else** — its knowledge
 ## `faction_tracks` (the rung-ready mark on a work row, the narrow reason `DrawerComposeController`
@@ -778,9 +805,12 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     # STEADY debit the Food breakdown itemizes, so the two readouts cannot disagree. **The pens' feed
     # is no longer a term** — a pen eats its fenced pasture and its keeper's hay, never the larder — and
     # raids stay out for the reason they always did: an episodic past loss is not a steady drain.
+    # **This turn's POOLED food rides every step** as the sim's runway walk carries it
+    # (`larder_runway_turns`' `standing_net`), so the empty marker and the `(N turns)` agree.
     chart.set_projection(
         DetailFormat.band_provisions(band), arrivals,
-        float(band.get("food_consumption", 0.0)), _band_labor.current_turn())
+        float(band.get("food_consumption", 0.0)), _band_labor.current_turn(),
+        DetailFormat.band_pooled_food_net(band))
     # A short zone gets a COMPACT chart — same series, same empty marker, less height. This is the
     # whole of what the band zone's tier now buys: the chart is built either way, and drawing it
     # denser is cheaper for the reader than pushing the blocks below it under the scroll.
@@ -1367,10 +1397,9 @@ const UPKEEP_MODE_BUTTON_META := "upkeep_mode_button"
 ## the card's own answer to *is anything wrong with this pool*, so the claim is made against what the
 ## builder DECIDED rather than against a substring of what it drew.
 ##
-## **IT MEANS "THE TRIANGLE IS FLYING", FOR EITHER REASON.** It meant *short of HANDS* until the
-## triangle widened to cover a tool shortfall too; the tool reason is on its own meta
-## (`HudWorkVocab.POOL_CARD_TOOL_SHORT_META`) and the hands reason on the hover alone, so a harness asking
-## WHICH reason reads those — never this.
+## **IT MEANS "THE `⚠` IS FLYING", WHICH IS A WORK SHORTFALL ALONE** (issue #716). A tool shortfall
+## on a pool that covers its work flies the info mark instead and leaves this `false`; the tool reason
+## is on its own meta (`HudWorkVocab.POOL_CARD_TOOL_SHORT_META`), whichever mark it rides under.
 const POOL_CARD_SHORT_META := "pool_card_short"
 
 ## Emit the band's fund-mode pick. Its own signal rather than a Callable into HudLayer, for
@@ -1502,8 +1531,9 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     # ⛔ **AND NOT BECAUSE A KEEPING KIT MOVES NOTHING — SINCE §4.8 IT MOVES THE KEEPING ITSELF.**
     # `tillage` and `hurdling` carry the keeping jobs, `KeepingGear::resolve` derives the tool per
     # web off the roster, and an equipped keeper supplies its bare output PLUS what the kit delivers
-    # against the same unmoved demand — flint hoes are +0.5 work per keeper per turn on the plant
-    # web, hurdles the same on the animal one — with `WearQuantum::UpkeepWork` billing them for it.
+    # against the same unmoved demand — `plain` hoes are +0.5 work per keeper per turn on the plant
+    # web (their `flint` tier +0.7), hurdles the same on the animal one — with
+    # `WearQuantum::UpkeepWork` billing them for it.
     # The old note here argued from an inert axis, which stopped being true the turn those two kits
     # took the jobs.
     #
@@ -1769,6 +1799,11 @@ func _on_zones_resized() -> void:
     if _panel_is_faction:
         rerender()
         return
+    # **A SHELL FLIP MOVES THE TRADE CONTENT** between its own zone and the foot of Parties, so it is a
+    # re-render, never a re-page (`_trade_wide`).
+    if _panel.is_wide_shell() != _trade_wide:
+        rerender()
+        return
     # The COLUMN COUNT is the second reason to rebuild rather than re-page, and for the same reason as
     # the tier: the band zone's split across columns is AUTHORED at build time, so a flank that has
     # gained or lost a column cannot be re-flowed in place — it would keep a layout built for a
@@ -1782,6 +1817,8 @@ func _on_zones_resized() -> void:
     # zone for it would be three.
     _sync_band_zone_scroll()
     _repage_work_zone()
+    # The Trade tier is chosen against the box, so a new box may re-author it — in place, after layout.
+    _schedule_trade_refill()
 
 ## The panel's `shown_zone_changed` handler — the narrow shell swapped the zone its body draws.
 ##
@@ -1794,6 +1831,10 @@ func _on_zones_resized() -> void:
 ## on, so the card comes down (and comes back on the tab back) by exactly one rule.
 func _on_shown_zone_changed() -> void:
     _sync_work_inspector_dialog(_work_zone_band)
+    # …and the Trade tab's list popover and hover card, which are the other surfaces drawn OUTSIDE
+    # the panel: a list open over the map for a tab the player has left has nothing behind it.
+    if not _trade_zone_is_on_screen():
+        _trade.dismiss()
 
 ## The height the band zone's TIER is chosen against: the box times the number of columns the flank
 ## lays out across.
@@ -1967,10 +2008,14 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     if _queue_expanded and not queued.is_empty():
         col.add_child(_build_build_queue_expanded(band, queued, pools_fund_mode))
         return
+    # **THE HEAD ROW'S TOOL-SHORT SECOND LINE IS HELD BACK BEFORE THE ROWS ARE COUNTED**, so a
+    # tool-short head costs the queue a row rather than taking its height off the board in silence.
+    # Resolved ONCE, and the same value goes to the rows, the block and the board's capacity.
+    var head_tools_h := _queue_head_tools_height(band, queued)
     var queue_rows_max := HudWorkVocab.build_queue_rows_max(_zone_box().y,
-        pools_fund_mode, queued.size(), roster_h, workings_h)
+        pools_fund_mode, queued.size(), roster_h, workings_h, head_tools_h)
     if not queued.is_empty():
-        col.add_child(_build_build_queue_block(band, queued, queue_rows_max))
+        col.add_child(_build_build_queue_block(band, queued, queue_rows_max, head_tools_h))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
     _reconcile_work_filter(models)
     # **NO SOURCES, NO CHIPS ROW** — the builder answers `null` there, and the omission is the block's
@@ -2028,7 +2073,8 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     var capacity := _work_board_capacity(filtered.size(), queued.size(),
         queue_rows_max, pools_fund_mode,
         _queue_settings_is_open(queue_settings), int(queue_settings["legs"]),
-        roster_h, workings_h, HudWorkVocab.work_row_height(deepest_party))
+        bool(queue_settings["crop"]), head_tools_h, roster_h, workings_h,
+        HudWorkVocab.work_row_height(deepest_party))
     var page_size := int(capacity["page_size"])
     var pages := int(capacity["pages"])
     _work_page = clampi(_work_page, 0, maxi(pages - 1, 0))
@@ -2085,12 +2131,13 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
 ## measure.
 func _work_board_capacity(count: int, queue_rows: int, queue_rows_max: int,
         pools_fund_mode: bool, queue_settings_open: bool = false,
-        queue_settings_legs: int = 0, roster_height: float = 0.0,
+        queue_settings_legs: int = 0, queue_settings_crop: bool = false,
+        queue_head_tools_height: float = 0.0, roster_height: float = 0.0,
         workings_height: float = 0.0,
         row_height: float = HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT) -> Dictionary:
     var box := _zone_box()
     var queue_h := HudWorkVocab.build_queue_block_height(queue_rows, queue_rows_max,
-        queue_settings_open, queue_settings_legs)
+        queue_settings_open, queue_settings_legs, queue_settings_crop, queue_head_tools_height)
     var pools_h := HudWorkVocab.pools_block_height(pools_fund_mode)
     var gaps := HudWorkVocab.WORK_ZONE_GAP_COUNT + 1.0
     if queue_h > 0.0:
@@ -2362,8 +2409,8 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     # ⛔ **NOT because a route rung takes no builder** — that claim was false and is retired with the
     # tooltip that carried it. `grade` / `pave` append an ordinary `BuildQueueEntry` funded by the
     # band's `builders` pool; it is only the FREE FLOOR that traffic wears in. The queued half is
-    # absent from this dict because the published demand carries none, and
-    # `HudWorkVocab.UPKEEP_POOL_COVERAGE_ROUTE_FORMAT` is worded to promise exactly what is here.
+    # absent from this dict because the published demand carries none; the coverage sentence
+    # (`HudWorkVocab.UPKEEP_POOL_COVERAGE_FORMAT`) names no queue, so it promises nothing more.
     var road_pool := _band_labor.roadwork_pool_state(band)
     var road_cover := {
         HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: float(road_pool.get("supplied",
@@ -2413,12 +2460,10 @@ func _build_pools_block(band: Dictionary, queued: Array) -> VBoxContainer:
     # is not being LOST — the queue block one down states its own blocked head. There is no KEEPING
     # shortfall for this pool to be short of.
     #
-    # ⛔ **IT CAN STILL BE SHORT OF TOOLS, AND IT FLIES THE TRIANGLE FOR THAT.** A builders pool has a
+    # ⛔ **IT CAN STILL BE SHORT OF TOOLS, AND IT FLIES THE INFO MARK FOR THAT.** A builders pool has a
     # TABLE OF EQUIPMENT like any other — the wire carries a `builders`/`hoes` row — so `_build_pool_card`
-    # resolves its `tool_line` on this branch too and folds it into `wants_mark`. The dead claim was
-    # that this card *"wears no mark"*, which was true only while the mark meant SHORT OF HANDS;
-    # widening the triangle to either shortfall made the hands half this card's exemption and the
-    # tools half everybody's.
+    # resolves its `tool_line` on this branch too. With no `cover` it is never work-short, so a tool
+    # shortfall here is always the `ⓘ` and the INFO tool line (issue #716), never the `⚠`.
     cards.add_child(_build_pool_card(band, HudWorkVocab.ROLE_NAME_BUILDERS,
         HudWorkVocab.BUILDERS_ROLE_HINT, HudConst.LABOR_KIND_BUILDERS, builders_eff, idle,
         queued))
@@ -2731,8 +2776,7 @@ func _build_workings_roster_head(band: Dictionary) -> HBoxContainer:
         HudWorkVocab.POOL_COVERAGE_SHORTFALL_KEY: float(pool.get("shortfall",
             SourceForecast.NO_UPKEEP_DEMAND)),
     }
-    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(
-        HudWorkVocab.ROLE_NAME_QUARRYWORK, cover)
+    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(cover)
     var effective := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_QUARRYWORK)
     # ⛔ **THE FOURTH KEEPING POOL REPORTS ITS SPARE HANDS TOO** (issue #715). This head IS the
     # `quarrywork` pool, so leaving the idle reading to the three cards would make the one pool with
@@ -3285,21 +3329,24 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         cover: Dictionary = {}) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
-    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(role_name, cover)
+    var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(cover)
     # **AND WHETHER ITS TOOLS REACHED THE HANDS ON IT** — a SECOND, independent shortfall on the same
     # card, and since `docs/plan_pool_toe.md` it is the pool's own TABLE OF EQUIPMENT rather than one
     # kit's reach: a pool's tools follow from its SITES' rungs, so a Roadwork pool keeping a dirt road
     # and a paved road is short of two different things and one kit id has room for one.
-    var tool_line := _pool_toe_short_line(band, kind, effective)
-    # **THE TRIANGLE FLIES ON EITHER REASON.** It was gated on the hands shortfall alone, so a pool
-    # short of tools wore no triangle and one short of both was indistinguishable from one short of
-    # hands. The triangle now says *something is wrong with this pool* and the hover says what.
     #
-    # ⛔ **THE HANDS HALF IS THE PREDICATE, NOT THE SENTENCE** (issue #715). The coverage line used to
+    # ⛔ **ONLY A WORK SHORTFALL FLIES THE `⚠`** (issue #716). Every pool tool is productivity, so a
+    # pool short of tools but covering its bill is losing nothing — it takes the calm info mark, and
+    # its tool line says what the tools would buy. Where the work IS short the tools are a second
+    # reason under the same triangle. The card never names or counts a tool: a count under a worker
+    # stepper read as a head count, and the coverage sentence carries the numbers.
+    #
+    # ⛔ **THE WORK HALF IS THE PREDICATE, NOT THE SENTENCE** (issue #715). The coverage line used to
     # be the test as well as the words — it returned `""` for an adequate pool — which is why a pool
     # that covers its bill exactly said NOTHING at all. The sentence now composes for every pool with
     # a bill and `upkeep_pool_is_short` is what the amber forks on; one composer, one predicate.
-    var is_short := HudWorkVocab.upkeep_pool_is_short(cover) or tool_line != ""
+    var is_short := HudWorkVocab.upkeep_pool_is_short(cover)
+    var tool_line := _pool_tools_short_line(band, kind, effective, is_short)
     # **AND WHAT THE BILL DID NOT USE** — a whole worker standing on this pool with nothing to do,
     # which is the third thing this card can say and the one it could not say at all. Read off the
     # wire's own `pool_crew` row and NEVER re-derived: `supply` above is a projection off a notional
@@ -3311,11 +3358,12 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # mark's scope.
     var idle_line := _pool_idle_line(band, kind, effective, queued,
         bool(cover.get(HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY, false)))
-    # **ONE SLOT, THREE STATES, AND SHORTFALL WINS IT.** The name row holds exactly one glyph (the
-    # measurements are in the block below), so an idle pool is marked only where nothing is wrong
-    # with it: a loss is the news and a spare hand can wait one hover.
+    # **ONE SLOT, AND A WORK SHORTFALL WINS IT.** The name row holds exactly one glyph (the
+    # measurements are in the block below), so the info mark — a tool shortfall, a spare hand, or
+    # both — flies only where the work is covered: a loss is the news and the rest can wait one hover.
     var wants_idle_mark := not is_short and idle_line != ""
-    var wants_mark := is_short or wants_idle_mark
+    var wants_info_mark := not is_short and (tool_line != "" or idle_line != "")
+    var wants_mark := is_short or wants_info_mark
     var card := PanelContainer.new()
     card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     # The role cards' own levelness rule, and it is load-bearing on a row of THREE: the `HBoxContainer`
@@ -3342,33 +3390,31 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # at the shared name size, which is what drove `POOL_CARD_NAME_FONT_SIZE` to 10 and trimmed every
     # `POOL_STEPPER_*` metric, and a second ROW costs 62px the work zone's floor cannot find.
     #
-    # **SO THE CARD WIDENS THE `⚠` IT ALREADY HAS INSTEAD OF ADDING A MARK**, which costs no width: the
-    # triangle flies on either shortfall (short of hands, short of tools, or both) and the title takes
-    # the WARN amber with it. Which shortfall it is — and both, when both hold — is on the hover, the
-    # rule the work-bill mark already followed here (*"the card is a role name over a stepper and has
-    # no room for arithmetic"*).
+    # **SO THE TOOL REASON RIDES THE ONE MARK THE CARD ALREADY HAS**, which costs no width: under the
+    # `⚠` when the work is short, under the info mark when it is not (issue #716). Which reasons hold
+    # is on the hover, the rule the work-bill mark already followed here (*"the card is a role name
+    # over a stepper and has no room for arithmetic"*).
     #
-    # **THE HOVER IS ORDERING, NOT REWORDING.** Each reason is its own line in the single phrasing the
-    # client uses for that fact everywhere — the hands shortfall first
-    # (`upkeep_pool_coverage_line`), then the tool shortfall (`HudWorkVocab.pool_toe_short_line`, the
-    # client's existing `N of M` phrasing) — and `join_tooltip_lines` drops whichever is empty.
-    #
-    # **THE IDLE READING IS A THIRD LINE, LAST** (issue #715) — the two shortfalls are what the band
-    # is LOSING and the spare hand is what it can gain, so it reads after them.
+    # **THE HOVER IS ORDERING, NOT REWORDING.** The work-units sentence first
+    # (`upkeep_pool_coverage_line`, which carries every number), then the tool line
+    # (`HudWorkVocab.pool_tools_short_line` — `Short of tools.` under the `⚠`, the INFO form
+    # under the info mark), then the idle reading (issue #715): what the band is LOSING before what it
+    # can gain. `join_tooltip_lines` drops whichever is empty.
     card.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line, tool_line, idle_line])
-    # **THE META IS THE TRIANGLE** — every harness reads it to ask *is this card marked SHORT*, and
-    # the two composers that decide the reasons are the same two that decide the glyph.
+    # **THE META IS THE TRIANGLE** — every harness reads it to ask *is this card marked SHORT*, which
+    # is the WORK shortfall alone (issue #716).
     #
     # ⛔ **IT IS THE *SHORT* ANSWER AND NOT *MARKED AT ALL*.** Several probes read it as *short*, so
     # widening it to cover the calm info mark would silently change what each of them asserts — which
-    # is why the idle state has a meta of its own below rather than a share of this one.
+    # is why the tool and idle states have metas of their own below rather than a share of this one.
     card.set_meta(POOL_CARD_SHORT_META, is_short)
-    # …and the TOOL reason on its own meta, carrying the SENTENCE rather than a flag: a harness asking
-    # *which reason is the triangle for* must not re-compose the wording it is checking.
+    # …and the TOOL reason on its own meta, carrying the SENTENCE rather than a flag — its form says
+    # which mark it rides under, and a harness must not re-compose the wording it is checking.
     card.set_meta(HudWorkVocab.POOL_CARD_TOOL_SHORT_META, tool_line)
-    # …and the IDLE state on a third, by the same rule and for the same reason. It carries the
-    # sentence the card is FLYING the info mark for, so it is `""` on a pool that is also short —
-    # where the reading is still on the hover but the slot went to the triangle.
+    # …and the IDLE state on a third, by the same rule and for the same reason. It carries the idle
+    # sentence whenever the info mark flies with a spare hand behind it (tools short or not), so it is
+    # `""` on a pool that is work-short — where the reading is still on the hover but the slot went to
+    # the triangle.
     card.set_meta(HudWorkVocab.POOL_CARD_IDLE_META, idle_line if wants_idle_mark else "")
     var col := VBoxContainer.new()
     col.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
@@ -3380,10 +3426,10 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
     # number under this title is not the sim's yet. WARN carries both, so the ink forks only against
     # the calm card.
     #
-    # ⛔ **THE IDLE MARK LEAVES THE TITLE ALONE** (issue #715). The amber has to keep meaning
-    # *something is being lost* — a road washing out, a patch rotting — and a worker with nothing to
-    # do is waste the player fixes with a stepper press. Colouring the title for it would spend the
-    # panel's one alarm ink on the least urgent thing it can say.
+    # ⛔ **THE INFO MARK LEAVES THE TITLE ALONE** (issues #715, #716). The amber has to keep meaning
+    # *something is being lost* — a road washing out, a patch rotting — and neither a worker with
+    # nothing to do nor tools that would stretch a covered crew further is that. Colouring the title
+    # for them would spend the panel's one alarm ink on the least urgent things it can say.
     title.add_theme_color_override("font_color",
         HudStyle.WARN if pending or is_short else HudStyle.INK)
     if not wants_mark:
@@ -3396,17 +3442,14 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
         var name_row := HBoxContainer.new()
         name_row.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
         name_row.add_child(title)
-        # ⛔ **ONE MARK FOR BOTH SHORTFALLS.** A second glyph (the work rows' `◆`) was measured and does
-        # not fit this row at any packing, so the one `⚠` stands for *something is wrong with this
-        # pool* and the two opposite remedies — a stepper away, or the bench — are told apart on the
-        # hover, which names each reason on its own line.
-        # ⛔ **AND ONE GLYPH FOR THREE STATES, SHORTFALL FIRST.** The slot cannot be shared, so the
-        # info mark is what stands in it only when the triangle has no claim on it — and it takes the
-        # INK_DIM secondary ink rather than the amber, so *there is a hand going spare* never reads as
-        # *this band is losing something*. Not the SIGNAL accent: its documented meaning is *calm,
-        # nothing needs you*, and on the `ember` default theme it is cream on cream against `INK`.
-        # What hue that is belongs to the active palette, which is the point of naming the token
-        # rather than a colour.
+        # ⛔ **ONE GLYPH FOR THREE STATES, WORK SHORTFALL FIRST.** A second glyph (the work rows' `◆`)
+        # was measured and does not fit this row at any packing. The `⚠` means *work is being lost*;
+        # the info mark stands in the slot only when the triangle has no claim on it — tools short,
+        # a hand spare, or both — and takes the INK_DIM secondary ink rather than the amber, so it
+        # never reads as *this band is losing something*. Not the SIGNAL accent: its documented
+        # meaning is *calm, nothing needs you*, and on the `ember` default theme it is cream on cream
+        # against `INK`. What hue that is belongs to the active palette, which is the point of naming
+        # the token rather than a colour.
         name_row.add_child(
             _pool_card_mark(HudWorkVocab.UPKEEP_POOL_SHORT_MARK, HudStyle.WARN) if is_short
             else _pool_card_mark(HudWorkVocab.UPKEEP_POOL_IDLE_MARK, HudStyle.INK_DIM))
@@ -3435,8 +3478,9 @@ func _build_pool_card(band: Dictionary, role_name: String, hint: String, kind: S
 ## One mark beside a pool card's name, at the name's own size. Shared so the states cannot be drawn
 ## at different sizes on one row.
 ##
-## **THE INK IS AN ARGUMENT BECAUSE THE SLOT CARRIES THREE STATES** (issue #715): both shortfalls
-## wear the WARN amber, and the idle reading wears `HudStyle.INK_DIM` — ordinary secondary ink,
+## **THE INK IS AN ARGUMENT BECAUSE THE SLOT CARRIES THREE STATES** (issues #715, #716): a WORK
+## shortfall wears the WARN amber, and the info mark (tools short on a covered pool, or a spare hand)
+## wears `HudStyle.INK_DIM` — ordinary secondary ink,
 ## claiming no severity — so it cannot be mistaken for something being lost. Not `SIGNAL`, whose
 ## documented meaning is *calm, nothing needs you* and which is cream on cream against `INK` on the
 ## `ember` `DEFAULT_THEME`. Passed in rather than derived from the glyph, which would make the colour a
@@ -3455,8 +3499,9 @@ func _pool_card_mark(glyph: String, ink: Color) -> Label:
     mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
     return mark
 
-## **WHAT THIS POOL'S TOOLS CAME UP SHORT OF** — its TOE's short lines in the client's existing
-## `N of M` phrasing (`4 of 6 hoes · 0 of 2 dressing hammers`), or `""`.
+## **WHETHER THIS POOL'S TOOLS CAME UP SHORT, IN THE FORM ITS MARK TAKES** — `Short of tools.` under
+## the `⚠` (`work_short`), the INFO form under the info mark, or `""` (issue #716). The card
+## never names or counts a tool; see `HudWorkVocab.pool_tools_short_line`.
 ##
 ## > #### ⛔ RETIRED — `_pool_kit_short_line`, WHICH READ THE POOL ROW'S OWN KIT COVERAGE
 ## >
@@ -3468,19 +3513,54 @@ func _pool_card_mark(glyph: String, ink: Color) -> Label:
 ## > **`docs/plan_pool_toe.md` §4 left it with nothing to fire on.** A pool row publishes `kitId` `""`
 ## > and `kitWorkersHolding == workers` — the *nothing to be short of* reading, deliberately, so no
 ## > existing reader reports a shortfall on a pool — so every one of those gates now answers silence
-## > for every pool in the game, and a pool short of its tools wore no triangle at all. The reason it
-## > cannot simply be repaired is the model rather than the field: a pool's tools are derived per SITE
-## > at that site's rung, and a Roadwork pool keeping a dirt road and a paved road wants TWO tools
-## > where one kit id has room for one.
-##
-## **THE TRIANGLE IS UNCHANGED AND FLIES ON EITHER SHORTFALL** — hands, tools or both. What moved is
-## where the tool half's answer comes from.
+## > for every pool in the game, and a pool short of its tools said so nowhere. The reason it cannot
+## > simply be repaired is the model rather than the field: a pool's tools are derived per SITE at that
+## > site's rung, and a Roadwork pool keeping a dirt road and a paved road wants TWO tools where one kit
+## > id has room for one.
 ##
 ## ⛔ **PENDING IS STILL A GATE, AND IT IS `_pool_toe_settled_rows`' NOW** — the card's sentence and the
 ## work row's remedy both read the TOE through it, so neither can answer for a staffing the turn has
 ## not resolved while the other answers for the one it has.
-func _pool_toe_short_line(band: Dictionary, kind: String, effective: Dictionary) -> String:
-    return HudWorkVocab.pool_toe_short_line(_pool_toe_settled_rows(band, kind, effective))
+func _pool_tools_short_line(band: Dictionary, kind: String, effective: Dictionary,
+        work_short: bool) -> String:
+    return HudWorkVocab.pool_tools_short_line(_pool_toe_settled_rows(band, kind, effective),
+        work_short, kind)
+
+## **IS THIS QUEUE ENTRY THE ONE THE BUILDERS' TOOL SHORTFALL IS ON** — the queue HEAD, and only
+## where the builders pool's settled TOE is short.
+##
+## The builders' tool claim is the head entry's alone (`docs/plan_pool_toe.md` §2.4 — entries behind
+## the head claim nothing), so *the builders pool is short of tools* MEANS *the head is*; no second
+## per-entry reading exists or is needed. It asks the SAME gate the Builders card's tool line does
+## (`_pool_toe_settled_rows`, pending-aware off `effective_role_workers`) through the same predicate
+## (`pool_toe_is_short`), so the card and the row cannot disagree about one fact.
+##
+## ⛔ **A PENDING ROW IS NEVER THE HEAD**, even alone: the wire has not placed it, and its rank is
+## `NOT_IN_ANY_BUILD_QUEUE` — the head marker's own rule, read through the same rank.
+func _queue_entry_tools_short(band: Dictionary, model: Dictionary) -> bool:
+    if _build_queue_row_is_pending(model) \
+            or _build_queue_row_rank(model) != SourceForecast.BUILD_QUEUE_HEAD:
+        return false
+    return HudWorkVocab.pool_toe_is_short(_pool_toe_settled_rows(band,
+        HudConst.LABOR_KIND_BUILDERS,
+        _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)))
+
+## **WHAT THE HEAD ROW'S TOOL-SHORT SECOND LINE COSTS THE ZONE** — `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT`
+## when the queue's FIRST entry is the wire head, `_queue_entry_tools_short` holds for it AND its
+## settings strip is not open, else `0.0`. An open head's strip leads with the sentence instead and the
+## row is one line — `_head_row_wears_tools_line` is the one test the row builder draws by. The first entry is always drawn (`BUILD_QUEUE_ROWS_MIN` is one), and an entry whose model is
+## missing is simply not first — so the head's row exists exactly when this charges for it, and the
+## reservation and the row builder turn on the one verdict.
+func _queue_head_tools_height(band: Dictionary, queued: Array) -> float:
+    if queued.is_empty() or not _head_row_wears_tools_line(band, queued[0] as Dictionary):
+        return 0.0
+    return HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT
+
+## **DOES THIS ROW DRAW THE `◆` SECOND LINE** — tool-short head, strip closed. One test for the
+## reservation above and the row builder, so the height paid for and the line drawn cannot disagree.
+func _head_row_wears_tools_line(band: Dictionary, model: Dictionary) -> bool:
+    return _queue_entry_tools_short(band, model) \
+        and String(model.get("key", "")) != _queue_open_key
 
 ## **WHAT THIS POOL'S BILL DID NOT USE — the wire's figure, ADJUSTED BY WHAT THE PLAYER HAS JUST
 ## DONE THAT THE SIM HAS NOT SEEN** (issue #715).
@@ -3647,12 +3727,12 @@ func _queued_keeping_hands(kind: String, queued: Array) -> float:
 ## source, needs the same gate the pool card applies.
 ##
 ## ⛔ **AND UNGATING EITHER CALLER PUTS THE TWO SURFACES BACK INTO DISAGREEMENT.** With the row's arm
-## ungated, pressing `+` on a tool-short Agriculture pool dropped the card's tool line and — absent a
-## hands shortfall — its ⚠, while every under-kept plant row simultaneously switched to *"Agriculture
-## needs tools, not hands"*: the triangle and the remedy contradicting each other on one screen, which
-## is the defect the shared predicate was introduced to close.
+## ungated, pressing `+` on a tool-short Agriculture pool dropped the card's tool line and its mark,
+## while every under-kept plant row simultaneously switched to *"Agriculture needs tools, not hands"*:
+## the card and the remedy contradicting each other on one screen, which is the defect the shared
+## predicate was introduced to close.
 ##
-## **AN EMPTY ARRAY IS THE GATED ANSWER, never a second sentinel**: `pool_toe_short_line` answers `""`
+## **AN EMPTY ARRAY IS THE GATED ANSWER, never a second sentinel**: `pool_tools_short_line` answers `""`
 ## and `pool_toe_is_short` answers `false` for it, which is exactly *nothing to be short of* — the same
 ## reading a pool with no TOE row at all gets.
 func _pool_toe_settled_rows(band: Dictionary, kind: String, effective: Dictionary) -> Array:
@@ -4050,7 +4130,8 @@ func _queue_rank_keys(band: Dictionary) -> Array:
 ## as a minimum so the size it draws at and the size `_work_board_capacity` subtracts are the same
 ## expression. The zone clips, so a block that drew taller than it was paid for would take the
 ## difference off the bottom of the board with nothing to show for it.
-func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) -> VBoxContainer:
+func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int,
+        head_tools_height: float = 0.0) -> VBoxContainer:
     var block := VBoxContainer.new()
     block.set_meta(HudWorkVocab.BUILD_QUEUE_BLOCK_META, queued.size())
     block.add_theme_constant_override("separation", 0)
@@ -4071,7 +4152,8 @@ func _build_build_queue_block(band: Dictionary, queued: Array, rows_max: int) ->
     # (`NOT_IN_ANY_BUILD_QUEUE`), so they take neither end-stop.
     var confirmed := _queue_rank_keys(band).size()
     block.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_block_height(
-        queued.size(), rows_max, _queue_settings_is_open(settings), int(settings["legs"])))
+        queued.size(), rows_max, _queue_settings_is_open(settings), int(settings["legs"]),
+        bool(settings["crop"]), head_tools_height))
     # The drag reaches its target rows through this map rather than through the tree, because the
     # drop indicator is a stylebox swap and must not re-render the block it is hovering over.
     _queue_row_nodes.clear()
@@ -4536,12 +4618,13 @@ func _toggle_queue_settings(key: String) -> void:
         _roster_expanded = &""
     _repage_work_zone()
 
-## **THE OPEN ENTRY'S SETTINGS — its CLIMB and its CROP.** That is the reason this is a strip rather
-## than another column: the row is five columns already and could not afford a sixth.
+## **THE OPEN ENTRY'S DETAILS AND SETTINGS — its detail line, its CLIMB, its CROP, its withdrawal.**
+## That is the reason this is a strip rather than another column: the row is five columns already and
+## could not afford a sixth.
 ##
 ## ⛔ **THE KIT WAS THE SECOND CONTROL AND IS GONE** (`docs/plan_pool_toe.md` §3) — a build's tools
-## are the RUNG's. So the strip has ONE control, which is why the flow predicate retired with it and
-## why an animal entry, committing no species and carrying no legs of its own, expands no longer.
+## are the RUNG's. So the strip has ONE picker, which is why the flow predicate retired with it. An
+## animal entry, committing no species and carrying no legs, opens to its detail line alone.
 ##
 ## It wears the work inspector's own stylebox and its own reserved height, so the two expansions in
 ## this zone read as one idea.
@@ -4553,60 +4636,91 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     # `true` unconditionally: reaching this builder IS the strip drawing, so the one thing the
     # reservation has to be told — does it draw — is settled here by construction.
     strip.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_settings_height(
-        true, int(content["legs"])))
-    strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
+        true, int(content["legs"]), bool(content["crop"])))
+    # The work inspector's stylebox with its top and bottom trimmed to `BUILD_QUEUE_SETTINGS_PADDING_V`
+    # — the chrome `build_queue_settings_height` charges — so the lines inside keep their full height.
+    var box := HudStyle.work_inspector_stylebox()
+    box.content_margin_top = HudWorkVocab.BUILD_QUEUE_SETTINGS_PADDING_V
+    box.content_margin_bottom = HudWorkVocab.BUILD_QUEUE_SETTINGS_PADDING_V
+    strip.add_theme_stylebox_override("panel", box)
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", 0)
     strip.add_child(column)
+    # **THE JOB'S DETAIL LINE LEADS EVERY STRIP, AND THE WITHDRAWAL RIDES IT.** Reported from play: a
+    # Tame row opened to a bare red `✕` and nothing else. Every strip now opens on what the row
+    # already knows about the job — its causes and its price — ellipsised beside the labelled
+    # withdrawal, at the control height `build_queue_settings_height` charges unconditionally. The
+    # words `Remove from queue` do not fit beside the crop picker at the narrow shell, which is why
+    # they ride THIS line (`HudWorkVocab.BUILD_QUEUE_UNQUEUE_LABEL` carries the measurement).
+    var detail_line := _build_queue_settings_line(column, "")
+    detail_line.add_child(_build_queue_detail_line(band, model))
+    detail_line.add_child(_build_queue_unqueue_button(band, model))
     # **THE ENTRY'S CLIMB, ONE LINE PER LEG** (`docs/plan_standing_upkeep.md` §2.8). A `sow` declared
-    # on untended ground is TWO legs and is still ONE queue row: splitting it would offer two `✕`s for
-    # one withdrawal and two places to drag for one reorder, so the entry stays one unit and its legs
-    # are what the row opens into. The wire lists them first-incomplete first, so the FIRST is the leg
-    # in flight and nothing here decides which.
+    # on untended ground is TWO legs and is still ONE queue row: splitting it would offer two
+    # withdrawals for one entry and two places to drag for one reorder, so the entry stays one unit
+    # and its legs are what the row opens into. The wire lists them first-incomplete first, so the
+    # FIRST is the leg in flight and nothing here decides which.
     var legs: Array = model.get("build_legs", []) as Array
     if not legs.is_empty():
         column.add_child(_build_queue_legs_head())
         for index in range(legs.size()):
             column.add_child(_build_queue_leg_line(legs[index] as Dictionary,
                 index == SourceForecast.BUILD_QUEUE_HEAD))
-    # **ONE CONTROL LINE, AND THE RESERVATION READS THE SAME ANSWER THE BUILDER DRAWS.** The strip's
-    # height is priced before it is drawn — `build_queue_settings_height` is the one arithmetic both
-    # `_work_board_capacity`'s chrome term and this `custom_minimum_size` take — and this zone takes
-    # any difference off the bottom of the board in silence.
-    #
-    # ⛔ **THE FLOW WENT WITH THE KIT PICKER.** It was two controls that sat side by side where the
-    # strip was wide enough (`HudWorkVocab.queue_settings_one_line`) and stacked where it was not; the
-    # kit is the RUNG's now, so there is one control and *a lone control is always one line whatever
-    # the width* — the predicate's own rule, applied to the only case left.
-    var line: HBoxContainer = null
+    # **THE CROP PICKER IS A LINE OF ITS OWN, AND `has_crop` PAYS FOR IT.** The strip's height is
+    # priced before it is drawn — `build_queue_settings_height` is the one arithmetic both
+    # `_work_board_capacity`'s chrome term and this `custom_minimum_size` take, off the same
+    # `_queue_settings_content` answer — and this zone takes any difference off the bottom of the board
+    # in silence.
     if bool(content["crop"]):
-        line = _build_queue_settings_line(column, HudWorkVocab.BUILD_QUEUE_SETTINGS_CROP_KEY)
+        var line := _build_queue_settings_line(column, HudWorkVocab.BUILD_QUEUE_SETTINGS_CROP_KEY)
         var crop_picker := _build_queue_crop_picker(band, model)
         if crop_picker != null:
             line.add_child(crop_picker)
-    # **THE WITHDRAWAL RIDES THE STRIP'S LAST LINE, RIGHT-ALIGNED** (§4.7b ③). The `✕` left the row
-    # when the reorder arrows took its 32px column, and the strip is where it went: every queued entry
-    # expands, so there is always a line to hang it on, and withdrawing becomes two clicks where
-    # reordering is one — the right way round, a reorder being the commoner act.
-    #
-    # ⛔ **IT ADDS NO LINE OF ITS OWN WHERE THERE IS A CONTROL TO RIDE, and buys one where there is
-    # not.** A LEGS-ONLY strip is reachable again — an entry whose crop list is empty but whose climb
-    # has rungs — since the kit picker retired, and a `✕` drawn with no line under it would draw
-    # taller than it was paid for in a zone that answers that by clipping the board. **Either way it
-    # is ONE control line**, which is why `build_queue_settings_height` charges one unconditionally
-    # and asks nothing about the crop: the line bought here is always the line that was reserved.
-    if line == null:
-        line = _build_queue_settings_line(column, "")
-    var spacer := Control.new()
-    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(spacer)
-    line.add_child(_build_queue_unqueue_button(band, model))
     return strip
 
-## **THE WITHDRAWAL — same button, same command, same optimistic write; only its HOST moved** (§4.7b
-## ③). It keeps `BUILD_QUEUE_UNQUEUE_META` and the entry's own rank on it, so every reader that found
-## it by name finds it in the strip.
+## **THE DETAIL LINE — one ellipsised readout of the job.** The text is
+## `HudWorkVocab.build_queue_detail_line` over fields the queue model already carries: the model's
+## `build_blocked_lines` (the source card's own producer) and `DetailFormat.build_price_clause` — the
+## same price the row's hover quotes, with its turn term suppressed because the date column is the
+## sim's own chained answer. On the tool-short HEAD it leads with `◆ builders short of tools` — the
+## row drops its own second line while this strip is open, so this is the fact's one statement here.
+##
+## **IT ELIDES, NEVER WRAPS**: it shares a control line with the withdrawal, reserved at that line's
+## height, and the zone clips. The label carries the FULL text on its hover (`HudWidgets.build_status_part`'s elide
+## form) and on `BUILD_QUEUE_DETAIL_META`. A cause reads in the kit-short amber; a bare price reads dim.
+func _build_queue_detail_line(band: Dictionary, model: Dictionary) -> Label:
+    var tools_short := _queue_entry_tools_short(band, model)
+    var blocked_lines: Array = model.get("build_blocked_lines", []) as Array
+    var text := HudWorkVocab.build_queue_detail_line(tools_short, blocked_lines,
+        _queue_entry_price(model))
+    var has_cause := tools_short or not blocked_lines.is_empty()
+    var label := HudWidgets.build_status_part(text,
+        HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY) if has_cause else HudStyle.INK_DIM,
+        true)
+    label.set_meta(HudWorkVocab.BUILD_QUEUE_DETAIL_META, text)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.BUILD_QUEUE_DETAIL_FONT_SIZE)
+    label.clip_text = true
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    return label
+
+## **THE JOB'S FULL PRICE, BOTH HALVES** — the one composition the row's hover and the strip's detail
+## line both quote, so the two cannot state one entry's price two ways. `BUILD_TURNS_NO_ESTIMATE`
+## suppresses the turn term deliberately: the date column is the sim's own chained answer, and a second
+## estimate here would be two producers for one number.
+func _queue_entry_price(model: Dictionary) -> String:
+    return DetailFormat.build_price_clause(
+        float(model.get("build_work_cost", SourceForecast.BUILD_WORK_COST_NONE)),
+        SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+        float(model.get("build_upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND)),
+        _queue_source_kind(model))
+
+## **THE WITHDRAWAL — same command, same optimistic write; its host moved and its face took words**
+## (§4.7b ③). It keeps `BUILD_QUEUE_UNQUEUE_META` and the entry's own rank on it, so every reader that
+## found it by that meta finds it in the strip. The bare `✕` it wore read as *close* or as *cancel and
+## lose the progress*; `BUILD_QUEUE_UNQUEUE_LABEL` says what it does and the tooltip says the work
+## already done is kept. It takes its NATURAL width — the words are the control, and the spacer beside
+## it is the child that gives.
 ##
 ## **NO CONFIRM.** `unqueue` withdraws a DECLARATION: the banked meter survives it, the row keeps its
 ## crew and its kit, and re-declaring is one press of that row's own `⌃`. This panel's confirm path is
@@ -4617,10 +4731,9 @@ func _build_queue_unqueue_button(band: Dictionary, model: Dictionary) -> Button:
     # The entry's own rank — a FINDER value, never asserted on, and read off the SAME model stamp its
     # row wears, so the two cannot state one entry's place two ways.
     withdraw.set_meta(HudWorkVocab.BUILD_QUEUE_UNQUEUE_META, _build_queue_row_rank(model))
-    withdraw.text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_GLYPH
+    withdraw.text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_LABEL
     withdraw.focus_mode = Control.FOCUS_NONE
     withdraw.tooltip_text = HudWorkVocab.BUILD_QUEUE_UNQUEUE_TOOLTIP
-    withdraw.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_UNQUEUE_WIDTH, 0.0)
     HudStyle.apply_button(withdraw, "ghost")
     # The parties zone's recall treatment: a steady, full-opacity DANGER red, because the steady red
     # already reads as destructive and there is nothing further to brighten to on hover. It squeezes
@@ -4641,7 +4754,9 @@ func _build_queue_settings_line(column: VBoxContainer, key_text: String) -> HBox
     line.custom_minimum_size = Vector2(0.0, HudWorkVocab.BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT)
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     column.add_child(line)
-    line.add_child(_build_queue_settings_key(key_text))
+    # The DETAIL line has no key, and a 30px blank would push the job's own words off its left edge.
+    if key_text != "":
+        line.add_child(_build_queue_settings_key(key_text))
     return line
 
 ## A settings key — `CROP` — at its declared width. It was one width shared with a `KIT` key beside
@@ -4813,9 +4928,28 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
                 and not event.pressed \
                 and Rect2(Vector2.ZERO, row.size).has_point(event.position):
             _toggle_queue_settings(String(model.get("key", ""))))
+    # **THE HEAD SHORT OF THE BUILDERS' TOOLS GROWS A SECOND LINE, AND ONLY THEN.** The builders' tool
+    # claim is the head entry's alone (`docs/plan_pool_toe.md` §2.4), so the work rows' own `◆` belongs
+    # on this row — and the first line has no width for it: a slot beside the face clips its asserted-
+    # unclipped `🌱 Cultivate (71, 18)` by 11px, a prefix in the date column clips the worst-case date
+    # by 13, and the marker column is the `▸` and the drag handle. The board's two-line-row idiom is
+    # the shape that costs neither guarantee: `◆ builders short of tools` under the face, at
+    # `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT`, which `_queue_head_tools_height` charges to the one
+    # reservation arithmetic on the same verdict. A head that is not short stays one line.
+    var tools_short := _queue_entry_tools_short(band, model)
+    var body := VBoxContainer.new()
+    body.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
+    body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    row.add_child(body)
     var line := HBoxContainer.new()
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    row.add_child(line)
+    line.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    body.add_child(line)
+    # …and ONLY while its settings strip is CLOSED: an open strip leads with the same words, so the
+    # row goes back to one line rather than stating the fact twice, one line apart.
+    if _head_row_wears_tools_line(band, model):
+        row.custom_minimum_size.y += HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT
+        body.add_child(_build_queue_row_tools_line())
     line.add_child(_build_queue_row_marker(band, model, is_head))
     # **AND THE ROW IS THE DROP TARGET, where the marker alone is the grab** — a drop that only
     # landed on a 10px column would be a gesture the player has to aim at twice.
@@ -4932,11 +5066,15 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # offer and the queued entry quote one price in one wording; `BUILD_TURNS_NO_ESTIMATE` suppresses
     # its turn term deliberately, the date column above being the sim's own chained answer and a
     # second estimate here two producers for one number.
-    var price := DetailFormat.build_price_clause(
-        float(model.get("build_work_cost", SourceForecast.BUILD_WORK_COST_NONE)),
-        SourceForecast.BUILD_TURNS_NO_ESTIMATE,
-        float(model.get("build_upkeep_demand", SourceForecast.NO_UPKEEP_DEMAND)),
-        _queue_source_kind(model))
+    #
+    # **THE HEAD STATES THE BUILDERS' TOOL SHORTFALL, BECAUSE IT IS THE HEAD'S** (`docs/plan_pool_toe.md`
+    # §2.4 — the builders' tool claim is the head entry's alone). The Builders card says *the top job
+    # in the queue is short of tools*; this is that job saying so, on its hover and its detail line.
+    # The mark itself is the row's second line, built above.
+    row.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_META, tools_short)
+    if tools_short:
+        tooltip_lines.append(HudWorkVocab.BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP)
+    var price := _queue_entry_price(model)
     if price != "":
         tooltip_lines.append(price)
     tooltip_lines.append_array(blocked_lines)
@@ -4948,6 +5086,28 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     row.tooltip_text = HudFormat.join_tooltip_lines(tooltip_lines)
     line.add_child(_build_queue_reorder_column(band, model, confirmed))
     return row
+
+## **THE HEAD ROW'S TOOL-SHORT LINE** — `◆ builders short of tools` in `KIT_SHORT_SEVERITY` amber,
+## indented past the marker column so the mark sits under the job face it qualifies. The `◆` is a
+## text-presentation glyph, so the font colour tints it (the red-backpack lesson in
+## `band-city-panel.md` → "THE ROW FLIES A KIT MARK"). It takes no input: the row's click is the row's.
+func _build_queue_row_tools_line() -> HBoxContainer:
+    var line := HBoxContainer.new()
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    var indent := Control.new()
+    indent.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH, 0.0)
+    indent.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(indent)
+    var text := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
+        HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT]
+    var label := HudWidgets.build_status_part(text,
+        HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY))
+    label.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_META, text)
+    label.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_INSPECTOR_NOTE_LINE_HEIGHT)
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(label)
+    return line
 
 ## **THE REORDER PAIR, IN THE COLUMN THE `✕` USED TO HAVE** (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##
@@ -6980,7 +7140,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
     # what binds.
     #
     # ⛔ **IT IS THE POOL CARD'S OWN TEST AND MUST STAY SO, PENDING GATE INCLUDED.**
-    # `_pool_toe_settled_rows` is the one gated reading both surfaces go through, so the triangle on
+    # `_pool_toe_settled_rows` is the one gated reading both surfaces go through, so the tool line on
     # the Agriculture card and the remedy on the row it is failing to keep cannot disagree about which
     # shortfall this is — which was the reported defect's other half (the card said nothing at all
     # while the tile complained). Reading `pool_toe_for` directly here re-opens it from the other end:
@@ -7947,6 +8107,73 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
         return
     emit_signal("cancel_order_requested", band, scope)
 
+# ---- zone `trade` -----------------------------------------------------------
+
+## Zone `trade` (issue #731) — the narrow shell's fourth tab. `TradeZoneController` authors it; this
+## only hands it the band and the box. A wide shell never calls this: the same content is a section
+## under Parties there (`build_parties_zone`).
+func build_trade_zone(band: Dictionary) -> VBoxContainer:
+    return _trade.build(band, _trade_zone_box())
+
+## The box the Trade content is authored against: its own zone's in the narrow shell, the Parties
+## zone's in the wide one (where it lives). The fallback keeps a no-dock host laying out sensibly.
+func _trade_zone_box() -> Vector2:
+    if _panel == null:
+        return HudWorkVocab.ZONE_FALLBACK_SIZE
+    var zone := BandCityPanel.ZONE_PARTIES if _trade_wide else BandCityPanel.ZONE_TRADE
+    var box: Vector2 = _panel.zone_size(zone)
+    return box if box.x > 0.0 and box.y > 0.0 else HudWorkVocab.ZONE_FALLBACK_SIZE
+
+## **THE ROOM THE TRADE TIER IS MEASURED AGAINST.** Narrow: its own zone's box. Wide: the Parties
+## zone's scrolling list — the box less the zone's fixed chrome (its head, any empty hint, the footer
+## and the gaps between them), since that list is where the section sits and the most of it a player
+## sees without scrolling.
+##
+## ⛔ **ONLY A LAID-OUT COLUMN CAN ANSWER.** The Parties column's autowrap hints (the empty-parties hint,
+## the no-idle reason) and an inline compose sheet report a word-per-line height while the column is
+## detached — which it is, mid-`build_parties_zone` — so a room measured there is too short and the
+## section drops to SHORT on every render while the resize path, measuring the live column, picks
+## FULL. So a detached column answers with the last LIVE measurement for the same box
+## (`_trade_live_room`), and `_schedule_trade_refill` re-chooses the tier a frame after every render
+## and every resize, on one path, so the two can never disagree.
+func _trade_room() -> Vector2:
+    var box := _trade_zone_box()
+    if not _trade_wide or _parties_zone_col == null or not is_instance_valid(_parties_zone_col):
+        return box
+    if not _parties_zone_col.is_inside_tree() and _trade_live_box == box \
+            and _trade_live_room != Vector2.ZERO:
+        return _trade_live_room
+    var used := 0.0
+    for child in _parties_zone_col.get_children():
+        if child is Control and String(child.name) != HudWorkVocab.PARTIES_LIST_NAME:
+            used += (child as Control).get_combined_minimum_size().y
+    used += float(maxi(_parties_zone_col.get_child_count() - 1, 0)) \
+        * float(_parties_zone_col.get_theme_constant("separation"))
+    var room := Vector2(box.x, maxf(box.y - used, 0.0))
+    if _parties_zone_col.is_inside_tree():
+        _trade_live_box = box
+        _trade_live_room = room
+    return room
+
+## **RE-CHOOSE THE TRADE TIER AFTER LAYOUT** — the one path a render and a resize both take, run at
+## most once per frame (a second request in the same frame rides the first). `refill` is a no-op when
+## the room has not moved.
+func _schedule_trade_refill() -> void:
+    if _trade_refill_pending or _host == null or not _host.is_inside_tree():
+        return
+    _trade_refill_pending = true
+    await _host.get_tree().process_frame
+    _trade_refill_pending = false
+    if _panel_is_faction or _panel == null:
+        return
+    _trade.refill(_trade_room())
+
+## Is the Trade content on screen — its own tab in the narrow shell, the Parties flank in the wide?
+func _trade_zone_is_on_screen() -> bool:
+    if _panel == null:
+        return false
+    return _panel.shows_zone(BandCityPanel.ZONE_PARTIES if _trade_wide else BandCityPanel.ZONE_TRADE)
+
 # ---- zone `parties` ---------------------------------------------------------
 
 ## Zone `parties`: head + `⋯` menu · one row per party in the field · the compose footer.
@@ -7968,7 +8195,7 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
 ##
 ## The scroll takes `SIZE_EXPAND_FILL`, which is what the old bottom spacer did — so the footer is
 ## still pinned to the bottom of the zone and a short list still renders exactly where it did.
-func build_parties_zone(band: Dictionary) -> VBoxContainer:
+func build_parties_zone(band: Dictionary, with_trade: bool = false) -> VBoxContainer:
     # BEFORE anything reads the latched float requirement below: a box change invalidates the mark.
     _note_parties_zone_box()
     var col := HudWidgets.make_zone_column()
@@ -8005,6 +8232,13 @@ func build_parties_zone(band: Dictionary) -> VBoxContainer:
     else:
         rows.add_child(_build_parties_inspector(inspected))
     col.add_child(_build_party_footer(band))
+    # **THE WIDE SHELL'S HOME FOR THE TRADE CONTENT** (issue #731, option iii): a section at the foot of
+    # this zone's own scrolling list — one scroll down, no fourth flank, the shell threshold unchanged.
+    # Inside the sanctioned scroll, so it adds no `ScrollContainer` of its own. Only the DOCK asks for it
+    # (`with_trade`): the drawer's flat host stacks the zones itself and has no Trade tab to stand in for.
+    # Built AFTER the footer, because the room it is tiered against is what the head and footer leave.
+    if with_trade:
+        rows.add_child(_trade.build_section(band, _trade_room()))
     return col
 
 ## The parties zone's scrolling list host — a `ScrollContainer` whose single child is the VBox the rows
@@ -9885,6 +10119,10 @@ func _push_zone_badges(band: Dictionary) -> void:
             awaiting = true
     _panel.set_tab_badge(BandCityPanel.ZONE_PARTIES,
         str(parties.size()) if not parties.is_empty() else "", awaiting)
+    # Trade carries this turn's SHIPMENTS, both ways, and nothing on a turn with none. Pooling never
+    # counts — it happens most turns whether the player looks or not, so a badge that counted it would
+    # never go out.
+    _panel.set_tab_badge(BandCityPanel.ZONE_TRADE, TradeZoneController.badge_text(band), false)
 
 ## Recall the selected in-flight expedition (folds it home). Emits recall_expedition_requested;
 ## Main formats the `recall_expedition …` command.
@@ -9966,13 +10204,23 @@ func render_band(unit: Dictionary) -> void:
     # `_trade_cargo_zones_rebuilding`. Set around exactly this call because this is where the old
     # zones are detached, and cleared immediately after, so no early return can strand it.
     _trade_cargo_zones_rebuilding = true
-    _panel.set_zones({
+    # **WHICH SHELL THE TRADE CONTENT IS AUTHORED FOR** is read once, here, before either builder that
+    # places it runs — `build_parties_zone` appends it on a wide shell, and only a narrow one is handed
+    # a Trade zone of its own.
+    _trade_wide = _panel.is_wide_shell()
+    var zones := {
         BandCityPanel.ZONE_BAND: HudWidgets.wrap_zone(build_band_zone(_band_labor.panel_band())),
         BandCityPanel.ZONE_WORK: HudWidgets.wrap_zone(build_work_zone(_band_labor.panel_band())),
-        BandCityPanel.ZONE_PARTIES: HudWidgets.wrap_zone(build_parties_zone(_band_labor.panel_band())),
-    })
+        BandCityPanel.ZONE_PARTIES: HudWidgets.wrap_zone(build_parties_zone(_band_labor.panel_band(),
+            _trade_wide)),
+    }
+    if not _trade_wide:
+        zones[BandCityPanel.ZONE_TRADE] = HudWidgets.wrap_zone(build_trade_zone(_band_labor.panel_band()))
+    _panel.set_zones(zones)
     _trade_cargo_zones_rebuilding = false
     _push_zone_badges(_band_labor.panel_band())
+    # The Trade tier, re-chosen against the laid-out column a frame from now — see `_trade_room`.
+    _schedule_trade_refill()
     # Header: settlement stage + name + stage label. The stage `id` is the panel's sprite key
     # (bundled art), the `icon` its emoji fallback for a stage with no art; both already flow
     # onto the marker/cohort dict. A missing stage falls back to a neutral glyph.
@@ -10020,6 +10268,8 @@ func render_faction() -> void:
     _party_compose_measured_box = Vector2.ZERO
     _party_compose_sheet = null
     _dismiss_compose_float()
+    # …and the Trade tab's list popover, which belongs to the band being left.
+    _trade.dismiss()
     # This page builds no work BOARD, so the re-page path must have nothing to re-page: `_on_zones_resized`
     # would otherwise rebuild the previous band's board into a host `set_zones` is about to free.
     # **AND THE INSPECTOR'S CARD COMES DOWN WITH IT, the float's own rule** — it lives outside the panel,
@@ -10277,6 +10527,7 @@ func refresh_snapshot() -> void:
         _party_compose_measured_box = Vector2.ZERO
         _party_compose_sheet = null
         _dismiss_compose_float()
+        _trade.dismiss()
         return
     # The page SURVIVES a snapshot, exactly as a band subject does — its totals are what the tick just
     # moved, so a tick is precisely when it must re-render rather than hand the panel back to a band.
@@ -10307,6 +10558,7 @@ func _index_of_player_band(entity: int) -> int:
 ## in `render_band`, since main's section-block model rebuilds that label each render.)
 func set_panel(panel: BandCityPanel) -> void:
     _panel = panel
+    _trade.set_panel(panel)
     # THE PANEL OWNS THE FILE, THIS CONTROLLER OWNS THE VOCABULARY. The panel stores the work sort as
     # an opaque string, so validating it is this side's job: an empty (never chosen) or unknown value
     # — a hand-edited prefs file, a sort retired since it was written — leaves the default standing.

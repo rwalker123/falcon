@@ -628,22 +628,15 @@ hint said the opposite for a slice — *"the roads this band is standing on"*, w
 stored-path model — and under the per-tile model that reading sends a player to move camp in order to
 escape a bill that follows them regardless.
 
-> #### ⛔ AND THE CORRECTION LANDED IN THE HINT AND NOT IN THE TOOLTIP EIGHTY LINES BELOW IT
+> #### ONE STRING NAMES WHAT THE POOL KEEPS NOW — THE HINT
 >
-> `HudWorkVocab.UPKEEP_POOL_COVERAGE_ROUTE_FORMAT` — the card's own `tooltip_text` — went on reading
-> *"the roads this band stands on need %s"* for a slice after `ROADWORK_ROLE_HINT` directly above it
-> had been fixed AND had written down why. **One model, two player-facing strings, one of them
-> corrected**: the wrong one was the tooltip a player opens precisely when the bill surprises them.
-> Both name the roads the band BUILT now.
->
-> ⛔ **ITS SECOND CLAIM WAS FALSE TOO** — that the route sentence names no queue *because a route rung
-> takes no builder and appends no build-queue entry*. That is the FREE FLOOR alone: `grade` / `pave`
-> append an ordinary `BuildQueueEntry` funded by the band's `builders` pool, exactly like every rung
-> on the other two branches. **The sentence still names no queue, and the true reason is the FIGURE**
-> — the road pool's `asked` is the cohort's published `roadwork_demand` verbatim, `BandPanelController`'s
-> road branch deliberately not going through `_pool_coverage` (the road rows are fog-filtered, so
-> summing them client-side would understate a bill the band still owes). A sentence promising a
-> queued half the number does not carry would be the worse of the two errors.
+> The route coverage sentence (`UPKEEP_POOL_COVERAGE_ROUTE_FORMAT`) once said *"the roads this band
+> stands on"* after the hint above it had been corrected — one model, two strings, one of them wrong.
+> Every pool now shares ONE coverage format, `UPKEEP_POOL_COVERAGE_FORMAT` (`Supplies %s of %s work a
+> turn.`), which names no holdings and no queue, so `ROADWORK_ROLE_HINT` (`Roadwork workers maintain
+> built roads.`) is the only place the catchment is worded. The figure still carries no queued term:
+> the road pool's `asked` is the cohort's published `roadwork_demand` verbatim, not summed from the
+> fog-filtered road rows.
 
 > ### ⛔ AND `roadwork` COULD NOT BE STAFFED AT ALL, WHICH IS `builders`' DEFECT ONE ROLE LATER
 >
