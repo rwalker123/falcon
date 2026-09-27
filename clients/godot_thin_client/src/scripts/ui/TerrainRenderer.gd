@@ -106,17 +106,18 @@ const WATER_SURFACE_DEFAULT_VARIATION_STRENGTH := 1.0   # 0..1, B's peak weight;
 const WATER_SURFACE_DEFAULT_VARIATION_CELL := 3.0       # patch noise cell, in HEX RADII (× radius → px)
 const WATER_SURFACE_DEFAULT_VARIATION_ROTATION_DEG := 37.0
 const WATER_SURFACE_DEFAULT_VARIATION_SCALE := 0.83     # B's UV scale vs the base UV (off 1, so the periods differ)
-const WATER_SURFACE_DEFAULT_WAVE_STRENGTH := 0.8        # × the waves' luma deviation from the layer mean
+const WATER_SURFACE_DEFAULT_WAVE_STRENGTH := 0.0        # ships OFF: its grain SCROLLS (a direction) and adds map-scale variance
 const WATER_SURFACE_DEFAULT_WAVE_SPEED := 0.012         # wave-texture UV per second
 const WATER_SURFACE_DEFAULT_WAVE_SCALE := 0.6           # wave UV vs base UV (< 1 = broader swells, and no minifying)
-# THE SWELL — the broad travelling light/dark bands that read as waves (the texture term above only shifts grain).
-const WATER_SURFACE_DEFAULT_SWELL_STRENGTH := 0.045     # peak luma offset of a crest / trough (luma units)
-const WATER_SURFACE_DEFAULT_SWELL_WAVELENGTH := 3.0     # primary swell wavelength, in HEX RADII
-const WATER_SURFACE_DEFAULT_SWELL_SPEED := 0.6          # primary swell phase speed, hex radii per second
-const WATER_SURFACE_MAX_SWELL_STRENGTH := 0.2
-const WATER_SURFACE_MIN_SWELL_WAVELENGTH := 0.5         # hex radii — shorter reads as ripple noise, not swell
-const WATER_SURFACE_MAX_SWELL_WAVELENGTH := 20.0
-const WATER_SURFACE_MAX_SWELL_SPEED := 5.0
+# THE CHOP — small patches that brighten, dim and morph in place: movement with no direction (the travelling
+# swell it replaced read live as the whole sea flowing one way, and drew a map-wide diagonal at 1.0×).
+const WATER_SURFACE_DEFAULT_CHOP_STRENGTH := 0.06       # peak luma offset of a bright / dark patch (luma units)
+const WATER_SURFACE_DEFAULT_CHOP_SCALE := 0.5           # coarse feature size, in HEX RADII
+const WATER_SURFACE_DEFAULT_CHOP_RATE := 0.8            # evolution: noise cells of its time axis per second
+const WATER_SURFACE_MAX_CHOP_STRENGTH := 0.2
+const WATER_SURFACE_MIN_CHOP_SCALE := 0.1               # hex radii — finer is per-pixel sparkle, not chop
+const WATER_SURFACE_MAX_CHOP_SCALE := 2.0               # hex radii — broader starts to read as map-scale pattern
+const WATER_SURFACE_MAX_CHOP_RATE := 5.0
 const WATER_SURFACE_DEFAULT_GLINT_STRENGTH := 0.0       # peak pull of a glint speck toward the pale foam tint (ships OFF)
 const WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS := 24.0   # px: below this the waves + glint are off (no far-zoom shimmer)
 # Clamp ceilings, so a config typo cannot turn the ocean into strobing noise (the floors are all 0).
@@ -867,12 +868,12 @@ func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -
 		0.0, WATER_SURFACE_MAX_WAVE_SPEED)
 	var wave_scale: float = clampf(float(ws.get("wave_scale", WATER_SURFACE_DEFAULT_WAVE_SCALE)),
 		WATER_SURFACE_MIN_SCALE, WATER_SURFACE_MAX_SCALE)
-	var swell_strength: float = clampf(float(ws.get("swell_strength", WATER_SURFACE_DEFAULT_SWELL_STRENGTH)),
-		0.0, WATER_SURFACE_MAX_SWELL_STRENGTH)
-	var swell_wavelength: float = clampf(float(ws.get("swell_wavelength", WATER_SURFACE_DEFAULT_SWELL_WAVELENGTH)),
-		WATER_SURFACE_MIN_SWELL_WAVELENGTH, WATER_SURFACE_MAX_SWELL_WAVELENGTH)
-	var swell_speed: float = clampf(float(ws.get("swell_speed", WATER_SURFACE_DEFAULT_SWELL_SPEED)),
-		0.0, WATER_SURFACE_MAX_SWELL_SPEED)
+	var chop_strength: float = clampf(float(ws.get("chop_strength", WATER_SURFACE_DEFAULT_CHOP_STRENGTH)),
+		0.0, WATER_SURFACE_MAX_CHOP_STRENGTH)
+	var chop_scale: float = clampf(float(ws.get("chop_scale", WATER_SURFACE_DEFAULT_CHOP_SCALE)),
+		WATER_SURFACE_MIN_CHOP_SCALE, WATER_SURFACE_MAX_CHOP_SCALE)
+	var chop_rate: float = clampf(float(ws.get("chop_rate", WATER_SURFACE_DEFAULT_CHOP_RATE)),
+		0.0, WATER_SURFACE_MAX_CHOP_RATE)
 	var glint_strength: float = clampf(float(ws.get("glint_strength", WATER_SURFACE_DEFAULT_GLINT_STRENGTH)),
 		0.0, WATER_SURFACE_MAX_GLINT_STRENGTH)
 	var motion_min_radius: float = maxf(
@@ -884,9 +885,9 @@ func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -
 	m.set_shader_parameter("water_wave_strength", wave_strength)
 	m.set_shader_parameter("water_wave_speed", wave_speed)
 	m.set_shader_parameter("water_wave_scale", wave_scale)
-	m.set_shader_parameter("water_swell_strength", swell_strength)
-	m.set_shader_parameter("water_swell_wavelength", swell_wavelength)   # hex radii (the shader works in them)
-	m.set_shader_parameter("water_swell_speed", swell_speed)             # hex radii per second
+	m.set_shader_parameter("water_chop_strength", chop_strength)
+	m.set_shader_parameter("water_chop_scale", chop_scale)               # hex radii (the shader works in them)
+	m.set_shader_parameter("water_chop_rate", chop_rate)                 # time-axis noise cells per second
 	m.set_shader_parameter("water_glint_strength", glint_strength)
 	m.set_shader_parameter("water_motion_enabled", radius >= motion_min_radius)
 

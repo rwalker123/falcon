@@ -653,7 +653,7 @@ subject disappeared is worse than one that varies, whereas an offset or a midpoi
 
 **The water surface was classified that way when it landed** (`terrain-blend-shader.md` → Water
 surface): it is the third reader of `TIME`, and every one of its terms is an offset — the waves a UV
-scroll, the swell a travelling phase, the glint a drift of its noise domain — so phase 0 still draws
+scroll, the chop a position on its time axis, the glint a drift of its noise domain — so phase 0 still draws
 them. The set stayed bit-identical run to run (308/308 across consecutive runs with state 29 in it).
 States 29 and 30 reach other phases through the `water_time_offset` uniform, not by un-freezing the
 clock.
@@ -811,13 +811,14 @@ the frame with the open water (`terrain-blend-shader.md` → Water surface). Fra
 |---|---|---|
 | `OCEAN_off` (+ `_open` / `_seam` / `_coast`) | variation, waves, glint all 0 | the BEFORE: the grid, unmistakable |
 | `OCEAN_static` (+ crops) | waves and glint 0 | the anti-tiling alone; no flat blotches where the patches meet |
-| `OCEAN_waves`, `_t2`, `_motion_diff` | swell and glint 0, two phases | the scrolled-texture term alone — kept because it is the term that measured as invisible |
-| `OCEAN_swell`, `_t2`, `_motion_diff` | waves and glint 0, two phases | the swell alone |
+| `OCEAN_waves`, `_t2`, `_motion_diff` | chop and glint 0, two phases | the scrolled-texture term alone (it ships off) — kept because it is the term that measured as invisible |
+| `OCEAN_chop`, `_t2`, `_motion_diff` | waves and glint 0, two phases | the chop alone |
 | `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s |
-| `OCEAN_seq0..3` | shipped, four phases a second apart | the look-at sequence the swell was tuned on |
+| `OCEAN_seq0..3` | shipped, four phases a second apart | the look-at sequence the chop was tuned on |
+| `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop is ON — the zoom where the retired swell drew a map-wide diagonal. Below the gate (the r ≈ 22.8 far-zoom grid) the chop is off and the water is static |
 
 The second phase is `OCEAN_MOTION_DT` (**1 s**) set on the `water_time_offset` uniform, since the
-harness clock is frozen. Three PNG-less claims ride it, and each fails on its own:
+harness clock is frozen. Six PNG-less claims ride it, and each fails on its own:
 
 - **The repeat measure.** Over a deep-only box, mean |ΔL| between each pixel and the one ONE TEXTURE
   PERIOD east (`2·r / base_scale` px), over the same at half a period. An exact copy scores ~0, an
@@ -829,13 +830,35 @@ harness clock is frozen. Three PNG-less claims ride it, and each fails on its ow
   number, when retuning the cell.
 - **Motion at game zoom, measured as MAGNITUDE.** Over the deep-ocean box, the mean |ΔL| between two
   phases a second apart must reach `OCEAN_MOTION_MIN_MEAN_DL` (**3 levels** on this water, luma ≈ 30);
-  measured **4.2**.
+  measured **3.9**.
   ⛔ **It was a changed-pixel COUNT, and the count passed a sea that looked still.** A scrolled texture
   moves nearly every pixel by a level or two, so the first claim read 1.55M of 2.07M pixels changed
   while the whole frame had moved **1.18 levels mean over eight seconds** — Ray ran it live and saw no
   waves. A count answers *did anything change*; what a player sees is *how far the brightness moved*,
-  so the claim is on that. **Sabotaged** by shipping the old texture term alone (`swell_strength` 0):
-  **0.94 levels**, fail — while **1.44M pixels** changed, which the count would have passed.
+  so the claim is on that. **Sabotaged** by shipping the old texture term alone: **0.94 levels**, fail —
+  while **1.44M pixels** changed, which the count would have passed.
+- **Steady motion.** One 1 s sample of a rate can land anywhere in a pulse, so the same surface is
+  measured over `OCEAN_STEADY_INTERVALS` (12) consecutive `OCEAN_STEADY_DT` (0.25 s) intervals — 3 s,
+  2.4 lattice periods of the coarse octave at `chop_rate` 0.8 and 3.3 of the fine one, four samples a
+  period — each read as a rate (mean |ΔL| / dt). The slowest must reach the magnitude bar itself
+  (`OCEAN_STEADY_MIN_FRACTION` 1.0: a 1 s change is at most the sum of its four quarter changes, so only
+  a pause drops a quarter below the per-second bar), and max/min ≤ `OCEAN_STEADY_MAX_RATIO` (1.5).
+  Shipped: **5.10, 5.09, 5.05, 5.15, 5.16, 5.06, 5.18, 5.03, 5.23, 5.07, 5.01, 5.03** — ratio **1.04**.
+  **Sabotaged** with one noise copy per octave (the form before `CHOP_PAIR_*`): **2.74, 6.21, 6.74, 4.86,
+  3.59, 4.62, 5.57, 5.82, 6.10, 4.46, 2.59, 5.13** — ratio **2.60**, fail; slowest 2.59, under the floor
+  too.
+- **No net direction.** The MOTION field — a phase minus its chop-off twin, so the art cancels — at two
+  phases `OCEAN_DIRECTION_DT` (0.5 s) apart is cross-correlated at every offset within ±24 px; the best
+  correlation more than 4 px from zero may not beat zero's by more than 0.02. Shipped: **0.740 at zero,
+  0.619 at best elsewhere**. **Sabotaged** with a single travelling sine train at the chop's own size:
+  **−0.807 at zero, 0.999 at (10, 12) px**, fail; and with the retired swell: **0.800 vs 0.984**, fail.
+- **No map-scale pattern.** The same motion field block-averaged over 2-hex-radius blocks — a low-pass —
+  and its std taken as a FRACTION of the per-pixel std (an absolute bar would scale with
+  `chop_strength`). Independent ~0.5 r patches keep about feature/block ≈ 0.25 of their std; bands or
+  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.29**; **sabotaged** with the
+  retired swell: **0.43**, fail. (The small travelling train reads 0.02 here and fails only the
+  direction claim — the two measure different things.) The margin is honest rather than wide: a 3 r
+  wavelength is partly averaged by 2 r blocks, and `chop_scale` near 0.7 r approaches the bar.
 - **No motion at far zoom.** The same geography on a grid twice the size fits at r ≈ 22.8, under
   `motion_min_radius` (24) and above `EDGE_BLEND_MIN_RADIUS`, and the two phases must differ by **exactly
   0 px**. The static anti-tiling reads no `TIME`, so any pixel there is the LOD gate leaking. The pair is

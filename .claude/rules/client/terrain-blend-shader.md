@@ -1124,22 +1124,51 @@ luma deviation from the layer's mean (`layer_luma_map`, the `luma()` weights) is
 apart, at `WATER_WAVE_B_SPEED` of the rate), so their sum morphs rather than sliding rigidly one way.
 Their mean luma minus the layer mean, × `wave_strength`, is added to rgb. `wave_scale` stays under 1:
 the base array has no mipmaps and is already minified at r ≈ 45, and a finer animated sample shimmers.
-**On its own this term is NOT visible motion**: it shifts fine grain, and measured over the open-ocean
-box it moves the water by **0.94 levels mean in a second** (1.18 in eight) — Ray ran it live and saw the
-sea as still. It stays as moving texture under the swell below, which is what reads as waves.
+**It ships OFF (`wave_strength` 0).** On its own it is not visible motion — measured over the open-ocean
+box it moves the water **0.94 levels mean in a second** (Ray ran it live and saw the sea as still) —
+and what motion it has is a SCROLL, which is a direction. Beside the chop it also carries map-scale
+variance: with it at 0.8 the chop's low-frequency fraction (below) reads **0.36**, over the bar.
 
-**2b — swell (animated).** Broad soft light/dark bands travelling across the water: three sine trains
-(`SWELL_DIR_A/B/C`, ≈20°, 102° and 300° — no pair near-opposite, so they never lock into a standing
-pattern) at wavelengths `swell_wavelength × SWELL_WAVELENGTH_RATIO` and relative amplitudes
-`SWELL_AMPLITUDE` (1.0 / 0.4 / 0.25 — one train dominates, so it reads as a swell with a direction
-rather than a cellular interference field; at 1.0 / 0.6 / 0.45 it looked like cobbles). Each train's
-speed is `swell_speed × √(its wavelength ratio)` — deep-water dispersion, longer trains run faster — so
-the sum never repeats in space or time. The phase is WARPED by low-frequency world noise
-(`SWELL_WARP_*`, cell 2.5 r, ±0.9 r), so crests bend and are neither straight nor periodic, and a broad
-drifting noise (`SWELL_GROUP_*`) scales the amplitude into groups, so some water is calmer. The sum,
-normalised to ±1, × `swell_strength`, is added to rgb as a LUMA offset: crest lighter, trough darker,
-hue untouched. Everything is in hex radii, so it looks the same at every zoom; it costs no texture fetch
-(three `sin` and three value-noise evaluations).
+**2b — chop (animated, directionless).** Small patches that brighten, dim and morph IN PLACE:
+`open_chop`, 3D value noise over (x, y, t·`chop_rate`), where time is an EVOLVING DIMENSION and never a
+translation, so nothing travels. Two octaves — the fine one `CHOP_FINE_SCALE` of the coarse size, at
+`CHOP_FINE_RATE` of its rate, so they never pulse together — each ROTATED off the screen axes by a
+different angle (`CHOP_*_ROTATION`), because value noise sits on a square lattice and at this size its
+patches otherwise read faintly square. Both are well under a hex (`chop_scale` 0.5 r), so no map-scale
+structure can form. The signed result × `chop_strength` is a LUMA offset, hue preserved. It uses a
+sine-free hash (`hash13`), so it keeps its precision as `TIME` grows.
+**Each octave is an INTERLEAVED PAIR of noises** (`chop_octave`, `CHOP_PAIR_*`), so the sea moves at a
+steady rate. Value noise interpolates its time axis with a smoothstep, whose slope is zero at every
+lattice time, and every pixel reaches that lattice time at once: with one copy the whole sea slowed
+to a near-stop every 1/`chop_rate` s (1.25 s), and `OCEAN_seq` read **5.03 → 3.80 → 2.72** levels per
+successive second — a rhythmic pause. The second copy sits half a lattice step later in time
+(`CHOP_PAIR_TIME_SHIFT`) and on unrelated lattice cells (`CHOP_PAIR_OFFSET`), so it is at its fastest
+whenever the first stops. The sum × 1/√2 keeps one copy's spread. Measured over twelve 0.25 s
+intervals the rate holds at **5.01–5.23 levels/s** (max/min 1.04; one copy: 2.59–6.74, 2.60). Pairing
+two independent fields lowers the per-pixel spread slightly (motion std 4.89 → 4.18 levels) and the 1 s
+chord (5.0 → 3.9 levels), while the moment-to-moment rate matches one copy's average.
+**It is applied ONCE per water fragment** (`water_motion`, after the depth field and before the shore),
+not inside `water_surface`: it is the same field for every water layer, so adding it to the depth
+field's mean equals adding it to each sample, at one evaluation instead of up to seven. Near a coast the
+waterline cross-fade blends toward a water estimate without it, so it eases out at the shore.
+
+> #### ⛔ THE TRAVELLING SWELL IT REPLACED — and why motion here must have NO direction
+>
+> The previous term was a swell: three travelling sine trains at 3 r (≈20°, 102°, 300°), phase-warped,
+> in swell groups. Live, **the whole sea read as flowing top-left → bottom-right across the map**, and
+> at 1.0× its crests drew a map-wide diagonal pattern. A strategy map's water has no current to show;
+> any net travel reads as one. So the open-water term evolves in place, and `blend_probe` state 29 now
+> asserts both halves — no net direction, no map-scale pattern — and fails on the retired swell.
+
+> #### THE COASTAL SWELL HOOK — the structure for waves rolling INTO the shore, not the feature
+>
+> Water motion is shaped `open_chop · (1 − coastal_w) + coastal_swell · coastal_w`. `coastal_swell()`
+> and `coastal_weight()` are STUBS returning 0, and `COASTAL_SWELL_ENABLED` (false) skips the blend, so
+> the shelf keeps the full open chop today. Turning it on needs: (1) a per-hex **distance-to-coast**
+> field — the shore pass's own `u` reaches only ~0.41 r, far too short for a swell crossing a shelf;
+> (2) a `coastal_terrains` config list for `coastal_weight()` to key its shelf-ness on, computed as the
+> neighbour-weighted mean over {own + 6 neighbours} with the depth field's weights (the temperature
+> grade's graded-ness is the model); and (3) `coastal_swell()` built from that field.
 
 **3 — glint (animated).** Two value-noise fields, each folded into a ridge net, drift through each other;
 the glint is their PRODUCT, so it lights only near ridge crossings — short scattered specks that crawl
@@ -1147,11 +1176,11 @@ and wink out. A third, broad noise (`GLINT_MASK_*`) masks it into drifting patch
 colour toward a pale tint halfway from `foam_color` to white, × `glint_strength`. A single ridge net was
 tried first and drew continuous closed loops over the whole sea that read as contour lines on a map.
 
-**LOD gate.** Waves, swell and glint run only while `water_motion_enabled` — `radius ≥ motion_min_radius`,
+**LOD gate.** Waves, chop and glint run only while `water_motion_enabled` — `radius ≥ motion_min_radius`,
 pushed by `TerrainRenderer._push_water_surface` the way `rivers_lod_enabled` is. Below it the static
 anti-tiling still runs, and nothing in it reads `TIME`, so the far zoom cannot shimmer.
 
-**Bit-exact when off.** With `variation_strength`, `wave_strength`, `swell_strength` and `glint_strength` all 0 the
+**Bit-exact when off.** With `variation_strength`, `wave_strength`, `chop_strength` and `glint_strength` all 0 the
 function returns sample A through the same expression the call site used before. Verified: a full
 `blend_probe` run on zeroed levers is byte-identical to the pre-surface render on all 291 frames. On the
 shipped levers 117 of them moved, every one with water in it; every land-only frame is byte-identical.
@@ -1159,16 +1188,17 @@ shipped levers 117 of them moved, every one with water in it; every land-only fr
 **Continuous redraw.** The client does not run `low_processor_mode`, so Godot renders the canvas every
 frame and `TIME` advances without `MapView` calling `queue_redraw` — the same mechanism the river
 scroll relies on. Shader `TIME` rolls over (`rendering/limits/time/time_rollover_secs`, 3600 s by
-default), so the wave, swell and glint phase jump once an hour, as the river scroll does.
+default), so the wave, chop and glint phase jump once an hour, as the river scroll does.
 
 **Harness phase.** `water_time_offset` is added to `TIME` for every animated term. `TerrainRenderer`
 never pushes it (0 in the game); `blend_probe` sets it on the material to render several phases while
-frozen at `Engine.time_scale` 0. Every term enters as an offset (a UV scroll, a phase, a noise-domain
-drift), so phase 0 still draws it — the harness freeze's re-check rule.
+frozen at `Engine.time_scale` 0. Every term enters as an offset (a UV scroll, a position on the chop's
+time axis, a noise-domain drift), so phase 0 still draws it — the harness freeze's re-check rule.
 
-**Cost.** Per `water_surface` call with the shipped levers: up to 4 `biome_array` fetches (A, B where its
-patch weight is non-zero, two waves) plus 1 `layer_luma_map` texel fetch and 4 value-noise evaluations,
-against 1 fetch before. An open-water pixel whose neighbours share its id makes one call; the depth field
+**Cost.** Per `water_surface` call with the shipped levers: up to 2 `biome_array` fetches (A, and B where
+its patch weight is non-zero; the two wave fetches are skipped at `wave_strength` 0) plus 1
+`layer_luma_map` texel fetch and 1 value-noise evaluation, against 1 fetch before. The chop adds two 3D
+value-noise evaluations per octave pair — four in all (32 hashes) — once per water fragment. An open-water pixel whose neighbours share its id makes one call; the depth field
 adds one call per differing water neighbour **within reach** (the loop skips a zero-weight neighbour),
 and the waterline cross-fade adds up to seven calls in its narrow band at a coast.
 
@@ -1178,23 +1208,25 @@ and the waterline cross-fade adds up to seven calls in its narrow band at a coas
 | `variation_cell` | 3.0 | the A/B patch noise cell, in hex radii (× radius → px) |
 | `variation_rotation_deg` | 37 | sample B's UV rotation |
 | `variation_scale` | 0.83 | sample B's UV scale against the base UV — off 1, so the two periods differ |
-| `wave_strength` | 0.8 | × the waves' luma deviation from the layer mean |
+| `wave_strength` | 0.0 | × the texture waves' luma deviation from the layer mean. **Ships off** — see 2 |
 | `wave_speed` | 0.012 | wave-texture UV per second (≈ 7 px/s at r ≈ 45) |
 | `wave_scale` | 0.6 | wave UV against the base UV; < 1 is broader and no minifying |
-| `swell_strength` | 0.045 | peak luma offset of a swell crest / trough (luma units, 0..1) |
-| `swell_wavelength` | 3.0 | the primary swell's wavelength, in hex radii |
-| `swell_speed` | 0.6 | the primary swell's phase speed, hex radii per second — a crest crosses a hex (≈1.7 r) in ~3 s |
+| `chop_strength` | 0.06 | peak luma offset of a bright / dark chop patch (luma units, 0..1) |
+| `chop_scale` | 0.5 | the coarse octave's feature size, in hex radii |
+| `chop_rate` | 0.8 | how fast the chop evolves — cells of its time axis per second |
 | `glint_strength` | 0.0 | peak pull of a glint speck toward its pale tint. **Ships off:** at 0.14 the specks read at map scale as white curls — scratches on the water, not whitecaps |
-| `motion_min_radius` | 24 | px; below it the waves, swell and glint are off |
+| `motion_min_radius` | 24 | px; below it the waves, chop and glint are off |
 
 Fallbacks are the `WATER_SURFACE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
 lever; the fixed feel (directions, cells, offsets, the mask) is the `WATER_*` / `GLINT_*` consts in the
 shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
 `variation_cell` (4) let one rotated sample cover most of the frame and showed B's own repeat on a
 diagonal; 3 keeps both samples in view. The repeat measure there reads **0.15** on the plain sample
-and **0.73** with the anti-tiling (1 = no correlation at the tile period). The swell was chosen on a
-four-phase sequence one second apart (`OCEAN_seq0..3`): the shipped surface moves the open water by
-**4.2 levels mean per second** (luma ≈ 30), against **0.94** for the texture waves alone.
+and **0.73** with the anti-tiling (1 = no correlation at the tile period). The chop was chosen on a
+four-phase sequence one second apart (`OCEAN_seq0..3`) and a 1.0×-like frame (`OCEAN_zoomed_out`,
+r ≈ 25.7): it moves the open water **3.9 levels mean over one second** and a steady **5.0–5.2 levels
+per second** over quarter-second intervals (luma ≈ 30), against **0.94** for the texture waves alone; at
+`chop_rate` 0.5 / strength 0.05 (single copy) it was 2.6, under the bar.
 
 ## Water temperature grade
 

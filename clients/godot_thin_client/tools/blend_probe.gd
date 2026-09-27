@@ -1111,12 +1111,12 @@ const OCEAN_DETAIL_CROP_RADII := 2.4
 # The levers each variant sets inside the `water_surface` block (merged over the shipped block, so the
 # levers it does not name stay shipped). OFF is the plain single sample — the pre-surface render, bit-exact.
 const OCEAN_OFF_SURFACE := {
-	"variation_strength": 0.0, "wave_strength": 0.0, "swell_strength": 0.0, "glint_strength": 0.0,
+	"variation_strength": 0.0, "wave_strength": 0.0, "chop_strength": 0.0, "glint_strength": 0.0,
 }
-const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "swell_strength": 0.0, "glint_strength": 0.0}
+const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "chop_strength": 0.0, "glint_strength": 0.0}
 # The scrolled-TEXTURE wave term alone — kept as a frame because it is the term that measured as invisible.
-const OCEAN_WAVES_SURFACE := {"swell_strength": 0.0, "glint_strength": 0.0}
-const OCEAN_SWELL_SURFACE := {"wave_strength": 0.0, "glint_strength": 0.0}   # the swell alone
+const OCEAN_WAVES_SURFACE := {"chop_strength": 0.0, "glint_strength": 0.0}
+const OCEAN_CHOP_SURFACE := {"wave_strength": 0.0, "glint_strength": 0.0}   # the chop alone
 const OCEAN_SHIPPED_SURFACE := {}
 # The SECOND motion phase, in seconds of shader time (the `water_time_offset` uniform — the harness runs at
 # Engine.time_scale 0, so TIME itself never moves). ONE second: the claim is that a player sees the water move
@@ -1143,9 +1143,46 @@ const OCEAN_REPEAT_ON_MIN := 0.6                        # the surface must bring
 # scrolled texture changes by a level or two, so the count was 1.5M of 2.07M on water that looked still
 # (measured 1.18 levels mean over EIGHT seconds). What a player sees is how far the brightness moves, so the
 # claim is on that. The bar is ~3 levels mean on this dark water (luma ≈ 30): a mean that size means the
-# swell bands are moving by several levels at their edges, where the eye reads them.
+# bright and dark patches are changing by several levels where the eye reads them.
 const OCEAN_MOTION_MIN_MEAN_DL := 3.0
+# STEADINESS. The 1 s magnitude above is one sample of a rate that can pulse: value noise's smoothstep time axis
+# has zero slope at every lattice time, so a single noise copy stops the whole sea at once every 1/chop_rate s
+# (the claim's sabotage). So the motion is also measured as a SERIES: OCEAN_STEADY_INTERVALS consecutive
+# intervals of OCEAN_STEADY_DT, each read as a rate (mean |ΔL| / dt, levels per second). 12 × 0.25 s = 3 s spans
+# 2.4 lattice periods of the coarse octave at the shipped chop_rate 0.8 (1.25 s each) and 3.3 of the fine one,
+# with four samples per period, so a pause cannot fall between samples. Two bars, each failing on its own:
+# the SLOWEST interval's rate ≥ OCEAN_MOTION_MIN_MEAN_DL × OCEAN_STEADY_MIN_FRACTION, and max/min ≤
+# OCEAN_STEADY_MAX_RATIO. The fraction is the WHOLE bar (1.0): the 1 s change is at most the sum of its four
+# quarter-second changes (triangle inequality), so a quarter-second rate reads the chop at or above the 1 s
+# chord, and a surface that clears 3 levels/s over a second on average must clear it in each quarter too
+# unless it pauses. Measured: shipped slowest 5.01; the single-copy sabotage's slowest 2.59.
+const OCEAN_STEADY_DT := 0.25
+const OCEAN_STEADY_INTERVALS := 12
+const OCEAN_STEADY_MIN_FRACTION := 1.0
+const OCEAN_STEADY_MAX_RATIO := 1.5
 const LUMA_LEVELS := 255.0
+# NO NET DIRECTION. The MOTION field (a phase minus the static frame, so the art cancels) at two phases
+# OCEAN_DIRECTION_DT apart is cross-correlated at every offset within ±OCEAN_DIRECTION_SEARCH_PX; a field that
+# evolves in place correlates best at ZERO offset, a travelling one at its travel distance. The best
+# correlation beyond OCEAN_DIRECTION_ZERO_PX of zero may not beat the zero-offset one by more than the
+# tolerance. The interval is short so the chop is still well correlated with itself.
+const OCEAN_DIRECTION_DT := 0.5
+const OCEAN_DIRECTION_SEARCH_PX := 24
+const OCEAN_DIRECTION_ZERO_PX := 4
+const OCEAN_DIRECTION_TOLERANCE := 0.02
+const OCEAN_FIELD_STRIDE := 2                           # px between samples of the motion field
+const OCEAN_CORR_SAMPLE_STRIDE := 4                     # field samples between correlation terms
+const OCEAN_CORR_EPSILON := 1e-9
+# NO MAP-SCALE PATTERN. The motion field (chop on minus chop off) block-averaged over blocks
+# OCEAN_LOWFREQ_BLOCK_RADII hex radii across — a low-pass that keeps only structure bigger than a couple of
+# hexes. Its std is judged as a FRACTION of the field's per-pixel std: small features average away in a block
+# (a field of independent ~0.5 r patches keeps about feature/block ≈ 0.25 of its std), while bands or blobs
+# the size of the block survive nearly whole. An absolute bar would instead scale with chop_strength.
+const OCEAN_LOWFREQ_BLOCK_RADII := 2.0
+const OCEAN_LOWFREQ_MAX_FRACTION := 0.35
+# The 1.0×-LIKE frame: the same geography on a grid that fits at r ≈ 25.7, just above motion_min_radius (24),
+# so the chop is ON there — the zoom at which the travelling swell drew its map-wide diagonal.
+const OCEAN_ZOOMED_OUT_GRID := Vector2i(42, 28)
 
 # State 30 (OCEANTEMP): the WATER TEMPERATURE GRADE (`terrain-blend-shader.md` → Water temperature grade).
 # State 29's geography at r ≈ 45 on a temperature gradient running polar (top) → tropical (bottom), with the
@@ -1224,7 +1261,7 @@ func _ready() -> void:
 	# `process_frame`, which still fires at time_scale 0.
 	#
 	# The WATER SURFACE (state 29) later became a third TIME reader, and was classified the same way: its
-	# waves are a UV scroll, its swell a travelling phase and its glint a drift of the noise domain — all
+	# waves are a UV scroll, its chop a position on its time axis and its glint a drift of the noise domain — all
 	# offsets, so phase 0 still draws them. States 29/30 render other phases through the `water_time_offset`
 	# uniform, never by un-freezing.
 	#
@@ -2211,9 +2248,9 @@ func _render_ocean_state() -> void:
 	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves", 0.0, false)
 	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves_t2", OCEAN_MOTION_DT, false)
 	_save_diff("OCEAN_waves", "OCEAN_waves_t2", "OCEAN_waves_motion_diff")
-	await _render_ocean_frame(OCEAN_SWELL_SURFACE, "OCEAN_swell", 0.0, false)
-	await _render_ocean_frame(OCEAN_SWELL_SURFACE, "OCEAN_swell_t2", OCEAN_MOTION_DT, false)
-	_save_diff("OCEAN_swell", "OCEAN_swell_t2", "OCEAN_swell_motion_diff")
+	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop", 0.0, false)
+	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop_t2", OCEAN_MOTION_DT, false)
+	_save_diff("OCEAN_chop", "OCEAN_chop_t2", "OCEAN_chop_motion_diff")
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped", 0.0, true)
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped_t2", OCEAN_MOTION_DT, false)
 	_save_diff("OCEAN_shipped", "OCEAN_shipped_t2", "OCEAN_motion_diff")
@@ -2228,10 +2265,17 @@ func _render_ocean_state() -> void:
 	if static_ratio < OCEAN_REPEAT_ON_MIN:
 		_fail("OCEAN: the water surface leaves the exact-copy repeat standing (ratio %.3f < %.2f)"
 			% [static_ratio, OCEAN_REPEAT_ON_MIN])
+	await _assert_ocean_no_net_direction_or_pattern()
 	await _assert_ocean_motion(GRID_W, GRID_H, GAME_HEX_RADIUS, true)
 	await _assert_ocean_motion(
 		GRID_W * OCEAN_FAR_GRID_SCALE, GRID_H * OCEAN_FAR_GRID_SCALE, OCEAN_FAR_HEX_RADIUS, false
 	)
+	# The 1.0×-like frame, two phases a second apart, judged by eye for any map-scale pattern.
+	_map.display_snapshot(_snapshot_ocean(OCEAN_ZOOMED_OUT_GRID.x, OCEAN_ZOOMED_OUT_GRID.y))
+	await _refit(GAME_HEX_RADIUS * GRID_W / OCEAN_ZOOMED_OUT_GRID.x)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_zoomed_out", 0.0, false)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_zoomed_out_t2", OCEAN_MOTION_DT, false)
+	_save_diff("OCEAN_zoomed_out", "OCEAN_zoomed_out_t2", "OCEAN_zoomed_out_motion_diff")
 	_set_water_time_offset(0.0)
 	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
 
@@ -2300,6 +2344,171 @@ func _assert_ocean_motion(gw: int, gh: int, target_radius: float, expect_motion:
 	elif not expect_motion and changed != 0:
 		_fail("OCEAN: at far zoom r %.1f the surface moved %d px — the motion LOD gate is leaking"
 			% [radius, changed])
+	if expect_motion:
+		await _assert_ocean_motion_steady()
+
+
+func _assert_ocean_motion_steady() -> void:
+	## THE STEADINESS SERIES (see OCEAN_STEADY_*), on the fixture _assert_ocean_motion just framed: the shipped
+	## surface's motion rate over consecutive short intervals may neither drop to a pause nor pulse.
+	var rates := PackedFloat32Array()
+	_set_water_time_offset(0.0)
+	await _settle()
+	var prev: Image = await _capture()
+	for i in range(1, OCEAN_STEADY_INTERVALS + 1):
+		_set_water_time_offset(OCEAN_STEADY_DT * i)
+		await _settle()
+		var cur: Image = await _capture()
+		if prev == null or cur == null:
+			return
+		rates.append(_ocean_mean_luma_delta(prev, cur) / OCEAN_STEADY_DT)
+		prev = cur
+	var lo: float = rates[0]
+	var hi: float = rates[0]
+	var parts := PackedStringArray()
+	for r in rates:
+		lo = minf(lo, r)
+		hi = maxf(hi, r)
+		parts.append("%.2f" % r)
+	var ratio: float = hi / maxf(lo, OCEAN_CORR_EPSILON)
+	print("blend_probe: OCEAN steadiness — levels/s per %.2f s interval: %s · min %.2f max %.2f ratio %.2f"
+		% [OCEAN_STEADY_DT, ", ".join(parts), lo, hi, ratio])
+	var floor_rate: float = OCEAN_MOTION_MIN_MEAN_DL * OCEAN_STEADY_MIN_FRACTION
+	if lo < floor_rate:
+		_fail("OCEAN: the slowest %.2f s interval moved only %.2f levels/s (want ≥ %.2f) — the chop pauses"
+			% [OCEAN_STEADY_DT, lo, floor_rate])
+	if ratio > OCEAN_STEADY_MAX_RATIO:
+		_fail("OCEAN: the chop's motion rate pulses — max/min %.2f over %d intervals (want ≤ %.2f)"
+			% [ratio, OCEAN_STEADY_INTERVALS, OCEAN_STEADY_MAX_RATIO])
+
+
+func _assert_ocean_no_net_direction_or_pattern() -> void:
+	## On state 29's own fixture at r ≈ 45: the MOTION field (shipped minus its chop-off twin) must neither
+	## drift (see OCEAN_DIRECTION_*) nor carry map-scale structure (see OCEAN_LOWFREQ_*).
+	var still: Image = await _ocean_capture({"chop_strength": 0.0, "wave_strength": 0.0}, 0.0)
+	var a: Image = await _ocean_capture({}, 0.0)
+	var b: Image = await _ocean_capture({}, OCEAN_DIRECTION_DT)
+	if still == null or a == null or b == null:
+		return
+	var box: Rect2i = _ocean_box_px(a)
+	var fa: PackedFloat32Array = _ocean_motion_field(a, still, box)
+	var fb: PackedFloat32Array = _ocean_motion_field(b, still, box)
+	var fw: int = box.size.x / OCEAN_FIELD_STRIDE
+	var fh: int = box.size.y / OCEAN_FIELD_STRIDE
+	var reach: int = OCEAN_DIRECTION_SEARCH_PX / OCEAN_FIELD_STRIDE
+	var zero_r: int = OCEAN_DIRECTION_ZERO_PX / OCEAN_FIELD_STRIDE
+	var r0: float = _field_correlation(fa, fb, fw, fh, 0, 0, reach)
+	var best := -1.0
+	var best_d := Vector2i.ZERO
+	for dy in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			if maxi(absi(dx), absi(dy)) <= zero_r:
+				continue
+			var r: float = _field_correlation(fa, fb, fw, fh, dx, dy, reach)
+			if r > best:
+				best = r
+				best_d = Vector2i(dx, dy) * OCEAN_FIELD_STRIDE
+	print("blend_probe: OCEAN direction — correlation at 0 offset %.3f · best beyond %d px %.3f at %s px over %.2f s"
+		% [r0, OCEAN_DIRECTION_ZERO_PX, best, best_d, OCEAN_DIRECTION_DT])
+	if best > r0 + OCEAN_DIRECTION_TOLERANCE:
+		_fail("OCEAN: the water motion TRAVELS — it correlates best %s px away (%.3f) rather than in place (%.3f)"
+			% [best_d, best, r0])
+	# No map-scale pattern: block means of the motion field over ~2 hex radii.
+	var block: int = maxi(int(OCEAN_LOWFREQ_BLOCK_RADII * _map.last_hex_radius / OCEAN_FIELD_STRIDE), 1)
+	var means := PackedFloat32Array()
+	for by in range(0, fh - block + 1, block):
+		for bx in range(0, fw - block + 1, block):
+			var sum := 0.0
+			for y in range(by, by + block):
+				for x in range(bx, bx + block):
+					sum += fa[y * fw + x]
+			means.append(sum / float(block * block))
+	var lf_std: float = _std(means) * LUMA_LEVELS
+	var px_std: float = _std(fa) * LUMA_LEVELS
+	print("blend_probe: OCEAN low-frequency — motion std %.2f levels per pixel, %.2f over %.0f-radius blocks (%d)"
+		% [px_std, lf_std, OCEAN_LOWFREQ_BLOCK_RADII, means.size()])
+	var lf_fraction: float = lf_std / maxf(px_std, OCEAN_CORR_EPSILON)
+	print("blend_probe: OCEAN low-frequency fraction %.2f (max %.2f)" % [lf_fraction, OCEAN_LOWFREQ_MAX_FRACTION])
+	if lf_fraction > OCEAN_LOWFREQ_MAX_FRACTION:
+		_fail("OCEAN: the water motion carries MAP-SCALE structure — %.2f of its std survives %.0f-radius blocks (max %.2f)"
+			% [lf_fraction, OCEAN_LOWFREQ_BLOCK_RADII, OCEAN_LOWFREQ_MAX_FRACTION])
+
+
+func _ocean_capture(surface: Dictionary, time_offset: float) -> Image:
+	var token: Array = _override_config({"water_surface": _ocean_surface(surface)})
+	_set_water_time_offset(time_offset)
+	await _settle()
+	var image: Image = await _capture()
+	_restore_config(token)
+	return image
+
+
+func _ocean_box_px(image: Image) -> Rect2i:
+	## The deep-ocean box (OCEAN_REPEAT_BOX_*) in image pixels.
+	var px_scale: float = float(image.get_width()) / get_viewport().get_visible_rect().size.x
+	var radius: float = _map.last_hex_radius
+	var p0: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.x, OCEAN_REPEAT_BOX_ROWS.x, radius, _map.last_origin)
+	var p1: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.y, OCEAN_REPEAT_BOX_ROWS.y, radius, _map.last_origin)
+	var x0: int = maxi(int(p0.x * px_scale), 0)
+	var y0: int = maxi(int(p0.y * px_scale), 0)
+	var x1: int = mini(int(p1.x * px_scale), image.get_width())
+	var y1: int = mini(int(p1.y * px_scale), image.get_height())
+	return Rect2i(x0, y0, x1 - x0, y1 - y0)
+
+
+func _ocean_motion_field(frame: Image, still: Image, box: Rect2i) -> PackedFloat32Array:
+	## Luma of `frame` minus `still`, sampled every OCEAN_FIELD_STRIDE px over `box` (row-major).
+	var fw: int = box.size.x / OCEAN_FIELD_STRIDE
+	var fh: int = box.size.y / OCEAN_FIELD_STRIDE
+	var field := PackedFloat32Array()
+	field.resize(fw * fh)
+	for y in range(fh):
+		for x in range(fw):
+			var px: int = box.position.x + x * OCEAN_FIELD_STRIDE
+			var py: int = box.position.y + y * OCEAN_FIELD_STRIDE
+			field[y * fw + x] = frame.get_pixel(px, py).get_luminance() - still.get_pixel(px, py).get_luminance()
+	return field
+
+
+func _field_correlation(fa: PackedFloat32Array, fb: PackedFloat32Array, fw: int, fh: int,
+		dx: int, dy: int, margin: int) -> float:
+	## Pearson correlation of fa(x, y) with fb(x + dx, y + dy), over the interior `margin` samples in from
+	## every edge (so every offset is scored over the same set of fa samples).
+	var sa := 0.0
+	var sb := 0.0
+	var saa := 0.0
+	var sbb := 0.0
+	var sab := 0.0
+	var n := 0
+	for y in range(margin, fh - margin, OCEAN_CORR_SAMPLE_STRIDE):
+		for x in range(margin, fw - margin, OCEAN_CORR_SAMPLE_STRIDE):
+			var va: float = fa[y * fw + x]
+			var vb: float = fb[(y + dy) * fw + x + dx]
+			sa += va
+			sb += vb
+			saa += va * va
+			sbb += vb * vb
+			sab += va * vb
+			n += 1
+	if n == 0:
+		return 0.0
+	var cov: float = sab / n - (sa / n) * (sb / n)
+	var var_a: float = saa / n - (sa / n) * (sa / n)
+	var var_b: float = sbb / n - (sb / n) * (sb / n)
+	return cov / sqrt(maxf(var_a * var_b, OCEAN_CORR_EPSILON * OCEAN_CORR_EPSILON))
+
+
+func _std(values: PackedFloat32Array) -> float:
+	if values.is_empty():
+		return 0.0
+	var mean := 0.0
+	for v in values:
+		mean += v
+	mean /= values.size()
+	var acc := 0.0
+	for v in values:
+		acc += (v - mean) * (v - mean)
+	return sqrt(acc / values.size())
 
 
 func _ocean_mean_luma_delta(a: Image, b: Image) -> float:

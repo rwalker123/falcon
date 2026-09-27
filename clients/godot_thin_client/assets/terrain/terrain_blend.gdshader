@@ -229,11 +229,12 @@ uniform float water_variation_scale;    // the second sample's UV scale, relativ
 uniform float water_wave_strength;      // multiplies the waves' luma deviation from the layer mean
 uniform float water_wave_speed;         // wave-texture UV per second (a UV of 1.0 = one wave tile)
 uniform float water_wave_scale;         // wave UV scale, relative to the base UV (< 1 = broader swells)
-// THE SWELL: broad soft light/dark bands travelling across the water — what actually reads as waves at map
-// zoom (the scrolled-texture term above only shifts fine grain, and measured as sub-perceptual motion).
-uniform float water_swell_strength;     // peak luma offset of a crest (+) / trough (−), 0..1 luma units
-uniform float water_swell_wavelength;   // the primary swell's wavelength, in HEX RADII (zoom-invariant)
-uniform float water_swell_speed;        // the primary swell's phase speed, in hex radii per second
+// THE CHOP: small patches that brighten, dim and morph IN PLACE — water that moves with no direction. It is
+// applied once per water fragment after the depth field (water_motion), not per layer sample: it is the same
+// field for every water layer, so adding it after the depth-field mean equals adding it inside.
+uniform float water_chop_strength;      // peak luma offset of a bright (+) / dark (−) patch, 0..1 luma units
+uniform float water_chop_scale;         // feature size of the coarse octave, in HEX RADII (zoom-invariant)
+uniform float water_chop_rate;          // how fast the field evolves: noise cells of its TIME axis per second
 uniform float water_glint_strength;     // peak pull of a glint speck toward its pale tint (0 = no glint)
 uniform bool water_motion_enabled;      // LOD gate for the waves + glint (the static anti-tiling always runs)
 // Added to TIME for the wave + glint phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
@@ -640,24 +641,42 @@ const float WATER_WAVE_B_ROTATION = 1.9;
 const float WATER_WAVE_B_SCALE = 1.31;
 // The second wave sample's direction runs at this fraction of the first's speed — two rates, no beat.
 const float WATER_WAVE_B_SPEED = 0.73;
-// THE SWELL — three travelling sine trains summed. Directions ≈ 20°, 102° and 300° (no pair near-opposite, so
-// they never lock into a standing pattern), wavelengths off any simple ratio of one another, and each train's
-// speed ∝ √wavelength (deep-water dispersion), so the sum never repeats in space or time and cannot settle into
-// a diamond lattice. Their phase is WARPED by low-frequency world noise, so crests bend and are not straight
-// or periodic; a broader noise sets swell GROUPS, so some water is calmer than the rest.
-const vec2 SWELL_DIR_A = vec2(0.940, 0.342);
-const vec2 SWELL_DIR_B = vec2(-0.208, 0.978);
-const vec2 SWELL_DIR_C = vec2(0.500, -0.866);
-const vec3 SWELL_WAVELENGTH_RATIO = vec3(1.0, 0.73, 1.41);   // of water_swell_wavelength, per train
-const vec3 SWELL_AMPLITUDE = vec3(1.0, 0.4, 0.25);          // relative, per train (normalised by the sum)
-const float SWELL_WARP_CELL = 2.5;                           // warp noise cell, hex radii
-const float SWELL_WARP_AMOUNT = 0.9;                         // warp displacement, hex radii
-const vec2 SWELL_WARP_OFFSET_X = vec2(401.0, 17.0);          // decorrelate the warp's two axes …
-const vec2 SWELL_WARP_OFFSET_Y = vec2(59.0, 223.0);          // … from each other and from every other field
-const float SWELL_GROUP_CELL = 5.0;                          // swell-group noise cell, hex radii
-const vec2 SWELL_GROUP_DRIFT = vec2(0.03, 0.02);             // group noise drift, cells per second
-const vec2 SWELL_GROUP_OFFSET = vec2(131.0, 311.0);
-const float SWELL_GROUP_CALM = 0.45;                         // amplitude where the group noise is lowest
+// THE CHOP — 3D value noise over (x, y, t·rate): time is an EVOLVING DIMENSION, never a translation, so the
+// field changes in place and nothing travels. (The swell it replaced was three travelling sine trains; live,
+// the whole sea read as flowing top-left → bottom-right and its crests drew a map-wide diagonal at 1.0×.)
+// Two octaves, the fine one a fraction of the coarse size, evolving at its own rate so the two never pulse
+// together; both are small (well under a hex) so no map-scale structure can form.
+const float CHOP_FINE_SCALE = 0.47;                          // fine octave's feature size, of the coarse one
+const float CHOP_FINE_RATE = 1.37;                           // fine octave's evolution rate, of the coarse one
+const vec2 CHOP_OCTAVE_WEIGHTS = vec2(0.65, 0.35);           // (coarse, fine); sum to 1
+const vec3 CHOP_OFFSET_COARSE = vec3(211.0, 67.0, 13.0);     // decorrelate the octaves from each other …
+const vec3 CHOP_OFFSET_FINE = vec3(37.0, 409.0, 101.0);      // … and from every other noise field
+// Value noise is built on a square lattice, and at chop size its patches read faintly square and axis-aligned.
+// Each octave is ROTATED (radians) off the screen axes, by different angles, so no lattice lines up with the
+// map, the hex grid or the other octave.
+const float CHOP_COARSE_ROTATION = 0.52;
+const float CHOP_FINE_ROTATION = -0.93;
+// THE INTERLEAVED PAIR — why each octave is TWO noises. vnoise3 interpolates its time axis with a smoothstep,
+// whose slope is ZERO at every lattice time: one copy stops the whole sea at once every 1/rate s (measured on
+// OCEAN_seq, 1 s apart: 5.03 → 3.80 → 2.72 levels/s). A second copy, CHOP_PAIR_TIME_SHIFT lattice steps later
+// on its time axis, is at mid-cell — its fastest — whenever the first is at a lattice time, so the two pauses
+// interleave and the pair moves at a near-constant rate. CHOP_PAIR_OFFSET moves it to unrelated lattice cells
+// (its z is 0, so the half-step shift stays exact), and CHOP_PAIR_NORM (1/√2) keeps the sum of the two
+// independent centred copies at one copy's spread.
+const float CHOP_PAIR_TIME_SHIFT = 0.5;
+const vec3 CHOP_PAIR_OFFSET = vec3(173.0, 293.0, 0.0);
+const float CHOP_PAIR_NORM = 0.70710678;
+const float VNOISE_MEAN = 0.5;                               // vnoise3's mid-value: subtracting it centres it
+// hash13's input scale (Hoskins' "hash without sine": no sin(), so no precision loss as TIME grows).
+const vec3 HASH3_SCALE = vec3(0.1031, 0.1030, 0.0973);
+const float HASH3_ADD = 33.33;
+// THE COASTAL SWELL HOOK — a second water-motion term, for waves rolling across the shelf INTO the shore. OFF:
+// with this false the coastal term is never read, so every water fragment gets the open chop at full strength
+// and the shelf moves exactly as open water does. Turning it on needs (1) a per-hex DISTANCE-TO-COAST field —
+// the shore pass's own distance reaches only ~0.41 r, far too short for a swell crossing a shelf — (2) a
+// `coastal_terrains` config list for coastal_weight() to key its shelf-ness on, and (3) coastal_swell() built
+// from that field.
+const bool COASTAL_SWELL_ENABLED = false;
 // GLINT: two independent value-noise fields, each folded into a RIDGE net (1 where the field crosses 0.5), drift
 // through each other in different directions. A glint is their PRODUCT, so it lights only near where two
 // ridges cross — short scattered specks that crawl along the crests and wink out, a slow sparkle rather than a
@@ -740,21 +759,18 @@ vec2 rotate_uv(vec2 uv, float angle) {
 //      1 / sqrt(wA² + wB²), applied as a LUMA offset so the hue is untouched.
 //   2. WAVES — two more samples of the same layer at a wave scale, scrolled with time in two non-opposite
 //      directions; their mean luma minus the layer mean, × water_wave_strength, is added to rgb.
-//   2b. SWELL — broad soft bands travelling across the water (see SWELL_*): three warped sine trains summed,
-//      added as a luma offset. This is what reads as waves; term 2 only shifts grain and measured as
-//      sub-perceptual motion on its own.
 //   3. GLINT — scattered specks where two drifting value-noise ridge nets cross pull the colour a little
 //      toward a pale foam tint (see GLINT_*).
-// 2, 2b and 3 run only with water_motion_enabled. With strength / waves / swell / glint all 0 this returns the plain
+// 2 and 3 run only with water_motion_enabled (the chop is applied per fragment — see water_motion). With
+// strength / waves / glint all 0 this returns the plain
 // sample A, bit-exact.
 vec3 water_surface(int layer, vec2 map_px) {
 	vec2 uv_a = map_px / (2.0 * hex_radius) * base_scale;   // == base_uv at the call site, same expression
 	vec3 col = texture(biome_array, vec3(uv_a, float(layer))).rgb;
 	bool vary = water_variation_strength > 0.0;
 	bool waves = water_motion_enabled && water_wave_strength > 0.0;
-	bool swell = water_motion_enabled && water_swell_strength > 0.0;
 	bool glint = water_motion_enabled && water_glint_strength > 0.0;
-	if (!vary && !waves && !swell && !glint) {
+	if (!vary && !waves && !glint) {
 		return col;
 	}
 	float mean = mean_luma(layer);
@@ -781,21 +797,6 @@ vec3 water_surface(int layer, vec2 map_px) {
 		float l1 = luma(texture(biome_array, vec3(uv_w1, float(layer))).rgb);
 		float l2 = luma(texture(biome_array, vec3(uv_w2, float(layer))).rgb);
 		col += vec3((0.5 * (l1 + l2) - mean) * water_wave_strength);
-	}
-	if (swell) {
-		// Everything in HEX RADII, so the swell looks the same at every zoom.
-		vec2 p = map_px / hex_radius;
-		vec2 wp = p / SWELL_WARP_CELL;
-		p += (vec2(vnoise(wp + SWELL_WARP_OFFSET_X), vnoise(wp + SWELL_WARP_OFFSET_Y)) - 0.5)
-			* (2.0 * SWELL_WARP_AMOUNT);
-		vec3 lambda = max(water_swell_wavelength, BLEND_SOFT_MIN) * SWELL_WAVELENGTH_RATIO;
-		vec3 speed = water_swell_speed * sqrt(SWELL_WAVELENGTH_RATIO);   // longer trains run faster
-		vec3 along = vec3(dot(p, SWELL_DIR_A), dot(p, SWELL_DIR_B), dot(p, SWELL_DIR_C));
-		vec3 phase = TAU * (along - speed * t) / lambda;
-		float h = dot(sin(phase), SWELL_AMPLITUDE) / dot(SWELL_AMPLITUDE, vec3(1.0));
-		float group = mix(SWELL_GROUP_CALM, 1.0,
-			vnoise(map_px / (hex_radius * SWELL_GROUP_CELL) + SWELL_GROUP_OFFSET + SWELL_GROUP_DRIFT * t));
-		col += vec3(h * group * water_swell_strength);   // a luma offset: crest lighter, trough darker, same hue
 	}
 	if (glint) {
 		vec2 gp = map_px / (hex_radius * GLINT_CELL) + GLINT_NOISE_OFFSET;
@@ -837,6 +838,66 @@ vec3 water_temperature_grade(vec3 c, float temp, float amount) {
 		g *= mix(1.0, water_temp_warm_brightness, warm);
 	}
 	return mix(c, g, clamp(water_temp_strength * amount, 0.0, 1.0));
+}
+
+float hash13(vec3 p) {
+	p = fract(p * HASH3_SCALE);
+	p += dot(p, p.zyx + HASH3_ADD);
+	return fract((p.x + p.y) * p.z);
+}
+
+// Smooth 3D value noise — vnoise's twin with a third (time) axis.
+float vnoise3(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = mix(hash13(i), hash13(i + vec3(1.0, 0.0, 0.0)), f.x);
+	float b = mix(hash13(i + vec3(0.0, 1.0, 0.0)), hash13(i + vec3(1.0, 1.0, 0.0)), f.x);
+	float c = mix(hash13(i + vec3(0.0, 0.0, 1.0)), hash13(i + vec3(1.0, 0.0, 1.0)), f.x);
+	float d = mix(hash13(i + vec3(0.0, 1.0, 1.0)), hash13(i + vec3(1.0, 1.0, 1.0)), f.x);
+	return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+}
+
+// One chop octave: the interleaved pair (see CHOP_PAIR_*), centred on 0.
+float chop_octave(vec3 q) {
+	float a = vnoise3(q) - VNOISE_MEAN;
+	float b = vnoise3(q + CHOP_PAIR_OFFSET + vec3(0.0, 0.0, CHOP_PAIR_TIME_SHIFT)) - VNOISE_MEAN;
+	return (a + b) * CHOP_PAIR_NORM;
+}
+
+// THE OPEN CHOP (see CHOP_*): signed, about −1..1, evolving in place.
+float open_chop(vec2 map_px, float t) {
+	vec2 p = map_px / (hex_radius * max(water_chop_scale, BLEND_SOFT_MIN));
+	float z = t * water_chop_rate;
+	float coarse = chop_octave(vec3(rotate_uv(p, CHOP_COARSE_ROTATION), z) + CHOP_OFFSET_COARSE);
+	float fine = chop_octave(vec3(rotate_uv(p, CHOP_FINE_ROTATION) / CHOP_FINE_SCALE, z * CHOP_FINE_RATE)
+		+ CHOP_OFFSET_FINE);
+	return 2.0 * dot(vec2(coarse, fine), CHOP_OCTAVE_WEIGHTS);
+}
+
+// THE COASTAL SWELL — a STUB (see COASTAL_SWELL_ENABLED). It will need a per-hex distance-to-coast field; until
+// that exists it returns 0 and nothing reads it.
+float coastal_swell(vec2 map_px, float t) {
+	return 0.0;
+}
+
+// How COASTAL a water fragment is (0 open ocean … 1 on the shelf) — the future blend weight between the two
+// motion terms. It will be the neighbour-weighted shelf-ness over {own + 6 neighbours} with the depth field's
+// weights (the temperature grade's graded-ness is the model), keyed on a `coastal_terrains` list. A STUB today.
+float coastal_weight() {
+	return 0.0;
+}
+
+// THE WATER MOTION a water fragment gets, as a signed luma offset:
+//   open_chop · (1 − coastal_w) + coastal_swell · coastal_w
+// With COASTAL_SWELL_ENABLED false the blend is never taken, so the shelf keeps the full open chop.
+float water_motion(vec2 map_px) {
+	float t = TIME + water_time_offset;
+	float motion = open_chop(map_px, t) * water_chop_strength;
+	if (COASTAL_SWELL_ENABLED) {
+		motion = mix(motion, coastal_swell(map_px, t), coastal_weight());
+	}
+	return motion;
 }
 
 // A BASE sample of any layer: water layers go through the one water sampler above, land keeps the plain
@@ -1486,6 +1547,14 @@ void fragment() {
 				float t = smoothstep(0.5 - soft, 0.5 + soft, pw);
 				result = mix(own_rgb, nb_rgb, t);
 			}
+		}
+
+		// --- WATER MOTION: the directionless chop (and, later, the coastal swell), once per water fragment, as a
+		// luma offset (hue preserved). After the depth field — it is the same field for every water layer, so
+		// adding it to the mean equals adding it to each sample — and before the shore, so the foam is untouched.
+		// Near a coast the waterline cross-fade blends toward an estimate without it, so it eases out at the shore.
+		if (water_motion_enabled && water_chop_strength > 0.0 && own_class == CLASS_WATER) {
+			result += vec3(water_motion(v_map));
 		}
 
 		// --- WATER TEMPERATURE GRADE: after the water surface + depth field, before the shore (foam untouched) ---
