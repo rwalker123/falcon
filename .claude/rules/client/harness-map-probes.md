@@ -829,8 +829,10 @@ harness clock is frozen. Six PNG-less claims ride it, and each fails on its own:
   where B covered most of the water and its repeat showed on a diagonal. Judge the frame, not only the
   number, when retuning the cell.
 - **Motion at game zoom, measured as MAGNITUDE.** Over the deep-ocean box, the mean |ΔL| between two
-  phases a second apart must reach `OCEAN_MOTION_MIN_MEAN_DL` (**3 levels** on this water, luma ≈ 30);
-  measured **3.9**.
+  phases `OCEAN_MOTION_DT` (2 s) apart must reach `OCEAN_MOTION_MIN_MEAN_DL` (**1.5 levels** on this
+  water, luma ≈ 30); measured **2.3**. The bar guards against the term going invisible, NOT the tuned
+  look — that is Ray's live call: at `chop_strength` 0.06 / `chop_rate` 0.8 (~4 levels/s) the chop read
+  in play as clouds changing too fast, so it ships at 0.035 / 0.4 and the window doubled with the rate.
   ⛔ **It was a changed-pixel COUNT, and the count passed a sea that looked still.** A scrolled texture
   moves nearly every pixel by a level or two, so the first claim read 1.55M of 2.07M pixels changed
   while the whole frame had moved **1.18 levels mean over eight seconds** — Ray ran it live and saw no
@@ -838,12 +840,13 @@ harness clock is frozen. Six PNG-less claims ride it, and each fails on its own:
   so the claim is on that. **Sabotaged** by shipping the old texture term alone: **0.94 levels**, fail —
   while **1.44M pixels** changed, which the count would have passed.
 - **Steady motion.** One 1 s sample of a rate can land anywhere in a pulse, so the same surface is
-  measured over `OCEAN_STEADY_INTERVALS` (12) consecutive `OCEAN_STEADY_DT` (0.25 s) intervals — 3 s,
-  2.4 lattice periods of the coarse octave at `chop_rate` 0.8 and 3.3 of the fine one, four samples a
-  period — each read as a rate (mean |ΔL| / dt). The slowest must reach the magnitude bar itself
-  (`OCEAN_STEADY_MIN_FRACTION` 1.0: a 1 s change is at most the sum of its four quarter changes, so only
-  a pause drops a quarter below the per-second bar), and max/min ≤ `OCEAN_STEADY_MAX_RATIO` (1.5).
-  Shipped: **5.10, 5.09, 5.05, 5.15, 5.16, 5.06, 5.18, 5.03, 5.23, 5.07, 5.01, 5.03** — ratio **1.04**.
+  measured over `OCEAN_STEADY_INTERVALS` (12) consecutive `OCEAN_STEADY_DT` (0.5 s) intervals — 6 s,
+  2.4 lattice periods of the coarse octave at `chop_rate` 0.4 and 3.3 of the fine one, four samples a
+  period — each read as a rate (mean |ΔL| / dt). The slowest must reach the magnitude bar's own rate,
+  `OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT` (`OCEAN_STEADY_MIN_FRACTION` 1.0: a window's change is at
+  most the sum of its interval changes, so only a pause drops one below it), and max/min ≤
+  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **1.47–1.53 levels/s** — ratio **1.04**. (At the earlier
+  0.06 / 0.8 tuning it held 5.01–5.23, and the single-copy sabotage swung 2.59–6.74, ratio 2.60.)
   **Sabotaged** with one noise copy per octave (the form before `CHOP_PAIR_*`): **2.74, 6.21, 6.74, 4.86,
   3.59, 4.62, 5.57, 5.82, 6.10, 4.46, 2.59, 5.13** — ratio **2.60**, fail; slowest 2.59, under the floor
   too.

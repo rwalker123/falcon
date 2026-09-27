@@ -111,9 +111,9 @@ const WATER_SURFACE_DEFAULT_WAVE_SPEED := 0.012         # wave-texture UV per se
 const WATER_SURFACE_DEFAULT_WAVE_SCALE := 0.6           # wave UV vs base UV (< 1 = broader swells, and no minifying)
 # THE CHOP — small patches that brighten, dim and morph in place: movement with no direction (the travelling
 # swell it replaced read live as the whole sea flowing one way, and drew a map-wide diagonal at 1.0×).
-const WATER_SURFACE_DEFAULT_CHOP_STRENGTH := 0.06       # peak luma offset of a bright / dark patch (luma units)
+const WATER_SURFACE_DEFAULT_CHOP_STRENGTH := 0.035      # peak luma offset of a bright / dark patch (luma units)
 const WATER_SURFACE_DEFAULT_CHOP_SCALE := 0.5           # coarse feature size, in HEX RADII
-const WATER_SURFACE_DEFAULT_CHOP_RATE := 0.8            # evolution: noise cells of its time axis per second
+const WATER_SURFACE_DEFAULT_CHOP_RATE := 0.4            # evolution: noise cells of its time axis per second
 const WATER_SURFACE_MAX_CHOP_STRENGTH := 0.2
 const WATER_SURFACE_MIN_CHOP_SCALE := 0.1               # hex radii — finer is per-pixel sparkle, not chop
 const WATER_SURFACE_MAX_CHOP_SCALE := 2.0               # hex radii — broader starts to read as map-scale pattern

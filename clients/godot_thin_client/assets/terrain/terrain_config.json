@@ -20,9 +20,9 @@
     "wave_strength": 0.0,
     "wave_speed": 0.012,
     "wave_scale": 0.6,
-    "chop_strength": 0.06,
+    "chop_strength": 0.035,
     "chop_scale": 0.5,
-    "chop_rate": 0.8,
+    "chop_rate": 0.4,
     "glint_strength": 0.0,
     "motion_min_radius": 24.0
   },

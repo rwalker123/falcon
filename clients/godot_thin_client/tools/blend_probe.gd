@@ -1121,7 +1121,7 @@ const OCEAN_SHIPPED_SURFACE := {}
 # The SECOND motion phase, in seconds of shader time (the `water_time_offset` uniform — the harness runs at
 # Engine.time_scale 0, so TIME itself never moves). ONE second: the claim is that a player sees the water move
 # within a moment of looking, so that is the interval the magnitude is measured over.
-const OCEAN_MOTION_DT := 1.0
+const OCEAN_MOTION_DT := 2.0   # one lattice period-ish at the shipped chop_rate 0.4 (2.5 s per cell)
 # The look-at sequence: the shipped surface at this many phases, OCEAN_MOTION_DT apart.
 const OCEAN_SEQUENCE_FRAMES := 4
 const OCEAN_TIME_OFFSET_UNIFORM := "water_time_offset"
@@ -1142,21 +1142,24 @@ const OCEAN_REPEAT_ON_MIN := 0.6                        # the surface must bring
 # A changed-pixel COUNT was the first claim and it passed a sub-perceptual wave: nearly every pixel of a
 # scrolled texture changes by a level or two, so the count was 1.5M of 2.07M on water that looked still
 # (measured 1.18 levels mean over EIGHT seconds). What a player sees is how far the brightness moves, so the
-# claim is on that. The bar is ~3 levels mean on this dark water (luma ≈ 30): a mean that size means the
-# bright and dark patches are changing by several levels where the eye reads them.
-const OCEAN_MOTION_MIN_MEAN_DL := 3.0
+# claim is on that. The bar guards against the term going INVISIBLE again, not the tuned look: the shipped
+# strength is a live call (chop_strength 0.06 moved ~4 levels/s and read as drifting clouds in play, so it
+# ships at 0.035), and it evolved too FAST (chop_rate 0.8 → 0.4). So the bar is levels per OCEAN_MOTION_DT
+# (2 s, scaled with the slower rate), not per second; 1.5 levels over 2 s is still ~5× the dead wave's
+# ~0.3 levels over the same window.
+const OCEAN_MOTION_MIN_MEAN_DL := 1.5
 # STEADINESS. The 1 s magnitude above is one sample of a rate that can pulse: value noise's smoothstep time axis
 # has zero slope at every lattice time, so a single noise copy stops the whole sea at once every 1/chop_rate s
 # (the claim's sabotage). So the motion is also measured as a SERIES: OCEAN_STEADY_INTERVALS consecutive
-# intervals of OCEAN_STEADY_DT, each read as a rate (mean |ΔL| / dt, levels per second). 12 × 0.25 s = 3 s spans
-# 2.4 lattice periods of the coarse octave at the shipped chop_rate 0.8 (1.25 s each) and 3.3 of the fine one,
+# intervals of OCEAN_STEADY_DT, each read as a rate (mean |ΔL| / dt, levels per second). 12 × 0.5 s = 6 s spans
+# 2.4 lattice periods of the coarse octave at the shipped chop_rate 0.4 (2.5 s each) and 3.3 of the fine one,
 # with four samples per period, so a pause cannot fall between samples. Two bars, each failing on its own:
-# the SLOWEST interval's rate ≥ OCEAN_MOTION_MIN_MEAN_DL × OCEAN_STEADY_MIN_FRACTION, and max/min ≤
+# the SLOWEST interval's rate ≥ (OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT) × OCEAN_STEADY_MIN_FRACTION, and max/min ≤
 # OCEAN_STEADY_MAX_RATIO. The fraction is the WHOLE bar (1.0): the 1 s change is at most the sum of its four
 # quarter-second changes (triangle inequality), so a quarter-second rate reads the chop at or above the 1 s
-# chord, and a surface that clears 3 levels/s over a second on average must clear it in each quarter too
+# chord, and a surface that clears the bar over a second on average must clear it in each quarter too
 # unless it pauses. Measured: shipped slowest 5.01; the single-copy sabotage's slowest 2.59.
-const OCEAN_STEADY_DT := 0.25
+const OCEAN_STEADY_DT := 0.5
 const OCEAN_STEADY_INTERVALS := 12
 const OCEAN_STEADY_MIN_FRACTION := 1.0
 const OCEAN_STEADY_MAX_RATIO := 1.5
@@ -1166,7 +1169,7 @@ const LUMA_LEVELS := 255.0
 # evolves in place correlates best at ZERO offset, a travelling one at its travel distance. The best
 # correlation beyond OCEAN_DIRECTION_ZERO_PX of zero may not beat the zero-offset one by more than the
 # tolerance. The interval is short so the chop is still well correlated with itself.
-const OCEAN_DIRECTION_DT := 0.5
+const OCEAN_DIRECTION_DT := 1.0
 const OCEAN_DIRECTION_SEARCH_PX := 24
 const OCEAN_DIRECTION_ZERO_PX := 4
 const OCEAN_DIRECTION_TOLERANCE := 0.02
@@ -2373,7 +2376,7 @@ func _assert_ocean_motion_steady() -> void:
 	var ratio: float = hi / maxf(lo, OCEAN_CORR_EPSILON)
 	print("blend_probe: OCEAN steadiness — levels/s per %.2f s interval: %s · min %.2f max %.2f ratio %.2f"
 		% [OCEAN_STEADY_DT, ", ".join(parts), lo, hi, ratio])
-	var floor_rate: float = OCEAN_MOTION_MIN_MEAN_DL * OCEAN_STEADY_MIN_FRACTION
+	var floor_rate: float = OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT * OCEAN_STEADY_MIN_FRACTION
 	if lo < floor_rate:
 		_fail("OCEAN: the slowest %.2f s interval moved only %.2f levels/s (want ≥ %.2f) — the chop pauses"
 			% [OCEAN_STEADY_DT, lo, floor_rate])

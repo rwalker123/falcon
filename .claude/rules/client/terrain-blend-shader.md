@@ -1140,7 +1140,7 @@ sine-free hash (`hash13`), so it keeps its precision as `TIME` grows.
 **Each octave is an INTERLEAVED PAIR of noises** (`chop_octave`, `CHOP_PAIR_*`), so the sea moves at a
 steady rate. Value noise interpolates its time axis with a smoothstep, whose slope is zero at every
 lattice time, and every pixel reaches that lattice time at once: with one copy the whole sea slowed
-to a near-stop every 1/`chop_rate` s (1.25 s), and `OCEAN_seq` read **5.03 → 3.80 → 2.72** levels per
+to a near-stop every 1/`chop_rate` s (1.25 s at the rate it was tuned at), and `OCEAN_seq` read **5.03 → 3.80 → 2.72** levels per
 successive second — a rhythmic pause. The second copy sits half a lattice step later in time
 (`CHOP_PAIR_TIME_SHIFT`) and on unrelated lattice cells (`CHOP_PAIR_OFFSET`), so it is at its fastest
 whenever the first stops. The sum × 1/√2 keeps one copy's spread. Measured over twelve 0.25 s
@@ -1211,9 +1211,9 @@ and the waterline cross-fade adds up to seven calls in its narrow band at a coas
 | `wave_strength` | 0.0 | × the texture waves' luma deviation from the layer mean. **Ships off** — see 2 |
 | `wave_speed` | 0.012 | wave-texture UV per second (≈ 7 px/s at r ≈ 45) |
 | `wave_scale` | 0.6 | wave UV against the base UV; < 1 is broader and no minifying |
-| `chop_strength` | 0.06 | peak luma offset of a bright / dark chop patch (luma units, 0..1) |
+| `chop_strength` | 0.035 | peak luma offset of a bright / dark chop patch (luma units, 0..1). 0.06 read live as drifting clouds |
 | `chop_scale` | 0.5 | the coarse octave's feature size, in hex radii |
-| `chop_rate` | 0.8 | how fast the chop evolves — cells of its time axis per second |
+| `chop_rate` | 0.4 | how fast the chop evolves — cells of its time axis per second. 0.8 read live as clouds changing too fast |
 | `glint_strength` | 0.0 | peak pull of a glint speck toward its pale tint. **Ships off:** at 0.14 the specks read at map scale as white curls — scratches on the water, not whitecaps |
 | `motion_min_radius` | 24 | px; below it the waves, chop and glint are off |
 
@@ -1223,10 +1223,11 @@ shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-p
 `variation_cell` (4) let one rotated sample cover most of the frame and showed B's own repeat on a
 diagonal; 3 keeps both samples in view. The repeat measure there reads **0.15** on the plain sample
 and **0.73** with the anti-tiling (1 = no correlation at the tile period). The chop was chosen on a
-four-phase sequence one second apart (`OCEAN_seq0..3`) and a 1.0×-like frame (`OCEAN_zoomed_out`,
-r ≈ 25.7): it moves the open water **3.9 levels mean over one second** and a steady **5.0–5.2 levels
-per second** over quarter-second intervals (luma ≈ 30), against **0.94** for the texture waves alone; at
-`chop_rate` 0.5 / strength 0.05 (single copy) it was 2.6, under the bar.
+four-phase sequence and a 1.0×-like frame (`OCEAN_zoomed_out`, r ≈ 25.7), then **toned down live**: at
+`chop_strength` 0.06 / `chop_rate` 0.8 (a steady ~5 levels/s) Ray read it in play as clouds, changing too
+fast. It ships at **0.035 / 0.4**: **2.3 levels mean over two seconds**, a steady **1.47–1.53 levels per
+second** (luma ≈ 30). The texture waves alone moved 0.94 levels per second and were invisible, so the
+usable band is narrow — below ~1 level/s the sea reads still, and ~5 reads as weather.
 
 ## Water temperature grade
 
