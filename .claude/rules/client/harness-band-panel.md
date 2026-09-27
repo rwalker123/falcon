@@ -2778,7 +2778,10 @@ sentence on the very next line. **It staged no bill at all until PR #743's revie
 state the issue is about was never rendered and an `ⓘ` that flew only on a bill-less pool passed. The Husbandry card
 is the paired WARN form. **`band_panel_pool_kit_short_builders`** re-pushes the band with a short
 builders TOE line and asserts the Builders card flies the `ⓘ` — it is passed no `cover`, so it can
-never be work-short.
+never be work-short — with `POOL_TOOLS_SHORT_BUILDERS_LINE` (*The top job in the queue is short of
+tools.*) as its tool line: `_want_pool_tool_line` forks on the ROLE, and
+`_assert_pool_tools_line_forks_on_work` drives the builders fork both ways round (work short and
+not) beside a FILLED row that states nothing.
 
 ⛔ **THE FILLED CARD AND THE NOT-APPLICABLE CARD RENDER IDENTICALLY**, so what separates them is
 asserted against the FIXTURE rather than against the card
@@ -2834,3 +2837,47 @@ for.** A run started immediately after a `--import` failed three claims with
 enough to starve the frame loop blows the budget and FAILS LOUDLY rather than hanging. The immediate
 re-run was green. **Judge it by a second run before treating it as a regression**; nothing in the
 pool-TOE arc is anywhere near that gesture.
+
+## The queue HEAD's tool shortfall, the strip's DETAIL line, and the labelled withdrawal
+
+`band-city-panel.md` → "THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL" and "⑤ THE STRIP OPENS ON THE
+JOB'S DETAIL LINE". One state, `_render_queue_head_tools_short_state`, appended at the very END of
+`_render_queue_control_states` (it pushes its own band and restores the three-entry fixture, so no
+frame above it moves). Three frames and **+26 `PASS`** — measured `1454 / 193` → `1480 / 196`
+(`PASS` / frames) on one windowed run, exit 0.
+
+| frame | what it stages |
+|---|---|
+| `band_panel_queue_head_tools_short` | builders TOE short; the HEAD's strip open — amber `builders short of tools` over the crop picker and `Remove` |
+| `band_panel_queue_tame_detail` | the Tame's strip — its price by EQUALITY, `Remove` pressed with REAL input |
+| `band_panel_queue_head_tools_short_expanded` | the same band in the expanded queue mode |
+
+- **THE HEAD, AND ONLY THE HEAD, IS ASSERTED AS A SET** — ranks read off
+  `BUILD_QUEUE_ROW_TOOLS_SHORT_META`, and every row's hover checked both ways — in both modes; the
+  builders' TOE FILLED (`_queue_head_tools_band_fixture(false)`) states it nowhere and the Builders
+  card carries no line; and a PENDING entry is refused by `_queue_entry_tools_short` both stamped at
+  rank 0 and at its real `NOT_IN_ANY_BUILD_QUEUE`, beside the confirmed head it must still accept.
+- **THE TAME'S PRICE IS THE FIXTURE'S, BY EQUALITY.** The three-entry fixture's herd carries no
+  `tame_work_cost` / `tame_upkeep_demand`, which the wire publishes unconditionally, so this state
+  stages them (`_queue_priced_herds`) — without them the detail line is legitimately empty and a
+  "some text rendered" claim would have been the only one available.
+- **THE WITHDRAWAL IS DRIVEN WITH `_drive_click`**, and asserted at its full natural width, inside the
+  strip, BELOW the detail line — the claims a squeezed or overlapped button fails.
+- **`_assert_queue_settings_strip` gained two claims** that every strip-open state inherits: the strip
+  LEADS with its detail line, and its reservation is within `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT`.
+- **`_report_queue_head_mark_placements` PRINTS the `◆` measurements** rather than asserting them —
+  `_report_queue_row_columns`' reason: a red line there asks for a decision (a wider date column, a
+  looser face guarantee), not a fix.
+- **Harness finders moved off the glyph**: every `BUILD_QUEUE_UNQUEUE_GLYPH` message now names
+  `BUILD_QUEUE_UNQUEUE_LABEL`, and the withdrawal's right-edge claim reads the button's own width
+  where it read the retired `BUILD_QUEUE_UNQUEUE_WIDTH`. Every finder was already by
+  `BUILD_QUEUE_UNQUEUE_META`.
+
+**Sabotage-verified in one run**, both halves failing a disjoint set: dropping the rank test from
+`_queue_entry_tools_short` fails the head-only SET (ranks `[0, 1, 2]`, both modes), the two non-head
+hovers and the Tame's price-by-equality; dropping `BUILD_QUEUE_DETAIL_HEIGHT` from
+`build_queue_settings_height` fails reserved == drawn on every strip-open state (`52px of the 34`),
+the closed/open arithmetic (`112 against 130`) and the tight dock's zone fit (`short by 5`).
+
+`WIDE_DOCK_QUEUE_ROWS` stays **2**: the detail line took 18 of the 22px the 56 → 34 fall released,
+and `(358 − 300) / 28` still affords the second entry row.

@@ -1221,6 +1221,12 @@ const POOL_TOOLS_SHORT_WARN_LINE := "Short of tools."
 ## being lost, so it is said as an opportunity: the tools would stretch each worker further.
 const POOL_TOOLS_SHORT_INFO_LINE := "More tools would speed this up."
 
+## **THE BUILDERS CARD'S TOOL LINE** — the one pool whose tools are claimed by ONE job, the queue's
+## head, so the sentence names that job's place rather than the pool. Still never names or counts a
+## tool (issue #716). Reported from play: the INFO form under the Builders card left the player
+## searching a queue whose rows said nothing about tools.
+const POOL_TOOLS_SHORT_BUILDERS_LINE := "The top job in the queue is short of tools."
+
 ## ⛔ **RETIRED — THE COUNTED TOOL LINE (`4 of 6 hoes · 0 of 2 dressing hammers`)**, with
 ## `POOL_TOE_TERM_FORMAT`, `POOL_TOE_SHORT_UNIT_GAP` and its ceil/floor + `kit_item_count_word` term
 ## assembly (issue #716). It sat under a WORKER stepper, so players read `0 of 1 hoe` as a head count
@@ -1260,9 +1266,18 @@ static func pool_toe_is_short(lines: Array) -> bool:
 ## `work_short` is `upkeep_pool_is_short` for the same card: under the `⚠` the tools are a second
 ## reason (`POOL_TOOLS_SHORT_WARN_LINE`); under the info mark they are the only one
 ## (`POOL_TOOLS_SHORT_INFO_LINE`). A pool whose tools are all filled says nothing.
-static func pool_tools_short_line(lines: Array, work_short: bool) -> String:
+##
+## **THE BUILDERS POOL SAYS WHICH JOB.** `kind` is the card's pool token; on `builders` the line is
+## `POOL_TOOLS_SHORT_BUILDERS_LINE` whatever the work reading, because the builders' tool claim is the
+## queue HEAD entry's alone (`docs/plan_pool_toe.md` §2.4 — entries behind the head claim nothing), so
+## *the builders are short of tools* and *the top job is short of tools* are one fact, and only the
+## second tells the player where to look. The head queue row states the same fact on its hover and its
+## detail line.
+static func pool_tools_short_line(lines: Array, work_short: bool, kind: String = "") -> String:
     if not pool_toe_is_short(lines):
         return ""
+    if kind == HudConst.LABOR_KIND_BUILDERS:
+        return POOL_TOOLS_SHORT_BUILDERS_LINE
     return POOL_TOOLS_SHORT_WARN_LINE if work_short else POOL_TOOLS_SHORT_INFO_LINE
 
 const WORK_ROW_MARKS_WIDTH := 20.0
@@ -2297,10 +2312,11 @@ const ROADWORK_ROSTER_ROWS_MAX := 3
 ## queue's withdrawal and the parties zone's recall — a destructive single-item control reads as one.
 const ROADWORK_ROSTER_ABANDON_GLYPH := "✕"
 
-## **AND ITS COLUMN IS THE QUEUE WITHDRAWAL'S**, for the identical measured reason: `HudWidgets.compact`
+## **AND ITS COLUMN IS THE ONE-GLYPH BUTTON COLUMN** (the queue withdrawal's, until that took words),
+## for the identical measured reason: `HudWidgets.compact`
 ## squeezes the type size and the VERTICAL padding only, so the ghost button keeps the side margins
 ## `HudStyle` authored and a 22px reservation is 10px under what the glyph draws.
-const ROADWORK_ROSTER_ABANDON_WIDTH := BUILD_QUEUE_UNQUEUE_WIDTH
+const ROADWORK_ROSTER_ABANDON_WIDTH := BUILD_QUEUE_GLYPH_BUTTON_WIDTH
 
 ## The block's stable handle, valued the number of road rows it drew — so a harness can say *this
 ## band's roster has N rows* rather than *a roster exists somewhere in the zone*.
@@ -2761,19 +2777,31 @@ static func build_queue_subject(kind: String, x: int, y: int, herd_label: String
 ## truncated list with nothing under it reads as the whole list** is still the rule; what changed is
 ## that the thing standing under it moved onto the head, so there is one control instead of two.
 
-## The withdrawal. Same `✕` and same steady DANGER ink the parties zone's recall control wears — a
-## destructive control reads as one — and, like that one, it asks nothing first: `unqueue` withdraws a
-## DECLARATION, the banked meter survives it, and re-declaring is one tick of the compose control.
-const BUILD_QUEUE_UNQUEUE_GLYPH := "✕"
+## **THE WITHDRAWAL IS A LABELLED BUTTON, NOT A GLYPH.** It was a bare `✕`, and reported from play
+## it read as *close this strip* or as *cancel and lose the progress* — neither of which it does:
+## `unqueue` withdraws a DECLARATION, the banked meter survives it, and re-declaring is one press of the
+## source row's `⌃`. The word says what it does; the tooltip says what is kept. It keeps the parties
+## zone's steady DANGER ink and asks nothing first — see `_build_queue_unqueue_button`.
+##
+## ⛔ **ONE WORD, AND THE CROP LINE IS WHY.** It rides the strip's last control line, beside the crop
+## picker on a plant entry: at the tall LEFT dock (the shipped default) that line has 344px of strip
+## content, and key 30 + picker 168 + three separations leave 134. `Remove from queue` draws 150 and
+## does not fit; `Remove` draws 73. A line of its own, or a seat beside the detail line, would have
+## paid for the longer words with a BUILD QUEUE entry row on the 1920 BOTTOM dock — see
+## `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT`.
+const BUILD_QUEUE_UNQUEUE_LABEL := "Remove"
 
-## **32 BECAUSE `HudWidgets.compact` LEAVES THE GHOST BUTTON ITS HORIZONTAL PADDING.** The trim
-## squeezes the type size and the VERTICAL padding — that is what keeps the control inside a 28px row
-## — and the button's own left/right margins survive it, so a 22px reservation was 10px under what the
-## `✕` actually draws and the row's expanding face paid the difference. It is the withdrawal's column
-## rather than the glyph's: what has to fit is the styled BUTTON.
-const BUILD_QUEUE_UNQUEUE_WIDTH := 32.0
+const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Take this job out of the build queue. The work already done on it is kept, and the source keeps its crew — queue it again to carry on."
 
-const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already banked is kept, and the source keeps its crew."
+## **ONE GLYPH IN A COMPACT GHOST BUTTON — 32 BECAUSE `HudWidgets.compact` LEAVES THE BUTTON ITS
+## HORIZONTAL PADDING.** The trim squeezes the type size and the VERTICAL padding — that is what keeps
+## the control inside a 28px row — and the button's own left/right margins survive it, so a 22px
+## reservation was 10px under what a glyph actually draws. It was `BUILD_QUEUE_UNQUEUE_WIDTH`, the
+## withdrawal `✕`'s column; the withdrawal carries WORDS now and takes its natural width, and what is
+## left of the number is the two columns still defined from it — the reorder pair's and the road
+## roster's own `✕`. **Retiring it into either of them would move the other**, which is why it is a
+## name of its own.
+const BUILD_QUEUE_GLYPH_BUTTON_WIDTH := 32.0
 
 # ---- UP/DOWN REORDER — the arrows take the `✕`'s column (`docs/plan_standing_upkeep.md` §4.7b ③) --
 #
@@ -2791,8 +2819,10 @@ const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already bank
 # **AND THE ARROWS KEEP THE FULL ROW HEIGHT** — a stacked pair inside 28px would be two 13px targets,
 # which is the placement this one was measured against and beat.
 
-## The reorder column IS the withdrawal's old one, stated as arithmetic rather than as a second 32.
-const BUILD_QUEUE_REORDER_WIDTH := BUILD_QUEUE_UNQUEUE_WIDTH
+## The reorder column IS the withdrawal's old one — the one-glyph button column, stated as a name
+## rather than as a second 32. **The withdrawal no longer defines it**: it took words and its natural
+## width (`BUILD_QUEUE_UNQUEUE_LABEL`), and the arrows' column must not move with it.
+const BUILD_QUEUE_REORDER_WIDTH := BUILD_QUEUE_GLYPH_BUTTON_WIDTH
 
 ## The gap between the pair, so two adjacent buttons read as two targets rather than as one wide one.
 const BUILD_QUEUE_REORDER_SEPARATION := 2
@@ -2886,21 +2916,23 @@ const BUILD_QUEUE_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_CHROME \
 ## 1920 bottom dock, the queue claimed 3 rows instead of 1 and `Zone_work` drew **414 into its 396px
 ## box** the moment a strip opened.
 ##
-## **STATED AS THE STRIP'S OWN WORST CASE rather than as a cushion**: ONE control line plus the
-## strip's chrome, which is what an entry carrying a crop draws. **LEGS ARE DELIBERATELY NOT
+## **STATED AS THE STRIP'S OWN WORST CASE rather than as a cushion**: the detail line, ONE control
+## line and the strip's chrome, which is what every leg-less entry draws. **LEGS ARE DELIBERATELY NOT
 ## COUNTED** — a multi-leg climb is the rarer entry, and reserving for it would shrink the block on
 ## every dock for a state most bands never reach, which is the same trade the retired constant's own
 ## comment made.
 ##
-## ⛔ **IT WAS THE WRAPPED CONTROL PAIR AND IS ONE LINE SHORTER.** The second line was the KIT
-## picker's, which `docs/plan_pool_toe.md` §3 retired — a build's tools are the rung's — so a strip
-## can no longer draw two control rows and a headroom term that still paid for one would hold a board
-## row back for a line nothing draws. `build_queue_settings_height`'s own retirement note carries the
-## measurement.
-##
+## ⛔ **IT WAS THE WRAPPED CONTROL PAIR (56), FELL TO ONE CONTROL LINE (34), AND CARRIES THE JOB'S
+## DETAIL LINE NOW (52).** The second control line was the KIT picker's, which `docs/plan_pool_toe.md`
+## §3 retired; the 18px since added is the DETAIL line every open strip leads with. On the 1920 BOTTOM
+## dock's 358px box the queue's own reservation is 300 at 52, leaving `(358 − 300) / 28` = 2 entry
+## rows — the second row the 56 → 34 fall bought survives, with 2px to spare. The two layouts that
+## kept the withdrawal's longer words would have spent it: a withdrawal line of its own under a crop
+## (a 74px strip) or the withdrawal beside the detail line (56, one entry row).
 ## ⛔ **IT IS DECLARED HERE, NOT BESIDE `BUILD_QUEUE_ROOM_GAP_COUNT` WHERE IT IS READ**, because a
 ## GDScript `const` may not read one declared below it and its term is on the lines above.
-const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT
+const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT \
+    + BUILD_QUEUE_DETAIL_HEIGHT
 
 ## **THE SETTINGS KEY'S DECLARED COLUMN.** It was shared by `CROP` and a `KIT` key beside it so the
 ## two pickers could not land on two different left edges when the strip wrapped; the kit went with
@@ -3079,9 +3111,9 @@ const BUILD_QUEUE_CROP_TOOLTIP := "Which crop this job commits the patch to. Lea
 ## this job's tools and crop"*: the TOOLS half named the per-entry kit picker, which
 ## `docs/plan_pool_toe.md` §3 retired — a build's tools follow from its rung — and the CROP half is
 ## the plant web's alone, a `Tame` committing no species, so on a hunt row the sentence promised two
-## controls that are not in the strip. **The `✕` is what every entry's strip carries**, so the hint
-## names the settings and the one control it can promise on every row.
-const BUILD_QUEUE_ROW_OPEN_HINT := "Click for this job's settings, and to withdraw it."
+## controls that are not in the strip. **The detail line and the withdrawal are what every entry's
+## strip carries**, so the hint names those and nothing a row might not have.
+const BUILD_QUEUE_ROW_OPEN_HINT := "Click for this job's details, and to remove it from the queue."
 
 ## `Wild Emmer 56%` — the entry's face, the crop basket's own pairing of a plant with its share.
 const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
@@ -3490,10 +3522,14 @@ const MICROSECONDS_PER_SECOND := 1_000_000.0
 ## (`WORK_ROW_HEIGHT` is 28). So the caller states whether a strip is OPEN, which is the one fact the
 ## content cannot carry, and `_build_build_queue_block` is where both the reservation and the render
 ## read it from one `_queue_settings_state` answer.
+##
+## ⛔ **AND EVERY OPEN STRIP LEADS WITH THE JOB'S DETAIL LINE** (`BUILD_QUEUE_DETAIL_HEIGHT`), so a
+## Tame opens to what the job costs and why it is stuck rather than to a bare control — charged here
+## unconditionally beside the control line, and in `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT`.
 static func build_queue_settings_height(is_open: bool, legs: int) -> float:
     if not is_open:
         return 0.0
-    var height := BUILD_QUEUE_SETTINGS_HEIGHT
+    var height := BUILD_QUEUE_SETTINGS_HEIGHT + BUILD_QUEUE_DETAIL_HEIGHT
     if legs > 0:
         height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT
     return height
@@ -3508,6 +3544,59 @@ const BUILD_QUEUE_LEG_FONT_SIZE := 11
 
 ## The strip's key for the leg list, in the CROP key's own register.
 const BUILD_QUEUE_LEGS_KEY := "CLIMB"
+
+# ---- THE ENTRY'S DETAIL LINE, first in its row's expansion ------------------------------------
+#
+# Reported from play: a Tame or Corral row opened to a bare withdrawal control and nothing else, and
+# nothing in the queue said which job the builders' tool shortfall was on. Every open strip now leads
+# with ONE line stating what the row already knows about the job — composed only from fields the
+# queue model already carries, never re-derived — with the withdrawal right-aligned on it.
+
+## The line's clauses, in reading order: the CAUSES first (they are why a player opened the row, and
+## the elide takes the tail), then the price. Joined with the client's standing ` · `.
+const BUILD_QUEUE_DETAIL_SEPARATOR := " · "
+
+## **THE HEAD'S TOOL CLAUSE** — the builders pool's TOE is the queue head's own claim, so when it is
+## short the head row says so, and no other row can. Lower-case because it is a clause mid-line.
+const BUILD_QUEUE_DETAIL_TOOLS_SHORT := "builders short of tools"
+
+## …and the same fact on the head ROW's hover, as a sentence, beside the job's price and cause.
+const BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP := "The builders are short of tools for this job — more tools would speed it up."
+
+## The detail label's stable handle, carrying the line's FULL text — a harness asks what the line
+## says without reading an ellipsised face.
+const BUILD_QUEUE_DETAIL_META := "build_queue_detail"
+
+## The detail line's type: the LEG lines' own size, so the strip's readouts share one register.
+const BUILD_QUEUE_DETAIL_FONT_SIZE := BUILD_QUEUE_LEG_FONT_SIZE
+
+## …and its height: a leg line's, being a readout rather than a control (nothing on it is pressable).
+## Charged once per open strip by `build_queue_settings_height` and in
+## `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT`.
+const BUILD_QUEUE_DETAIL_HEIGHT := BUILD_QUEUE_LEG_HEIGHT
+
+## **THE ROW'S HEAD-TOOLS STATE AS META** — `true` on the one row that states the builders' tool
+## shortfall. Every row carries it, so a harness asks *which row says so* by handle; there is no mark
+## on the row itself (see `band-city-panel.md` → the build queue's head tool shortfall for the
+## placements measured and refused).
+const BUILD_QUEUE_ROW_TOOLS_SHORT_META := "build_queue_row_tools_short"
+
+## **THE DETAIL LINE — the job's causes, then its price, or `""` when the row knows neither.**
+## `tools_short` is the head row's builders-TOE verdict (`false` on every other row); `blocked_lines`
+## the model's `build_blocked_lines`, the source card's own producer; `price` the
+## `DetailFormat.build_price_clause` the row's hover already quotes. Pure joining — nothing here
+## computes a number.
+static func build_queue_detail_line(tools_short: bool, blocked_lines: Array,
+        price: String) -> String:
+    var parts: Array[String] = []
+    if tools_short:
+        parts.append(BUILD_QUEUE_DETAIL_TOOLS_SHORT)
+    for line in blocked_lines:
+        if String(line) != "":
+            parts.append(String(line))
+    if price != "":
+        parts.append(price)
+    return BUILD_QUEUE_DETAIL_SEPARATOR.join(parts)
 
 ## **THE LEG IN FLIGHT WEARS THE QUEUE HEAD'S OWN MARKER**, and every other leg reserves its slot —
 ## the block's standing rule one level in. The first published leg IS the one in flight (the wire
