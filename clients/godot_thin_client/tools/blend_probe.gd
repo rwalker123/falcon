@@ -1093,6 +1093,47 @@ const ROAD_LABEL_OUTLINE_SIZE := 6
 # Nudge off the hex centre so the caption sits beside the road rather than on top of the pixels it names.
 const ROAD_LABEL_OFFSET := Vector2(-48.0, -74.0)
 
+# State 29 (OCEAN): THE OPEN-OCEAN REPEAT, and the water surface that breaks it (`terrain-blend-shader.md` →
+# Water surface). A 24×16 grid at the game's r ≈ 45 that is almost all deep_ocean — the one terrain with
+# nothing on it to hide the base art's exact-copy repeat every 1/base_scale hex-rows — with a ragged
+# continental_shelf band down the east side and a small prairie island on it, so the deep↔shelf depth field
+# and a real coastline are in the same frame as the open water.
+const OCEAN_DEEP_ID := WATER_DEEP_ID
+const OCEAN_SHELF_ID := WATER_SHELF_ID
+const OCEAN_ISLAND_ID := COAST_SHORE_ID                 # prairie
+const OCEAN_SHELF_BASE_COL := 17                        # the shelf starts here, wobbled per row
+const OCEAN_ISLAND_HEXES := [Vector2i(20, 7), Vector2i(21, 7), Vector2i(20, 8), Vector2i(21, 8), Vector2i(20, 9)]
+const OCEAN_OPEN_CROP := Vector2i(7, 8)                 # mid open ocean
+const OCEAN_OPEN_CROP_RADII := 8.0                      # ~2 texture repeats across at base_scale 0.25
+const OCEAN_SEAM_CROP := Vector2i(17, 4)                # the ragged deep↔shelf boundary
+const OCEAN_COAST_CROP := Vector2i(20, 8)               # the island's coast
+const OCEAN_DETAIL_CROP_RADII := 2.4
+# The levers each variant sets inside the `water_surface` block (merged over the shipped block, so the
+# levers it does not name stay shipped). OFF is the plain single sample — the pre-surface render, bit-exact.
+const OCEAN_OFF_SURFACE := {"variation_strength": 0.0, "wave_strength": 0.0, "glint_strength": 0.0}
+const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "glint_strength": 0.0}
+const OCEAN_WAVES_SURFACE := {"glint_strength": 0.0}   # the wave term alone, so it can be judged apart
+const OCEAN_SHIPPED_SURFACE := {}
+# The SECOND motion phase, in seconds of shader time (the `water_time_offset` uniform — the harness runs at
+# Engine.time_scale 0, so TIME itself never moves). Long enough that the drift is plain in the diff.
+const OCEAN_MOTION_DT := 8.0
+const OCEAN_TIME_OFFSET_UNIFORM := "water_time_offset"
+# A grid twice the size in both axes fits at r ≈ 22.5 — under the shipped motion_min_radius (24), still above
+# EDGE_BLEND_MIN_RADIUS (16) so the depth field and shore run: the far zoom where the waves must be OFF.
+const OCEAN_FAR_GRID_SCALE := 2
+const OCEAN_FAR_HEX_RADIUS := 22.5
+# THE REPEAT MEASURE. The base art repeats every `2·r / base_scale` px in both axes. Over the open-ocean box,
+# mean |ΔL| between each pixel and the one ONE PERIOD east of it, over the same at a NON-period offset
+# (OCEAN_REPEAT_CONTROL_FRACTION of a period): an exact copy scores ~0, an unrelated texture ~1.
+const OCEAN_REPEAT_CONTROL_FRACTION := 0.5
+const OCEAN_REPEAT_BOX_COLS := Vector2i(1, 14)          # hex columns of the measured box (deep ocean only)
+const OCEAN_REPEAT_BOX_ROWS := Vector2i(1, 14)
+const OCEAN_REPEAT_SAMPLE_STRIDE := 3                   # px — every pixel is 1.7M get_pixel calls; 1 in 9 is plenty
+const OCEAN_REPEAT_OFF_MAX := 0.35                      # the plain sample MUST read as a repeat (premise)
+const OCEAN_REPEAT_ON_MIN := 0.6                        # the surface must bring it near an unrelated texture
+# Motion liveness: at game zoom two phases must differ over a real fraction of the frame; at far zoom by 0 px.
+const OCEAN_MOTION_MIN_CHANGED_PX := 100000
+
 # The state filter's cmdline flag (after the scene's `--`), e.g. `-- --only=G` / `-- --only=1,4,G`.
 const ONLY_ARG_PREFIX := "--only="
 
@@ -1136,6 +1177,10 @@ func _ready() -> void:
 	# only WHICH TEXELS of the water art land where is pinned. This harness itself has no
 	# time-dependent GDScript at all (no Time. reads, no tween, no pulse), and `_settle` waits on
 	# `process_frame`, which still fires at time_scale 0.
+	#
+	# The WATER SURFACE (state 29) later became a third TIME reader, and was classified the same way: its
+	# waves are a UV scroll and its glint a drift of the noise domain, both offsets, so phase 0 still draws
+	# them. State 29 renders a second phase through the `water_time_offset` uniform, never by un-freezing.
 	#
 	# RE-CHECK RULE for anything animated added later: an AMPLITUDE term (`A * sin(t)`) VANISHES at
 	# phase 0, and a frame that is deterministic because its subject disappeared is worse than one
@@ -1369,6 +1414,10 @@ func _ready() -> void:
 	if _want("28/NAVBASE"):
 		# --- state 28 (NAVBASE): a navigable river whose valley biome changes along it (see NAVBASE_*) ---
 		await _render_navbase_state()
+
+	if _want("29/OCEAN"):
+		# --- state 29 (OCEAN): the open-ocean repeat grid + the water surface that breaks it (see OCEAN_*) ---
+		await _render_ocean_state()
 
 	_finish()
 
@@ -2096,6 +2145,149 @@ func _bank_neighbor(hex: Vector2i, dir: int) -> Vector2i:
 	var off: Array = BANK_DIR_OFFSETS[dir]
 	var dx: int = int(off[1] if (hex.y % 2) != 0 else off[0])
 	return Vector2i(hex.x + dx, hex.y + int(off[2]))
+
+
+func _render_ocean_state() -> void:
+	## State 29 (OCEAN) at the game's r ≈ 45, grid OFF (a drawn hexagon is itself a lattice over the water):
+	## OCEAN_off (the plain single sample — the repeat grid, i.e. the BEFORE) → OCEAN_static (anti-tiling only)
+	## → OCEAN_waves (+ glint off) at two phases and their amplified diff, so the wave term is judged apart →
+	## OCEAN_shipped at two phases + their diff (the whole surface MOVES). Then the PNG-less claims: the repeat
+	## measure (the grid is gone, not merely changed) and the motion LOD gate at game vs far zoom.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_ocean(GRID_W, GRID_H))
+	await _refit(GAME_HEX_RADIUS)
+	var off_ratio: float = await _render_ocean_frame(OCEAN_OFF_SURFACE, "OCEAN_off", 0.0, true)
+	var static_ratio: float = await _render_ocean_frame(OCEAN_STATIC_SURFACE, "OCEAN_static", 0.0, true)
+	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves", 0.0, false)
+	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves_t2", OCEAN_MOTION_DT, false)
+	_save_diff("OCEAN_waves", "OCEAN_waves_t2", "OCEAN_waves_motion_diff")
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped", 0.0, true)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped_t2", OCEAN_MOTION_DT, false)
+	_save_diff("OCEAN_shipped", "OCEAN_shipped_t2", "OCEAN_motion_diff")
+	print("blend_probe: OCEAN repeat ratio — off %.3f · static %.3f (period / non-period |ΔL|)"
+		% [off_ratio, static_ratio])
+	# The premise first: without it the ON claim passes on a frame that never repeated at all.
+	if off_ratio > OCEAN_REPEAT_OFF_MAX:
+		_fail("OCEAN: the PLAIN sample does not read as a repeat (ratio %.3f > %.2f) — the measure is not"
+			% [off_ratio, OCEAN_REPEAT_OFF_MAX] + " looking at the tile period, so the ON claim below proves nothing")
+	if static_ratio < OCEAN_REPEAT_ON_MIN:
+		_fail("OCEAN: the water surface leaves the exact-copy repeat standing (ratio %.3f < %.2f)"
+			% [static_ratio, OCEAN_REPEAT_ON_MIN])
+	await _assert_ocean_motion(GRID_W, GRID_H, GAME_HEX_RADIUS, true)
+	await _assert_ocean_motion(
+		GRID_W * OCEAN_FAR_GRID_SCALE, GRID_H * OCEAN_FAR_GRID_SCALE, OCEAN_FAR_HEX_RADIUS, false
+	)
+	_set_water_time_offset(0.0)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _render_ocean_frame(surface: Dictionary, name: String, time_offset: float, crops: bool) -> float:
+	## One OCEAN frame with `surface` merged over the shipped `water_surface` block, at shader phase
+	## `time_offset`. `crops` adds the native-res open-water / deep↔shelf / coast close-ups. Returns the
+	## frame's repeat ratio, measured before the config is restored.
+	var token: Array = _override_config({"water_surface": _ocean_surface(surface)})
+	_set_water_time_offset(time_offset)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save(name)
+	await _settle()
+	var ratio: float = _ocean_repeat_ratio(await _capture())
+	if crops:
+		await _settle()
+		await _save_crop("%s_open" % name, OCEAN_OPEN_CROP.x, OCEAN_OPEN_CROP.y, OCEAN_OPEN_CROP_RADII)
+		await _settle()
+		await _save_crop("%s_seam" % name, OCEAN_SEAM_CROP.x, OCEAN_SEAM_CROP.y, OCEAN_DETAIL_CROP_RADII)
+		await _settle()
+		await _save_crop("%s_coast" % name, OCEAN_COAST_CROP.x, OCEAN_COAST_CROP.y, OCEAN_DETAIL_CROP_RADII)
+	_restore_config(token)
+	return ratio
+
+
+func _ocean_surface(changes: Dictionary) -> Dictionary:
+	## The shipped `water_surface` block with `changes` laid over it.
+	var surface: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("water_surface", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in changes:
+		surface[key] = changes[key]
+	return surface
+
+
+func _set_water_time_offset(seconds: float) -> void:
+	## The shader phase of the waves + glint. Set on the material directly: TerrainRenderer never pushes it.
+	_map._terrain._terrain_blend_material.set_shader_parameter(OCEAN_TIME_OFFSET_UNIFORM, seconds)
+	_map.queue_redraw()
+
+
+func _assert_ocean_motion(gw: int, gh: int, target_radius: float, expect_motion: bool) -> void:
+	## Two captures of the SHIPPED surface at two phases. At game zoom the waves must move a real fraction of
+	## the frame; below `motion_min_radius` they must move NOTHING — the static anti-tiling takes no time term,
+	## so any changed pixel there is the LOD gate leaking. The pair is the claim: a gate that never opened
+	## passes the far half, a gate that never closed passes the near half.
+	_map.display_snapshot(_snapshot_ocean(gw, gh))
+	await _refit(target_radius)
+	_set_water_time_offset(0.0)
+	await _settle()
+	var a: Image = await _capture()
+	_set_water_time_offset(OCEAN_MOTION_DT)
+	await _settle()
+	var b: Image = await _capture()
+	if a == null or b == null:
+		return
+	var changed: int = _changed_pixel_count(a, b)
+	var radius: float = _map.last_hex_radius
+	print("blend_probe: OCEAN motion at r %.1f — %d px changed over %.0f s" % [radius, changed, OCEAN_MOTION_DT])
+	if expect_motion and changed < OCEAN_MOTION_MIN_CHANGED_PX:
+		_fail("OCEAN: at r %.1f the waves moved only %d px (want ≥ %d) — the surface is not animating"
+			% [radius, changed, OCEAN_MOTION_MIN_CHANGED_PX])
+	elif not expect_motion and changed != 0:
+		_fail("OCEAN: at far zoom r %.1f the surface moved %d px — the motion LOD gate is leaking"
+			% [radius, changed])
+
+
+func _ocean_repeat_ratio(image: Image) -> float:
+	## THE REPEAT MEASURE (see OCEAN_REPEAT_*): mean |ΔL| to the pixel ONE texture period east, over the same
+	## at a non-period offset, across the deep-ocean box. ~0 = exact copies (the grid); ~1 = no repeat.
+	if image == null:
+		return 0.0
+	var px_scale: float = float(image.get_width()) / get_viewport().get_visible_rect().size.x
+	var radius: float = _map.last_hex_radius
+	var base_scale: float = float(TerrainTextureManager.terrain_config.get(
+		"base_texture_scale", TerrainRenderer.BASE_DEFAULT_TEXTURE_SCALE))
+	var period: int = roundi(2.0 * radius / base_scale * px_scale)
+	var control: int = roundi(period * OCEAN_REPEAT_CONTROL_FRACTION)
+	var p0: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.x, OCEAN_REPEAT_BOX_ROWS.x, radius, _map.last_origin)
+	var p1: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.y, OCEAN_REPEAT_BOX_ROWS.y, radius, _map.last_origin)
+	var x0: int = maxi(int(p0.x * px_scale), 0)
+	var y0: int = maxi(int(p0.y * px_scale), 0)
+	var x1: int = mini(int(p1.x * px_scale) - period, image.get_width() - period - 1)
+	var y1: int = mini(int(p1.y * px_scale), image.get_height() - 1)
+	var period_sum := 0.0
+	var control_sum := 0.0
+	for y in range(y0, y1, OCEAN_REPEAT_SAMPLE_STRIDE):
+		for x in range(x0, x1, OCEAN_REPEAT_SAMPLE_STRIDE):
+			var l: float = image.get_pixel(x, y).get_luminance()
+			period_sum += absf(l - image.get_pixel(x + period, y).get_luminance())
+			control_sum += absf(l - image.get_pixel(x + control, y).get_luminance())
+	return period_sum / maxf(control_sum, 1e-6)
+
+
+func _snapshot_ocean(gw: int, gh: int) -> Dictionary:
+	## Open deep_ocean with a ragged continental_shelf band down the east side and a prairie island on it.
+	## Scaled with the grid (`gw` / GRID_W), so the far-zoom grid is the same geography, only more of it.
+	var k: int = gw / GRID_W
+	var arr: Array = []
+	arr.resize(gw * gh)
+	for y in range(gh):
+		var shelf_col: int = (OCEAN_SHELF_BASE_COL
+			+ int(COAST_SHORE_WOBBLE[(y / k) % COAST_SHORE_WOBBLE.size()])) * k
+		for x in range(gw):
+			arr[y * gw + x] = OCEAN_SHELF_ID if x >= shelf_col else OCEAN_DEEP_ID
+	for hex: Vector2i in OCEAN_ISLAND_HEXES:
+		for dy in range(k):
+			for dx in range(k):
+				arr[(hex.y * k + dy) * gw + hex.x * k + dx] = OCEAN_ISLAND_ID
+	return _snapshot(arr, gw, gh)
 
 
 func _render_ecotone_state() -> void:

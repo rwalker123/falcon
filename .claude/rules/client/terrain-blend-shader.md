@@ -1092,6 +1092,89 @@ as a silty **BANK with a wide channel through it**. The old `HydrologyOverlay` p
   walk on the corner lattice) never produces — the original fixture did exactly that and made the render
   look far worse than it is.
 
+## Water surface
+
+**Why.** The base art is sampled in continuous world space with `repeat_enable`
+(`base_uv = v_map / (2·hex_radius) · base_scale`), so one 512² texture repeats as an **exact copy**
+every `1 / base_scale` hex-rows (8·r at the shipped 0.25). On land the repeat hides under biome seams,
+canopy and relief; open ocean has nothing on it, so the copies read as a **grid**. Evening out the art's
+detail amplitude (`scripts/texture/equalize_detail.py`) softened it and could not remove it — an exact
+copy of an even texture still repeats.
+
+**One sampler for every water layer.** `water_surface(layer, map_px)` is the only way a `CLASS_WATER`
+layer is sampled from `biome_array`: the own-hex base, every neighbour in the water depth field, and the
+water estimate of the waterline cross-fade (`base_sample` dispatches on the layer's blend_class, id-map
+G). It is a pure function of (layer, world point, time), exactly as the plain sample it replaced was of
+(layer, world point), so every argument that made those passes continuous across a hex edge still holds.
+Routing only the own-hex base through it would put the depth field's neighbour term and the waterline's
+water estimate on a different surface from the hex beside them — a step at the edge. Land samples
+(the flat interlock, the corner triple, the navigable bank) stay the plain sample.
+
+**1 — anti-tiling (static, always on).** Sample A is the plain `base_uv` sample. Sample B is the same
+layer at `rotate(base_uv, variation_rotation) · variation_scale + WATER_VARIATION_UV_OFFSET`. They are
+mixed by a world-space value noise whose cell is in hex radii (zoom-invariant, like
+`blend_noise_scale`), smoothstepped (`WATER_VARIATION_EDGE`) into broad patches of pure A and pure B.
+**The mix is variance-preserving**: a plain lerp of two uncorrelated samples loses up to half its detail
+variance at 50/50, which reads as flat, blurry blotches exactly where the patches meet. So the lerp's
+luma deviation from the layer's mean (`layer_luma_map`, the `luma()` weights) is rescaled by
+`1 / sqrt(wA² + wB²)`, applied as a luma offset so the hue is untouched.
+
+**2 — waves (animated).** Two more samples of the same layer at `base_uv · wave_scale`, scrolled by
+`TIME · wave_speed` along `WATER_WAVE_DIR_A` and, rotated and rescaled, along `WATER_WAVE_DIR_B` (≈107°
+apart, at `WATER_WAVE_B_SPEED` of the rate), so their sum morphs rather than sliding rigidly one way.
+Their mean luma minus the layer mean, × `wave_strength`, is added to rgb. `wave_scale` stays under 1:
+the base array has no mipmaps and is already minified at r ≈ 45, and a finer animated sample shimmers.
+
+**3 — glint (animated).** Two value-noise fields, each folded into a ridge net, drift through each other;
+the glint is their PRODUCT, so it lights only near ridge crossings — short scattered specks that crawl
+and wink out. A third, broad noise (`GLINT_MASK_*`) masks it into drifting patches. The specks pull the
+colour toward a pale tint halfway from `foam_color` to white, × `glint_strength`. A single ridge net was
+tried first and drew continuous closed loops over the whole sea that read as contour lines on a map.
+
+**LOD gate.** Waves and glint run only while `water_motion_enabled` — `radius ≥ motion_min_radius`,
+pushed by `TerrainRenderer._push_water_surface` the way `rivers_lod_enabled` is. Below it the static
+anti-tiling still runs, and nothing in it reads `TIME`, so the far zoom cannot shimmer.
+
+**Bit-exact when off.** With `variation_strength`, `wave_strength` and `glint_strength` all 0 the
+function returns sample A through the same expression the call site used before. Verified: a full
+`blend_probe` run on zeroed levers is byte-identical to the pre-surface render on all 291 frames. On the
+shipped levers 117 of them moved, every one with water in it; every land-only frame is byte-identical.
+
+**Continuous redraw.** The client does not run `low_processor_mode`, so Godot renders the canvas every
+frame and `TIME` advances without `MapView` calling `queue_redraw` — the same mechanism the river
+scroll relies on. Shader `TIME` rolls over (`rendering/limits/time/time_rollover_secs`, 3600 s by
+default), so the wave and glint phase jump once an hour, as the river scroll does.
+
+**Harness phase.** `water_time_offset` is added to `TIME` for both animated terms. `TerrainRenderer`
+never pushes it (0 in the game); `blend_probe` sets it on the material to render two phases while
+frozen at `Engine.time_scale` 0. Both terms enter as offsets (a UV scroll, a noise-domain drift), so
+phase 0 still draws them — the harness freeze's re-check rule.
+
+**Cost.** Per `water_surface` call with the shipped levers: up to 4 `biome_array` fetches (A, B where its
+patch weight is non-zero, two waves) plus 1 `layer_luma_map` texel fetch and 4 value-noise evaluations,
+against 1 fetch before. An open-water pixel whose neighbours share its id makes one call; the depth field
+adds one call per differing water neighbour **within reach** (the loop skips a zero-weight neighbour),
+and the waterline cross-fade adds up to seven calls in its narrow band at a coast.
+
+| Lever (`terrain_config.json` → `water_surface`) | Shipped | Meaning |
+|---|---|---|
+| `variation_strength` | 1.0 | 0..1, sample B's peak weight; 0 = the plain sample, bit-exact |
+| `variation_cell` | 3.0 | the A/B patch noise cell, in hex radii (× radius → px) |
+| `variation_rotation_deg` | 37 | sample B's UV rotation |
+| `variation_scale` | 0.83 | sample B's UV scale against the base UV — off 1, so the two periods differ |
+| `wave_strength` | 0.8 | × the waves' luma deviation from the layer mean |
+| `wave_speed` | 0.012 | wave-texture UV per second (≈ 7 px/s at r ≈ 45) |
+| `wave_scale` | 0.6 | wave UV against the base UV; < 1 is broader swells and no minifying |
+| `glint_strength` | 0.0 | peak pull of a glint speck toward its pale tint. **Ships off:** at 0.14 the specks read at map scale as white curls — scratches on the water, not whitecaps |
+| `motion_min_radius` | 24 | px; below it the waves and glint are off |
+
+Fallbacks are the `WATER_SURFACE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
+lever; the fixed feel (directions, cells, offsets, the mask) is the `WATER_*` / `GLINT_*` consts in the
+shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
+`variation_cell` (4) let one rotated sample cover most of the frame and showed B's own repeat on a
+diagonal; 3 keeps both samples in view. The repeat measure there reads **0.15** on the plain sample
+and **0.73** with the anti-tiling (1 = no correlation at the tile period).
+
 ## Everything this shader draws exists ONLY in this shader — and a map OVERLAY turns it off
 
 `TerrainRenderer.shader_active()` is

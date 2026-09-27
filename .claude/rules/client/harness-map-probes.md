@@ -651,6 +651,12 @@ AMPLITUDE term (`A * sin(t)`) VANISHES at phase 0 and a frame that is determinis
 subject disappeared is worse than one that varies, whereas an offset or a midpoint idiom (`0.5 + 0.5
 * sin(t)` → 0.5 at t = 0) survives — classify the new term before trusting the freeze.
 
+**The water surface was classified that way when it landed** (`terrain-blend-shader.md` → Water
+surface): it is the third reader of `TIME`, and both of its terms are offsets — the waves a UV scroll,
+the glint a drift of its noise domain — so phase 0 still draws both. The set stays bit-identical run to
+run (308/308 across consecutive runs with state 29 in it). State 29 reaches a second phase through the
+`water_time_offset` uniform, not by un-freezing the clock.
+
 **One more state (15, D): the THREE-SCALE shore profile — CLIFF vs BEACH vs LAKE, and the MIXED
 coast** → `D*.png`, the ragged coast against **dark `rocky_reg`** (prairie's tan camouflages both
 sand and foam) at r≈75, **grid overlay OFF**, one camera/crop per comparison set.
@@ -792,6 +798,42 @@ lines). Measure the straddle-pixel ratio on the chain's exit edges ((3,4)E, (4,5
 edges, and the pockets' six edges; `_crop0` is the bend whose exit edge the meander carried the channel
 across. Before any fix it read up to **2.99** on an exit edge and **5.27** on a pocket edge; after, **≤ 0.96**
 and **≤ 1.37**.
+
+**One more state (29, OCEAN): the open-ocean REPEAT GRID and the water surface that breaks it** →
+`OCEAN_*.png`, at the GAME's r ≈ 45 (`GRID_W × GRID_H`), grid OFF. A field of `deep_ocean` — the terrain
+with nothing on it to hide the base art's exact-copy repeat — with a ragged `continental_shelf` band down
+the east side and a five-hex prairie island on it, so the deep↔shelf depth field and a real coast share
+the frame with the open water (`terrain-blend-shader.md` → Water surface). Frames, each a
+`water_surface` block laid over the shipped one:
+
+| frame | levers | read for |
+|---|---|---|
+| `OCEAN_off` (+ `_open` / `_seam` / `_coast`) | variation, waves, glint all 0 | the BEFORE: the grid, unmistakable |
+| `OCEAN_static` (+ crops) | waves and glint 0 | the anti-tiling alone; no flat blotches where the patches meet |
+| `OCEAN_waves`, `_t2`, `_motion_diff` | glint 0, two phases | the wave term apart from the glint, and the amplified diff that shows it moves |
+| `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s |
+
+The second phase is `OCEAN_MOTION_DT` (8 s) set on the `water_time_offset` uniform, since the harness
+clock is frozen. Three PNG-less claims ride it, and each fails on its own:
+
+- **The repeat measure.** Over a deep-only box, mean |ΔL| between each pixel and the one ONE TEXTURE
+  PERIOD east (`2·r / base_scale` px), over the same at half a period. An exact copy scores ~0, an
+  unrelated texture ~1. The premise is asserted first — `OCEAN_off` must read as a repeat
+  (≤ `OCEAN_REPEAT_OFF_MAX`, measured **0.15**) — or the ON claim passes on a frame that never repeated;
+  then `OCEAN_static` must reach `OCEAN_REPEAT_ON_MIN` (0.6; measured **0.73**). **It is blind to sample
+  B's own period**, which is rotated off the horizontal: at `variation_cell` 4 it scored 0.84 on a frame
+  where B covered most of the water and its repeat showed on a diagonal. Judge the frame, not only the
+  number, when retuning the cell.
+- **Motion at game zoom.** Two phases of the shipped surface must differ over at least
+  `OCEAN_MOTION_MIN_CHANGED_PX` (measured **1.55M** of 2.07M).
+- **No motion at far zoom.** The same geography on a grid twice the size fits at r ≈ 22.8, under
+  `motion_min_radius` (24) and above `EDGE_BLEND_MIN_RADIUS`, and the two phases must differ by **exactly
+  0 px**. The static anti-tiling reads no `TIME`, so any pixel there is the LOD gate leaking. The pair is
+  the claim: a gate that never opened passes this half, one that never closed passes the one above.
+
+Sabotaged by zeroing the three strengths in `terrain_config.json`: the repeat claim fails at 0.152 and
+the game-zoom motion claim at 0 px, and the other 291 frames came back byte-identical to the render
+before the water surface existed.
 
 ## Worked-source mark states (issue #412)
 

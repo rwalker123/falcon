@@ -214,6 +214,26 @@ uniform float blend_noise_amount; // amplitude of that boundary wobble (added to
 uniform float water_blend_band;
 uniform float water_blend_soft;
 uniform float water_blend_noise_amount;
+// THE WATER SURFACE (config "water_surface"; see water_surface() and WATER_* below). Every base sample of a
+// WATER layer goes through ONE function, so the depth field, the waterline cross-fade and the own-hex base all
+// see the identical surface and stay continuous. Land samples never touch these.
+// ANTI-TILING (static): a second, rotated + rescaled + offset sample of the same layer, mixed in by broad
+// world-noise patches, so the texture's exact-copy repeat every 1/base_scale hex-rows stops reading as a grid.
+uniform float water_variation_strength; // 0..1: the second sample's peak weight (0 = one plain sample, bit-exact)
+uniform float water_variation_cell;     // patch noise cell, px (variation_cell × radius) — zoom-invariant
+uniform float water_variation_rotation; // radians: the second sample's UV rotation
+uniform float water_variation_scale;    // the second sample's UV scale, relative to the base UV
+// WAVES + GLINT (animated): two scrolling samples of the same layer add a luma ripple; a drifting value-noise
+// ridge adds a faint sparkle. Both are gated by water_motion_enabled (radius ≥ motion_min_radius), so the far
+// zoom — where the unmipmapped base art is minified — never shimmers.
+uniform float water_wave_strength;      // multiplies the waves' luma deviation from the layer mean
+uniform float water_wave_speed;         // wave-texture UV per second (a UV of 1.0 = one wave tile)
+uniform float water_wave_scale;         // wave UV scale, relative to the base UV (< 1 = broader swells)
+uniform float water_glint_strength;     // peak pull of a glint speck toward its pale tint (0 = no glint)
+uniform bool water_motion_enabled;      // LOD gate for the waves + glint (the static anti-tiling always runs)
+// Added to TIME for the wave + glint phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
+// harness frozen at Engine.time_scale 0 can render the surface at two known phases, deterministically.
+uniform float water_time_offset;
 uniform float noise_cell;     // FEATURE value-noise cell size in px (config feature_noise_cell) — shared by the
                               // shoreline reach/wisp, the canopy treeline and the peak footline. Deliberately
                               // DECOUPLED from blend_noise_cell so retuning the interlock grain can't move any
@@ -579,6 +599,47 @@ const float HEX_CORNER_STEP_DEG = 60.0;
 // dissolves the silhouette (a pure ramp only softens its rim). Capped so a ramp always survives — a plateau
 // spanning the whole reach would put a hard step at the reach's outer edge.
 const float WATER_FIELD_PLATEAU_MAX = 0.5;
+// --- THE WATER SURFACE: fixed feel (the strengths / cells / speeds are config levers — see the uniforms) ---
+// Sample B's UV offset, in texture tiles: moves B's origin off A's, so the two are not aligned even where the
+// rotation leaves a lattice point in place (the rotation is about the UV origin).
+const vec2 WATER_VARIATION_UV_OFFSET = vec2(0.371, 0.613);
+// Decorrelates the A/B patch noise from every other world-noise field in this shader (shore, rivers, blend).
+const vec2 WATER_VARIATION_NOISE_OFFSET = vec2(157.0, 43.0);
+// Half-width of the smoothstep that turns the patch noise into B's weight. Well under 0.5, so the noise's
+// middle band ramps and its extremes saturate: BROAD patches of pure A and pure B, joined by soft mixes.
+const float WATER_VARIATION_EDGE = 0.18;
+// Floor on the variance-preserving renormalisation's denominator sqrt(wA² + wB²) (min 1/√2 at a 50/50 mix);
+// only a guard — the weights always sum to 1, so it is never reached.
+const float WATER_VARIANCE_NORM_MIN = 0.5;
+// The two wave samples scroll in DIFFERENT, non-opposite directions (≈ 107° apart), so their sum drifts and
+// morphs instead of sliding rigidly one way. Unit vectors in wave-UV space.
+const vec2 WATER_WAVE_DIR_A = vec2(0.8, 0.6);
+const vec2 WATER_WAVE_DIR_B = vec2(-0.342, 0.940);
+// The second wave sample is ROTATED (radians) and SCALED against the first, so the two copies of the same art
+// never line up into one doubled pattern.
+const float WATER_WAVE_B_ROTATION = 1.9;
+const float WATER_WAVE_B_SCALE = 1.31;
+// The second wave sample's direction runs at this fraction of the first's speed — two rates, no beat.
+const float WATER_WAVE_B_SPEED = 0.73;
+// GLINT: two independent value-noise fields, each folded into a RIDGE net (1 where the field crosses 0.5), drift
+// through each other in different directions. A glint is their PRODUCT, so it lights only near where two
+// ridges cross — short scattered specks that crawl along the crests and wink out, a slow sparkle rather than a
+// flicker. (One ridge net on its own drew continuous closed loops that read as contour lines on the map.)
+const float GLINT_CELL = 0.45;                          // noise cell, in HEX RADII (zoom-invariant)
+const float GLINT_CELL_B_RATIO = 1.37;                  // the second field's cell, relative to the first
+const vec2 GLINT_DRIFT_A = vec2(0.045, 0.030);          // drift, in noise cells per second
+const vec2 GLINT_DRIFT_B = vec2(-0.028, 0.041);
+const vec2 GLINT_NOISE_OFFSET = vec2(311.0, 97.0);      // decorrelates it from every other noise field
+const vec2 GLINT_NOISE_OFFSET_B = vec2(29.0, 181.0);    // …and the second field from the first
+const float GLINT_RIDGE_LO = 0.8;                       // ridge value where a net starts to count (1 = crest)
+const float GLINT_WHITE_MIX = 0.5;                      // the glint's colour: this far from foam_color toward white
+// Even as specks the glint would cover the sea evenly, so a third, much broader noise field MASKS it into
+// scattered drifting patches — most of the water carries no glint at any moment.
+const float GLINT_MASK_CELL = 3.5;                      // in HEX RADII
+const vec2 GLINT_MASK_DRIFT = vec2(0.012, -0.008);      // noise cells per second — slower than the ridges
+const vec2 GLINT_MASK_OFFSET = vec2(71.0, 263.0);
+const float GLINT_MASK_LO = 0.55;                       // mask noise below this: no glint
+const float GLINT_MASK_HI = 0.8;                        // …above this: the full glint
 
 // v_world is the quad-LOCAL (viewport/screen-fixed) coordinate — it does NOT track the map on
 // pan/zoom. hex_origin (= MapView last_origin) moves with the pan/zoom, so hex-anchored terms
@@ -618,6 +679,88 @@ float luma(vec3 c) {
 // Mean luminance of a base layer (the zero-point of its pseudo-height), fetched by layer index.
 float mean_luma(int layer) {
 	return texelFetch(layer_luma_map, ivec2(layer, 0), 0).r;
+}
+
+vec2 rotate_uv(vec2 uv, float angle) {
+	float c = cos(angle);
+	float s = sin(angle);
+	return vec2(c * uv.x - s * uv.y, s * uv.x + c * uv.y);
+}
+
+// THE WATER SURFACE — the ONE sampler for every base sample of a WATER-class layer (the own-hex base, the depth
+// field's neighbours, the waterline cross-fade's water estimate). Every water layer goes through the identical
+// transform, so the depth-field mean between deep_ocean / shelf / … stays continuous: the result is a pure
+// function of (layer, world point, time), exactly as the plain sample it replaces was of (layer, world point).
+// Why it exists: the base art is sampled in continuous world space with repeat_enable, so ONE 512² texture
+// repeats as an EXACT COPY every 1/base_scale hex-rows; on a large water body nothing interrupts that, and the
+// copies read as a grid. Land hides it under biome seams, canopy and relief; open ocean cannot.
+//   1. ANTI-TILING — sample B at a rotated + rescaled + offset UV, mixed with sample A by broad world-noise
+//      patches (cell in hex radii → zoom-invariant). The mix is VARIANCE-PRESERVING: a plain lerp of two
+//      uncorrelated samples halves the detail's variance at 50/50, which reads as blurry flat blotches exactly
+//      where the patches meet; so the lerp's luma deviation from the layer mean is rescaled by
+//      1 / sqrt(wA² + wB²), applied as a LUMA offset so the hue is untouched.
+//   2. WAVES — two more samples of the same layer at a wave scale, scrolled with time in two non-opposite
+//      directions; their mean luma minus the layer mean, × water_wave_strength, is added to rgb.
+//   3. GLINT — scattered specks where two drifting value-noise ridge nets cross pull the colour a little
+//      toward a pale foam tint (see GLINT_*).
+// 2 and 3 run only with water_motion_enabled. With strength / waves / glint all 0 this returns the plain
+// sample A, bit-exact.
+vec3 water_surface(int layer, vec2 map_px) {
+	vec2 uv_a = map_px / (2.0 * hex_radius) * base_scale;   // == base_uv at the call site, same expression
+	vec3 col = texture(biome_array, vec3(uv_a, float(layer))).rgb;
+	bool vary = water_variation_strength > 0.0;
+	bool waves = water_motion_enabled && water_wave_strength > 0.0;
+	bool glint = water_motion_enabled && water_glint_strength > 0.0;
+	if (!vary && !waves && !glint) {
+		return col;
+	}
+	float mean = mean_luma(layer);
+	if (vary) {
+		float n = vnoise(map_px / max(water_variation_cell, BLEND_SOFT_MIN) + WATER_VARIATION_NOISE_OFFSET);
+		float w_b = smoothstep(0.5 - WATER_VARIATION_EDGE, 0.5 + WATER_VARIATION_EDGE, n)
+			* clamp(water_variation_strength, 0.0, 1.0);
+		if (w_b > 0.0) {
+			float w_a = 1.0 - w_b;
+			vec2 uv_b = rotate_uv(uv_a, water_variation_rotation) * water_variation_scale + WATER_VARIATION_UV_OFFSET;
+			vec3 b = texture(biome_array, vec3(uv_b, float(layer))).rgb;
+			vec3 lin = col * w_a + b * w_b;
+			float norm = 1.0 / max(sqrt(w_a * w_a + w_b * w_b), WATER_VARIANCE_NORM_MIN);
+			float dev = luma(lin) - mean;
+			col = lin + vec3(dev * (norm - 1.0));   // rescale the deviation about the mean, as a luma offset
+		}
+	}
+	float t = TIME + water_time_offset;
+	if (waves) {
+		vec2 uv_w = uv_a * water_wave_scale;
+		vec2 uv_w1 = uv_w + WATER_WAVE_DIR_A * (t * water_wave_speed);
+		vec2 uv_w2 = rotate_uv(uv_w, WATER_WAVE_B_ROTATION) * WATER_WAVE_B_SCALE
+			+ WATER_WAVE_DIR_B * (t * water_wave_speed * WATER_WAVE_B_SPEED);
+		float l1 = luma(texture(biome_array, vec3(uv_w1, float(layer))).rgb);
+		float l2 = luma(texture(biome_array, vec3(uv_w2, float(layer))).rgb);
+		col += vec3((0.5 * (l1 + l2) - mean) * water_wave_strength);
+	}
+	if (glint) {
+		vec2 gp = map_px / (hex_radius * GLINT_CELL) + GLINT_NOISE_OFFSET;
+		// Each ridge is 1 exactly where its field crosses 0.5: a thin sinuous line.
+		float ridge_a = 1.0 - abs(2.0 * vnoise(gp + GLINT_DRIFT_A * t) - 1.0);
+		float ridge_b = 1.0 - abs(2.0 * vnoise(gp / GLINT_CELL_B_RATIO + GLINT_NOISE_OFFSET_B + GLINT_DRIFT_B * t)
+			- 1.0);
+		float mask = smoothstep(GLINT_MASK_LO, GLINT_MASK_HI,
+			vnoise(map_px / (hex_radius * GLINT_MASK_CELL) + GLINT_MASK_OFFSET + GLINT_MASK_DRIFT * t));
+		float sparkle = smoothstep(GLINT_RIDGE_LO, 1.0, ridge_a) * smoothstep(GLINT_RIDGE_LO, 1.0, ridge_b)
+			* mask * water_glint_strength;
+		col = mix(col, mix(foam_color, vec3(1.0), GLINT_WHITE_MIX), sparkle);
+	}
+	return col;
+}
+
+// A BASE sample of any layer: water layers go through the one water sampler above, land keeps the plain
+// world-space sample. `is_water` is the layer's blend_class (id-map G) — never a guess from the id.
+vec3 base_sample(int layer, bool is_water, vec2 base_uv, vec2 map_px) {
+	if (is_water) {
+		return water_surface(layer, map_px);
+	}
+	return texture(biome_array, vec3(base_uv, float(layer))).rgb;
 }
 
 // Shore profile of a terrain: (sand_scale, foam_scale, wisp_scale), fetched by layer index. Neutral
@@ -1048,7 +1191,8 @@ void fragment() {
 		bool own_navigable_base = own_layer == river_navigable_terrain_id;
 		int underlying_layer = int(texture(navigable_underlying_map, id_uv).r * 255.0 + 0.5);
 		int base_layer = own_navigable_base ? underlying_layer : own_layer;
-		vec3 result = texture(biome_array, vec3(base_uv, float(base_layer))).rgb;
+		// Water layers take the ONE water sampler (anti-tiling + waves — see water_surface); land the plain sample.
+		vec3 result = base_sample(base_layer, own_class == CLASS_WATER, base_uv, v_map);
 
 		// ELIGIBILITY: the base rule is SAME-CLASS — a hex blends only with a neighbour of its OWN blend_class
 		// and a different terrain id. flat↔flat (grass↔soil ecotones) and water↔water (deep ocean grading into
@@ -1098,7 +1242,9 @@ void fragment() {
 				float d = dot(v_world - own_c, dir_v) - half_dist + wobble;
 				// 0 at the reach limit → 1 from the plateau line inward to (and across) the shared edge.
 				float w = smoothstep(-reach, -plateau, d);
-				wsum_rgb += texture(biome_array, vec3(base_uv, float(nlayer))).rgb * w;
+				// Out of reach contributes exactly 0 — skip the (now up to four-fetch) surface sample.
+				if (w <= 0.0) { continue; }
+				wsum_rgb += water_surface(nlayer, v_map) * w;   // the SAME surface the own hex drew
 				wsum += w;
 			}
 			result = wsum_rgb / wsum;
@@ -1429,7 +1575,7 @@ void fragment() {
 				float wl_reach = max(waterline_band * wobble, SHORE_REACH_MIN_PX);
 				float wl_outer = wl_reach * (1.0 + SHORE_WATERLINE_FADE);
 				if (waterline_band > 0.0 && abs(u) < wl_outer) {
-					vec3 own_base = texture(biome_array, vec3(base_uv, float(base_layer))).rgb;
+					vec3 own_base = base_sample(base_layer, own_water, base_uv, v_map);
 					vec3 land_sum = own_water ? vec3(0.0) : own_base;   // own carries weight 1 by construction
 					float land_w = own_water ? 0.0 : 1.0;
 					vec3 water_sum = own_water ? own_base : vec3(0.0);
@@ -1456,7 +1602,8 @@ void fragment() {
 						// The SAME unwobbled weight as the profile field — a noise displacement here would
 						// break the exact cross-edge agreement the whole cross-fade rests on.
 						float w = smoothstep(-half_dist * SHORE_PROFILE_REACH_APOTHEMS, 0.0, d);
-						vec3 nb_base = texture(biome_array, vec3(base_uv, float(base_layer_of(nuv, nlayer)))).rgb;
+						// The water estimate must be the water SURFACE the water hex draws, or the wet edge steps.
+						vec3 nb_base = base_sample(base_layer_of(nuv, nlayer), nb_water, base_uv, v_map);
 						if (nb_water) {
 							water_sum += nb_base * w;
 							water_w += w;

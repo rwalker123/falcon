@@ -96,6 +96,30 @@ const EDGE_BLEND_DEFAULT_RUGGED_LAND := true
 const WATER_BLEND_DEFAULT_WIDTH := 0.45          # reach (× radius → px), vs 0.25 on land
 const WATER_BLEND_DEFAULT_SOFT := 0.45           # feather half-width, vs 0.35 on land (capped as land is)
 const WATER_BLEND_DEFAULT_NOISE_AMOUNT := 0.45   # wobble amplitude, vs 0.30 on land
+# --- WATER SURFACE levers (terrain_config's "water_surface" block; the shader's water_surface()) ---
+# One base texture repeats as an EXACT COPY every 1/base_scale hex-rows, and open ocean has nothing to hide the
+# repeat under, so it read as a grid. The shader breaks it with a second rotated/rescaled sample mixed in by
+# broad world-noise patches (static), and adds a subtle scrolling wave ripple + a faint glint (animated, LOD-gated).
+# Chosen on blend_probe state 29/OCEAN at the game's r ≈ 45. Everything subtle: the ocean must not compete with
+# units and markers.
+const WATER_SURFACE_DEFAULT_VARIATION_STRENGTH := 1.0   # 0..1, B's peak weight; 0 = one plain sample (bit-exact)
+const WATER_SURFACE_DEFAULT_VARIATION_CELL := 3.0       # patch noise cell, in HEX RADII (× radius → px)
+const WATER_SURFACE_DEFAULT_VARIATION_ROTATION_DEG := 37.0
+const WATER_SURFACE_DEFAULT_VARIATION_SCALE := 0.83     # B's UV scale vs the base UV (off 1, so the periods differ)
+const WATER_SURFACE_DEFAULT_WAVE_STRENGTH := 0.8        # × the waves' luma deviation from the layer mean
+const WATER_SURFACE_DEFAULT_WAVE_SPEED := 0.012         # wave-texture UV per second
+const WATER_SURFACE_DEFAULT_WAVE_SCALE := 0.6           # wave UV vs base UV (< 1 = broader swells, and no minifying)
+const WATER_SURFACE_DEFAULT_GLINT_STRENGTH := 0.0       # peak pull of a glint speck toward the pale foam tint (ships OFF)
+const WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS := 24.0   # px: below this the waves + glint are off (no far-zoom shimmer)
+# Clamp ceilings, so a config typo cannot turn the ocean into strobing noise (the floors are all 0).
+const WATER_SURFACE_MAX_VARIATION_STRENGTH := 1.0
+const WATER_SURFACE_MIN_VARIATION_CELL := 0.25          # hex radii — below this the patches are speckle, not patches
+const WATER_SURFACE_MAX_VARIATION_CELL := 20.0
+const WATER_SURFACE_MIN_SCALE := 0.05                   # a UV scale of 0 would sample one texel across the whole map
+const WATER_SURFACE_MAX_SCALE := 4.0
+const WATER_SURFACE_MAX_WAVE_STRENGTH := 2.0
+const WATER_SURFACE_MAX_WAVE_SPEED := 1.0
+const WATER_SURFACE_MAX_GLINT_STRENGTH := 1.0
 # Shoreline (land↔water coasts): a continuous profile — land → sand → surf → water — built from a SIGNED
 # coast coordinate that straddles the shared edge, so no boundary in that chain is a hard step (see the
 # shader's shoreline block for the three rejected passes this replaced). The three reaches are fractions of
@@ -637,6 +661,7 @@ func update_shader_quad(radius: float, origin: Vector2, viewport_size: Vector2) 
 	m.set_shader_parameter("water_blend_band", water_width * radius)
 	m.set_shader_parameter("water_blend_soft", water_soft)
 	m.set_shader_parameter("water_blend_noise_amount", water_noise_amount)
+	_push_water_surface(m, config, radius)
 	m.set_shader_parameter("noise_cell", feature_noise_cell)   # shore/canopy/peak grain — raw px, decoupled
 	# Base biome texture is sampled in continuous world space (kills the per-hex repeat grid); one tile
 	# spans ~1/base_scale hex-rows. See BASE_DEFAULT_TEXTURE_SCALE / CLAUDE.md → Edge Blending.
@@ -792,6 +817,37 @@ func update_shader_quad(radius: float, origin: Vector2, viewport_size: Vector2) 
 	_terrain_blend_quad.visible = true
 	_terrain_blend_quad.set_rect_size(viewport_size)
 	_terrain_blend_quad.queue_redraw()
+
+func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -> void:
+	## The water-surface levers (see WATER_SURFACE_DEFAULT_*). The patch cell is a hex-radius fraction → px,
+	## like blend_width; the motion LOD mirrors rivers_lod_enabled (radius ≥ its own min radius).
+	var ws: Dictionary = config.get("water_surface", {})
+	var strength: float = clampf(float(ws.get("variation_strength", WATER_SURFACE_DEFAULT_VARIATION_STRENGTH)),
+		0.0, WATER_SURFACE_MAX_VARIATION_STRENGTH)
+	var cell: float = clampf(float(ws.get("variation_cell", WATER_SURFACE_DEFAULT_VARIATION_CELL)),
+		WATER_SURFACE_MIN_VARIATION_CELL, WATER_SURFACE_MAX_VARIATION_CELL)
+	var rotation_deg: float = float(ws.get("variation_rotation_deg", WATER_SURFACE_DEFAULT_VARIATION_ROTATION_DEG))
+	var variation_scale: float = clampf(float(ws.get("variation_scale", WATER_SURFACE_DEFAULT_VARIATION_SCALE)),
+		WATER_SURFACE_MIN_SCALE, WATER_SURFACE_MAX_SCALE)
+	var wave_strength: float = clampf(float(ws.get("wave_strength", WATER_SURFACE_DEFAULT_WAVE_STRENGTH)),
+		0.0, WATER_SURFACE_MAX_WAVE_STRENGTH)
+	var wave_speed: float = clampf(float(ws.get("wave_speed", WATER_SURFACE_DEFAULT_WAVE_SPEED)),
+		0.0, WATER_SURFACE_MAX_WAVE_SPEED)
+	var wave_scale: float = clampf(float(ws.get("wave_scale", WATER_SURFACE_DEFAULT_WAVE_SCALE)),
+		WATER_SURFACE_MIN_SCALE, WATER_SURFACE_MAX_SCALE)
+	var glint_strength: float = clampf(float(ws.get("glint_strength", WATER_SURFACE_DEFAULT_GLINT_STRENGTH)),
+		0.0, WATER_SURFACE_MAX_GLINT_STRENGTH)
+	var motion_min_radius: float = maxf(
+		float(ws.get("motion_min_radius", WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS)), 0.0)
+	m.set_shader_parameter("water_variation_strength", strength)
+	m.set_shader_parameter("water_variation_cell", cell * radius)            # patch noise cell (px)
+	m.set_shader_parameter("water_variation_rotation", deg_to_rad(rotation_deg))
+	m.set_shader_parameter("water_variation_scale", variation_scale)
+	m.set_shader_parameter("water_wave_strength", wave_strength)
+	m.set_shader_parameter("water_wave_speed", wave_speed)
+	m.set_shader_parameter("water_wave_scale", wave_scale)
+	m.set_shader_parameter("water_glint_strength", glint_strength)
+	m.set_shader_parameter("water_motion_enabled", radius >= motion_min_radius)
 
 func hide_shader_quad() -> void:
 	if _terrain_blend_quad != null and _terrain_blend_quad.visible:

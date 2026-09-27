@@ -12,6 +12,17 @@
     "blend_soft": 0.45,
     "blend_noise_amount": 0.45
   },
+  "water_surface": {
+    "variation_strength": 1.0,
+    "variation_cell": 3.0,
+    "variation_rotation_deg": 37.0,
+    "variation_scale": 0.83,
+    "wave_strength": 0.8,
+    "wave_speed": 0.012,
+    "wave_scale": 0.6,
+    "glint_strength": 0.0,
+    "motion_min_radius": 24.0
+  },
   "use_terrain_textures": true,
   "use_edge_blending": true,
   "lod_near_distance": 50.0,
