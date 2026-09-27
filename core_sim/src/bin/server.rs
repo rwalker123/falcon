@@ -7303,14 +7303,29 @@ fn handle_cancel_order(
         return;
     }
 
-    {
+    // **A cleared far row brings its whole caravan home** — the rows are read before the clear,
+    // because `clear_kinds` holds no larder and drops them with their parties still on the road.
+    let cleared_rows: Vec<core_sim::LaborAssignment> = {
         let mut entity = app.world.entity_mut(band.entity);
         if clears_travel {
             entity.remove::<BandTravel>();
         }
-        if let Some(mut allocation) = entity.get_mut::<LaborAllocation>() {
-            allocation.clear_kinds(|target| !cancel_scope_clears(scope, target));
+        match entity.get_mut::<LaborAllocation>() {
+            Some(mut allocation) => {
+                let cleared = allocation
+                    .assignments
+                    .iter()
+                    .filter(|row| row.party.is_some() && cancel_scope_clears(scope, &row.target))
+                    .cloned()
+                    .collect();
+                allocation.clear_kinds(|target| !cancel_scope_clears(scope, target));
+                cleared
+            }
+            None => Vec::new(),
         }
+    };
+    for row in &cleared_rows {
+        core_sim::bring_the_dropped_party_home(&mut app.world, band.entity, row);
     }
 
     let tick = app.world.resource::<SimulationTick>().0;

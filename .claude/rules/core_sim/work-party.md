@@ -247,17 +247,29 @@ kit, an invalid floor or an oversized crew.
 mean, so a float) and `first_load_turn` (1-based, `0` = none within the horizon) — every walk field
 reads `0` inside the apron.
 
-## Fold-back, unassign, abandon — everything comes home
+## Every exit brings everything home, through ONE settle step
 
-**A caravan that ends early must not lose what is on the road.** `WorkParty::hand_over_everything`
-settles the load and every walker's pack into the band on every exit:
+**A caravan that ends early must not lose what is on the road.** `systems::stand_down_party` is the
+one settle step — `WorkParty::hand_over_everything` into `bring_the_party_home` — and every path that
+ends a posting routes through it:
 
-- **A lapsing row** — the herd the posting follows has left the registry, or a holding has nothing
-  left to hold; the row ends with `status=lapsed` and its caravan comes home.
+- **A lapsing row** — a holding with nothing left to hold; the row ends with `status=lapsed` and its
+  caravan comes home before the row is removed.
+- **A source that stopped posting** — the herd drifted back inside `band_work_range` (or the band
+  moved up to it), or the herd **left the registry** (`status=lapsed reason=herd_gone`). Neither turn
+  posts a party, so neither reaches the per-posting settlement; the foot of the pass sweeps every row
+  still carrying a party that posted nothing this turn, settles it, and clears `party` — **before**
+  the `lapsed` removal, which would otherwise drop the row with its caravan on the road. A re-entered
+  row is plainly local afterwards and publishes no party field.
 - **Unassign** — a row held at zero hands has nobody at the source and nobody to send, so the caravan
-  is brought home and the party stood down (the row survives as a holding if it holds anything).
+  is brought home and the party stood down (the row survives as a holding if it holds anything). A
+  zero-crew row that posts nothing is caught by the sweep above.
 - **Abandon / a zero-crew drop** — `LaborAllocation::drop_source_row` returns the row it removed, and
   `systems::bring_the_dropped_party_home` settles its party.
+- **The starvation shed** — `LaborAllocation::normalize` holds no larder, so the labor pass reads the
+  parties off the rows before the walk and settles the party of every row the shed drops outright.
+- **`cancel_order`** — `clear_kinds` holds no larder either, so `handle_cancel_order` reads the rows it
+  is about to clear and brings each one's party home through `bring_the_dropped_party_home`.
 
 > #### ⛔ FOOD HANDED OVER ON THE WAY OUT GOES ON THE LEDGER'S ROUTE ARM
 >
@@ -268,8 +280,10 @@ settles the load and every walker's pack into the band on every exit:
 > credits it there. Food a **live** posting lands (a delivered pack) goes through the row's `actual`
 > like any other take.
 
-Pinned by `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home`, on both the
-larder and the route arm.
+Pinned by `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home`,
+`::a_herd_back_inside_the_apron_brings_its_caravan_home_once` and
+`::a_vanished_herd_brings_its_caravan_home_as_the_row_lapses`, each on both the larder and the route
+arm.
 
 ## `BandReach` no longer asks about distance
 
@@ -290,4 +304,6 @@ the arm reach this row"* is the question the settlements must go on asking.
 | `work_party::tests::departures_never_exceed_the_hunters_present` | a take wanting more packs than hunters leaves the rest in the load |
 | `work_party::tests::a_carcass_heavier_than_one_pack_goes_home_over_several_porters` | the big carcass: nothing wasted that the resident take would waste |
 | `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home` | the road comes home, on the larder and the route arm |
+| `work_party_caravan::a_herd_back_inside_the_apron_brings_its_caravan_home_once` | a re-entered source settles its caravan once, clears `party` and publishes none |
+| `work_party_caravan::a_vanished_herd_brings_its_caravan_home_as_the_row_lapses` | a vanished herd's caravan comes home once, before the row lapses |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes` | forecast == actual on the encoded snapshot |

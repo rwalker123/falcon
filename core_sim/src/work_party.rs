@@ -770,7 +770,7 @@ mod tests {
         );
     }
 
-    /// ⛔ **The fold-back brings the road home** — every walker's pack and the load.
+    /// ⛔ **A posting that ends brings the road home** — every walker's pack and the load.
     #[test]
     fn handing_over_brings_every_walker_and_the_load_home() {
         let mut party = WorkParty::posted(UVec2::ZERO, 6, 6);

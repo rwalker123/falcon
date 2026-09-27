@@ -1199,8 +1199,8 @@ message WorkPartyForecastReply {
   // ordinary local row's steady rate. Every walk field below reads 0 with it.
   bool posts_a_party = 1;
   // THE STEADY FOOD PER TURN ARRIVING AT THE HOME BAND - the number the assigned row will publish
-  // as `netRateHome`: the eaten share plus every pack that lands, averaged over the forecast
-  // horizon. Comparable across a near source and a far one.
+  // as `netRateHome`: every pack that lands, averaged over the forecast horizon. Comparable across
+  // a near source and a far one.
   float rate_home = 2;
   // The ONE-WAY walk in tiles, measured from the band's apron and shortened by any road.
   uint32 walk_tiles = 3;

@@ -347,3 +347,141 @@ fn unassigning_a_caravan_mid_walk_brings_every_pack_home() {
         "the party is stood down"
     );
 }
+
+/// A hex inside the band's own apron (`band_work_range` 2), on the camp's row.
+const INSIDE_THE_APRON: u32 = 1;
+/// How close two food totals must agree — the settled load is summed in `f32` across walkers.
+const SAME_FOOD: f32 = 1e-2;
+
+/// **A CARAVAN WITH A NONZERO LOAD AND SOMEBODY ON THE ROAD** — run a far hunt until both hold, and
+/// hand back what the party is carrying in all.
+fn a_caravan_carrying_food(app: &mut App, band: Entity) -> f32 {
+    for _ in 0..TURNS_TO_SEE_A_PORTER {
+        resolve_a_turn(app);
+        let party = app
+            .world
+            .get::<LaborAllocation>(band)
+            .and_then(|allocation| allocation.assignments.first())
+            .and_then(|row| row.party.clone())
+            .expect("the far row carries a party");
+        if party.hunters_on_the_road() > 0 && party.load_food > 0.0 {
+            return party.load_food + party.on_the_road.iter().map(|w| w.food).sum::<f32>();
+        }
+    }
+    panic!("liveness: the caravan must put somebody on the road with food still in the load");
+}
+
+/// What the band's food ledger has taken in on its route arm so far — where a party's homecoming
+/// is entered.
+fn route_received(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .last_food_transfers
+        .received()
+}
+
+/// ⛔ **A HERD THAT WANDERS BACK INSIDE THE APRON TAKES THE PARTY HOME, ONCE.** The row stops
+/// posting — the band's own hands reach the herd again — so its caravan has ended: the load and
+/// every walker's pack must reach the larder on that turn, on the route arm, and never again; the
+/// row carries no party afterwards and publishes none.
+#[test]
+fn a_herd_back_inside_the_apron_brings_its_caravan_home_once() {
+    let (mut app, band) = world_hunting_at(5);
+    let carried = a_caravan_carrying_food(&mut app, band);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == HERD_ID)
+            .expect("the fixture herd is still seated");
+        let inside = UVec2::new(CAMP.x + INSIDE_THE_APRON, CAMP.y);
+        herd.route = vec![inside];
+        herd.step_index = 0;
+        herd.current_pos = inside;
+    }
+    let larder_before = larder(&app, band);
+    let route_before = route_received(&app, band);
+    resolve_a_turn(&mut app);
+    let local_take = app
+        .world
+        .get::<LaborAllocation>(band)
+        .and_then(|allocation| allocation.last_yields.first().cloned())
+        .expect("the local row publishes its yield")
+        .actual;
+    let landed = larder(&app, band) - larder_before - local_take;
+    let routed = route_received(&app, band) - route_before;
+    assert!(
+        (landed - carried).abs() < SAME_FOOD,
+        "the load and every pack land home beside the local take: {landed} of {carried}"
+    );
+    assert!(
+        (routed - carried).abs() < SAME_FOOD,
+        "…on the route arm, outside this turn's income: {routed} of {carried}"
+    );
+    let row = app
+        .world
+        .get::<LaborAllocation>(band)
+        .and_then(|allocation| allocation.assignments.first().cloned())
+        .expect("the row survives as a local hunt");
+    assert!(row.party.is_none(), "the row is plainly local again");
+    let published = published_party(&app);
+    assert_eq!(
+        (
+            published.party_workers,
+            published.hunters_on_the_road,
+            published.walk_tiles,
+            published.walk_out_remaining,
+            published.next_load_home_in,
+        ),
+        (0, 0, 0, 0, 0),
+        "the published row carries no party fields: {published:?}"
+    );
+    // **Once**: nothing more arrives on the route arm the turn after.
+    let route_after = route_received(&app, band);
+    resolve_a_turn(&mut app);
+    assert_eq!(
+        route_received(&app, band),
+        route_after,
+        "the caravan came home once — a later turn hands nothing more over"
+    );
+}
+
+/// ⛔ **A HERD GONE FROM THE REGISTRY TAKES ITS PARTY HOME BEFORE THE ROW LAPSES.** The row ends
+/// (`status=lapsed reason=herd_gone`), and the load and every walker's pack must reach the larder
+/// on that turn, on the route arm, exactly once.
+#[test]
+fn a_vanished_herd_brings_its_caravan_home_as_the_row_lapses() {
+    let (mut app, band) = world_hunting_at(5);
+    let carried = a_caravan_carrying_food(&mut app, band);
+    app.world.resource_mut::<HerdRegistry>().clear();
+    let larder_before = larder(&app, band);
+    let route_before = route_received(&app, band);
+    resolve_a_turn(&mut app);
+    let landed = larder(&app, band) - larder_before;
+    let routed = route_received(&app, band) - route_before;
+    assert!(
+        (landed - carried).abs() < SAME_FOOD,
+        "the load and every pack land home as the row lapses: {landed} of {carried}"
+    );
+    assert!(
+        (routed - carried).abs() < SAME_FOOD,
+        "…on the route arm, outside this turn's income: {routed} of {carried}"
+    );
+    assert!(
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("the band keeps its allocation")
+            .assignments
+            .is_empty(),
+        "the row whose herd is gone lapses"
+    );
+    let larder_after = larder(&app, band);
+    resolve_a_turn(&mut app);
+    assert_eq!(
+        larder(&app, band),
+        larder_after,
+        "the caravan came home once — a later turn hands nothing more over"
+    );
+}
