@@ -1124,6 +1124,22 @@ luma deviation from the layer's mean (`layer_luma_map`, the `luma()` weights) is
 apart, at `WATER_WAVE_B_SPEED` of the rate), so their sum morphs rather than sliding rigidly one way.
 Their mean luma minus the layer mean, × `wave_strength`, is added to rgb. `wave_scale` stays under 1:
 the base array has no mipmaps and is already minified at r ≈ 45, and a finer animated sample shimmers.
+**On its own this term is NOT visible motion**: it shifts fine grain, and measured over the open-ocean
+box it moves the water by **0.94 levels mean in a second** (1.18 in eight) — Ray ran it live and saw the
+sea as still. It stays as moving texture under the swell below, which is what reads as waves.
+
+**2b — swell (animated).** Broad soft light/dark bands travelling across the water: three sine trains
+(`SWELL_DIR_A/B/C`, ≈20°, 102° and 300° — no pair near-opposite, so they never lock into a standing
+pattern) at wavelengths `swell_wavelength × SWELL_WAVELENGTH_RATIO` and relative amplitudes
+`SWELL_AMPLITUDE` (1.0 / 0.4 / 0.25 — one train dominates, so it reads as a swell with a direction
+rather than a cellular interference field; at 1.0 / 0.6 / 0.45 it looked like cobbles). Each train's
+speed is `swell_speed × √(its wavelength ratio)` — deep-water dispersion, longer trains run faster — so
+the sum never repeats in space or time. The phase is WARPED by low-frequency world noise
+(`SWELL_WARP_*`, cell 2.5 r, ±0.9 r), so crests bend and are neither straight nor periodic, and a broad
+drifting noise (`SWELL_GROUP_*`) scales the amplitude into groups, so some water is calmer. The sum,
+normalised to ±1, × `swell_strength`, is added to rgb as a LUMA offset: crest lighter, trough darker,
+hue untouched. Everything is in hex radii, so it looks the same at every zoom; it costs no texture fetch
+(three `sin` and three value-noise evaluations).
 
 **3 — glint (animated).** Two value-noise fields, each folded into a ridge net, drift through each other;
 the glint is their PRODUCT, so it lights only near ridge crossings — short scattered specks that crawl
@@ -1131,11 +1147,11 @@ and wink out. A third, broad noise (`GLINT_MASK_*`) masks it into drifting patch
 colour toward a pale tint halfway from `foam_color` to white, × `glint_strength`. A single ridge net was
 tried first and drew continuous closed loops over the whole sea that read as contour lines on a map.
 
-**LOD gate.** Waves and glint run only while `water_motion_enabled` — `radius ≥ motion_min_radius`,
+**LOD gate.** Waves, swell and glint run only while `water_motion_enabled` — `radius ≥ motion_min_radius`,
 pushed by `TerrainRenderer._push_water_surface` the way `rivers_lod_enabled` is. Below it the static
 anti-tiling still runs, and nothing in it reads `TIME`, so the far zoom cannot shimmer.
 
-**Bit-exact when off.** With `variation_strength`, `wave_strength` and `glint_strength` all 0 the
+**Bit-exact when off.** With `variation_strength`, `wave_strength`, `swell_strength` and `glint_strength` all 0 the
 function returns sample A through the same expression the call site used before. Verified: a full
 `blend_probe` run on zeroed levers is byte-identical to the pre-surface render on all 291 frames. On the
 shipped levers 117 of them moved, every one with water in it; every land-only frame is byte-identical.
@@ -1143,12 +1159,12 @@ shipped levers 117 of them moved, every one with water in it; every land-only fr
 **Continuous redraw.** The client does not run `low_processor_mode`, so Godot renders the canvas every
 frame and `TIME` advances without `MapView` calling `queue_redraw` — the same mechanism the river
 scroll relies on. Shader `TIME` rolls over (`rendering/limits/time/time_rollover_secs`, 3600 s by
-default), so the wave and glint phase jump once an hour, as the river scroll does.
+default), so the wave, swell and glint phase jump once an hour, as the river scroll does.
 
-**Harness phase.** `water_time_offset` is added to `TIME` for both animated terms. `TerrainRenderer`
-never pushes it (0 in the game); `blend_probe` sets it on the material to render two phases while
-frozen at `Engine.time_scale` 0. Both terms enter as offsets (a UV scroll, a noise-domain drift), so
-phase 0 still draws them — the harness freeze's re-check rule.
+**Harness phase.** `water_time_offset` is added to `TIME` for every animated term. `TerrainRenderer`
+never pushes it (0 in the game); `blend_probe` sets it on the material to render several phases while
+frozen at `Engine.time_scale` 0. Every term enters as an offset (a UV scroll, a phase, a noise-domain
+drift), so phase 0 still draws it — the harness freeze's re-check rule.
 
 **Cost.** Per `water_surface` call with the shipped levers: up to 4 `biome_array` fetches (A, B where its
 patch weight is non-zero, two waves) plus 1 `layer_luma_map` texel fetch and 4 value-noise evaluations,
@@ -1164,16 +1180,94 @@ and the waterline cross-fade adds up to seven calls in its narrow band at a coas
 | `variation_scale` | 0.83 | sample B's UV scale against the base UV — off 1, so the two periods differ |
 | `wave_strength` | 0.8 | × the waves' luma deviation from the layer mean |
 | `wave_speed` | 0.012 | wave-texture UV per second (≈ 7 px/s at r ≈ 45) |
-| `wave_scale` | 0.6 | wave UV against the base UV; < 1 is broader swells and no minifying |
+| `wave_scale` | 0.6 | wave UV against the base UV; < 1 is broader and no minifying |
+| `swell_strength` | 0.045 | peak luma offset of a swell crest / trough (luma units, 0..1) |
+| `swell_wavelength` | 3.0 | the primary swell's wavelength, in hex radii |
+| `swell_speed` | 0.6 | the primary swell's phase speed, hex radii per second — a crest crosses a hex (≈1.7 r) in ~3 s |
 | `glint_strength` | 0.0 | peak pull of a glint speck toward its pale tint. **Ships off:** at 0.14 the specks read at map scale as white curls — scratches on the water, not whitecaps |
-| `motion_min_radius` | 24 | px; below it the waves and glint are off |
+| `motion_min_radius` | 24 | px; below it the waves, swell and glint are off |
 
 Fallbacks are the `WATER_SURFACE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
 lever; the fixed feel (directions, cells, offsets, the mask) is the `WATER_*` / `GLINT_*` consts in the
 shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
 `variation_cell` (4) let one rotated sample cover most of the frame and showed B's own repeat on a
 diagonal; 3 keeps both samples in view. The repeat measure there reads **0.15** on the plain sample
-and **0.73** with the anti-tiling (1 = no correlation at the tile period).
+and **0.73** with the anti-tiling (1 = no correlation at the tile period). The swell was chosen on a
+four-phase sequence one second apart (`OCEAN_seq0..3`): the shipped surface moves the open water by
+**4.2 levels mean per second** (luma ≈ 30), against **0.94** for the texture waves alone.
+
+## Water temperature grade
+
+**Why.** Climate should read off the sea at a glance: cold seas darker, greyer, slate; warm seas a
+touch brighter and more turquoise. It is a colour GRADE on graded open water, not an overlay — it has to
+read as sea colour, never as the Temperature overlay left on.
+
+**The data.** `temp_map` is a per-hex `RGBAF` texture beside `id_map` / `elev_map`: R = the tile's °C
+(`MapView.tile_temperature`), G = 1 where the hex has a reading the player may know, B = 1 where the
+hex's terrain is graded. It is built by `TerrainRenderer.rebuild_temperature_map`, called from
+`rebuild_shader_maps` — so it rides every full splatmap rebuild, including the FoW toggle's. **Tile
+temperature drifts every turn and a delta that moves it names `tiles`, which is NOT a shader-map
+section**, so `MapView.display_snapshot` refreshes it on its own when `tiles` changed and no full
+rebuild ran: the incremental path patches only the delta's cells (`update_temperature_cells`, an
+in-place `Image.set_pixel` + `ImageTexture.update`), and a full tile re-ingest rebuilds the whole map.
+Without that the grade would show the temperature of whichever frame last touched the terrain.
+
+**Which water.** `water_temperature.graded_terrains`, BY NAME (`deep_ocean`, `continental_shelf`);
+resolved to ids when the map is built. Lakes, coral, vents and every land terrain are untouched.
+
+**The anchors are the sim's.** `neutral = (boreal_max + temperate_max) / 2`; the cold weight is
+`clamp((neutral − T) / (neutral − polar_max), 0, 1)` and the warm weight
+`clamp((T − neutral) / (temperate_max − neutral), 0, 1)` — full cold at the polar cut point, nothing
+mid-temperate, full warm at the tropical boundary. The three cut points are `TileClimate`'s (the
+`climate_*_max_temp` overlay keys MapView adopts), pushed as `water_temp_neutral` / `_cold_span` /
+`_warm_span`. **With no published cut points the grade is off** (`water_temp_enabled` false) — the
+client invents no threshold, the Climate Authority rule.
+
+**Smooth across hexes.** The pixel's temperature and its graded-ness are neighbour-weighted means over
+the WATER hexes of {own + 6 neighbours}, with the depth field's own `smoothstep(−reach, −plateau, d)`
+weight (the `water_blend` reach and plateau). A neighbour without a reading adds nothing to the
+temperature and — having none — no graded-ness. **It is deliberately UNWOBBLED**: with no wobble a
+neighbour's weight is exactly 1 at the shared edge from both frames, so both means meet there for any
+config; the wobbled depth field only does so while its wobble stays under its plateau. So a
+temperature step between two hexes, and a graded↔ungraded (deep↔coral) seam, both ramp across the edge
+instead of stepping on it.
+
+**The grade** (`water_temperature_grade`, applied to the water fragment's `result` after the depth field,
+before the shore — the foam colour is unchanged): cold desaturates toward luma by
+`cold_desaturate × cold`, pulls toward `cold_tint`'s hue by `cold`, and scales by
+`mix(1, cold_brightness, cold)`; warm pulls toward `warm_tint`'s hue by `warm` and scales by
+`mix(1, warm_brightness, warm)`. **The tint pull keeps luma** (`tint_keep_luma`): multiply by the tint —
+so the texture's detail survives — then rescale back to the original luma; brightness moves only through
+the brightness levers. The whole result is mixed in by `strength × graded-ness`.
+
+**It runs at every zoom.** Climate reads most at far zoom, and nothing in it moves, so it is not under
+the motion LOD gate.
+
+**Fog.** The sim publishes every tile's temperature whatever the viewer has seen (the `TileState` rows
+are not fog-filtered), and the tile card already shows a DISCOVERED hex's temperature
+(`temperature` is not in `FOW_DISCOVERED_HIDDEN_KEYS`), so grading a remembered sea reveals nothing the
+card does not. An UNEXPLORED hex is fog-filled regardless — but the grade blends neighbours in, so an
+unexplored hex's reading would reach the edge of a visible one. So with FoW on, `_temperature_texel`
+marks an unexplored hex **no data**, and the grade near it rests on the visible hexes alone.
+
+**Strength 0 is bit-exact** (`water_temp_enabled` false skips the block): `blend_probe` state 30
+asserts the temperature fixture at strength 0 renders byte-identical to state 29's shipped frame.
+Every existing harness frame is byte-identical — no fixture before state 30 publishes cut points.
+
+| Lever (`terrain_config.json` → `water_temperature`) | Shipped | Meaning |
+|---|---|---|
+| `strength` | 1.0 | global multiplier; 0 = off, bit-exact |
+| `graded_terrains` | `deep_ocean`, `continental_shelf` | the water terrains graded, by name |
+| `cold_tint` | `[158, 168, 179]` | slate — a hue target, applied luma-preserving |
+| `cold_desaturate` | 0.55 | fraction of the way to grey at full cold |
+| `cold_brightness` | 0.86 | colour scale at full cold |
+| `warm_tint` | `[77, 204, 199]` | turquoise |
+| `warm_brightness` | 1.15 | colour scale at full warm |
+
+Fallbacks are `WATER_TEMPERATURE_DEFAULT_*` in `ui/TerrainRenderer.gd`. Chosen on `blend_probe` state
+**30 (OCEANTEMP)** (`harness-map-probes.md`): the per-row shift over the deep ocean runs **−4.4 luma
+levels / −0.27 saturation** at the polar rows to **+4.7 / +0.14** at the tropical ones. A
+`cold_brightness` of 0.82 took the polar deep ocean to near-black; 0.86 keeps it readable as water.
 
 ## Everything this shader draws exists ONLY in this shader — and a map OVERLAY turns it off
 

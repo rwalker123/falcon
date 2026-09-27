@@ -78,6 +78,18 @@ static func set_cut_points(polar_max: float, boreal_max: float, temperate_max: f
 static func has_bands() -> bool:
 	return _bands_published
 
+## The published cut points themselves (°C), for a reader that needs the NUMBERS rather than a band
+## name — the terrain shader's water temperature grade anchors on them. Meaningless until
+## `has_bands()`, which every caller must ask first.
+static func polar_max() -> float:
+	return _polar_max
+
+static func boreal_max() -> float:
+	return _boreal_max
+
+static func temperate_max() -> float:
+	return _temperate_max
+
 ## Named climate band for a tile temperature (°C). Returns BAND_UNKNOWN until the sim
 ## publishes its cut points.
 static func band_for(temperature: float) -> String:

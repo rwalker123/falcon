@@ -1110,13 +1110,20 @@ const OCEAN_COAST_CROP := Vector2i(20, 8)               # the island's coast
 const OCEAN_DETAIL_CROP_RADII := 2.4
 # The levers each variant sets inside the `water_surface` block (merged over the shipped block, so the
 # levers it does not name stay shipped). OFF is the plain single sample — the pre-surface render, bit-exact.
-const OCEAN_OFF_SURFACE := {"variation_strength": 0.0, "wave_strength": 0.0, "glint_strength": 0.0}
-const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "glint_strength": 0.0}
-const OCEAN_WAVES_SURFACE := {"glint_strength": 0.0}   # the wave term alone, so it can be judged apart
+const OCEAN_OFF_SURFACE := {
+	"variation_strength": 0.0, "wave_strength": 0.0, "swell_strength": 0.0, "glint_strength": 0.0,
+}
+const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "swell_strength": 0.0, "glint_strength": 0.0}
+# The scrolled-TEXTURE wave term alone — kept as a frame because it is the term that measured as invisible.
+const OCEAN_WAVES_SURFACE := {"swell_strength": 0.0, "glint_strength": 0.0}
+const OCEAN_SWELL_SURFACE := {"wave_strength": 0.0, "glint_strength": 0.0}   # the swell alone
 const OCEAN_SHIPPED_SURFACE := {}
 # The SECOND motion phase, in seconds of shader time (the `water_time_offset` uniform — the harness runs at
-# Engine.time_scale 0, so TIME itself never moves). Long enough that the drift is plain in the diff.
-const OCEAN_MOTION_DT := 8.0
+# Engine.time_scale 0, so TIME itself never moves). ONE second: the claim is that a player sees the water move
+# within a moment of looking, so that is the interval the magnitude is measured over.
+const OCEAN_MOTION_DT := 1.0
+# The look-at sequence: the shipped surface at this many phases, OCEAN_MOTION_DT apart.
+const OCEAN_SEQUENCE_FRAMES := 4
 const OCEAN_TIME_OFFSET_UNIFORM := "water_time_offset"
 # A grid twice the size in both axes fits at r ≈ 22.5 — under the shipped motion_min_radius (24), still above
 # EDGE_BLEND_MIN_RADIUS (16) so the depth field and shore run: the far zoom where the waves must be OFF.
@@ -1131,8 +1138,46 @@ const OCEAN_REPEAT_BOX_ROWS := Vector2i(1, 14)
 const OCEAN_REPEAT_SAMPLE_STRIDE := 3                   # px — every pixel is 1.7M get_pixel calls; 1 in 9 is plenty
 const OCEAN_REPEAT_OFF_MAX := 0.35                      # the plain sample MUST read as a repeat (premise)
 const OCEAN_REPEAT_ON_MIN := 0.6                        # the surface must bring it near an unrelated texture
-# Motion liveness: at game zoom two phases must differ over a real fraction of the frame; at far zoom by 0 px.
-const OCEAN_MOTION_MIN_CHANGED_PX := 100000
+# MOTION MAGNITUDE: mean |ΔL| (8-bit levels) over the open-ocean box between two phases OCEAN_MOTION_DT apart.
+# A changed-pixel COUNT was the first claim and it passed a sub-perceptual wave: nearly every pixel of a
+# scrolled texture changes by a level or two, so the count was 1.5M of 2.07M on water that looked still
+# (measured 1.18 levels mean over EIGHT seconds). What a player sees is how far the brightness moves, so the
+# claim is on that. The bar is ~3 levels mean on this dark water (luma ≈ 30): a mean that size means the
+# swell bands are moving by several levels at their edges, where the eye reads them.
+const OCEAN_MOTION_MIN_MEAN_DL := 3.0
+const LUMA_LEVELS := 255.0
+
+# State 30 (OCEANTEMP): the WATER TEMPERATURE GRADE (`terrain-blend-shader.md` → Water temperature grade).
+# State 29's geography at r ≈ 45 on a temperature gradient running polar (top) → tropical (bottom), with the
+# climate anchors the SIM SHIPS read out of its own config rather than restated here, plus a coral_shelf patch
+# in the warm rows (an UNGRADED water terrain: the graded-ness must ramp across its seam, not step).
+const OCEANTEMP_SIM_CONFIG := "res://../../core_sim/src/data/simulation_config.json"
+const OCEANTEMP_CLIMATE_KEY := "climate"
+const OCEANTEMP_CORAL_ID := 3                           # coral_shelf — water, deliberately not graded
+const OCEANTEMP_CORAL_HEXES := [Vector2i(9, 12), Vector2i(10, 12), Vector2i(9, 13), Vector2i(10, 13), Vector2i(11, 13)]
+# How far past each end anchor the gradient runs, as a fraction of that side's span: the top and bottom rows
+# then sit at FULL cold / FULL warm rather than just touching them.
+const OCEANTEMP_OVERSHOOT := 0.25
+const OCEANTEMP_OFF := {"strength": 0.0}
+# (b) MONOTONE: per hex row over the deep-ocean columns, the graded frame minus the ungraded one. The mean luma
+# and saturation shifts must not DROP from one row to the next by more than this (8-bit levels / HSV units),
+# and must be negative at the top and positive at the bottom.
+const OCEANTEMP_BAND_COLS := Vector2i(1, 14)
+const OCEANTEMP_LUMA_TOLERANCE := 0.4 / 255.0
+const OCEANTEMP_SAT_TOLERANCE := 0.02
+# (c) NO HEX STEP, on a SPLIT fixture (rows < OCEANTEMP_SPLIT_ROW polar, the rest tropical) — the largest jump
+# two neighbouring hexes can carry. Along lines crossing each cold|warm edge, on the graded-minus-ungraded luma:
+# the |Δ| of the 2-px pair straddling the edge over the largest 2-px |Δ| elsewhere on the same line. A blended
+# edge scores ≤ ~1 (the edge is no steeper than the ramp around it); a per-hex grade is a step, and scores
+# many times that.
+const OCEANTEMP_SPLIT_ROW := 8
+const OCEANTEMP_EDGE_SAMPLES := 9                        # sample lines per edge, spread along it
+const OCEANTEMP_EDGE_SPAN := 0.35                        # of the radius, either side of the edge midpoint
+const OCEANTEMP_EDGE_REACH := 0.6                        # of the radius, how far each line runs either side
+const OCEANTEMP_EDGE_GUARD_PX := 3.0                     # px around the edge excluded from "elsewhere"
+const OCEANTEMP_EDGE_RATIO_MAX := 1.5
+const OCEANTEMP_EDGE_COLS := Vector2i(2, 13)
+const OCEANTEMP_NEIGHBOUR_TOLERANCE := 0.05              # fractional slack when finding a hex's row+1 neighbours
 
 # The state filter's cmdline flag (after the scene's `--`), e.g. `-- --only=G` / `-- --only=1,4,G`.
 const ONLY_ARG_PREFIX := "--only="
@@ -1179,8 +1224,9 @@ func _ready() -> void:
 	# `process_frame`, which still fires at time_scale 0.
 	#
 	# The WATER SURFACE (state 29) later became a third TIME reader, and was classified the same way: its
-	# waves are a UV scroll and its glint a drift of the noise domain, both offsets, so phase 0 still draws
-	# them. State 29 renders a second phase through the `water_time_offset` uniform, never by un-freezing.
+	# waves are a UV scroll, its swell a travelling phase and its glint a drift of the noise domain — all
+	# offsets, so phase 0 still draws them. States 29/30 render other phases through the `water_time_offset`
+	# uniform, never by un-freezing.
 	#
 	# RE-CHECK RULE for anything animated added later: an AMPLITUDE term (`A * sin(t)`) VANISHES at
 	# phase 0, and a frame that is deterministic because its subject disappeared is worse than one
@@ -1418,6 +1464,10 @@ func _ready() -> void:
 	if _want("29/OCEAN"):
 		# --- state 29 (OCEAN): the open-ocean repeat grid + the water surface that breaks it (see OCEAN_*) ---
 		await _render_ocean_state()
+
+	if _want("30/OCEANTEMP"):
+		# --- state 30 (OCEANTEMP): the water temperature grade, polar → tropical (see OCEANTEMP_*) ---
+		await _render_ocean_temperature_state()
 
 	_finish()
 
@@ -2161,9 +2211,14 @@ func _render_ocean_state() -> void:
 	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves", 0.0, false)
 	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves_t2", OCEAN_MOTION_DT, false)
 	_save_diff("OCEAN_waves", "OCEAN_waves_t2", "OCEAN_waves_motion_diff")
+	await _render_ocean_frame(OCEAN_SWELL_SURFACE, "OCEAN_swell", 0.0, false)
+	await _render_ocean_frame(OCEAN_SWELL_SURFACE, "OCEAN_swell_t2", OCEAN_MOTION_DT, false)
+	_save_diff("OCEAN_swell", "OCEAN_swell_t2", "OCEAN_swell_motion_diff")
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped", 0.0, true)
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped_t2", OCEAN_MOTION_DT, false)
 	_save_diff("OCEAN_shipped", "OCEAN_shipped_t2", "OCEAN_motion_diff")
+	for i in range(OCEAN_SEQUENCE_FRAMES):
+		await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_seq%d" % i, OCEAN_MOTION_DT * i, false)
 	print("blend_probe: OCEAN repeat ratio — off %.3f · static %.3f (period / non-period |ΔL|)"
 		% [off_ratio, static_ratio])
 	# The premise first: without it the ON claim passes on a frame that never repeated at all.
@@ -2236,13 +2291,30 @@ func _assert_ocean_motion(gw: int, gh: int, target_radius: float, expect_motion:
 		return
 	var changed: int = _changed_pixel_count(a, b)
 	var radius: float = _map.last_hex_radius
-	print("blend_probe: OCEAN motion at r %.1f — %d px changed over %.0f s" % [radius, changed, OCEAN_MOTION_DT])
-	if expect_motion and changed < OCEAN_MOTION_MIN_CHANGED_PX:
-		_fail("OCEAN: at r %.1f the waves moved only %d px (want ≥ %d) — the surface is not animating"
-			% [radius, changed, OCEAN_MOTION_MIN_CHANGED_PX])
+	var mean_dl: float = _ocean_mean_luma_delta(a, b)
+	print("blend_probe: OCEAN motion at r %.1f — mean |ΔL| %.2f levels over %.1f s (%d px changed)"
+		% [radius, mean_dl, OCEAN_MOTION_DT, changed])
+	if expect_motion and mean_dl < OCEAN_MOTION_MIN_MEAN_DL:
+		_fail("OCEAN: at r %.1f the water moved only %.2f levels mean in %.1f s (want ≥ %.1f) — not a visible wave"
+			% [radius, mean_dl, OCEAN_MOTION_DT, OCEAN_MOTION_MIN_MEAN_DL])
 	elif not expect_motion and changed != 0:
 		_fail("OCEAN: at far zoom r %.1f the surface moved %d px — the motion LOD gate is leaking"
 			% [radius, changed])
+
+
+func _ocean_mean_luma_delta(a: Image, b: Image) -> float:
+	## Mean |ΔL| in 8-bit levels between two captures, over the deep-ocean box (OCEAN_REPEAT_BOX_*).
+	var px_scale: float = float(a.get_width()) / get_viewport().get_visible_rect().size.x
+	var radius: float = _map.last_hex_radius
+	var p0: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.x, OCEAN_REPEAT_BOX_ROWS.x, radius, _map.last_origin)
+	var p1: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.y, OCEAN_REPEAT_BOX_ROWS.y, radius, _map.last_origin)
+	var total := 0.0
+	var n := 0
+	for y in range(maxi(int(p0.y * px_scale), 0), mini(int(p1.y * px_scale), a.get_height()), OCEAN_REPEAT_SAMPLE_STRIDE):
+		for x in range(maxi(int(p0.x * px_scale), 0), mini(int(p1.x * px_scale), a.get_width()), OCEAN_REPEAT_SAMPLE_STRIDE):
+			total += absf(a.get_pixel(x, y).get_luminance() - b.get_pixel(x, y).get_luminance())
+			n += 1
+	return total / maxf(n, 1) * LUMA_LEVELS
 
 
 func _ocean_repeat_ratio(image: Image) -> float:
@@ -2288,6 +2360,203 @@ func _snapshot_ocean(gw: int, gh: int) -> Dictionary:
 			for dx in range(k):
 				arr[(hex.y * k + dy) * gw + hex.x * k + dx] = OCEAN_ISLAND_ID
 	return _snapshot(arr, gw, gh)
+
+
+func _render_ocean_temperature_state() -> void:
+	## State 30 (OCEANTEMP) at r ≈ 45, grid OFF, waves at phase 0. Frames: OCEANTEMP_off (strength 0) and
+	## OCEANTEMP (shipped), each with open / seam / coast / coral crops, plus the split pair the step claim is
+	## measured on. Claims (a) strength 0 == state 29's shipped frame, (b) monotone cold → warm, (c) no hex step.
+	var climate: Dictionary = _oceantemp_sim_climate()
+	if climate.is_empty():
+		_fail("OCEANTEMP: could not read the sim's climate anchors from %s" % OCEANTEMP_SIM_CONFIG)
+		return
+	_map._show_grid_lines = false
+	_set_water_time_offset(0.0)
+	# (a)'s reference: state 29's own fixture (no temperatures, no anchors) on the shipped levers.
+	_map.display_snapshot(_snapshot_ocean(GRID_W, GRID_H))
+	await _refit(GAME_HEX_RADIUS)
+	await _settle()
+	var reference: Image = await _capture()
+	# (a): the SAME geography (no coral), now carrying temperatures and the published anchors, at strength 0.
+	_map.display_snapshot(_snapshot_ocean_temperature(climate, false, false))
+	await _refit(GAME_HEX_RADIUS)
+	var zero: Image = await _render_oceantemp_frame(OCEANTEMP_OFF, "OCEANTEMP_zero", false)
+	if reference == null or zero == null:
+		return
+	var moved: int = _changed_pixel_count(reference, zero)
+	print("blend_probe: OCEANTEMP strength 0 vs the plain OCEAN frame — %d px differ" % moved)
+	if moved != 0:
+		_fail("OCEANTEMP: at strength 0 the graded fixture differs from state 29's shipped frame by %d px" % moved)
+	_map.display_snapshot(_snapshot_ocean_temperature(climate, false, true))
+	await _refit(GAME_HEX_RADIUS)
+	var off: Image = await _render_oceantemp_frame(OCEANTEMP_OFF, "OCEANTEMP_off")
+	var graded: Image = await _render_oceantemp_frame({}, "OCEANTEMP")
+	if off == null or graded == null:
+		return
+	_assert_oceantemp_monotone(off, graded)
+	# (c) — the split fixture, the largest step two neighbouring hexes can carry.
+	_map.display_snapshot(_snapshot_ocean_temperature(climate, true, false))
+	await _refit(GAME_HEX_RADIUS)
+	var split_off: Image = await _render_oceantemp_frame(OCEANTEMP_OFF, "OCEANTEMP_split_off", false)
+	var split: Image = await _render_oceantemp_frame({}, "OCEANTEMP_split", false)
+	if split_off != null and split != null:
+		_assert_oceantemp_no_hex_step(split_off, split)
+	_map._show_grid_lines = true
+
+
+func _render_oceantemp_frame(changes: Dictionary, name: String, crops: bool = true) -> Image:
+	var block: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("water_temperature", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in changes:
+		block[key] = changes[key]
+	var token: Array = _override_config({"water_temperature": block})
+	_map._fit_map_to_view()
+	await _settle()
+	await _save(name)
+	await _settle()
+	var image: Image = await _capture()
+	if crops:
+		await _save_crop("%s_open" % name, OCEAN_OPEN_CROP.x, OCEAN_OPEN_CROP.y, OCEAN_OPEN_CROP_RADII)
+		await _settle()
+		await _save_crop("%s_seam" % name, OCEAN_SEAM_CROP.x, OCEAN_SEAM_CROP.y, OCEAN_DETAIL_CROP_RADII)
+		await _settle()
+		await _save_crop("%s_coast" % name, OCEAN_COAST_CROP.x, OCEAN_COAST_CROP.y, OCEAN_DETAIL_CROP_RADII)
+		await _settle()
+		var coral: Vector2i = OCEANTEMP_CORAL_HEXES[0]
+		await _save_crop("%s_coral" % name, coral.x, coral.y, OCEAN_DETAIL_CROP_RADII)
+	_restore_config(token)
+	return image
+
+
+func _oceantemp_sim_climate() -> Dictionary:
+	## The sim's own `climate` block — polar/boreal/temperate_max_temp — read from its config file so the
+	## fixture cannot drift from what the server publishes.
+	var text := FileAccess.get_file_as_string(ProjectSettings.globalize_path(OCEANTEMP_SIM_CONFIG))
+	var parsed: Variant = JSON.parse_string(text)
+	if not parsed is Dictionary:
+		return {}
+	return (parsed as Dictionary).get(OCEANTEMP_CLIMATE_KEY, {})
+
+
+func _snapshot_ocean_temperature(climate: Dictionary, split: bool, coral: bool) -> Dictionary:
+	## State 29's ocean + a coral patch, a per-tile temperature by row, and the climate anchors on the overlay
+	## keys MapView adopts them from (the same keys the native decoder emits).
+	var polar: float = float(climate["polar_max_temp"])
+	var boreal: float = float(climate["boreal_max_temp"])
+	var temperate: float = float(climate["temperate_max_temp"])
+	var neutral: float = 0.5 * (boreal + temperate)
+	var coldest: float = polar - OCEANTEMP_OVERSHOOT * (neutral - polar)
+	var warmest: float = temperate + OCEANTEMP_OVERSHOOT * (temperate - neutral)
+	var snap: Dictionary = _snapshot_ocean(GRID_W, GRID_H)
+	var terrain: Array = snap["overlays"]["terrain"]
+	if coral:
+		for hex: Vector2i in OCEANTEMP_CORAL_HEXES:
+			terrain[hex.y * GRID_W + hex.x] = OCEANTEMP_CORAL_ID
+	var tiles: Array = []
+	for y in range(GRID_H):
+		var temp: float = lerpf(coldest, warmest, float(y) / float(GRID_H - 1))
+		if split:
+			temp = coldest if y < OCEANTEMP_SPLIT_ROW else warmest
+		for x in range(GRID_W):
+			tiles.append({"entity": y * GRID_W + x, "x": x, "y": y, "temperature": temp})
+	snap["tiles"] = tiles
+	snap["overlays"]["climate_polar_max_temp"] = polar
+	snap["overlays"]["climate_boreal_max_temp"] = boreal
+	snap["overlays"]["climate_temperate_max_temp"] = temperate
+	return snap
+
+
+func _assert_oceantemp_monotone(off: Image, graded: Image) -> void:
+	## (b): per hex row, over the deep-ocean columns, the mean luma and saturation SHIFT (graded − off).
+	var radius: float = _map.last_hex_radius
+	var px_scale: float = float(graded.get_width()) / get_viewport().get_visible_rect().size.x
+	var luma_shift: Array[float] = []
+	var sat_shift: Array[float] = []
+	for row in range(GRID_H):
+		var a: Vector2 = _map._hex_center(OCEANTEMP_BAND_COLS.x, row, radius, _map.last_origin) * px_scale
+		var b: Vector2 = _map._hex_center(OCEANTEMP_BAND_COLS.y, row, radius, _map.last_origin) * px_scale
+		var half: int = int(0.5 * radius * px_scale)
+		var dl := 0.0
+		var ds := 0.0
+		var n := 0
+		for y in range(maxi(int(a.y) - half, 0), mini(int(a.y) + half, graded.get_height()), OCEAN_REPEAT_SAMPLE_STRIDE):
+			for x in range(maxi(int(a.x), 0), mini(int(b.x), graded.get_width()), OCEAN_REPEAT_SAMPLE_STRIDE):
+				var g: Color = graded.get_pixel(x, y)
+				var o: Color = off.get_pixel(x, y)
+				dl += g.get_luminance() - o.get_luminance()
+				ds += g.s - o.s
+				n += 1
+		luma_shift.append(dl / maxf(n, 1))
+		sat_shift.append(ds / maxf(n, 1))
+	var report := PackedStringArray()
+	for row in range(GRID_H):
+		report.append("%+.1f/%+.3f" % [luma_shift[row] * 255.0, sat_shift[row]])
+	print("blend_probe: OCEANTEMP per-row shift (luma levels / sat), polar → tropical: ", " ".join(report))
+	if not (luma_shift[0] < 0.0 and luma_shift[GRID_H - 1] > 0.0):
+		_fail("OCEANTEMP: the polar rows must read DARKER and the tropical rows BRIGHTER (luma shift %+.2f → %+.2f)"
+			% [luma_shift[0] * 255.0, luma_shift[GRID_H - 1] * 255.0])
+	if not (sat_shift[0] < 0.0 and sat_shift[GRID_H - 1] > 0.0):
+		_fail("OCEANTEMP: the polar rows must read GREYER and the tropical rows MORE SATURATED (%+.3f → %+.3f)"
+			% [sat_shift[0], sat_shift[GRID_H - 1]])
+	for row in range(1, GRID_H):
+		if luma_shift[row] < luma_shift[row - 1] - OCEANTEMP_LUMA_TOLERANCE:
+			_fail("OCEANTEMP: luma shift falls from row %d to %d (%+.2f → %+.2f levels) — not monotone cold → warm"
+				% [row - 1, row, luma_shift[row - 1] * 255.0, luma_shift[row] * 255.0])
+		if sat_shift[row] < sat_shift[row - 1] - OCEANTEMP_SAT_TOLERANCE:
+			_fail("OCEANTEMP: saturation shift falls from row %d to %d (%+.3f → %+.3f) — not monotone cold → warm"
+				% [row - 1, row, sat_shift[row - 1], sat_shift[row]])
+
+
+func _assert_oceantemp_no_hex_step(off: Image, graded: Image) -> void:
+	## (c): along lines crossing each cold|warm hex edge, on the graded − off luma, the 2-px |Δ| straddling the
+	## edge over the largest 2-px |Δ| elsewhere on the line (see OCEANTEMP_EDGE_*).
+	var radius: float = _map.last_hex_radius
+	var px_scale: float = float(graded.get_width()) / get_viewport().get_visible_rect().size.x
+	var r_px: float = radius * px_scale
+	var straddle_sum := 0.0
+	var elsewhere_sum := 0.0
+	var lines := 0
+	var row: int = OCEANTEMP_SPLIT_ROW - 1
+	for col in range(OCEANTEMP_EDGE_COLS.x, OCEANTEMP_EDGE_COLS.y + 1):
+		var ca: Vector2 = _map._hex_center(col, row, radius, _map.last_origin) * px_scale
+		for ncol in range(col - 1, col + 2):
+			var cb: Vector2 = _map._hex_center(ncol, row + 1, radius, _map.last_origin) * px_scale
+			if absf(ca.distance_to(cb) - MAP_VIEW.SQRT3 * r_px) > OCEANTEMP_NEIGHBOUR_TOLERANCE * r_px:
+				continue
+			var n: Vector2 = (cb - ca).normalized()
+			var t := Vector2(-n.y, n.x)
+			var mid: Vector2 = 0.5 * (ca + cb)
+			for i in range(OCEANTEMP_EDGE_SAMPLES):
+				var s: float = lerpf(-OCEANTEMP_EDGE_SPAN, OCEANTEMP_EDGE_SPAN,
+					float(i) / float(OCEANTEMP_EDGE_SAMPLES - 1)) * r_px
+				var p0: Vector2 = mid + t * s
+				var straddle: float = absf(_diff_luma(graded, off, p0 + n) - _diff_luma(graded, off, p0 - n))
+				var elsewhere := 0.0
+				var reach: int = int(OCEANTEMP_EDGE_REACH * r_px)
+				for k in range(-reach, reach):
+					if absf(float(k) + 0.5) < OCEANTEMP_EDGE_GUARD_PX:
+						continue
+					var q: Vector2 = p0 + n * (float(k) + 1.0)
+					elsewhere = maxf(elsewhere,
+						absf(_diff_luma(graded, off, q + n) - _diff_luma(graded, off, q - n)))
+				straddle_sum += straddle
+				elsewhere_sum += elsewhere
+				lines += 1
+	if lines == 0:
+		_fail("OCEANTEMP: found no cold|warm hex edge to measure — the step claim proves nothing")
+		return
+	var ratio: float = straddle_sum / maxf(elsewhere_sum, 1e-6)
+	print("blend_probe: OCEANTEMP hex-step ratio %.2f over %d lines (straddle %.2f vs ramp %.2f levels mean)"
+		% [ratio, lines, straddle_sum / lines * 255.0, elsewhere_sum / lines * 255.0])
+	if ratio > OCEANTEMP_EDGE_RATIO_MAX:
+		_fail("OCEANTEMP: the grade STEPS on the hex edge (straddle/ramp %.2f > %.2f)" % [ratio, OCEANTEMP_EDGE_RATIO_MAX])
+
+
+func _diff_luma(a: Image, b: Image, p: Vector2) -> float:
+	var x: int = clampi(int(round(p.x)), 0, a.get_width() - 1)
+	var y: int = clampi(int(round(p.y)), 0, a.get_height() - 1)
+	return a.get_pixel(x, y).get_luminance() - b.get_pixel(x, y).get_luminance()
 
 
 func _render_ecotone_state() -> void:

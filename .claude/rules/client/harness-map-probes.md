@@ -652,10 +652,11 @@ subject disappeared is worse than one that varies, whereas an offset or a midpoi
 * sin(t)` → 0.5 at t = 0) survives — classify the new term before trusting the freeze.
 
 **The water surface was classified that way when it landed** (`terrain-blend-shader.md` → Water
-surface): it is the third reader of `TIME`, and both of its terms are offsets — the waves a UV scroll,
-the glint a drift of its noise domain — so phase 0 still draws both. The set stays bit-identical run to
-run (308/308 across consecutive runs with state 29 in it). State 29 reaches a second phase through the
-`water_time_offset` uniform, not by un-freezing the clock.
+surface): it is the third reader of `TIME`, and every one of its terms is an offset — the waves a UV
+scroll, the swell a travelling phase, the glint a drift of its noise domain — so phase 0 still draws
+them. The set stayed bit-identical run to run (308/308 across consecutive runs with state 29 in it).
+States 29 and 30 reach other phases through the `water_time_offset` uniform, not by un-freezing the
+clock.
 
 **One more state (15, D): the THREE-SCALE shore profile — CLIFF vs BEACH vs LAKE, and the MIXED
 coast** → `D*.png`, the ragged coast against **dark `rocky_reg`** (prairie's tan camouflages both
@@ -810,11 +811,13 @@ the frame with the open water (`terrain-blend-shader.md` → Water surface). Fra
 |---|---|---|
 | `OCEAN_off` (+ `_open` / `_seam` / `_coast`) | variation, waves, glint all 0 | the BEFORE: the grid, unmistakable |
 | `OCEAN_static` (+ crops) | waves and glint 0 | the anti-tiling alone; no flat blotches where the patches meet |
-| `OCEAN_waves`, `_t2`, `_motion_diff` | glint 0, two phases | the wave term apart from the glint, and the amplified diff that shows it moves |
+| `OCEAN_waves`, `_t2`, `_motion_diff` | swell and glint 0, two phases | the scrolled-texture term alone — kept because it is the term that measured as invisible |
+| `OCEAN_swell`, `_t2`, `_motion_diff` | waves and glint 0, two phases | the swell alone |
 | `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s |
+| `OCEAN_seq0..3` | shipped, four phases a second apart | the look-at sequence the swell was tuned on |
 
-The second phase is `OCEAN_MOTION_DT` (8 s) set on the `water_time_offset` uniform, since the harness
-clock is frozen. Three PNG-less claims ride it, and each fails on its own:
+The second phase is `OCEAN_MOTION_DT` (**1 s**) set on the `water_time_offset` uniform, since the
+harness clock is frozen. Three PNG-less claims ride it, and each fails on its own:
 
 - **The repeat measure.** Over a deep-only box, mean |ΔL| between each pixel and the one ONE TEXTURE
   PERIOD east (`2·r / base_scale` px), over the same at half a period. An exact copy scores ~0, an
@@ -824,8 +827,15 @@ clock is frozen. Three PNG-less claims ride it, and each fails on its own:
   B's own period**, which is rotated off the horizontal: at `variation_cell` 4 it scored 0.84 on a frame
   where B covered most of the water and its repeat showed on a diagonal. Judge the frame, not only the
   number, when retuning the cell.
-- **Motion at game zoom.** Two phases of the shipped surface must differ over at least
-  `OCEAN_MOTION_MIN_CHANGED_PX` (measured **1.55M** of 2.07M).
+- **Motion at game zoom, measured as MAGNITUDE.** Over the deep-ocean box, the mean |ΔL| between two
+  phases a second apart must reach `OCEAN_MOTION_MIN_MEAN_DL` (**3 levels** on this water, luma ≈ 30);
+  measured **4.2**.
+  ⛔ **It was a changed-pixel COUNT, and the count passed a sea that looked still.** A scrolled texture
+  moves nearly every pixel by a level or two, so the first claim read 1.55M of 2.07M pixels changed
+  while the whole frame had moved **1.18 levels mean over eight seconds** — Ray ran it live and saw no
+  waves. A count answers *did anything change*; what a player sees is *how far the brightness moved*,
+  so the claim is on that. **Sabotaged** by shipping the old texture term alone (`swell_strength` 0):
+  **0.94 levels**, fail — while **1.44M pixels** changed, which the count would have passed.
 - **No motion at far zoom.** The same geography on a grid twice the size fits at r ≈ 22.8, under
   `motion_min_radius` (24) and above `EDGE_BLEND_MIN_RADIUS`, and the two phases must differ by **exactly
   0 px**. The static anti-tiling reads no `TIME`, so any pixel there is the LOD gate leaking. The pair is
@@ -834,6 +844,37 @@ clock is frozen. Three PNG-less claims ride it, and each fails on its own:
 Sabotaged by zeroing the three strengths in `terrain_config.json`: the repeat claim fails at 0.152 and
 the game-zoom motion claim at 0 px, and the other 291 frames came back byte-identical to the render
 before the water surface existed.
+
+**One more state (30, OCEANTEMP): the WATER TEMPERATURE GRADE** → `OCEANTEMP_*.png`, state 29's ocean at
+r ≈ 45, grid OFF, waves at phase 0, on a temperature gradient running polar (top row) → tropical (bottom
+row), plus a five-hex `coral_shelf` patch in the warm rows (ungraded water, so the graded-ness must ramp
+across its seam). **The climate anchors are read out of `core_sim/src/data/simulation_config.json` at run
+time** (`climate.polar/boreal/temperate_max_temp` — 0 / 3 / 18 °C) and published through the same
+`climate_*_max_temp` overlay keys the decoder emits, so the fixture cannot drift from what the server
+sends; the gradient overshoots each end anchor by `OCEANTEMP_OVERSHOOT` of that side's span, so the top
+and bottom rows sit at FULL cold and FULL warm (`terrain-blend-shader.md` → Water temperature grade).
+
+| frame | reads for |
+|---|---|
+| `OCEANTEMP_off` / `OCEANTEMP` (+ `_open` / `_seam` / `_coast` / `_coral`) | strength 0 against shipped: slate polar sea, turquoise tropics, neither garish |
+| `OCEANTEMP_zero` | the no-coral geography at strength 0 — claim (a)'s subject |
+| `OCEANTEMP_split_off` / `OCEANTEMP_split` | top half polar, bottom half tropical — the largest step two neighbouring hexes can carry, claim (c)'s subject |
+
+Three PNG-less claims, each sabotage-verified to fail on its own:
+
+- **(a) Strength 0 is bit-exact** — the temperature fixture WITH temperatures and published anchors, at
+  strength 0, against state 29's own fixture captured first: **0 px** differ.
+- **(b) Monotone cold → warm.** Per hex row over the deep-ocean columns, the mean luma and saturation
+  SHIFT (graded minus the strength-0 frame, so the texture cancels) must be negative at the top,
+  positive at the bottom, and never fall row to row by more than `OCEANTEMP_LUMA_TOLERANCE` /
+  `OCEANTEMP_SAT_TOLERANCE`. Measured **−4.4 / −0.27 → +4.7 / +0.14**. The saturation tolerance is 0.02
+  because the full-cold rows share one grade over different texture and wobble by ~0.01. **Sabotaged**
+  by swapping the cold and warm weights: 23 failures.
+- **(c) No hex step.** On the SPLIT fixture, along 216 lines crossing the cold|warm hex edges, on the
+  graded-minus-off luma: the 2-px |Δ| straddling the edge over the largest 2-px |Δ| elsewhere on the
+  same line (the ECO straddle-ratio idea, asked of the grade alone). A blended edge is no steeper than
+  the ramp around it: measured **0.13** against a bar of 1.5. **Sabotaged** by grading each hex on its
+  own temperature (no neighbour blend): **6.61**, fail.
 
 ## Worked-source mark states (issue #412)
 

@@ -20,8 +20,20 @@
     "wave_strength": 0.8,
     "wave_speed": 0.012,
     "wave_scale": 0.6,
+    "swell_strength": 0.045,
+    "swell_wavelength": 3.0,
+    "swell_speed": 0.6,
     "glint_strength": 0.0,
     "motion_min_radius": 24.0
+  },
+  "water_temperature": {
+    "strength": 1.0,
+    "graded_terrains": ["deep_ocean", "continental_shelf"],
+    "cold_tint": [158, 168, 179],
+    "cold_desaturate": 0.55,
+    "cold_brightness": 0.86,
+    "warm_tint": [77, 204, 199],
+    "warm_brightness": 1.15
   },
   "use_terrain_textures": true,
   "use_edge_blending": true,

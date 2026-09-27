@@ -229,11 +229,30 @@ uniform float water_variation_scale;    // the second sample's UV scale, relativ
 uniform float water_wave_strength;      // multiplies the waves' luma deviation from the layer mean
 uniform float water_wave_speed;         // wave-texture UV per second (a UV of 1.0 = one wave tile)
 uniform float water_wave_scale;         // wave UV scale, relative to the base UV (< 1 = broader swells)
+// THE SWELL: broad soft light/dark bands travelling across the water — what actually reads as waves at map
+// zoom (the scrolled-texture term above only shifts fine grain, and measured as sub-perceptual motion).
+uniform float water_swell_strength;     // peak luma offset of a crest (+) / trough (−), 0..1 luma units
+uniform float water_swell_wavelength;   // the primary swell's wavelength, in HEX RADII (zoom-invariant)
+uniform float water_swell_speed;        // the primary swell's phase speed, in hex radii per second
 uniform float water_glint_strength;     // peak pull of a glint speck toward its pale tint (0 = no glint)
 uniform bool water_motion_enabled;      // LOD gate for the waves + glint (the static anti-tiling always runs)
 // Added to TIME for the wave + glint phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
 // harness frozen at Engine.time_scale 0 can render the surface at two known phases, deterministically.
 uniform float water_time_offset;
+// THE WATER TEMPERATURE GRADE (config "water_temperature"; see water_temperature_grade()). Graded open water
+// shifts toward slate as it cools and toward turquoise as it warms, so climate reads off the sea at a glance.
+// temp_map: per hex, R = °C, G = has a reading (0 = none, incl. unexplored under fog), B = a graded terrain.
+uniform sampler2D temp_map : filter_nearest;
+uniform bool water_temp_enabled;       // false until the sim publishes its climate cut points, or at strength 0
+uniform float water_temp_strength;     // global multiplier on the whole grade
+uniform float water_temp_neutral;      // °C with no grade: mid-temperate, (boreal_max + temperate_max) / 2
+uniform float water_temp_cold_span;    // °C from neutral down to polar_max, where the cold grade is full
+uniform float water_temp_warm_span;    // °C from neutral up to temperate_max, where the warm grade is full
+uniform vec3 water_temp_cold_tint;
+uniform float water_temp_cold_desaturate;
+uniform float water_temp_cold_brightness;
+uniform vec3 water_temp_warm_tint;
+uniform float water_temp_warm_brightness;
 uniform float noise_cell;     // FEATURE value-noise cell size in px (config feature_noise_cell) — shared by the
                               // shoreline reach/wisp, the canopy treeline and the peak footline. Deliberately
                               // DECOUPLED from blend_noise_cell so retuning the interlock grain can't move any
@@ -621,6 +640,24 @@ const float WATER_WAVE_B_ROTATION = 1.9;
 const float WATER_WAVE_B_SCALE = 1.31;
 // The second wave sample's direction runs at this fraction of the first's speed — two rates, no beat.
 const float WATER_WAVE_B_SPEED = 0.73;
+// THE SWELL — three travelling sine trains summed. Directions ≈ 20°, 102° and 300° (no pair near-opposite, so
+// they never lock into a standing pattern), wavelengths off any simple ratio of one another, and each train's
+// speed ∝ √wavelength (deep-water dispersion), so the sum never repeats in space or time and cannot settle into
+// a diamond lattice. Their phase is WARPED by low-frequency world noise, so crests bend and are not straight
+// or periodic; a broader noise sets swell GROUPS, so some water is calmer than the rest.
+const vec2 SWELL_DIR_A = vec2(0.940, 0.342);
+const vec2 SWELL_DIR_B = vec2(-0.208, 0.978);
+const vec2 SWELL_DIR_C = vec2(0.500, -0.866);
+const vec3 SWELL_WAVELENGTH_RATIO = vec3(1.0, 0.73, 1.41);   // of water_swell_wavelength, per train
+const vec3 SWELL_AMPLITUDE = vec3(1.0, 0.4, 0.25);          // relative, per train (normalised by the sum)
+const float SWELL_WARP_CELL = 2.5;                           // warp noise cell, hex radii
+const float SWELL_WARP_AMOUNT = 0.9;                         // warp displacement, hex radii
+const vec2 SWELL_WARP_OFFSET_X = vec2(401.0, 17.0);          // decorrelate the warp's two axes …
+const vec2 SWELL_WARP_OFFSET_Y = vec2(59.0, 223.0);          // … from each other and from every other field
+const float SWELL_GROUP_CELL = 5.0;                          // swell-group noise cell, hex radii
+const vec2 SWELL_GROUP_DRIFT = vec2(0.03, 0.02);             // group noise drift, cells per second
+const vec2 SWELL_GROUP_OFFSET = vec2(131.0, 311.0);
+const float SWELL_GROUP_CALM = 0.45;                         // amplitude where the group noise is lowest
 // GLINT: two independent value-noise fields, each folded into a RIDGE net (1 where the field crosses 0.5), drift
 // through each other in different directions. A glint is their PRODUCT, so it lights only near where two
 // ridges cross — short scattered specks that crawl along the crests and wink out, a slow sparkle rather than a
@@ -640,6 +677,8 @@ const vec2 GLINT_MASK_DRIFT = vec2(0.012, -0.008);      // noise cells per secon
 const vec2 GLINT_MASK_OFFSET = vec2(71.0, 263.0);
 const float GLINT_MASK_LO = 0.55;                       // mask noise below this: no glint
 const float GLINT_MASK_HI = 0.8;                        // …above this: the full glint
+// Divide-by-zero guard for tint_keep_luma's rescale on a black texel.
+const float WATER_TEMP_LUMA_MIN = 1e-4;
 
 // v_world is the quad-LOCAL (viewport/screen-fixed) coordinate — it does NOT track the map on
 // pan/zoom. hex_origin (= MapView last_origin) moves with the pan/zoom, so hex-anchored terms
@@ -701,17 +740,21 @@ vec2 rotate_uv(vec2 uv, float angle) {
 //      1 / sqrt(wA² + wB²), applied as a LUMA offset so the hue is untouched.
 //   2. WAVES — two more samples of the same layer at a wave scale, scrolled with time in two non-opposite
 //      directions; their mean luma minus the layer mean, × water_wave_strength, is added to rgb.
+//   2b. SWELL — broad soft bands travelling across the water (see SWELL_*): three warped sine trains summed,
+//      added as a luma offset. This is what reads as waves; term 2 only shifts grain and measured as
+//      sub-perceptual motion on its own.
 //   3. GLINT — scattered specks where two drifting value-noise ridge nets cross pull the colour a little
 //      toward a pale foam tint (see GLINT_*).
-// 2 and 3 run only with water_motion_enabled. With strength / waves / glint all 0 this returns the plain
+// 2, 2b and 3 run only with water_motion_enabled. With strength / waves / swell / glint all 0 this returns the plain
 // sample A, bit-exact.
 vec3 water_surface(int layer, vec2 map_px) {
 	vec2 uv_a = map_px / (2.0 * hex_radius) * base_scale;   // == base_uv at the call site, same expression
 	vec3 col = texture(biome_array, vec3(uv_a, float(layer))).rgb;
 	bool vary = water_variation_strength > 0.0;
 	bool waves = water_motion_enabled && water_wave_strength > 0.0;
+	bool swell = water_motion_enabled && water_swell_strength > 0.0;
 	bool glint = water_motion_enabled && water_glint_strength > 0.0;
-	if (!vary && !waves && !glint) {
+	if (!vary && !waves && !swell && !glint) {
 		return col;
 	}
 	float mean = mean_luma(layer);
@@ -739,6 +782,21 @@ vec3 water_surface(int layer, vec2 map_px) {
 		float l2 = luma(texture(biome_array, vec3(uv_w2, float(layer))).rgb);
 		col += vec3((0.5 * (l1 + l2) - mean) * water_wave_strength);
 	}
+	if (swell) {
+		// Everything in HEX RADII, so the swell looks the same at every zoom.
+		vec2 p = map_px / hex_radius;
+		vec2 wp = p / SWELL_WARP_CELL;
+		p += (vec2(vnoise(wp + SWELL_WARP_OFFSET_X), vnoise(wp + SWELL_WARP_OFFSET_Y)) - 0.5)
+			* (2.0 * SWELL_WARP_AMOUNT);
+		vec3 lambda = max(water_swell_wavelength, BLEND_SOFT_MIN) * SWELL_WAVELENGTH_RATIO;
+		vec3 speed = water_swell_speed * sqrt(SWELL_WAVELENGTH_RATIO);   // longer trains run faster
+		vec3 along = vec3(dot(p, SWELL_DIR_A), dot(p, SWELL_DIR_B), dot(p, SWELL_DIR_C));
+		vec3 phase = TAU * (along - speed * t) / lambda;
+		float h = dot(sin(phase), SWELL_AMPLITUDE) / dot(SWELL_AMPLITUDE, vec3(1.0));
+		float group = mix(SWELL_GROUP_CALM, 1.0,
+			vnoise(map_px / (hex_radius * SWELL_GROUP_CELL) + SWELL_GROUP_OFFSET + SWELL_GROUP_DRIFT * t));
+		col += vec3(h * group * water_swell_strength);   // a luma offset: crest lighter, trough darker, same hue
+	}
 	if (glint) {
 		vec2 gp = map_px / (hex_radius * GLINT_CELL) + GLINT_NOISE_OFFSET;
 		// Each ridge is 1 exactly where its field crosses 0.5: a thin sinuous line.
@@ -752,6 +810,33 @@ vec3 water_surface(int layer, vec2 map_px) {
 		col = mix(col, mix(foam_color, vec3(1.0), GLINT_WHITE_MIX), sparkle);
 	}
 	return col;
+}
+
+// Pull `c` toward `tint`'s HUE while keeping its luma: multiply (so the texture's own detail survives), then
+// rescale back to the original luma. WATER_TEMP_LUMA_MIN guards the rescale on a black texel.
+vec3 tint_keep_luma(vec3 c, vec3 tint) {
+	vec3 t = c * tint;
+	return t * (luma(c) / max(luma(t), WATER_TEMP_LUMA_MIN));
+}
+
+// THE WATER TEMPERATURE GRADE of one colour, at the pixel's (neighbour-blended) temperature `temp`, scaled by
+// `amount` (its blended graded-ness). Cold: desaturate toward luma, pull toward the cold tint's hue, darken.
+// Warm: pull toward the warm tint's hue, brighten. Neutral temperature is a no-op. The two tails are exclusive
+// (one of cold / warm is always 0), and the final mix makes the whole thing scale with strength × amount.
+vec3 water_temperature_grade(vec3 c, float temp, float amount) {
+	float cold = clamp((water_temp_neutral - temp) / water_temp_cold_span, 0.0, 1.0);
+	float warm = clamp((temp - water_temp_neutral) / water_temp_warm_span, 0.0, 1.0);
+	vec3 g = c;
+	if (cold > 0.0) {
+		g = mix(g, vec3(luma(g)), water_temp_cold_desaturate * cold);
+		g = mix(g, tint_keep_luma(g, water_temp_cold_tint), cold);
+		g *= mix(1.0, water_temp_cold_brightness, cold);
+	}
+	if (warm > 0.0) {
+		g = mix(g, tint_keep_luma(g, water_temp_warm_tint), warm);
+		g *= mix(1.0, water_temp_warm_brightness, warm);
+	}
+	return mix(c, g, clamp(water_temp_strength * amount, 0.0, 1.0));
 }
 
 // A BASE sample of any layer: water layers go through the one water sampler above, land keeps the plain
@@ -1400,6 +1485,53 @@ void fragment() {
 				float soft = max(seam_soft, BLEND_SOFT_MIN);
 				float t = smoothstep(0.5 - soft, 0.5 + soft, pw);
 				result = mix(own_rgb, nb_rgb, t);
+			}
+		}
+
+		// --- WATER TEMPERATURE GRADE: after the water surface + depth field, before the shore (foam untouched) ---
+		// The pixel's temperature AND its graded-ness are neighbour-weighted means over the WATER hexes of
+		// {own + 6 neighbours}, with the depth field's own reach/plateau weight — so a temperature step between
+		// two hexes, and a graded↔ungraded (deep↔coral) seam, both ramp across the edge instead of stepping on
+		// it. Unwobbled on purpose: with no wobble the neighbour's weight is exactly 1 AT the shared edge from
+		// both frames, so the two means meet there for any config (the wobbled depth field only does so while
+		// its wobble stays under its plateau). A neighbour with no reading adds nothing to the temperature,
+		// and — having no reading — no graded-ness either. Runs at every zoom: climate matters most far out.
+		if (water_temp_enabled && own_class == CLASS_WATER) {
+			float t_reach = max(water_blend_band, BLEND_SOFT_MIN);
+			float t_plateau = clamp(water_blend_soft, 0.0, WATER_FIELD_PLATEAU_MAX) * t_reach;
+			vec4 own_t = texture(temp_map, id_uv);
+			float g_sum = own_t.g * own_t.b;   // own weight 1: graded only where it has a reading
+			float g_w = 1.0;
+			float t_sum = own_t.r * own_t.g;
+			float t_w = own_t.g;
+			for (int dir = 0; dir < 6; dir++) {
+				ivec2 off = neighbor_offset(row, dir);
+				int ncol = col + off.x;
+				int nrow = row + off.y;
+				if (nrow < 0 || nrow >= grid_h) { continue; }
+				int ncol_id = ncol;
+				if (wrap_h) {
+					ncol_id = wrap_col(ncol);
+				} else if (ncol < 0 || ncol >= grid_w) {
+					continue;
+				}
+				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
+				if (int(texture(id_map, nuv).g * 255.0 + 0.5) != CLASS_WATER) { continue; }
+				vec2 nb_c = hex_center(ncol, nrow);
+				vec2 dir_v = normalize(nb_c - own_c);
+				float half_dist = 0.5 * distance(own_c, nb_c);
+				float d = dot(v_world - own_c, dir_v) - half_dist;
+				float w = smoothstep(-t_reach, -t_plateau, d);
+				if (w <= 0.0) { continue; }
+				vec4 nt = texture(temp_map, nuv);
+				g_sum += nt.g * nt.b * w;
+				g_w += w;
+				t_sum += nt.r * nt.g * w;
+				t_w += nt.g * w;
+			}
+			float graded = g_sum / g_w;
+			if (graded > 0.0 && t_w > 0.0) {
+				result = water_temperature_grade(result, t_sum / t_w, graded);
 			}
 		}
 
