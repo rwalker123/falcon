@@ -223,21 +223,28 @@ uniform float water_variation_strength; // 0..1: the second sample's peak weight
 uniform float water_variation_cell;     // patch noise cell, px (variation_cell × radius) — zoom-invariant
 uniform float water_variation_rotation; // radians: the second sample's UV rotation
 uniform float water_variation_scale;    // the second sample's UV scale, relative to the base UV
-// WAVES + GLINT (animated): two scrolling samples of the same layer add a luma ripple; a drifting value-noise
-// ridge adds a faint sparkle. Both are gated by water_motion_enabled (radius ≥ motion_min_radius), so the far
+// WAVES (animated): two scrolling samples of the same layer add a luma ripple. Gated, with the chop and the
+// whitecaps, by water_motion_enabled (radius ≥ motion_min_radius, AND the player's `O` toggle), so the far
 // zoom — where the unmipmapped base art is minified — never shimmers.
 uniform float water_wave_strength;      // multiplies the waves' luma deviation from the layer mean
 uniform float water_wave_speed;         // wave-texture UV per second (a UV of 1.0 = one wave tile)
 uniform float water_wave_scale;         // wave UV scale, relative to the base UV (< 1 = broader swells)
 // THE CHOP: small patches that brighten, dim and morph IN PLACE — water that moves with no direction. It is
-// applied once per water fragment after the depth field (water_motion), not per layer sample: it is the same
+// applied once per water fragment after the depth field (apply_water_motion), not per layer sample: it is the same
 // field for every water layer, so adding it after the depth-field mean equals adding it inside.
 uniform float water_chop_strength;      // peak luma offset of a bright (+) / dark (−) patch, 0..1 luma units
 uniform float water_chop_scale;         // feature size of the coarse octave, in HEX RADII (zoom-invariant)
 uniform float water_chop_rate;          // how fast the field evolves: noise cells of its TIME axis per second
-uniform float water_glint_strength;     // peak pull of a glint speck toward its pale tint (0 = no glint)
-uniform bool water_motion_enabled;      // LOD gate for the waves + glint (the static anti-tiling always runs)
-// Added to TIME for the wave + glint phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
+// THE WHITECAPS: sparse, small bright flecks that appear, peak and fade IN PLACE, clustered where the chop is in
+// its bright phase (see WHITECAP_* and open_whitecap). Applied with the chop, once per water fragment.
+uniform float water_whitecap_strength;  // peak pull of a fleck toward its near-white foam tint (0 = none, bit-exact)
+uniform float water_whitecap_coverage;  // 0..1: how much of the sea's noise crests break — bigger = more caps
+uniform float water_whitecap_scale;     // the fleck field's noise cell, in HEX RADII (a fleck is its crest)
+uniform float water_whitecap_rate;      // how fast flecks come and go: noise cells of its TIME axis per second
+// The motion gate for the waves, chop and whitecaps: TerrainRenderer ANDs the zoom LOD (radius ≥
+// motion_min_radius) with the session-only `O` toggle. The static anti-tiling and the temperature grade always run.
+uniform bool water_motion_enabled;
+// Added to TIME for the wave, chop and whitecap phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
 // harness frozen at Engine.time_scale 0 can render the surface at two known phases, deterministically.
 uniform float water_time_offset;
 // THE WATER TEMPERATURE GRADE (config "water_temperature"; see water_temperature_grade()). Graded open water
@@ -667,6 +674,27 @@ const float CHOP_PAIR_TIME_SHIFT = 0.5;
 const vec3 CHOP_PAIR_OFFSET = vec3(173.0, 293.0, 0.0);
 const float CHOP_PAIR_NORM = 0.70710678;
 const float VNOISE_MEAN = 0.5;                               // vnoise3's mid-value: subtracting it centres it
+// THE WHITECAPS (see open_whitecap). A fine 3D value-noise field over (x, y, t·whitecap_rate) — an interleaved
+// PAIR like each chop octave, so the flecks never pause together — rotated off the screen axes by its own angle
+// so its lattice lines up with nothing. A fleck is where that field crests past a high threshold: sparse, soft
+// blobs a fraction of a cell across that swell and fade in place, with no drift, no lines and no curls.
+const float WHITECAP_ROTATION = 1.21;                        // radians — off the chop octaves' 0.52 / −0.93
+const vec3 WHITECAP_OFFSET = vec3(503.0, 157.0, 71.0);       // decorrelates it from the chop and every other field
+// The pair's crest: two centred copies each ≤ 0.5, summed × CHOP_PAIR_NORM. whitecap_coverage 0 puts the
+// threshold here (no caps); 1 puts it at the field's mean (half the sea).
+const float WHITECAP_FIELD_PEAK = 0.70710678;
+const float WHITECAP_SOFT = 0.2;                            // field units from threshold to a full fleck
+// CLUSTERING: flecks break only where the CHOP (open_chop's signed value, about −1..1) is in its bright phase —
+// full above WHITECAP_CLUSTER_HI, none below WHITECAP_CLUSTER_LO — so caps gather where the sea is rougher and
+// come and go with it, instead of sprinkling the water uniformly.
+const float WHITECAP_CLUSTER_LO = 0.25;
+const float WHITECAP_CLUSTER_HI = 0.6;
+// BREAK-UP: a finer noise, evolving on the same time axis, is added to the fleck field before the threshold, so
+// a cap's edge is ragged spray rather than a round dot — without it the flecks read as falling snow.
+const float WHITECAP_BREAKUP_SCALE = 2.7;                    // its frequency, × the fleck field's
+const float WHITECAP_BREAKUP_AMOUNT = 0.22;                  // field units it adds, ± half this
+const vec3 WHITECAP_BREAKUP_OFFSET = vec3(89.0, 331.0, 17.0);
+const float WHITECAP_WHITE_MIX = 0.6;                        // the fleck's colour: this far from foam_color to white
 // hash13's input scale (Hoskins' "hash without sine": no sin(), so no precision loss as TIME grows).
 const vec3 HASH3_SCALE = vec3(0.1031, 0.1030, 0.0973);
 const float HASH3_ADD = 33.33;
@@ -677,25 +705,6 @@ const float HASH3_ADD = 33.33;
 // `coastal_terrains` config list for coastal_weight() to key its shelf-ness on, and (3) coastal_swell() built
 // from that field.
 const bool COASTAL_SWELL_ENABLED = false;
-// GLINT: two independent value-noise fields, each folded into a RIDGE net (1 where the field crosses 0.5), drift
-// through each other in different directions. A glint is their PRODUCT, so it lights only near where two
-// ridges cross — short scattered specks that crawl along the crests and wink out, a slow sparkle rather than a
-// flicker. (One ridge net on its own drew continuous closed loops that read as contour lines on the map.)
-const float GLINT_CELL = 0.45;                          // noise cell, in HEX RADII (zoom-invariant)
-const float GLINT_CELL_B_RATIO = 1.37;                  // the second field's cell, relative to the first
-const vec2 GLINT_DRIFT_A = vec2(0.045, 0.030);          // drift, in noise cells per second
-const vec2 GLINT_DRIFT_B = vec2(-0.028, 0.041);
-const vec2 GLINT_NOISE_OFFSET = vec2(311.0, 97.0);      // decorrelates it from every other noise field
-const vec2 GLINT_NOISE_OFFSET_B = vec2(29.0, 181.0);    // …and the second field from the first
-const float GLINT_RIDGE_LO = 0.8;                       // ridge value where a net starts to count (1 = crest)
-const float GLINT_WHITE_MIX = 0.5;                      // the glint's colour: this far from foam_color toward white
-// Even as specks the glint would cover the sea evenly, so a third, much broader noise field MASKS it into
-// scattered drifting patches — most of the water carries no glint at any moment.
-const float GLINT_MASK_CELL = 3.5;                      // in HEX RADII
-const vec2 GLINT_MASK_DRIFT = vec2(0.012, -0.008);      // noise cells per second — slower than the ridges
-const vec2 GLINT_MASK_OFFSET = vec2(71.0, 263.0);
-const float GLINT_MASK_LO = 0.55;                       // mask noise below this: no glint
-const float GLINT_MASK_HI = 0.8;                        // …above this: the full glint
 // Divide-by-zero guard for tint_keep_luma's rescale on a black texel.
 const float WATER_TEMP_LUMA_MIN = 1e-4;
 
@@ -759,18 +768,14 @@ vec2 rotate_uv(vec2 uv, float angle) {
 //      1 / sqrt(wA² + wB²), applied as a LUMA offset so the hue is untouched.
 //   2. WAVES — two more samples of the same layer at a wave scale, scrolled with time in two non-opposite
 //      directions; their mean luma minus the layer mean, × water_wave_strength, is added to rgb.
-//   3. GLINT — scattered specks where two drifting value-noise ridge nets cross pull the colour a little
-//      toward a pale foam tint (see GLINT_*).
-// 2 and 3 run only with water_motion_enabled (the chop is applied per fragment — see water_motion). With
-// strength / waves / glint all 0 this returns the plain
-// sample A, bit-exact.
+// 2 runs only with water_motion_enabled (the chop and whitecaps are applied per fragment — see
+// apply_water_motion). With strength and waves both 0 this returns the plain sample A, bit-exact.
 vec3 water_surface(int layer, vec2 map_px) {
 	vec2 uv_a = map_px / (2.0 * hex_radius) * base_scale;   // == base_uv at the call site, same expression
 	vec3 col = texture(biome_array, vec3(uv_a, float(layer))).rgb;
 	bool vary = water_variation_strength > 0.0;
 	bool waves = water_motion_enabled && water_wave_strength > 0.0;
-	bool glint = water_motion_enabled && water_glint_strength > 0.0;
-	if (!vary && !waves && !glint) {
+	if (!vary && !waves) {
 		return col;
 	}
 	float mean = mean_luma(layer);
@@ -797,18 +802,6 @@ vec3 water_surface(int layer, vec2 map_px) {
 		float l1 = luma(texture(biome_array, vec3(uv_w1, float(layer))).rgb);
 		float l2 = luma(texture(biome_array, vec3(uv_w2, float(layer))).rgb);
 		col += vec3((0.5 * (l1 + l2) - mean) * water_wave_strength);
-	}
-	if (glint) {
-		vec2 gp = map_px / (hex_radius * GLINT_CELL) + GLINT_NOISE_OFFSET;
-		// Each ridge is 1 exactly where its field crosses 0.5: a thin sinuous line.
-		float ridge_a = 1.0 - abs(2.0 * vnoise(gp + GLINT_DRIFT_A * t) - 1.0);
-		float ridge_b = 1.0 - abs(2.0 * vnoise(gp / GLINT_CELL_B_RATIO + GLINT_NOISE_OFFSET_B + GLINT_DRIFT_B * t)
-			- 1.0);
-		float mask = smoothstep(GLINT_MASK_LO, GLINT_MASK_HI,
-			vnoise(map_px / (hex_radius * GLINT_MASK_CELL) + GLINT_MASK_OFFSET + GLINT_MASK_DRIFT * t));
-		float sparkle = smoothstep(GLINT_RIDGE_LO, 1.0, ridge_a) * smoothstep(GLINT_RIDGE_LO, 1.0, ridge_b)
-			* mask * water_glint_strength;
-		col = mix(col, mix(foam_color, vec3(1.0), GLINT_WHITE_MIX), sparkle);
 	}
 	return col;
 }
@@ -888,16 +881,33 @@ float coastal_weight() {
 	return 0.0;
 }
 
-// THE WATER MOTION a water fragment gets, as a signed luma offset:
-//   open_chop · (1 − coastal_w) + coastal_swell · coastal_w
-// With COASTAL_SWELL_ENABLED false the blend is never taken, so the shelf keeps the full open chop.
-float water_motion(vec2 map_px) {
+// THE WHITECAPS (see WHITECAP_*): how far this fragment is pulled toward the foam tint, 0..whitecap_strength.
+// `chop` is open_chop's signed value here — the caps cluster in its bright phase.
+float open_whitecap(vec2 map_px, float t, float chop) {
+	vec2 p = rotate_uv(map_px / (hex_radius * max(water_whitecap_scale, BLEND_SOFT_MIN)), WHITECAP_ROTATION);
+	float z = t * water_whitecap_rate;
+	float field = chop_octave(vec3(p, z) + WHITECAP_OFFSET)
+		+ WHITECAP_BREAKUP_AMOUNT * (vnoise3(vec3(p * WHITECAP_BREAKUP_SCALE, z) + WHITECAP_BREAKUP_OFFSET) - VNOISE_MEAN);
+	float threshold = WHITECAP_FIELD_PEAK * (1.0 - clamp(water_whitecap_coverage, 0.0, 1.0));
+	float fleck = smoothstep(threshold, threshold + WHITECAP_SOFT, field);
+	return fleck * smoothstep(WHITECAP_CLUSTER_LO, WHITECAP_CLUSTER_HI, chop) * water_whitecap_strength;
+}
+
+// THE WATER MOTION applied to a water fragment's colour `c`. The OPEN-OCEAN term is the chop (a luma offset, hue
+// preserved) with the whitecaps over it; the coastal term will be the swell:
+//   open · (1 − coastal_w) + coastal · coastal_w
+// With COASTAL_SWELL_ENABLED false the blend is never taken, so the shelf keeps the full open chop + caps.
+vec3 apply_water_motion(vec3 c, vec2 map_px) {
 	float t = TIME + water_time_offset;
-	float motion = open_chop(map_px, t) * water_chop_strength;
-	if (COASTAL_SWELL_ENABLED) {
-		motion = mix(motion, coastal_swell(map_px, t), coastal_weight());
+	float chop = open_chop(map_px, t);
+	vec3 open = c + vec3(chop * water_chop_strength);
+	if (water_whitecap_strength > 0.0) {
+		open = mix(open, mix(foam_color, vec3(1.0), WHITECAP_WHITE_MIX), open_whitecap(map_px, t, chop));
 	}
-	return motion;
+	if (COASTAL_SWELL_ENABLED) {
+		open = mix(open, c + vec3(coastal_swell(map_px, t)), coastal_weight());
+	}
+	return open;
 }
 
 // A BASE sample of any layer: water layers go through the one water sampler above, land keeps the plain
@@ -1549,12 +1559,13 @@ void fragment() {
 			}
 		}
 
-		// --- WATER MOTION: the directionless chop (and, later, the coastal swell), once per water fragment, as a
-		// luma offset (hue preserved). After the depth field — it is the same field for every water layer, so
+		// --- WATER MOTION: the directionless chop + whitecaps (and, later, the coastal swell), once per water
+		// fragment. After the depth field — it is the same field for every water layer, so
 		// adding it to the mean equals adding it to each sample — and before the shore, so the foam is untouched.
 		// Near a coast the waterline cross-fade blends toward an estimate without it, so it eases out at the shore.
-		if (water_motion_enabled && water_chop_strength > 0.0 && own_class == CLASS_WATER) {
-			result += vec3(water_motion(v_map));
+		if (water_motion_enabled && (water_chop_strength > 0.0 || water_whitecap_strength > 0.0)
+				&& own_class == CLASS_WATER) {
+			result = apply_water_motion(result, v_map);
 		}
 
 		// --- WATER TEMPERATURE GRADE: after the water surface + depth field, before the shore (foam untouched) ---

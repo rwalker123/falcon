@@ -99,7 +99,7 @@ const WATER_BLEND_DEFAULT_NOISE_AMOUNT := 0.45   # wobble amplitude, vs 0.30 on 
 # --- WATER SURFACE levers (terrain_config's "water_surface" block; the shader's water_surface()) ---
 # One base texture repeats as an EXACT COPY every 1/base_scale hex-rows, and open ocean has nothing to hide the
 # repeat under, so it read as a grid. The shader breaks it with a second rotated/rescaled sample mixed in by
-# broad world-noise patches (static), and adds a subtle scrolling wave ripple + a faint glint (animated, LOD-gated).
+# broad world-noise patches (static), and adds an in-place chop + whitecaps (animated, LOD-gated, `O` toggles).
 # Chosen on blend_probe state 29/OCEAN at the game's r ≈ 45. Everything subtle: the ocean must not compete with
 # units and markers.
 const WATER_SURFACE_DEFAULT_VARIATION_STRENGTH := 1.0   # 0..1, B's peak weight; 0 = one plain sample (bit-exact)
@@ -118,8 +118,18 @@ const WATER_SURFACE_MAX_CHOP_STRENGTH := 0.2
 const WATER_SURFACE_MIN_CHOP_SCALE := 0.1               # hex radii — finer is per-pixel sparkle, not chop
 const WATER_SURFACE_MAX_CHOP_SCALE := 2.0               # hex radii — broader starts to read as map-scale pattern
 const WATER_SURFACE_MAX_CHOP_RATE := 5.0
-const WATER_SURFACE_DEFAULT_GLINT_STRENGTH := 0.0       # peak pull of a glint speck toward the pale foam tint (ships OFF)
-const WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS := 24.0   # px: below this the waves + glint are off (no far-zoom shimmer)
+# THE WHITECAPS — sparse bright flecks that appear, peak and fade in place, clustered in the chop's bright phase.
+# They carry the visible motion: the chop alone, at the strength that stopped it reading as clouds, is faint.
+const WATER_SURFACE_DEFAULT_WHITECAP_STRENGTH := 0.8    # peak pull of a fleck toward the near-white foam tint
+const WATER_SURFACE_DEFAULT_WHITECAP_COVERAGE := 0.45   # 0..1: bigger = more of the noise crests break
+const WATER_SURFACE_DEFAULT_WHITECAP_SCALE := 0.35      # the fleck field's noise cell, in HEX RADII
+const WATER_SURFACE_DEFAULT_WHITECAP_RATE := 0.6        # flecks' life: noise cells of its time axis per second
+const WATER_SURFACE_MAX_WHITECAP_STRENGTH := 1.0
+const WATER_SURFACE_MAX_WHITECAP_COVERAGE := 1.0
+const WATER_SURFACE_MIN_WHITECAP_SCALE := 0.05          # hex radii — finer is single-pixel sparkle
+const WATER_SURFACE_MAX_WHITECAP_SCALE := 2.0           # hex radii — broader is foam patches, not caps
+const WATER_SURFACE_MAX_WHITECAP_RATE := 5.0
+const WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS := 24.0   # px: below this the waves, chop and whitecaps are off
 # Clamp ceilings, so a config typo cannot turn the ocean into strobing noise (the floors are all 0).
 const WATER_SURFACE_MAX_VARIATION_STRENGTH := 1.0
 const WATER_SURFACE_MIN_VARIATION_CELL := 0.25          # hex radii — below this the patches are speckle, not patches
@@ -128,7 +138,6 @@ const WATER_SURFACE_MIN_SCALE := 0.05                   # a UV scale of 0 would 
 const WATER_SURFACE_MAX_SCALE := 4.0
 const WATER_SURFACE_MAX_WAVE_STRENGTH := 2.0
 const WATER_SURFACE_MAX_WAVE_SPEED := 1.0
-const WATER_SURFACE_MAX_GLINT_STRENGTH := 1.0
 # --- WATER TEMPERATURE GRADE (terrain_config's "water_temperature" block; the shader's water_temperature_grade) ---
 # Open water tinted by its tile's °C so climate reads at a glance: cold seas darker, greyer, slate; warm seas a
 # touch brighter and more turquoise. The ANCHORS are the sim's published climate cut points (TileClimate) —
@@ -362,6 +371,9 @@ var _terrain_id_by_name: Dictionary = {}   # terrain config `name` -> id (feeds 
 # (splatmap) + the exact hex-layout uniforms. Supersedes A's baked-overlay dither when use_edge_blending.
 var _terrain_blend_quad: Node2D = null
 var _terrain_blend_material: ShaderMaterial = null
+# The water-motion gate is two halves: the zoom LOD (set on every uniform push) and the player's `O` toggle.
+var _water_motion_lod_on := false
+var _water_motion_toggle_on := true
 var _terrain_blend_ready: bool = false
 var _terrain_id_map_tex: ImageTexture = null   # RGBA8: R=terrain id, G=blend_class code (0 water/1 flat/2 rugged), B=canopy code (0=none else layer+1), A=peak code (0=none else layer+1)
 var _terrain_vis_map_tex: ImageTexture = null  # R8: 0 unexplored / 0.5 discovered / 1 active
@@ -874,8 +886,16 @@ func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -
 		WATER_SURFACE_MIN_CHOP_SCALE, WATER_SURFACE_MAX_CHOP_SCALE)
 	var chop_rate: float = clampf(float(ws.get("chop_rate", WATER_SURFACE_DEFAULT_CHOP_RATE)),
 		0.0, WATER_SURFACE_MAX_CHOP_RATE)
-	var glint_strength: float = clampf(float(ws.get("glint_strength", WATER_SURFACE_DEFAULT_GLINT_STRENGTH)),
-		0.0, WATER_SURFACE_MAX_GLINT_STRENGTH)
+	var whitecap_strength: float = clampf(
+		float(ws.get("whitecap_strength", WATER_SURFACE_DEFAULT_WHITECAP_STRENGTH)),
+		0.0, WATER_SURFACE_MAX_WHITECAP_STRENGTH)
+	var whitecap_coverage: float = clampf(
+		float(ws.get("whitecap_coverage", WATER_SURFACE_DEFAULT_WHITECAP_COVERAGE)),
+		0.0, WATER_SURFACE_MAX_WHITECAP_COVERAGE)
+	var whitecap_scale: float = clampf(float(ws.get("whitecap_scale", WATER_SURFACE_DEFAULT_WHITECAP_SCALE)),
+		WATER_SURFACE_MIN_WHITECAP_SCALE, WATER_SURFACE_MAX_WHITECAP_SCALE)
+	var whitecap_rate: float = clampf(float(ws.get("whitecap_rate", WATER_SURFACE_DEFAULT_WHITECAP_RATE)),
+		0.0, WATER_SURFACE_MAX_WHITECAP_RATE)
 	var motion_min_radius: float = maxf(
 		float(ws.get("motion_min_radius", WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS)), 0.0)
 	m.set_shader_parameter("water_variation_strength", strength)
@@ -888,8 +908,28 @@ func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -
 	m.set_shader_parameter("water_chop_strength", chop_strength)
 	m.set_shader_parameter("water_chop_scale", chop_scale)               # hex radii (the shader works in them)
 	m.set_shader_parameter("water_chop_rate", chop_rate)                 # time-axis noise cells per second
-	m.set_shader_parameter("water_glint_strength", glint_strength)
-	m.set_shader_parameter("water_motion_enabled", radius >= motion_min_radius)
+	m.set_shader_parameter("water_whitecap_strength", whitecap_strength)
+	m.set_shader_parameter("water_whitecap_coverage", whitecap_coverage)
+	m.set_shader_parameter("water_whitecap_scale", whitecap_scale)       # hex radii
+	m.set_shader_parameter("water_whitecap_rate", whitecap_rate)         # time-axis noise cells per second
+	_water_motion_lod_on = radius >= motion_min_radius
+	m.set_shader_parameter("water_motion_enabled", _water_motion_lod_on and _water_motion_toggle_on)
+
+## THE `O` TOGGLE — water motion (chop + whitecaps + waves) on / off, for look-dev: it tells whether a "cloudy"
+## sea is the motion or the static surface. Session-only (not persisted); the static anti-tiling and the
+## temperature grade are untouched. ANDed with the zoom LOD, so it can only turn motion OFF.
+func toggle_water_motion() -> void:
+	set_water_motion_enabled(not _water_motion_toggle_on)
+
+func set_water_motion_enabled(enabled: bool) -> void:
+	_water_motion_toggle_on = enabled
+	if _terrain_blend_material != null:
+		_terrain_blend_material.set_shader_parameter(
+			"water_motion_enabled", _water_motion_lod_on and _water_motion_toggle_on)
+	_view.queue_redraw()
+
+func is_water_motion_enabled() -> bool:
+	return _water_motion_toggle_on
 
 func hide_shader_quad() -> void:
 	if _terrain_blend_quad != null and _terrain_blend_quad.visible:

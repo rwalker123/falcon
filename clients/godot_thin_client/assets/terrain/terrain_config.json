@@ -23,7 +23,10 @@
     "chop_strength": 0.035,
     "chop_scale": 0.5,
     "chop_rate": 0.4,
-    "glint_strength": 0.0,
+    "whitecap_strength": 0.6,
+    "whitecap_coverage": 0.68,
+    "whitecap_scale": 0.55,
+    "whitecap_rate": 0.6,
     "motion_min_radius": 24.0
   },
   "water_temperature": {

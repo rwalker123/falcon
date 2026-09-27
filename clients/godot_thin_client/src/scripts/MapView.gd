@@ -2407,6 +2407,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			_terrain.toggle_terrain_textures()
 			_mark_input_handled()
 			return
+		if KeyboardArbiter.is_bare_key(event, KEY_O):
+			_terrain.toggle_water_motion()   # look-dev aid: ocean chop + whitecaps on/off (session-only)
+			_mark_input_handled()
+			return
 	if event is InputEventMouseButton:
 		var mouse_event: InputEventMouseButton = event
 		if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:

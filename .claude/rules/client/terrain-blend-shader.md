@@ -1147,7 +1147,7 @@ whenever the first stops. The sum × 1/√2 keeps one copy's spread. Measured ov
 intervals the rate holds at **5.01–5.23 levels/s** (max/min 1.04; one copy: 2.59–6.74, 2.60). Pairing
 two independent fields lowers the per-pixel spread slightly (motion std 4.89 → 4.18 levels) and the 1 s
 chord (5.0 → 3.9 levels), while the moment-to-moment rate matches one copy's average.
-**It is applied ONCE per water fragment** (`water_motion`, after the depth field and before the shore),
+**It is applied ONCE per water fragment** (`apply_water_motion`, after the depth field and before the shore),
 not inside `water_surface`: it is the same field for every water layer, so adding it to the depth
 field's mean equals adding it to each sample, at one evaluation instead of up to seven. Near a coast the
 waterline cross-fade blends toward a water estimate without it, so it eases out at the shore.
@@ -1162,25 +1162,40 @@ waterline cross-fade blends toward a water estimate without it, so it eases out 
 
 > #### THE COASTAL SWELL HOOK — the structure for waves rolling INTO the shore, not the feature
 >
-> Water motion is shaped `open_chop · (1 − coastal_w) + coastal_swell · coastal_w`. `coastal_swell()`
-> and `coastal_weight()` are STUBS returning 0, and `COASTAL_SWELL_ENABLED` (false) skips the blend, so
-> the shelf keeps the full open chop today. Turning it on needs: (1) a per-hex **distance-to-coast**
+> Water motion is shaped `open · (1 − coastal_w) + coastal_swell · coastal_w`, where the OPEN-ocean term
+> is the chop with the whitecaps over it. `coastal_swell()` and `coastal_weight()` are STUBS returning 0,
+> and `COASTAL_SWELL_ENABLED` (false) skips the blend, so the shelf keeps the full open chop and caps
+> today. Turning it on needs: (1) a per-hex **distance-to-coast**
 > field — the shore pass's own `u` reaches only ~0.41 r, far too short for a swell crossing a shelf;
 > (2) a `coastal_terrains` config list for `coastal_weight()` to key its shelf-ness on, computed as the
 > neighbour-weighted mean over {own + 6 neighbours} with the depth field's weights (the temperature
 > grade's graded-ness is the model); and (3) `coastal_swell()` built from that field.
 
-**3 — glint (animated).** Two value-noise fields, each folded into a ridge net, drift through each other;
-the glint is their PRODUCT, so it lights only near ridge crossings — short scattered specks that crawl
-and wink out. A third, broad noise (`GLINT_MASK_*`) masks it into drifting patches. The specks pull the
-colour toward a pale tint halfway from `foam_color` to white, × `glint_strength`. A single ridge net was
-tried first and drew continuous closed loops over the whole sea that read as contour lines on a map.
+**3 — whitecaps (animated, directionless).** They carry the visible motion: at the strength that stopped
+the chop reading as clouds (0.035), the chop alone is close to imperceptible. Sparse, small, soft bright
+flecks that appear, peak and fade IN PLACE — `open_whitecap`, a fine 3D value-noise field over (x, y,
+t·`whitecap_rate`) built as an interleaved PAIR like each chop octave (so the flecks never pause
+together) and rotated off the screen axes by its own angle (`WHITECAP_ROTATION`). A fleck is where the
+field crests past a threshold, `smoothstep(threshold, threshold + WHITECAP_SOFT, field)`, with
+`threshold = WHITECAP_FIELD_PEAK · (1 − whitecap_coverage)` — the pair's crest at coverage 0 (no caps),
+its mean at 1. A finer noise on the same time axis is added to the field first (`WHITECAP_BREAKUP_*`), so
+a cap's edge is ragged spray; without it the flecks were round dots that read as falling snow. The
+flecks CLUSTER in the chop's bright phase — × `smoothstep(WHITECAP_CLUSTER_LO, WHITECAP_CLUSTER_HI, chop)`
+on `open_chop`'s signed value — so they gather where the sea is rougher and come and go with it. A fleck
+pulls the colour toward `foam_color` blended `WHITECAP_WHITE_MIX` of the way to white, × `whitecap_strength`.
+They are part of the open-ocean term, applied with the chop, so they ease out at the waterline the same way.
+A fleck spans about a third of its noise cell (`whitecap_scale` 0.55 r → ~0.18 r).
+**The glint they supersede** — the product of two drifting ridge nets, masked into patches — read at map
+scale as white curls, scratches on the water rather than whitecaps, and shipped off before it was removed.
 
-**LOD gate.** Waves, chop and glint run only while `water_motion_enabled` — `radius ≥ motion_min_radius`,
-pushed by `TerrainRenderer._push_water_surface` the way `rivers_lod_enabled` is. Below it the static
-anti-tiling still runs, and nothing in it reads `TIME`, so the far zoom cannot shimmer.
+**LOD gate and the `O` toggle.** Waves, chop and whitecaps run only while `water_motion_enabled`, which
+`TerrainRenderer` pushes as `radius ≥ motion_min_radius` (the way `rivers_lod_enabled` is) AND the
+player's `O` toggle (`toggle_water_motion`, session-only, not persisted). Below the gate, or toggled off,
+the static anti-tiling and the temperature grade still run and nothing reads `TIME`, so the far zoom
+cannot shimmer. `O` is a look-dev aid: it tells whether a "cloudy" sea is the motion or the static
+surface under it.
 
-**Bit-exact when off.** With `variation_strength`, `wave_strength`, `chop_strength` and `glint_strength` all 0 the
+**Bit-exact when off.** With `variation_strength`, `wave_strength`, `chop_strength` and `whitecap_strength` all 0 the
 function returns sample A through the same expression the call site used before. Verified: a full
 `blend_probe` run on zeroed levers is byte-identical to the pre-surface render on all 291 frames. On the
 shipped levers 117 of them moved, every one with water in it; every land-only frame is byte-identical.
@@ -1188,17 +1203,18 @@ shipped levers 117 of them moved, every one with water in it; every land-only fr
 **Continuous redraw.** The client does not run `low_processor_mode`, so Godot renders the canvas every
 frame and `TIME` advances without `MapView` calling `queue_redraw` — the same mechanism the river
 scroll relies on. Shader `TIME` rolls over (`rendering/limits/time/time_rollover_secs`, 3600 s by
-default), so the wave, chop and glint phase jump once an hour, as the river scroll does.
+default), so the wave, chop and whitecap phase jump once an hour, as the river scroll does.
 
 **Harness phase.** `water_time_offset` is added to `TIME` for every animated term. `TerrainRenderer`
 never pushes it (0 in the game); `blend_probe` sets it on the material to render several phases while
 frozen at `Engine.time_scale` 0. Every term enters as an offset (a UV scroll, a position on the chop's
-time axis, a noise-domain drift), so phase 0 still draws it — the harness freeze's re-check rule.
+time axis), so phase 0 still draws it — the harness freeze's re-check rule.
 
 **Cost.** Per `water_surface` call with the shipped levers: up to 2 `biome_array` fetches (A, and B where
 its patch weight is non-zero; the two wave fetches are skipped at `wave_strength` 0) plus 1
 `layer_luma_map` texel fetch and 1 value-noise evaluation, against 1 fetch before. The chop adds two 3D
-value-noise evaluations per octave pair — four in all (32 hashes) — once per water fragment. An open-water pixel whose neighbours share its id makes one call; the depth field
+value-noise evaluations per octave pair — four in all (32 hashes) — once per water fragment, and the
+whitecaps three more (a pair plus the break-up). An open-water pixel whose neighbours share its id makes one call; the depth field
 adds one call per differing water neighbour **within reach** (the loop skips a zero-weight neighbour),
 and the waterline cross-fade adds up to seven calls in its narrow band at a coast.
 
@@ -1214,12 +1230,15 @@ and the waterline cross-fade adds up to seven calls in its narrow band at a coas
 | `chop_strength` | 0.035 | peak luma offset of a bright / dark chop patch (luma units, 0..1). 0.06 read live as drifting clouds |
 | `chop_scale` | 0.5 | the coarse octave's feature size, in hex radii |
 | `chop_rate` | 0.4 | how fast the chop evolves — cells of its time axis per second. 0.8 read live as clouds changing too fast |
-| `glint_strength` | 0.0 | peak pull of a glint speck toward its pale tint. **Ships off:** at 0.14 the specks read at map scale as white curls — scratches on the water, not whitecaps |
-| `motion_min_radius` | 24 | px; below it the waves, chop and glint are off |
+| `whitecap_strength` | 0.6 | peak pull of a fleck toward its near-white foam tint; 0 = none, bit-exact |
+| `whitecap_coverage` | 0.68 | 0..1 — how much of the fleck field's crest breaks; bigger = more caps |
+| `whitecap_scale` | 0.55 | the fleck field's noise cell, in hex radii; a fleck is ~⅓ of it |
+| `whitecap_rate` | 0.6 | how fast flecks come and go — cells of its time axis per second (~1.7 s a fleck) |
+| `motion_min_radius` | 24 | px; below it the waves, chop and whitecaps are off |
 
 Fallbacks are the `WATER_SURFACE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
-lever; the fixed feel (directions, cells, offsets, the mask) is the `WATER_*` / `GLINT_*` consts in the
-shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
+lever; the fixed feel (directions, cells, offsets, rotations, the whitecap threshold softness,
+break-up and clustering) is the `WATER_*` / `CHOP_*` / `WHITECAP_*` consts in the shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
 `variation_cell` (4) let one rotated sample cover most of the frame and showed B's own repeat on a
 diagonal; 3 keeps both samples in view. The repeat measure there reads **0.15** on the plain sample
 and **0.73** with the anti-tiling (1 = no correlation at the tile period). The chop was chosen on a
@@ -1227,7 +1246,11 @@ four-phase sequence and a 1.0×-like frame (`OCEAN_zoomed_out`, r ≈ 25.7), the
 `chop_strength` 0.06 / `chop_rate` 0.8 (a steady ~5 levels/s) Ray read it in play as clouds, changing too
 fast. It ships at **0.035 / 0.4**: **2.3 levels mean over two seconds**, a steady **1.47–1.53 levels per
 second** (luma ≈ 30). The texture waves alone moved 0.94 levels per second and were invisible, so the
-usable band is narrow — below ~1 level/s the sea reads still, and ~5 reads as weather.
+usable band is narrow — below ~1 level/s the sea reads still, and ~5 reads as weather. The whitecaps were
+then chosen by eye at r ≈ 45 and on the 1.0×-like frame: flecks at `whitecap_scale` 0.35 were 2–3 px dots
+(snow), and a hard crest edge (`WHITECAP_SOFT` 0.06) read the same way; 0.55 with a softer edge and the
+break-up reads as scattered caps. With them the open water moves **3.0 levels over two seconds**, a
+**2.1–2.5 levels/s** series.
 
 ## Water temperature grade
 

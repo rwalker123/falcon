@@ -1111,12 +1111,15 @@ const OCEAN_DETAIL_CROP_RADII := 2.4
 # The levers each variant sets inside the `water_surface` block (merged over the shipped block, so the
 # levers it does not name stay shipped). OFF is the plain single sample — the pre-surface render, bit-exact.
 const OCEAN_OFF_SURFACE := {
-	"variation_strength": 0.0, "wave_strength": 0.0, "chop_strength": 0.0, "glint_strength": 0.0,
+	"variation_strength": 0.0, "wave_strength": 0.0, "chop_strength": 0.0, "whitecap_strength": 0.0,
 }
-const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "chop_strength": 0.0, "glint_strength": 0.0}
+const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "chop_strength": 0.0, "whitecap_strength": 0.0}
 # The scrolled-TEXTURE wave term alone — kept as a frame because it is the term that measured as invisible.
-const OCEAN_WAVES_SURFACE := {"chop_strength": 0.0, "glint_strength": 0.0}
-const OCEAN_CHOP_SURFACE := {"wave_strength": 0.0, "glint_strength": 0.0}   # the chop alone
+const OCEAN_WAVES_SURFACE := {"chop_strength": 0.0, "whitecap_strength": 0.0}
+const OCEAN_CHOP_SURFACE := {"wave_strength": 0.0, "whitecap_strength": 0.0}   # the chop alone
+# The whitecaps' twin with them OFF: the shipped surface minus the caps, so (shipped − this) is the caps alone
+# (the chop and art cancel — the caps' clustering reads the chop's FIELD, not its strength).
+const OCEAN_NO_WHITECAP_SURFACE := {"whitecap_strength": 0.0}
 const OCEAN_SHIPPED_SURFACE := {}
 # The SECOND motion phase, in seconds of shader time (the `water_time_offset` uniform — the harness runs at
 # Engine.time_scale 0, so TIME itself never moves). ONE second: the claim is that a player sees the water move
@@ -1186,6 +1189,30 @@ const OCEAN_LOWFREQ_MAX_FRACTION := 0.35
 # The 1.0×-LIKE frame: the same geography on a grid that fits at r ≈ 25.7, just above motion_min_radius (24),
 # so the chop is ON there — the zoom at which the travelling swell drew its map-wide diagonal.
 const OCEAN_ZOOMED_OUT_GRID := Vector2i(42, 28)
+# THE WHITECAPS (three claims, on the cap MASK: open-ocean pixels at least OCEAN_WHITECAP_MIN_DL levels brighter
+# than the whitecap-off twin at the same phase — the chop and art cancel, so the mask is the caps alone).
+# A fleck's core pulls toward near-white by whitecap_strength, tens of levels on this dark water, so a few
+# levels is a clean cut that leaves out the fleck's faint soft rim.
+const OCEAN_WHITECAP_MIN_DL := 8.0
+# (a) COVERAGE: the mask's fraction of open-ocean pixels. Sparse flecks, never a carpet: at least one pixel in a
+# thousand (a sea with any caps at all at the shipped coverage) and at most one in twenty (beyond that they
+# stop reading as flecks and start to whiten the sea).
+const OCEAN_WHITECAP_COVERAGE_MIN := 0.001
+const OCEAN_WHITECAP_COVERAGE_MAX := 0.05
+# (b) SMALL: the mask's mean 4-connected blob, in px, may not exceed a disc OCEAN_WHITECAP_MAX_FLECK_RADII hex
+# radii across, π·(that·r / 2)². A fleck is the crest of a noise field whose cell is whitecap_scale hex radii, so
+# it spans about a third of a cell (0.18 r at the shipped 0.55); past ~0.3 r a "fleck" is a foam patch. The bar
+# is in hex radii, NOT read from whitecap_scale — a bar that grew with the lever could never catch it.
+const OCEAN_WHITECAP_MAX_FLECK_RADII := 0.3
+# (c) IN PLACE: the fraction of the caps at t that are still caps at t + OCEAN_WHITECAP_DT (0.5 s, under a fleck's
+# ~1.7 s life at whitecap_rate 0.6). Flecks that swell and fade where they are keep SOME of their pixels; flecks
+# that jumped keep only chance (≈ the coverage, under 0.01), so the floor is far above that. The ceiling is set by
+# the FROZEN case: with whitecap_rate 0 the fleck field stands still and only the cluster gate, following the
+# chop, moves the caps — that alone keeps ~0.7 over the window — so caps living on their own clock must keep
+# clearly less.
+const OCEAN_WHITECAP_DT := 0.5
+const OCEAN_WHITECAP_OVERLAP_MIN := 0.2
+const OCEAN_WHITECAP_OVERLAP_MAX := 0.6
 
 # State 30 (OCEANTEMP): the WATER TEMPERATURE GRADE (`terrain-blend-shader.md` → Water temperature grade).
 # State 29's geography at r ≈ 45 on a temperature gradient running polar (top) → tropical (bottom), with the
@@ -1264,7 +1291,7 @@ func _ready() -> void:
 	# `process_frame`, which still fires at time_scale 0.
 	#
 	# The WATER SURFACE (state 29) later became a third TIME reader, and was classified the same way: its
-	# waves are a UV scroll, its chop a position on its time axis and its glint a drift of the noise domain — all
+	# waves are a UV scroll, and its chop and whitecaps positions on their noise fields' time axis — all
 	# offsets, so phase 0 still draws them. States 29/30 render other phases through the `water_time_offset`
 	# uniform, never by un-freezing.
 	#
@@ -2240,7 +2267,7 @@ func _bank_neighbor(hex: Vector2i, dir: int) -> Vector2i:
 func _render_ocean_state() -> void:
 	## State 29 (OCEAN) at the game's r ≈ 45, grid OFF (a drawn hexagon is itself a lattice over the water):
 	## OCEAN_off (the plain single sample — the repeat grid, i.e. the BEFORE) → OCEAN_static (anti-tiling only)
-	## → OCEAN_waves (+ glint off) at two phases and their amplified diff, so the wave term is judged apart →
+	## → OCEAN_waves (chop + whitecaps off) at two phases and their amplified diff, so the wave term is judged apart →
 	## OCEAN_shipped at two phases + their diff (the whole surface MOVES). Then the PNG-less claims: the repeat
 	## measure (the grid is gone, not merely changed) and the motion LOD gate at game vs far zoom.
 	_map._show_grid_lines = false
@@ -2251,6 +2278,7 @@ func _render_ocean_state() -> void:
 	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves", 0.0, false)
 	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves_t2", OCEAN_MOTION_DT, false)
 	_save_diff("OCEAN_waves", "OCEAN_waves_t2", "OCEAN_waves_motion_diff")
+	await _render_ocean_frame(OCEAN_NO_WHITECAP_SURFACE, "OCEAN_no_whitecaps", 0.0, false)
 	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop", 0.0, false)
 	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop_t2", OCEAN_MOTION_DT, false)
 	_save_diff("OCEAN_chop", "OCEAN_chop_t2", "OCEAN_chop_motion_diff")
@@ -2269,6 +2297,8 @@ func _render_ocean_state() -> void:
 		_fail("OCEAN: the water surface leaves the exact-copy repeat standing (ratio %.3f < %.2f)"
 			% [static_ratio, OCEAN_REPEAT_ON_MIN])
 	await _assert_ocean_no_net_direction_or_pattern()
+	await _assert_ocean_whitecaps()
+	await _assert_ocean_motion_toggle()
 	await _assert_ocean_motion(GRID_W, GRID_H, GAME_HEX_RADIUS, true)
 	await _assert_ocean_motion(
 		GRID_W * OCEAN_FAR_GRID_SCALE, GRID_H * OCEAN_FAR_GRID_SCALE, OCEAN_FAR_HEX_RADIUS, false
@@ -2316,7 +2346,7 @@ func _ocean_surface(changes: Dictionary) -> Dictionary:
 
 
 func _set_water_time_offset(seconds: float) -> void:
-	## The shader phase of the waves + glint. Set on the material directly: TerrainRenderer never pushes it.
+	## The shader phase of the waves, chop and whitecaps. Set on the material directly: TerrainRenderer never pushes it.
 	_map._terrain._terrain_blend_material.set_shader_parameter(OCEAN_TIME_OFFSET_UNIFORM, seconds)
 	_map.queue_redraw()
 
@@ -2388,7 +2418,7 @@ func _assert_ocean_motion_steady() -> void:
 func _assert_ocean_no_net_direction_or_pattern() -> void:
 	## On state 29's own fixture at r ≈ 45: the MOTION field (shipped minus its chop-off twin) must neither
 	## drift (see OCEAN_DIRECTION_*) nor carry map-scale structure (see OCEAN_LOWFREQ_*).
-	var still: Image = await _ocean_capture({"chop_strength": 0.0, "wave_strength": 0.0}, 0.0)
+	var still: Image = await _ocean_capture(OCEAN_STATIC_SURFACE, 0.0)
 	var a: Image = await _ocean_capture({}, 0.0)
 	var b: Image = await _ocean_capture({}, OCEAN_DIRECTION_DT)
 	if still == null or a == null or b == null:
@@ -2435,6 +2465,107 @@ func _assert_ocean_no_net_direction_or_pattern() -> void:
 	if lf_fraction > OCEAN_LOWFREQ_MAX_FRACTION:
 		_fail("OCEAN: the water motion carries MAP-SCALE structure — %.2f of its std survives %.0f-radius blocks (max %.2f)"
 			% [lf_fraction, OCEAN_LOWFREQ_BLOCK_RADII, OCEAN_LOWFREQ_MAX_FRACTION])
+
+
+func _assert_ocean_whitecaps() -> void:
+	## THE WHITECAP CLAIMS (see OCEAN_WHITECAP_*) on state 29's fixture at r ≈ 45: coverage in a band, small
+	## flecks, and flecks that change in place.
+	var on_a: Image = await _ocean_capture({}, 0.0)
+	var off_a: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, 0.0)
+	var on_b: Image = await _ocean_capture({}, OCEAN_WHITECAP_DT)
+	var off_b: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, OCEAN_WHITECAP_DT)
+	if on_a == null or off_a == null or on_b == null or off_b == null:
+		return
+	var box: Rect2i = _ocean_box_px(on_a)
+	var mask_a: PackedByteArray = _whitecap_mask(on_a, off_a, box)
+	var mask_b: PackedByteArray = _whitecap_mask(on_b, off_b, box)
+	var total: int = mask_a.size()
+	var caps_a := 0
+	var kept := 0
+	for i in range(total):
+		if mask_a[i] != 0:
+			caps_a += 1
+			if mask_b[i] != 0:
+				kept += 1
+	var coverage: float = float(caps_a) / maxf(total, 1)
+	var blobs: int = _count_blobs(mask_a, box.size.x, box.size.y)
+	var mean_blob: float = float(caps_a) / maxf(blobs, 1)
+	var fleck_radius_px: float = OCEAN_WHITECAP_MAX_FLECK_RADII * _map.last_hex_radius / 2.0
+	var blob_max: float = PI * fleck_radius_px * fleck_radius_px
+	var overlap: float = float(kept) / maxf(caps_a, 1)
+	print("blend_probe: OCEAN whitecaps — coverage %.4f (%d of %d px, band %.3f–%.3f) · %d flecks, mean %.1f px"
+		% [coverage, caps_a, total, OCEAN_WHITECAP_COVERAGE_MIN, OCEAN_WHITECAP_COVERAGE_MAX, blobs, mean_blob]
+		+ " (max %.1f) · overlap over %.1f s %.2f (band %.2f–%.2f)"
+		% [blob_max, OCEAN_WHITECAP_DT, overlap, OCEAN_WHITECAP_OVERLAP_MIN, OCEAN_WHITECAP_OVERLAP_MAX])
+	if coverage < OCEAN_WHITECAP_COVERAGE_MIN:
+		_fail("OCEAN: whitecaps ABSENT — %.4f of the open ocean capped (want ≥ %.3f)"
+			% [coverage, OCEAN_WHITECAP_COVERAGE_MIN])
+	elif coverage > OCEAN_WHITECAP_COVERAGE_MAX:
+		_fail("OCEAN: whitecaps CARPET the sea — %.4f of the open ocean capped (want ≤ %.3f)"
+			% [coverage, OCEAN_WHITECAP_COVERAGE_MAX])
+	if caps_a > 0 and mean_blob > blob_max:
+		_fail("OCEAN: whitecaps are PATCHES, not flecks — mean blob %.1f px (want ≤ %.1f)" % [mean_blob, blob_max])
+	if caps_a > 0 and overlap < OCEAN_WHITECAP_OVERLAP_MIN:
+		_fail("OCEAN: whitecaps JUMP — only %.2f of them survive %.1f s in place (want ≥ %.2f)"
+			% [overlap, OCEAN_WHITECAP_DT, OCEAN_WHITECAP_OVERLAP_MIN])
+	elif caps_a > 0 and overlap > OCEAN_WHITECAP_OVERLAP_MAX:
+		_fail("OCEAN: whitecaps are STATIC — %.2f of them unchanged after %.1f s (want ≤ %.2f)"
+			% [overlap, OCEAN_WHITECAP_DT, OCEAN_WHITECAP_OVERLAP_MAX])
+
+
+func _whitecap_mask(on: Image, off: Image, box: Rect2i) -> PackedByteArray:
+	## 1 where `on` is at least OCEAN_WHITECAP_MIN_DL levels brighter than `off`, over `box` (row-major).
+	var mask := PackedByteArray()
+	mask.resize(box.size.x * box.size.y)
+	var bar: float = OCEAN_WHITECAP_MIN_DL / LUMA_LEVELS
+	for y in range(box.size.y):
+		for x in range(box.size.x):
+			var px: int = box.position.x + x
+			var py: int = box.position.y + y
+			var d: float = on.get_pixel(px, py).get_luminance() - off.get_pixel(px, py).get_luminance()
+			mask[y * box.size.x + x] = 1 if d >= bar else 0
+	return mask
+
+
+func _count_blobs(mask: PackedByteArray, w: int, h: int) -> int:
+	## 4-connected components of the set pixels of `mask` (w × h, row-major).
+	var seen := PackedByteArray()
+	seen.resize(mask.size())
+	var blobs := 0
+	var stack := PackedInt32Array()
+	for start in range(mask.size()):
+		if mask[start] == 0 or seen[start] != 0:
+			continue
+		blobs += 1
+		seen[start] = 1
+		stack.append(start)
+		while not stack.is_empty():
+			var i: int = stack[stack.size() - 1]
+			stack.remove_at(stack.size() - 1)
+			var x: int = i % w
+			var y: int = i / w
+			for n: int in [i - 1 if x > 0 else -1, i + 1 if x < w - 1 else -1,
+					i - w if y > 0 else -1, i + w if y < h - 1 else -1]:
+				if n >= 0 and mask[n] != 0 and seen[n] == 0:
+					seen[n] = 1
+					stack.append(n)
+	return blobs
+
+
+func _assert_ocean_motion_toggle() -> void:
+	## THE `O` TOGGLE: with water motion toggled off, two phases of the SHIPPED surface are byte-identical (the
+	## magnitude claim is the premise that, toggled on, they are not). The toggle is restored after.
+	_map._terrain.set_water_motion_enabled(false)
+	var a: Image = await _ocean_capture({}, 0.0)
+	var b: Image = await _ocean_capture({}, OCEAN_MOTION_DT)
+	_map._terrain.set_water_motion_enabled(true)
+	if a == null or b == null:
+		return
+	var changed: int = _changed_pixel_count(a, b)
+	print("blend_probe: OCEAN motion toggled OFF — %d px differ over %.1f s" % [changed, OCEAN_MOTION_DT])
+	if changed != 0:
+		_fail("OCEAN: the `O` toggle leaves the water moving — %d px differ over %.1f s with motion off"
+			% [changed, OCEAN_MOTION_DT])
 
 
 func _ocean_capture(surface: Dictionary, time_offset: float) -> Image:

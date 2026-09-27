@@ -653,7 +653,7 @@ subject disappeared is worse than one that varies, whereas an offset or a midpoi
 
 **The water surface was classified that way when it landed** (`terrain-blend-shader.md` → Water
 surface): it is the third reader of `TIME`, and every one of its terms is an offset — the waves a UV
-scroll, the chop a position on its time axis, the glint a drift of its noise domain — so phase 0 still draws
+scroll, the chop and the whitecaps positions on their noise fields' time axis — so phase 0 still draws
 them. The set stayed bit-identical run to run (308/308 across consecutive runs with state 29 in it).
 States 29 and 30 reach other phases through the `water_time_offset` uniform, not by un-freezing the
 clock.
@@ -809,16 +809,17 @@ the frame with the open water (`terrain-blend-shader.md` → Water surface). Fra
 
 | frame | levers | read for |
 |---|---|---|
-| `OCEAN_off` (+ `_open` / `_seam` / `_coast`) | variation, waves, glint all 0 | the BEFORE: the grid, unmistakable |
-| `OCEAN_static` (+ crops) | waves and glint 0 | the anti-tiling alone; no flat blotches where the patches meet |
-| `OCEAN_waves`, `_t2`, `_motion_diff` | chop and glint 0, two phases | the scrolled-texture term alone (it ships off) — kept because it is the term that measured as invisible |
-| `OCEAN_chop`, `_t2`, `_motion_diff` | waves and glint 0, two phases | the chop alone |
-| `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s |
+| `OCEAN_off` (+ `_open` / `_seam` / `_coast`) | variation, waves, chop, whitecaps all 0 | the BEFORE: the grid, unmistakable |
+| `OCEAN_static` (+ crops) | waves, chop and whitecaps 0 | the anti-tiling alone; no flat blotches where the patches meet |
+| `OCEAN_waves`, `_t2`, `_motion_diff` | chop and whitecaps 0, two phases | the scrolled-texture term alone (it ships off) — kept because it is the term that measured as invisible |
+| `OCEAN_no_whitecaps` | whitecaps 0 | the shipped surface without its caps — the twin every whitecap claim subtracts |
+| `OCEAN_chop`, `_t2`, `_motion_diff` | waves and whitecaps 0, two phases | the chop alone |
+| `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s; `OCEAN_shipped_open` is the r ≈ 45 crop the whitecaps are judged on |
 | `OCEAN_seq0..3` | shipped, four phases a second apart | the look-at sequence the chop was tuned on |
-| `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop is ON — the zoom where the retired swell drew a map-wide diagonal. Below the gate (the r ≈ 22.8 far-zoom grid) the chop is off and the water is static |
+| `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop and caps are ON — the zoom where the retired swell drew a map-wide diagonal, and where the caps must stay sparse flecks, never streaks or patches. Below the gate (the r ≈ 22.8 far-zoom grid) the motion is off and the water is static |
 
-The second phase is `OCEAN_MOTION_DT` (**1 s**) set on the `water_time_offset` uniform, since the
-harness clock is frozen. Six PNG-less claims ride it, and each fails on its own:
+The second phase is `OCEAN_MOTION_DT` (**2 s**) set on the `water_time_offset` uniform, since the
+harness clock is frozen. Eleven PNG-less claims ride it, and each fails on its own:
 
 - **The repeat measure.** Over a deep-only box, mean |ΔL| between each pixel and the one ONE TEXTURE
   PERIOD east (`2·r / base_scale` px), over the same at half a period. An exact copy scores ~0, an
@@ -830,7 +831,7 @@ harness clock is frozen. Six PNG-less claims ride it, and each fails on its own:
   number, when retuning the cell.
 - **Motion at game zoom, measured as MAGNITUDE.** Over the deep-ocean box, the mean |ΔL| between two
   phases `OCEAN_MOTION_DT` (2 s) apart must reach `OCEAN_MOTION_MIN_MEAN_DL` (**1.5 levels** on this
-  water, luma ≈ 30); measured **2.3**. The bar guards against the term going invisible, NOT the tuned
+  water, luma ≈ 30); measured **3.0** with the whitecaps (2.3 on the chop alone). The bar guards against the term going invisible, NOT the tuned
   look — that is Ray's live call: at `chop_strength` 0.06 / `chop_rate` 0.8 (~4 levels/s) the chop read
   in play as clouds changing too fast, so it ships at 0.035 / 0.4 and the window doubled with the rate.
   ⛔ **It was a changed-pixel COUNT, and the count passed a sea that looked still.** A scrolled texture
@@ -845,29 +846,51 @@ harness clock is frozen. Six PNG-less claims ride it, and each fails on its own:
   period — each read as a rate (mean |ΔL| / dt). The slowest must reach the magnitude bar's own rate,
   `OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT` (`OCEAN_STEADY_MIN_FRACTION` 1.0: a window's change is at
   most the sum of its interval changes, so only a pause drops one below it), and max/min ≤
-  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **1.47–1.53 levels/s** — ratio **1.04**. (At the earlier
-  0.06 / 0.8 tuning it held 5.01–5.23, and the single-copy sabotage swung 2.59–6.74, ratio 2.60.)
+  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **2.10–2.51 levels/s** — ratio **1.19** (the chop alone held
+  1.47–1.53, ratio 1.04; the caps add a little pulse). (At the earlier 0.06 / 0.8 tuning it held
+  5.01–5.23, and the single-copy sabotage swung 2.59–6.74, ratio 2.60.)
   **Sabotaged** with one noise copy per octave (the form before `CHOP_PAIR_*`): **2.74, 6.21, 6.74, 4.86,
   3.59, 4.62, 5.57, 5.82, 6.10, 4.46, 2.59, 5.13** — ratio **2.60**, fail; slowest 2.59, under the floor
   too.
-- **No net direction.** The MOTION field — a phase minus its chop-off twin, so the art cancels — at two
-  phases `OCEAN_DIRECTION_DT` (0.5 s) apart is cross-correlated at every offset within ±24 px; the best
-  correlation more than 4 px from zero may not beat zero's by more than 0.02. Shipped: **0.740 at zero,
-  0.619 at best elsewhere**. **Sabotaged** with a single travelling sine train at the chop's own size:
+- **No net direction.** The MOTION field — a phase minus its motion-off twin (`OCEAN_STATIC_SURFACE`:
+  chop, waves AND whitecaps off), so the art cancels and the caps are part of the field — at two phases
+  `OCEAN_DIRECTION_DT` (1 s) apart is cross-correlated at every offset within ±24 px; the best
+  correlation more than 4 px from zero may not beat zero's by more than 0.02. Shipped with the caps:
+  **0.366 at zero, 0.287 at best elsewhere** (the chop alone: 0.740 vs 0.619). **Sabotaged** with a single travelling sine train at the chop's own size:
   **−0.807 at zero, 0.999 at (10, 12) px**, fail; and with the retired swell: **0.800 vs 0.984**, fail.
 - **No map-scale pattern.** The same motion field block-averaged over 2-hex-radius blocks — a low-pass —
   and its std taken as a FRACTION of the per-pixel std (an absolute bar would scale with
   `chop_strength`). Independent ~0.5 r patches keep about feature/block ≈ 0.25 of their std; bands or
-  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.29**; **sabotaged** with the
+  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.20** with the caps (0.29
+  on the chop alone); **sabotaged** with the
   retired swell: **0.43**, fail. (The small travelling train reads 0.02 here and fails only the
   direction claim — the two measure different things.) The margin is honest rather than wide: a 3 r
   wavelength is partly averaged by 2 r blocks, and `chop_scale` near 0.7 r approaches the bar.
+- **Whitecaps (a) — coverage in a band.** The cap MASK is every open-ocean pixel at least
+  `OCEAN_WHITECAP_MIN_DL` (8 levels) brighter than the whitecap-off twin at the same phase (the chop and
+  the art cancel, so the mask is the caps alone). Its fraction of the box must lie in
+  [`OCEAN_WHITECAP_COVERAGE_MIN`, `_MAX`] = [0.001, 0.05] — present, and nowhere near a carpet. Shipped
+  **0.0083** (7062 of 854k px). **Sabotaged** with `whitecap_strength` 0: **0.0000**, fail.
+- **Whitecaps (b) — small flecks.** The mask's mean 4-connected blob may not exceed a disc
+  `OCEAN_WHITECAP_MAX_FLECK_RADII` (0.3) hex radii across, **142.9 px** at r = 45. The bar is in hex
+  radii, NOT read from `whitecap_scale` — a bar that grew with the lever could never catch it. Shipped
+  **94 flecks, mean 75.1 px**. **Sabotaged** with `whitecap_scale` 2.0: **219.2 px**, fail (the
+  clustering gate still breaks the big crests up, which is why it is not larger).
+- **Whitecaps (c) — change in place.** The fraction of the caps at t still capped at t +
+  `OCEAN_WHITECAP_DT` (0.5 s): in [0.2, 0.6]. Jumping flecks keep only chance (≈ the coverage, under
+  0.01). The ceiling is set by the FROZEN case, measured: with the fleck field frozen only the cluster
+  gate, following the chop, moves the caps, which alone keeps ~0.7. Shipped **0.43**. **Sabotaged** with
+  `whitecap_rate` 0: **0.69**, fail. (Over the first 1 s window tried it read 0.15 shipped against 0.45
+  frozen, too close to the floor to separate.)
+- **The `O` toggle.** With `TerrainRenderer.set_water_motion_enabled(false)`, two phases of the SHIPPED
+  surface `OCEAN_MOTION_DT` apart differ by **exactly 0 px** (the magnitude claim is its premise:
+  toggled on, they differ). The toggle is restored after.
 - **No motion at far zoom.** The same geography on a grid twice the size fits at r ≈ 22.8, under
   `motion_min_radius` (24) and above `EDGE_BLEND_MIN_RADIUS`, and the two phases must differ by **exactly
   0 px**. The static anti-tiling reads no `TIME`, so any pixel there is the LOD gate leaking. The pair is
   the claim: a gate that never opened passes this half, one that never closed passes the one above.
 
-Sabotaged by zeroing the three strengths in `terrain_config.json`: the repeat claim fails at 0.152 and
+Sabotaged by zeroing the surface strengths in `terrain_config.json`: the repeat claim fails at 0.152 and
 the game-zoom motion claim at 0 px, and the other 291 frames came back byte-identical to the render
 before the water surface existed.
 
