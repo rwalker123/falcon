@@ -83,7 +83,7 @@ const SETTLE_TURNS: u32 = 5;
 /// sub-unit material draw to cross a whole unit.
 const TURNS: u32 = 40;
 
-/// **The roster's archetypal dairy animal** — `standing_yield.provisions_per_head 0.0351`, and no
+/// **The roster's archetypal dairy animal** — the largest `standing_yield.provisions_per_head`, and no
 /// standing material, so its food half is readable on its own.
 const DAIRY_SPECIES: &str = "Wild Aurochs";
 /// **The roster's fleece animal** — milk *and* fibre, which is what makes it the row that proves one
@@ -421,7 +421,19 @@ struct Ledger {
 
 /// Run one fixture forward and report what it paid.
 fn run_fixture(species: &str, rung: Rung, fraction: f32) -> Ledger {
+    run_fixture_at_share(species, rung, fraction, None)
+}
+
+/// [`run_fixture`] with `husbandry.pastoral_standing_fraction` pinned to `share` when one is named —
+/// so a test of the pastoral DIAL measures the mechanism rather than whatever value ships.
+fn run_fixture_at_share(species: &str, rung: Rung, fraction: f32, share: Option<f32>) -> Ledger {
     let mut app = base_world();
+    if let Some(share) = share {
+        let mut handle = app.world.resource_mut::<FaunaConfigHandle>();
+        let mut config = (*handle.get()).clone();
+        config.husbandry.pastoral_standing_fraction = share;
+        handle.replace(std::sync::Arc::new(config));
+    }
     let (tile, _) = richest_pasture(&app);
     level_footprint_pasture(&mut app, tile, PEN_RADIUS);
     let id = seat_herd(&mut app, tile, species, rung, fraction);
@@ -567,19 +579,27 @@ fn the_standing_payout_is_the_species_rate_times_the_head_count() {
     );
 }
 
-/// **A ROAMING HERD IS MILKED OPPORTUNISTICALLY, NOT TWICE DAILY** — the pastoral share, and the
-/// reason it is load-bearing rather than a nicety: the two migratory species can never be penned, so
-/// a pen-only gate would hand them nothing at all.
+/// **THE FIXTURE'S pastoral share** — deliberately NOT the shipped value (which is `1.0`: a herded
+/// animal is milked like a penned one). Pinned below the pen's own share so the dial's effect is
+/// visible at all; the test measures the MECHANISM, whatever value ships.
+const FIXTURE_PASTORAL_SHARE: f32 = 0.4;
+/// The pen's own share — the pastoral dial at the value that milks a roaming herd like a penned one.
+const PEN_EQUIVALENT_SHARE: f32 = 1.0;
+
+/// **THE PASTORAL SHARE IS A DIAL ON THE ROAMING HERD'S MILK, AND IT IS LOAD-BEARING** — the two
+/// migratory species can never be penned, so a pen-only gate would hand them nothing at all.
 #[test]
 fn the_pastoral_rung_pays_its_share_and_the_wild_rung_pays_nothing() {
-    let share = FaunaConfig::builtin().husbandry.pastoral_standing_fraction;
-    assert!(
-        (0.0..1.0).contains(&share),
-        "this test measures a share BELOW the pen's, and the shipped dial is {share}"
-    );
+    const {
+        assert!(
+            FIXTURE_PASTORAL_SHARE > 0.0 && FIXTURE_PASTORAL_SHARE < PEN_EQUIVALENT_SHARE,
+            "this test measures a share strictly between nothing and the pen's"
+        );
+    }
+    let share = Some(FIXTURE_PASTORAL_SHARE);
 
     // The pastoral-only species, at its own top rung. It is the row the share exists for.
-    let roaming = run_fixture(PASTORAL_ONLY_SPECIES, Rung::Pastoral, 1.0);
+    let roaming = run_fixture_at_share(PASTORAL_ONLY_SPECIES, Rung::Pastoral, 1.0, share);
     assert!(
         roaming.standing > 0.0,
         "a species that can never be penned must still be milkable: {roaming:?}"
@@ -587,16 +607,35 @@ fn the_pastoral_rung_pays_its_share_and_the_wild_rung_pays_nothing() {
 
     // A wild herd of the same species yields nothing renewable however the field is set — you do not
     // milk an animal that runs from you.
-    let wild = run_fixture(PASTORAL_ONLY_SPECIES, Rung::Wild, 1.0);
+    let wild = run_fixture_at_share(PASTORAL_ONLY_SPECIES, Rung::Wild, 1.0, share);
     assert_eq!(
         wild.standing, 0.0,
         "a wild herd gives no standing yield: {wild:?}"
     );
 
-    // And the pen pays MORE per head than the halter, by exactly the dial: same species, same
-    // fraction, one rung apart. Measured on a pennable species so both rungs are reachable.
-    let penned = run_fixture(DAIRY_SPECIES, Rung::Penned, 1.0);
-    let haltered = run_fixture(DAIRY_SPECIES, Rung::Pastoral, 1.0);
+    // **The dial, exactly.** The same haltered herd, milked at the fixture's share and at the pen's
+    // own: nothing is culled at `f = 1`, so the two runs grow the same herd and differ ONLY in the
+    // share its milk is paid at.
+    let haltered = run_fixture_at_share(DAIRY_SPECIES, Rung::Pastoral, 1.0, share);
+    let pen_equivalent = run_fixture_at_share(
+        DAIRY_SPECIES,
+        Rung::Pastoral,
+        1.0,
+        Some(PEN_EQUIVALENT_SHARE),
+    );
+    assert!(
+        agrees(
+            haltered.standing,
+            pen_equivalent.standing * FIXTURE_PASTORAL_SHARE
+        ),
+        "pastoral milk is the pen-equivalent milk times the dial: {} vs {} x {FIXTURE_PASTORAL_SHARE}",
+        haltered.standing,
+        pen_equivalent.standing
+    );
+
+    // And below a full share the pen pays MORE than the halter: same species, same fraction, one
+    // rung apart. Measured on a pennable species so both rungs are reachable.
+    let penned = run_fixture_at_share(DAIRY_SPECIES, Rung::Penned, 1.0, share);
     assert!(
         haltered.standing > 0.0 && haltered.standing < penned.standing,
         "a roaming herd yields less than a penned one, and more than nothing: \

@@ -1185,6 +1185,18 @@ calibration was independent of how big the pen is. The meat rate has since moved
 per-head column was deliberately **not** re-derived, so the `k` table in `fauna_config.json`'s
 `_comment_standing_yield` is the record of that calibration point, not an invariant.
 
+**The food rates were then scaled ×3.4** (aurochs 0.0351 → **0.11934**, crag_goat 0.00429 →
+**0.014586**, wild_sheep 0.00168 → **0.005712**, fowl 0.000159 → **0.0005406**, steppe_runner
+0.00477 → **0.016218**, marsh_grazer 0.00423 → **0.014382**; fibre untouched). After the meat rate
+tripled, full milk paid only 3–16% of full meat; ×3.4 puts cattle and goat pens back near **0.5×**
+full meat, the original calibration intent, with sheep lower because the fleece is their point.
+
+> **PER WORKER, MILK BEATS MEAT ON A KEPT HERD — ON PURPOSE.** Milking needs only the keepers; meat
+> needs a take crew on top. That is the secondary-products revolution: dairying feeds more people per
+> animal than slaughter. It deliberately **supersedes** the first calibration's `k < 1` balance
+> point (*"full milk pays less than meat"*), which now holds per turn of the source but not per
+> worker.
+
 **Nothing in the config is milk-shaped or wool-shaped.** Milk and eggs are both just `provisions`;
 wool, down and cashmere are all just `fibre`. **No material was added.** `StandingYieldDef` is the
 living twin of `HuntYieldDef` in the same row shape, and the shipped `fibre` readings are deliberately
@@ -1219,9 +1231,10 @@ re-sorting a herd is labor, not panels.
 
 ### Why the pastoral share is load-bearing rather than a nicety
 
-`husbandry.pastoral_standing_fraction` is **global, not per species**, because the reason a roaming
-herd yields less is structural — it is milked opportunistically, not twice daily — rather than a fact
-about the animal. Without it the two migratory species, which can never be penned, would get nothing
+`husbandry.pastoral_standing_fraction` ships at **1.0**: nomadic pastoralists lived on their herds'
+milk, so a herded animal is milked like a penned one. (It shipped at `0.4`, on the reading that a
+roaming herd is milked opportunistically rather than twice daily.) It stays **global, not per
+species**, because what it states is a fact about the rung rather than about the animal. Without it the two migratory species, which can never be penned, would get nothing
 at all; it is also the first thing that makes the mobile rung worth *staying* on rather than a waypoint
 to the pen. The steppe economy was milk.
 
@@ -1245,7 +1258,7 @@ which is `fauna::hunt_take_overdraws` and never the `actual > sustainable` compa
 |---|---|---|
 | `species.*.standing_yield.provisions_per_head` | per species | Food one live head gives per turn. Absent block = no renewable option, with no *"this species can't"* branch anywhere. `boar` / `rabbit` / `snow_hare` omit it. |
 | `species.*.standing_yield.materials[].per_head` | per species | What a live head gives per turn, per material — the same row shape `hunt_yield.materials` uses, with the rate key renamed. |
-| `husbandry.pastoral_standing_fraction` | `0.4` | The `rung_fraction` at `animal:pastoral`. Validated finite, `[0,1]`. |
+| `husbandry.pastoral_standing_fraction` | `1.0` (was `0.4`) | The `rung_fraction` at `animal:pastoral` — a herded animal is milked like a penned one. Validated finite, `[0,1]`. |
 | `husbandry.output_recommit_work_fraction` | `0.333` | The `set_herd_output` job's price, as a share of the herd's current rung's `build.work_cost`. Validated finite, `> 0`. |
 
 ## ⛔ A SPECIES MAY OVERRIDE THE PASTORAL RUNG GAINS — absent means "use the global"

@@ -1668,11 +1668,14 @@ pub struct HusbandryConfig {
     /// §3) — the `rung_fraction` at `animal:pastoral`, against `1.0` at `animal:pen` and nothing at
     /// all wild.
     ///
+    /// **Ships at `1.0`**: nomadic pastoralists lived on their herds' milk, so a herded animal is
+    /// milked like a penned one. It shipped at `0.4`, on the reading that a roaming herd is milked
+    /// opportunistically rather than twice daily.
+    ///
     /// # It is GLOBAL, not per species, because the reason is structural
     ///
-    /// A roaming herd yields less because it is milked opportunistically rather than twice daily —
-    /// a fact about the rung, not about the animal. A per-species dial here would say the *cow* is
-    /// worse at being mobile, which is not what anybody means.
+    /// What it states is a fact about the rung, not about the animal. A per-species dial here would
+    /// say the *cow* is worse at being mobile, which is not what anybody means.
     ///
     /// # ⛔ IT IS LOAD-BEARING, NOT A NICETY
     ///
@@ -1951,9 +1954,9 @@ const DEFAULT_ESCAPE_ACCELERATION: f32 = 0.05;
 /// many kept turns bring a frayed herd back to zero*. A **playtest dial**.
 const DEFAULT_NEGLECT_RECOVERY_RATE: f32 = 0.25;
 
-/// The shipped [`HusbandryConfig::pastoral_standing_fraction`] — a roaming herd delivers 40% of its
-/// standing rates. See that field.
-const DEFAULT_PASTORAL_STANDING_FRACTION: f32 = 0.4;
+/// The shipped [`HusbandryConfig::pastoral_standing_fraction`] — a roaming herd delivers its standing
+/// rates in full, as a penned one does (it shipped at `0.4`). See that field.
+const DEFAULT_PASTORAL_STANDING_FRACTION: f32 = 1.0;
 
 /// The shipped [`HusbandryConfig::output_recommit_work_fraction`] — a third of the herd's current
 /// rung's `build.work_cost`. See that field.
