@@ -109,31 +109,34 @@ const CARRY_BOUND_SHARE: f32 = 0.99;
 // ---------------------------------------------------------------------------------------------
 
 /// The commit "was" is measured at.
-const WAS_COMMIT: &str = "3b168b94";
-/// `standing_yield.provisions_per_head` at [`WAS_COMMIT`], for every species this trial moves.
-const WAS_PROVISIONS_PER_HEAD: [(&str, f32); 6] = [
-    ("aurochs", 0.0351),
-    ("crag_goat", 0.00429),
-    ("wild_sheep", 0.00168),
-    ("fowl", 0.000159),
-    ("steppe_runner", 0.00477),
-    ("marsh_grazer", 0.00423),
+const WAS_COMMIT: &str = "942c893a";
+/// `engage_rate` at [`WAS_COMMIT`], for every species this trial moves.
+const WAS_ENGAGE_RATE: [(&str, f32); 5] = [
+    ("deer", 1.0),
+    ("wild_sheep", 1.5),
+    ("crag_goat", 1.5),
+    ("alpine_ibex", 1.0),
+    ("gazelle", 2.0),
 ];
-/// `husbandry.pastoral_standing_fraction` at [`WAS_COMMIT`].
-const WAS_PASTORAL_STANDING_FRACTION: f32 = 0.4;
+/// The species' own `pen_engage_gain` at [`WAS_COMMIT`], for every species this trial moves.
+const WAS_PEN_ENGAGE_GAIN: [(&str, f32); 2] = [("wild_sheep", 8.5), ("crag_goat", 7.9)];
 
 /// **The fauna config as it stood at [`WAS_COMMIT`]** — the shipped config with this trial's levers
 /// put back, so "was" stays the baseline whatever the JSON says today.
 fn was_fauna(now: &FaunaConfig) -> FaunaConfig {
     let mut was = now.clone();
-    for (key, per_head) in WAS_PROVISIONS_PER_HEAD {
+    for (key, rate) in WAS_ENGAGE_RATE {
         was.species
             .get_mut(key)
-            .and_then(|def| def.standing_yield.as_mut())
-            .unwrap_or_else(|| panic!("the shipped roster gives `{key}` a standing yield"))
-            .provisions_per_head = Some(per_head);
+            .unwrap_or_else(|| panic!("the shipped roster carries `{key}`"))
+            .engage_rate = rate;
     }
-    was.husbandry.pastoral_standing_fraction = WAS_PASTORAL_STANDING_FRACTION;
+    for (key, gain) in WAS_PEN_ENGAGE_GAIN {
+        was.species
+            .get_mut(key)
+            .unwrap_or_else(|| panic!("the shipped roster carries `{key}`"))
+            .pen_engage_gain = Some(gain);
+    }
     was
 }
 

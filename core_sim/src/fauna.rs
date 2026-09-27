@@ -11416,6 +11416,72 @@ mod tests {
         );
     }
 
+    /// **THE STAPLES' REACH RETUNE MOVED THE HUNT AND LEFT THE SHEEP AND GOAT PENS WHERE THEY
+    /// WERE.** Wild sheep and crag goats were given the reach of the regional staples they were
+    /// (`engage_rate` `1.5 → 2.5` and `1.5 → 2.25`), and each `pen_engage_gain` was lowered in the
+    /// same edit (`8.5 → 5.1`, `7.9 → 5.266667`) so the pen's handling rate — `engage_rate ×
+    /// pen_engage_gain` — did not move. The boar pin's twin: read through [`herd_engage_rate`] on a
+    /// real penned herd, paired with the wild reach so a roster where the retune never landed fails.
+    #[test]
+    fn the_staples_reach_retune_leaves_the_sheep_and_goat_pens_unchanged() {
+        /// `(display, engage_rate before, pen_engage_gain before, engage_rate after)`.
+        const RETUNED: [(&str, f32, f32, f32); 2] = [
+            ("Wild Sheep", 1.5, 8.5, 2.5),
+            ("Crag Goats", 1.5, 7.9, 2.25),
+        ];
+        /// Float slack for a product of two config reals; far below any step a retune would make.
+        const SAME_RATE: f32 = 1e-4;
+
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let anchor = UVec2::new(1, 1);
+        for (species, engage_before, pen_gain_before, engage_after) in RETUNED {
+            let def = fauna
+                .species_by_display(species)
+                .expect("the fixture names a shipped species");
+            let capacity = def.biomass[1];
+            let herd_at_capacity = || {
+                let mut herd = Herd::new(
+                    "staples_trial".to_string(),
+                    species.to_string(),
+                    def.size_class,
+                    vec![anchor],
+                    capacity,
+                    capacity,
+                    def.fodder_per_biomass,
+                    def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
+                    def.body_mass,
+                );
+                herd.husbandry_ceiling = def.husbandry_ceiling;
+                herd
+            };
+
+            let wild = herd_at_capacity();
+            assert!(
+                (herd_engage_rate(&wild, &fauna) - engage_after).abs() < SAME_RATE,
+                "liveness: wild {species} must reach at the retuned rate {engage_after}, got {}",
+                herd_engage_rate(&wild, &fauna)
+            );
+
+            let mut penned = herd_at_capacity();
+            assert!(
+                penned.tame_outright(FactionId(1), &ladder),
+                "{species} must be tameable for its pen to exist"
+            );
+            assert!(
+                penned.corral_at(anchor, &ladder),
+                "{species} must be pennable — its husbandry_ceiling is the pen"
+            );
+            let handling_before = engage_before * pen_gain_before;
+            assert!(
+                (herd_engage_rate(&penned, &fauna) - handling_before).abs() < SAME_RATE,
+                "a {species} pen handles {handling_before} animals per keeper, as it did before the \
+                 retune; got {}",
+                herd_engage_rate(&penned, &fauna)
+            );
+        }
+    }
+
     /// **A quarry that never stands owes NO crew, and `0` is the answer rather than a fudge.** At a
     /// stay of zero the take is identically zero at every party size — no number of hands changes it
     /// — so the crew *needed to achieve the take* is none. Asserted as that reasoning: the take at

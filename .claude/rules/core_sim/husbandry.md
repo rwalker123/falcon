@@ -968,8 +968,8 @@ dial **does not move a pen's maximum** — that is `r × K / 4`, set by `pen_den
 | species | `pen_engage_gain` | reaches its max at |
 |---|---|---|
 | aurochs | **4.2** | 5 keepers |
-| wild_sheep | **8.5** | 5 |
-| crag_goat | **7.9** | 5 |
+| wild_sheep | **5.1** (was 8.5) | 5 |
+| crag_goat | **5.266667** (was 7.9) | 5 |
 | snow_hare | **9.4** | 5 |
 | boar | **6.6** | 5 |
 | fowl | **44.0** | 5 |
@@ -981,6 +981,14 @@ and at `0.33` the boar sat in the small-game band beside its size peers' `1.0` �
 down by the same factor and the pen's handling rate `engage_rate × pen_engage_gain` stayed exactly
 `6.6` animals per keeper. The pen row did not move; the wild hunt did.
 `fauna::tests::the_boar_reach_trial_leaves_the_pens_handling_rate_unchanged` pins the product.
+
+**Wild sheep and crag goats were re-expressed the same way** when their wild `engage_rate` rose as
+regional staples (`1.5 → 2.5` and `1.5 → 2.25`; see `fauna.md` → "The regional staples carry their
+correction in reach"): `pen_engage_gain` `8.5 → 5.1` holds the sheep pen at **12.75** animals per
+keeper, and `7.9 → 5.266667` holds the goat pen at **11.85** (`2.25 × 5.266667 = 11.8500008`, inside
+the pin's `1e-4`). `fauna::tests::the_staples_reach_retune_leaves_the_sheep_and_goat_pens_unchanged`
+pins both products. **Their pastoral reach moved** — `2.0 × 2.5 = 5.0` and `2.0 × 2.25 = 4.5`, up
+from `3.0` — because the pastoral gain is the global and cannot be lowered below `1.0` to compensate.
 
 ⛔ **A PER-SPECIES `engage_rate` RETUNE ALWAYS OWES A `pen_engage_gain` RETUNE ON A PENNABLE
 SPECIES** for the same reason a `pen_density` retune does: the pen reads the product, so moving one

@@ -243,10 +243,17 @@ pub struct SpeciesDef {
     /// at 20–26.5 (you hunt them until you can tame them), and pen small game is at the bottom.
     ///
     /// **Danger is NOT a reach term.** A boar sits at `1.0 × 12 = 12`, its size peers' band (Red Deer
-    /// `15`, Wild Reindeer `20`) — its danger lives in `ferocity` / `attack` / the injury hazard, and
-    /// its `wariness 0.25` says boar do not flee. At `0.33` it read `~4`, in the small-game band,
-    /// because the danger was being counted a second time here. The wolf's `1.75` is still the
-    /// roster's lowest.
+    /// then `15`, Wild Reindeer `20`) — its danger lives in `ferocity` / `attack` / the injury
+    /// hazard, and its `wariness 0.25` says boar do not flee. At `0.33` it read `~4`, in the
+    /// small-game band, because the danger was being counted a second time here. The wolf's `1.75`
+    /// is still the roster's lowest.
+    ///
+    /// **The regional staples carry their correction HERE, not in wariness.** Red deer (`2.0`), wild
+    /// sheep (`2.5`), crag goats (`2.25`), alpine ibex (`1.5`) and gazelle (`6.0`) were whole
+    /// pre-farming economies, and on their honest wariness a hunter could not feed on them; the
+    /// history and the intended per-hunter order are in `fauna_config.json`'s
+    /// `_comment_engage_rate`. **A pennable species' retune owes a `pen_engage_gain` retune**, since a
+    /// pen handles `engage_rate × pen_engage_gain` animals per keeper.
     ///
     /// **Playtest dials.** Validated finite & `> 0`.
     pub engage_rate: f32,
