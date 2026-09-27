@@ -134,6 +134,7 @@ const PANEL_WIDTH := 380.0
 ##
 ## At a 1080-high viewport the strip is **39% of the window** against the 42% 456 took, inside
 ## `MAX_WIDE_HEIGHT_FRACTION` (0.6) with room.
+
 const PANEL_HEIGHT_WIDE := 418.0
 ## FLOOR on the cross-axis size when collapsed to a thin rail (both orientations) — the rail is at
 ## least this thin, and thicker when its own chrome needs more (`_collapsed_cross_axis_size`).

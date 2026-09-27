@@ -76,6 +76,24 @@ upkeep, build materials) pro-rata.
 - A site's claim ranks at **that site row's** `SourcePriority`.
 - A build's claim ranks at **its queue head row's** priority — the rule a build's materials follow
   today.
+- **Within one tier, keeping is served before building.** Every keeping pool's claims in the tier
+  settle first — in full if the stock covers them, by largest remainder among themselves if not —
+  and the builders' claim in that tier takes what is left. Across tiers nothing moves: a `High`
+  build still outranks a `Normal` keeping site, because the player's mark is the stated lever.
+
+  > ⛔ **WHY KEEPING FIRST, AND WHY ONLY INSIDE A TIER.** The two shortfalls are different kinds of
+  > loss. A keeping site that goes short — with no idle hand to top it up bare (§2.3 step 5) —
+  > **loses something already built**; a build that goes short is **finished later**. Largest
+  > remainder on the raw bid alone hid a rule the other way round: a build bids a whole tool per
+  > builder and a keeping site bids the fraction of a hand its bill needs, so a single hoe in a tied
+  > tier went to the build every time — maximising the tool's own utilisation, invisibly.
+  >
+  > Placing keeping above **every** tier was rejected: it would override a `High` mark the player
+  > put on a build, and break *"the priority decides where tools go"*.
+  >
+  > **"Work units gained" was not chosen as the measure** because for one tool it is the same
+  > ranking as utilisation — a tool's gain is its per-hand bonus × the hands that carry it, and the
+  > bonus is the same at every site unless it depends on the rung.
 
 **Settlement is band-wide per tool; the per-pool TOE is the readout of it.** Stone-dressing is wanted
 by Roadwork (paved roads) and Quarrywork (quarries); both pools' claims go into the one settlement,
