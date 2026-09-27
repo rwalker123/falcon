@@ -405,7 +405,13 @@ pub struct SpeciesDef {
     ///
     /// **These are UNASSISTED numbers — pre-dog, pre-horse.** A couple of herders on foot mind a large
     /// herd; dogs and riding horses are future herding **gear**, and gear is productivity, so the
-    /// shipped values leave that headroom. The roster itself lives in `fauna_config.json`'s
+    /// shipped values leave that headroom.
+    ///
+    /// **Small stock is kept as a place, not herded as heads.** Heads is the right unit because a
+    /// shepherd chases individual strays; a coop or hutch is one job — feed it, shut it in, collect
+    /// from it — so its keeper minds far more animals (fowl 1000, rabbit 500). Snow hare sits lower
+    /// (250): hares are solitary, skittish and never domesticated, so each takes more handling than a
+    /// rabbit. The roster itself lives in `fauna_config.json`'s
     /// `_comment_animals_per_herder`, with the retired values kept there as history.
     ///
     /// Resolved **live** by display name ([`FaunaConfig::animals_per_herder_for`]), never cached on the
@@ -1831,7 +1837,8 @@ const DEFAULT_PASTORAL_ENGAGE_GAIN: f32 = 2.0;
 /// | `4.0` | `0.5` | `0.8000` | yes — and pinned to the **pen's** carry ceiling |
 ///
 /// That is what [`SpeciesDef::pastoral_resistance`] exists for: this global stays at the identity and
-/// the six exceptions carry their own row. A **playtest lever**, validated in `(0, 1]`.
+/// the exceptions carry their own row (see `fauna_config.json`'s `_comment_pastoral_overrides`). A
+/// **playtest lever**, validated in `(0, 1]`.
 const DEFAULT_PASTORAL_RESISTANCE: f32 = 1.0;
 
 /// **ONE HEX HOLDS 104 AUROCHS** — the shipped [`HusbandryConfig::hex_space_budget`],

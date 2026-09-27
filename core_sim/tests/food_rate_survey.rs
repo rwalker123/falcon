@@ -16,9 +16,10 @@
 //! - **The plant web** is driven through `project_realized_forage`, whose loop body is the one
 //!   `forage_take` the turn pays through; a gather is continuous, so the projection *is* the take.
 //!
-//! **Every animal cell is printed twice: the shipped config, and "was" — the pre-trial baseline**
-//! ([`was_fauna`]), rebuilt in-process by overriding the trial's levers on a clone, so the comparison
-//! survives the JSON moving. The plant web is untouched by the trial, so its rows carry one reading.
+//! **Every improved-rung cell is printed twice: the shipped config, and "was" — commit
+//! [`WAS_COMMIT`]** ([`was_fauna`], [`was_labor`]), rebuilt in-process by putting the trial's levers
+//! back on a clone, so the comparison survives the JSON moving. Wild forage has no lever in the trial,
+//! so its rows carry one reading.
 //!
 //! **The band is STOCKED** — `EquipmentConfig::for_a_stocked_fixture`, one party's worth of every item
 //! plus the half-again reserve — because a shipped spawn owns nothing (`start_stock_fraction 0.0`).
@@ -29,14 +30,15 @@ use std::sync::Arc;
 use bevy::math::UVec2;
 use core_sim::{
     build_work_per_worker_turn, forage_provisions, herd_default_hunt_kit, herd_density_gain,
-    herd_ecology, herd_space_capacity, herd_standing_provisions, herd_upkeep_demand, hunt_take,
-    patch_carrying_capacity, patch_composition, patch_ecology, patch_provisions_per_biomass_taking,
-    patch_upkeep_demand, project_realized_forage, regrow_biomass, selected_biomass_share,
-    sustainable_yield, BandEquipment, CombatConfig, CreaturesConfig, CultivationCeiling,
-    DemographicsConfig, EquipmentConfig, FactionId, FaunaConfig, FloraConfig, FloraShare,
-    ForagePatch, Herd, HuntDraw, HuntTakeBound, HuntingParty, HusbandryCeiling, KitChoice,
-    KitCoverage, LaborConfig, LadderConfig, PartyResolution, Quarry, RungKey, SpeciesDef,
-    TakeSelection, DEFAULT_ESCAPEMENT_FLOOR, NO_BUILD_GEAR,
+    herd_destination_capacity, herd_ecology, herd_space_capacity, herd_standing_provisions,
+    herd_upkeep_demand, hunt_take, patch_carrying_capacity, patch_composition, patch_ecology,
+    patch_provisions_per_biomass_taking, patch_upkeep_demand, project_realized_forage,
+    regrow_biomass, selected_biomass_share, sustainable_yield, BandEquipment, CombatConfig,
+    CreaturesConfig, CultivationCeiling, DemographicsConfig, EquipmentConfig, FactionId,
+    FaunaConfig, FloraConfig, FloraShare, ForagePatch, GrazePatch, GrazeRegistry, Herd, HuntDraw,
+    HuntTakeBound, HuntingParty, HusbandryCeiling, KitChoice, KitCoverage, LaborConfig,
+    LadderConfig, PartyResolution, PreyDatum, Quarry, RungKey, SpeciesDef, TakeSelection,
+    DEFAULT_ESCAPEMENT_FLOOR, NO_BUILD_GEAR,
 };
 use sim_runtime::TerrainType;
 
@@ -103,40 +105,42 @@ const FORAGE_ROWS_SHOWN: usize = 12;
 const CARRY_BOUND_SHARE: f32 = 0.99;
 
 // ---------------------------------------------------------------------------------------------
-// The pre-trial baseline ("was")
+// The baseline ("was") — commit 250e6aac
 // ---------------------------------------------------------------------------------------------
 
-/// `hunt.provisions_per_biomass` before the trial.
-const WAS_MEAT_RATE: f32 = 0.02;
-/// `husbandry.pastoral_gain` before the trial.
-const WAS_PASTORAL_GAIN: f32 = 2.0;
-/// `husbandry.pen_gain` before the trial.
-const WAS_PEN_GAIN: f32 = 4.0;
-/// `animals_per_herder` before the trial, for every species the trial moves.
-const WAS_ANIMALS_PER_HERDER: [(&str, f32); 8] = [
-    ("aurochs", 12.0),
-    ("steppe_runner", 15.0),
-    ("marsh_grazer", 15.0),
-    ("wild_horse", 25.0),
-    ("reindeer", 100.0),
-    ("boar", 15.0),
-    ("wild_sheep", 50.0),
-    ("crag_goat", 80.0),
-];
+/// The commit "was" is measured at.
+const WAS_COMMIT: &str = "250e6aac";
+/// `animals_per_herder` at [`WAS_COMMIT`], for every species this trial moves.
+const WAS_ANIMALS_PER_HERDER: [(&str, f32); 3] =
+    [("fowl", 200.0), ("rabbit", 200.0), ("snow_hare", 200.0)];
+/// The species that inherited the global `pastoral_resistance` at [`WAS_COMMIT`].
+const WAS_GLOBAL_RESISTANCE: [&str; 2] = ["wild_sheep", "crag_goat"];
+/// `cultivation.tended_regrowth_gain` at [`WAS_COMMIT`].
+const WAS_TENDED_REGROWTH_GAIN: f32 = 1.0;
 
-/// **The fauna config as it stood before the trial** — the shipped config with the trial's levers put
-/// back, so "was" stays the baseline whatever the JSON says today.
+/// **The fauna config as it stood at [`WAS_COMMIT`]** — the shipped config with this trial's levers
+/// put back, so "was" stays the baseline whatever the JSON says today.
 fn was_fauna(now: &FaunaConfig) -> FaunaConfig {
     let mut was = now.clone();
-    was.hunt.provisions_per_biomass = WAS_MEAT_RATE;
-    was.husbandry.pastoral_gain = WAS_PASTORAL_GAIN;
-    was.husbandry.pen_gain = WAS_PEN_GAIN;
     for (key, herders) in WAS_ANIMALS_PER_HERDER {
         was.species
             .get_mut(key)
             .unwrap_or_else(|| panic!("the shipped roster carries `{key}`"))
             .animals_per_herder = herders;
     }
+    for key in WAS_GLOBAL_RESISTANCE {
+        was.species
+            .get_mut(key)
+            .unwrap_or_else(|| panic!("the shipped roster carries `{key}`"))
+            .pastoral_resistance = None;
+    }
+    was
+}
+
+/// **The labor config as it stood at [`WAS_COMMIT`]** — the plant half of [`was_fauna`].
+fn was_labor(now: &LaborConfig) -> LaborConfig {
+    let mut was = now.clone();
+    was.forage.cultivation.tended_regrowth_gain = WAS_TENDED_REGROWTH_GAIN;
     was
 }
 
@@ -144,6 +148,7 @@ fn was_fauna(now: &FaunaConfig) -> FaunaConfig {
 // The shipped configs, and the stocked band
 // ---------------------------------------------------------------------------------------------
 
+#[derive(Clone)]
 struct Shipped {
     labor: Arc<LaborConfig>,
     flora: Arc<FloraConfig>,
@@ -156,14 +161,19 @@ struct Shipped {
     creatures: Arc<CreaturesConfig>,
     /// `demographics.consumption.per_capita_draw` — the "× upkeep" denominator.
     per_capita_draw: f32,
+    /// The labor config at [`WAS_COMMIT`] — read only through [`Shipped::as_was_plants`].
+    labor_was: Arc<LaborConfig>,
 }
 
 impl Shipped {
     fn load() -> Self {
         let now = FaunaConfig::builtin();
         let was = was_fauna(&now);
+        let labor = LaborConfig::builtin();
+        let labor_was = Arc::new(was_labor(&labor));
         Self {
-            labor: LaborConfig::builtin(),
+            labor,
+            labor_was,
             flora: FloraConfig::builtin(),
             now,
             was,
@@ -172,6 +182,15 @@ impl Shipped {
             equipment: Arc::new(EquipmentConfig::for_a_stocked_fixture()),
             creatures: CreaturesConfig::builtin(),
             per_capita_draw: DemographicsConfig::builtin().consumption.per_capita_draw,
+        }
+    }
+
+    /// The same survey with the plant web read at [`WAS_COMMIT`], so every plant helper answers "was"
+    /// through its ordinary `s.labor` read.
+    fn as_was_plants(&self) -> Self {
+        Self {
+            labor: self.labor_was.clone(),
+            ..self.clone()
         }
     }
 
@@ -751,7 +770,7 @@ fn food_rate_survey() {
         );
     }
 
-    println!("\n## RUNG 1 — WILD: forage (whole realized basket; flora is untouched by the trial, so no \"was\")\n");
+    println!("\n## RUNG 1 — WILD: forage (whole realized basket; no trial lever reaches it, so no \"was\")\n");
     println!("| terrain | K | bare 1 | bare 3 | bare 5 | basket 1 | basket 3 | basket 5 | line food/turn (1 tile) | basket crew → 95% of line | binds @3 |");
     println!("|---|---|---|---|---|---|---|---|---|---|---|");
     let mut forage_rows: Vec<(TerrainType, f32, Vec<f32>, PlantRow)> = forage_terrains(&s)
@@ -841,8 +860,9 @@ fn food_rate_survey() {
         print_plant_rung(terrain, RungKey::PlantTended, &s, &mut every_cell);
     }
     println!(
-        "\nTended multipliers over wild: r×{:.2} (`cultivation.tended_regrowth_gain`) · committed-crop share ×{:.2} (`tended_weeding_gain`) · conversion ×{:.2} (`tended_conversion_gain`) · K unchanged · upkeep {:.2} work/turn per `capacity_per_tender` {:.0} (`plant:tended` upkeep)",
+        "\nTended multipliers over wild: r×{:.2} ← {:.2} (`cultivation.tended_regrowth_gain`) · committed-crop share ×{:.2} (`tended_weeding_gain`) · conversion ×{:.2} (`tended_conversion_gain`) · K unchanged · upkeep {:.2} work/turn per `capacity_per_tender` {:.0} (`plant:tended` upkeep)",
         cultivation.tended_regrowth_gain,
+        s.labor_was.forage.cultivation.tended_regrowth_gain,
         cultivation.tended_weeding_gain,
         cultivation.tended_conversion_gain,
         tended_upkeep,
@@ -888,11 +908,14 @@ fn food_rate_survey() {
         field_upkeep,
     );
     println!(
-        "\nMeat conversion (every animal row): `hunt.provisions_per_biomass` {:.3} ← {:.3}. Regrowth cap `husbandry_regrowth_cap` {:.2}.",
+        "\nMeat conversion (every animal row): `hunt.provisions_per_biomass` {:.3} ← {:.3}. Regrowth cap `husbandry_regrowth_cap` {:.2}. \"was\" = {WAS_COMMIT}.",
         s.now.hunt.provisions_per_biomass,
         s.was.hunt.provisions_per_biomass,
         s.now.husbandry.husbandry_regrowth_cap,
     );
+
+    print_milk_table(&s, &mut every_cell);
+    print_band_land_test(&s, &mut every_cell);
 
     // Liveness: a table of zeros that exits 0 would say nothing.
     assert!(
@@ -969,22 +992,411 @@ fn print_plant_rung(terrain: TerrainType, rung: RungKey, s: &Shipped, every_cell
         &s.labor.forage,
     ));
     let row = plant_row(terrain, Some((&crop, rung)), &RUNG_CREWS, s);
+    let was = plant_row(
+        terrain,
+        Some((&crop, rung)),
+        &RUNG_CREWS,
+        &s.as_was_plants(),
+    );
     every_cell.extend(row.per_worker.iter().copied());
-    let food: Vec<String> = row.per_worker.iter().map(|food| s.cell(*food)).collect();
+    let food: Vec<String> = row
+        .per_worker
+        .iter()
+        .zip(&was.per_worker)
+        .map(|(now, was)| s.pair(*now, *was))
+        .collect();
     let with: Vec<String> = row
         .per_worker
         .iter()
+        .zip(&was.per_worker)
         .zip(RUNG_CREWS)
-        .map(|(food, crew)| s.cell(with_keepers(*food, crew, keepers)))
+        .map(|((now, was), crew)| {
+            s.pair(
+                with_keepers(*now, crew, keepers),
+                with_keepers(*was, crew, keepers),
+            )
+        })
         .collect();
     println!(
-        "| {terrain:?} | {crop} | {:.0} | {} | {keepers:.2} | {} | {:.3} ({:.3}/tile) | {} | {} |",
+        "| {terrain:?} | {crop} | {:.0} | {} | {keepers:.2} | {} | {:.3} ← {:.3} ({:.3}/tile) | {} ← {} | {} |",
         patch.carrying_capacity,
         food.join(" | "),
         with.join(" | "),
         row.line,
+        was.line,
         row.line / PATCH_TILES as f32,
         row.crew_to_line,
+        was.crew_to_line,
         row.binds,
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Milk against meat — the same kept herd, settled two ways
+// ---------------------------------------------------------------------------------------------
+
+/// A kept herd worked wholly for meat — nothing committed to its standing output.
+const NO_STANDING_COMMITMENT: f32 = 0.0;
+/// The shares of full-meat food that full milk is solved to pay, for the `provisions_per_head` a
+/// species would need. Information only; nothing is applied.
+const MILK_TARGETS: [f32; 2] = [0.5, 0.65];
+/// The rungs a kept herd can be milked at.
+const MILKED_RUNGS: [RungKey; 2] = [RungKey::AnimalPastoral, RungKey::AnimalPen];
+
+/// A source settled one way, for the whole source.
+struct SettledSource {
+    /// Food/turn off the whole source, averaged over the measured window.
+    total: f32,
+    /// The take crew that total was reached at — `0` for milk, which no take crew collects.
+    crew: u32,
+    /// The herd's average stock over the measured window, as a fraction of its `K`.
+    stock_over_k: f32,
+    /// Keeper-turns the herd owes at that settled stock — keepers follow head count.
+    keepers: f32,
+}
+
+impl SettledSource {
+    /// Food per worker with the keepers counted in the denominator.
+    fn per_worker(&self) -> f32 {
+        let workers = self.crew as f32 + self.keepers;
+        if workers > 0.0 {
+            self.total / workers
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Keeper-turns `herd` owes standing at `stock_over_k` of its own `K`.
+fn keepers_at(herd: &Herd, stock_over_k: f32, fauna: &FaunaConfig, s: &Shipped) -> f32 {
+    let mut standing = herd.clone();
+    standing.biomass = herd.carrying_capacity * stock_over_k;
+    keepers_owed(herd_upkeep_demand(&standing, fauna, &s.ladder))
+}
+
+/// **The herd worked wholly for meat** (`f = 0`) at the SMALLEST crew that takes [`LINE_SHARE`] of
+/// the most any swept crew takes — past that point extra hands add almost nothing and only dilute the
+/// per-worker figure.
+fn settle_meat(herd: &Herd, kit: &KitChoice, fauna: &FaunaConfig, s: &Shipped) -> SettledSource {
+    let mut meat = herd.clone();
+    meat.standing_output_fraction = NO_STANDING_COMMITMENT;
+    let swept: Vec<(u32, SettledHunt)> = sweep_crews()
+        .into_iter()
+        .map(|crew| (crew, hunt_with(&meat, kit, crew, fauna, s)))
+        .collect();
+    let total_of = |entry: &(u32, SettledHunt)| entry.1.food_per_worker * entry.0 as f32;
+    let most = swept.iter().map(total_of).fold(0.0, f32::max);
+    let (crew, settled) = swept
+        .into_iter()
+        .find(|entry| total_of(entry) >= most * LINE_SHARE)
+        .expect("the sweep tries at least one crew");
+    SettledSource {
+        total: settled.food_per_worker * crew as f32,
+        crew,
+        stock_over_k: settled.stock_over_k,
+        keepers: keepers_at(&meat, settled.stock_over_k, fauna, s),
+    }
+}
+
+/// **The herd committed wholly to its standing output** (`f = 1`): nothing is culled, so it rides
+/// up toward `K` and settles where it settles, and its milk / eggs are what come in.
+fn settle_milk(herd: &Herd, fauna: &FaunaConfig, s: &Shipped) -> SettledSource {
+    let mut kept = herd.clone();
+    kept.standing_output_fraction = FULL_STANDING_COMMITMENT;
+    let (mut total, mut stock) = (0.0_f32, 0.0_f32);
+    for turn in 0..WARMUP_TURNS + MEASURED_TURNS {
+        regrow_biomass(&mut kept, fauna);
+        if turn >= WARMUP_TURNS {
+            total += herd_standing_provisions(&kept, fauna);
+            stock += kept.biomass;
+        }
+    }
+    let stock_over_k = stock / MEASURED_TURNS as f32 / kept.carrying_capacity;
+    SettledSource {
+        total: total / MEASURED_TURNS as f32,
+        crew: 0,
+        stock_over_k,
+        keepers: keepers_at(&kept, stock_over_k, fauna, s),
+    }
+}
+
+/// `milk ÷ meat`, or `0` for a herd that pays no meat.
+fn milk_ratio(milk: &SettledSource, meat: &SettledSource) -> f32 {
+    if meat.total > 0.0 {
+        milk.total / meat.total
+    } else {
+        0.0
+    }
+}
+
+fn print_milk_table(s: &Shipped, every_cell: &mut Vec<f32>) {
+    println!(
+        "\n## MILK vs MEAT — every species with a standing food yield, rungs 2 and 3, the whole source (← {WAS_COMMIT})\n"
+    );
+    println!("Meat: f = 0 at the crew that takes the most. Milk: f = 1, nothing culled, no take crew — the keepers are the only workers. Keepers follow the settled head count under each.\n");
+    println!("| species | rung | meat food/turn (crew) | meat B/K | meat keepers | meat per worker + keepers | milk food/turn | milk B/K | milk keepers | milk per keeper | milk ÷ meat | per_head now | per_head for 0.5× | per_head for 0.65× |");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    for (key, def) in sorted_species(s) {
+        let per_head = s
+            .now
+            .standing_yield_for(&def.display_name)
+            .provisions_per_head;
+        if per_head <= 0.0 {
+            continue;
+        }
+        for rung in MILKED_RUNGS {
+            let (Some(now_herd), Some(was_herd)) = (
+                seated_herd(key, def, rung, &s.now, s),
+                seated_herd(key, def, rung, &s.was, s),
+            ) else {
+                continue;
+            };
+            let kit = herd_default_hunt_kit(
+                &s.equipment,
+                s.creatures.person(),
+                def,
+                rung == RungKey::AnimalPen,
+            );
+            let meat = settle_meat(&now_herd, &kit, &s.now, s);
+            let meat_was = settle_meat(&was_herd, &kit, &s.was, s);
+            let milk = settle_milk(&now_herd, &s.now, s);
+            let milk_was = settle_milk(&was_herd, &s.was, s);
+            every_cell.extend([meat.total, milk.total]);
+            let needed: Vec<String> = MILK_TARGETS
+                .iter()
+                .map(|target| {
+                    if milk.total > 0.0 {
+                        format!("{:.5}", per_head * target * meat.total / milk.total)
+                    } else {
+                        "-".to_string()
+                    }
+                })
+                .collect();
+            println!(
+                "| {} | {rung:?} | {:.3} ({}) ← {:.3} ({}) | {:.2} ← {:.2} | {:.2} ← {:.2} | {:.3} ← {:.3} | {:.3} ← {:.3} | {:.2} ← {:.2} | {:.2} ← {:.2} | {:.3} ← {:.3} | {:.2} ← {:.2} | {per_head:.5} | {} |",
+                def.display_name,
+                meat.total,
+                meat.crew,
+                meat_was.total,
+                meat_was.crew,
+                meat.stock_over_k,
+                meat_was.stock_over_k,
+                meat.keepers,
+                meat_was.keepers,
+                meat.per_worker(),
+                meat_was.per_worker(),
+                milk.total,
+                milk_was.total,
+                milk.stock_over_k,
+                milk_was.stock_over_k,
+                milk.keepers,
+                milk_was.keepers,
+                milk.per_worker(),
+                milk_was.per_worker(),
+                milk_ratio(&milk, &meat),
+                milk_ratio(&milk_was, &meat_was),
+                needed.join(" | "),
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The per-band land test — does land limit pens against fields?
+// ---------------------------------------------------------------------------------------------
+
+/// The band the land test staffs.
+const BAND_WORKERS: u32 = 30;
+/// The apron's ground: the Field's reference cropland, and the reference pasture for contrast.
+const LAND_TEST_TERRAINS: [TerrainType; 2] =
+    [TerrainType::AlluvialPlain, TerrainType::PrairieSteppe];
+/// The pens the land test fills the apron with.
+const LAND_TEST_PENS: [&str; 2] = ["aurochs", "wild_sheep"];
+/// No carnivore feeds on the fixture's herds.
+const NO_PREY: [PreyDatum; 0] = [];
+
+/// One kind of source a band can put on its apron, staffed at any crew up to [`BAND_WORKERS`].
+struct SourceCurve {
+    /// Keeper-turns one such source owes, beside its take crew.
+    keepers: f32,
+    /// Food/turn off one such source at a take crew of `index + 1`.
+    totals: Vec<f32>,
+}
+
+/// One allocation of the band: how many of each source, at what take crew each.
+#[derive(Clone, Copy, Default)]
+struct Plan {
+    fields: u32,
+    field_crew: u32,
+    pens: u32,
+    pen_crew: u32,
+    food: f32,
+    workers: f32,
+}
+
+fn field_curve(terrain: TerrainType, s: &Shipped) -> Option<(String, SourceCurve)> {
+    let composition = basket_on(terrain, s);
+    let crop = best_crop(&composition, RungKey::PlantField, s)?;
+    let patch = seated_patch(terrain, Some((&crop, RungKey::PlantField)), 1.0, s);
+    let keepers = keepers_owed(patch_upkeep_demand(
+        &patch,
+        &s.ladder,
+        s.labor.forage.capacity_for(terrain),
+        &s.labor.forage,
+    ));
+    let basket_kit = s.kit(HARVESTING_KIT);
+    let totals = (1..=BAND_WORKERS)
+        .map(|crew| {
+            let carry = forage_carry(&gear(basket_kit.clone(), crew, s), s);
+            settle_forage(&patch, &composition, crew, carry, s) * crew as f32
+        })
+        .collect();
+    Some((crop, SourceCurve { keepers, totals }))
+}
+
+/// **A fresh pen on `terrain`** — its `K` struck by the sim's own capacity seam over a footprint of
+/// that ground's graze (full pasture, no hay), rather than the roster's range biomass the rung tables
+/// use. Returns the curve plus `(K from the ground, K from the roster)`.
+fn pen_curve(key: &str, terrain: TerrainType, s: &Shipped) -> Option<(SourceCurve, f32, f32)> {
+    let def = s.now.species.get(key)?;
+    let mut herd = seated_herd(key, def, RungKey::AnimalPen, &s.now, s)?;
+    let roster_k = herd.carrying_capacity;
+    let anchor = herd.corralled_at.expect("a seated pen is fenced");
+    let mut graze = GrazeRegistry::default();
+    for tile in core_sim::grid_utils::hex_range_tiles(
+        anchor,
+        herd.pen_radius,
+        FIXTURE_MAP,
+        FIXTURE_MAP,
+        FIXTURE_WRAP,
+    ) {
+        graze.patches.insert(
+            tile,
+            GrazePatch::new(tile, s.now.graze.capacity_for(terrain)),
+        );
+    }
+    herd.build_destination = Some(RungKey::AnimalPen);
+    let ground_k = herd_destination_capacity(
+        &herd,
+        Some(def),
+        &graze,
+        &NO_PREY,
+        &s.now,
+        FIXTURE_MAP,
+        FIXTURE_MAP,
+        FIXTURE_WRAP,
+    )
+    .expect("a queued pen quotes its destination capacity");
+    herd.build_destination = None;
+    herd.carrying_capacity = ground_k;
+    herd.biomass = ground_k * DEFAULT_ESCAPEMENT_FLOOR;
+    herd.biomass_before_regrowth = herd.biomass;
+    herd.upkeep_supplied = herd_upkeep_demand(&herd, &s.now, &s.ladder);
+    herd.refresh_ecology_phase(&s.now);
+    let kit = herd_default_hunt_kit(&s.equipment, s.creatures.person(), def, true);
+    let keepers = keepers_owed(herd_upkeep_demand(&herd, &s.now, &s.ladder));
+    let totals = (1..=BAND_WORKERS)
+        .map(|crew| hunt_with(&herd, &kit, crew, &s.now, s).food_per_worker * crew as f32)
+        .collect();
+    Some((SourceCurve { keepers, totals }, ground_k, roster_k))
+}
+
+/// Every `(count, crew, workers, food)` a band could put on one kind of source, `(0, 0, 0, 0)`
+/// included, at a uniform crew per source.
+fn options(curve: Option<&SourceCurve>, slots: usize) -> Vec<(u32, u32, f32, f32)> {
+    let mut out = vec![(0, 0, 0.0, 0.0)];
+    let Some(curve) = curve else {
+        return out;
+    };
+    for count in 1..=slots as u32 {
+        for crew in 1..=BAND_WORKERS {
+            let workers = count as f32 * (crew as f32 + curve.keepers);
+            if workers <= BAND_WORKERS as f32 {
+                let food = count as f32 * curve.totals[crew as usize - 1];
+                out.push((count, crew, workers, food));
+            }
+        }
+    }
+    out
+}
+
+/// The most food the band's [`BAND_WORKERS`] can take off fields and pens together.
+fn best_plan(field: Option<&SourceCurve>, pen: Option<&SourceCurve>, slots: usize) -> Plan {
+    let mut best = Plan::default();
+    let pen_options = options(pen, slots);
+    for (fields, field_crew, field_workers, field_food) in options(field, slots) {
+        for (pens, pen_crew, pen_workers, pen_food) in &pen_options {
+            let workers = field_workers + pen_workers;
+            let food = field_food + pen_food;
+            if workers <= BAND_WORKERS as f32 && food > best.food {
+                best = Plan {
+                    fields,
+                    field_crew,
+                    pens: *pens,
+                    pen_crew: *pen_crew,
+                    food,
+                    workers,
+                };
+            }
+        }
+    }
+    best
+}
+
+fn plan_cell(plan: &Plan) -> String {
+    format!(
+        "{:.2} food/turn ({:.3}/worker) — {} field(s) × {} crew, {} pen(s) × {} crew, {:.1} workers",
+        plan.food,
+        plan.food / BAND_WORKERS as f32,
+        plan.fields,
+        plan.field_crew,
+        plan.pens,
+        plan.pen_crew,
+        plan.workers,
+    )
+}
+
+fn print_band_land_test(s: &Shipped, every_cell: &mut Vec<f32>) {
+    let apron = core_sim::grid_utils::hex_range_tiles(
+        FIXTURE_ANCHOR,
+        s.labor.band_work_range,
+        FIXTURE_MAP,
+        FIXTURE_MAP,
+        FIXTURE_WRAP,
+    )
+    .len();
+    println!(
+        "\n## PER-BAND LAND TEST — {BAND_WORKERS} workers, an apron of {apron} tiles (`band_work_range` {}), every tile one ground\n",
+        s.labor.band_work_range
+    );
+    println!("Fields and pens on the SAME apron: the forage layer and the graze layer are separate stocks on each tile, so both counts are bounded by the apron separately. Each pen is a single-tile fence (radius 0) whose K is the sim's own footprint seam over that ground's full pasture, no hay. Uniform crew per source; keepers counted as workers; food is net — a pen's feed is its footprint's grass, not food.\n");
+    println!("| ground | source | keepers each | K ground (roster) | best all-fields | best all-pens | best mix |");
+    println!("|---|---|---|---|---|---|---|");
+    for terrain in LAND_TEST_TERRAINS {
+        let field = field_curve(terrain, s);
+        let all_fields = best_plan(field.as_ref().map(|(_, c)| c), None, apron);
+        every_cell.push(all_fields.food);
+        if let Some((crop, curve)) = &field {
+            println!(
+                "| {terrain:?} | Field ({crop}) | {:.2} | - | {} | - | - |",
+                curve.keepers,
+                plan_cell(&all_fields),
+            );
+        }
+        for key in LAND_TEST_PENS {
+            let Some((pen, ground_k, roster_k)) = pen_curve(key, terrain, s) else {
+                continue;
+            };
+            let all_pens = best_plan(None, Some(&pen), apron);
+            let mix = best_plan(field.as_ref().map(|(_, c)| c), Some(&pen), apron);
+            every_cell.push(all_pens.food);
+            println!(
+                "| {terrain:?} | Pen ({key}) | {:.2} | {ground_k:.0} ({roster_k:.0}) | {} | {} | {} |",
+                pen.keepers,
+                plan_cell(&all_fields),
+                plan_cell(&all_pens),
+                plan_cell(&mix),
+            );
+        }
+    }
 }

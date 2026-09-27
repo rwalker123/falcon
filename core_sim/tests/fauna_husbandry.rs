@@ -4015,6 +4015,20 @@ fn a_tames_first_turn_draws_the_husbandry_pool_and_a_wild_hunt_draws_nothing() {
 fn two_bands_keeping_one_herd_sum_their_hands() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
+    // **Sized to want two hands, read off the species' own `animals_per_herder`** — a warren is
+    // kept as one hutch job, so at half its K it wants less than one keeper, and a single hand would
+    // then be the whole claim. Stating the size in hands keeps the fixture honest across a retune.
+    const HANDS_THE_HERD_WANTS: f32 = 2.0;
+    {
+        let heads_per_hand = app
+            .world
+            .resource::<FaunaConfigHandle>()
+            .get()
+            .animals_per_herder_for(FIXTURE_SPECIES);
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.biomass = HANDS_THE_HERD_WANTS * heads_per_hand * herd.body_mass;
+    }
     domesticate(&mut app, &id);
     let demand = keeping_demand(&app, &id);
     assert!(

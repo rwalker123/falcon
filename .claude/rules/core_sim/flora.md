@@ -433,7 +433,9 @@ Sow.
   untouched so any balance movement was attributable to the roster alone. **S2 then retired the tended
   regrowth boost** (`tended_regrowth_gain` 2.0 → **1.0**, neutral): with competitor-removal now explicit
   as concentration, a growth boost double-counts it, so tending pays through concentration + conversion
-  and the rung-2 "wild < tended" guarantee moved to the roster's own bar (see "Cultivation").
+  and the rung-2 "wild < tended" guarantee moved to the roster's own bar (see "Cultivation"). The
+  boost has since returned at **1.5** on the kept-herd reading (weeding lets the stand come back
+  faster); see "Cultivation".
 
 ### Fodder — the F3 coupling (hay is delivered graze-flow)
 

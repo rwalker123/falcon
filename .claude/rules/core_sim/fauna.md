@@ -839,9 +839,14 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   the rung's own `upkeep_crew_needed`) rather than recomputing a `ceil`, so there is exactly one
 >   definition of what a herd wants.
 > - **Heads, not tonnes.** The denominator is per-**animal** (`SpeciesDef::animals_per_herder`,
->   per-species, UNASSISTED — pre-dog, pre-horse, which are future herding gear: fowl/rabbit/snow_hare 200, reindeer 150, crag_goat/wild_sheep 100, steppe_runner/marsh_grazer/wild_horse 50, aurochs/boar 40;
->   deer/mammoth are `wild`-ceiling and omit it). A shepherd minds ~300 sheep, a cowherd ~80 cattle —
->   you watch individuals, and a heavier beast is not proportionally more work. A per-*biomass* dial
+>   per-species, UNASSISTED — pre-dog, pre-horse, which are future herding gear: fowl 1000, rabbit
+>   500, snow_hare 250, reindeer 150, crag_goat/wild_sheep 100, steppe_runner/marsh_grazer/wild_horse
+>   50, aurochs/boar 40; deer/mammoth are `wild`-ceiling and omit it). A shepherd minds ~300 sheep, a
+>   cowherd ~80 cattle — you watch individuals, and a heavier beast is not proportionally more work.
+>   **Small stock is kept as a place**: a coop or hutch is one job (feed, shut in, collect), so its
+>   keeper minds far more heads; snow hare sits below rabbit because a never-domesticated, solitary,
+>   skittish hare takes more handling each (the Romans walled them in leporaria). The small stock
+>   were 200 each before. A per-*biomass* dial
 >   says "one herder per 100 fowl but one per 2 boar" and invents a 45-herder steppe megaherd that is a
 >   pure artifact of the unit (4,560 biomass of Steppe Runner is **86 animals** ⇒ ~6 herders).
 > - **ONE need, not three — but "one need" means one CREW, not one formula.** The herders mind the herd,

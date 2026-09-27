@@ -1281,11 +1281,12 @@ did. Measured, no global pair lifts both halves without inflating the first:
 
 ### The shipped allocation
 
-Globals stay at `engage 2.0` / `resistance 1.0` (the identity), and six species carry a row:
+Globals stay at `engage 2.0` / `resistance 1.0` (the identity), and eight species carry a row:
 
 | species | override | why |
 |---|---|---|
 | `rabbit`, `fowl`, `snow_hare` | resistance `0.5` | fight-bound small game; reach is **inert** on them, and `0.5` doubles them exactly |
+| `wild_sheep`, `crag_goat` | resistance `0.5` | the **first herded animals** (~11,000 BP) because they are docile, flock-following and small — a tame flock resists handling *less* than a tame aurochs, not more. They inherited the global `1.0` before, which ranked them tougher to handle than the aurochs |
 | `marsh_grazer`, `steppe_runner` | resistance `0.75` | fight-bound at `durability 60`, the toughest nomads — **and pastoral is their top rung** (`husbandry_ceiling: pastoral`), so it has to pay |
 | `aurochs` | engage `4.0` **and** resistance `0.75` | the only species that needed **both** arms: `engage_rate 0.17` is the lowest of any tameable so `×2` barely clears one animal, and `durability 150` / `defense 6` is the toughest body on the roster, so unlocking reach alone just handed it to the fight |
 

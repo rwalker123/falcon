@@ -253,10 +253,13 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
 - **Tended yield — a WILD STAND, gathered place-local** (slice 7 — the rung-2 correction). A tended
   patch is **worked, not passive**, and it is **still wild**: it rides a curve
   (`cultivation.tended_regrowth_gain`, folded in by **`forage::patch_ecology`** — the plant twin of
-  `fauna::herd_ecology`, and the one seam every consumer resolves a patch's ecology through). **Flora
-  Roster S2 retired the regrowth boost to a NEUTRAL 1.0** (`docs/plan_flora_roster.md` §4.3): once S1
-  made competitor-removal explicit, a growth boost double-counted it, so tending pays through the
-  **composition + conversion** of a committed crop, not the curve. **#433 fixed what "composition"
+  `fauna::herd_ecology`, and the one seam every consumer resolves a patch's ecology through). **The
+  boost ships at 1.5** — weeding and clearing the competitors lets the stand come back faster, the
+  plant twin of the kept-herd gains (`pastoral_gain` 1.25, `pen_gain` 1.5), between wild (1.0) and
+  the Field's `field_regrowth_gain` (2.53, which a settled Field reads alone — the two gains do not
+  compose). History: Flora Roster S2 had retired it to a NEUTRAL 1.0 (`docs/plan_flora_roster.md`
+  §4.3) on the grounds that a growth boost double-counted S1's explicit competitor-removal. The
+  rung's main payoff is still the **composition + conversion** of a committed crop. **#433 fixed what "composition"
   means**: rung 2 **weeds** the tile's basket (the favored share rises to `min(1, share ×
   tended_weeding_gain)`, taken from the least abundant first) and **never touches `K`** — the retired
   concentration term cut a committed tile's capacity and discarded the remainder — and it pays
@@ -269,8 +272,8 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   bug. **A committed crop still out-yields the same patch's wild Sustain** on good ground — the
   intensification incentive, now carried by composition + conversion (guaranteed by the roster's bar,
   `core_sim/tests/flora_roster.rs`) rather than the retired boost. A *bare* tended patch (no crop)
-  still pays **exactly** wild — no commitment means no weeding and no conversion gain, and
-  `tended_regrowth_gain` is neutral, so every term is the identity.
+  pays wild's MSY × `tended_regrowth_gain` — no commitment means no weeding and no conversion gain,
+  so the regrowth boost is the only term that moves.
   > **THE REFERENCE BASKET the measured figures in this file are taken on** — `AlluvialPlain`,
   > `K = 195`, the realization of tile `(0,0)` under seed `0xF10A_5EED_C011_0010` (the one the shipped
   > `sweep_tiles` fixtures use): `wild_emmer` 0.375 / `wild_tubers` 0.292 / `tobacco` 0.208 /
@@ -546,11 +549,11 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   — the builders are the band's own pool and the gatherers beside them are untouched, so neither a
   staffing floor nor a dip has anything left to say), so
   the plant and animal ladders can only be tuned together (see "The Intensification Ladder"). What stays
-  in `labor_config.json` `forage.cultivation` (`CultivationConfig`): **`tended_regrowth_gain`** (1.0 —
-  NEUTRAL since Flora Roster S2: a tended patch's stock regrows exactly as fast as wild. It began as
-  the plant twin of `husbandry.pastoral_gain`, but S1 made competitor-removal explicit, so a growth
-  boost double-counted it; tending pays through composition + conversion and the rung-2 "wild <
-  tended" guarantee moved to the roster. Kept as a playtest dial; only a gain *below* 1.0 is
+  in `labor_config.json` `forage.cultivation` (`CultivationConfig`): **`tended_regrowth_gain`** (1.5 — a
+  tended patch's stock regrows 1.5× as fast as wild, the plant twin of `husbandry.pastoral_gain`:
+  weeding lowers what holds the stand back. It was 2.0, then the neutral 1.0 from Flora Roster S2 —
+  S1 made competitor-removal explicit and a boost was read as double-counting it — and the rung-2
+  "wild < tended" guarantee still lives in the roster. A playtest dial; only a gain *below* 1.0 is
   rejected), **`tended_weeding_gain`** (1.5 — how far rung 2 can push the favored species' share,
   `min(1, share × gain)`; the renamed `tended_concentration_gain`, which used to multiply `K` and now
   moves *composition*) and **`tended_conversion_gain`** (2.0 — rung 2's conversion multiplier on the
