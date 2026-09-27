@@ -1166,7 +1166,24 @@ than rendered: ids 0/1/2 still equal their literal blue/orange/green (every game
 every committed frame is drawn in them), the legacy NAME spelling still resolves to the same people,
 an absent faction still gets the caller's fallback, no two ids share a colour, no id falls through to
 the unknown-faction tint, and successive ids stay at least `PALETTE_MIN_NEIGHBOUR_HUE_GAP` of the hue
-wheel apart. **It is the LAST state in the run**, appended so no existing frame moved.
+wheel apart. It was appended after every earlier state so no existing frame moved; only the
+exchange-network states (below) run after it.
+
+### `map_exchange_network*` / `map_layers_popover` — the `trade_network` layer and its switch (issue #624)
+
+Three player camps pooling in one network (a giver, a taker, one netting under `EVEN_FLOOR`; one link
+on a road rung, two on open ground, each listed by BOTH ends) plus another people's camp a shipment
+reaches, with the giver selected — and a second shipment cancelled in camp (its whole cargo returned
+the same turn). Rendered at `SOURCE_LIST_WINDOW_SIZE`, so the popover and the `☰` glyph are captured
+at 1:1. **The layer's choices are asserted off `ExchangeNetworkRenderer.collect_marks`**, which names
+bands: each pair ONE line with its rung, the selected camp's two links flagged, ONE arrow giver →
+foreign camp (the cancelled one netted away), rings on the giver (warm) and taker (cool) and NOT on
+the even camp. Then the `MAP LAYERS` popover's glyph, three-button layout, attachment gap and
+checkbox; the uncheck driven through the box into a scratch prefs file (`EXCHANGE_PREFS_PATH`, so the
+developer's own `client_settings.cfg` is never written) turning the layer off and emptying the marks
+(`map_exchange_network_off`); and the swap/close leg as real presses. The state pins
+`ClientSettings.map_toggles = {}` first — the autoload read the developer's real prefs. **It is the
+LAST state in the run**, appended so no existing frame moved.
 
 ### `map_band_names*` — the fixed-screen-size BAND NAME PILL (`map-markers.md`)
 

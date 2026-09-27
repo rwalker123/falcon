@@ -38,7 +38,7 @@ paths:
     `_unit_at_point` (marker hit-test), `_nearest_unit_sample` (leaked a hidden band's label *and* a
     bearing on it into `tile_info`), and `refresh_selection_payload`'s selected-unit re-resolve (a
     foreign band walking into fog kept streaming live state — now drops its selection, mirroring the
-    herd rule). Already-correct (left alone): everything player-scoped — `_draw_supply_links`,
+    herd rule). Already-correct (left alone): everything player-scoped — `ExchangeNetworkRenderer`'s pooling lines and rings (its shipment arrows fog-gate the far end),
     `BandOverlayRenderer._selected_player_band`, the `need == "band"` targeting glow, band alerts, own work highlights.
     Hud mirrors the exception in `_assemble_roster` (an unseen hex lists your own units, never foreign
     ones, and no herds) and appends `OCCUPANTS_UNSEEN_OTHERS_HINT` ("Out of sight — you can't see
