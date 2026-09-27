@@ -1172,21 +1172,60 @@ waterline cross-fade blends toward a water estimate without it, so it eases out 
 > grade's graded-ness is the model); and (3) `coastal_swell()` built from that field.
 
 **3 — whitecaps (animated, directionless).** They carry the visible motion: at the strength that stopped
-the chop reading as clouds (0.035), the chop alone is close to imperceptible. Sparse, small, soft bright
-flecks that appear, peak and fade IN PLACE — `open_whitecap`, a fine 3D value-noise field over (x, y,
-t·`whitecap_rate`) built as an interleaved PAIR like each chop octave (so the flecks never pause
-together) and rotated off the screen axes by its own angle (`WHITECAP_ROTATION`). A fleck is where the
-field crests past a threshold, `smoothstep(threshold, threshold + WHITECAP_SOFT, field)`, with
-`threshold = WHITECAP_FIELD_PEAK · (1 − whitecap_coverage)` — the pair's crest at coverage 0 (no caps),
-its mean at 1. A finer noise on the same time axis is added to the field first (`WHITECAP_BREAKUP_*`), so
-a cap's edge is ragged spray; without it the flecks were round dots that read as falling snow. The
-flecks CLUSTER in the chop's bright phase — × `smoothstep(WHITECAP_CLUSTER_LO, WHITECAP_CLUSTER_HI, chop)`
-on `open_chop`'s signed value — so they gather where the sea is rougher and come and go with it. A fleck
-pulls the colour toward `foam_color` blended `WHITECAP_WHITE_MIX` of the way to white, × `whitecap_strength`.
-They are part of the open-ocean term, applied with the chop, so they ease out at the waterline the same way.
-A fleck spans about a third of its noise cell (`whitecap_scale` 0.55 r → ~0.18 r).
-**The glint they supersede** — the product of two drifting ridge nets, masked into patches — read at map
-scale as white curls, scratches on the water rather than whitecaps, and shipped off before it was removed.
+the chop reading as clouds (0.035), the chop alone is close to imperceptible. A whitecap is a SHAPE, a
+thin white crescent that flashes on and fades where it was born (`open_whitecap`, `whitecap_grid`).
+
+> #### ⛔ WHY NOT NOISE PEAKS — the first whitecaps read as CYAN BLOBS
+>
+> The first cut thresholded a fine 3D value-noise field: a cap was wherever the field crested. Live, Ray
+> saw **cyan, not white**, and **round blobs, not waves**. Both follow from the method. A noise crest is
+> round, whatever the threshold. And a crest's opacity rises smoothly from its rim, so most of every cap
+> was PARTLY covering the water: white mixed with dark blue reads cyan, and the colour itself was pulled
+> toward `foam_color` (a pale cyan) only 60% of the way to white. No threshold or softness fixes either.
+
+**Spawn.** Two jittered cell grids (`whitecap_cell` hex radii), each rotated off the screen axes and off
+each other (`WHITECAP_GRID_ROTATION`) and offset (`WHITECAP_GRID_B_OFFSET`), so no lattice shows. Each
+cell holds at most one cap at a time. Per cell a hash gives a lifecycle PHASE; per cell and cycle
+(`floor(t·rate + phase)`) a second hash gives the cap's position in the cell (kept `WHITECAP_CELL_MARGIN`
+off its edge), whether it spawns, and a third its size and angle jitter. So a cell respawns somewhere new
+each cycle, and a cap never moves during its life. A cell spawns with chance `whitecap_coverage` × a
+smoothstep (`WHITECAP_ROUGH_*`) over the chop's COARSE octave at the cap's centre. The chop is read **at the
+moment the cap spawned**, so caps cluster where the sea is rough, and a cap's fate is fixed for its whole
+life (it never pops in or out halfway because the chop moved on). A fragment visits its own cell and the 8
+around it in each grid. A cap is never longer than a cell, so none reaches further.
+
+**Shape.** A crescent in cap-local axes (u along, v across, +v the leading edge). Its half-width is
+`WHITECAP_WIDTH_RATIO` of its half-length at the middle and tapers to its horns. Its centreline bows
+`WHITECAP_CURVE` half-lengths, so the horns trail behind the crest. Across it the opacity ramps up from the
+trailing side, is FULL between `WHITECAP_BACK_FULL` and `lead`, then drops to the leading edge. The full
+body is load-bearing: every partly covered pixel is white over blue and reads cyan.
+
+**Lifecycle.** `fract(t·whitecap_rate + phase)`, per cap:
+- **Attack:** a fast attack to full opacity over `WHITECAP_ATTACK` (12%) of the cycle.
+- **Fade:** a slow fade over the rest. As the cap fades it STRETCHES along its length (`WHITECAP_STRETCH`) and
+  SPREADS across it (`WHITECAP_SPREAD`), and `lead` slides from `WHITECAP_LEAD_FRESH` to `_SPENT`, so a sharp
+  crest softens into spreading foam.
+- **Rate:** phases are per cell, so the sea has no global pulse; the steadiness claim holds.
+
+**Colour.** `mix(c, whitecap_color, opacity · whitecap_strength)`. The colour is laid over the water as
+COVERAGE and never tinted through `foam_color` or the water's hue, so an edge is white at partial opacity,
+not blue.
+
+**Orientation is REGIONAL.** A cap's angle is that of a very-low-frequency world VECTOR noise at its centre
+(two value noises, the atan of their centred pair, so every direction is equally likely; cell
+`WHITECAP_ANGLE_CELL` 12 r), plus a per-cap jitter (`WHITECAP_ANGLE_JITTER`). Caps agree within a region
+and disagree across the map: there is no single map-wide direction, and nothing moves. **The coastal swell
+hook is where a coast can later align them:** the same `coastal_weight` that will blend in the swell can
+blend the regional angle toward the shore-normal.
+
+**Cost** (per water fragment, shipped). 2 grids × 9 cells, each a `hash13` + a `hash33` and a distance test.
+A cell whose cap can reach the fragment adds the spawn test and the shape: the coarse chop (two 3D value
+noises), a `hash33`, the two 2D value noises of the angle field, and an `atan`. At `whitecap_cell` 0.7 /
+`whitecap_length` 0.45 that is 0–2 cells per fragment.
+
+**The glint and the noise-peak caps are both gone.** The glint (the product of two drifting ridge nets,
+masked into patches) read at map scale as white curls, scratches on the water rather than whitecaps. The
+noise-peak caps are the box above.
 
 **LOD gate and the `O` toggle.** Waves, chop and whitecaps run only while `water_motion_enabled`, which
 `TerrainRenderer` pushes as `radius ≥ motion_min_radius` (the way `rivers_lod_enabled` is) AND the
@@ -1213,8 +1252,8 @@ time axis), so phase 0 still draws it — the harness freeze's re-check rule.
 **Cost.** Per `water_surface` call with the shipped levers: up to 2 `biome_array` fetches (A, and B where
 its patch weight is non-zero; the two wave fetches are skipped at `wave_strength` 0) plus 1
 `layer_luma_map` texel fetch and 1 value-noise evaluation, against 1 fetch before. The chop adds two 3D
-value-noise evaluations per octave pair — four in all (32 hashes) — once per water fragment, and the
-whitecaps three more (a pair plus the break-up). An open-water pixel whose neighbours share its id makes one call; the depth field
+value-noise evaluations per octave pair — four in all (32 hashes) — once per water fragment; the whitecaps'
+cost is under 3 above. An open-water pixel whose neighbours share its id makes one call; the depth field
 adds one call per differing water neighbour **within reach** (the loop skips a zero-weight neighbour),
 and the waterline cross-fade adds up to seven calls in its narrow band at a coast.
 
@@ -1230,15 +1269,17 @@ and the waterline cross-fade adds up to seven calls in its narrow band at a coas
 | `chop_strength` | 0.035 | peak luma offset of a bright / dark chop patch (luma units, 0..1). 0.06 read live as drifting clouds |
 | `chop_scale` | 0.5 | the coarse octave's feature size, in hex radii |
 | `chop_rate` | 0.4 | how fast the chop evolves — cells of its time axis per second. 0.8 read live as clouds changing too fast |
-| `whitecap_strength` | 0.6 | peak pull of a fleck toward its near-white foam tint; 0 = none, bit-exact |
-| `whitecap_coverage` | 0.68 | 0..1 — how much of the fleck field's crest breaks; bigger = more caps |
-| `whitecap_scale` | 0.55 | the fleck field's noise cell, in hex radii; a fleck is ~⅓ of it |
-| `whitecap_rate` | 0.6 | how fast flecks come and go — cells of its time axis per second (~1.7 s a fleck) |
+| `whitecap_strength` | 0.95 | a cap's peak opacity over the water; 0 = none, bit-exact |
+| `whitecap_coverage` | 0.22 | 0..1 — a cell's chance to spawn a cap each cycle, where the sea is rough |
+| `whitecap_cell` | 0.7 | the spawn grids' cell, in hex radii — the caps' density scale |
+| `whitecap_length` | 0.45 | a fresh cap's length, in hex radii (it stretches as it fades) |
+| `whitecap_rate` | 0.3 | lifecycles per second — a cap lives ~3.3 s |
+| `whitecap_color` | `[240, 244, 246]` | near-pure white, laid over the water by opacity |
 | `motion_min_radius` | 24 | px; below it the waves, chop and whitecaps are off |
 
 Fallbacks are the `WATER_SURFACE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
-lever; the fixed feel (directions, cells, offsets, rotations, the whitecap threshold softness,
-break-up and clustering) is the `WATER_*` / `CHOP_*` / `WHITECAP_*` consts in the shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
+lever; the fixed feel (directions, cells, offsets, rotations, and the whitecaps' shape, lifecycle, orientation
+field and clustering) is the `WATER_*` / `CHOP_*` / `WHITECAP_*` consts in the shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
 `variation_cell` (4) let one rotated sample cover most of the frame and showed B's own repeat on a
 diagonal; 3 keeps both samples in view. The repeat measure there reads **0.15** on the plain sample
 and **0.73** with the anti-tiling (1 = no correlation at the tile period). The chop was chosen on a
@@ -1247,10 +1288,13 @@ four-phase sequence and a 1.0×-like frame (`OCEAN_zoomed_out`, r ≈ 25.7), the
 fast. It ships at **0.035 / 0.4**: **2.3 levels mean over two seconds**, a steady **1.47–1.53 levels per
 second** (luma ≈ 30). The texture waves alone moved 0.94 levels per second and were invisible, so the
 usable band is narrow — below ~1 level/s the sea reads still, and ~5 reads as weather. The whitecaps were
-then chosen by eye at r ≈ 45 and on the 1.0×-like frame: flecks at `whitecap_scale` 0.35 were 2–3 px dots
-(snow), and a hard crest edge (`WHITECAP_SOFT` 0.06) read the same way; 0.55 with a softer edge and the
-break-up reads as scattered caps. With them the open water moves **3.0 levels over two seconds**, a
-**2.1–2.5 levels/s** series.
+chosen by eye at r ≈ 45 and on the live-like frame (`OCEAN_live`, r ≈ 35, the radius of Ray's 1.5×
+screenshots):
+- `WHITECAP_CURVE` 0.3 read as fingernail clippings.
+- `whitecap_coverage` 0.35 on a 0.6 r cell was a rain of dashes.
+- 0.22 on 0.7 r, 0.45 r long, reads as scattered breaking crests.
+
+With them the open water moves **3.7 levels over two seconds**, a **2.3–2.6 levels/s** series.
 
 ## Water temperature grade
 

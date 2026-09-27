@@ -1189,30 +1189,52 @@ const OCEAN_LOWFREQ_MAX_FRACTION := 0.35
 # The 1.0×-LIKE frame: the same geography on a grid that fits at r ≈ 25.7, just above motion_min_radius (24),
 # so the chop is ON there — the zoom at which the travelling swell drew its map-wide diagonal.
 const OCEAN_ZOOMED_OUT_GRID := Vector2i(42, 28)
-# THE WHITECAPS (three claims, on the cap MASK: open-ocean pixels at least OCEAN_WHITECAP_MIN_DL levels brighter
+# The LIVE-like frame: a grid that fits at r ≈ 35, the radius of Ray's 1.5× screenshots.
+const OCEAN_LIVE_GRID := Vector2i(31, 21)
+# One cap's LIFE: crops at these fractions of one whitecap cycle — fresh, at the peak of its attack, mid-fade and
+# late in the fade (see WHITECAP_ATTACK in the shader).
+const OCEAN_CAP_LIFE_FRACTIONS := [0.0, 0.1, 0.35, 0.7]
+const OCEAN_CAP_LIFE_CROP_RADII := 3.0
+# THE WHITECAPS (five claims, on the cap MASK: open-ocean pixels at least OCEAN_WHITECAP_MIN_DL levels brighter
 # than the whitecap-off twin at the same phase — the chop and art cancel, so the mask is the caps alone).
-# A fleck's core pulls toward near-white by whitecap_strength, tens of levels on this dark water, so a few
-# levels is a clean cut that leaves out the fleck's faint soft rim.
 const OCEAN_WHITECAP_MIN_DL := 8.0
-# (a) COVERAGE: the mask's fraction of open-ocean pixels. Sparse flecks, never a carpet: at least one pixel in a
-# thousand (a sea with any caps at all at the shipped coverage) and at most one in twenty (beyond that they
-# stop reading as flecks and start to whiten the sea).
+# (a) COVERAGE: the mask's fraction of open-ocean pixels. Sparse caps, never a carpet: at least one pixel in a
+# thousand and at most one in twenty (beyond that they stop reading as caps and start to whiten the sea).
 const OCEAN_WHITECAP_COVERAGE_MIN := 0.001
 const OCEAN_WHITECAP_COVERAGE_MAX := 0.05
-# (b) SMALL: the mask's mean 4-connected blob, in px, may not exceed a disc OCEAN_WHITECAP_MAX_FLECK_RADII hex
-# radii across, π·(that·r / 2)². A fleck is the crest of a noise field whose cell is whitecap_scale hex radii, so
-# it spans about a third of a cell (0.18 r at the shipped 0.55); past ~0.3 r a "fleck" is a foam patch. The bar
-# is in hex radii, NOT read from whitecap_scale — a bar that grew with the lever could never catch it.
-const OCEAN_WHITECAP_MAX_FLECK_RADII := 0.3
-# (c) IN PLACE: the fraction of the caps at t that are still caps at t + OCEAN_WHITECAP_DT (0.5 s, under a fleck's
-# ~1.7 s life at whitecap_rate 0.6). Flecks that swell and fade where they are keep SOME of their pixels; flecks
-# that jumped keep only chance (≈ the coverage, under 0.01), so the floor is far above that. The ceiling is set by
-# the FROZEN case: with whitecap_rate 0 the fleck field stands still and only the cluster gate, following the
-# chop, moves the caps — that alone keeps ~0.7 over the window — so caps living on their own clock must keep
-# clearly less.
-const OCEAN_WHITECAP_DT := 0.5
+# (b) ELONGATION: each blob's aspect ratio, sqrt(λmax / λmin) of its pixel second moments (each λ taken with a
+# pixel's own 1/12 variance, so a one-pixel-wide line is not infinite), averaged over the blobs of at least
+# OCEAN_WHITECAP_MIN_BLOB_PX pixels (a smaller one has no shape to measure). A streak is several times longer than
+# wide; a round blob is ~1.
+const OCEAN_WHITECAP_MIN_BLOB_PX := 8
+const OCEAN_WHITECAP_PIXEL_VARIANCE := 1.0 / 12.0
+const OCEAN_WHITECAP_ASPECT_MIN := 2.5
+# (c) WHITE: the cap CORE — mask pixels at least OCEAN_WHITECAP_CORE_DL levels over the twin, i.e. where the cap
+# covers at least ~3/4 of the water (a fully opaque cap sits ~200 levels over it) — must be near-neutral (mean
+# HSV saturation ≤ OCEAN_WHITECAP_CORE_SAT_MAX) and far brighter than the water (mean luma ≥ the box's water luma
+# + OCEAN_WHITECAP_CORE_LUMA_ABOVE levels). Pale foam_color is (176, 194, 205): saturation 0.14, where the
+# shipped near-white is 0.02 — the core reads ~0.05 with the water still showing through its rim.
+const OCEAN_WHITECAP_CORE_DL := 140.0
+const OCEAN_WHITECAP_CORE_SAT_MAX := 0.08
+const OCEAN_WHITECAP_CORE_LUMA_ABOVE := 100.0
+# (d) IN PLACE: the fraction of the caps at t still capped at t + OCEAN_WHITECAP_DT. A cap lives one cycle
+# (1 / whitecap_rate, 3.3 s shipped) where it spawned, so over OCEAN_WHITECAP_DT it keeps SOME of its pixels;
+# caps that jumped keep only chance (≈ the coverage, under 0.02); frozen caps keep nearly all.
+const OCEAN_WHITECAP_DT := 1.0
 const OCEAN_WHITECAP_OVERLAP_MIN := 0.2
-const OCEAN_WHITECAP_OVERLAP_MAX := 0.6
+const OCEAN_WHITECAP_OVERLAP_MAX := 0.85
+# (e) REGIONAL ORIENTATION: the mean resultant length R of the blobs' DOUBLED orientation angles (a streak's
+# axis has no head) — 1 when all agree, ~0 when they are spread. Over the whole box it must stay under
+# OCEAN_WHITECAP_GLOBAL_R_MAX (no map-wide direction); averaged over OCEAN_WHITECAP_WINDOW_RADII-hex-radius
+# windows holding at least OCEAN_WHITECAP_WINDOW_MIN_BLOBS blobs it must reach OCEAN_WHITECAP_LOCAL_R_MIN (caps
+# agree within a region). The local bar sits halfway between CHANCE — per-cap random angles measured 0.25 here
+# (n random axes average R ≈ 0.89/√n) — and the shipped caps, which read 0.57–0.68 across different phases of
+# the same frame; the window is ~half an orientation region (WHITECAP_ANGLE_CELL, 12 r) so a window mostly sits
+# inside one.
+const OCEAN_WHITECAP_GLOBAL_R_MAX := 0.5
+const OCEAN_WHITECAP_WINDOW_RADII := 6.0
+const OCEAN_WHITECAP_WINDOW_MIN_BLOBS := 6
+const OCEAN_WHITECAP_LOCAL_R_MIN := 0.45
 
 # State 30 (OCEANTEMP): the WATER TEMPERATURE GRADE (`terrain-blend-shader.md` → Water temperature grade).
 # State 29's geography at r ≈ 45 on a temperature gradient running polar (top) → tropical (bottom), with the
@@ -2309,6 +2331,21 @@ func _render_ocean_state() -> void:
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_zoomed_out", 0.0, false)
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_zoomed_out_t2", OCEAN_MOTION_DT, false)
 	_save_diff("OCEAN_zoomed_out", "OCEAN_zoomed_out_t2", "OCEAN_zoomed_out_motion_diff")
+	# The LIVE-like frame: Ray's screenshots are at 1.5× zoom, r ≈ 35 — where the caps must read as streaks.
+	_map.display_snapshot(_snapshot_ocean(OCEAN_LIVE_GRID.x, OCEAN_LIVE_GRID.y))
+	await _refit(GAME_HEX_RADIUS * GRID_W / OCEAN_LIVE_GRID.x)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_live", 0.0, false)
+	await _settle()
+	await _save_crop("OCEAN_live_open", OCEAN_OPEN_CROP.x, OCEAN_OPEN_CROP.y, OCEAN_OPEN_CROP_RADII)
+	# One cap's LIFE: the same small open-water crop at game zoom, at fractions of one whitecap cycle.
+	_map.display_snapshot(_snapshot_ocean(GRID_W, GRID_H))
+	await _refit(GAME_HEX_RADIUS)
+	var ws: Dictionary = TerrainTextureManager.terrain_config.get("water_surface", {})
+	var cycle_s: float = 1.0 / maxf(float(ws.get("whitecap_rate", 0.0)), OCEAN_CORR_EPSILON)
+	for i in range(OCEAN_CAP_LIFE_FRACTIONS.size()):
+		_set_water_time_offset(OCEAN_CAP_LIFE_FRACTIONS[i] * cycle_s)
+		await _settle()
+		await _save_crop("OCEAN_cap_life%d" % i, OCEAN_OPEN_CROP.x, OCEAN_OPEN_CROP.y, OCEAN_CAP_LIFE_CROP_RADII)
 	_set_water_time_offset(0.0)
 	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
 
@@ -2468,8 +2505,8 @@ func _assert_ocean_no_net_direction_or_pattern() -> void:
 
 
 func _assert_ocean_whitecaps() -> void:
-	## THE WHITECAP CLAIMS (see OCEAN_WHITECAP_*) on state 29's fixture at r ≈ 45: coverage in a band, small
-	## flecks, and flecks that change in place.
+	## THE WHITECAP CLAIMS (see OCEAN_WHITECAP_*) on state 29's fixture at r ≈ 45: coverage in a band, elongated
+	## streaks, white cores, change in place, and orientation that agrees by region but not across the map.
 	var on_a: Image = await _ocean_capture({}, 0.0)
 	var off_a: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, 0.0)
 	var on_b: Image = await _ocean_capture({}, OCEAN_WHITECAP_DT)
@@ -2477,47 +2514,104 @@ func _assert_ocean_whitecaps() -> void:
 	if on_a == null or off_a == null or on_b == null or off_b == null:
 		return
 	var box: Rect2i = _ocean_box_px(on_a)
-	var mask_a: PackedByteArray = _whitecap_mask(on_a, off_a, box)
-	var mask_b: PackedByteArray = _whitecap_mask(on_b, off_b, box)
+	var mask_a: PackedByteArray = _whitecap_mask(on_a, off_a, box, OCEAN_WHITECAP_MIN_DL)
+	var mask_b: PackedByteArray = _whitecap_mask(on_b, off_b, box, OCEAN_WHITECAP_MIN_DL)
+	var core: PackedByteArray = _whitecap_mask(on_a, off_a, box, OCEAN_WHITECAP_CORE_DL)
 	var total: int = mask_a.size()
 	var caps_a := 0
 	var kept := 0
+	var core_n := 0
+	var core_sat := 0.0
+	var core_luma := 0.0
+	var water_luma := 0.0
 	for i in range(total):
+		var px: int = box.position.x + i % box.size.x
+		var py: int = box.position.y + i / box.size.x
+		water_luma += off_a.get_pixel(px, py).get_luminance()
 		if mask_a[i] != 0:
 			caps_a += 1
 			if mask_b[i] != 0:
 				kept += 1
+		if core[i] != 0:
+			var c: Color = on_a.get_pixel(px, py)
+			core_n += 1
+			core_sat += c.s
+			core_luma += c.get_luminance()
 	var coverage: float = float(caps_a) / maxf(total, 1)
-	var blobs: int = _count_blobs(mask_a, box.size.x, box.size.y)
-	var mean_blob: float = float(caps_a) / maxf(blobs, 1)
-	var fleck_radius_px: float = OCEAN_WHITECAP_MAX_FLECK_RADII * _map.last_hex_radius / 2.0
-	var blob_max: float = PI * fleck_radius_px * fleck_radius_px
 	var overlap: float = float(kept) / maxf(caps_a, 1)
-	print("blend_probe: OCEAN whitecaps — coverage %.4f (%d of %d px, band %.3f–%.3f) · %d flecks, mean %.1f px"
-		% [coverage, caps_a, total, OCEAN_WHITECAP_COVERAGE_MIN, OCEAN_WHITECAP_COVERAGE_MAX, blobs, mean_blob]
-		+ " (max %.1f) · overlap over %.1f s %.2f (band %.2f–%.2f)"
-		% [blob_max, OCEAN_WHITECAP_DT, overlap, OCEAN_WHITECAP_OVERLAP_MIN, OCEAN_WHITECAP_OVERLAP_MAX])
+	water_luma = water_luma / maxf(total, 1) * LUMA_LEVELS
+	core_sat /= maxf(core_n, 1)
+	core_luma = core_luma / maxf(core_n, 1) * LUMA_LEVELS
+	# Shapes: aspect and axis per blob, then the resultant of the doubled axes over the box and per window.
+	var shapes: Array = _blob_shapes(mask_a, box.size.x, box.size.y)
+	var aspect_sum := 0.0
+	var global_vec := Vector2.ZERO
+	var windows := {}
+	var window_px: float = OCEAN_WHITECAP_WINDOW_RADII * _map.last_hex_radius
+	for shape: Dictionary in shapes:
+		aspect_sum += float(shape["aspect"])
+		var axis := Vector2(cos(2.0 * float(shape["angle"])), sin(2.0 * float(shape["angle"])))
+		global_vec += axis
+		var key := Vector2i(int(float(shape["cx"]) / window_px), int(float(shape["cy"]) / window_px))
+		var w: Array = windows.get(key, [Vector2.ZERO, 0])
+		windows[key] = [w[0] + axis, w[1] + 1]
+	var mean_aspect: float = aspect_sum / maxf(shapes.size(), 1)
+	var global_r: float = global_vec.length() / maxf(shapes.size(), 1)
+	var local_sum := 0.0
+	var local_n := 0
+	for key: Vector2i in windows:
+		var w: Array = windows[key]
+		if int(w[1]) >= OCEAN_WHITECAP_WINDOW_MIN_BLOBS:
+			local_sum += (w[0] as Vector2).length() / float(w[1])
+			local_n += 1
+	var local_r: float = local_sum / maxf(local_n, 1)
+	print("blend_probe: OCEAN whitecaps — (a) coverage %.4f (%d of %d px, band %.3f–%.3f)"
+		% [coverage, caps_a, total, OCEAN_WHITECAP_COVERAGE_MIN, OCEAN_WHITECAP_COVERAGE_MAX])
+	print("blend_probe: OCEAN whitecaps — (b) mean aspect %.2f over %d blobs of ≥ %d px (min %.1f)"
+		% [mean_aspect, shapes.size(), OCEAN_WHITECAP_MIN_BLOB_PX, OCEAN_WHITECAP_ASPECT_MIN])
+	print("blend_probe: OCEAN whitecaps — (c) core %d px: saturation %.3f (max %.2f), luma %.1f vs water %.1f (≥ +%.0f)"
+		% [core_n, core_sat, OCEAN_WHITECAP_CORE_SAT_MAX, core_luma, water_luma, OCEAN_WHITECAP_CORE_LUMA_ABOVE])
+	print("blend_probe: OCEAN whitecaps — (d) overlap over %.1f s %.2f (band %.2f–%.2f)"
+		% [OCEAN_WHITECAP_DT, overlap, OCEAN_WHITECAP_OVERLAP_MIN, OCEAN_WHITECAP_OVERLAP_MAX])
+	print("blend_probe: OCEAN whitecaps — (e) orientation R global %.2f (max %.2f) · local %.2f over %d windows (min %.2f)"
+		% [global_r, OCEAN_WHITECAP_GLOBAL_R_MAX, local_r, local_n, OCEAN_WHITECAP_LOCAL_R_MIN])
 	if coverage < OCEAN_WHITECAP_COVERAGE_MIN:
 		_fail("OCEAN: whitecaps ABSENT — %.4f of the open ocean capped (want ≥ %.3f)"
 			% [coverage, OCEAN_WHITECAP_COVERAGE_MIN])
+		return
 	elif coverage > OCEAN_WHITECAP_COVERAGE_MAX:
 		_fail("OCEAN: whitecaps CARPET the sea — %.4f of the open ocean capped (want ≤ %.3f)"
 			% [coverage, OCEAN_WHITECAP_COVERAGE_MAX])
-	if caps_a > 0 and mean_blob > blob_max:
-		_fail("OCEAN: whitecaps are PATCHES, not flecks — mean blob %.1f px (want ≤ %.1f)" % [mean_blob, blob_max])
-	if caps_a > 0 and overlap < OCEAN_WHITECAP_OVERLAP_MIN:
+	if mean_aspect < OCEAN_WHITECAP_ASPECT_MIN:
+		_fail("OCEAN: whitecaps are BLOBS, not streaks — mean aspect %.2f (want ≥ %.1f)"
+			% [mean_aspect, OCEAN_WHITECAP_ASPECT_MIN])
+	if core_n == 0:
+		_fail("OCEAN: no whitecap reaches a CORE (%.0f levels over the water)" % OCEAN_WHITECAP_CORE_DL)
+	elif core_sat > OCEAN_WHITECAP_CORE_SAT_MAX:
+		_fail("OCEAN: whitecap cores are TINTED, not white — saturation %.3f (want ≤ %.2f)"
+			% [core_sat, OCEAN_WHITECAP_CORE_SAT_MAX])
+	elif core_luma < water_luma + OCEAN_WHITECAP_CORE_LUMA_ABOVE:
+		_fail("OCEAN: whitecap cores are DIM — luma %.1f over water %.1f (want ≥ +%.0f)"
+			% [core_luma, water_luma, OCEAN_WHITECAP_CORE_LUMA_ABOVE])
+	if overlap < OCEAN_WHITECAP_OVERLAP_MIN:
 		_fail("OCEAN: whitecaps JUMP — only %.2f of them survive %.1f s in place (want ≥ %.2f)"
 			% [overlap, OCEAN_WHITECAP_DT, OCEAN_WHITECAP_OVERLAP_MIN])
-	elif caps_a > 0 and overlap > OCEAN_WHITECAP_OVERLAP_MAX:
+	elif overlap > OCEAN_WHITECAP_OVERLAP_MAX:
 		_fail("OCEAN: whitecaps are STATIC — %.2f of them unchanged after %.1f s (want ≤ %.2f)"
 			% [overlap, OCEAN_WHITECAP_DT, OCEAN_WHITECAP_OVERLAP_MAX])
+	if global_r > OCEAN_WHITECAP_GLOBAL_R_MAX:
+		_fail("OCEAN: whitecaps share ONE map-wide direction — orientation R %.2f over the box (want ≤ %.2f)"
+			% [global_r, OCEAN_WHITECAP_GLOBAL_R_MAX])
+	if local_n == 0 or local_r < OCEAN_WHITECAP_LOCAL_R_MIN:
+		_fail("OCEAN: whitecap orientation is not REGIONAL — local R %.2f over %d windows (want ≥ %.2f)"
+			% [local_r, local_n, OCEAN_WHITECAP_LOCAL_R_MIN])
 
 
-func _whitecap_mask(on: Image, off: Image, box: Rect2i) -> PackedByteArray:
-	## 1 where `on` is at least OCEAN_WHITECAP_MIN_DL levels brighter than `off`, over `box` (row-major).
+func _whitecap_mask(on: Image, off: Image, box: Rect2i, min_dl: float) -> PackedByteArray:
+	## 1 where `on` is at least `min_dl` levels brighter than `off`, over `box` (row-major).
 	var mask := PackedByteArray()
 	mask.resize(box.size.x * box.size.y)
-	var bar: float = OCEAN_WHITECAP_MIN_DL / LUMA_LEVELS
+	var bar: float = min_dl / LUMA_LEVELS
 	for y in range(box.size.y):
 		for x in range(box.size.x):
 			var px: int = box.position.x + x
@@ -2527,29 +2621,55 @@ func _whitecap_mask(on: Image, off: Image, box: Rect2i) -> PackedByteArray:
 	return mask
 
 
-func _count_blobs(mask: PackedByteArray, w: int, h: int) -> int:
-	## 4-connected components of the set pixels of `mask` (w × h, row-major).
+func _blob_shapes(mask: PackedByteArray, w: int, h: int) -> Array:
+	## The 4-connected blobs of `mask` (w × h, row-major) of at least OCEAN_WHITECAP_MIN_BLOB_PX pixels, each as
+	## {cx, cy, aspect, angle}: its centroid, sqrt(λmax / λmin) of its second moments, and its major axis angle.
 	var seen := PackedByteArray()
 	seen.resize(mask.size())
-	var blobs := 0
+	var shapes: Array = []
 	var stack := PackedInt32Array()
 	for start in range(mask.size()):
 		if mask[start] == 0 or seen[start] != 0:
 			continue
-		blobs += 1
 		seen[start] = 1
 		stack.append(start)
+		var n := 0
+		var sx := 0.0
+		var sy := 0.0
+		var sxx := 0.0
+		var syy := 0.0
+		var sxy := 0.0
 		while not stack.is_empty():
 			var i: int = stack[stack.size() - 1]
 			stack.remove_at(stack.size() - 1)
 			var x: int = i % w
 			var y: int = i / w
-			for n: int in [i - 1 if x > 0 else -1, i + 1 if x < w - 1 else -1,
+			n += 1
+			sx += x
+			sy += y
+			sxx += x * x
+			syy += y * y
+			sxy += x * y
+			for nb: int in [i - 1 if x > 0 else -1, i + 1 if x < w - 1 else -1,
 					i - w if y > 0 else -1, i + w if y < h - 1 else -1]:
-				if n >= 0 and mask[n] != 0 and seen[n] == 0:
-					seen[n] = 1
-					stack.append(n)
-	return blobs
+				if nb >= 0 and mask[nb] != 0 and seen[nb] == 0:
+					seen[nb] = 1
+					stack.append(nb)
+		if n < OCEAN_WHITECAP_MIN_BLOB_PX:
+			continue
+		var cx: float = sx / n
+		var cy: float = sy / n
+		var vxx: float = sxx / n - cx * cx + OCEAN_WHITECAP_PIXEL_VARIANCE
+		var vyy: float = syy / n - cy * cy + OCEAN_WHITECAP_PIXEL_VARIANCE
+		var vxy: float = sxy / n - cx * cy
+		var mid: float = 0.5 * (vxx + vyy)
+		var spread: float = sqrt(0.25 * (vxx - vyy) * (vxx - vyy) + vxy * vxy)
+		shapes.append({
+			"cx": cx, "cy": cy,
+			"aspect": sqrt((mid + spread) / maxf(mid - spread, OCEAN_WHITECAP_PIXEL_VARIANCE)),
+			"angle": 0.5 * atan2(2.0 * vxy, vxx - vyy),
+		})
+	return shapes
 
 
 func _assert_ocean_motion_toggle() -> void:

@@ -235,12 +235,15 @@ uniform float water_wave_scale;         // wave UV scale, relative to the base U
 uniform float water_chop_strength;      // peak luma offset of a bright (+) / dark (−) patch, 0..1 luma units
 uniform float water_chop_scale;         // feature size of the coarse octave, in HEX RADII (zoom-invariant)
 uniform float water_chop_rate;          // how fast the field evolves: noise cells of its TIME axis per second
-// THE WHITECAPS: sparse, small bright flecks that appear, peak and fade IN PLACE, clustered where the chop is in
-// its bright phase (see WHITECAP_* and open_whitecap). Applied with the chop, once per water fragment.
-uniform float water_whitecap_strength;  // peak pull of a fleck toward its near-white foam tint (0 = none, bit-exact)
-uniform float water_whitecap_coverage;  // 0..1: how much of the sea's noise crests break — bigger = more caps
-uniform float water_whitecap_scale;     // the fleck field's noise cell, in HEX RADII (a fleck is its crest)
-uniform float water_whitecap_rate;      // how fast flecks come and go: noise cells of its TIME axis per second
+// THE WHITECAPS: small breaking-wave streaks, one per cell of two jittered grids, that flash white and fade IN
+// PLACE, clustered where the chop is rough (see WHITECAP_* and open_whitecap). Applied with the chop, once per
+// water fragment.
+uniform float water_whitecap_strength;  // peak opacity of a cap over the water (0 = none, bit-exact)
+uniform float water_whitecap_coverage;  // 0..1: the chance a cell spawns a cap in a cycle, where the sea is rough
+uniform float water_whitecap_cell;      // the spawn grid's cell, in HEX RADII — the caps' density scale
+uniform float water_whitecap_length;    // a fresh cap's length, in HEX RADII
+uniform float water_whitecap_rate;      // cap lifecycles per second (1 / a cap's life)
+uniform vec3 water_whitecap_color;      // the cap's colour — laid OVER the water by opacity, never tinted into it
 // The motion gate for the waves, chop and whitecaps: TerrainRenderer ANDs the zoom LOD (radius ≥
 // motion_min_radius) with the session-only `O` toggle. The static anti-tiling and the temperature grade always run.
 uniform bool water_motion_enabled;
@@ -674,27 +677,47 @@ const float CHOP_PAIR_TIME_SHIFT = 0.5;
 const vec3 CHOP_PAIR_OFFSET = vec3(173.0, 293.0, 0.0);
 const float CHOP_PAIR_NORM = 0.70710678;
 const float VNOISE_MEAN = 0.5;                               // vnoise3's mid-value: subtracting it centres it
-// THE WHITECAPS (see open_whitecap). A fine 3D value-noise field over (x, y, t·whitecap_rate) — an interleaved
-// PAIR like each chop octave, so the flecks never pause together — rotated off the screen axes by its own angle
-// so its lattice lines up with nothing. A fleck is where that field crests past a high threshold: sparse, soft
-// blobs a fraction of a cell across that swell and fade in place, with no drift, no lines and no curls.
-const float WHITECAP_ROTATION = 1.21;                        // radians — off the chop octaves' 0.52 / −0.93
-const vec3 WHITECAP_OFFSET = vec3(503.0, 157.0, 71.0);       // decorrelates it from the chop and every other field
-// The pair's crest: two centred copies each ≤ 0.5, summed × CHOP_PAIR_NORM. whitecap_coverage 0 puts the
-// threshold here (no caps); 1 puts it at the field's mean (half the sea).
-const float WHITECAP_FIELD_PEAK = 0.70710678;
-const float WHITECAP_SOFT = 0.2;                            // field units from threshold to a full fleck
-// CLUSTERING: flecks break only where the CHOP (open_chop's signed value, about −1..1) is in its bright phase —
-// full above WHITECAP_CLUSTER_HI, none below WHITECAP_CLUSTER_LO — so caps gather where the sea is rougher and
-// come and go with it, instead of sprinkling the water uniformly.
-const float WHITECAP_CLUSTER_LO = 0.25;
-const float WHITECAP_CLUSTER_HI = 0.6;
-// BREAK-UP: a finer noise, evolving on the same time axis, is added to the fleck field before the threshold, so
-// a cap's edge is ragged spray rather than a round dot — without it the flecks read as falling snow.
-const float WHITECAP_BREAKUP_SCALE = 2.7;                    // its frequency, × the fleck field's
-const float WHITECAP_BREAKUP_AMOUNT = 0.22;                  // field units it adds, ± half this
-const vec3 WHITECAP_BREAKUP_OFFSET = vec3(89.0, 331.0, 17.0);
-const float WHITECAP_WHITE_MIX = 0.6;                        // the fleck's colour: this far from foam_color to white
+// THE WHITECAPS (see open_whitecap). Why not noise peaks: thresholding a noise field gave ROUND blobs whose soft
+// rims, mixed with the blue water under them, read CYAN — and every rim is a soft rim. A cap is a SHAPE instead:
+// a thin crescent spawned per cell of two jittered grids, flashing white and fading where it was born.
+// The two grids: each rotated off the screen axes (and off each other) and offset, so neither lattice shows.
+const vec2 WHITECAP_GRID_ROTATION = vec2(0.31, 1.12);        // radians, grid A / grid B
+const vec2 WHITECAP_GRID_B_OFFSET = vec2(0.37, 0.61);        // cells — grid A sits at 0
+const float WHITECAP_GRID_B_SALT = 719.0;                     // decorrelates grid B's hashes from grid A's
+const float WHITECAP_CELL_MARGIN = 0.15;                      // a cap's centre keeps this far (cells) off its cell edge
+// The SHAPE, in cap-local axes (u along its length, v across, +v the leading edge). A crescent: its half-width
+// is WHITECAP_WIDTH_RATIO of its half-length at the middle and tapers to its horns, and its centreline bows by
+// WHITECAP_CURVE half-lengths so the horns trail behind the crest.
+const float WHITECAP_WIDTH_RATIO = 0.22;
+const float WHITECAP_CURVE = 0.15;
+// The opacity is FULL between WHITECAP_BACK_FULL and `lead` — a solid white body, since every partially covered
+// pixel is white mixed with blue water and reads cyan — ramps up from the trailing side (−1) to it, and drops from
+// `lead` to the leading edge (+1). A fresh cap's lead sits near the front, so its crest is a sharp edge; a spent
+// one's has slid back, so the drop softens and spreads.
+const float WHITECAP_BACK_FULL = -0.2;
+const float WHITECAP_LEAD_FRESH = 0.55;
+const float WHITECAP_LEAD_SPENT = -0.2;
+const float WHITECAP_SIZE_JITTER = 0.35;                      // ± fraction of whitecap_length, per cap
+// THE LIFECYCLE: fract(t·rate + phase), per cap. A fast attack to full white over WHITECAP_ATTACK of the cycle,
+// then a slow fade over the rest while the cap STRETCHES along its length and SPREADS across it (foam spreading).
+const float WHITECAP_ATTACK = 0.12;
+const float WHITECAP_STRETCH = 0.6;                           // extra length at the end of the fade, × fresh length
+const float WHITECAP_SPREAD = 0.8;                            // extra width at the end of the fade, × fresh width
+// ORIENTATION IS REGIONAL: the angle of a very-low-frequency world VECTOR noise (two value noises, as the atan of
+// their centred pair, so every direction is equally likely) at the cap's centre, plus a small per-cap jitter.
+// Caps agree within a region and disagree across the map — no single map-wide direction — and nothing moves.
+const float WHITECAP_ANGLE_CELL = 12.0;                        // hex radii — a region spans a few hexes
+const vec2 WHITECAP_ANGLE_OFFSET_A = vec2(613.0, 29.0);
+const vec2 WHITECAP_ANGLE_OFFSET_B = vec2(83.0, 457.0);
+const float WHITECAP_ANGLE_JITTER = 0.35;                     // ± radians per cap
+// CLUSTERING: a cell spawns with chance whitecap_coverage × a smoothstep over the COARSE chop octave at the cap's
+// centre, read at the moment it spawns — so caps gather where the sea is rough, and a cap's fate is fixed for its
+// life (it never pops in or out halfway because the chop moved on).
+const float WHITECAP_ROUGH_LO = 0.0;
+const float WHITECAP_ROUGH_HI = 0.25;
+// Salts for the per-cycle hashes, so a cell's position, spawn, size and angle are independent draws.
+const vec3 WHITECAP_HASH_SPAWN = vec3(0.0, 0.0, 0.0);
+const vec3 WHITECAP_HASH_SHAPE = vec3(131.0, 257.0, 0.5);
 // hash13's input scale (Hoskins' "hash without sine": no sin(), so no precision loss as TIME grows).
 const vec3 HASH3_SCALE = vec3(0.1031, 0.1030, 0.0973);
 const float HASH3_ADD = 33.33;
@@ -839,6 +862,13 @@ float hash13(vec3 p) {
 	return fract((p.x + p.y) * p.z);
 }
 
+// Three independent hashes of a vec3 — hash13's three-output twin (Hoskins), same scale and add.
+vec3 hash33(vec3 p) {
+	p = fract(p * HASH3_SCALE);
+	p += dot(p, p.yxz + HASH3_ADD);
+	return fract((p.xxy + p.yxx) * p.zyx);
+}
+
 // Smooth 3D value noise — vnoise's twin with a third (time) axis.
 float vnoise3(vec3 p) {
 	vec3 i = floor(p);
@@ -858,11 +888,17 @@ float chop_octave(vec3 q) {
 	return (a + b) * CHOP_PAIR_NORM;
 }
 
+// The chop's COARSE octave at `p` (in chop cells) and time-axis position `z` — open_chop's own, and the whitecaps'
+// roughness gate.
+float chop_coarse(vec2 p, float z) {
+	return chop_octave(vec3(rotate_uv(p, CHOP_COARSE_ROTATION), z) + CHOP_OFFSET_COARSE);
+}
+
 // THE OPEN CHOP (see CHOP_*): signed, about −1..1, evolving in place.
 float open_chop(vec2 map_px, float t) {
 	vec2 p = map_px / (hex_radius * max(water_chop_scale, BLEND_SOFT_MIN));
 	float z = t * water_chop_rate;
-	float coarse = chop_octave(vec3(rotate_uv(p, CHOP_COARSE_ROTATION), z) + CHOP_OFFSET_COARSE);
+	float coarse = chop_coarse(p, z);
 	float fine = chop_octave(vec3(rotate_uv(p, CHOP_FINE_ROTATION) / CHOP_FINE_SCALE, z * CHOP_FINE_RATE)
 		+ CHOP_OFFSET_FINE);
 	return 2.0 * dot(vec2(coarse, fine), CHOP_OCTAVE_WEIGHTS);
@@ -881,16 +917,71 @@ float coastal_weight() {
 	return 0.0;
 }
 
-// THE WHITECAPS (see WHITECAP_*): how far this fragment is pulled toward the foam tint, 0..whitecap_strength.
-// `chop` is open_chop's signed value here — the caps cluster in its bright phase.
-float open_whitecap(vec2 map_px, float t, float chop) {
-	vec2 p = rotate_uv(map_px / (hex_radius * max(water_whitecap_scale, BLEND_SOFT_MIN)), WHITECAP_ROTATION);
-	float z = t * water_whitecap_rate;
-	float field = chop_octave(vec3(p, z) + WHITECAP_OFFSET)
-		+ WHITECAP_BREAKUP_AMOUNT * (vnoise3(vec3(p * WHITECAP_BREAKUP_SCALE, z) + WHITECAP_BREAKUP_OFFSET) - VNOISE_MEAN);
-	float threshold = WHITECAP_FIELD_PEAK * (1.0 - clamp(water_whitecap_coverage, 0.0, 1.0));
-	float fleck = smoothstep(threshold, threshold + WHITECAP_SOFT, field);
-	return fleck * smoothstep(WHITECAP_CLUSTER_LO, WHITECAP_CLUSTER_HI, chop) * water_whitecap_strength;
+// ONE WHITECAP GRID (see WHITECAP_*): the opacity of the caps of one jittered grid at `p` (hex radii). The grid is
+// rotated by `rot` and offset by `off` cells; `salt` separates its hashes from the other grid's. It visits the
+// fragment's cell and its 8 neighbours — a cap is never longer than a cell, so none reaches further — and
+// keeps the most opaque cap.
+float whitecap_grid(vec2 p, float t, float rot, vec2 off, float salt) {
+	float cell = max(water_whitecap_cell, BLEND_SOFT_MIN);
+	vec2 q = rotate_uv(p, rot) / cell + off;
+	vec2 base = floor(q);
+	float fresh_half = 0.5 * min(water_whitecap_length, cell);
+	float reach = fresh_half * (1.0 + WHITECAP_SIZE_JITTER) * (1.0 + WHITECAP_STRETCH);
+	float chop_cell = hex_radius * max(water_chop_scale, BLEND_SOFT_MIN);
+	float best = 0.0;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 ci = base + vec2(float(i), float(j));
+			float life = t * water_whitecap_rate + hash13(vec3(ci, salt));
+			float cycle = floor(life);
+			float f = life - cycle;
+			vec3 h = hash33(vec3(ci, cycle + salt) + WHITECAP_HASH_SPAWN);
+			vec2 cap_q = ci + WHITECAP_CELL_MARGIN + h.xy * (1.0 - 2.0 * WHITECAP_CELL_MARGIN);
+			vec2 d = rotate_uv((q - cap_q) * cell, -rot);            // fragment − cap centre, world hex radii
+			if (dot(d, d) > reach * reach) {
+				continue;
+			}
+			// The cap's centre in world hex radii, and the moment it spawned — its spawn is decided there, then.
+			vec2 centre = p - d;
+			float t_spawn = water_whitecap_rate > 0.0 ? (cycle - (life - t * water_whitecap_rate)) / water_whitecap_rate : 0.0;
+			float rough = smoothstep(WHITECAP_ROUGH_LO, WHITECAP_ROUGH_HI,
+				chop_coarse(centre * hex_radius / chop_cell, t_spawn * water_chop_rate));
+			if (h.z >= water_whitecap_coverage * rough) {
+				continue;
+			}
+			vec3 g = hash33(vec3(ci, cycle + salt) + WHITECAP_HASH_SHAPE);
+			float angle = atan(vnoise(centre / WHITECAP_ANGLE_CELL + WHITECAP_ANGLE_OFFSET_B) - VNOISE_MEAN,
+				vnoise(centre / WHITECAP_ANGLE_CELL + WHITECAP_ANGLE_OFFSET_A) - VNOISE_MEAN)
+				+ WHITECAP_ANGLE_JITTER * (2.0 * g.x - 1.0);
+			// The lifecycle: a fast attack, then a slow fade while the cap stretches and spreads.
+			float fade = clamp((f - WHITECAP_ATTACK) / (1.0 - WHITECAP_ATTACK), 0.0, 1.0);
+			float intensity = smoothstep(0.0, WHITECAP_ATTACK, f) * (1.0 - smoothstep(WHITECAP_ATTACK, 1.0, f));
+			float half_len = fresh_half * (1.0 + WHITECAP_SIZE_JITTER * (2.0 * g.y - 1.0)) * (1.0 + WHITECAP_STRETCH * fade);
+			float half_w = half_len * WHITECAP_WIDTH_RATIO * (1.0 + WHITECAP_SPREAD * fade);
+			// The crescent, in cap-local axes: u along, v across (+v leading).
+			vec2 uv = rotate_uv(d, -angle);
+			float s = uv.x / half_len;
+			if (abs(s) >= 1.0) {
+				continue;
+			}
+			float taper = 1.0 - s * s;
+			float v = uv.y + WHITECAP_CURVE * half_len * s * s;     // the horns trail behind the crest
+			float x = v / max(half_w * taper, BLEND_SOFT_MIN);
+			float lead = mix(WHITECAP_LEAD_FRESH, WHITECAP_LEAD_SPENT, fade);
+			float across = smoothstep(-1.0, min(WHITECAP_BACK_FULL, lead), x) * (1.0 - smoothstep(lead, 1.0, x));
+			best = max(best, across * intensity);
+		}
+	}
+	return best;
+}
+
+// THE WHITECAPS (see WHITECAP_*): a cap's OPACITY over the water at this fragment, 0..whitecap_strength — the max
+// of the two grids.
+float open_whitecap(vec2 map_px, float t) {
+	vec2 p = map_px / hex_radius;
+	float a = whitecap_grid(p, t, WHITECAP_GRID_ROTATION.x, vec2(0.0), 0.0);
+	float b = whitecap_grid(p, t, WHITECAP_GRID_ROTATION.y, WHITECAP_GRID_B_OFFSET, WHITECAP_GRID_B_SALT);
+	return max(a, b) * water_whitecap_strength;
 }
 
 // THE WATER MOTION applied to a water fragment's colour `c`. The OPEN-OCEAN term is the chop (a luma offset, hue
@@ -902,7 +993,7 @@ vec3 apply_water_motion(vec3 c, vec2 map_px) {
 	float chop = open_chop(map_px, t);
 	vec3 open = c + vec3(chop * water_chop_strength);
 	if (water_whitecap_strength > 0.0) {
-		open = mix(open, mix(foam_color, vec3(1.0), WHITECAP_WHITE_MIX), open_whitecap(map_px, t, chop));
+		open = mix(open, water_whitecap_color, open_whitecap(map_px, t));
 	}
 	if (COASTAL_SWELL_ENABLED) {
 		open = mix(open, c + vec3(coastal_swell(map_px, t)), coastal_weight());

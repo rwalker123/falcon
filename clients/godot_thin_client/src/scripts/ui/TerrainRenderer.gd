@@ -118,16 +118,21 @@ const WATER_SURFACE_MAX_CHOP_STRENGTH := 0.2
 const WATER_SURFACE_MIN_CHOP_SCALE := 0.1               # hex radii — finer is per-pixel sparkle, not chop
 const WATER_SURFACE_MAX_CHOP_SCALE := 2.0               # hex radii — broader starts to read as map-scale pattern
 const WATER_SURFACE_MAX_CHOP_RATE := 5.0
-# THE WHITECAPS — sparse bright flecks that appear, peak and fade in place, clustered in the chop's bright phase.
+# THE WHITECAPS — small breaking-wave streaks spawned per cell of two jittered grids: each flashes white and fades
+# in place, clustered where the chop is rough, oriented by region.
 # They carry the visible motion: the chop alone, at the strength that stopped it reading as clouds, is faint.
-const WATER_SURFACE_DEFAULT_WHITECAP_STRENGTH := 0.8    # peak pull of a fleck toward the near-white foam tint
-const WATER_SURFACE_DEFAULT_WHITECAP_COVERAGE := 0.45   # 0..1: bigger = more of the noise crests break
-const WATER_SURFACE_DEFAULT_WHITECAP_SCALE := 0.35      # the fleck field's noise cell, in HEX RADII
-const WATER_SURFACE_DEFAULT_WHITECAP_RATE := 0.6        # flecks' life: noise cells of its time axis per second
+const WATER_SURFACE_DEFAULT_WHITECAP_STRENGTH := 0.9    # a cap's peak opacity over the water
+const WATER_SURFACE_DEFAULT_WHITECAP_COVERAGE := 0.35   # 0..1: a cell's chance to spawn a cap, where the sea is rough
+const WATER_SURFACE_DEFAULT_WHITECAP_CELL := 0.6        # the spawn grid's cell, in HEX RADII (density)
+const WATER_SURFACE_DEFAULT_WHITECAP_LENGTH := 0.35     # a fresh cap's length, in HEX RADII
+const WATER_SURFACE_DEFAULT_WHITECAP_RATE := 0.3        # lifecycles per second — a cap lives ~3 s
+const WATER_SURFACE_DEFAULT_WHITECAP_COLOR := Vector3(240.0, 244.0, 246.0) / 255.0  # near-pure white
 const WATER_SURFACE_MAX_WHITECAP_STRENGTH := 1.0
 const WATER_SURFACE_MAX_WHITECAP_COVERAGE := 1.0
-const WATER_SURFACE_MIN_WHITECAP_SCALE := 0.05          # hex radii — finer is single-pixel sparkle
-const WATER_SURFACE_MAX_WHITECAP_SCALE := 2.0           # hex radii — broader is foam patches, not caps
+const WATER_SURFACE_MIN_WHITECAP_CELL := 0.2            # hex radii — denser reads as a carpet of foam
+const WATER_SURFACE_MAX_WHITECAP_CELL := 4.0
+const WATER_SURFACE_MIN_WHITECAP_LENGTH := 0.05         # hex radii — shorter is a single pixel
+const WATER_SURFACE_MAX_WHITECAP_LENGTH := 1.0          # hex radii (the shader also caps it at one cell)
 const WATER_SURFACE_MAX_WHITECAP_RATE := 5.0
 const WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS := 24.0   # px: below this the waves, chop and whitecaps are off
 # Clamp ceilings, so a config typo cannot turn the ocean into strobing noise (the floors are all 0).
@@ -892,8 +897,11 @@ func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -
 	var whitecap_coverage: float = clampf(
 		float(ws.get("whitecap_coverage", WATER_SURFACE_DEFAULT_WHITECAP_COVERAGE)),
 		0.0, WATER_SURFACE_MAX_WHITECAP_COVERAGE)
-	var whitecap_scale: float = clampf(float(ws.get("whitecap_scale", WATER_SURFACE_DEFAULT_WHITECAP_SCALE)),
-		WATER_SURFACE_MIN_WHITECAP_SCALE, WATER_SURFACE_MAX_WHITECAP_SCALE)
+	var whitecap_cell: float = clampf(float(ws.get("whitecap_cell", WATER_SURFACE_DEFAULT_WHITECAP_CELL)),
+		WATER_SURFACE_MIN_WHITECAP_CELL, WATER_SURFACE_MAX_WHITECAP_CELL)
+	var whitecap_length: float = clampf(float(ws.get("whitecap_length", WATER_SURFACE_DEFAULT_WHITECAP_LENGTH)),
+		WATER_SURFACE_MIN_WHITECAP_LENGTH, WATER_SURFACE_MAX_WHITECAP_LENGTH)
+	var whitecap_color: Vector3 = _shore_color(ws.get("whitecap_color"), WATER_SURFACE_DEFAULT_WHITECAP_COLOR)
 	var whitecap_rate: float = clampf(float(ws.get("whitecap_rate", WATER_SURFACE_DEFAULT_WHITECAP_RATE)),
 		0.0, WATER_SURFACE_MAX_WHITECAP_RATE)
 	var motion_min_radius: float = maxf(
@@ -910,8 +918,10 @@ func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -
 	m.set_shader_parameter("water_chop_rate", chop_rate)                 # time-axis noise cells per second
 	m.set_shader_parameter("water_whitecap_strength", whitecap_strength)
 	m.set_shader_parameter("water_whitecap_coverage", whitecap_coverage)
-	m.set_shader_parameter("water_whitecap_scale", whitecap_scale)       # hex radii
-	m.set_shader_parameter("water_whitecap_rate", whitecap_rate)         # time-axis noise cells per second
+	m.set_shader_parameter("water_whitecap_cell", whitecap_cell)         # hex radii
+	m.set_shader_parameter("water_whitecap_length", whitecap_length)     # hex radii
+	m.set_shader_parameter("water_whitecap_rate", whitecap_rate)         # lifecycles per second
+	m.set_shader_parameter("water_whitecap_color", whitecap_color)
 	_water_motion_lod_on = radius >= motion_min_radius
 	m.set_shader_parameter("water_motion_enabled", _water_motion_lod_on and _water_motion_toggle_on)
 

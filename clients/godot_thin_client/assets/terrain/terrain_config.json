@@ -23,10 +23,12 @@
     "chop_strength": 0.035,
     "chop_scale": 0.5,
     "chop_rate": 0.4,
-    "whitecap_strength": 0.6,
-    "whitecap_coverage": 0.68,
-    "whitecap_scale": 0.55,
-    "whitecap_rate": 0.6,
+    "whitecap_strength": 0.95,
+    "whitecap_coverage": 0.22,
+    "whitecap_cell": 0.7,
+    "whitecap_length": 0.45,
+    "whitecap_rate": 0.3,
+    "whitecap_color": [240, 244, 246],
     "motion_min_radius": 24.0
   },
   "water_temperature": {

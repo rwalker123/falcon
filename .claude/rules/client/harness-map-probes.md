@@ -816,10 +816,12 @@ the frame with the open water (`terrain-blend-shader.md` → Water surface). Fra
 | `OCEAN_chop`, `_t2`, `_motion_diff` | waves and whitecaps 0, two phases | the chop alone |
 | `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s; `OCEAN_shipped_open` is the r ≈ 45 crop the whitecaps are judged on |
 | `OCEAN_seq0..3` | shipped, four phases a second apart | the look-at sequence the chop was tuned on |
-| `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop and caps are ON — the zoom where the retired swell drew a map-wide diagonal, and where the caps must stay sparse flecks, never streaks or patches. Below the gate (the r ≈ 22.8 far-zoom grid) the motion is off and the water is static |
+| `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop and caps are ON — the zoom where the retired swell drew a map-wide diagonal, and where the caps must stay sparse, never a carpet or map-scale patches. Below the gate (the r ≈ 22.8 far-zoom grid) the motion is off and the water is static |
+| `OCEAN_live` (+ `_open`) | shipped, on a 31×21 grid at r ≈ 35 | the LIVE-like frame, the radius of Ray's 1.5× screenshots: the caps must read as small breaking-wave streaks, not dots, stars, scratches or snow |
+| `OCEAN_cap_life0..3` | shipped, a 3-radius crop at r ≈ 45, at 0 / 0.1 / 0.35 / 0.7 of one whitecap cycle | one cap's life: the flash, the peak, the stretched and softened fade |
 
 The second phase is `OCEAN_MOTION_DT` (**2 s**) set on the `water_time_offset` uniform, since the
-harness clock is frozen. Eleven PNG-less claims ride it, and each fails on its own:
+harness clock is frozen. Twelve PNG-less claims ride it, and each fails on its own:
 
 - **The repeat measure.** Over a deep-only box, mean |ΔL| between each pixel and the one ONE TEXTURE
   PERIOD east (`2·r / base_scale` px), over the same at half a period. An exact copy scores ~0, an
@@ -831,7 +833,7 @@ harness clock is frozen. Eleven PNG-less claims ride it, and each fails on its o
   number, when retuning the cell.
 - **Motion at game zoom, measured as MAGNITUDE.** Over the deep-ocean box, the mean |ΔL| between two
   phases `OCEAN_MOTION_DT` (2 s) apart must reach `OCEAN_MOTION_MIN_MEAN_DL` (**1.5 levels** on this
-  water, luma ≈ 30); measured **3.0** with the whitecaps (2.3 on the chop alone). The bar guards against the term going invisible, NOT the tuned
+  water, luma ≈ 30); measured **3.7** with the whitecaps (2.3 on the chop alone). The bar guards against the term going invisible, NOT the tuned
   look — that is Ray's live call: at `chop_strength` 0.06 / `chop_rate` 0.8 (~4 levels/s) the chop read
   in play as clouds changing too fast, so it ships at 0.035 / 0.4 and the window doubled with the rate.
   ⛔ **It was a changed-pixel COUNT, and the count passed a sea that looked still.** A scrolled texture
@@ -846,8 +848,8 @@ harness clock is frozen. Eleven PNG-less claims ride it, and each fails on its o
   period — each read as a rate (mean |ΔL| / dt). The slowest must reach the magnitude bar's own rate,
   `OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT` (`OCEAN_STEADY_MIN_FRACTION` 1.0: a window's change is at
   most the sum of its interval changes, so only a pause drops one below it), and max/min ≤
-  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **2.10–2.51 levels/s** — ratio **1.19** (the chop alone held
-  1.47–1.53, ratio 1.04; the caps add a little pulse). (At the earlier 0.06 / 0.8 tuning it held
+  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **2.34–2.61 levels/s** — ratio **1.11** (the chop alone held
+  1.47–1.53, ratio 1.04). (At the earlier 0.06 / 0.8 tuning it held
   5.01–5.23, and the single-copy sabotage swung 2.59–6.74, ratio 2.60.)
   **Sabotaged** with one noise copy per octave (the form before `CHOP_PAIR_*`): **2.74, 6.21, 6.74, 4.86,
   3.59, 4.62, 5.57, 5.82, 6.10, 4.46, 2.59, 5.13** — ratio **2.60**, fail; slowest 2.59, under the floor
@@ -856,32 +858,45 @@ harness clock is frozen. Eleven PNG-less claims ride it, and each fails on its o
   chop, waves AND whitecaps off), so the art cancels and the caps are part of the field — at two phases
   `OCEAN_DIRECTION_DT` (1 s) apart is cross-correlated at every offset within ±24 px; the best
   correlation more than 4 px from zero may not beat zero's by more than 0.02. Shipped with the caps:
-  **0.366 at zero, 0.287 at best elsewhere** (the chop alone: 0.740 vs 0.619). **Sabotaged** with a single travelling sine train at the chop's own size:
+  **0.527 at zero, 0.218 at best elsewhere** (the chop alone: 0.740 vs 0.619). **Sabotaged** with a single travelling sine train at the chop's own size:
   **−0.807 at zero, 0.999 at (10, 12) px**, fail; and with the retired swell: **0.800 vs 0.984**, fail.
 - **No map-scale pattern.** The same motion field block-averaged over 2-hex-radius blocks — a low-pass —
   and its std taken as a FRACTION of the per-pixel std (an absolute bar would scale with
   `chop_strength`). Independent ~0.5 r patches keep about feature/block ≈ 0.25 of their std; bands or
-  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.20** with the caps (0.29
+  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.14** with the caps (0.29
   on the chop alone); **sabotaged** with the
   retired swell: **0.43**, fail. (The small travelling train reads 0.02 here and fails only the
   direction claim — the two measure different things.) The margin is honest rather than wide: a 3 r
   wavelength is partly averaged by 2 r blocks, and `chop_scale` near 0.7 r approaches the bar.
-- **Whitecaps (a) — coverage in a band.** The cap MASK is every open-ocean pixel at least
-  `OCEAN_WHITECAP_MIN_DL` (8 levels) brighter than the whitecap-off twin at the same phase (the chop and
-  the art cancel, so the mask is the caps alone). Its fraction of the box must lie in
-  [`OCEAN_WHITECAP_COVERAGE_MIN`, `_MAX`] = [0.001, 0.05] — present, and nowhere near a carpet. Shipped
-  **0.0083** (7062 of 854k px). **Sabotaged** with `whitecap_strength` 0: **0.0000**, fail.
-- **Whitecaps (b) — small flecks.** The mask's mean 4-connected blob may not exceed a disc
-  `OCEAN_WHITECAP_MAX_FLECK_RADII` (0.3) hex radii across, **142.9 px** at r = 45. The bar is in hex
-  radii, NOT read from `whitecap_scale` — a bar that grew with the lever could never catch it. Shipped
-  **94 flecks, mean 75.1 px**. **Sabotaged** with `whitecap_scale` 2.0: **219.2 px**, fail (the
-  clustering gate still breaks the big crests up, which is why it is not larger).
-- **Whitecaps (c) — change in place.** The fraction of the caps at t still capped at t +
-  `OCEAN_WHITECAP_DT` (0.5 s): in [0.2, 0.6]. Jumping flecks keep only chance (≈ the coverage, under
-  0.01). The ceiling is set by the FROZEN case, measured: with the fleck field frozen only the cluster
-  gate, following the chop, moves the caps, which alone keeps ~0.7. Shipped **0.43**. **Sabotaged** with
-  `whitecap_rate` 0: **0.69**, fail. (Over the first 1 s window tried it read 0.15 shipped against 0.45
-  frozen, too close to the floor to separate.)
+- **The five whitecap claims** ride one pair of phases `OCEAN_WHITECAP_DT` (1 s) apart. Each phase is
+  captured with and without the caps. The cap MASK is every open-ocean pixel at least
+  `OCEAN_WHITECAP_MIN_DL` (8 levels) brighter than its whitecap-off twin (the chop and the art cancel, so
+  the mask is the caps alone), and blobs are its 4-connected components.
+  - **(a) Coverage in a band.** The mask's fraction of the box lies in [0.001, 0.05]: present, and nowhere
+    near a carpet. Shipped **0.0108**. **Sabotaged** with `whitecap_strength` 0: **0.0000**, fail.
+  - **(b) Elongation.** The mean aspect ratio, `sqrt(λmax / λmin)` of each blob's pixel second moments,
+    over blobs of ≥ 8 px, is ≥ 2.5. Each λ carries a pixel's own 1/12 variance, so a 1-px line is not
+    infinite. Shipped **3.71** over 98 blobs. **Sabotaged** with an isotropic cap
+    (`WHITECAP_WIDTH_RATIO` 1): **1.32**, fail.
+  - **(c) White.** The cap CORE is mask pixels ≥ 140 levels over the twin, where a cap covers at least ~3/4
+    of the water. Its mean HSV saturation must be ≤ 0.08, and its luma ≥ the water's + 100. Shipped
+    **0.051 / 208 vs water 30**. **Sabotaged** by laying `foam_color` in place of `whitecap_color`
+    (the old pale-cyan pull): **0.151**, fail. The core is the claim, not every cap pixel, because an
+    antialiased rim is white over blue at any colour. The WHITE-BODY shape (`WHITECAP_BACK_FULL`) is what
+    keeps that rim thin.
+  - **(d) Change in place.** Of the caps at t, the fraction still capped at t + 1 s lies in [0.2, 0.85].
+    A cap lives 3.3 s where it spawned. Caps that jumped keep only chance (≈ the coverage). Shipped
+    **0.64**. **Sabotaged** with `whitecap_rate` 0 (every cap frozen mid-life, its spawn decision included):
+    **1.00**, fail.
+  - **(e) Regional, not global, orientation.** Each blob's axis is `½·atan2(2·μxy, μxx − μyy)`, and R is
+    the mean resultant length of the DOUBLED axes (a streak's axis has no head).
+    - **The two bars:** R over the whole box must be ≤ 0.5. R averaged over 6-hex-radius windows holding
+      ≥ 6 blobs must be ≥ 0.45.
+    - **Shipped:** **global 0.11, local 0.68**.
+    - **Sabotaged with one fixed global angle:** global **0.91**, fail.
+    - **Sabotaged with per-cap random angles:** local **0.25**, fail.
+    - **Where the local bar sits:** halfway between that chance level and the shipped caps. The shipped
+      caps read 0.57–0.68 across different phases of one frame, so a tighter bar would flake.
 - **The `O` toggle.** With `TerrainRenderer.set_water_motion_enabled(false)`, two phases of the SHIPPED
   surface `OCEAN_MOTION_DT` apart differ by **exactly 0 px** (the magnitude claim is its premise:
   toggled on, they differ). The toggle is restored after.
