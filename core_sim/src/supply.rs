@@ -40,8 +40,8 @@ use bevy::prelude::*;
 
 use crate::{
     components::{
-        BandId, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile, TransferLink,
-        FODDER, FOOD,
+        BandId, LaborAllocation, MaterialBatch, PopulationCohort, ResidentBand, Tile,
+        TransferCause, TransferCrossing, TransferDirection, FODDER, FOOD,
     },
     connections::ConnectionLedger,
     grid_utils::hex_distance_wrapped,
@@ -52,19 +52,72 @@ use crate::{
     supply_network_config::SupplyNetworkConfigHandle,
 };
 
-/// Per-turn supply-network membership: `entity → network id`. Recomputed every turn by
-/// `balance_supply_networks`. `id >= 1` is a stable-per-snapshot id shared by every band in the
-/// same multi-band connected component; a band absent from the map (singleton/isolated) reads `0`.
+/// Per-turn supply-network membership: `entity → network id`, plus each band's own pooling links
+/// and its component's span. Recomputed every turn by `balance_supply_networks`. `id >= 1` is a
+/// stable-per-snapshot id shared by every band in the same multi-band connected component; a band
+/// absent from the map (singleton/isolated) reads `0`, no links and a span of `0`.
 /// Not snapshot-persisted — it is a derived readout the capture reads to tag each cohort so the
-/// client can draw supply links between members of the same network.
+/// client can draw supply links between members of the same network. **A resource and not a local**
+/// so a recapture between turns re-reads the turn's links rather than blanking them.
 #[derive(Resource, Default)]
-pub struct SupplyNetworkMembership(pub HashMap<Entity, u32>);
+pub struct SupplyNetworkMembership {
+    networks: HashMap<Entity, u32>,
+    links: HashMap<Entity, Vec<PoolingLink>>,
+    span_tiles: HashMap<Entity, u32>,
+}
 
 impl SupplyNetworkMembership {
     /// The network id for a band this turn: `0` when it is not in a multi-band network.
     pub fn network_of(&self, entity: Entity) -> u32 {
-        self.0.get(&entity).copied().unwrap_or(0)
+        self.networks.get(&entity).copied().unwrap_or(0)
     }
+
+    /// **This band's own pooling links this turn**, in the other band's id order — every link the
+    /// balancer formed with it, not every member of its component (a network is a chain as often as
+    /// a star). Empty for a band in no network.
+    pub fn pooling_links_of(&self, entity: Entity) -> &[PoolingLink] {
+        self.links
+            .get(&entity)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    /// **The span this band's network formed at** — the longest hex distance among the links of its
+    /// component, `0` for a band in no network. It is the distance the links *actually* reached,
+    /// free reach and road-held reach alike, and deliberately not the `reach_tiles` lever.
+    pub fn span_tiles_of(&self, entity: Entity) -> u32 {
+        self.span_tiles.get(&entity).copied().unwrap_or(0)
+    }
+
+    fn clear(&mut self) {
+        self.networks.clear();
+        self.links.clear();
+        self.span_tiles.clear();
+    }
+}
+
+/// **ONE POOLING LINK, seen from one of its two ends** — a row of
+/// [`SupplyNetworkMembership::pooling_links_of`], on the wire as `PopulationCohortState.poolingLinks`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolingLink {
+    /// The band at the other end.
+    pub band: BandId,
+    /// Hex distance between the two camps this turn.
+    pub distance_tiles: u32,
+    /// **The rung holding the run** — the weakest tile of the path between the camps
+    /// ([`crate::routes::path_lesson_rung`]), `None` where any tile on it has no kept road, which is
+    /// every link held by the free reach over open ground.
+    pub rung: Option<crate::intensification::RungKey>,
+}
+
+/// **What one pooling link is worth, read once off the tiles between its camps** — the distance, the
+/// rung holding it, and the friction its roads buy. One trace per link, shared by the friction
+/// reading and the published link list, so the two cannot be read off different paths.
+struct LinkReading {
+    ends: (usize, usize),
+    distance_tiles: u32,
+    rung: Option<crate::intensification::RungKey>,
+    friction_multiplier: f32,
 }
 
 /// A band in a single-member component is not part of a shared network.
@@ -219,23 +272,11 @@ fn link_holds(
 ///
 /// A component with no link of its own — which a singleton cannot have — pools at exactly today's
 /// friction, so there is no early-game regression, by construction.
-fn component_friction(
-    roads: &crate::routes::RoadRegistry,
-    nodes: &[Node],
-    links: &[(usize, usize)],
-    members: &[usize],
-    width: u32,
-    height: u32,
-    wrap: bool,
-) -> f32 {
+fn component_friction(links: &[LinkReading], members: &[usize]) -> f32 {
     links
         .iter()
-        .filter(|(i, j)| members.contains(i) && members.contains(j))
-        .map(|(i, j)| {
-            let path =
-                crate::routes::trace_path(nodes[*i].pos, nodes[*j].pos, width, height, wrap, roads);
-            crate::routes::path_friction_multiplier(roads, &path)
-        })
+        .filter(|link| members.contains(&link.ends.0) && members.contains(&link.ends.1))
+        .map(|link| link.friction_multiplier)
         .fold(crate::intensification::FRICTION_UNCHANGED, f32::min)
 }
 
@@ -384,7 +425,7 @@ pub fn balance_supply_networks(
     mut membership: ResMut<SupplyNetworkMembership>,
 ) {
     // Recomputed from scratch every turn; a 0/1-band map (early return below) leaves it empty.
-    membership.0.clear();
+    membership.clear();
     let cfg = config.get();
     let ladder = ladder.get();
     let width = tile_registry.width;
@@ -538,6 +579,55 @@ pub fn balance_supply_networks(
         components.entry(root).or_default().push(i);
     }
 
+    // **Each link read ONCE off the tiles between its camps** — the friction its roads buy (read per
+    // component below) and the rung and distance each end publishes. One trace per link, which is
+    // what the friction reading alone cost before the links were published.
+    let links: Vec<LinkReading> = links
+        .into_iter()
+        .map(|(i, j)| {
+            let path =
+                crate::routes::trace_path(nodes[i].pos, nodes[j].pos, width, height, wrap, &roads);
+            LinkReading {
+                ends: (i, j),
+                distance_tiles: hex_distance_wrapped(nodes[i].pos, nodes[j].pos, width, wrap),
+                rung: crate::routes::path_lesson_rung(&roads, &path),
+                friction_multiplier: crate::routes::path_friction_multiplier(&roads, &path),
+            }
+        })
+        .collect();
+    // **Every link is published from BOTH ends**, and each band's span is its component's longest
+    // link — so a chain A–B–C reports the same span at A as at C, the figure a player reads as
+    // "within N tiles" for the network they are in.
+    let mut component_span: HashMap<usize, u32> = HashMap::new();
+    for link in &links {
+        let (i, j) = link.ends;
+        for (me, other) in [(i, j), (j, i)] {
+            membership
+                .links
+                .entry(nodes[me].entity)
+                .or_default()
+                .push(PoolingLink {
+                    band: nodes[other].band,
+                    distance_tiles: link.distance_tiles,
+                    rung: link.rung,
+                });
+        }
+        let root = find(&mut parent, i);
+        let span = component_span.entry(root).or_default();
+        *span = (*span).max(link.distance_tiles);
+    }
+    for band_links in membership.links.values_mut() {
+        band_links.sort_by_key(|link| link.band);
+    }
+    for (root, members) in &components {
+        let Some(&span) = component_span.get(root) else {
+            continue;
+        };
+        for &m in members {
+            membership.span_tiles.insert(nodes[m].entity, span);
+        }
+    }
+
     // Assign each multi-band component a stable id (BTreeMap root order → deterministic), then
     // record `entity → id` for its members so the snapshot can group bands by network. Singletons
     // get no entry and read 0.
@@ -549,7 +639,7 @@ pub fn balance_supply_networks(
         let network_id = next_network_id;
         next_network_id += 1;
         for &m in members {
-            membership.0.insert(nodes[m].entity, network_id);
+            membership.networks.insert(nodes[m].entity, network_id);
         }
     }
 
@@ -567,10 +657,7 @@ pub fn balance_supply_networks(
         // ⛔ **THE FIRST THING A ROUTE RUNG HAS EVER BOUGHT, and it is DERIVED FROM THE TILES.**
         // See [`component_friction`]: each pooling link averages the roads on the tiles between its
         // two camps, so a **partly** roaded run pays partly.
-        let friction = friction
-            * scalar_from_f32(component_friction(
-                &roads, &nodes, &links, members, width, height, wrap,
-            ));
+        let friction = friction * scalar_from_f32(component_friction(&links, members));
 
         let mut commodities: BTreeSet<&str> = BTreeSet::new();
         for &m in members {
@@ -664,48 +751,86 @@ pub fn balance_supply_networks(
             // larder identity; `FODDER` closes nothing but is what the hay rows and the fodder
             // runway read (`snapshot::population`), and a pooled store that nothing counted is
             // exactly why a receiving band's runway used to say it was draining while its hay rose.
-            // Materials still have no account here: theirs is the batch store itself, and a scalar
-            // total of hide and bone is the retired trade axis under a new name.
-            let ledger = if commodity == FOOD {
-                allocation
-                    .map(|allocation| allocation.map_unchanged(|a| &mut a.last_food_transfers))
-            } else if commodity == FODDER {
-                allocation
-                    .map(|allocation| allocation.map_unchanged(|a| &mut a.last_fodder_transfers))
-            } else {
-                None
-            };
-            if let Some(mut ledger) = ledger {
+            // Materials are booked per rating in the loop below, never here: a scalar total of hide
+            // and bone is the retired trade axis under a new name.
+            if commodity != FOOD && commodity != FODDER {
+                continue;
+            }
+            if let Some(mut allocation) = allocation {
                 // **Added, never assigned** — a band can balance against several neighbours in one
                 // pass, and the ledger also carries what a command drew earlier in the same snapshot
-                // window.
+                // window. `book_crossing` writes the ledger arm and the crossings row together.
                 //
-                // **The link is [`TransferLink::Local`]** — pooling is what bands standing near
-                // each other do without anybody carrying anything. This pass is the bulk of that
-                // arm; a fission's dowry is the other writer on it, for the same reason.
-                if delta > scalar_zero() {
-                    ledger.credit(TransferLink::Local, delta.to_f32());
-                } else {
-                    ledger.debit(TransferLink::Local, (-delta).to_f32());
-                }
+                // **The cause is [`TransferCause::Pooled`], so the link is `TransferLink::Local`**
+                // — pooling is what bands standing near each other do without anybody carrying
+                // anything. This pass is the bulk of that arm; a fission's dowry is the other writer.
+                //
+                // ⛔ **NO COUNTERPARTY, AND THAT IS AN INVARIANT.** The balancer moves each commodity
+                // toward one per-capita share across the whole component: a receiver is paid out of
+                // a pot every surplus member put into, so there is no "who gave it" to name.
+                allocation.book_crossing(pooled_crossing(&commodity, delta));
             }
         }
     }
 
     for (entity, (material, band), delta, reading) in applied_materials {
-        let Ok((_, mut cohort, _, _)) = cohorts.get_mut(entity) else {
+        let Ok((_, mut cohort, _, allocation)) = cohorts.get_mut(entity) else {
             continue;
         };
-        if delta < scalar_zero() {
+        // **Booked per RATING, at the reading that moved** — a send at the sender's own batch
+        // reading (a partial take leaves it unchanged), an arrival at the senders' blended one. The
+        // same no-counterparty invariant as the commodity loop above.
+        let crossing = if delta < scalar_zero() {
+            let sent_reading = cohort
+                .stores
+                .material_batches(&material)
+                .find(|(key, _)| **key == band)
+                .map(|(_, batch)| batch.characteristics.clone())
+                .unwrap_or_default();
             // A send comes out of exactly the batch it was priced against — never re-sorted, since
             // the rating is already named.
-            cohort.stores.take_material_batch(&material, &band, -delta);
+            let taken = cohort.stores.take_material_batch(&material, &band, -delta);
+            TransferCrossing::material(
+                &material,
+                band,
+                sent_reading,
+                TransferDirection::Out,
+                TransferCause::Pooled,
+                taken.to_f32(),
+            )
         } else {
             cohort
                 .stores
-                .deposit_material(&material, band, delta, &reading);
+                .deposit_material(&material, band.clone(), delta, &reading);
+            TransferCrossing::material(
+                &material,
+                band,
+                reading,
+                TransferDirection::In,
+                TransferCause::Pooled,
+                delta.to_f32(),
+            )
+        };
+        if let Some(mut allocation) = allocation {
+            allocation.book_crossing(crossing);
         }
     }
+}
+
+/// **A pooling move as a crossing** — the direction off the delta's sign, the magnitude off its
+/// absolute value, and deliberately nothing else: see the no-counterparty invariant at the caller.
+fn pooled_crossing(commodity: &str, delta: Scalar) -> TransferCrossing {
+    let (direction, magnitude) = if delta > scalar_zero() {
+        (TransferDirection::In, delta)
+    } else {
+        (TransferDirection::Out, -delta)
+    };
+    TransferCrossing::goods(
+        commodity,
+        direction,
+        TransferCause::Pooled,
+        magnitude.to_f32(),
+    )
 }
 
 #[cfg(test)]

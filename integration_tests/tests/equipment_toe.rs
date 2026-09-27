@@ -1667,8 +1667,8 @@ fn each_kit_wears_on_a_use_quantum_of_its_own_job() {
 // COUNTS AND TIERS (the equipment-count slice)
 // ---------------------------------------------------------------------------------------------
 
-/// The tier every shipped item's one quality rung carries — the flint age.
-const FLINT_TIER: &str = "flint";
+/// The OPENING tier every shipped item carries, and the one `tiers[0]` declares as the default.
+const PLAIN_TIER: &str = "plain";
 
 /// **AN ABSENT ENTRY IS NOT OWNED — the invariant this slice inverted.**
 ///
@@ -1832,7 +1832,7 @@ fn wear_runs_the_stock_out_one_batch_at_a_time_and_idle_stock_does_not_rot() {
         core_sim::WearQuantum::Strike,
         uses_per_unit * 0.8,
     );
-    ledger.stock(SPEARS, 2, FLINT_TIER, None);
+    ledger.stock(SPEARS, 2, PLAIN_TIER, None);
     assert_eq!(
         ledger.count_of(SPEARS),
         3,
@@ -1905,20 +1905,20 @@ fn a_tier_switches_an_items_attack_without_touching_its_shared_effects() {
         EquipmentConfig::from_json_str(&json.to_string()).expect("a second tier is a valid table");
     let def = config.item(SPEARS).expect("spears");
 
-    let flint = def.default_tier();
+    let plain = def.default_tier();
     let bronze = def.tier("bronze").expect("the fixture added bronze");
-    assert_eq!(flint.id, FLINT_TIER, "the FIRST tier is the default");
+    assert_eq!(plain.id, PLAIN_TIER, "the FIRST tier is the default");
     assert_ne!(
         tier_attack(bronze),
-        tier_attack(flint),
+        tier_attack(plain),
         "the tier is what the material bought"
     );
-    assert_ne!(bronze.starting_durability, flint.starting_durability);
+    assert_ne!(bronze.starting_durability, plain.starting_durability);
 
     // The shared effects are the ITEM's, so a band holding either tier resolves the same ones.
     let big_game = config.kit("big_game").expect("the roster ships big_game");
     let stocked = BandEquipment::start_stocked(&config);
-    for tier in [FLINT_TIER, "bronze"] {
+    for tier in [PLAIN_TIER, "bronze"] {
         let mut ledger = BandEquipment::default();
         ledger.stock(SPEARS, 1, tier, None);
         assert_eq!(
@@ -1938,7 +1938,7 @@ fn a_tier_switches_an_items_attack_without_touching_its_shared_effects() {
             .hunter_profile_unbounded(intrinsic, &big_game, &ledger)
             .attack
     };
-    assert_eq!(attack_at(FLINT_TIER), tier_attack(flint));
+    assert_eq!(attack_at(PLAIN_TIER), tier_attack(plain));
     assert_eq!(attack_at("bronze"), tier_attack(bronze));
 }
 

@@ -801,10 +801,12 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context, merge_fod
     # sees it. An enemy band shows the bare larder line, exactly as before.
     _food_flow_present = false
     if HudConst.is_player_unit(unit_data) and DetailFormat.band_has_food_flow(unit_data):
-        # The headline "/turn" is the STEADY net: income (Gathered + Hunted — the realized average,
-        # so it no longer swings turn-to-turn) minus what the people eat and what raids take off the
-        # larder. The breakdown below itemizes the income rows and the debits.
-        var net := DetailFormat.band_net_food(unit_data)
+        # The headline "/turn" is the steady net — income (Gathered + Hunted, the realized average, so
+        # it does not swing turn-to-turn) minus what the people eat and what raids take — PLUS this
+        # turn's pooled food (`DetailFormat.band_headline_food_rate`). So the breakdown's rows,
+        # `⇄ Local exchange` included, sum to it on a turn when nothing else crossed. A shipment, a
+        # party's haul or rations and a split's dowry are one-off and stay out of the rate.
+        var net := DetailFormat.band_headline_food_rate(unit_data)
         var net_hex := HudStyle.HEALTHY_HEX if net >= 0.0 else HudStyle.DANGER_HEX
         line += " · [color=#%s]%s[/color]" % [net_hex, SourceForecast.format_yield(net)]
         _food_flow_present = true

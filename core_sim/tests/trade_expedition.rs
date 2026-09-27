@@ -27,7 +27,8 @@ use core_sim::{
     build_test_app, run_turn, scalar_from_f32, scalar_zero, split_band_from_parent, BandId,
     BandKey, BandTravel, Expedition, ExpeditionMission, ExpeditionPhase, LaborAllocation,
     LocalStore, PopulationCohort, ResidentBand, Scalar, SettleConfig, SimulationConfig,
-    SnapshotHistory, StartingUnit, Tile, TileRegistry, ViewerFaction, FODDER, FOOD,
+    SnapshotHistory, StartingUnit, Tile, TileRegistry, TransferCause, TransferDirection,
+    ViewerFaction, FODDER, FOOD,
 };
 
 /// A pinned earthlike world, so the terrain under every fixture is the same one every run.
@@ -194,6 +195,16 @@ fn launch_shipment(
     destination_pos: UVec2,
     cargo: LocalStore,
 ) -> Entity {
+    // The destination's faction, fixed at launch the way the launch command fixes it — the other
+    // half of the counterparty the shipment's rows name.
+    let destination_faction = {
+        let mut query = app.world.query::<(&BandId, &PopulationCohort)>();
+        query
+            .iter(&app.world)
+            .find(|(id, _)| **id == destination)
+            .map(|(_, cohort)| cohort.faction)
+            .expect("a shipment is launched at a live band")
+    };
     let mut cohort = app
         .world
         .get::<PopulationCohort>(home)
@@ -218,6 +229,7 @@ fn launch_shipment(
                 home_band: home,
                 mission: ExpeditionMission::Trade {
                     destination_band: destination,
+                    destination_faction,
                     destination_name: "the neighbours".to_string(),
                 },
                 phase: ExpeditionPhase::Outbound,
@@ -802,12 +814,23 @@ fn a_destination_that_vanishes_sends_the_party_home_with_its_cargo() {
         "a shipment with nobody left to deliver to turns for home"
     );
 
-    // And it really gets there: drive it until it folds back, then look for the goods.
+    // And it really gets there: drive it until it folds back, then look for the goods. Every hide
+    // row the sender's store published on the way is kept, so the homecoming's CAUSE can be read.
+    let mut hide_rows = Vec::new();
     for _ in 0..MAX_TURNS_HOME {
         if app.world.get::<Expedition>(party).is_none() {
             break;
         }
         run_turn(&mut app);
+        hide_rows.extend(
+            app.world
+                .get::<PopulationCohort>(sender)
+                .expect("the band")
+                .last_turn_transfer_crossings
+                .iter()
+                .filter(|crossing| crossing.commodity == HIDE)
+                .cloned(),
+        );
     }
     assert!(
         app.world.get::<Expedition>(party).is_none(),
@@ -829,6 +852,41 @@ fn a_destination_that_vanishes_sends_the_party_home_with_its_cargo() {
         held_after - held_before >= FINE_AMOUNT + POOR_AMOUNT - EPSILON,
         "the undelivered shipment comes home whole rather than being destroyed: \
          {held_before} -> {held_after}"
+    );
+
+    // ⛔ **The cargo comes home as `ShipmentReturned`, per rating, naming the destination** — not as
+    // `PartyHome`, which is the party's own pack (anything it hunts on the way home lands there, and
+    // is why this is not an equality over the whole store above). EXACTLY the shipment, because the
+    // cargo is a store of its own that nothing else writes.
+    let returned: Vec<_> = hide_rows
+        .iter()
+        .filter(|crossing| crossing.cause == TransferCause::ShipmentReturned)
+        .collect();
+    assert_eq!(
+        returned.len(),
+        2,
+        "two ratings went out, two ratings come back: {hide_rows:?}"
+    );
+    let returned_total: f32 = returned.iter().map(|crossing| crossing.amount).sum();
+    assert!(
+        (returned_total - (FINE_AMOUNT + POOR_AMOUNT)).abs() < EPSILON,
+        "the returned rows are the whole shipment: {returned_total}"
+    );
+    let party_band = returned[0].party;
+    for crossing in &returned {
+        assert_eq!(
+            (
+                crossing.direction,
+                crossing.counterparty.map(|counterparty| counterparty.band),
+                crossing.party,
+            ),
+            (TransferDirection::In, Some(destination_id), party_band),
+            "each returned rating names the destination it never reached and its party: {crossing:?}"
+        );
+    }
+    assert!(
+        party_band.is_some(),
+        "the returned cargo names the party that carried it"
     );
 }
 

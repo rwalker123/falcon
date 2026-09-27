@@ -268,11 +268,15 @@ wood than on stone.
 
 ### 5b. Stone's axes finally get a reader, and they were authored for this
 
-`materials.json` gives stone `hardness` and `workability` and records that nothing reads either. The
-two cases above **are** those two axes: a spear point wants stone that **knaps** (`workability`), a
-road wants stone that **bears load** (`hardness`). And since a source states the characteristics of
-what it yields, a streambed pays knappable flint and a quarry pays building block — one generic
-material, two readings, exactly as a mammoth pays tough hide and a hare supple.
+`materials.json` gave stone `hardness` and `workability` and recorded that nothing read either. **Both
+are read now** (issue #736), and the split the shipped recipes landed on is *within the tool kit*
+rather than tool-against-road: **`hardness`** for a point or an edge that must hold its shape through
+the blow (`spears_flint`, `clubs_flint`) and **`workability`** for a broad blade that has to be
+*flaked* predictably (`hoes_flint`). A hard unworkable stone therefore makes excellent points and
+poor hoe blades, and a soft workable one the reverse — which is the opposed pair this section was
+written in advance of. And since a source states the characteristics of what it yields, a streambed
+pays knappable flint and a quarry pays building block — one generic material, two readings, exactly
+as a mammoth pays tough hide and a hare supple.
 
 > **THIS DOES NOT REOPEN THE DEFERRAL `materials.json` RECORDS.** What was deferred is an
 > **improvement** reading an axis — *"a better stone makes a better road."* That stays deferred: a
@@ -345,15 +349,33 @@ restated where it is observable.
 
 ## 8. Out of scope, deliberately
 
-**Stone tools.** Every cutting tool in the game is bone: `spears` and `clubs` both read bone
-`density`, and no shipped recipe takes stone at all. `recipes.json` calls bone *"the scarce one by an
-order of magnitude"* — 0.0012–0.003 per biomass against hide's 0.006–0.022, so one spear is about
-eleven turns of hunting. **Spear points are bone because stone had no producer**, so knappable stone
-is the obvious relief for a scarcity the file already names in its own words.
+**~~Stone tools.~~ SHIPPED — issue #736, and this block records what it answered rather than a
+deferral that is still open.** The deferral read: *every cutting tool in the game is bone;
+`spears` and `clubs` both read bone `density`, no shipped recipe takes stone at all, and
+`recipes.json` calls bone "the scarce one by an order of magnitude" — 0.0012–0.003 per biomass
+against hide's 0.006–0.022, so one spear is about eleven turns of hunting. Spear points are bone
+because stone had no producer, so knappable stone is the obvious relief for a scarcity the file
+already names in its own words. Land the producers first, then re-cut the roster with the bone
+economy in front of you.*
 
-That is a change to the shipped tool roster and a larger question than this arc. **Land the producers
-first, then re-cut the roster with the bone economy in front of you.** Recorded here so it is not
-re-derived, and so nobody reads the bone spear as a considered choice.
+**The producers landed here and the roster was re-cut on top of them**, which is the order the block
+asked for. What shipped:
+
+- `stone` declares `craft: knapping` and the organics' own `hand_working`, so a bench works it.
+- **`KNAPPING_DISCOVERY_ID` 2017** — a bench craft, distinct from the `quarrying` ladder rung (2016)
+  that gets the stone out of the ground.
+- Every item's opening tier was renamed `flint` → **`plain`** (it was made of bone, hide or fibre),
+  and `spears` / `clubs` / `hoes` gained a real **`flint`** tier: harder-hitting and **brittle**
+  (`starting_durability` 70 against 100), so the bone path is not retired one rung up.
+- **A recipe names the tier it makes** (`RecipeOutput::tier`), which is what lets one item have two
+  recipes with different inputs and different stats.
+- The two **road tools** were corrected from 2 bone to 2 stone — a dressing hammer with a bone head
+  was only ever a stand-in. That is a **large pacing move** on the route branch; see §9.
+- An **antler billet** (bone + wood) is stone's bench tool, without which knapping is capped at the
+  bare hand's `good` for ever.
+
+**The bone economy came out of it stronger rather than obsoleted**: bone is what the stone-working
+tool is made of.
 
 **Gold's value.** Gold is a metal and the varieties model holds it — a variety with poor hardness,
 which is true and useful, since a soft metal makes bad tools. What is missing is that gold's *worth*
@@ -372,9 +394,18 @@ not a blocker: the deposit works whatever the metal is for.
   free. Recorded as an item rather than a bare decision because it makes stone tools cost more
   **labor** than bone tools while costing less **material**, which is a gameplay claim rather than a
   tuning detail. **If it plays tedious the fix is a bigger yield per turn, never a free mechanism.**
-- **Forestry's kit does not exist and the natural one is an axe.** With stone tools out of scope
-  (§8) it would be bone-hafted, which sits oddly. The alternative is to ship forestry
-  kitless until the roster is re-cut, at the cost of the branch having no gear decision at all.
+- **Forestry's kit does not exist, and the reason it could not be written is gone.** The objection
+  was that the natural tool is an axe and, with stone tools out of scope, it would have to be
+  bone-hafted — *"which sits oddly"*. Stone tools shipped (§8), so a knapped axe is now an ordinary
+  roster row: an item with a `flint` tier and a recipe reading stone's `hardness`, beside the three
+  that already exist. **It is still not written** — forestry ships kitless, so the branch has no gear
+  decision — and what it now waits on is only somebody cutting the item, not a missing material.
+- **The road tools' pacing moved a long way and nobody has played it.** `earthmoving` and
+  `stone_dressing` cost 2 **stone** instead of 2 bone since §8's change: about 5 worker-turns on a
+  scatter against about 22 turns of a whole band's hunting. `recipes.json`'s `_comment_road_tools`
+  says what these cost *"is what decides whether a faction roads its first link at turn 40 or turn
+  100"*, and this makes it much sooner. Intended — the bone head was a stand-in — but it is the first
+  number to look at if roads start arriving too early.
 - **Whether a worked-out quarry should leave anything behind.** A depleted deposit is a source whose
   reachable stock is zero; whether that source is removed, or stands as a visible spent working, is a
   readout question this arc can answer either way.

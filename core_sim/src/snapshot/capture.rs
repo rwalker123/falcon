@@ -2906,6 +2906,17 @@ pub fn capture_snapshot(
             }
             position.is_some_and(|pos| visibility_ledger.is_visible(viewer, pos.x, pos.y))
         };
+        // **Every live band's name, by id** — a crossing names its counterparty off this, and a
+        // shipment's counterparty may be a band the viewer holds no row for.
+        let band_names: crate::snapshot::population::BandNameLookup = populations
+            .iter()
+            .filter_map(|(_, _, _, _, _, band_id, band_name, _, _)| {
+                Some((
+                    *band_id?,
+                    band_name.map(|name| name.0.clone()).unwrap_or_default(),
+                ))
+            })
+            .collect();
         let mut population_states: Vec<PopulationCohortState> = populations
             .iter()
             .filter_map(
@@ -3044,6 +3055,7 @@ pub fn capture_snapshot(
                         demographics: &demographics_config,
                         wellbeing: &wellbeing_config,
                         supply_membership: &supply_membership,
+                        band_names: &band_names,
                         work_range: band_work_range,
                         raid_radius: fauna_config.predators.raid_radius,
                         scout_vantage_distance,
@@ -3083,6 +3095,13 @@ pub fn capture_snapshot(
                             // life gauge quotes a build's wear in *gardens' worth*, not in bare work
                             // units, and the garden is the `plant:tended` rung's own `work_cost`.
                             reference_build_cost: ladder_config.reference_build_cost(),
+                            // **The two equipped values the item table does not hold**, off the same
+                            // levers the role cards resolve the wayfinding gear's reach from — so a
+                            // craft offer's `makes` and a Scout card quote one number.
+                            equipped_elsewhere: crate::snapshot::crafting::EquippedElsewhere {
+                                scout_vantage_range: kit_levers.equipped_vantage_range,
+                                expedition_sight_range: kit_levers.equipped_expedition_sight_range,
+                            },
                         },
                         build_sources: &crate::snapshot::population::BuildSourceInputs {
                             forage: &forage_registry,

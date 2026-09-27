@@ -49,6 +49,30 @@ const FIXTURE_BAND_NAMES := [
 	"Nettlebrook", "Oakenshade", "Pinewold", "Ravensgate", "Saltmarch",
 ]
 
+## **ONE TRANSFER CROSSING, IN THE DECODER'S OWN SHAPE** (issue #731, `population_to_dict`'s
+## `transfer_crossings` rows) — for a fixture whose Food / Fodder popover or Trade tab has to state a
+## crossing by its CAUSE. `readings` is the `material_batches` reading shape
+## (`{axis, value, band_name}`), empty for food and fodder. Shared by `ui_preview`'s chapters and
+## `band_panel_preview`, so the two harnesses stage one row shape.
+static func transfer_crossing(commodity: String, direction: int, cause: int, amount: float,
+		readings: Array = [], counterparty_id: int = HudTradeVocab.NO_BAND,
+		counterparty_name: String = "", counterparty_faction: int = HudConst.PLAYER_FACTION_ID,
+		party_id: int = HudTradeVocab.NO_BAND) -> Dictionary:
+	var local := cause == HudTradeVocab.CAUSE_POOLED or cause == HudTradeVocab.CAUSE_DOWRY_IN \
+		or cause == HudTradeVocab.CAUSE_DOWRY_OUT
+	return {
+		HudTradeVocab.CROSSING_COMMODITY: commodity,
+		HudTradeVocab.CROSSING_READINGS: readings,
+		HudTradeVocab.CROSSING_DIRECTION: direction,
+		HudTradeVocab.CROSSING_LINK: HudTradeVocab.LINK_LOCAL if local else HudTradeVocab.LINK_ROUTE,
+		HudTradeVocab.CROSSING_CAUSE: cause,
+		HudTradeVocab.CROSSING_COUNTERPARTY_ID: counterparty_id,
+		HudTradeVocab.CROSSING_COUNTERPARTY_NAME: counterparty_name,
+		HudTradeVocab.CROSSING_COUNTERPARTY_FACTION: counterparty_faction,
+		HudTradeVocab.CROSSING_PARTY_ID: party_id,
+		HudTradeVocab.CROSSING_AMOUNT: amount,
+	}
+
 static func band_fixture() -> Dictionary:
 	return with_band_id({
 		# `name` is the SIM's field and `id` the marker stamp `MapView._rebuild_unit_markers` derives
@@ -369,11 +393,16 @@ const KIT_FORAGE_CARRY_BARE := 1.6
 ## fields are one reading, so an entry stating the worth and not the branch describes a wire the sim
 ## does not send.
 const KIT_BUILD_WORK_NEUTRAL := 0.0
-## What either build tool buys: the `equipment.json` `crook` flint tier's own value, which the
-## `hoes` mirror exactly — **the extra work ONE EQUIPPED WORKER DELIVERS PER TURN**, so an equipped
-## builder banks `PER_WORKER_OUTPUT + this` = 1.5 where a bare one banks 1.0. The two webs' rungs cost
-## the same, so mirroring the number is what makes a greyed kit read as a WEB refusal rather than as a
-## weaker tool.
+## What either build tool's OPENING tier buys: the `equipment.json` `crook`'s `plain` tier value,
+## which the `hoes`' own `plain` tier mirrors exactly — **the extra work ONE EQUIPPED WORKER DELIVERS
+## PER TURN**, so an equipped builder banks `PER_WORKER_OUTPUT + this` = 1.5 where a bare one banks
+## 1.0. The two webs' rungs cost the same, so mirroring the number is what makes a greyed kit read as
+## a WEB refusal rather than as a weaker tool.
+##
+## **IT IS THE `plain` TIER'S NUMBER AND THE TIER HAS TO BE NAMED NOW.** `crook` ships `plain` alone,
+## but `hoes` ships `[plain, flint]` and its `flint` tier buys **0.7** at a starting durability of 70
+## rather than 100 — so *"the hoes' value"* is ambiguous where it once was not. This fixture prices
+## the opening tier of both; a fixture wanting the harder, more brittle hoe states `0.7` and says so.
 ##
 ## ⛔ **IT WAS `8.5`, AND THAT NUMBER CANNOT BE CARRIED ACROSS** (`docs/plan_standing_upkeep.md` §4.8).
 ## Under the retired subtraction it meant *units taken off the job*; the shipped stat means *work added

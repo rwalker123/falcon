@@ -77,6 +77,12 @@ const SHORE_PROFILE_DEFAULT_WISP_SCALE := 1.0
 # Guard rails on the config values: a negative scale is meaningless, and nothing needs to more than double
 # the shipped (ocean-tuned) profile.
 const SHORE_PROFILE_MAX_SCALE := 2.0
+# A LAND terrain may carry `shore_profile: { sand_scale }` too — a GATE on the beach forming on it (0 = no
+# sand: ice meets water with none), multiplied in-shader into the water's own sand_scale as a continuous
+# land-side field. It is a gate, never a widening, hence the 1.0 cap; foam/wisp are the water's alone.
+const SHORE_WATER_BLEND_CLASS := "water"
+const SHORE_PROFILE_LAND_MAX_SAND_SCALE := 1.0
+const SHORE_PROFILE_WATER_ONLY_KEYS: Array[String] = ["foam_scale", "wisp_scale"]
 
 # PER-TERRAIN BLEND PROFILE (R = width_scale, G = noise_scale, B = noise_cell_scale), one texel per terrain id
 # — the same 1×N by-layer-index lookup table as layer_shore_texture, and the flat↔flat seam's analog of it.
@@ -313,6 +319,22 @@ func rebuild_layer_shore_map() -> void:
 			continue
 		var profile: Variant = entry.get("shore_profile", null)
 		if not (profile is Dictionary):
+			continue
+		if String(entry.get("blend_class", "")) != SHORE_WATER_BLEND_CLASS:
+			# A LAND terrain's shore_profile carries ONE axis: whether a beach may form on it. Surf and wisp
+			# are the WATER's (the shader never reads G/B off a land layer), so a land entry naming them is a
+			# config mistake that would otherwise be silently ignored.
+			for water_only_key: String in SHORE_PROFILE_WATER_ONLY_KEYS:
+				if (profile as Dictionary).has(water_only_key):
+					push_error("[TerrainTextureManager] terrain %d (%s) is land: shore_profile.%s is a WATER-only axis and is ignored" % [
+						tid, String(entry.get("name", "?")), water_only_key])
+			shore_img.set_pixel(tid, 0, Color(
+				clampf(float((profile as Dictionary).get("sand_scale", SHORE_PROFILE_DEFAULT_SAND_SCALE)),
+					0.0, SHORE_PROFILE_LAND_MAX_SAND_SCALE),
+				SHORE_PROFILE_DEFAULT_FOAM_SCALE,
+				SHORE_PROFILE_DEFAULT_WISP_SCALE,
+				1.0
+			))
 			continue
 		shore_img.set_pixel(tid, 0, Color(
 			_shore_scale(profile, "sand_scale", SHORE_PROFILE_DEFAULT_SAND_SCALE),

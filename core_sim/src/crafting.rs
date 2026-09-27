@@ -1,8 +1,9 @@
 //! **The crafts — one knowledge track per material** (`docs/plan_crafting_and_materials.md` §5).
 //!
-//! Hide → Tanning, Fibre → Weaving, Bone → Bone-working. They sit in the faction's
-//! [`crate::resources::DiscoveryProgressLedger`] beside the intensification ladder's five, and they
-//! are earned the way every other knowledge in this game is: **by doing the thing**.
+//! Hide → Tanning, Fibre → Weaving, Bone → Bone-working, Wood → Weaving, Stone → Knapping. They sit
+//! in the faction's [`crate::resources::DiscoveryProgressLedger`] beside the intensification
+//! ladder's own, and they are earned the way every other knowledge in this game is: **by doing the
+//! thing**.
 //!
 //! | | scope | lifetime | answers |
 //! |---|---|---|---|
@@ -37,6 +38,20 @@ pub const WEAVING_DISCOVERY_ID: u32 = 2009;
 /// [`TANNING_DISCOVERY_ID`]; next free id after [`WEAVING_DISCOVERY_ID`].
 pub const BONE_WORKING_DISCOVERY_ID: u32 = 2010;
 
+/// Discovery id for the faction-level **Knapping** knowledge — the craft of `stone`. See
+/// [`TANNING_DISCOVERY_ID`]; the next free id after the ladder's `quarrying` (2016).
+///
+/// ⛔ **2011 IS RETIRED AND IS NOT REUSED** — it was `trailcraft`, deleted rather than renumbered
+/// onto (`intensification_ladder.json`'s route floor, `routes.rs`), because a gap is safer than a
+/// renumber. 2012–2016 are roadbuilding, paving, woodcraft, conservationism and quarrying.
+///
+/// ⛔ **KNAPPING IS NOT QUARRYING.** `quarrying` (2016) is the *ladder* rung that gets stone out of
+/// the ground — a `RungBranch::Extraction` gate on a crew standing on rock. This is the *bench*
+/// craft that works the stone once it is in the store, earned the way every craft is: by making
+/// something out of it. A faction can hold either without the other, and the two are priced
+/// separately in the ladder's `lesson_costs`.
+pub const KNAPPING_DISCOVERY_ID: u32 = 2017;
+
 /// The craft name `materials.json` spells for [`TANNING_DISCOVERY_ID`]. Named here so the sim never
 /// spells a craft outside this module and a test fixture.
 pub const TANNING_CRAFT: &str = "tanning";
@@ -44,6 +59,9 @@ pub const TANNING_CRAFT: &str = "tanning";
 pub const WEAVING_CRAFT: &str = "weaving";
 /// See [`TANNING_CRAFT`].
 pub const BONE_WORKING_CRAFT: &str = "bone_working";
+/// See [`TANNING_CRAFT`]. The craft of `stone` — see [`KNAPPING_DISCOVERY_ID`] for why it is not
+/// `quarrying`.
+pub const KNAPPING_CRAFT: &str = "knapping";
 
 /// **The craft ids the sim has a discovery for** — the bounded coded set, exactly as
 /// `intensification::discovery_id_for` is for the ladder's knowledge names. A craft a material
@@ -52,19 +70,25 @@ pub const BONE_WORKING_CRAFT: &str = "bone_working";
 /// at load.
 /// **Every craft the sim has a discovery for, enumerated** — the domain of [`craft_discovery_id`],
 /// named so a caller that must be *exhaustive* over the crafts lists them from here rather than
-/// re-spelling the three names. Its one reader is `LadderConfig::validate`, which insists the ladder
+/// re-spelling the names. Its one reader is `LadderConfig::validate`, which insists the ladder
 /// prices every craft a bench can teach.
 ///
 /// **Deliberately not derived from `materials.json`** ([`crafts_declared_by`] is that reading): a
 /// material retiring its craft must not quietly retire the *requirement* to price it, and the loaders
 /// already reconcile the roster against this coded set.
-pub const CRAFTS_WITH_A_DISCOVERY: [&str; 3] = [TANNING_CRAFT, WEAVING_CRAFT, BONE_WORKING_CRAFT];
+pub const CRAFTS_WITH_A_DISCOVERY: [&str; 4] = [
+    TANNING_CRAFT,
+    WEAVING_CRAFT,
+    BONE_WORKING_CRAFT,
+    KNAPPING_CRAFT,
+];
 
 pub fn craft_discovery_id(craft: &str) -> Option<u32> {
     match craft {
         TANNING_CRAFT => Some(TANNING_DISCOVERY_ID),
         WEAVING_CRAFT => Some(WEAVING_DISCOVERY_ID),
         BONE_WORKING_CRAFT => Some(BONE_WORKING_DISCOVERY_ID),
+        KNAPPING_CRAFT => Some(KNAPPING_DISCOVERY_ID),
         _ => None,
     }
 }
@@ -120,14 +144,15 @@ pub const HAND_WORKING_MATERIAL_EFFICIENCY: f32 = 1.0;
 mod tests {
     use super::*;
 
-    /// The three craft ids are distinct and sit above the ladder's five — a collision would make two
+    /// The craft ids are distinct and sit above the ladder's own — a collision would make two
     /// knowledges the same ledger row, which is the one failure a `u32` id cannot report.
     #[test]
-    fn the_three_crafts_have_distinct_ids_above_the_ladders() {
+    fn the_crafts_have_distinct_ids_above_the_ladders() {
         let ids = [
             TANNING_DISCOVERY_ID,
             WEAVING_DISCOVERY_ID,
             BONE_WORKING_DISCOVERY_ID,
+            KNAPPING_DISCOVERY_ID,
         ];
         let mut sorted = ids.to_vec();
         sorted.sort_unstable();
@@ -152,8 +177,14 @@ mod tests {
         }
         assert_eq!(
             crafts_declared_by(&materials),
-            vec![BONE_WORKING_CRAFT, TANNING_CRAFT, WEAVING_CRAFT],
-            "the shipped table declares exactly the three organic crafts"
+            vec![
+                BONE_WORKING_CRAFT,
+                KNAPPING_CRAFT,
+                TANNING_CRAFT,
+                WEAVING_CRAFT
+            ],
+            "the shipped table declares the three organic crafts plus stone's knapping - wood is \
+             worked by `weaving` and mints no craft of its own"
         );
     }
 }

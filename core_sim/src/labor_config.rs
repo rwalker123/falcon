@@ -379,7 +379,7 @@ pub struct ForageLaborConfig {
     ///
     /// > **THE NUMBER MOVED; THE KEY DID NOT.** This was the *basketed* `8.0` for as long as the
     /// > basket's own payload had nowhere else to live. Quality tiers gave it one: the baskets'
-    /// > `flint` tier declares `forage_carry equipped 8.0`, and what stands here is the `1.6` the
+    /// > `plain` tier declares `forage_carry equipped 8.0`, and what stands here is the `1.6` the
     /// > item used to declare as its `unequipped` side. The key's **role** changed and its name did
     /// > not, because every caller hands it to
     /// > [`crate::equipment_config::EquipmentConfig::forage_per_worker_biomass_capacity`], whose
@@ -473,7 +473,7 @@ pub struct HuntLaborConfig {
     /// `fauna_config`'s `hunt.*_per_biomass` so the ecology stays consistent.
     ///
     /// > **THE NUMBER MOVED; THE KEY DID NOT.** This was the *sledded* `40.0` for as long as the
-    /// > sled's own payload had nowhere else to live. Quality tiers gave it one: the sled's `flint`
+    /// > sled's own payload had nowhere else to live. Quality tiers gave it one: the sled's `plain`
     /// > tier declares `hunt_carry equipped 40.0`, and what stands here is the `12.0` the item used
     /// > to declare as its `unequipped` side. The key's **role** changed and its name did not,
     /// > because every caller hands it to

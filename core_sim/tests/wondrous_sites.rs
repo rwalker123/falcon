@@ -83,6 +83,7 @@ fn spawn_cohort(app: &mut App, faction: FactionId, size: u32) {
         last_food_consumption: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
+        last_turn_transfer_crossings: Vec::new(),
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: Default::default(),

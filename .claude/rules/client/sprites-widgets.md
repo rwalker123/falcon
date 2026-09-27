@@ -89,8 +89,9 @@ sized to the stock icon's 16px, so swapping them moves no metrics. FONT override
 the Button's own `text`) and are set here too.
 
 It is applied **per control, not through a project theme**: `HudWidgets.build_improvement_control` is
-the client's only `CheckBox` construction site, the Options pane's toggles being `CheckButton`s (a
-different widget with its own art), and there is no theme resource to hang it on anyway.
+the client's only CHECKBOX construction site (the crafting picker's radios are the other `CheckBox`,
+styled by `apply_radio` below), the Options pane's toggles being `CheckButton`s (a different widget
+with its own art), and there is no theme resource to hang it on anyway.
 
 **`ui_preview` guards it by CONTRAST and HUE, never by "an override is set"** — an override-shaped
 assertion passes on the `icon_normal_color` version that renders nothing. On `herd_corral_ungated`:
@@ -98,6 +99,18 @@ the `unchecked` art composited over `PANEL_SOLID` must clear `CHECKBOX_INDICATOR
 scores ~0.001), and the `checked` art's colour, brightness divided out, must sit within
 `CHECKBOX_TICK_COLOUR_TOLERANCE` of `SIGNAL` (stock grey scores ~0.65). The second measure is
 deliberately not contrast: the stock tick chip is light and would clear a contrast bar unchanged.
+
+### …and the RADIO (`HudStyle.apply_radio`), which is DRAWN rather than recoloured
+
+A `CheckBox` in a `ButtonGroup` draws the `radio_*` theme icons, not `checked` / `unchecked`, so
+`apply_checkbox`'s overrides never reach it. The stock radio art is the checkbox's trap twice over:
+the unlit disc is filled near-black and vanishes on `PANEL_SOLID`, and the lit one is a LIGHT disc
+with a DARK dot, which recoloured through `_checkbox_recoloured` reads as a hollow ring — the opposite
+of chosen. Measured on the crafting panel's Make picker: the disabled unlit radio drew nothing at all
+and the lit one read as empty. So `_radio_indicator` rasterises the indicator at the stock 16px — an
+outlined ring, plus a filled dot when lit — `SIGNAL` lit, `INK_DIM` unlit, `INK_FAINT` for both
+disabled twins. The face takes `apply_checkbox`'s inks. Its four rasters are nulled in
+`apply_palette` with the checkbox's. The one caller is `CraftingPanel._build_picker_option`.
 
 ## The modal dialog (`HudStyle.apply_dialog`)
 

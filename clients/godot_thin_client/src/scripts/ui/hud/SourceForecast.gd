@@ -1576,7 +1576,8 @@ const BUILD_WORK_PREDICATE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_T
 const BUILD_NO_ESCAPEMENT_ROOM := 0.0
 
 ## **THE GEAR TERM'S TWO HALVES, keyed on the dict a caller hands `build_turns_at`** — the work units
-## one equipped worker ADDS to what it delivers per turn (flint hoes, +0.5 on a plant build), and how
+## one equipped worker ADDS to what it delivers per turn (`plain` hoes, +0.5 on a plant build; their
+## `flint` tier, +0.7), and how
 ## many of the band's workers this kit can actually equip for one. It is a term of the SUPPLY and
 ## never a discount off the pile (`docs/plan_standing_upkeep.md` §4.8 — `build_turns_at` states the
 ## form and is the one place this is evaluated).

@@ -503,9 +503,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // people and their gear and never by what they are standing on.
             let _ = entry.insert("scout_vantage_range", row.scoutVantageRange() as f64);
             // **THE BUILD AXIS AT THIS BAND'S LIVE WEAR, IN WORK UNITS** — the EXTRA work one
-            // equipped worker DELIVERS per turn (neutral `0`; the crook's and the hoes' flint tiers
-            // each declare 0.5, so an equipped builder banks `1.0 + 0.5 = 1.5` where a bare one banks
-            // `1.0`), so spent gear steps back to neutral here the way every other axis does.
+            // equipped worker DELIVERS per turn (neutral `0`; the crook's and the hoes' `plain`
+            // tiers each declare 0.5, so an equipped builder banks `1.0 + 0.5 = 1.5` where a bare
+            // one banks `1.0` — the hoes' second tier, `flint`, declares 0.7 instead, which is what
+            // makes naming the TIER load-bearing here), so spent gear steps back to neutral here the
+            // way every other axis does.
             //
             // ⛔ **AN ADDEND, NOT A DISCOUNT.** This read *"what one equipped worker takes off an
             // improvement's cost"* with the retired subtraction's **8.5** beside it. **A job's work
@@ -1387,15 +1389,28 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("shortfalls", &shortfalls_to_array(offer.shortfalls()));
             let _ = row.insert("output_grade", offer.outputGrade().unwrap_or(""));
             let _ = row.insert("on_bench", offer.onBench());
-            // **THE LEDGER'S GROUP HEAD** — the tier a craft would produce right now, and its rank
-            // in the item's own list. The heads run rank-DESCENDING (newest first), which is the
-            // client's only honest ordering: alphabetical would put Iron above Bronze.
-            let _ = row.insert("output_tier_name", offer.outputTierName().unwrap_or(""));
-            let _ = row.insert("output_tier_rank", offer.outputTierRank() as i64);
-            // **RENDER IT VERBATIM, and only this carries a tier word into the Owned cell.** `""`
-            // when there is no news — what the band carries is said only when it disagrees with
-            // what the band could now make.
-            let _ = row.insert("owned_note", offer.ownedNote().unwrap_or(""));
+            // `outputTierName` / `outputTierRank` and `ownedNote` are deprecated on the wire and not
+            // decoded: the ledger groups by group and item, never by tier, its Owned cell carries no
+            // tier word, and which tier the band holds is the recipe popup's `owned_at_tier`.
+            // **ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK.** Several offers share one
+            // `output_item_id`; the client groups them into one row and these five are what that
+            // row's recipe popup and its Make picker read. All RESOLVED SIM-SIDE — the client never
+            // picks the suggested recipe, never spells a stat and never divides a durability.
+            //
+            // The recipe's short name among its siblings ("Bone", "Flint"); `""` on a sole recipe.
+            let _ = row.insert("recipe_label", offer.recipeLabel().unwrap_or(""));
+            // What this recipe would make from this band's store ("26 attack"); `""` for a bench
+            // tool and for a material output.
+            let _ = row.insert("makes", offer.makes().unwrap_or(""));
+            // How long one fresh unit at this recipe's tier lasts ("175 blows"); `""` on a material.
+            let _ = row.insert("lasts", offer.lasts().unwrap_or(""));
+            // EXACTLY ONE offer per row is true: the recipe the row's cells show and the picker
+            // opens on.
+            let _ = row.insert("suggested", offer.suggested());
+            // Units owned at THIS recipe's tier, or `-1` when every recipe for the item makes the
+            // same tier and no count per recipe exists (`OWNED_AT_TIER_UNATTRIBUTED`). `-1` is not
+            // "none": `0` is a real count.
+            let _ = row.insert("owned_at_tier", offer.ownedAtTier() as i64);
             craft_offers.push(&row.to_variant());
         }
     }
@@ -1561,6 +1576,80 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         }
     }
     let _ = dict.insert("pool_crew", &pool_crew);
+    // --- WHAT CROSSED THIS BAND'S STORE, BY CAUSE (issue #731) -------------------------------------
+    // One row per (good, rating, direction, cause, counterparty, party), on the per-turn window the
+    // eight `transfer_*_turn` arms are on. For `provisions` and `fodder` the rows summed per
+    // (link, direction) equal those arms; for a material they are its only transfer account, one row
+    // per RATING — a surface sums one material's ratings for its summary line, never two materials.
+    //
+    // The codes are the schema's (`TransferCrossingState` in `snapshot.fbs`):
+    //   direction  0 in, 1 out
+    //   link       0 local, 1 route
+    //   cause      0 pooled, 1 dowry_out, 2 dowry_in, 3 shipment_out, 4 shipment_in, 5 party_home,
+    //              6 party_provisions, 7 shipment_returned (undelivered cargo coming home, naming
+    //              the destination its shipment_out named)
+    // ⛔ A POOLED ROW NEVER NAMES A COUNTERPARTY (`counterparty_band_id == 0`) — the invariant, not a
+    // gap. `party_id` is the carrying party's `band_id` (0 = none), the key one shipment groups by.
+    // Always inserted (empty array when absent) so the band dict has a stable shape.
+    let mut transfer_crossings = VarArray::new();
+    if let Some(crossings) = cohort.transferCrossings() {
+        for crossing in crossings.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("commodity", crossing.commodity().unwrap_or_default());
+            // A material's exact reading per axis, in its DECLARED order — the `material_batches`
+            // shape. Empty for provisions and fodder.
+            let mut readings = VarArray::new();
+            if let Some(list) = crossing.readings() {
+                for reading in list.iter() {
+                    let mut entry = VarDictionary::new();
+                    let _ = entry.insert("axis", reading.axis().unwrap_or(""));
+                    let _ = entry.insert("value", reading.value() as f64);
+                    let _ = entry.insert("band_name", reading.bandName().unwrap_or(""));
+                    readings.push(&entry.to_variant());
+                }
+            }
+            let _ = row.insert("readings", &readings);
+            let _ = row.insert("direction", crossing.direction() as i64);
+            let _ = row.insert("link", crossing.link() as i64);
+            let _ = row.insert("cause", crossing.cause() as i64);
+            let _ = row.insert("counterparty_band_id", crossing.counterpartyBandId() as i64);
+            // Empty with a non-zero id = a band the sim can no longer name; render `Band #<id>`.
+            let _ = row.insert(
+                "counterparty_name",
+                crossing.counterpartyName().unwrap_or_default(),
+            );
+            let _ = row.insert(
+                "counterparty_faction",
+                crossing.counterpartyFaction() as i64,
+            );
+            let _ = row.insert("party_id", crossing.partyId() as i64);
+            let _ = row.insert("amount", crossing.amount() as f64);
+            transfer_crossings.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("transfer_crossings", &transfer_crossings);
+
+    // --- THIS BAND'S OWN POOLING LINKS, AND ITS NETWORK'S SPAN (issue #731) -----------------------
+    // Every supply-network link the balancer formed with this band this turn — its DIRECT links, not
+    // every member of `supply_network_id`. `rung_id` joins the ladder's route rung rows
+    // (`"route:trail"`); `""` = some tile on the run has no kept road. The span is the longest link
+    // in the band's whole network (0 = no network) — the distance the links actually reached, not
+    // the config's free reach.
+    let mut pooling_links = VarArray::new();
+    if let Some(links) = cohort.poolingLinks() {
+        for link in links.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("band_id", link.bandId() as i64);
+            let _ = row.insert("distance_tiles", link.distanceTiles() as i64);
+            let _ = row.insert("rung_id", link.rungId().unwrap_or_default());
+            pooling_links.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("pooling_links", &pooling_links);
+    let _ = dict.insert(
+        "supply_network_span_tiles",
+        cohort.supplyNetworkSpanTiles() as i64,
+    );
 
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
     // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and
