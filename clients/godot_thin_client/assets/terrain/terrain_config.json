@@ -24,9 +24,9 @@
     "chop_scale": 0.5,
     "chop_rate": 0.4,
     "whitecap_strength": 0.95,
-    "whitecap_coverage": 0.22,
-    "whitecap_cell": 0.7,
-    "whitecap_length": 0.45,
+    "whitecap_coverage": 0.85,
+    "whitecap_cell": 2.0,
+    "whitecap_length": 0.7,
     "whitecap_rate": 0.3,
     "whitecap_color": [240, 244, 246],
     "motion_min_radius": 24.0

@@ -1191,6 +1191,9 @@ const OCEAN_LOWFREQ_MAX_FRACTION := 0.35
 const OCEAN_ZOOMED_OUT_GRID := Vector2i(42, 28)
 # The LIVE-like frame: a grid that fits at r ≈ 35, the radius of Ray's 1.5× screenshots.
 const OCEAN_LIVE_GRID := Vector2i(31, 21)
+# …and at 2.0× — radius = cover-fit base × zoom_factor (MapView._update_layout_metrics), so 35 px at 1.5× puts
+# 2.0× at ~47 px: a grid that fits at r ≈ 47.
+const OCEAN_LIVE_2X_GRID := Vector2i(23, 16)
 # One cap's LIFE: crops at these fractions of one whitecap cycle — fresh, at the peak of its attack, mid-fade and
 # late in the fade (see WHITECAP_ATTACK in the shader).
 const OCEAN_CAP_LIFE_FRACTIONS := [0.0, 0.1, 0.35, 0.7]
@@ -1208,6 +1211,7 @@ const OCEAN_WHITECAP_COVERAGE_MAX := 0.05
 # wide; a round blob is ~1.
 const OCEAN_WHITECAP_MIN_BLOB_PX := 8
 const OCEAN_WHITECAP_PIXEL_VARIANCE := 1.0 / 12.0
+const OCEAN_WHITECAP_SEGMENT_VARIANCE_RATIO := 12.0      # a uniform segment of length L has variance L² / 12
 const OCEAN_WHITECAP_ASPECT_MIN := 2.5
 # (c) WHITE: the cap CORE — mask pixels at least OCEAN_WHITECAP_CORE_DL levels over the twin, i.e. where the cap
 # covers at least ~3/4 of the water (a fully opaque cap sits ~200 levels over it) — must be near-neutral (mean
@@ -1231,6 +1235,12 @@ const OCEAN_WHITECAP_OVERLAP_MAX := 0.85
 # (n random axes average R ≈ 0.89/√n) — and the shipped caps, which read 0.57–0.68 across different phases of
 # the same frame; the window is ~half an orientation region (WHITECAP_ANGLE_CELL, 12 r) so a window mostly sits
 # inside one.
+# (f) LENGTH VARIATION: the coefficient of variation (std / mean) of the blobs' major-axis length, sqrt(12·λmax)
+# (a uniform segment's length from its variance). Caps of one grain size read as RICE; real crests vary widely.
+# Measured: the RICE form — one unbroken streak per cell, no length jitter — still reads 0.29 (the fade's stretch
+# and the antialiased tips vary it that much on their own); length jitter alone reads 0.39; shipped, with the
+# break-up and the crest groups, 0.58. The bar asks for more than the stretch alone can give.
+const OCEAN_WHITECAP_LENGTH_CV_MIN := 0.4
 const OCEAN_WHITECAP_GLOBAL_R_MAX := 0.5
 const OCEAN_WHITECAP_WINDOW_RADII := 6.0
 const OCEAN_WHITECAP_WINDOW_MIN_BLOBS := 6
@@ -1248,6 +1258,16 @@ const OCEANTEMP_CORAL_HEXES := [Vector2i(9, 12), Vector2i(10, 12), Vector2i(9, 1
 # then sit at FULL cold / FULL warm rather than just touching them.
 const OCEANTEMP_OVERSHOOT := 0.25
 const OCEANTEMP_OFF := {"strength": 0.0}
+# (d) THE CAPS ON A GRADED SEA: hex rows above OCEANTEMP_CAP_COLD_ROWS are the cold band, rows from
+# OCEANTEMP_CAP_WARM_FROM_ROW the warm one (the grade is near full at each end, see OCEANTEMP_OVERSHOOT). Cores are
+# pooled over OCEANTEMP_CAP_PHASES (seconds, spread across a whitecap cycle so different caps are caught), and a
+# band needs OCEANTEMP_CAP_MIN_CORE_PX of them for the claim to have a subject.
+const OCEANTEMP_CAP_COLD_ROWS := 5
+const OCEANTEMP_CAP_WARM_FROM_ROW := 11
+const OCEANTEMP_CAP_PHASES := [0.0, 1.1, 2.3]
+const OCEANTEMP_CAP_MIN_CORE_PX := 100
+const OCEANTEMP_CAP_CROP_WARM := Vector2i(10, 12)
+const OCEANTEMP_CAP_CROP_COLD := Vector2i(10, 3)
 # (b) MONOTONE: per hex row over the deep-ocean columns, the graded frame minus the ungraded one. The mean luma
 # and saturation shifts must not DROP from one row to the next by more than this (8-bit levels / HSV units),
 # and must be negative at the top and positive at the bottom.
@@ -2337,6 +2357,9 @@ func _render_ocean_state() -> void:
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_live", 0.0, false)
 	await _settle()
 	await _save_crop("OCEAN_live_open", OCEAN_OPEN_CROP.x, OCEAN_OPEN_CROP.y, OCEAN_OPEN_CROP_RADII)
+	_map.display_snapshot(_snapshot_ocean(OCEAN_LIVE_2X_GRID.x, OCEAN_LIVE_2X_GRID.y))
+	await _refit(GAME_HEX_RADIUS * GRID_W / OCEAN_LIVE_2X_GRID.x)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_live_2x", 0.0, false)
 	# One cap's LIFE: the same small open-water crop at game zoom, at fractions of one whitecap cycle.
 	_map.display_snapshot(_snapshot_ocean(GRID_W, GRID_H))
 	await _refit(GAME_HEX_RADIUS)
@@ -2556,6 +2579,14 @@ func _assert_ocean_whitecaps() -> void:
 		var w: Array = windows.get(key, [Vector2.ZERO, 0])
 		windows[key] = [w[0] + axis, w[1] + 1]
 	var mean_aspect: float = aspect_sum / maxf(shapes.size(), 1)
+	var lengths := PackedFloat32Array()
+	for shape: Dictionary in shapes:
+		lengths.append(float(shape["length"]))
+	var mean_len := 0.0
+	for l in lengths:
+		mean_len += l
+	mean_len /= maxf(lengths.size(), 1)
+	var length_cv: float = _std(lengths) / maxf(mean_len, OCEAN_CORR_EPSILON)
 	var global_r: float = global_vec.length() / maxf(shapes.size(), 1)
 	var local_sum := 0.0
 	var local_n := 0
@@ -2569,6 +2600,8 @@ func _assert_ocean_whitecaps() -> void:
 		% [coverage, caps_a, total, OCEAN_WHITECAP_COVERAGE_MIN, OCEAN_WHITECAP_COVERAGE_MAX])
 	print("blend_probe: OCEAN whitecaps — (b) mean aspect %.2f over %d blobs of ≥ %d px (min %.1f)"
 		% [mean_aspect, shapes.size(), OCEAN_WHITECAP_MIN_BLOB_PX, OCEAN_WHITECAP_ASPECT_MIN])
+	print("blend_probe: OCEAN whitecaps — (f) length CV %.2f (mean %.1f px, min %.2f)"
+		% [length_cv, mean_len, OCEAN_WHITECAP_LENGTH_CV_MIN])
 	print("blend_probe: OCEAN whitecaps — (c) core %d px: saturation %.3f (max %.2f), luma %.1f vs water %.1f (≥ +%.0f)"
 		% [core_n, core_sat, OCEAN_WHITECAP_CORE_SAT_MAX, core_luma, water_luma, OCEAN_WHITECAP_CORE_LUMA_ABOVE])
 	print("blend_probe: OCEAN whitecaps — (d) overlap over %.1f s %.2f (band %.2f–%.2f)"
@@ -2585,6 +2618,8 @@ func _assert_ocean_whitecaps() -> void:
 	if mean_aspect < OCEAN_WHITECAP_ASPECT_MIN:
 		_fail("OCEAN: whitecaps are BLOBS, not streaks — mean aspect %.2f (want ≥ %.1f)"
 			% [mean_aspect, OCEAN_WHITECAP_ASPECT_MIN])
+	if length_cv < OCEAN_WHITECAP_LENGTH_CV_MIN:
+		_fail("OCEAN: whitecaps are ONE SIZE (rice) — length CV %.2f (want ≥ %.2f)" % [length_cv, OCEAN_WHITECAP_LENGTH_CV_MIN])
 	if core_n == 0:
 		_fail("OCEAN: no whitecap reaches a CORE (%.0f levels over the water)" % OCEAN_WHITECAP_CORE_DL)
 	elif core_sat > OCEAN_WHITECAP_CORE_SAT_MAX:
@@ -2667,6 +2702,7 @@ func _blob_shapes(mask: PackedByteArray, w: int, h: int) -> Array:
 		shapes.append({
 			"cx": cx, "cy": cy,
 			"aspect": sqrt((mid + spread) / maxf(mid - spread, OCEAN_WHITECAP_PIXEL_VARIANCE)),
+			"length": sqrt(OCEAN_WHITECAP_SEGMENT_VARIANCE_RATIO * (mid + spread)),
 			"angle": 0.5 * atan2(2.0 * vxy, vxx - vyy),
 		})
 	return shapes
@@ -2810,7 +2846,7 @@ func _ocean_repeat_ratio(image: Image) -> float:
 func _snapshot_ocean(gw: int, gh: int) -> Dictionary:
 	## Open deep_ocean with a ragged continental_shelf band down the east side and a prairie island on it.
 	## Scaled with the grid (`gw` / GRID_W), so the far-zoom grid is the same geography, only more of it.
-	var k: int = gw / GRID_W
+	var k: int = maxi(gw / GRID_W, 1)   # a grid SMALLER than GRID_W (the 2.0× frame) keeps the base geography
 	var arr: Array = []
 	arr.resize(gw * gh)
 	for y in range(gh):
@@ -2864,7 +2900,70 @@ func _render_ocean_temperature_state() -> void:
 	var split: Image = await _render_oceantemp_frame({}, "OCEANTEMP_split", false)
 	if split_off != null and split != null:
 		_assert_oceantemp_no_hex_step(split_off, split)
+	# (d) — the whitecaps stay WHITE on a graded sea, cold and warm.
+	_map.display_snapshot(_snapshot_ocean_temperature(climate, false, true))
+	await _refit(GAME_HEX_RADIUS)
+	await _assert_oceantemp_caps_white()
+	_set_water_time_offset(0.0)
 	_map._show_grid_lines = true
+
+
+func _assert_oceantemp_caps_white() -> void:
+	## (d) THE CAPS ON A GRADED SEA (see OCEANTEMP_CAP_*): state 29's whiteness claim — core saturation and luma,
+	## the same OCEAN_WHITECAP_CORE_* bars — asked of the COLD rows and the WARM rows separately, pooled over
+	## OCEANTEMP_CAP_PHASES so each band holds enough cores. State 29 carries no temperatures, so the grade
+	## never runs there, and a grade that recoloured the caps could not show in it.
+	var bands := {"cold": [0, 0, 0.0, 0.0, 0.0], "warm": [0, 0, 0.0, 0.0, 0.0]}   # core px, all px, sat, luma, water
+	for phase: float in OCEANTEMP_CAP_PHASES:
+		var on: Image = await _ocean_capture({}, phase)
+		var off: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, phase)
+		if on == null or off == null:
+			return
+		var box: Rect2i = _ocean_box_px(on)
+		var px_scale: float = float(on.get_width()) / get_viewport().get_visible_rect().size.x
+		var radius: float = _map.last_hex_radius
+		var cold_y: float = _map._hex_center(0, OCEANTEMP_CAP_COLD_ROWS, radius, _map.last_origin).y * px_scale
+		var warm_y: float = _map._hex_center(0, OCEANTEMP_CAP_WARM_FROM_ROW, radius, _map.last_origin).y * px_scale
+		var core: PackedByteArray = _whitecap_mask(on, off, box, OCEAN_WHITECAP_CORE_DL)
+		for i in range(core.size()):
+			var px: int = box.position.x + i % box.size.x
+			var py: int = box.position.y + i / box.size.x
+			var key: String = "cold" if py < cold_y else ("warm" if py >= warm_y else "")
+			if key == "":
+				continue
+			var b: Array = bands[key]
+			b[1] += 1
+			b[4] += off.get_pixel(px, py).get_luminance()
+			if core[i] != 0:
+				var c: Color = on.get_pixel(px, py)
+				b[0] += 1
+				b[2] += c.s
+				b[3] += c.get_luminance()
+	# The last capture restored the config without a redraw, so the uniforms still hold its caps-OFF twin: redraw.
+	_map.queue_redraw()
+	await _settle()
+	await _save("OCEANTEMP_caps")
+	await _settle()
+	await _save_crop("OCEANTEMP_caps_warm", OCEANTEMP_CAP_CROP_WARM.x, OCEANTEMP_CAP_CROP_WARM.y, OCEAN_OPEN_CROP_RADII)
+	await _settle()
+	await _save_crop("OCEANTEMP_caps_cold", OCEANTEMP_CAP_CROP_COLD.x, OCEANTEMP_CAP_CROP_COLD.y, OCEAN_OPEN_CROP_RADII)
+	for key: String in ["cold", "warm"]:
+		var b: Array = bands[key]
+		var n: int = b[0]
+		var sat: float = b[2] / maxf(n, 1)
+		var luma: float = b[3] / maxf(n, 1) * LUMA_LEVELS
+		var water: float = b[4] / maxf(b[1], 1) * LUMA_LEVELS
+		print("blend_probe: OCEANTEMP caps on the %s sea — %d core px: saturation %.3f (max %.2f), luma %.1f vs water %.1f"
+			% [key, n, sat, OCEAN_WHITECAP_CORE_SAT_MAX, luma, water])
+		if n < OCEANTEMP_CAP_MIN_CORE_PX:
+			_fail("OCEANTEMP: only %d whitecap core px on the %s sea (want ≥ %d) — the claim has no subject"
+				% [n, key, OCEANTEMP_CAP_MIN_CORE_PX])
+		elif sat > OCEAN_WHITECAP_CORE_SAT_MAX:
+			_fail("OCEANTEMP: whitecaps on the %s sea are TINTED — core saturation %.3f (want ≤ %.2f)"
+				% [key, sat, OCEAN_WHITECAP_CORE_SAT_MAX])
+		elif luma < water + OCEAN_WHITECAP_CORE_LUMA_ABOVE:
+			_fail("OCEANTEMP: whitecaps on the %s sea are DIM — core luma %.1f over water %.1f (want ≥ +%.0f)"
+				% [key, luma, water, OCEAN_WHITECAP_CORE_LUMA_ABOVE])
 
 
 func _render_oceantemp_frame(changes: Dictionary, name: String, crops: bool = true) -> Image:

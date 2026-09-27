@@ -817,11 +817,12 @@ the frame with the open water (`terrain-blend-shader.md` → Water surface). Fra
 | `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s; `OCEAN_shipped_open` is the r ≈ 45 crop the whitecaps are judged on |
 | `OCEAN_seq0..3` | shipped, four phases a second apart | the look-at sequence the chop was tuned on |
 | `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop and caps are ON — the zoom where the retired swell drew a map-wide diagonal, and where the caps must stay sparse, never a carpet or map-scale patches. Below the gate (the r ≈ 22.8 far-zoom grid) the motion is off and the water is static |
-| `OCEAN_live` (+ `_open`) | shipped, on a 31×21 grid at r ≈ 35 | the LIVE-like frame, the radius of Ray's 1.5× screenshots: the caps must read as small breaking-wave streaks, not dots, stars, scratches or snow |
-| `OCEAN_cap_life0..3` | shipped, a 3-radius crop at r ≈ 45, at 0 / 0.1 / 0.35 / 0.7 of one whitecap cycle | one cap's life: the flash, the peak, the stretched and softened fade |
+| `OCEAN_live` (+ `_open`) | shipped, on a 31×21 grid at r ≈ 35 | the LIVE-like frame, the radius of Ray's 1.5× screenshots: the caps must read as broken foam streaks, not rice, dots, stars, scratches or snow |
+| `OCEAN_live_2x` | shipped, on a 23×16 grid at r ≈ 47 | Ray's 2.0× (radius = cover-fit base × zoom_factor, so 35 px at 1.5× → ~47 at 2.0×). `_snapshot_ocean` floors its scale at 1, so a grid smaller than `GRID_W` keeps the base geography |
+| `OCEAN_cap_life0..3` | shipped, a 3-radius crop at r ≈ 45, at 0 / 0.1 / 0.35 / 0.7 of one whitecap cycle | one crest group's life: the flash, the peak, the stretched and softened fade, gone |
 
 The second phase is `OCEAN_MOTION_DT` (**2 s**) set on the `water_time_offset` uniform, since the
-harness clock is frozen. Twelve PNG-less claims ride it, and each fails on its own:
+harness clock is frozen. Thirteen PNG-less claims ride it, and each fails on its own:
 
 - **The repeat measure.** Over a deep-only box, mean |ΔL| between each pixel and the one ONE TEXTURE
   PERIOD east (`2·r / base_scale` px), over the same at half a period. An exact copy scores ~0, an
@@ -833,7 +834,7 @@ harness clock is frozen. Twelve PNG-less claims ride it, and each fails on its o
   number, when retuning the cell.
 - **Motion at game zoom, measured as MAGNITUDE.** Over the deep-ocean box, the mean |ΔL| between two
   phases `OCEAN_MOTION_DT` (2 s) apart must reach `OCEAN_MOTION_MIN_MEAN_DL` (**1.5 levels** on this
-  water, luma ≈ 30); measured **3.7** with the whitecaps (2.3 on the chop alone). The bar guards against the term going invisible, NOT the tuned
+  water, luma ≈ 30); measured **3.8** with the whitecaps (2.3 on the chop alone). The bar guards against the term going invisible, NOT the tuned
   look — that is Ray's live call: at `chop_strength` 0.06 / `chop_rate` 0.8 (~4 levels/s) the chop read
   in play as clouds changing too fast, so it ships at 0.035 / 0.4 and the window doubled with the rate.
   ⛔ **It was a changed-pixel COUNT, and the count passed a sea that looked still.** A scrolled texture
@@ -848,7 +849,7 @@ harness clock is frozen. Twelve PNG-less claims ride it, and each fails on its o
   period — each read as a rate (mean |ΔL| / dt). The slowest must reach the magnitude bar's own rate,
   `OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT` (`OCEAN_STEADY_MIN_FRACTION` 1.0: a window's change is at
   most the sum of its interval changes, so only a pause drops one below it), and max/min ≤
-  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **2.34–2.61 levels/s** — ratio **1.11** (the chop alone held
+  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **2.23–2.79 levels/s** — ratio **1.25** (the chop alone held
   1.47–1.53, ratio 1.04). (At the earlier 0.06 / 0.8 tuning it held
   5.01–5.23, and the single-copy sabotage swung 2.59–6.74, ratio 2.60.)
   **Sabotaged** with one noise copy per octave (the form before `CHOP_PAIR_*`): **2.74, 6.21, 6.74, 4.86,
@@ -858,45 +859,49 @@ harness clock is frozen. Twelve PNG-less claims ride it, and each fails on its o
   chop, waves AND whitecaps off), so the art cancels and the caps are part of the field — at two phases
   `OCEAN_DIRECTION_DT` (1 s) apart is cross-correlated at every offset within ±24 px; the best
   correlation more than 4 px from zero may not beat zero's by more than 0.02. Shipped with the caps:
-  **0.527 at zero, 0.218 at best elsewhere** (the chop alone: 0.740 vs 0.619). **Sabotaged** with a single travelling sine train at the chop's own size:
+  **0.504 at zero, 0.226 at best elsewhere** (the chop alone: 0.740 vs 0.619). **Sabotaged** with a single travelling sine train at the chop's own size:
   **−0.807 at zero, 0.999 at (10, 12) px**, fail; and with the retired swell: **0.800 vs 0.984**, fail.
 - **No map-scale pattern.** The same motion field block-averaged over 2-hex-radius blocks — a low-pass —
   and its std taken as a FRACTION of the per-pixel std (an absolute bar would scale with
   `chop_strength`). Independent ~0.5 r patches keep about feature/block ≈ 0.25 of their std; bands or
-  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.14** with the caps (0.29
+  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.17** with the caps (0.29
   on the chop alone); **sabotaged** with the
   retired swell: **0.43**, fail. (The small travelling train reads 0.02 here and fails only the
   direction claim — the two measure different things.) The margin is honest rather than wide: a 3 r
   wavelength is partly averaged by 2 r blocks, and `chop_scale` near 0.7 r approaches the bar.
-- **The five whitecap claims** ride one pair of phases `OCEAN_WHITECAP_DT` (1 s) apart. Each phase is
+- **The six whitecap claims** ride one pair of phases `OCEAN_WHITECAP_DT` (1 s) apart. Each phase is
   captured with and without the caps. The cap MASK is every open-ocean pixel at least
   `OCEAN_WHITECAP_MIN_DL` (8 levels) brighter than its whitecap-off twin (the chop and the art cancel, so
   the mask is the caps alone), and blobs are its 4-connected components.
   - **(a) Coverage in a band.** The mask's fraction of the box lies in [0.001, 0.05]: present, and nowhere
-    near a carpet. Shipped **0.0108**. **Sabotaged** with `whitecap_strength` 0: **0.0000**, fail.
+    near a carpet. Shipped **0.0135**. **Sabotaged** with `whitecap_strength` 0: **0.0000**, fail.
   - **(b) Elongation.** The mean aspect ratio, `sqrt(λmax / λmin)` of each blob's pixel second moments,
     over blobs of ≥ 8 px, is ≥ 2.5. Each λ carries a pixel's own 1/12 variance, so a 1-px line is not
-    infinite. Shipped **3.71** over 98 blobs. **Sabotaged** with an isotropic cap
-    (`WHITECAP_WIDTH_RATIO` 1): **1.32**, fail.
+    infinite. Shipped **3.44** over 108 blobs. **Sabotaged** with an isotropic cap: **1.32**, fail.
+    - **The bar stays at 2.5, and the streaks did NOT raise the aspect** (the crescents read 3.71). A
+      broken streak is measured dash by dash, and the trailing wash widens each dash.
   - **(c) White.** The cap CORE is mask pixels ≥ 140 levels over the twin, where a cap covers at least ~3/4
     of the water. Its mean HSV saturation must be ≤ 0.08, and its luma ≥ the water's + 100. Shipped
-    **0.051 / 208 vs water 30**. **Sabotaged** by laying `foam_color` in place of `whitecap_color`
-    (the old pale-cyan pull): **0.151**, fail. The core is the claim, not every cap pixel, because an
-    antialiased rim is white over blue at any colour. The WHITE-BODY shape (`WHITECAP_BACK_FULL`) is what
-    keeps that rim thin.
+    **0.052 / 206 vs water 30**. **Sabotaged** by laying `foam_color` in place of `whitecap_color`:
+    **0.151**, fail.
   - **(d) Change in place.** Of the caps at t, the fraction still capped at t + 1 s lies in [0.2, 0.85].
-    A cap lives 3.3 s where it spawned. Caps that jumped keep only chance (≈ the coverage). Shipped
-    **0.64**. **Sabotaged** with `whitecap_rate` 0 (every cap frozen mid-life, its spawn decision included):
-    **1.00**, fail.
+    Shipped **0.54**. **Sabotaged** with `whitecap_rate` 0: **1.00**, fail.
   - **(e) Regional, not global, orientation.** Each blob's axis is `½·atan2(2·μxy, μxx − μyy)`, and R is
-    the mean resultant length of the DOUBLED axes (a streak's axis has no head).
+    the mean resultant length of the DOUBLED axes.
     - **The two bars:** R over the whole box must be ≤ 0.5. R averaged over 6-hex-radius windows holding
-      ≥ 6 blobs must be ≥ 0.45.
-    - **Shipped:** **global 0.11, local 0.68**.
-    - **Sabotaged with one fixed global angle:** global **0.91**, fail.
-    - **Sabotaged with per-cap random angles:** local **0.25**, fail.
-    - **Where the local bar sits:** halfway between that chance level and the shipped caps. The shipped
-      caps read 0.57–0.68 across different phases of one frame, so a tighter bar would flake.
+      ≥ 6 blobs must be ≥ 0.45, halfway between chance (per-cap random angles: 0.25) and the shipped caps.
+    - **Shipped:** **global 0.24, local 0.64**.
+    - **Sabotaged:** one fixed global angle gave global **0.91**, fail; random angles gave local **0.25**,
+      fail. Both were measured on the crescents; the orientation code did not change.
+  - **(f) Length VARIATION.** The coefficient of variation of the blobs' major-axis length, `sqrt(12·λmax)`
+    (a uniform segment's length from its variance), must be ≥ 0.4. Shipped **0.58**.
+    - **The RICE form fails:** one unbroken streak per cell with no length jitter
+      (`WHITECAP_LENGTH_MIN = MAX = SEGMENT_MIN = 1`, no break-up, `WHITECAP_GROUP_MAX` 1) reads **0.29**.
+      That much comes from the fade's stretch and the antialiased tips alone.
+    - **Removing the length jitter ALONE does not fail it:** that reads **0.73**, because the break-up and
+      the crest groups vary the drawn dashes more than the jitter does. That is why the sabotage that
+      fails is the rice form.
+    - **Length jitter with no break-up and no groups** reads **0.39**, just under the bar.
 - **The `O` toggle.** With `TerrainRenderer.set_water_motion_enabled(false)`, two phases of the SHIPPED
   surface `OCEAN_MOTION_DT` apart differ by **exactly 0 px** (the magnitude claim is its premise:
   toggled on, they differ). The toggle is restored after.
@@ -924,7 +929,7 @@ and bottom rows sit at FULL cold and FULL warm (`terrain-blend-shader.md` → Wa
 | `OCEANTEMP_zero` | the no-coral geography at strength 0 — claim (a)'s subject |
 | `OCEANTEMP_split_off` / `OCEANTEMP_split` | top half polar, bottom half tropical — the largest step two neighbouring hexes can carry, claim (c)'s subject |
 
-Three PNG-less claims, each sabotage-verified to fail on its own:
+Four PNG-less claims, each sabotage-verified to fail on its own:
 
 - **(a) Strength 0 is bit-exact** — the temperature fixture WITH temperatures and published anchors, at
   strength 0, against state 29's own fixture captured first: **0 px** differ.
@@ -934,6 +939,16 @@ Three PNG-less claims, each sabotage-verified to fail on its own:
   `OCEANTEMP_SAT_TOLERANCE`. Measured **−4.4 / −0.27 → +4.7 / +0.14**. The saturation tolerance is 0.02
   because the full-cold rows share one grade over different texture and wobble by ~0.01. **Sabotaged**
   by swapping the cold and warm weights: 23 failures.
+- **(d) The caps stay WHITE on a graded sea.** State 29's whiteness claim (core saturation ≤ 0.08, core
+  luma ≥ water + 100), asked of the COLD rows (above row 5) and the WARM rows (from row 11) separately, with
+  cores pooled over three phases (0 / 1.1 / 2.3 s). Shipped: **cold 0.041 over 1909 core px, warm 0.063
+  over 904**. **Sabotaged** by moving the water motion back BEFORE the grade: **cold 0.118, warm 0.444**,
+  both fail.
+  - **Why this is state 30's claim and not state 29's:** state 29 carries no temperatures, so the grade
+    never runs there. The motion-before-grade order passes state 29's claim (c) untouched while turning
+    every cap on a warm sea turquoise — which is what Ray saw live, and what this state was blind to until
+    now.
+  - **Frames:** `OCEANTEMP_caps` (the graded sea with its caps) and `_caps_warm` / `_caps_cold` crops.
 - **(c) No hex step.** On the SPLIT fixture, along 216 lines crossing the cold|warm hex edges, on the
   graded-minus-off luma: the 2-px |Δ| straddling the edge over the largest 2-px |Δ| elsewhere on the
   same line (the ECO straddle-ratio idea, asked of the grade alone). A blended edge is no steeper than
