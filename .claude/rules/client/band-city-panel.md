@@ -2540,8 +2540,9 @@ strip suggests.
 harness was run at twelve values of the constant and judged by exit status. **416** hands the zones a 356px
 box and `band_panel_build_queue_wide` fails with `needs 358px … short by 2`; 418 clips nothing at any dock
 or viewport in the matrix. Fund mode does not raise the floor — its 110px pools block buys the queue fewer
-rows, so the two move against each other. **That last claim was false with a crop strip open, and the
-budget is 436 now** — see "AND IT RAISED `PANEL_HEIGHT_WIDE` 418 → 436" under the build queue's controls.
+rows, so the two move against each other — **true only while the settings strip is 54px or less**: fund
+mode with a plant entry's strip open is the build queue's own worst case, stated under "THE WORK ZONE'S
+WORST CASE AT 418" with the queue's controls.
 
 **WHAT THE 38px COSTS IS ONE BUILD QUEUE ENTRY ROW, and nothing else.** A wide dock draws one entry and
 `+3 more` where it drew two and `+2 more` (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS` 2 → 1, which is
@@ -3647,12 +3648,12 @@ as *close this strip* or as *cancel and lose the progress* — neither of which 
 one strip:
 
 ```
-▸ 🌱 Cultivate (71, 18)    Cultivating 0% · turn 82           ▲▼
-  ◆ builders short of tools                                        ← the head's 2nd line (below)
-┌──────────────────────────────────────────────────────────────┐
-│ 40 work · 0.3 work a turn from Husbandry…  [Remove from queue]│   ← detail line (22px)
-│ CROP [Sim picks        ⌄]                                     │   ← a plant entry only (22px)
-└──────────────────────────────────────────────────────────────┘
+strip CLOSED                                                     strip OPEN
+▸ 🌱 Cultivate (71, 18)   Cultivating 0% · turn 82  ▲▼         ▸ 🌱 Cultivate (71, 18)   Cultivating 0% · turn 82  ▲▼
+  ◆ builders short of tools                                     ┌──────────────────────────────────────────────┐
+                                                                │ ◆ builders short of tools · …  [Remove from queue]│
+                                                                │ CROP [Sim picks        ⌄]                    │
+                                                                └──────────────────────────────────────────────┘
 ```
 
 - **EVERY OPEN STRIP LEADS WITH ONE DETAIL LINE** (`_build_queue_detail_line`,
@@ -3668,8 +3669,10 @@ one strip:
   the tall LEFT dock (344px of strip content less key 30, picker 168 and three separations leaves
   134), so the detail label is the child that gives (**190px** of it left at that dock). The detail
   line has no key column.
-- **THE HEAD'S TOOL CLAUSE IS NOT ON THE DETAIL LINE.** The head row's own `◆` second line states it
-  directly above the strip, and a second copy one line down said nothing new.
+- **ON THE TOOL-SHORT HEAD, THE DETAIL LINE LEADS WITH `◆ builders short of tools`** (amber), before
+  the price. The head row drops its own `◆` second line while its strip is open, so this is the fact's
+  only statement in that state — one sentence visible in either state, never both. No other strip, and
+  no strip while the builders' TOE is filled, carries the clause.
 - **What each entry kind opened to before it**, for the record: a Tame/Corral (`legs 0`, no crop) —
   the `✕` alone; a plant entry — the crop picker with the `✕` beside it (plus `CLIMB` and its leg lines
   on a multi-leg climb); a road — `CLIMB`, its one leg line, and the `✕` on a line of its own.
@@ -3678,20 +3681,25 @@ one strip:
 - **An entry the wire has not priced states an empty line**, never an invented one. The wire publishes
   the rung prices unconditionally (`tame_work_cost` et al., `dict/subsistence.rs`), so this is a
   fixture state rather than a play state.
-- **THE HEIGHT IS ONE ARITHMETIC.** `build_queue_settings_height(is_open, legs, has_crop)`: chrome 12
+- **THE HEIGHT IS ONE ARITHMETIC.** `build_queue_settings_height(is_open, legs, has_crop)`: chrome 10
   + the detail line 22 (unconditional) + legs + the crop line 22 (`has_crop`, read off the same
-  `_queue_settings_content` answer the builder draws). A Tame's strip is **34**, a plant entry's
-  **56**, and `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` is 56 again — the plant strip, the worst case.
+  `_queue_settings_content` answer the builder draws). A Tame's strip is **32**, a plant entry's
+  **54**, and `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` is 54 — the plant strip, the worst case.
+- **THE CHROME IS 10, NOT THE ROLE CARD'S 12.** The strip wears `work_inspector_stylebox` with its top
+  and bottom content margins trimmed to `BUILD_QUEUE_SETTINGS_PADDING_V` (5); the sides keep 6. The
+  control and detail lines keep their full 22px, and the crop picker and `Remove from queue` draw
+  unclipped (reserved == drawn, asserted on every strip-open state). Those 2px are what the work
+  zone's worst case needed at 418 — see below.
 
 **The measured alternatives**, kept as the record of the trade Ray made for the words:
 
-| layout | crop strip | `ROOM_SETTINGS` | 1920 BOTTOM queue rows at 418 |
+| layout (at chrome 12) | crop strip | `ROOM_SETTINGS` | 1920 BOTTOM queue rows at 418 |
 |---|---|---|---|
 | detail own line, `Remove` (73px) on the control line | 52 | 52 | 2 |
-| detail + `Remove from queue` on one line, crop below — **ships** | 56 | 56 | 1 (2 at 436) |
+| detail + `Remove from queue` on one line, crop below — **ships, trimmed to 54** | 56 | 56 | 1 |
 | `Remove from queue` on a line of its own under the crop | 74 | 74 | floor 376 > 358 box |
 
-#### ⛔ THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL — a `◆` SECOND LINE, and only while it is short
+#### ⛔ THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL — a `◆` SECOND LINE while its strip is CLOSED
 
 The builders pool's tool claim is **the queue HEAD entry's alone** (`docs/plan_pool_toe.md` §2.4), so
 *the builders pool's TOE is short* means exactly *the head is short of tools*. The Builders card said
@@ -3708,8 +3716,13 @@ so in the pool's words and nothing in the queue said which job.
   term for term — `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT` = `WORK_ROW_TWO_LINE_HEIGHT − WORK_ROW_HEIGHT` =
   16 (the stepper gap and a note line at `ALLOC_SECTION_FONT_SIZE`). **A head that is not short stays
   one line**, and no other row ever grows one.
+- **…AND ONLY WHILE ITS SETTINGS STRIP IS CLOSED.** With the head's strip open the row is one line
+  (28px) and the strip's detail line leads with the same words. `_head_row_wears_tools_line` (tool-short
+  AND `key != _queue_open_key`) is the ONE test both the row builder and the reservation read, in the
+  collapsed block and the expanded mode alike.
 - **THE SECOND LINE IS IN THE ONE RESERVATION ARITHMETIC.** `_queue_head_tools_height(band, queued)`
-  answers 16 when the queue's first entry is the wire head and short, else 0 — the first entry is
+  answers 16 when the queue's first entry wears the line (`_head_row_wears_tools_line`), else 0 — so a
+  head whose strip is open is never charged both its line and its strip. The first entry is
   always drawn (`BUILD_QUEUE_ROWS_MIN` is one), so the row exists exactly when the term is charged. The
   one value goes to `build_queue_rows_max` (held back before the rows are counted, so a tool-short head
   costs the queue a row rather than the board 16px in silence), `build_queue_block_height` and
@@ -3732,34 +3745,33 @@ face unclipped (123 of 126), the date at its 168, the `▸` in place, the mark a
 text-presentation glyph, inside the head row and below its face, and the row drawing the 44px it
 reserved.
 
-#### ⛔ AND IT RAISED `PANEL_HEIGHT_WIDE` 418 → 436 — the minimum, swept
+#### ⛔ THE WORK ZONE'S WORST CASE AT 418 — and why the line and the strip never both draw
 
-The 1920 BOTTOM dock's worst case is the fund-mode POOLS block (110), a queued head short of tools, and
-that head's crop strip open — and there the queue is already at its one-row floor, so it has no row to
-give back:
+`BandCityPanel.PANEL_HEIGHT_WIDE` is **418**, a 358px work-zone box on the 1920 BOTTOM dock, and the
+horizontal panel does not grow for this arc. The worst case there is the fund-mode POOLS block, a
+queued head short of the builders' tools, and that head's crop strip open — the queue at its one-row
+floor, with nothing left to give back:
 
 | term | px |
 |---|---|
 | `ZONE_HEAD_HEIGHT` + `WORK_CHIPS_HEIGHT` | 20 + 26 |
 | POOLS block, fund mode (`pools_block_height(true)`) | 110 |
-| BUILD QUEUE head 22 + one entry row 28 + the head's second line 16 + a crop strip 56 | 122 |
+| BUILD QUEUE head 22 + one entry row 28 + a crop strip 54 (the head's `◆` line is NOT drawn — its strip is open) | 104 |
 | one board row 44 + `WORK_PAGER_HEIGHT` 24 + five gaps 30 | 98 |
-| **total** | **376** |
+| **total** | **358** |
 
-**434 fails `needs 376px … short by 2`; 436 is 376 of 376.** Of the 18px, 16 is the head's second line
-and **2 was already owed**: the "456 CAME BACK DOWN TO 418" table carries the NON-fund pools block, and
-its *"fund mode does not raise the floor"* was never staged with a crop strip open — fund mode plus a 56
-strip needed 360 at 418. `band_panel_queue_head_tools_worst_case` is the frame that stages it now. **No
-tier moves** — the one-column box (376) stays under `BAND_ZONE_TALL_MIN_HEIGHT` (420), two columns stay
-TALL, and `BAND_ZONE_CHART_MIN_HEIGHT`'s crossing at a 402 budget is still below it — and the strip is
-40% of a 1080-high window. The 18px also gave back the queue row the 56 strip had taken:
-`WIDE_DOCK_QUEUE_ROWS` is **2** at 436.
-
-⛔ **THE 1152×720 NARROW SHELL DOES NOT FIT THAT WORST CASE, AND `PANEL_HEIGHT_WIDE` CANNOT REACH IT.**
-There the panel takes the tabbed narrow shell, whose one zone is clamped to **337px** by
-`MAX_WIDE_HEIGHT_FRACTION`; the same fund-mode + tool-short-head + crop-strip state measures **346 of
-337 (9 over)**, the board floored at one row. Without the head's second line it is 330 and fits. The
-harness REPORTS it (`band_panel_queue_head_tools_worst_case (1152x720)`) rather than asserting it.
+- **358 of 358, asserted** (`band_panel_queue_head_tools_worst_case`). The two rules that make it fit:
+  the head's second line and its open strip are exclusive (16px it would otherwise cost), and the
+  strip's chrome is 10 rather than 12 — fund mode with a 56px crop strip needed 360 in this box before
+  either existed.
+- **The same band with the strip CLOSED** draws the `◆` line and reads **334 of 358**
+  (`band_panel_queue_head_tools_worst_case_closed`), the board taking two rows.
+- **The 1152×720 NARROW shell** (its one zone clamped to 337px by `MAX_WIDE_HEIGHT_FRACTION`, not by
+  `PANEL_HEIGHT_WIDE`) holds the strip-open worst case at **328 of 337, asserted**
+  (`band_panel_queue_head_tools_worst_case_tight`).
+- **Queue rows:** the tall LEFT dock draws 3; the 1920 BOTTOM dock draws **1** entry row with a strip's
+  54px held back (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS`, the trade Ray took for `Remove from
+  queue`), and 1 in the worst case, strip open or closed.
 
 #### ⛔ ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — and it was a live defect
 

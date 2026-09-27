@@ -3533,14 +3533,21 @@ func _queue_entry_tools_short(band: Dictionary, model: Dictionary) -> bool:
         _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)))
 
 ## **WHAT THE HEAD ROW'S TOOL-SHORT SECOND LINE COSTS THE ZONE** — `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT`
-## when the queue's FIRST entry is the wire head and `_queue_entry_tools_short` holds for it, else
-## `0.0`. The first entry is always drawn (`BUILD_QUEUE_ROWS_MIN` is one), and an entry whose model is
+## when the queue's FIRST entry is the wire head, `_queue_entry_tools_short` holds for it AND its
+## settings strip is not open, else `0.0`. An open head's strip leads with the sentence instead and the
+## row is one line — `_head_row_wears_tools_line` is the one test the row builder draws by. The first entry is always drawn (`BUILD_QUEUE_ROWS_MIN` is one), and an entry whose model is
 ## missing is simply not first — so the head's row exists exactly when this charges for it, and the
 ## reservation and the row builder turn on the one verdict.
 func _queue_head_tools_height(band: Dictionary, queued: Array) -> float:
-    if queued.is_empty() or not _queue_entry_tools_short(band, queued[0] as Dictionary):
+    if queued.is_empty() or not _head_row_wears_tools_line(band, queued[0] as Dictionary):
         return 0.0
     return HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT
+
+## **DOES THIS ROW DRAW THE `◆` SECOND LINE** — tool-short head, strip closed. One test for the
+## reservation above and the row builder, so the height paid for and the line drawn cannot disagree.
+func _head_row_wears_tools_line(band: Dictionary, model: Dictionary) -> bool:
+    return _queue_entry_tools_short(band, model) \
+        and String(model.get("key", "")) != _queue_open_key
 
 ## **WHAT THIS POOL'S BILL DID NOT USE — the wire's figure, ADJUSTED BY WHAT THE PLAYER HAS JUST
 ## DONE THAT THE SIM HAS NOT SEEN** (issue #715).
@@ -4617,7 +4624,12 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
     # reservation has to be told — does it draw — is settled here by construction.
     strip.custom_minimum_size = Vector2(0.0, HudWorkVocab.build_queue_settings_height(
         true, int(content["legs"]), bool(content["crop"])))
-    strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
+    # The work inspector's stylebox with its top and bottom trimmed to `BUILD_QUEUE_SETTINGS_PADDING_V`
+    # — the chrome `build_queue_settings_height` charges — so the lines inside keep their full height.
+    var box := HudStyle.work_inspector_stylebox()
+    box.content_margin_top = HudWorkVocab.BUILD_QUEUE_SETTINGS_PADDING_V
+    box.content_margin_bottom = HudWorkVocab.BUILD_QUEUE_SETTINGS_PADDING_V
+    strip.add_theme_stylebox_override("panel", box)
     var column := VBoxContainer.new()
     column.add_theme_constant_override("separation", 0)
     strip.add_child(column)
@@ -4657,16 +4669,18 @@ func _build_queue_settings_strip(band: Dictionary, model: Dictionary) -> PanelCo
 ## `HudWorkVocab.build_queue_detail_line` over fields the queue model already carries: the model's
 ## `build_blocked_lines` (the source card's own producer) and `DetailFormat.build_price_clause` — the
 ## same price the row's hover quotes, with its turn term suppressed because the date column is the
-## sim's own chained answer. The head's tool shortfall is on the ROW's second line directly above, so
-## it is not repeated here.
+## sim's own chained answer. On the tool-short HEAD it leads with `◆ builders short of tools` — the
+## row drops its own second line while this strip is open, so this is the fact's one statement here.
 ##
 ## **IT ELIDES, NEVER WRAPS**: it shares a control line with the withdrawal, reserved at that line's
 ## height, and the zone clips. The label carries the FULL text on its hover (`HudWidgets.build_status_part`'s elide
 ## form) and on `BUILD_QUEUE_DETAIL_META`. A cause reads in the kit-short amber; a bare price reads dim.
-func _build_queue_detail_line(_band: Dictionary, model: Dictionary) -> Label:
+func _build_queue_detail_line(band: Dictionary, model: Dictionary) -> Label:
+    var tools_short := _queue_entry_tools_short(band, model)
     var blocked_lines: Array = model.get("build_blocked_lines", []) as Array
-    var text := HudWorkVocab.build_queue_detail_line(blocked_lines, _queue_entry_price(model))
-    var has_cause := not blocked_lines.is_empty()
+    var text := HudWorkVocab.build_queue_detail_line(tools_short, blocked_lines,
+        _queue_entry_price(model))
+    var has_cause := tools_short or not blocked_lines.is_empty()
     var label := HudWidgets.build_status_part(text,
         HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY) if has_cause else HudStyle.INK_DIM,
         true)
@@ -4918,7 +4932,9 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
     line.size_flags_vertical = Control.SIZE_EXPAND_FILL
     body.add_child(line)
-    if tools_short:
+    # …and ONLY while its settings strip is CLOSED: an open strip leads with the same words, so the
+    # row goes back to one line rather than stating the fact twice, one line apart.
+    if _head_row_wears_tools_line(band, model):
         row.custom_minimum_size.y += HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT
         body.add_child(_build_queue_row_tools_line())
     line.add_child(_build_queue_row_marker(band, model, is_head))

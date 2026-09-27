@@ -2850,53 +2850,57 @@ pool-TOE arc is anywhere near that gesture.
 ## The queue HEAD's tool shortfall, the strip's DETAIL line, and the labelled withdrawal
 
 `band-city-panel.md` → "THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL", "⑤ THE STRIP OPENS ON THE JOB'S
-DETAIL LINE" and "AND IT RAISED `PANEL_HEIGHT_WIDE` 418 → 436". One state,
-`_render_queue_head_tools_short_state`, appended at the very END of `_render_queue_control_states` (it
-pushes its own bands and restores the three-entry fixture, so no frame above it moves). Five frames —
-measured **`1583 / 225`** (`PASS` / frames) on the merged tree in one windowed run, exit 0 — five of those frames are this state's.
+DETAIL LINE" and "THE WORK ZONE'S WORST CASE AT 418". One state, `_render_queue_head_tools_short_state`,
+appended at the very END of `_render_queue_control_states` (it pushes its own bands and restores the
+three-entry fixture, so no frame above it moves). Seven frames; the run measures **`1599 / 227`**
+(`PASS` / frames) on the merged tree, exit 0.
 
 | frame | what it stages |
 |---|---|
 | `band_panel_queue_head_tools_short` | builders TOE short, nothing open: the head row's amber `◆ builders short of tools` second line |
-| `band_panel_queue_head_tools_short_open` | …and the head's strip open beneath it — detail line + `Remove from queue`, crop picker below |
-| `band_panel_queue_tame_detail` | the Tame's strip — its price by EQUALITY, `Remove from queue` pressed with REAL input |
-| `band_panel_queue_head_tools_short_expanded` | the same band in the expanded queue mode |
-| `band_panel_queue_head_tools_worst_case` | the 1920 BOTTOM dock: fund-mode pools + tool-short head + crop strip open — the 376 floor |
+| `band_panel_queue_head_tools_short_open` | the head's strip OPEN: the row is one line, the detail line leads with `◆ builders short of tools` beside `Remove from queue`, crop picker below |
+| `band_panel_queue_tame_detail` | a NON-head (Tame) strip open — its price by EQUALITY, the head wearing its line again, `Remove from queue` pressed with REAL input |
+| `band_panel_queue_head_tools_short_expanded` | the same band in the expanded queue mode, nothing open |
+| `band_panel_queue_head_tools_worst_case` | 1920 BOTTOM: fund-mode pools + tool-short head + its crop strip open — **358 of 358, asserted** |
+| `band_panel_queue_head_tools_worst_case_tight` | the same at 1152×720, the narrow shell — **328 of 337, asserted** |
+| `band_panel_queue_head_tools_worst_case_closed` | 1920 BOTTOM, the strip CLOSED — the `◆` line drawn, 334 of 358 |
 
-- **THE PLACEMENT IS ASSERTED, NOT REPORTED** (`_assert_queue_head_tools_mark`, collapsed and
-  expanded): ONE `◆` line, on the head row and inside it, below the face; amber
+- **THE PLACEMENT IS ASSERTED** (`_assert_queue_head_tools_mark`, on every strip-closed state and with
+  a non-head strip open): ONE `◆` line, on the head row and inside it, below the face; amber
   (`KIT_SHORT_SEVERITY`) and a text-presentation glyph (`EMOJI_PLANE_FLOOR`); the row draws the 44px it
   reserved; and line one is untouched — the face unclipped (123 of 126), the date at 168, the `▸` in
-  the marker column. It replaced `_report_queue_head_mark_placements`, which only printed the three
-  refused placements.
-- **THE PAIRED NEGATIVES**: every non-head row's hover checked both ways; the builders' TOE FILLED
-  draws no `◆` line anywhere and the head stays one line (28px); the Builders card has no tool line;
-  and a PENDING entry is refused by `_queue_entry_tools_short` both stamped at rank 0 and at its real
+  the marker column.
+- **THE PAIR: LINE OR CLAUSE, NEVER BOTH.** With the head's strip open no `◆` line is drawn, the head
+  draws and reserves 28px, and the detail line LEADS with the clause in amber
+  (`_queue_tools_clause`). The worst-case frame asserts the same exclusion at the 1920 BOTTOM dock.
+- **THE PAIRED NEGATIVES**: every non-head row's hover checked both ways; the Tame's detail line is
+  its price by EQUALITY, so it carries no clause; the builders' TOE FILLED draws no `◆` line, the head
+  stays one line, the Builders card has no tool line, and the head's OPEN strip does not state it; a
+  PENDING entry is refused by `_queue_entry_tools_short` both stamped at rank 0 and at its real
   `NOT_IN_ANY_BUILD_QUEUE`, and `_queue_head_tools_height` charges nothing for a queue it leads.
 - **THE TAME'S PRICE IS THE FIXTURE'S, BY EQUALITY.** The three-entry fixture's herd carries no
   `tame_work_cost` / `tame_upkeep_demand`, which the wire publishes unconditionally, so this state
   stages them (`_queue_priced_herds`).
 - **THE WITHDRAWAL IS DRIVEN WITH `_drive_click`**, and asserted at its full natural width (150),
   inside the strip, on the detail line's own row and right of the label.
-- **THE WORST CASE CARRIES A LIVENESS CONJUNCT** — fund-mode row, one `◆` line, strip open, crop
-  picker drawn — because the keeping-pool patch has no basket of its own; the state lends it the queue
-  fixture's, or the strip is 34 and the fit is a fit of a smaller zone. It then REPORTS the same state
-  at 1152×720, which does not fit (346 of 337) and which no `PANEL_HEIGHT_WIDE` reaches.
+- **THE WORST CASE CARRIES A LIVENESS CONJUNCT** — fund-mode row, the head flagged tool-short, strip
+  open, crop picker drawn — because the keeping-pool patch has no basket of its own; the state lends it
+  the queue fixture's, or the strip is 32 and the fit is a fit of a smaller zone.
 - **`_assert_queue_settings_strip`** asserts every strip-open state LEADS with its detail line and
-  reserves within `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT`; `_assert_closed_settings_costs_the_board_nothing`
+  reserves within `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` (54); `_assert_closed_settings_costs_the_board_nothing`
   adds the crop line and the head's second line to its equality.
-- **Harness finders moved off the glyph**: every `BUILD_QUEUE_UNQUEUE_GLYPH` message names
-  `BUILD_QUEUE_UNQUEUE_LABEL`, and the withdrawal's right-edge claim reads the button's own width where
-  it read the retired `BUILD_QUEUE_UNQUEUE_WIDTH`. Every finder was already by `BUILD_QUEUE_UNQUEUE_META`.
+- **Harness finders are off the glyph**: every withdrawal message names `BUILD_QUEUE_UNQUEUE_LABEL`,
+  and the withdrawal's right-edge claim reads the button's own width. Every finder is by
+  `BUILD_QUEUE_UNQUEUE_META`.
 
-**Sabotage-verified in one run**: dropping the rank test from `_queue_entry_tools_short` AND zeroing
-`_queue_head_tools_height` fails the head-only set in both modes (`◆` lines drawn: 3, ranks
-`[0, 1, 2]`), the two non-head hovers, the pending charge (`0 / 0`) and the worst case's fit
-(`needs 388px … short by 12`).
+**Sabotage-verified.** Letting `_head_row_wears_tools_line` ignore the open strip fails the pair (`◆`
+line drawn with the strip open, head 44px against 28), the worst-case exclusion, and both fits — the
+1920 BOTTOM dock `needs 374px … short by 16`, 1152×720 `needs 344px … short by 7`. Dropping the rank
+test from `_queue_entry_tools_short` fails the head-only set in both modes (ranks `[0, 1, 2]`) and the
+two non-head hovers.
 
-**`PANEL_HEIGHT_WIDE` was swept at 434 / 436**, judged by exit status: 434 fails the worst case
-`short by 2`, 436 is clean. `WIDE_DOCK_QUEUE_ROWS` is **2** at 436 (it read 1 at 418 once the strip
-went back to 56); `DIALOG_PROBE_WIDE_BOARD_ROWS` is unchanged.
+`WIDE_DOCK_QUEUE_ROWS` is **1**, re-measured off a failing run: the strip's reservation went 34 → 54
+with `Remove from queue` beside the detail line, and the 358px box keeps the queue at its floor row.
 
 ## The Trade tab's states live in `tools/band_panel_trade_tab.gd` (issue #731)
 

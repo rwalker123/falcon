@@ -17391,11 +17391,11 @@ const QUEUE_ROW_WORKERS := 1
 ## `build_queue_rows_max` holds that room back from the queue's own ceiling, so 22px is one more entry
 ## row. **RE-MEASURED, never adjusted**: the harness reported `2 drawn` against this constant's 1.
 ##
-## **IT IS STILL 2, AND FOR A NEW REASON.** The strip went back to 56 for `Remove from queue` beside its
-## detail line, which at 418 left one row; `BandCityPanel.PANEL_HEIGHT_WIDE` rose 418 → 436 for the
-## tool-short head's worst case (`band_panel_queue_head_tools_worst_case`), and at a 376px box the queue
-## affords two again. RE-MEASURED, never adjusted.
-const WIDE_DOCK_QUEUE_ROWS := 2
+## ⛔ **IT WENT 2 → 1 WITH `Remove from queue`.** The settings strip's reservation grew back from 34 to
+## 54 (chrome 10 + the detail line that carries the withdrawal + the crop line), and at the 418 budget's
+## 358px box that leaves the queue its floor row — the trade Ray took for the withdrawal's words.
+## RE-MEASURED, never adjusted: the harness reported `1 drawn` against this constant's 2.
+const WIDE_DOCK_QUEUE_ROWS := 1
 
 func _render_build_queue_states() -> void:
 	_panel.set_dock(SIDE_LEFT)
@@ -17702,7 +17702,8 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_band_panel("head tools — …and the Builders card names the top job: \"%s\" (got \"%s\")"
 			% [HudWorkVocab.POOL_TOOLS_SHORT_BUILDERS_LINE, builders.get("gear", "")],
 		String(builders.get("gear", "")) == HudWorkVocab.POOL_TOOLS_SHORT_BUILDERS_LINE)
-	# THE HEAD'S STRIP beneath its two-line row: the detail line does NOT repeat the row's second line.
+	# THE HEAD'S STRIP OPEN: the row goes back to ONE line and the strip's detail line LEADS with the
+	# sentence instead — one statement in either state, never both.
 	_hud._bandpanel._toggle_queue_settings(_queue_entry_key(false))
 	await _settle()
 	await _save("band_panel_queue_head_tools_short_open")
@@ -17710,9 +17711,22 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_zone_content_fits()
 	_assert_queue_settings_strip("the head tools-short strip")
 	var detail := _queue_strip_detail()
-	_assert_band_panel("head tools — the head's detail line does not repeat the row's `%s` (\"%s\")"
-			% [HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT, detail],
-		not detail.contains(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT))
+	var head_open := _build_queue_rows()[0] if not _build_queue_rows().is_empty() else null
+	_assert_band_panel("head tools — with the head's strip OPEN no `◆` line is drawn (%d) and the head is ONE line (%.0fpx, want %.0f)"
+			% [_queue_tools_lines().size(), 0.0 if head_open == null else head_open.size.y,
+				HudWorkVocab.WORK_ROW_HEIGHT],
+		_queue_tools_lines().is_empty() and head_open != null
+			and absf(head_open.size.y - HudWorkVocab.WORK_ROW_HEIGHT) <= QUEUE_FACE_WIDTH_TOLERANCE
+			and is_equal_approx(head_open.custom_minimum_size.y, HudWorkVocab.WORK_ROW_HEIGHT))
+	_assert_band_panel("head tools — …and the strip's detail line LEADS with \"%s\" (\"%s\")"
+			% [_queue_tools_clause(), detail],
+		detail.begins_with(_queue_tools_clause()))
+	var open_detail := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_DETAIL_META) as Label
+	_assert_band_panel("head tools — …in the kit-short amber (%s)"
+			% [Color.TRANSPARENT if open_detail == null
+				else open_detail.get_theme_color(FONT_COLOR_THEME_KEY)],
+		open_detail != null and open_detail.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(
+			HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)))
 	# THE TAME ROW'S STRIP — it opened to a bare `✕` before; now a detail line and a labelled button.
 	_hud._bandpanel._toggle_queue_settings(_queue_entry_key(true))
 	await _settle()
@@ -17728,6 +17742,8 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_band_panel("head tools — the TAME row opens on its price, not a bare control — \"%s\" (want \"%s\")"
 			% [tame_detail, tame_price],
 		tame_strip != null and tame_price != "" and tame_detail == tame_price)
+	# …and with a NON-head strip open, the head's own strip is closed, so the head wears its line again.
+	_assert_queue_head_tools_mark("a non-head strip open")
 	if tame_strip != null:
 		_assert_band_panel("head tools — …and a crop-less strip is ONE control line — %.0f reserved (want %.0f), %.0f drawn"
 				% [tame_strip.custom_minimum_size.y, HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT,
@@ -17762,6 +17778,14 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_band_panel("head tools — …and the Builders card states no tool line (\"%s\")"
 			% _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS).get("gear", ""),
 		String(_pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS).get("gear", "")) == "")
+	# …and the head's OPEN strip does not lead with the clause either, when the TOE is filled.
+	_hud._bandpanel._toggle_queue_settings(_queue_entry_key(false))
+	await _settle()
+	_assert_band_panel("head tools — …and the FILLED head's open strip does not state it (\"%s\")"
+			% _queue_strip_detail(),
+		_find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META) != null
+			and not _queue_strip_detail().contains(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT))
+	_hud._bandpanel._queue_open_key = ""
 	# THE PENDING ROW IS NEVER THE HEAD — even stamped at rank 0 the helper refuses it, and at its
 	# real `NOT_IN_ANY_BUILD_QUEUE` rank too; and a queue LED by a pending entry charges no second line.
 	_push_bands([_queue_head_tools_band_fixture(true)])
@@ -17795,6 +17819,11 @@ func _render_queue_head_tools_short_state() -> void:
 	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1, QUEUE_TURNS_SECOND))
 	_push_bands([_build_queue_band_fixture(3)])
 	await _settle()
+
+## The detail line's leading clause on the tool-short head's open strip.
+func _queue_tools_clause() -> String:
+	return HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
+		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT]
 
 ## The drawn `◆` second lines, wherever they are.
 func _queue_tools_lines() -> Array[Control]:
@@ -17865,10 +17894,10 @@ func _assert_queue_head_tools_mark(where: String) -> void:
 		marker.text == HudWorkVocab.BUILD_QUEUE_HEAD_MARKER)
 
 ## ⛔ GUARD: **THE 1920 BOTTOM DOCK'S WORST CASE** — the fund-mode POOLS block (the tallest), a queued
-## head short of the builders' tools (its second line), and that head's settings strip open. Every
-## term the queue's reservation carries at once, on the dock whose box is the smallest one
-## `PANEL_HEIGHT_WIDE` sizes. The zone clips, so the fit is asserted, and the queue's rows are
-## reported so a reader can see what the box gave back.
+## head short of the builders' tools, and that head's crop strip open: 358 of the 358px box at
+## `PANEL_HEIGHT_WIDE` 418. It fits because the head's `◆` second line and its open strip are
+## exclusive and the strip's chrome is 10. The same state is asserted on the 1152×720 narrow shell
+## (337px box), and the strip-CLOSED twin — the line drawn, the strip not — is asserted after it.
 func _render_queue_head_tools_worst_case() -> void:
 	await _pin_canvas(DOCKROW_CANVAS)
 	_panel.set_dock(SIDE_BOTTOM)
@@ -17899,13 +17928,13 @@ func _render_queue_head_tools_worst_case() -> void:
 	var pools := _find_meta_control(_panel, HudWorkVocab.POOLS_BLOCK_META)
 	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
 	# LIVENESS: every term really is present, or the fit below is a fit of a smaller zone.
-	_assert_band_panel("worst case — the fund-mode row, the tool-short head and an open strip are all drawn (fund %s, mark lines %d, strip %s, crop %s)"
+	_assert_band_panel("worst case — the fund-mode row, the tool-short head and an open strip are all drawn (fund %s, tool-short rows %d, strip %s, crop %s)"
 			% [pools != null and bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META)),
-				_queue_tools_lines().size(), strip != null,
+				_queue_rows_stating_tools_short().size(), strip != null,
 				strip != null and _find_meta_control(strip,
 					HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) != null],
 		pools != null and bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META))
-			and _queue_tools_lines().size() == 1 and strip != null
+			and _queue_rows_stating_tools_short() == [SourceForecast.BUILD_QUEUE_HEAD] and strip != null
 			and _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) != null)
 	print("band_panel_preview: worst case — the 1920 BOTTOM dock draws %d queue row(s), %d board row(s); strip %.0fpx"
 		% [_build_queue_rows().size(), _work_board_row_count(),
@@ -17913,16 +17942,31 @@ func _render_queue_head_tools_worst_case() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_queue_head_tools_worst_case")
-	# …and the same worst case on the 1152×720 window, REPORTED rather than asserted: there the panel
-	# takes the NARROW tabbed shell, whose one zone is clamped by `MAX_WIDE_HEIGHT_FRACTION` to 337px
-	# and not by `PANEL_HEIGHT_WIDE` — so no value of that constant reaches it, and the fund-mode floor
-	# was already past that box before the head's second line existed.
+	_assert_band_panel("worst case — …with the strip OPEN the head is one line and the strip carries the sentence (%d `◆` lines)"
+			% _queue_tools_lines().size(),
+		_queue_tools_lines().is_empty() and _queue_strip_detail().begins_with(_queue_tools_clause()))
+	# …and the same worst case on the 1152×720 window: there the panel takes the NARROW tabbed shell,
+	# whose one zone is clamped by `MAX_WIDE_HEIGHT_FRACTION` to 337px and not by `PANEL_HEIGHT_WIDE`.
 	await _pin_canvas(DIALOG_PROBE_TIGHTEST_CANVAS)
 	_panel.set_dock(SIDE_BOTTOM)
 	await _settle()
+	await _save("band_panel_queue_head_tools_worst_case_tight")
+	_assert_zone_content_fits()
 	_report_zone_content_extent("band_panel_queue_head_tools_worst_case (1152x720)")
 	await _pin_canvas(DOCKROW_CANVAS)
+	await _settle()
+	# THE STRIP CLOSED: the head wears its `◆` line, and the queue's reservation paid for it.
 	_hud._bandpanel._queue_open_key = ""
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_queue_head_tools_worst_case_closed")
+	_assert_band_panel("worst case — with the strip CLOSED the head wears its `◆` line (%d)"
+			% _queue_tools_lines().size(), _queue_tools_lines().size() == 1)
+	print("band_panel_preview: worst case (strip closed) — the 1920 BOTTOM dock draws %d queue row(s), %d board row(s)"
+		% [_build_queue_rows().size(), _work_board_row_count()])
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_queue_head_tools_worst_case (strip closed)")
 
 ## The open strip's detail line, off its handle — the FULL text, not the ellipsised face.
 func _queue_strip_detail() -> String:

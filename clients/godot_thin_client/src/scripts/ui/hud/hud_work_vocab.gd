@@ -2900,10 +2900,18 @@ const BUILD_QUEUE_CROP_WIDTH := 168.0
 ## SUM rather than a literal: a second line costs another control and no more chrome.
 const BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT := WORK_COMPACT_PICKER_LINE_HEIGHT
 
-## **THE STRIP'S OWN CHROME, CHARGED EXACTLY ONCE** — `HudStyle.ROLE_CARD_PADDING` above and below
-## (6 + 6), from the single `work_inspector_stylebox` the strip wears however many lines open inside
-## it. Reserving it per LINE is what made a wrapped strip cost 68 where it draws 56.
-const BUILD_QUEUE_SETTINGS_CHROME := 12.0
+## **THE STRIP'S OWN VERTICAL PADDING — 5, one under the role card's `HudStyle.ROLE_CARD_PADDING`.**
+## The strip wears `work_inspector_stylebox` with its top and bottom content margins trimmed to this
+## (`BandPanelController._build_queue_settings_strip`); the sides keep the card's 6. Those 2px are what
+## the 1920 BOTTOM dock's worst case was short by at `BandCityPanel.PANEL_HEIGHT_WIDE` 418 — fund-mode
+## pools with the head's crop strip open needed 360 in a 358px box — and they come out of the strip's
+## air, never out of the control line or the detail line inside it.
+const BUILD_QUEUE_SETTINGS_PADDING_V := 5
+
+## **THE STRIP'S OWN CHROME, CHARGED EXACTLY ONCE** — `BUILD_QUEUE_SETTINGS_PADDING_V` above and below,
+## from the single stylebox the strip wears however many lines open inside it. Reserving it per LINE is
+## what made a wrapped strip cost 68 where it drew 56.
+const BUILD_QUEUE_SETTINGS_CHROME := 2.0 * float(BUILD_QUEUE_SETTINGS_PADDING_V)
 
 ## The open strip's height at ONE LINE of controls, and the number BOTH the strip draws at and
 ## `build_queue_block_height` reserves. The zone `clip_contents`, so a strip that drew taller than it
@@ -2932,11 +2940,10 @@ const BUILD_QUEUE_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_CHROME \
 ## the block on every dock for a state most bands never reach, which is the same trade the retired
 ## constant's own comment made.
 ##
-## ⛔ **IT WAS THE WRAPPED KIT/CROP PAIR (56), FELL TO ONE CONTROL LINE (34), AND IS 56 AGAIN** — the
-## DETAIL line every open strip leads with carries `BUILD_QUEUE_UNQUEUE_LABEL` at the control height,
-## and a crop strip adds its picker's line beneath it. On the 1920 BOTTOM dock that costs the queue
-## its second entry row (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS` 2 → 1), which is the trade Ray
-## took for the withdrawal's words.
+## ⛔ **IT IS 54: chrome 10 + the DETAIL line 22 + the crop line 22.** The detail line every open strip
+## leads with carries `BUILD_QUEUE_UNQUEUE_LABEL` at the control height, and a crop strip adds its
+## picker's line beneath it. On the 1920 BOTTOM dock (a 358px box) that leaves the queue ONE entry row
+## (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS`), the trade Ray took for the withdrawal's words.
 ## ⛔ **IT IS DECLARED HERE, NOT BESIDE `BUILD_QUEUE_ROOM_GAP_COUNT` WHERE IT IS READ**, because a
 ## GDScript `const` may not read one declared below it and its term is on the lines above.
 const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT \
@@ -3288,7 +3295,7 @@ const BUILD_QUEUE_HEAD_HEIGHT := 22.0
 ## the disclosure BUTTON now, and an `HBoxContainer` grows to its tallest child.
 ##
 ## ⛔ **`head_tools_height` IS THE HEAD ROW'S SECOND LINE** — `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT`
-## while the drawn head is short of the builders' tools, `0.0` otherwise
+## while the drawn head is short of the builders' tools and its strip is closed, `0.0` otherwise
 ## (`BandPanelController._queue_head_tools_height`). The row grows only in that state, so the term is
 ## an argument rather than a constant, and the same value goes to `build_queue_rows_max` and
 ## `_work_board_capacity`.
@@ -3581,8 +3588,9 @@ const BUILD_QUEUE_DETAIL_SEPARATOR := " · "
 ## builders pool's TOE is the queue head's own claim (`docs/plan_pool_toe.md` §2.4), so when it is
 ## short the head row says so and no other row can. It is the work rows' own `◆` (`KIT_SHORT_MARK`)
 ## and the board's two-line-row idiom: the first line had no width for the mark (the face's unclipped
-## guarantee and the date's worst case measured 3px and 0px of slack), so the row grows a line ONLY in
-## this state and a head that is not short stays one line.
+## guarantee and the date's worst case measured 3px and 0px of slack), so the row grows a line ONLY
+## while the head is tool-short AND its settings strip is CLOSED. With the strip open the row is one
+## line and the strip's detail line leads with the same words instead — one statement in either state.
 const BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT := "builders short of tools"
 const BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT := "%s %s"
 
@@ -3614,10 +3622,15 @@ const BUILD_QUEUE_ROW_TOOLS_SHORT_META := "build_queue_row_tools_short"
 ## **THE DETAIL LINE — the job's causes, then its price, or `""` when the row knows neither.**
 ## `blocked_lines` is the model's `build_blocked_lines`, the source card's own producer; `price` the
 ## `DetailFormat.build_price_clause` the row's hover already quotes. Pure joining — nothing here
-## computes a number. **The head's tool shortfall is NOT a clause here**: the head row's own second
-## line states it directly above the strip, and a second copy one line down said nothing new.
-static func build_queue_detail_line(blocked_lines: Array, price: String) -> String:
+## computes a number. **`tools_short` LEADS with `◆ builders short of tools`** on the tool-short
+## head's OPEN strip: the head row drops its own second line while its strip is open, so this is the
+## only statement of the fact in that state — one sentence visible in either state, never both.
+static func build_queue_detail_line(tools_short: bool, blocked_lines: Array,
+        price: String) -> String:
     var parts: Array[String] = []
+    if tools_short:
+        parts.append(BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [KIT_SHORT_MARK,
+            BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT])
     for line in blocked_lines:
         if String(line) != "":
             parts.append(String(line))
