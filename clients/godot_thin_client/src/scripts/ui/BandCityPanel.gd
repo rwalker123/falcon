@@ -134,7 +134,19 @@ const PANEL_WIDTH := 380.0
 ##
 ## At a 1080-high viewport the strip is **39% of the window** against the 42% 456 took, inside
 ## `MAX_WIDE_HEIGHT_FRACTION` (0.6) with room.
-const PANEL_HEIGHT_WIDE := 418.0
+##
+## **IT IS 436 NOW — 418 + 18, SWEPT.** Two things joined the work zone's worst case: the queue HEAD
+## short of the builders' tools grows a second line (`HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT`,
+## 16), and the settings strip went back to 56 for `Remove from queue` (a crop strip). With the
+## fund-mode POOLS block (110) — which the 358 table above does NOT carry, and which with a 56 crop
+## strip already needed 360, a 2px clip no frame staged — the floor is **376**: 46 + 110 + queue
+## (head 22 + one row 28 + second line 16 + strip 56) + one board row 44 + pager 24 + gaps 30.
+## `band_panel_queue_head_tools_worst_case` stages it: **434 fails `short by 2`, 436 is 376 of 376.**
+## The queue is already at its one-row floor there, so no queue row could be given back instead. No
+## tier moves: the one-column box (376) stays under `BAND_ZONE_TALL_MIN_HEIGHT` (420), two columns
+## stay TALL, and `BAND_ZONE_CHART_MIN_HEIGHT`'s 402 crossing is still below the budget. 40% of a
+## 1080-high window.
+const PANEL_HEIGHT_WIDE := 436.0
 ## FLOOR on the cross-axis size when collapsed to a thin rail (both orientations) — the rail is at
 ## least this thin, and thicker when its own chrome needs more (`_collapsed_cross_axis_size`).
 const COLLAPSED_SIZE := 46.0

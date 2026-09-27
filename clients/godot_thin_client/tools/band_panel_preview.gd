@@ -17391,9 +17391,10 @@ const QUEUE_ROW_WORKERS := 1
 ## `build_queue_rows_max` holds that room back from the queue's own ceiling, so 22px is one more entry
 ## row. **RE-MEASURED, never adjusted**: the harness reported `2 drawn` against this constant's 1.
 ##
-## **IT STAYED 2 WHEN THE STRIP GREW ITS DETAIL LINE** — `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` 34 → 52, 18 of
-## the 22px, and `(358 − 300) / 28` still affords two rows with 2px to spare. The withdrawal's longer
-## `Remove from queue` would have cost this row; see `HudWorkVocab.BUILD_QUEUE_UNQUEUE_LABEL`.
+## **IT IS STILL 2, AND FOR A NEW REASON.** The strip went back to 56 for `Remove from queue` beside its
+## detail line, which at 418 left one row; `BandCityPanel.PANEL_HEIGHT_WIDE` rose 418 → 436 for the
+## tool-short head's worst case (`band_panel_queue_head_tools_worst_case`), and at a 376px box the queue
+## affords two again. RE-MEASURED, never adjusted.
 const WIDE_DOCK_QUEUE_ROWS := 2
 
 func _render_build_queue_states() -> void:
@@ -17663,13 +17664,13 @@ func _queue_rows_stating_tools_short() -> Array:
 ##
 ## | state | head row | rows behind it | Builders card |
 ## |---|---|---|---|
-## | builders TOE short | hover + detail line state it | never | `POOL_TOOLS_SHORT_BUILDERS_LINE` |
-## | …the same, EXPANDED queue mode | hover states it | never | — |
-## | builders TOE FILLED | silent | silent | no tool line |
-## | a PENDING row (never the head) | — | the helper answers `false` even at rank 0 | — |
+## | builders TOE short | the amber `◆` second line + the hover sentence | never | `POOL_TOOLS_SHORT_BUILDERS_LINE` |
+## | …the same, EXPANDED queue mode | the same | never | — |
+## | builders TOE FILLED | one line, silent | silent | no tool line |
+## | a PENDING row (never the head) | — | the helper refuses it even at rank 0, and charges nothing | — |
 ##
 ## …and the DETAIL line every strip now opens on — a Tame's included, which used to open to a bare
-## control — with the labelled withdrawal pressed through REAL input.
+## control — with `Remove from queue` beside it, pressed through REAL input.
 func _render_queue_head_tools_short_state() -> void:
 	await _pin_canvas(PREVIEW_SIZE)
 	_panel.set_dock(SIDE_LEFT)
@@ -17680,15 +17681,15 @@ func _render_queue_head_tools_short_state() -> void:
 	_set_world_herds(_queue_priced_herds())
 	_push_bands([_queue_head_tools_band_fixture(true)])
 	await _settle()
-	_report_queue_head_mark_placements()
 	# LIVENESS: the fixture's builders TOE really is short, or every claim below passes on silence.
 	var band := _hud._band_labor.panel_band()
 	_assert_band_panel("head tools — precondition: the builders pool's TOE is SHORT on this band",
 		HudWorkVocab.pool_toe_is_short(
 			HudBandLaborState.pool_toe_for(band, HudConst.LABOR_KIND_BUILDERS)))
-	_assert_band_panel("head tools — the HEAD row and only the head states the shortfall (ranks %s)"
-			% [_queue_rows_stating_tools_short()],
-		_queue_rows_stating_tools_short() == [SourceForecast.BUILD_QUEUE_HEAD])
+	await _save("band_panel_queue_head_tools_short")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_queue_head_tools_mark("the tall LEFT dock")
 	for row in _build_queue_rows():
 		var is_head := int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) \
 			== SourceForecast.BUILD_QUEUE_HEAD
@@ -17701,17 +17702,17 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_band_panel("head tools — …and the Builders card names the top job: \"%s\" (got \"%s\")"
 			% [HudWorkVocab.POOL_TOOLS_SHORT_BUILDERS_LINE, builders.get("gear", "")],
 		String(builders.get("gear", "")) == HudWorkVocab.POOL_TOOLS_SHORT_BUILDERS_LINE)
-	# THE HEAD'S STRIP: the detail line leads with the tool clause, the crop picker sits beneath it.
+	# THE HEAD'S STRIP beneath its two-line row: the detail line does NOT repeat the row's second line.
 	_hud._bandpanel._toggle_queue_settings(_queue_entry_key(false))
 	await _settle()
-	await _save("band_panel_queue_head_tools_short")
+	await _save("band_panel_queue_head_tools_short_open")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_queue_settings_strip("the head tools-short strip")
 	var detail := _queue_strip_detail()
-	_assert_band_panel("head tools — the head's detail line LEADS with \"%s\" (got \"%s\")"
-			% [HudWorkVocab.BUILD_QUEUE_DETAIL_TOOLS_SHORT, detail],
-		detail.begins_with(HudWorkVocab.BUILD_QUEUE_DETAIL_TOOLS_SHORT))
+	_assert_band_panel("head tools — the head's detail line does not repeat the row's `%s` (\"%s\")"
+			% [HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT, detail],
+		not detail.contains(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT))
 	# THE TAME ROW'S STRIP — it opened to a bare `✕` before; now a detail line and a labelled button.
 	_hud._bandpanel._toggle_queue_settings(_queue_entry_key(true))
 	await _settle()
@@ -17728,10 +17729,11 @@ func _render_queue_head_tools_short_state() -> void:
 			% [tame_detail, tame_price],
 		tame_strip != null and tame_price != "" and tame_detail == tame_price)
 	if tame_strip != null:
-		var want_h := HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT + HudWorkVocab.BUILD_QUEUE_DETAIL_HEIGHT
-		_assert_band_panel("head tools — …and it reserves the chrome, the detail line and ONE control line — %.0f reserved (want %.0f), %.0f drawn"
-				% [tame_strip.custom_minimum_size.y, want_h, tame_strip.size.y],
-			is_equal_approx(tame_strip.custom_minimum_size.y, want_h)
+		_assert_band_panel("head tools — …and a crop-less strip is ONE control line — %.0f reserved (want %.0f), %.0f drawn"
+				% [tame_strip.custom_minimum_size.y, HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT,
+					tame_strip.size.y],
+			is_equal_approx(tame_strip.custom_minimum_size.y,
+				HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT)
 				and absf(tame_strip.size.y - tame_strip.custom_minimum_size.y)
 					<= QUEUE_FACE_WIDTH_TOLERANCE)
 		await _assert_labelled_withdrawal_by_real_input(tame_strip)
@@ -17741,22 +17743,27 @@ func _render_queue_head_tools_short_state() -> void:
 	_hud._bandpanel._toggle_queue_expanded()
 	await _settle()
 	await _save("band_panel_queue_head_tools_short_expanded")
-	_assert_band_panel("head tools — EXPANDED mode: the head and only the head states it (ranks %s)"
-			% [_queue_rows_stating_tools_short()],
-		_queue_rows_stating_tools_short() == [SourceForecast.BUILD_QUEUE_HEAD])
+	_assert_queue_head_tools_mark("the EXPANDED queue")
 	_hud._bandpanel._toggle_queue_expanded()
 	await _settle()
-	# THE PAIRED NEGATIVE — the builders' TOE FILLED: no row states it and the card has no tool line.
+	# THE PAIRED NEGATIVE — the builders' TOE FILLED: no row states it, no row grows its second line,
+	# and the card has no tool line.
 	_push_bands([_queue_head_tools_band_fixture(false)])
 	await _settle()
-	_assert_band_panel("head tools — with the builders' TOE FILLED no row states it (ranks %s)"
-			% [_queue_rows_stating_tools_short()],
-		_build_queue_rows().size() > 0 and _queue_rows_stating_tools_short().is_empty())
+	_assert_band_panel("head tools — with the builders' TOE FILLED no row states it (ranks %s) and none draws the `◆` line (%d)"
+			% [_queue_rows_stating_tools_short(), _queue_tools_lines().size()],
+		_build_queue_rows().size() > 0 and _queue_rows_stating_tools_short().is_empty()
+			and _queue_tools_lines().is_empty())
+	var calm_head := _build_queue_rows()[0] if not _build_queue_rows().is_empty() else null
+	_assert_band_panel("head tools — …and the head stays ONE line (%.0f px, want %.0f)"
+			% [0.0 if calm_head == null else calm_head.size.y, HudWorkVocab.WORK_ROW_HEIGHT],
+		calm_head != null and absf(calm_head.size.y - HudWorkVocab.WORK_ROW_HEIGHT)
+			<= QUEUE_FACE_WIDTH_TOLERANCE)
 	_assert_band_panel("head tools — …and the Builders card states no tool line (\"%s\")"
 			% _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS).get("gear", ""),
 		String(_pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS).get("gear", "")) == "")
 	# THE PENDING ROW IS NEVER THE HEAD — even stamped at rank 0 the helper refuses it, and at its
-	# real `NOT_IN_ANY_BUILD_QUEUE` rank too.
+	# real `NOT_IN_ANY_BUILD_QUEUE` rank too; and a queue LED by a pending entry charges no second line.
 	_push_bands([_queue_head_tools_band_fixture(true)])
 	await _settle()
 	band = _hud._band_labor.panel_band()
@@ -17773,10 +17780,149 @@ func _render_queue_head_tools_short_state() -> void:
 		_hud._bandpanel._queue_entry_tools_short(band, head_model)
 			and not _hud._bandpanel._queue_entry_tools_short(band, pending_model)
 			and not _hud._bandpanel._queue_entry_tools_short(band, tail_model))
+	_assert_band_panel("head tools — …and a queue led by a pending entry charges no second line (%.0f / %.0f)"
+			% [_hud._bandpanel._queue_head_tools_height(band, [head_model]),
+				_hud._bandpanel._queue_head_tools_height(band, [pending_model])],
+		is_equal_approx(_hud._bandpanel._queue_head_tools_height(band, [head_model]),
+				HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT)
+			and is_equal_approx(_hud._bandpanel._queue_head_tools_height(band, [pending_model]), 0.0))
+	await _render_queue_head_tools_worst_case()
 	# Restore the chapter's three-entry fixture for whatever follows.
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
 	_hud._bandpanel._queue_open_key = ""
+	_set_forage_patches(_build_queue_patches(3))
+	_set_world_herds(_build_queue_herds(SourceForecast.BUILD_QUEUE_HEAD + 1, QUEUE_TURNS_SECOND))
 	_push_bands([_build_queue_band_fixture(3)])
 	await _settle()
+
+## The drawn `◆` second lines, wherever they are.
+func _queue_tools_lines() -> Array[Control]:
+	return _collect_meta_controls(_panel, HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_META, [])
+
+## ⛔ GUARD: **THE CHOSEN PLACEMENT — the head's SECOND line — and the three things it must not cost.**
+## The mark is drawn on the head row and on no other; it is amber, a text-presentation glyph (a colour
+## emoji ignores `font_color`, the red-backpack defect); it sits INSIDE the head row, BELOW its face;
+## the row draws exactly the one-line height plus `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT` (reserved ==
+## drawn); and the first line is untouched — the face renders unclipped, the date column keeps its
+## `BUILD_QUEUE_DATE_WIDTH`, and the marker column still holds `▸`.
+func _assert_queue_head_tools_mark(where: String) -> void:
+	_assert_band_panel("head mark — %s: the HEAD row and only the head states the shortfall (ranks %s)"
+			% [where, _queue_rows_stating_tools_short()],
+		_queue_rows_stating_tools_short() == [SourceForecast.BUILD_QUEUE_HEAD])
+	var lines := _queue_tools_lines()
+	_assert_band_panel("head mark — %s: exactly ONE `◆` line is drawn (%d)" % [where, lines.size()],
+		lines.size() == 1)
+	var head: Control = null
+	for row in _build_queue_rows():
+		if int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD:
+			head = row
+	if lines.size() != 1 or head == null:
+		_fail("head mark — %s: no head row / mark line to measure" % where)
+		return
+	var mark := lines[0] as Label
+	var want_text := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
+		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT]
+	_assert_band_panel("head mark — %s: …it reads \"%s\" (got \"%s\")" % [where, want_text, mark.text],
+		mark.text == want_text)
+	_assert_band_panel("head mark — %s: …in the kit-short amber (%s)"
+			% [where, mark.get_theme_color(FONT_COLOR_THEME_KEY)],
+		mark.get_theme_color(FONT_COLOR_THEME_KEY).is_equal_approx(
+			HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY)))
+	var emoji := false
+	for code_point in HudWorkVocab.KIT_SHORT_MARK.to_utf32_buffer().to_int32_array():
+		emoji = emoji or code_point >= EMOJI_PLANE_FLOOR
+	_assert_band_panel("head mark — %s: …a TEXT-presentation glyph the ink can tint" % where,
+		not emoji)
+	_assert_band_panel("head mark — %s: …it sits on the head row itself (row %s, mark %s)"
+			% [where, head.get_global_rect(), mark.get_global_rect()],
+		head.get_global_rect().grow(QUEUE_FACE_WIDTH_TOLERANCE).encloses(mark.get_global_rect())
+			and head.is_ancestor_of(mark))
+	var face := _find_meta_control(head, HudWorkVocab.BUILD_QUEUE_FACE_META) as Label
+	var date := _find_meta_control(head, HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
+	var marker := _find_meta_control(head, HudWorkVocab.BUILD_QUEUE_MARKER_META) as Label
+	if face == null or date == null or marker == null:
+		_fail("head mark — %s: the head row lost its face / date / marker" % where)
+		return
+	_assert_band_panel("head mark — %s: …BELOW the face (face bottom %.0f, mark top %.0f)"
+			% [where, face.global_position.y + face.size.y, mark.global_position.y],
+		mark.global_position.y + QUEUE_FACE_WIDTH_TOLERANCE >= face.global_position.y + face.size.y)
+	var want_h := HudWorkVocab.WORK_ROW_HEIGHT + HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT
+	_assert_band_panel("head mark — %s: …and the row draws %.0fpx, what it reserved (%.0f)"
+			% [where, head.size.y, want_h],
+		absf(head.size.y - want_h) <= QUEUE_FACE_WIDTH_TOLERANCE
+			and is_equal_approx(head.custom_minimum_size.y, want_h))
+	var face_need := face.get_theme_font("font").get_string_size(face.text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, face.get_theme_font_size("font_size")).x
+	_assert_band_panel("head mark — %s: …the face `%s` is UNCLIPPED (%.0f of %.0f)"
+			% [where, face.text, face_need, face.size.x],
+		face.size.x + QUEUE_FACE_WIDTH_TOLERANCE >= face_need)
+	_assert_band_panel("head mark — %s: …the date column keeps its %.0fpx (%.0f)"
+			% [where, HudWorkVocab.BUILD_QUEUE_DATE_WIDTH, date.size.x],
+		absf(date.size.x - HudWorkVocab.BUILD_QUEUE_DATE_WIDTH) <= QUEUE_FACE_WIDTH_TOLERANCE)
+	_assert_band_panel("head mark — %s: …and the marker column still holds `%s` (\"%s\")"
+			% [where, HudWorkVocab.BUILD_QUEUE_HEAD_MARKER, marker.text],
+		marker.text == HudWorkVocab.BUILD_QUEUE_HEAD_MARKER)
+
+## ⛔ GUARD: **THE 1920 BOTTOM DOCK'S WORST CASE** — the fund-mode POOLS block (the tallest), a queued
+## head short of the builders' tools (its second line), and that head's settings strip open. Every
+## term the queue's reservation carries at once, on the dock whose box is the smallest one
+## `PANEL_HEIGHT_WIDE` sizes. The zone clips, so the fit is asserted, and the queue's rows are
+## reported so a reader can see what the box gave back.
+func _render_queue_head_tools_worst_case() -> void:
+	await _pin_canvas(DOCKROW_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	_hud._bandpanel._queue_open_key = ""
+	_set_world_herds(_keeping_pool_herd_fixtures())
+	# …with the queue fixture's own BASKET on the patch, so the head's strip carries its crop picker —
+	# the tallest strip there is, and the one `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` is sized to.
+	var patches := _keeping_pool_patch_fixtures()
+	(patches[0] as Dictionary)["composition"] = \
+		(_build_queue_patches(1)[0] as Dictionary)["composition"]
+	_set_forage_patches(patches)
+	var band := _keeping_pool_band_fixture(HudConst.UPKEEP_FUND_MODE_SPREAD)
+	band[HudBandLaborState.POOL_TOE_KEY] = [_pool_toe_row(HudConst.LABOR_KIND_BUILDERS,
+		POOL_TOE_BUILDERS_ITEM, POOL_TOE_BUILDERS_REQUIRED, POOL_TOE_BUILDERS_FILLED)]
+	var rows: Array = (band["labor_assignments"] as Array).duplicate(true)
+	rows.append({"kind": HudConst.LABOR_KIND_BUILDERS, "workers": QUEUE_BUILDERS})
+	band["labor_assignments"] = rows
+	_push_bands([band])
+	await _settle()
+	var head_key := _queue_entry_key(false)
+	if head_key == "":
+		_fail("worst case — the fund-mode band carries no queued plant entry")
+		return
+	_hud._bandpanel._toggle_queue_settings(head_key)
+	await _settle()
+	await _save("band_panel_queue_head_tools_worst_case")
+	var pools := _find_meta_control(_panel, HudWorkVocab.POOLS_BLOCK_META)
+	var strip := _find_meta_control(_panel, HudWorkVocab.BUILD_QUEUE_SETTINGS_META)
+	# LIVENESS: every term really is present, or the fit below is a fit of a smaller zone.
+	_assert_band_panel("worst case — the fund-mode row, the tool-short head and an open strip are all drawn (fund %s, mark lines %d, strip %s, crop %s)"
+			% [pools != null and bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META)),
+				_queue_tools_lines().size(), strip != null,
+				strip != null and _find_meta_control(strip,
+					HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) != null],
+		pools != null and bool(pools.get_meta(HudWorkVocab.POOLS_BLOCK_META))
+			and _queue_tools_lines().size() == 1 and strip != null
+			and _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_CROP_PICKER_META) != null)
+	print("band_panel_preview: worst case — the 1920 BOTTOM dock draws %d queue row(s), %d board row(s); strip %.0fpx"
+		% [_build_queue_rows().size(), _work_board_row_count(),
+			0.0 if strip == null else strip.size.y])
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_report_zone_content_extent("band_panel_queue_head_tools_worst_case")
+	# …and the same worst case on the 1152×720 window, REPORTED rather than asserted: there the panel
+	# takes the NARROW tabbed shell, whose one zone is clamped by `MAX_WIDE_HEIGHT_FRACTION` to 337px
+	# and not by `PANEL_HEIGHT_WIDE` — so no value of that constant reaches it, and the fund-mode floor
+	# was already past that box before the head's second line existed.
+	await _pin_canvas(DIALOG_PROBE_TIGHTEST_CANVAS)
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	_report_zone_content_extent("band_panel_queue_head_tools_worst_case (1152x720)")
+	await _pin_canvas(DOCKROW_CANVAS)
+	_hud._bandpanel._queue_open_key = ""
 
 ## The open strip's detail line, off its handle — the FULL text, not the ellipsised face.
 func _queue_strip_detail() -> String:
@@ -17789,7 +17935,8 @@ func _queue_strip_detail() -> String:
 ## ⛔ GUARD: **THE LABELLED WITHDRAWAL, PRESSED WITH REAL INPUT, STILL SENDS `unqueue`.** Its face
 ## changed from a glyph to words and it now shares a line with an ellipsising label, so the claims are
 ## the ones a squeezed or covered button fails: it draws at its full natural width, INSIDE the strip,
-## BELOW the detail line it must not overlap, and a real click through the viewport emits the command.
+## ON the detail line's own row beside the label that gives way to it, and a real click through the
+## viewport emits the command.
 func _assert_labelled_withdrawal_by_real_input(strip: Control) -> void:
 	var button := _find_meta_control(strip, HudWorkVocab.BUILD_QUEUE_UNQUEUE_META) as Button
 	if button == null:
@@ -17807,9 +17954,11 @@ func _assert_labelled_withdrawal_by_real_input(strip: Control) -> void:
 			and button.size.x + QUEUE_FACE_WIDTH_TOLERANCE >= button.get_combined_minimum_size().x
 			and button.global_position.x + button.size.x
 				<= strip.global_position.x + strip.size.x + QUEUE_FACE_WIDTH_TOLERANCE)
-	_assert_band_panel("labelled withdrawal — …on the control line BELOW the detail line, inside the strip's bottom",
-		detail != null and button.global_position.y + QUEUE_FACE_WIDTH_TOLERANCE
-				>= detail.global_position.y + detail.size.y
+	_assert_band_panel("labelled withdrawal — …on the detail line's own row, right of the label, inside the strip's bottom",
+		detail != null and absf(detail.get_global_rect().get_center().y
+				- button.get_global_rect().get_center().y) <= QUEUE_FACE_WIDTH_TOLERANCE
+			and detail.global_position.x + detail.size.x
+				<= button.global_position.x + QUEUE_FACE_WIDTH_TOLERANCE
 			and button.global_position.y + button.size.y
 				<= strip.global_position.y + strip.size.y + QUEUE_FACE_WIDTH_TOLERANCE)
 	var seen: Array = []
@@ -17827,46 +17976,6 @@ func _assert_labelled_withdrawal_by_real_input(strip: Control) -> void:
 	_hud._bandpanel.rerender()
 	await _settle()
 
-## **WHERE THE HEAD ROW'S `◆` COULD GO, MEASURED — and it goes nowhere.** PRINTED, never asserted,
-## for `_report_queue_row_columns`' reason: a red line here asks for a decision, not a fix. The row has
-## no spare width (marker 10 · face expanding · date 168 · reorder 32 · four separations), and the two
-## guarantees any placement must keep are the face's asserted-unclipped `🌱 Cultivate (72, 18)` and the
-## date column's worst case `Cultivating 100% · turn 999`.
-func _report_queue_head_mark_placements() -> void:
-	var rows := _build_queue_rows()
-	if rows.is_empty():
-		_fail("head mark — no queue row to measure")
-		return
-	var face := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_FACE_META) as Label
-	var date := _find_meta_control(rows[0], HudWorkVocab.BUILD_QUEUE_DATE_META) as Label
-	if face == null or date == null:
-		_fail("head mark — the head row has no face/date pair to measure")
-		return
-	var font := face.get_theme_font("font")
-	var size := face.get_theme_font_size("font_size")
-	var mark := font.get_string_size(HudWorkVocab.KIT_SHORT_MARK, HORIZONTAL_ALIGNMENT_LEFT, -1.0,
-		size).x
-	var head_marker := font.get_string_size(HudWorkVocab.BUILD_QUEUE_HEAD_MARKER,
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
-	var sep := float(HudWorkVocab.WORK_ROW_SEPARATION)
-	var face_need := font.get_string_size(String(face.get_meta(HudWorkVocab.BUILD_QUEUE_FACE_META)),
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
-	var widest_date: String = HudSelectionVocab.RUNG_COMPLETES_LEG_FORMAT % [
-		String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS[SourceForecast.IMPROVEMENT_CULTIVATE]),
-		QUEUE_MARK_WIDEST_PERCENT, QUEUE_MARK_WIDEST_TURN]
-	var prefixed := HudWorkVocab.KIT_SHORT_MARK + " " + widest_date
-	var prefixed_px := font.get_string_size(prefixed, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
-	print("band_panel_preview: head mark — `%s` is %.0fpx. BESIDE THE FACE: face column %.0fpx, `%s` needs %.0f (slack %.0f); a slot costs %.0f, leaving %.0f (clips by %.0f). INSIDE THE DATE: `%s` needs %.0f of %.0f (clips by %.0f). THE MARKER COLUMN: %.0fpx, already holding `%s` (%.0f)."
-		% [HudWorkVocab.KIT_SHORT_MARK, mark, face.size.x, face.text, face_need,
-			face.size.x - face_need, mark + sep, face.size.x - mark - sep,
-			face_need - (face.size.x - mark - sep), prefixed, prefixed_px, date.size.x,
-			prefixed_px - date.size.x, HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH,
-			HudWorkVocab.BUILD_QUEUE_HEAD_MARKER, head_marker])
-
-## The date column's worst case, as `_report_queue_row_columns` measures it: a full meter over a
-## three-digit turn.
-const QUEUE_MARK_WIDEST_PERCENT := 100
-const QUEUE_MARK_WIDEST_TURN := 999
 
 ## One queued entry's key by web, off the block's own model list.
 func _queue_entry_key(animal: bool) -> String:
@@ -23225,11 +23334,19 @@ func _assert_closed_settings_costs_the_board_nothing() -> void:
 	# missing outright.
 	var open_h := HudWorkVocab.build_queue_block_height(queued,
 		HudWorkVocab.BUILD_QUEUE_ROWS_MAX, true, 0)
-	_assert_band_panel("…while an OPEN one adds exactly the strip — its chrome, control line and DETAIL line — %.0f against %.0f"
-			% [open_h, closed + HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT
-				+ HudWorkVocab.BUILD_QUEUE_DETAIL_HEIGHT],
-		is_equal_approx(open_h, closed + HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT
-			+ HudWorkVocab.BUILD_QUEUE_DETAIL_HEIGHT))
+	_assert_band_panel("…while an OPEN one adds exactly the strip — its chrome and the detail line the withdrawal rides — %.0f against %.0f"
+			% [open_h, closed + HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT],
+		is_equal_approx(open_h, closed + HudWorkVocab.BUILD_QUEUE_SETTINGS_HEIGHT))
+	# …and a CROP strip adds its picker's line, and a tool-short head its second line — each term
+	# once, in the one expression.
+	var crop_h := HudWorkVocab.build_queue_block_height(queued,
+		HudWorkVocab.BUILD_QUEUE_ROWS_MAX, true, 0, true,
+		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT)
+	_assert_band_panel("…a CROP strip under a tool-short head adds its picker line and the head's second line — %.0f against %.0f"
+			% [crop_h, open_h + HudWorkVocab.BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
+				+ HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT],
+		is_equal_approx(crop_h, open_h + HudWorkVocab.BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
+			+ HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT))
 	# THE RENDERED HALF. Same band, same dock, only the strip moving.
 	var plant := ""
 	for entry_variant in _hud._bandpanel._build_queue_models(_hud._band_labor.panel_band(),

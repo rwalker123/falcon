@@ -2540,7 +2540,8 @@ strip suggests.
 harness was run at twelve values of the constant and judged by exit status. **416** hands the zones a 356px
 box and `band_panel_build_queue_wide` fails with `needs 358px … short by 2`; 418 clips nothing at any dock
 or viewport in the matrix. Fund mode does not raise the floor — its 110px pools block buys the queue fewer
-rows, so the two move against each other.
+rows, so the two move against each other. **That last claim was false with a crop strip open, and the
+budget is 436 now** — see "AND IT RAISED `PANEL_HEIGHT_WIDE` 418 → 436" under the build queue's controls.
 
 **WHAT THE 38px COSTS IS ONE BUILD QUEUE ENTRY ROW, and nothing else.** A wide dock draws one entry and
 `+3 more` where it drew two and `+2 more` (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS` 2 → 1, which is
@@ -2662,7 +2663,8 @@ in work units), so the hint is the only place a pool's holdings are named; the i
   §2.4 — entries behind the head claim nothing), so *the builders are short of tools* and *the top
   job is* are one fact, and only the second tells the player where to look. Reported from play: the
   INFO form under this card left the player searching a queue whose rows said nothing about tools.
-  The head row states the same fact — see "THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL" below.
+  The head row states the same fact as an amber `◆` second line — see "THE HEAD CARRIES THE
+  BUILDERS' TOOL SHORTFALL" below.
 - **THE SHORT TEST IS ON THE WIRE'S FLOATS** — `HudWorkVocab.pool_toe_row_is_short`,
   `required − filled > POOL_TOE_SHORT_MIN` — and a pool short by any amount over that floor is short;
   see "A SUB-UNIT TOOL SHORTFALL MUST NOT ROUND AWAY" below.
@@ -3258,7 +3260,7 @@ BUILD QUEUE                          3 builders · Tillage kit
   the row keeps its crew and its kit, and re-declaring is one tick of the compose control — so it is
   the parties zone's cancel-versus-recall rule read one surface over. It wears that zone's steady,
   full-opacity `DANGER` treatment for the same reason: a destructive control reads as one. It lives in
-  the row's settings strip and reads `Remove` — see ④ and ⑤ below.
+  the row's settings strip and reads `Remove from queue` — see ④ and ⑤ below.
 - **IT EMITS THE CONTROLLER'S OWN `unqueue_requested`, RELAYED by `HudLayer`**, with a payload
   identical key-for-key to `DrawerComposeController`'s — so `Main.format_unqueue` serves both
   surfaces and there is no second command builder.
@@ -3638,7 +3640,7 @@ withdrawal set lives in the same per-band record (beside `assign` / `move`) so i
   signal synchronously) and `Main._on_hud_unqueue` hands the payload back to `drop_pending_unqueue`
   when the send does not go, exactly as `_on_hud_assign_labor` does.
 
-#### ⑤ THE STRIP OPENS ON THE JOB'S DETAIL LINE, AND THE WITHDRAWAL IS A WORD
+#### ⑤ THE STRIP OPENS ON THE JOB'S DETAIL LINE, AND THE WITHDRAWAL READS `Remove from queue`
 
 Reported from play: expanding a Tame or Corral row showed a bare red `✕` and nothing else, which read
 as *close this strip* or as *cancel and lose the progress* — neither of which it does. Two changes,
@@ -3646,20 +3648,28 @@ one strip:
 
 ```
 ▸ 🌱 Cultivate (71, 18)    Cultivating 0% · turn 82           ▲▼
+  ◆ builders short of tools                                        ← the head's 2nd line (below)
 ┌──────────────────────────────────────────────────────────────┐
-│ builders short of tools · 40 work · 0.3 work a turn from …    │   ← detail line (18px)
-│ CROP [Sim picks        ⌄]                          [Remove]   │   ← control line (22px)
+│ 40 work · 0.3 work a turn from Husbandry…  [Remove from queue]│   ← detail line (22px)
+│ CROP [Sim picks        ⌄]                                     │   ← a plant entry only (22px)
 └──────────────────────────────────────────────────────────────┘
 ```
 
 - **EVERY OPEN STRIP LEADS WITH ONE DETAIL LINE** (`_build_queue_detail_line`,
-  `HudWorkVocab.build_queue_detail_line`) — causes first, then the price, joined with ` · `: the head's
-  builders-tool clause (below), the model's `build_blocked_lines` (the source card's own producer), and
-  `DetailFormat.build_price_clause` through `_queue_entry_price`, the same composition the row's hover
-  quotes. **Nothing is re-derived**: every term is a field the queue model already carries. The line
-  ELIDES and never wraps — `HudWidgets.build_status_part`'s elide form, the full text on its hover and
-  on `BUILD_QUEUE_DETAIL_META` — because its height is reserved and the zone clips. A cause reads in
-  the kit-short amber; a bare price in `INK_DIM`.
+  `HudWorkVocab.build_queue_detail_line`) — causes first, then the price, joined with ` · `: the
+  model's `build_blocked_lines` (the source card's own producer) and `DetailFormat.build_price_clause`
+  through `_queue_entry_price`, the same composition the row's hover quotes. **Nothing is
+  re-derived**. The label ELIDES and never wraps — `HudWidgets.build_status_part`'s elide form, the full
+  text on its hover and on `BUILD_QUEUE_DETAIL_META` — because the line's height is reserved and the
+  zone clips. A cause reads in the kit-short amber; a bare price in `INK_DIM`.
+- **The withdrawal rides the detail line**, right-aligned: `Remove from queue`, DANGER ink, tooltip
+  *"Take this job out of the build queue. The work already done on it is kept, and the source keeps
+  its crew — queue it again to carry on."* It is **150px** and does not fit beside the crop picker at
+  the tall LEFT dock (344px of strip content less key 30, picker 168 and three separations leaves
+  134), so the detail label is the child that gives (**190px** of it left at that dock). The detail
+  line has no key column.
+- **THE HEAD'S TOOL CLAUSE IS NOT ON THE DETAIL LINE.** The head row's own `◆` second line states it
+  directly above the strip, and a second copy one line down said nothing new.
 - **What each entry kind opened to before it**, for the record: a Tame/Corral (`legs 0`, no crop) —
   the `✕` alone; a plant entry — the crop picker with the `✕` beside it (plus `CLIMB` and its leg lines
   on a multi-leg climb); a road — `CLIMB`, its one leg line, and the `✕` on a line of its own.
@@ -3667,67 +3677,89 @@ one strip:
   roadwork — so there is no working strip to open.
 - **An entry the wire has not priced states an empty line**, never an invented one. The wire publishes
   the rung prices unconditionally (`tame_work_cost` et al., `dict/subsistence.rs`), so this is a
-  fixture state — the tight-dock frame's unpriced patch shows it — rather than a play state.
-- **THE DETAIL LINE IS CHARGED ONCE, INSIDE THE ONE ARITHMETIC.** `BUILD_QUEUE_DETAIL_HEIGHT` (a leg
-  line's 18) is added unconditionally by `build_queue_settings_height` — so `_work_board_capacity` and
-  the strip's `custom_minimum_size` read it together — and `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` is now
-  chrome 12 + detail 18 + control 22 = **52**.
-- **THE WITHDRAWAL READS `Remove`**, DANGER ink, tooltip *"Take this job out of the build queue. The
-  work already done on it is kept, and the source keeps its crew — queue it again to carry on."* It
-  stays right-aligned on the strip's last control line, beside the crop picker on a plant entry.
+  fixture state rather than a play state.
+- **THE HEIGHT IS ONE ARITHMETIC.** `build_queue_settings_height(is_open, legs, has_crop)`: chrome 12
+  + the detail line 22 (unconditional) + legs + the crop line 22 (`has_crop`, read off the same
+  `_queue_settings_content` answer the builder draws). A Tame's strip is **34**, a plant entry's
+  **56**, and `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` is 56 again — the plant strip, the worst case.
 
-⛔ **ONE WORD, AND THE THREE LAYOUTS THAT KEPT THE LONGER ONE WERE MEASURED AND REFUSED.** `Remove from
-queue` draws **150px**. The tall LEFT dock's strip has **344px** of content, and the crop line's key 30
-+ picker 168 + three separations leave **134** — so it does not fit beside the picker, and each way of
-buying it room costs the zone:
+**The measured alternatives**, kept as the record of the trade Ray made for the words:
 
-| layout | crop strip | `ROOM_SETTINGS` | 1920 BOTTOM queue rows | detail line width |
-|---|---|---|---|---|
-| detail own line, `Remove` (73px) on the control line — **ships** | 52 | 52 | **2** | 344 |
-| detail + `Remove from queue` sharing one control line, crop below | 56 | 56 | 1 | 190 |
-| `Remove from queue` on a line of its own under the crop | 74 | 74 | — (floor 376 > 358 box) | 344 |
+| layout | crop strip | `ROOM_SETTINGS` | 1920 BOTTOM queue rows at 418 |
+|---|---|---|---|
+| detail own line, `Remove` (73px) on the control line | 52 | 52 | 2 |
+| detail + `Remove from queue` on one line, crop below — **ships** | 56 | 56 | 1 (2 at 436) |
+| `Remove from queue` on a line of its own under the crop | 74 | 74 | floor 376 > 358 box |
 
-The 1920 BOTTOM dock's queue reservation is 300 at 52, and `(358 − 300) / 28` = 2 entry rows with 2px
-to spare; at 56 it is 1, which is the row the 56 → 34 fall bought (`WIDE_DOCK_QUEUE_ROWS`). With the
-strip open that dock's work zone reads **358 of 358**, as before; the tight 1152×720 BOTTOM dock went
-324 → **337 of 337**.
-
-#### ⛔ THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL — on its hover and its detail line, and NOT as a `◆`
+#### ⛔ THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL — a `◆` SECOND LINE, and only while it is short
 
 The builders pool's tool claim is **the queue HEAD entry's alone** (`docs/plan_pool_toe.md` §2.4), so
 *the builders pool's TOE is short* means exactly *the head is short of tools*. The Builders card said
-so in the pool's words (`More tools would speed this up.`) and nothing in the queue said which job.
+so in the pool's words and nothing in the queue said which job.
 
 - **`_queue_entry_tools_short(band, model)` is the one verdict** — the wire head (rank
   `BUILD_QUEUE_HEAD`), never a pending row, and `pool_toe_is_short` over `_pool_toe_settled_rows(band,
   "builders", …)`: the same pending-aware gate and the same predicate the Builders card's line reads, so
   the card and the row cannot disagree. Both the collapsed block and the expanded mode get it, since
   both build through `_build_build_queue_row`.
-- **The row's hover gains `BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP`** and the head's detail line LEADS
-  with `builders short of tools`. `BUILD_QUEUE_ROW_TOOLS_SHORT_META` (a bool on every row) is the
-  harness handle.
-- **The Builders card's own line names the job** — see "A POOL CAN BE SHORT OF ITS TOOLS".
+- **THE ROW GROWS A SECOND LINE: `◆ builders short of tools`** (`BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT`,
+  `_build_queue_row_tools_line`), the work rows' own `KIT_SHORT_MARK` in `KIT_SHORT_SEVERITY` amber,
+  indented past the marker column so it sits under the face. It is the board's two-line-row idiom
+  term for term — `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT` = `WORK_ROW_TWO_LINE_HEIGHT − WORK_ROW_HEIGHT` =
+  16 (the stepper gap and a note line at `ALLOC_SECTION_FONT_SIZE`). **A head that is not short stays
+  one line**, and no other row ever grows one.
+- **THE SECOND LINE IS IN THE ONE RESERVATION ARITHMETIC.** `_queue_head_tools_height(band, queued)`
+  answers 16 when the queue's first entry is the wire head and short, else 0 — the first entry is
+  always drawn (`BUILD_QUEUE_ROWS_MIN` is one), so the row exists exactly when the term is charged. The
+  one value goes to `build_queue_rows_max` (held back before the rows are counted, so a tool-short head
+  costs the queue a row rather than the board 16px in silence), `build_queue_block_height` and
+  `_work_board_capacity`.
+- **The row's hover gains `BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP`**; `BUILD_QUEUE_ROW_TOOLS_SHORT_META`
+  (a bool on every row) and `BUILD_QUEUE_ROW_TOOLS_LINE_META` (on the drawn line) are the harness
+  handles.
 
-⛔ **THE ROW WEARS NO `◆` — EVERY PLACEMENT CLIPS A SHIPPED GUARANTEE.** The work rows' amber mark was
-the ask; the head row has no width for it. Measured at the tall LEFT dock by
-`band_panel_preview._report_queue_head_mark_placements` (the `◆` is **10px** at `WORK_ROW_FONT_SIZE`):
+⛔ **THE FIRST LINE HAD NO WIDTH FOR THE MARK, WHICH IS WHY IT IS A SECOND LINE.** Measured at the tall
+LEFT dock with the `◆` at **10px**:
 
-| placement | needs | has | verdict |
+| placement on line one | needs | has | verdict |
 |---|---|---|---|
 | a slot beside the face (mark + one separation) | 14 | 3 of slack | the face drops to 112 and `🌱 Cultivate (71, 18)`, asserted unclipped at 123, clips by 11 |
 | inside the date column, `◆ Cultivating 100% · turn 999` | 181 | 168 | the worst-case date clips by 13 — and what a clip takes off the end is the DATE |
 | the marker column | 10 | 10, holding `▸` (7) | the head marker is load-bearing (it names the funded entry) and is the drag handle |
 
-Any of them is a lossy placement, so the fact rides the two surfaces that have room for it. Widening the
-date column or dropping the face guarantee is a decision the harness report exists to ask for, not one
-this client took.
+The second line costs none of the three: `band_panel_preview._assert_queue_head_tools_mark` asserts the
+face unclipped (123 of 126), the date at its 168, the `▸` in place, the mark amber and a
+text-presentation glyph, inside the head row and below its face, and the row drawing the 44px it
+reserved.
 
-**Frames:** `band_panel_queue_head_tools_short` (the head's strip open: the amber detail line over the
-crop picker and `Remove`), `band_panel_queue_tame_detail` (the Tame's strip: its price by equality
-against the fixture, and `Remove` pressed with REAL input), `band_panel_queue_head_tools_short_expanded`.
-The set is asserted as a set: head and only the head, in both modes; the builders' TOE FILLED states it
-nowhere and the card has no line; a PENDING entry never states it, at rank 0 or at its real
-`NOT_IN_ANY_BUILD_QUEUE`.
+#### ⛔ AND IT RAISED `PANEL_HEIGHT_WIDE` 418 → 436 — the minimum, swept
+
+The 1920 BOTTOM dock's worst case is the fund-mode POOLS block (110), a queued head short of tools, and
+that head's crop strip open — and there the queue is already at its one-row floor, so it has no row to
+give back:
+
+| term | px |
+|---|---|
+| `ZONE_HEAD_HEIGHT` + `WORK_CHIPS_HEIGHT` | 20 + 26 |
+| POOLS block, fund mode (`pools_block_height(true)`) | 110 |
+| BUILD QUEUE head 22 + one entry row 28 + the head's second line 16 + a crop strip 56 | 122 |
+| one board row 44 + `WORK_PAGER_HEIGHT` 24 + five gaps 30 | 98 |
+| **total** | **376** |
+
+**434 fails `needs 376px … short by 2`; 436 is 376 of 376.** Of the 18px, 16 is the head's second line
+and **2 was already owed**: the "456 CAME BACK DOWN TO 418" table carries the NON-fund pools block, and
+its *"fund mode does not raise the floor"* was never staged with a crop strip open — fund mode plus a 56
+strip needed 360 at 418. `band_panel_queue_head_tools_worst_case` is the frame that stages it now. **No
+tier moves** — the one-column box (376) stays under `BAND_ZONE_TALL_MIN_HEIGHT` (420), two columns stay
+TALL, and `BAND_ZONE_CHART_MIN_HEIGHT`'s crossing at a 402 budget is still below it — and the strip is
+40% of a 1080-high window. The 18px also gave back the queue row the 56 strip had taken:
+`WIDE_DOCK_QUEUE_ROWS` is **2** at 436.
+
+⛔ **THE 1152×720 NARROW SHELL DOES NOT FIT THAT WORST CASE, AND `PANEL_HEIGHT_WIDE` CANNOT REACH IT.**
+There the panel takes the tabbed narrow shell, whose one zone is clamped to **337px** by
+`MAX_WIDE_HEIGHT_FRACTION`; the same fund-mode + tool-short-head + crop-strip state measures **346 of
+337 (9 over)**, the board floored at one row. Without the head's second line it is 330 and fits. The
+harness REPORTS it (`band_panel_queue_head_tools_worst_case (1152x720)`) rather than asserting it.
 
 #### ⛔ ONE EXPANSION OPEN AT A TIME IN THE WORK ZONE — and it was a live defect
 
