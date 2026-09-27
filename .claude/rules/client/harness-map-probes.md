@@ -1174,7 +1174,9 @@ exchange-network states (below) run after it.
 Three player camps pooling in one network (a giver, a taker, one netting under `EVEN_FLOOR`; one link
 on a road rung, two on open ground, each listed by BOTH ends) plus another people's camp a shipment
 reaches, with the giver selected — and a second shipment cancelled in camp (its whole cargo returned
-the same turn). Rendered at `SOURCE_LIST_WINDOW_SIZE`, so the popover and the `☰` glyph are captured
+the same turn). The same frame is saved again in loam (`map_exchange_network_loam`, by re-applying the
+palette — the map reads `HudStyle` live), the theme where the links first read as rivers, and the
+default is put back before the next frame. Rendered at `SOURCE_LIST_WINDOW_SIZE`, so the popover and the `☰` glyph are captured
 at 1:1. **The layer's choices are asserted off `ExchangeNetworkRenderer.collect_marks`**, which names
 bands: each pair ONE line with its rung, the selected camp's two links flagged, ONE arrow giver →
 foreign camp (the cancelled one netted away), rings on the giver (warm) and taker (cool) and NOT on

@@ -7121,6 +7121,9 @@ const EXCHANGE_RINGED_CAMPS := 2
 ## The scratch prefs file the checkbox leg writes through, so a real `set_map_toggle` never lands in
 ## the developer's own `user://client_settings.cfg`.
 const EXCHANGE_PREFS_PATH := "user://map_preview_client_settings.cfg"
+## The theme the second exchange frame renders in — the one whose blue `SIGNAL` made the links read
+## as rivers (why `HudStyle.TRADE` exists).
+const EXCHANGE_LOAM_THEME := "loam"
 
 func _exchange_band(spec: Dictionary, faction: int, links: Array, crossings: Array) -> Dictionary:
 	var band := _band_at(int(spec["entity"]), int(spec["x"]), int(spec["y"]), STAGE_CAMP, faction)
@@ -7255,6 +7258,17 @@ func _exchange_network_states() -> void:
 		rings.size() == EXCHANGE_RINGED_CAMPS and rings.get(giver_id, false) == true
 			and rings.get(taker_id, true) == false and not rings.has(even_id))
 	await _save("map_exchange_network")
+	# …AND IN LOAM, the theme the layer was reported from: drawn in loam's pale-blue `SIGNAL`, the links
+	# read as RIVERS. The map draws its marks live off `HudStyle`, so re-applying the palette re-tints
+	# this frame's links and rings with no rebuild; the HUD chrome built under the default keeps its
+	# colours, which is fine — the map is what this frame is of. Put back before anything else renders.
+	HudPalette.apply(EXCHANGE_LOAM_THEME)
+	_map.queue_redraw()
+	await _settle()
+	await _save("map_exchange_network_loam")
+	HudPalette.apply(HudPalette.DEFAULT_THEME)
+	_map.queue_redraw()
+	await _settle()
 
 	# THE MAP LAYERS POPOVER — the third button's own card, attached to it like the other two.
 	var picker: OverlayPicker = _map._minimap._minimap_2d.overlay_picker

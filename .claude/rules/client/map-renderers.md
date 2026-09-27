@@ -502,8 +502,8 @@ is the one deliberately unarbitrated key here** — `ESCAPE` acts under every ow
 
 | mark | source | says |
 |---|---|---|
-| a plain line per pooling pair | each band's `pooling_links`, deduped (`a–b` = `b–a`) | these two pool; width/opacity by the link's rung — `OPEN_GROUND_RUNG` faint and thin, a kept-road rung heavier |
-| a ring on the camp | its `pooled` food crossings this turn, netted by `TradeLedger.cause_net` | `HudStyle.WARN` = net giver, `HudStyle.READY` = net taker, none = under `HudTradeVocab.EVEN_FLOOR` |
+| a gold glow per pooling pair | each band's `pooling_links`, deduped (`a–b` = `b–a`) | these two pool; two `HudStyle.TRADE` strokes — a wide faint halo under a thin brighter core — weighted by the link's rung: `OPEN_GROUND_RUNG` thin and dim, a kept-road rung thicker and brighter |
+| a ring on the camp | its `pooled` food crossings this turn, netted by `TradeLedger.cause_net` | `HudStyle.TRADE` = net giver, `HudStyle.READY` = net taker, none = under `HudTradeVocab.EVEN_FLOOR` |
 | a dashed, cased arrow | this turn's shipment crossings via `TradeLedger.net_shipment_crossings`, deduped by `party_id` | a trade party carried goods sender → receiver |
 
 **A LOCAL LINE IS UNDIRECTED BECAUSE POOLING IS ANONYMOUS.** `core_sim/src/supply.rs`
@@ -520,8 +520,15 @@ with no export left to net against is not a trade leg and draws no arrow.
 
 **The ring rides the tile's ACTIVE band** — the selected one if it is on the tile, else the first in
 snapshot order — the same card `BandMarkerRenderer` draws full-bright, so the ring describes the
-camp the stack shows. `READY`, not `SIGNAL`, is the cool side: `SIGNAL` is cream on ember and orange
-on kiln, while `READY` is blue or teal and `WARN` amber or gold on all four themes.
+camp the stack shows.
+
+**GOLD IS GOODS FLOWING OUT — one colour, `HudStyle.TRADE`, for the links and the giver ring.** The
+links were first drawn in `SIGNAL`, and on loam, where `SIGNAL` is a pale blue, they read as RIVERS
+in play. `TRADE` is a themed token authored as a warm gold in every palette (`HudPalette.THEMES`),
+because the map already spends blue on rivers and brown on roads; the halo is what makes a link read
+as light rather than as one more painted line. It is not `WARN` (sharing food is not a warning). The
+taker ring is `READY`, blue or teal on all four themes, which is what keeps giver and taker apart —
+not `SIGNAL`, which is cream on ember, orange on kiln and pale blue on loam.
 
 **The selected band's links and arrows draw brighter** (`SELECTED_*_BOOST`, `ROUTE_SELECTED_OPACITY`).
 

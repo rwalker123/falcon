@@ -12,8 +12,8 @@ extends RefCounted
 ##
 ## | mark | from | says |
 ## |---|---|---|
-## | a plain line between two camps | each band's `pooling_links` | these two pool — weight/opacity by the link's RUNG (open ground faint, a kept road stronger) |
-## | a ring on a camp | its `pooled` food crossings this turn | warm = gave more than it took, cool = took more than it gave, none = about even |
+## | a gold glow between two camps | each band's `pooling_links` | these two pool — weight/brightness by the link's RUNG (open ground faint, a kept road stronger) |
+## | a ring on a camp | its `pooled` food crossings this turn | gold = gave more than it took, cool = took more than it gave, none = about even |
 ## | a dashed arrow | this turn's `shipment_*` crossings | a trade party carried goods from this camp to that one |
 ##
 ## ⛔ **A LOCAL LINE HAS NO ARROWHEAD, AND MUST NOT GROW ONE.** Pooling is an anonymous pool
@@ -31,16 +31,28 @@ extends RefCounted
 ## its head lands outside the receiving token instead of under it.
 
 # ---- LOCAL EXCHANGE — the undirected pooling lines -----------------------------------------------
-## Open ground (`HudTradeVocab.OPEN_GROUND_RUNG`): within the free reach, no kept road. Faint and thin
-## — the terrain already draws the roads (#554), so this layer stays the quieter of the two.
-const LOCAL_OPEN_WIDTH := 1.5
-const LOCAL_OPEN_OPACITY := 0.30
-## A link whose whole run is on a kept road rung — heavier, so a road-held network reads as one.
-const LOCAL_ROAD_WIDTH := 3.0
-const LOCAL_ROAD_OPACITY := 0.55
-## A link touching the SELECTED band: this much more opacity and width than its rung's own.
-const SELECTED_OPACITY_BOOST := 0.35
+## **A GOLD GLOW, TWO STROKES PER LINK** — a wide, faint `HudStyle.TRADE` HALO underneath and a thin,
+## brighter `TRADE` CORE on top. Gold because the map already spends blue on rivers and brown on
+## roads: drawn in loam's pale-blue `SIGNAL`, these links read as rivers in play. The halo is what
+## makes it read as LIGHT rather than as one more painted line on the terrain.
+##
+## Open ground (`HudTradeVocab.OPEN_GROUND_RUNG`): within the free reach, no kept road. The thin,
+## dim rung — the terrain already draws the roads (#554), so this layer stays quiet.
+const LOCAL_OPEN_CORE_WIDTH := 1.5
+const LOCAL_OPEN_CORE_OPACITY := 0.55
+const LOCAL_OPEN_HALO_WIDTH := 5.0
+const LOCAL_OPEN_HALO_OPACITY := 0.14
+## A link whose whole run is on a kept road rung — thicker and brighter, so a road-held network reads
+## as one.
+const LOCAL_ROAD_CORE_WIDTH := 2.5
+const LOCAL_ROAD_CORE_OPACITY := 0.85
+const LOCAL_ROAD_HALO_WIDTH := 8.0
+const LOCAL_ROAD_HALO_OPACITY := 0.22
+## A link touching the SELECTED band: this much more opacity (both strokes) and width (the core) than
+## its rung's own, and the halo widened by the same step times `SELECTED_HALO_WIDTH_SCALE`.
+const SELECTED_OPACITY_BOOST := 0.15
 const SELECTED_WIDTH_BOOST := 1.0
+const SELECTED_HALO_WIDTH_SCALE := 2.0
 ## Cap on a boosted opacity, so a boost never overflows the colour's alpha.
 const MAX_OPACITY := 1.0
 
@@ -113,7 +125,7 @@ func draw_network(radius: float, origin: Vector2) -> void:
 		_draw_route_arrow(_center_of(by_band[arrow[MARK_SENDER]], radius, origin),
 			_center_of(by_band[arrow[MARK_RECEIVER]], radius, origin), bool(arrow[MARK_SELECTED]), radius)
 	for ring in marks[MARKS_RINGS]:
-		var tint: Color = HudStyle.WARN if bool(ring[MARK_GIVER]) else HudStyle.READY
+		var tint: Color = HudStyle.TRADE if bool(ring[MARK_GIVER]) else HudStyle.READY
 		_view.draw_arc(_center_of(by_band[ring[MARK_BAND]], radius, origin), radius * RING_RADIUS_FACTOR,
 			0.0, TAU, RING_SEGMENTS, Color(tint, RING_OPACITY), RING_WIDTH, true)
 
@@ -194,12 +206,18 @@ func _draw_local_link(link: Dictionary, by_band: Dictionary, radius: float, orig
 	if a.distance_to(b) < MIN_SEGMENT_LENGTH or _is_wrap_artifact(a, b):
 		return
 	var on_road := String(link[MARK_RUNG_ID]) != HudTradeVocab.OPEN_GROUND_RUNG
-	var width := LOCAL_ROAD_WIDTH if on_road else LOCAL_OPEN_WIDTH
-	var opacity := LOCAL_ROAD_OPACITY if on_road else LOCAL_OPEN_OPACITY
+	var core_width := LOCAL_ROAD_CORE_WIDTH if on_road else LOCAL_OPEN_CORE_WIDTH
+	var core_opacity := LOCAL_ROAD_CORE_OPACITY if on_road else LOCAL_OPEN_CORE_OPACITY
+	var halo_width := LOCAL_ROAD_HALO_WIDTH if on_road else LOCAL_OPEN_HALO_WIDTH
+	var halo_opacity := LOCAL_ROAD_HALO_OPACITY if on_road else LOCAL_OPEN_HALO_OPACITY
 	if bool(link[MARK_SELECTED]):
-		width += SELECTED_WIDTH_BOOST
-		opacity = minf(MAX_OPACITY, opacity + SELECTED_OPACITY_BOOST)
-	_view.draw_line(a, b, Color(HudStyle.SIGNAL, opacity), width, true)
+		core_width += SELECTED_WIDTH_BOOST
+		halo_width += SELECTED_WIDTH_BOOST * SELECTED_HALO_WIDTH_SCALE
+		core_opacity = minf(MAX_OPACITY, core_opacity + SELECTED_OPACITY_BOOST)
+		halo_opacity = minf(MAX_OPACITY, halo_opacity + SELECTED_OPACITY_BOOST)
+	# Halo first, so the core lies on top of its own glow.
+	_view.draw_line(a, b, Color(HudStyle.TRADE, halo_opacity), halo_width, true)
+	_view.draw_line(a, b, Color(HudStyle.TRADE, core_opacity), core_width, true)
 
 ## This turn's shipments, sender → receiver, one arrow per trade party. Read off the player's own
 ## camps' ledgers (`TradeLedger.net_shipment_crossings`, so a cancelled export has already netted to
@@ -266,9 +284,11 @@ func _draw_route_arrow(from: Vector2, to: Vector2, selected: bool, radius: float
 ## so the ring always describes the camp the stack is showing. Only a player camp in a pooling
 ## network is ringed, and only when its net `pooled` food this turn does not read `even`
 ## (`HudTradeVocab.EVEN_FLOOR`, the Trade tab's own dead band). Out of the pool (a negative net) is a
-## giver — warm, `HudStyle.WARN`; into it is a taker — cool, `HudStyle.READY`. **Not `SIGNAL` for the
-## cool side**: `SIGNAL` is cream on ember and orange on kiln, so it is not cool on most themes, while
-## `READY` is blue or teal on all four and `WARN` amber or gold on all four.
+## giver — `HudStyle.TRADE`, the links' own gold, so the layer tells ONE story: gold is goods flowing
+## out. Into it is a taker — cool, `HudStyle.READY`. **Not `SIGNAL` for the cool side**: `SIGNAL` is
+## cream on ember, orange on kiln and pale blue on loam, while `READY` is blue or teal on all four and
+## sits clear of every theme's `TRADE` gold. **Not `WARN` for the giver**: sharing food is not a
+## warning.
 func _collect_rings() -> Array:
 	var active_by_tile: Dictionary = {}
 	for unit in _view.units:

@@ -245,7 +245,7 @@ few stubbornly cyan accents in it. What is derived rather than authored:
 | `MapView.HERD_DISTRESS_COLOR` | `HudStyle.DANGER` |
 | `MapView.OVERLAY_COLORS` | the ramp colours above it — a whole table rebuilt, not a value |
 
-A theme authors **26 HUD colours** and **16 map ramp colours**; the three earth themes share one
+A theme authors **28 HUD colours** and **16 map ramp colours**; the three earth themes share one
 `EARTH_MAP` ramp set, since a data ramp answers "how much of X is here?" and does not vary with the
 chrome's warmth. `console` keeps its own. Everything else in either script stays `const`: paddings,
 radii, alphas, font sizes, the two pure-black washes (`CHIP_BG`, `READOUT_BG`) that work on any
