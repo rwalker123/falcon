@@ -100,7 +100,7 @@ const WATER_BLEND_DEFAULT_NOISE_AMOUNT := 0.45   # wobble amplitude, vs 0.30 on 
 # One base texture repeats as an EXACT COPY every 1/base_scale hex-rows, and open ocean has nothing to hide the
 # repeat under, so it read as a grid. The shader breaks it with a second rotated/rescaled sample mixed in by
 # broad world-noise patches (static), and adds an in-place chop (animated, LOD-gated, `O` toggles). Open water has no
-# whitecaps; foam belongs to the coastal swell (see COASTAL_SWELL_* below).
+# whitecaps, and neither does the coast: the only foam is the shoreline surf.
 # Chosen on blend_probe state 29/OCEAN at the game's r ≈ 45. Everything subtle: the ocean must not compete with
 # units and markers.
 const WATER_SURFACE_DEFAULT_VARIATION_STRENGTH := 1.0   # 0..1, B's peak weight; 0 = one plain sample (bit-exact)
@@ -121,21 +121,16 @@ const WATER_SURFACE_MIN_CHOP_SCALE := 0.1               # hex radii — finer is
 const WATER_SURFACE_MAX_CHOP_SCALE := 2.0               # hex radii — broader starts to read as map-scale pattern
 const WATER_SURFACE_MAX_CHOP_RATE := 5.0
 # --- THE COASTAL SHORE SWELL (terrain_config's "coastal_swell" block; the shader's apply_water_motion) ---
-# Crests run parallel to the coast and roll in, shoaling (shorter and taller) as they near land, and break into foam
-# in the last stretch. It runs off a distance-to-coast field built once per world (see rebuild_coast_field).
+# In the water hex beside a coast, crests run parallel to it and roll in, shoaling (shorter and taller) as they near
+# land, and each one landing surges the shoreline surf. It runs off a distance-to-coast field built once per world
+# (see rebuild_coast_field).
 const COASTAL_SWELL_DEFAULT_STRENGTH := 0.14           # a crest's luma offset in deep coastal water (luma units)
-const COASTAL_SWELL_DEFAULT_WAVELENGTH := 1.3          # crest spacing in deep coastal water, HEX RADII
-const COASTAL_SWELL_DEFAULT_SPEED := 0.3               # crest speed in deep coastal water, hex radii per second
-const COASTAL_SWELL_DEFAULT_REACH := 4.0               # how far from land the swell runs, HEX RADII
-const COASTAL_SWELL_DEFAULT_SHOAL_LENGTH := 0.5        # the wavelength at the shore, × the deep one
+const COASTAL_SWELL_DEFAULT_WAVELENGTH := 0.65         # crest spacing in deep coastal water, HEX RADII
+const COASTAL_SWELL_DEFAULT_SPEED := 0.18              # crest speed in deep coastal water, hex radii per second
+const COASTAL_SWELL_DEFAULT_REACH := 1.73              # how far from land the swell runs, HEX RADII: √3, one hex across
+const COASTAL_SWELL_DEFAULT_SHOAL_LENGTH := 0.6        # the wavelength at the shore, × the deep one
 const COASTAL_SWELL_DEFAULT_SHOAL_GAIN := 1.6          # the amplitude at the shore, × the deep one
-const COASTAL_SWELL_DEFAULT_BREAK_ZONE := 1.0          # crests break into foam within this many HEX RADII of land
 const COASTAL_SWELL_DEFAULT_SURGE := 0.35              # the shoreline surf's seaward reach grows by this as a crest lands
-const COASTAL_SWELL_DEFAULT_FOAM_STRENGTH := 0.97      # breaking foam's peak opacity over the water
-const COASTAL_SWELL_DEFAULT_FOAM_COVERAGE := 0.7       # 0..1: a foam cell's chance to break on a given crest
-const COASTAL_SWELL_DEFAULT_FOAM_CELL := 0.8           # the foam grid's cell, HEX RADII
-const COASTAL_SWELL_DEFAULT_FOAM_LENGTH := 0.8         # a fresh foam streak's nominal length, HEX RADII
-const COASTAL_SWELL_DEFAULT_FOAM_COLOR := Vector3(196.0, 202.0, 206.0) / 255.0  # light neutral grey
 const COASTAL_SWELL_DEFAULT_TERRAINS := ["deep_ocean", "continental_shelf", "coral_shelf"]  # by NAME; lakes excluded
 const COASTAL_SWELL_MAX_STRENGTH := 0.2
 const COASTAL_SWELL_MIN_WAVELENGTH := 0.2              # hex radii — shorter is shimmer, not a swell
@@ -145,10 +140,6 @@ const COASTAL_SWELL_MIN_REACH := 0.5
 const COASTAL_SWELL_MIN_SHOAL_LENGTH := 0.1
 const COASTAL_SWELL_MAX_SHOAL_GAIN := 4.0
 const COASTAL_SWELL_MAX_SURGE := 1.5
-const COASTAL_SWELL_MIN_FOAM_CELL := 0.2
-const COASTAL_SWELL_MAX_FOAM_CELL := 3.0
-const COASTAL_SWELL_MIN_FOAM_LENGTH := 0.05
-const COASTAL_SWELL_MAX_FOAM_LENGTH := 2.0
 # THE COAST FIELD (built by the native `CoastField`; see rebuild_coast_field). Sub-hex resolution, so a crest — a
 # contour of this field — rounds a hex corner instead of tracing it; blurred a little for the same reason.
 const COAST_FIELD_TEXELS_PER_RADIUS := 8.0
@@ -1175,11 +1166,10 @@ func _resolve_coastal_ids() -> Dictionary:
 
 func _push_coastal_swell(m: ShaderMaterial, config: Dictionary) -> void:
 	## The coastal swell's levers (see COASTAL_SWELL_DEFAULT_*). OFF (`coastal_enabled` false) until the coast field
-	## exists, or with both the swell and its foam at 0.
+	## exists, or with the swell's strength at 0.
 	var cs: Dictionary = config.get("coastal_swell", {})
 	var strength: float = clampf(float(cs.get("strength", COASTAL_SWELL_DEFAULT_STRENGTH)), 0.0, COASTAL_SWELL_MAX_STRENGTH)
-	var foam_strength: float = clampf(float(cs.get("foam_strength", COASTAL_SWELL_DEFAULT_FOAM_STRENGTH)), 0.0, 1.0)
-	m.set_shader_parameter("coastal_enabled", _coast_tex != null and (strength > 0.0 or foam_strength > 0.0))
+	m.set_shader_parameter("coastal_enabled", _coast_tex != null and strength > 0.0)
 	m.set_shader_parameter("swell_strength", strength)
 	m.set_shader_parameter("swell_wavelength", clampf(float(cs.get("wavelength", COASTAL_SWELL_DEFAULT_WAVELENGTH)),
 		COASTAL_SWELL_MIN_WAVELENGTH, COASTAL_SWELL_MAX_WAVELENGTH))
@@ -1191,18 +1181,8 @@ func _push_coastal_swell(m: ShaderMaterial, config: Dictionary) -> void:
 		COASTAL_SWELL_MIN_SHOAL_LENGTH, 1.0))
 	m.set_shader_parameter("swell_shoal_gain", clampf(float(cs.get("shoal_gain", COASTAL_SWELL_DEFAULT_SHOAL_GAIN)),
 		0.0, COASTAL_SWELL_MAX_SHOAL_GAIN))
-	m.set_shader_parameter("swell_break_zone", clampf(float(cs.get("break_zone", COASTAL_SWELL_DEFAULT_BREAK_ZONE)),
-		0.0, COAST_FIELD_CAP_RADII))
 	m.set_shader_parameter("swell_surge", clampf(float(cs.get("surge", COASTAL_SWELL_DEFAULT_SURGE)),
 		0.0, COASTAL_SWELL_MAX_SURGE))
-	m.set_shader_parameter("swell_foam_strength", foam_strength)
-	m.set_shader_parameter("swell_foam_coverage", clampf(float(cs.get("foam_coverage", COASTAL_SWELL_DEFAULT_FOAM_COVERAGE)),
-		0.0, 1.0))
-	m.set_shader_parameter("swell_foam_cell", clampf(float(cs.get("foam_cell", COASTAL_SWELL_DEFAULT_FOAM_CELL)),
-		COASTAL_SWELL_MIN_FOAM_CELL, COASTAL_SWELL_MAX_FOAM_CELL))
-	m.set_shader_parameter("swell_foam_length", clampf(float(cs.get("foam_length", COASTAL_SWELL_DEFAULT_FOAM_LENGTH)),
-		COASTAL_SWELL_MIN_FOAM_LENGTH, COASTAL_SWELL_MAX_FOAM_LENGTH))
-	m.set_shader_parameter("swell_foam_color", _shore_color(cs.get("foam_color"), COASTAL_SWELL_DEFAULT_FOAM_COLOR))
 
 func rebuild_temperature_map() -> void:
 	## (Re)build the whole temp_map (see TEMP_MAP_*) from `MapView.tile_temperature`. Called with every

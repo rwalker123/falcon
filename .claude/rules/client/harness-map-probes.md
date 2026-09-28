@@ -886,13 +886,13 @@ claims ride it, and each fails on its own:
 - **Open water has NO caps.** At two phases (0 and 1.3 s), the shipped frame against its coastal-off twin
   (`COAST_OFF` over `coastal_swell`): over the deep-ocean box, every pixel past the swell's reach, they
   must be byte-identical. The premise is that the pair DOES differ somewhere, at the island's coast;
-  without it the claim passes on a swell that never drew. Shipped: **0 deep px differ, 267 188 in the whole
+  without it the claim passes on a swell that never drew. Shipped: **0 deep px differ, 87 624 in the whole
   frame**. **Sabotaged** with the coastal weight forced to 1 everywhere: **1 413 905 deep px**, fail.
   - **What went with the open-water caps.** Their seven claims (coverage band, elongation, neutral core,
     change in place, regional orientation, length variation, fade-in) and the `OCEAN_no_whitecaps` and
-    `OCEAN_cap_life0..4` frames are retired from this state. The foam claims that still describe
-    something moved to state 31 (COAST) with the generator: its neutral core and its fade-in. Regional
-    orientation became "along the crest".
+    `OCEAN_cap_life0..4` frames are retired from this state. Two of them followed the generator to state
+    31 (COAST) and were retired again when the coastal foam went; state 31's claim (e) now asserts there
+    is no foam on the water at all.
 - **The `O` toggle.** With `TerrainRenderer.set_water_motion_enabled(false)`, two phases of the SHIPPED
   surface `OCEAN_MOTION_DT` apart differ by **exactly 0 px** (the magnitude claim is its premise:
   toggled on, they differ). The toggle is restored after.
@@ -936,94 +936,80 @@ Three PNG-less claims, each sabotage-verified to fail on its own:
   the ramp around it: measured **0.13** against a bar of 1.5. **Sabotaged** by grading each hex on its
   own temperature (no neighbour blend): **6.61**, fail.
 
-- **RETIRED — (d), the caps on the graded sea.** Its subject was the open-water caps. The claim it made — foam
-  is neutral on a warm-graded sea, which is what catches the grade running after the motion — is state 31
-  (COAST)'s foam claim now, and its fixture is warm-graded throughout for that reason.
+- **RETIRED — (d), the caps on the graded sea.** Its subject was the open-water caps. It moved to state 31
+  (COAST) with the coastal foam and went when that foam was removed: with no foam laid on the water there
+  is no colour for the grade to tint.
 
 **One more state (31, COAST): the COASTAL SHORE SWELL** → `COAST*.png`, at the game's r ≈ 45, grid OFF
 (`terrain-blend-shader.md` → Coastal shore swell). The fixture:
-- **Land:** from the east edge in by `COAST_LAND_DEPTH[row]` hexes, which gives bays and headlands, with a
-  `COAST_SHELF_WIDTH`-hex shelf off it and deep ocean beyond.
+- **Land:** from the east edge in by `COAST_LAND_DEPTH[row]` hexes, which gives bays and headlands (and one
+  one-hex inlet), with a `COAST_SHELF_WIDTH`-hex shelf off it and deep ocean beyond.
 - **Plus:** a three-hex island offshore and a three-hex `inland_sea` lake inland, all placed from the EAST
   edge so the same geography fits the narrower 2.0× grid.
-- **Temperature:** every tile at the warm end of the sim's own climate anchors, so the foam is judged
-  where the grade's tint is strongest.
+- **Temperature:** every tile at the warm end of the sim's own climate anchors, the grade's strongest tint.
 
 | frame | reads for |
 |---|---|
 | `COAST_off` | the same frame with the coastal swell off — the reference for what the swell adds |
-| `COAST`, `_t2`, `COAST_motion_diff` | the swell at two phases: crests parallel to the coast, rolling in, breaking at the shore |
-| `COAST_seq0..3` | a 3.5-radius crop of a bay at 0 / 1.1 / 2.2 / 3.3 s: a set rolling in and breaking |
-| `COAST_lake` | the lake: no swell, no foam, no surge |
+| `COAST`, `_t2`, `COAST_motion_diff` | the swell at two phases: crests parallel to the coast, only in the first water hex, landing on the beach |
+| `COAST_seq0..3` | a 3.5-radius crop of a bay at 0 / 0.9 / 1.8 / 2.7 s, one wave: crests rolling in and the surf pulsing |
+| `COAST_lake` | the lake: no swell, no surge |
 | `COAST_2x` | the same fixture on a 23×16 grid at r ≈ 47, Ray's 2.0× |
 
 **S** below is the shipped frame minus a coastal-off twin (`COAST_OFF`, over `coastal_swell`). The chop and
 the art cancel, so S is the coastal term alone. For (b)–(d) both frames also have `chop_strength` 0, so S is
 the swell with no chop residue. Pixel → field distance goes through `TerrainRenderer.coast_distance_at`,
-which samples the CPU copy of the field exactly as the shader samples the texture. Seven claims, each
-sabotage-verified to fail on its own:
+which samples the CPU copy of the field exactly as the shader samples the texture. The bands below are all
+inside the swell's 1.73 r reach. Seven claims, each sabotage-verified to fail on its own:
 
-- **(a) Present near the coast, absent far out and on the lake.** Mean |S| over water 0.4–2.5 r from land
-  must be at least 1.0 levels. Past `reach` + 0.1 r, and on the lake, S must be EXACTLY 0 — the coastal
-  weight is 0 there, not small.
-  - **Shipped:** **3.12 levels** near; **0 of 225 923 px** moved far; **0 of 3 941** on the lake.
-  - **Sabotaged** by adding `inland_sea` to `coastal_terrains`: **3 728 of 3 941 lake px** moved, fail.
-- **(b) Travels toward the coast.** At points 1.2–3.2 r from land, S's profile along the direction to the
-  coast is compared 0.5 s apart. The summed cross-correlation over shifts ±16 px must peak at a POSITIVE
-  (shoreward) shift. Shipped **+5 px** over 2 339 points. **Sabotaged** with `speed` −0.3: **−5 px**, fail.
+- **(a) Present near the coast, absent far out and on the lake.** Mean |S| over water 0.2–1.0 r from land
+  must be at least 1.0 levels. Past `reach` + 0.1 r (1.83 r), and on the lake, S must be EXACTLY 0 — the
+  coastal weight is 0 there, not small.
+  - **Shipped:** **2.98 levels** near; **0 of 285 866 px** moved far; **0 of 3 941** on the lake.
+  - **Sabotaged** by adding `inland_sea` to `coastal_terrains`: **3 151 of 3 941 lake px** moved, fail.
+- **(b) Travels toward the coast.** At points 0.4–1.2 r from land, S's profile along the direction to the
+  coast is compared 0.5 s apart. The summed cross-correlation over shifts ±8 px must peak at a POSITIVE
+  (shoreward) shift. The search stays under half the ~20 px shore wavelength, so it cannot lock onto the
+  neighbouring crest. Shipped **+3 px** over 1 102 points. **Sabotaged** with `speed` −0.18: **−3 px**, fail.
 - **(c) Crests run parallel to the coast.** S's gradient (a ±2 px stencil) against the coast field's, as
-  a doubled-angle mean weighted by the gradient's strength, over 1.5–3.5 r. It must be at least 0.5.
-  - **Shipped:** **0.77**.
+  a doubled-angle mean weighted by the gradient's strength, over 0.3–1.2 r. It must be at least 0.5.
+  - **Shipped:** **0.87**.
   - **Sabotaged** with the phase keyed on a fixed map axis (`p.y`) instead of the coast distance:
-    **0.10**, fail.
+    **0.12**, fail.
   - **The fixed axis is `y` on purpose:** the fixture's mainland coast runs north–south, so a fixed `x`
     phase would largely agree with the coast normal and pass.
 - **(d) No hex structure.** Straddle-ratio lines (the OCEANTEMP idea) across the edges between two
-  same-terrain water hexes 0.5–3 r from land: the 2-px |Δ| of S straddling the edge over the largest 2-px
-  |Δ| elsewhere on the line. It must be at most 1.5. Shipped **0.24** over 357 lines.
-  - **Sabotaged** by reading the field at the fragment's HEX CENTRE (per-hex distance): **3.39**, fail.
-  - **The same sabotage also fails (a)** (2 569 far px moved), (b) (+0 px) and (c) (−0.04).
-- **(e) Breaking foam only in the break zone, oriented along the crest** — plus the two whitecap claims that
-  moved here with the generator. The foam mask is shipped vs its foam-off twin, ≥ 8 levels, pooled over
-  phases 0.7 / 1.9 / 3.1 s.
-  - **Where:** at most 0.02 of the foam may lie beyond `break_zone` + 1.2 × `foam_cell` of land (a group
-    is centred in the zone and reaches up to (1 + its margin) cells). Shipped **0.000** of 30 912 px.
-    **Sabotaged** by spawning foam out to `reach`: **0.436**, fail.
-  - **Along the crest:** the blobs' axes against the perpendicular to the way to the coast, as a
-    doubled-angle mean, must be at least 0.4. Shipped **0.56** over 203 blobs. The bold groups are
-    fatter than the hairlines were (0.86), so a blob's axis is less sharply defined.
-  - **NEUTRAL, measured on the RENDERED pixels of the foam's solid core.** The foam is
-    `mix(water, foam, α)`, so a pixel's α follows from the foam-on/off lumas; the CORE is where α ≥ 0.8.
-    There the rendered pixel's mean HSV saturation must be ≤ 0.12 and its mean luma at least 50 levels
-    over the water under it, over at least 30 core pixels.
-    - **Shipped:** **2 080 core px**, saturation **0.092**, luma **187.0** over water **72.4**.
-    - **Sabotaged** with the first coastal cut's foam (hairline streaks at 0.75 opacity): **0 core px**,
-      fail. That foam never covered the water, which is why it rendered cyan.
-    - **Sabotaged** by moving the water motion back BEFORE the grade: saturation **0.645**, fail.
-    - **Sabotaged** with a turquoise `foam_color` `[150, 200, 212]`: saturation **0.320**, fail.
-    - **What it does not catch:** the hairline SHAPE at full opacity passes (563 core px, saturation
-      0.093). Its cores are grey; what is wrong with it is its width, which is judged by eye.
-    - **Why it replaced the laid-on claim.** That claim recovered the colour the foam was laid on in,
-      `water + Δ / α`, and asked that it be neutral. It passed at **0.050** while every dash rendered cyan:
-      the colour was grey, but the thin foam never covered the water under it
-      (`terrain-blend-shader.md` → "THIN BREAKING FOAM RENDERED CYAN").
-  - **FADE-IN:** of the foam blobs newborn since 0.25 s earlier, at most 0.10 may already reach 64
-    levels. Shipped **0.000** of 58. **Sabotaged** with `SWELL_FOAM_FADE_IN` 0.02: **0.429**, fail. The
-    shipped fade-in went from 0.12 to 0.2 of a wave because 0.12 read 0.129 here.
+  same-terrain water hexes 0.3–1.5 r from land: the 2-px |Δ| of S straddling the edge over the largest 2-px
+  |Δ| elsewhere on the line. It must be at most 1.5. Shipped **0.26** over 231 lines.
+  - **Sabotaged** by reading the field at the fragment's HEX CENTRE (per-hex distance): **1.83**, fail.
+    The narrow band leaves a hex-centre read less to step over than the old 4 r swell did (3.39 then).
+  - **The same sabotage also fails (a)** (4 far px moved) and (c) (0.34).
+- **(e) No foam chips.** The coast's only foam is the shoreline surf. Past `COAST_SURF_BAND` (0.6 r) of land
+  — the surf's seaward reach with a full surge on a cliff coast is ~0.55 r — S may not reach
+  `COAST_CHIP_DL` (40 levels) in a blob of `COAST_CHIP_MIN_PX` (4) or more, pooled over three phases.
+  - **Shipped:** **0 blobs**; the peak S past the band is **20.0 levels**, printed beside the claim so the
+    margin is on the record. The retired chips were ~115 levels over the water.
+  - **Sabotaged** by restoring a chip (a grey disc on a 0.8 r grid, 0.6–1.2 r from land): **225 blobs
+    (10 373 px)**, fail.
+  - **Also failed** by the fixed-axis phase of (c) (7 blobs, peak 46 levels), since its crests stop
+    shoaling off the coast.
+  - **It replaced (e)'s foam claims**, which went with the foam: break-zone placement, along-crest
+    orientation, the neutral rendered core and the fade-in (`terrain-blend-shader.md` → "WHY THERE IS NO
+    FOAM ON THE WATER").
 - **(f) The shore pulse moves the surf and never the sand.** The shipped frame against its surge-0 twin,
-  at the three foam phases. Pixels must change on WATER hexes, and none may change on a LAND hex.
+  at the three phases. Pixels must change on WATER hexes, and none may change on a LAND hex.
   - **Which land pixels count:** only those that are land for 2 px in every direction. A pixel on the
     hex line is rasterised by the shader's own point-in-hex pick, which need not be this probe's; the
     first cut counted 110 such boundary pixels.
-  - **Shipped:** **51 494 water px, 0 land px**.
-  - **Reported, not asserted:** the brightest 5% of the surged water renders saturation **0.133**, RGB
-    about **(127, 144, 146)**. That is the shoreline's own muted grey-blue `foam_color` at the surf's
+  - **Shipped:** **60 665 water px, 0 land px**.
+  - **Reported, not asserted:** the brightest 5% of the surged water renders saturation **0.130**, RGB
+    about **(126, 143, 145)**. That is the shoreline's own muted grey-blue `foam_color` at the surf's
     `foam_opacity`, an earlier decision this state does not own.
-  - **Sabotaged** by surging the surf's inland wash too: **23 545 land px**, fail.
+  - **Sabotaged** by surging the surf's inland wash too: **25 471 land px**, fail.
 - **(g) `O` off gives byte-identical phases.** With the toggle off, two phases 2 s apart differ by **0 px**.
-  **Sabotaged** by leaving the shore surge ungated by the motion switch: **36 331 px**, fail.
+  **Sabotaged** by leaving the shore surge ungated by the motion switch: **33 565 px**, fail.
 
-**The field's build time is printed with the state** (`COAST field built in … ms`): ~5 ms for the 24×16
+**The field's build time is printed with the state** (`COAST field built in … ms`): ~4 ms for the 24×16
 fixture. The Huge map (128×80) measured ~120 ms in a standalone run, not in this harness.
 
 ## Worked-source mark states (issue #412)

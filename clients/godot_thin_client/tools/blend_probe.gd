@@ -1193,13 +1193,6 @@ const OCEAN_LIVE_2X_GRID := Vector2i(23, 16)
 # and its COAST_OFF twin are byte-identical at each of OCEAN_NO_CAPS_PHASES — the premise being that the same pair
 # DOES differ somewhere in the frame (the island's coast), or the claim passes on a swell that never drew.
 const OCEAN_NO_CAPS_PHASES := [0.0, 1.3]
-# THE FOAM BLOBS (shared by the COAST foam claims, see _blob_shapes): a blob is a 4-connected component of at
-# least FOAM_BLOB_MIN_PX pixels (a smaller one has no shape to measure). Each second-moment λ carries a pixel's own
-# FOAM_PIXEL_VARIANCE, so a one-pixel line is not infinitely thin; a uniform segment of length L has variance
-# L² / FOAM_SEGMENT_VARIANCE_RATIO.
-const FOAM_BLOB_MIN_PX := 8
-const FOAM_PIXEL_VARIANCE := 1.0 / 12.0
-const FOAM_SEGMENT_VARIANCE_RATIO := 12.0
 
 # State 31 (COAST): the COASTAL SHORE SWELL (`terrain-blend-shader.md` → Coastal shore swell). Land from the east
 # edge in by COAST_LAND_DEPTH[row] hexes (bays and headlands), a shelf COAST_SHELF_WIDTH hexes wide off it, deep
@@ -1212,38 +1205,39 @@ const COAST_LAKE_ID := LAKE_WATER_ID                    # inland_sea — not a c
 const COAST_ISLAND_FROM_EAST := [Vector2i(14, 5), Vector2i(13, 5), Vector2i(14, 6)]   # (hexes from east, row)
 const COAST_LAKE_FROM_EAST := [Vector2i(3, 9), Vector2i(2, 9), Vector2i(3, 10)]
 const COAST_2X_GRID := Vector2i(23, 16)                 # fits at r ≈ 47, Ray's 2.0× (see OCEAN_LIVE_2X_GRID)
-const COAST_SEQ_PHASES := [0.0, 1.1, 2.2, 3.3]          # seconds: a set rolling in and breaking
+const COAST_SEQ_PHASES := [0.0, 0.9, 1.8, 2.7]          # seconds: crests rolling in over one wave (~3.6 s)
 const COAST_SEQ_CROP_FROM_EAST := Vector2i(7, 4)
 const COAST_SEQ_CROP_RADII := 3.5
 const COAST_LAKE_CROP_FROM_EAST := Vector2i(3, 9)
 const COAST_LAKE_CROP_RADII := 2.5
 # The twins the claims subtract (each laid over the shipped `coastal_swell` block).
-const COAST_OFF := {"strength": 0.0, "foam_strength": 0.0, "surge": 0.0}
-const COAST_NO_FOAM := {"foam_strength": 0.0}
+const COAST_OFF := {"strength": 0.0, "surge": 0.0}
 const COAST_NO_SURGE := {"surge": 0.0}
 const COAST_NO_CHOP := {"chop_strength": 0.0}           # over `water_surface`: S is then the swell alone
 # (a) PRESENCE: mean |S| (S = shipped − COAST_OFF, 8-bit levels) over water COAST_NEAR_BAND hex radii from land must
 # reach COAST_NEAR_MIN_DL; past `reach` + COAST_FAR_MARGIN, and on the lake, S must be EXACTLY 0 (the coastal
 # weight is 0 there, not small). Sampled every COAST_SAMPLE_STRIDE px.
 const COAST_SAMPLE_STRIDE := 2
-const COAST_NEAR_BAND := Vector2(0.4, 2.5)
+const COAST_NEAR_BAND := Vector2(0.2, 1.0)
 const COAST_NEAR_MIN_DL := 1.0
 const COAST_FAR_MARGIN := 0.1
 const COAST_ELIGIBLE_MIN := 0.5
 # (b) TRAVEL: the swell profile along the way to the coast, at points COAST_TRAVEL_BAND from land (every
 # COAST_POINT_STRIDE px), half-length COAST_PROFILE_HALF_PX, compared COAST_DT apart over shifts ±COAST_TRAVEL_SEARCH_PX.
 # (c) ALIGNMENT: the swell's gradient against the coast field's, doubled-angle, over COAST_ALIGN_BAND.
+# The swell's wavelength near the shore is only ~20 px at r ≈ 45: a crest moves ~3 px in COAST_DT, and the search
+# stays under half a wavelength — a wider one could lock onto the neighbouring crest and read the travel backwards.
 const COAST_DT := 0.5
-const COAST_TRAVEL_BAND := Vector2(1.2, 3.2)
-const COAST_TRAVEL_SEARCH_PX := 16
-const COAST_PROFILE_HALF_PX := 20
+const COAST_TRAVEL_BAND := Vector2(0.4, 1.2)
+const COAST_TRAVEL_SEARCH_PX := 8
+const COAST_PROFILE_HALF_PX := 16
 const COAST_POINT_STRIDE := 10
 const COAST_GRAD_STEP_PX := 4.0
-const COAST_ALIGN_BAND := Vector2(1.5, 3.5)
+const COAST_ALIGN_BAND := Vector2(0.3, 1.2)
 const COAST_ALIGN_MIN := 0.5
 const COAST_ALIGN_STENCIL_PX := 2                       # the swell gradient's half-stencil, px
 # (d) NO HEX STRUCTURE: straddle-ratio lines across same-terrain water hex edges within COAST_HEX_BAND of land.
-const COAST_HEX_BAND := Vector2(0.5, 3.0)
+const COAST_HEX_BAND := Vector2(0.3, 1.5)
 const COAST_HEX_EDGE_SAMPLES := 7
 const COAST_HEX_EDGE_SPAN := 0.35                       # of the radius, either side of the edge midpoint
 const COAST_HEX_EDGE_REACH := 0.6                       # of the radius, how far each line runs either side
@@ -1251,37 +1245,20 @@ const COAST_HEX_STEP_PX := 2
 const COAST_HEX_GUARD_PX := 3.0
 const COAST_HEX_FLOOR_DL := 0.5                         # levels: a flat line is not a divide by zero
 const COAST_HEX_RATIO_MAX := 1.5
-# (e) BREAKING FOAM: the mask is shipped vs COAST_NO_FOAM, ≥ COAST_FOAM_MIN_DL levels, pooled over COAST_FOAM_PHASES.
-# All of it must lie within `break_zone` + COAST_FOAM_GROUP_REACH_CELLS × `foam_cell` of land (a group is centred
-# in the zone and reaches up to (1 + its margin) cells) — at most COAST_FOAM_OUTSIDE_MAX of it beyond — and its
-# blobs lie ALONG the crest (doubled-angle alignment with the perpendicular to the way to the coast).
-# NEUTRAL, on the RENDERED pixels — what the player sees, not the colour the foam was laid on in (that claim passed
-# while every dash rendered cyan: dashes too thin to ever reach full coverage let the turquoise through). The foam
-# CORE is the pixels where the foam covers at least COAST_FOAM_CORE_ALPHA of the water — its opacity follows from
-# the foam-on/off lumas, α = Δ / (foam luma − water luma) — and there the RENDERED pixel's mean HSV saturation must
-# be ≤ COAST_FOAM_SAT_MAX and its luma ≥ water + COAST_FOAM_CORE_LUMA_ABOVE, over at least COAST_FOAM_MIN_CORE_PX
-# pixels (a foam with no solid core has no subject, and fails). Asked on this warm-graded sea, it also catches the
-# grade running after the motion. FADE-IN (moved from state 29 (g)): of the foam blobs newborn since COAST_FADE_STEP
-# earlier, at most COAST_FOAM_BRIGHT_MAX already reach COAST_FOAM_BRIGHT_DL.
-const COAST_FOAM_PHASES := [0.7, 1.9, 3.1]
-const COAST_FOAM_MIN_DL := 8.0
-const COAST_FOAM_GROUP_REACH_CELLS := 1.2
-const COAST_FOAM_OUTSIDE_MAX := 0.02
-const COAST_FOAM_ALIGN_MIN := 0.4
-const COAST_FOAM_CORE_ALPHA := 0.8
-const COAST_FOAM_SAT_MAX := 0.12
-const COAST_FOAM_CORE_LUMA_ABOVE := 50.0
-const COAST_FOAM_MIN_CORE_PX := 30
-const COAST_FOAM_ALPHA_MIN := 1.0                       # levels: floor on (foam luma − water luma)
+# (e) NO FOAM CHIPS: the coast carries no breaking foam, so past the shore surf (COAST_SURF_BAND hex radii of land,
+# the surf's seaward reach with a full surge on a cliff coast, ~0.55 r) S must never reach COAST_CHIP_DL levels —
+# above the swell's own peak there, below any chip. Pooled over COAST_PHASES; a chip is a 4-connected blob of at
+# least COAST_CHIP_MIN_PX such pixels (smaller is a rounding speck, not a mark on the water).
+const COAST_SURF_BAND := 0.6
+const COAST_CHIP_DL := 40.0
+const COAST_CHIP_MIN_PX := 4
+const COAST_PHASES := [0.7, 1.9, 3.1]
 # The shore pulse's surf is REPORTED, not asserted, on its brightest COAST_SURF_TOP_FRACTION of changed pixels —
 # it is the shoreline's own foam_color, an earlier decision this arc does not own.
 const COAST_SURF_TOP_FRACTION := 0.05
 # (f) THE SHORE PULSE: a LAND pixel counts only this far inside its hex (see _assert_coast_shore_pulse).
 const COAST_LAND_INTERIOR_PX := 2.0
-const COAST_FADE_STEP := 0.25
-const COAST_FOAM_BRIGHT_DL := 64.0
-const COAST_FOAM_BRIGHT_MAX := 0.1
-const COAST_BOX_WEST_FROM_EAST := 16                     # the foam claims read the frame from this column east
+const COAST_BOX_WEST_FROM_EAST := 16                     # the chip claim reads the frame from this column east
 # Rec.709 luma weights (Color.get_luminance's), for reading a whole frame off its raw bytes.
 const LUMA_R := 0.2126
 const LUMA_G := 0.7152
@@ -2635,58 +2612,6 @@ func _blob_labels(mask: PackedByteArray, w: int, h: int) -> PackedInt32Array:
 					labels[nb] = next
 					stack.append(nb)
 	return labels
-
-
-func _blob_shapes(mask: PackedByteArray, w: int, h: int) -> Array:
-	## The 4-connected blobs of `mask` (w × h, row-major) of at least FOAM_BLOB_MIN_PX pixels, each as
-	## {cx, cy, aspect, angle}: its centroid, sqrt(λmax / λmin) of its second moments, and its major axis angle.
-	var seen := PackedByteArray()
-	seen.resize(mask.size())
-	var shapes: Array = []
-	var stack := PackedInt32Array()
-	for start in range(mask.size()):
-		if mask[start] == 0 or seen[start] != 0:
-			continue
-		seen[start] = 1
-		stack.append(start)
-		var n := 0
-		var sx := 0.0
-		var sy := 0.0
-		var sxx := 0.0
-		var syy := 0.0
-		var sxy := 0.0
-		while not stack.is_empty():
-			var i: int = stack[stack.size() - 1]
-			stack.remove_at(stack.size() - 1)
-			var x: int = i % w
-			var y: int = i / w
-			n += 1
-			sx += x
-			sy += y
-			sxx += x * x
-			syy += y * y
-			sxy += x * y
-			for nb: int in [i - 1 if x > 0 else -1, i + 1 if x < w - 1 else -1,
-					i - w if y > 0 else -1, i + w if y < h - 1 else -1]:
-				if nb >= 0 and mask[nb] != 0 and seen[nb] == 0:
-					seen[nb] = 1
-					stack.append(nb)
-		if n < FOAM_BLOB_MIN_PX:
-			continue
-		var cx: float = sx / n
-		var cy: float = sy / n
-		var vxx: float = sxx / n - cx * cx + FOAM_PIXEL_VARIANCE
-		var vyy: float = syy / n - cy * cy + FOAM_PIXEL_VARIANCE
-		var vxy: float = sxy / n - cx * cy
-		var mid: float = 0.5 * (vxx + vyy)
-		var spread: float = sqrt(0.25 * (vxx - vyy) * (vxx - vyy) + vxy * vxy)
-		shapes.append({
-			"cx": cx, "cy": cy,
-			"aspect": sqrt((mid + spread) / maxf(mid - spread, FOAM_PIXEL_VARIANCE)),
-			"length": sqrt(FOAM_SEGMENT_VARIANCE_RATIO * (mid + spread)),
-			"angle": 0.5 * atan2(2.0 * vxy, vxx - vyy),
-		})
-	return shapes
 
 
 func _assert_ocean_motion_toggle() -> void:
@@ -4069,9 +3994,8 @@ func _save_contact_sheet(names: Array[String], labels: Array[String], out_name: 
 
 func _render_coast_state() -> void:
 	## State 31 (COAST) at the game's r ≈ 45, grid OFF: an irregular coastline (bays and headlands), a small island
-	## and an inland lake, on a WARM-graded sea (so the foam is asked to stay neutral where the grade is strongest).
-	## Frames: COAST at two phases + their diff, COAST_2x (r ≈ 47), a four-phase sequence crop of a set rolling in
-	## and breaking, and the lake. Then the claims (see COAST_*).
+	## and an inland lake, on a WARM-graded sea. Frames: COAST at two phases + their diff, COAST_2x (r ≈ 47), a
+	## four-phase sequence crop of crests rolling in and landing, and the lake. Then the claims (see COAST_*).
 	var climate: Dictionary = _oceantemp_sim_climate()
 	if climate.is_empty():
 		_fail("COAST: could not read the sim's climate anchors from %s" % OCEANTEMP_SIM_CONFIG)
@@ -4095,7 +4019,7 @@ func _render_coast_state() -> void:
 	await _assert_coast_presence()
 	await _assert_coast_travel_and_alignment()
 	await _assert_coast_no_hex_structure()
-	await _assert_coast_break_foam()
+	await _assert_coast_no_chips()
 	await _assert_coast_shore_pulse()
 	await _assert_coast_toggle()
 	# The 2.0× frame, last: it leaves the map on a different grid.
@@ -4202,7 +4126,7 @@ func _luma_box(image: Image, box: Rect2i) -> PackedFloat32Array:
 
 
 func _coast_box(image: Image) -> Rect2i:
-	## The part of the frame the coast's foam can reach: from COAST_BOX_WEST_FROM_EAST hexes in from the east edge.
+	## The part of the frame the coast's swell can reach: from COAST_BOX_WEST_FROM_EAST hexes in from the east edge.
 	var px_scale := _coast_px_scale(image)
 	var west: Vector2 = _map._hex_center(maxi(_map.grid_width - COAST_BOX_WEST_FROM_EAST, 0), 0, _map.last_hex_radius,
 		_map.last_origin) * px_scale
@@ -4293,9 +4217,9 @@ func _assert_coast_travel_and_alignment() -> void:
 	## positive shift. (c) CRESTS RUN PARALLEL TO THE COAST: the swell's own gradient lines up with the coast
 	## field's (doubled-angle mean, weighted by the gradient's strength).
 	var off0: Image = await _coast_capture(COAST_OFF, 0.0, COAST_NO_CHOP)
-	var on0: Image = await _coast_capture(COAST_NO_FOAM, 0.0, COAST_NO_CHOP)
+	var on0: Image = await _coast_capture({}, 0.0, COAST_NO_CHOP)
 	var off1: Image = await _coast_capture(COAST_OFF, COAST_DT, COAST_NO_CHOP)
-	var on1: Image = await _coast_capture(COAST_NO_FOAM, COAST_DT, COAST_NO_CHOP)
+	var on1: Image = await _coast_capture({}, COAST_DT, COAST_NO_CHOP)
 	if off0 == null or on0 == null or off1 == null or on1 == null:
 		return
 	var w := on0.get_width()
@@ -4360,10 +4284,10 @@ func _assert_coast_travel_and_alignment() -> void:
 
 
 func _assert_coast_no_hex_structure() -> void:
-	## (d) NO HEX STRUCTURE: on S (shipped − coastal-off, no foam), along lines crossing the edges between two
+	## (d) NO HEX STRUCTURE: on S (shipped − coastal-off), along lines crossing the edges between two
 	## coastal WATER hexes within COAST_HEX_BAND of land, the 2-px |Δ| straddling the edge over the largest 2-px |Δ|
 	## elsewhere on the line (the OCEANTEMP straddle idea). A field read per hex steps at every edge.
-	var on: Image = await _coast_capture(COAST_NO_FOAM, 0.0, COAST_NO_CHOP)
+	var on: Image = await _coast_capture({}, 0.0, COAST_NO_CHOP)
 	var off: Image = await _coast_capture(COAST_OFF, 0.0, COAST_NO_CHOP)
 	if on == null or off == null:
 		return
@@ -4415,126 +4339,56 @@ func _assert_coast_no_hex_structure() -> void:
 		_fail("COAST: the swell STEPS at hex edges — ratio %.2f (want ≤ %.2f)" % [ratio, COAST_HEX_RATIO_MAX])
 
 
-func _assert_coast_break_foam() -> void:
-	## (e) BREAKING FOAM ONLY IN THE BREAK ZONE, ORIENTED ALONG THE CREST; plus the two whitecap claims that moved here
-	## with the generator: NEUTRAL cores on this warm-graded sea (the grade-order regression), and FADE-IN (newborn
-	## foam is faint). The foam mask is shipped vs its foam-off twin at the same phase, ≥ COAST_FOAM_MIN_DL.
-	var block: Dictionary = _coastal_block({})
-	var allowance: float = float(block.get("break_zone", 0.0)) + COAST_FOAM_GROUP_REACH_CELLS * float(block.get("foam_cell", 0.0))
-	var foam_rgb: Array = block.get("foam_color", [0, 0, 0])
-	var foam_luma: float = LUMA_R * float(foam_rgb[0]) + LUMA_G * float(foam_rgb[1]) + LUMA_B * float(foam_rgb[2])
-	var foam_px := 0
-	var outside := 0
-	var core_n := 0
-	var core_sat := 0.0
-	var core_luma := 0.0
-	var water_luma := 0.0
+func _assert_coast_no_chips() -> void:
+	## (e) NO FOAM CHIPS: the coast's only foam is the shoreline surf. Past COAST_SURF_BAND of land, on coastal water,
+	## S (shipped − coastal-off) never reaches COAST_CHIP_DL in a blob of COAST_CHIP_MIN_PX or more — the chips that
+	## used to break mid-hex were ~100 levels over the water; the swell there stays well under the bar. The peak S
+	## past the band is printed beside it, so the margin is on the record.
+	var chips := 0
+	var chip_px := 0
+	var peak := 0.0
 	var water_n := 0
-	var align_num := 0.0
-	var align_n := 0
-	var born := 0
-	var born_bright := 0
-	for phase: float in COAST_FOAM_PHASES:
+	for phase: float in COAST_PHASES:
 		var on: Image = await _coast_capture({}, phase)
-		var off: Image = await _coast_capture(COAST_NO_FOAM, phase)
-		var on_prev: Image = await _coast_capture({}, phase - COAST_FADE_STEP)
-		var off_prev: Image = await _coast_capture(COAST_NO_FOAM, phase - COAST_FADE_STEP)
-		if on == null or off == null or on_prev == null or off_prev == null:
+		var off: Image = await _coast_capture(COAST_OFF, phase)
+		if on == null or off == null:
 			return
 		var px_scale := _coast_px_scale(on)
 		var box := _coast_box(on)
 		var la := _luma_box(on, box)
 		var lb := _luma_box(off, box)
-		var lp := _luma_box(on_prev, box)
-		var lq := _luma_box(off_prev, box)
-		var n := la.size()
 		var mask := PackedByteArray()
-		mask.resize(n)
-		var bright := PackedByteArray()
-		bright.resize(n)
-		var before := PackedByteArray()
-		before.resize(n)
-		for i in range(n):
+		mask.resize(la.size())
+		for i in range(la.size()):
 			var dl: float = la[i] - lb[i]
+			if dl <= peak and dl < COAST_CHIP_DL:
+				continue
 			var px := Vector2(box.position.x + i % box.size.x, box.position.y + i / box.size.x)
-			# The foam's opacity here, from the foam-on/off lumas (the foam is mix(water, foam, α)); the CORE is
-			# where it covers most of the water, and there the RENDERED pixel is what is judged.
-			if dl > 0.0 and dl / maxf(foam_luma - lb[i], COAST_FOAM_ALPHA_MIN) >= COAST_FOAM_CORE_ALPHA:
-				var c1: Color = on.get_pixel(int(px.x), int(px.y))
-				core_n += 1
-				core_sat += c1.s
-				core_luma += la[i]
-				water_luma += lb[i]
-				water_n += 1
-			bright[i] = 1 if dl >= COAST_FOAM_BRIGHT_DL else 0
-			before[i] = 1 if lp[i] - lq[i] >= COAST_FOAM_MIN_DL else 0
-			if dl < COAST_FOAM_MIN_DL:
+			var tid := _pixel_hex_id(px, px_scale)
+			if tid == COAST_LAND_ID or tid == COAST_LAKE_ID or tid < 0:
 				continue
-			mask[i] = 1
-			foam_px += 1
-			if _coast_at_pixel(px, px_scale).x > allowance:
-				outside += 1
-		for shape: Dictionary in _blob_shapes(mask, box.size.x, box.size.y):
-			var centre := Vector2(box.position.x + float(shape["cx"]), box.position.y + float(shape["cy"]))
-			var toward := _coast_dir_at_pixel(centre, px_scale)
-			if toward == Vector2.ZERO:
+			if _coast_at_pixel(px, px_scale).x < COAST_SURF_BAND:
 				continue
-			var along_crest: float = atan2(toward.x, -toward.y)   # perpendicular to the way to the coast
-			align_num += cos(2.0 * (float(shape["angle"]) - along_crest))
-			align_n += 1
+			peak = maxf(peak, dl)
+			if dl >= COAST_CHIP_DL:
+				mask[i] = 1
 		var labels: PackedInt32Array = _blob_labels(mask, box.size.x, box.size.y)
-		var old := {}
-		var lit := {}
-		for i in range(labels.size()):
-			var label: int = labels[i]
-			if label == 0:
-				continue
-			if before[i] != 0:
-				old[label] = true
-			if bright[i] != 0:
-				lit[label] = true
-		var seen := {}
-		for i in range(labels.size()):
-			var label: int = labels[i]
-			if label == 0 or seen.has(label):
-				continue
-			seen[label] = true
-			if old.has(label):
-				continue
-			born += 1
-			if lit.has(label):
-				born_bright += 1
-	var outside_frac: float = float(outside) / maxf(foam_px, 1)
-	var alignment: float = align_num / maxf(align_n, 1)
-	var sat: float = core_sat / maxf(core_n, 1)
-	var luma: float = core_luma / maxf(core_n, 1)
-	var water: float = water_luma / maxf(water_n, 1)
-	var fade_bright: float = float(born_bright) / maxf(born, 1)
-	print("blend_probe: COAST (e) foam %d px, %.3f beyond %.2f r of land (max %.2f) · along-crest alignment %.2f over %d blobs (min %.2f)"
-		% [foam_px, outside_frac, allowance, COAST_FOAM_OUTSIDE_MAX, alignment, align_n, COAST_FOAM_ALIGN_MIN])
-	print("blend_probe: COAST (e) foam core (α ≥ %.1f) %d px: RENDERED saturation %.3f (max %.2f), luma %.1f vs water %.1f (≥ +%.0f) · fade-in %.3f of %d newborn (max %.2f)"
-		% [COAST_FOAM_CORE_ALPHA, core_n, sat, COAST_FOAM_SAT_MAX, luma, water, COAST_FOAM_CORE_LUMA_ABOVE, fade_bright, born,
-			COAST_FOAM_BRIGHT_MAX])
-	if foam_px == 0:
-		_fail("COAST: no breaking foam at all")
-		return
-	if outside_frac > COAST_FOAM_OUTSIDE_MAX:
-		_fail("COAST: foam OUTSIDE the break zone — %.3f of it beyond %.2f r of land (want ≤ %.2f)"
-			% [outside_frac, allowance, COAST_FOAM_OUTSIDE_MAX])
-	if align_n == 0 or alignment < COAST_FOAM_ALIGN_MIN:
-		_fail("COAST: foam is not oriented along the crest — alignment %.2f (want ≥ %.2f)" % [alignment, COAST_FOAM_ALIGN_MIN])
-	if core_n < COAST_FOAM_MIN_CORE_PX:
-		_fail("COAST: only %d foam px reach %.1f coverage (want ≥ %d) — the foam has no solid core, so the water shows through it everywhere"
-			% [core_n, COAST_FOAM_CORE_ALPHA, COAST_FOAM_MIN_CORE_PX])
-	elif sat > COAST_FOAM_SAT_MAX:
-		_fail("COAST: foam on the warm sea is TINTED — core saturation %.3f (want ≤ %.2f)" % [sat, COAST_FOAM_SAT_MAX])
-	elif luma < water + COAST_FOAM_CORE_LUMA_ABOVE:
-		_fail("COAST: foam cores are DIM — luma %.1f over water %.1f (want ≥ +%.0f)" % [luma, water, COAST_FOAM_CORE_LUMA_ABOVE])
-	if born == 0:
-		_fail("COAST: no foam was born between phases %.2f s apart — the fade-in claim has no subject" % COAST_FADE_STEP)
-	elif fade_bright > COAST_FOAM_BRIGHT_MAX:
-		_fail("COAST: foam POPS IN — %.3f of newborn foam already reaches %.0f levels (want ≤ %.2f)"
-			% [fade_bright, COAST_FOAM_BRIGHT_DL, COAST_FOAM_BRIGHT_MAX])
+		var sizes := {}
+		for label: int in labels:
+			if label != 0:
+				sizes[label] = int(sizes.get(label, 0)) + 1
+		for label: int in sizes:
+			if int(sizes[label]) >= COAST_CHIP_MIN_PX:
+				chips += 1
+				chip_px += int(sizes[label])
+		water_n += 1
+	print("blend_probe: COAST (e) no foam chips — %d blobs (%d px) reach %.0f levels past %.1f r of land over %d phases · peak swell there %.1f levels"
+		% [chips, chip_px, COAST_CHIP_DL, COAST_SURF_BAND, water_n, peak])
+	if peak <= 0.0:
+		_fail("COAST: nothing moved past the surf band at all — the no-chips claim has no subject")
+	if chips > 0:
+		_fail("COAST: %d FOAM CHIPS on the water past the surf (%d px at ≥ %.0f levels) — the coast's only foam is the shoreline surf"
+			% [chips, chip_px, COAST_CHIP_DL])
 
 
 func _assert_coast_shore_pulse() -> void:
@@ -4543,7 +4397,7 @@ func _assert_coast_shore_pulse() -> void:
 	var water_changed := 0
 	var land_changed := 0
 	var surf: Array = []   # [luma, saturation] of every surge-changed water pixel, for the colour report
-	for phase: float in COAST_FOAM_PHASES:
+	for phase: float in COAST_PHASES:
 		var on: Image = await _coast_capture({}, phase)
 		var still: Image = await _coast_capture(COAST_NO_SURGE, phase)
 		if on == null or still == null:
@@ -4591,8 +4445,8 @@ func _assert_coast_shore_pulse() -> void:
 
 
 func _assert_coast_toggle() -> void:
-	## (g) `O` OFF: two phases of the shipped COAST frame are byte-identical — the swell, its foam and the shore
-	## surge all stop with the rest of the water motion.
+	## (g) `O` OFF: two phases of the shipped COAST frame are byte-identical — the swell and the shore surge both
+	## stop with the rest of the water motion.
 	_map._terrain.set_water_motion_enabled(false)
 	var a: Image = await _coast_capture({}, 0.0)
 	var b: Image = await _coast_capture({}, OCEAN_MOTION_DT)
