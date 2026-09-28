@@ -4983,8 +4983,17 @@ impl LaborAllocation {
         // The kits have to outlive the borrow the budget builds from, so they are resolved into a
         // vector first — `kit_choice` mints a fresh `KitChoice` per call.
         let kits = self.kitted_rows(config, |_| true);
+        // ⛔ **LESS WHAT THE POOLS WERE ISSUED** — one unit arms one person per turn across both
+        // accounts, and the pools settle first (`BandItemBudget::reserving`). Read off
+        // [`Self::last_pool_toe`], which the turn parks right after the settlement and above every
+        // take row, so the turn, the assign-time seed and the capture all divide one remainder.
         crate::equipment_config::BandItemBudget::of_rows(
             kits.iter().map(|(kit, workers)| (kit, *workers)),
+        )
+        .reserving(
+            self.last_pool_toe
+                .iter()
+                .map(|line| (line.item.as_str(), line.filled)),
         )
     }
 

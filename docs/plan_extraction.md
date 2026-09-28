@@ -394,12 +394,17 @@ not a blocker: the deposit works whatever the metal is for.
   free. Recorded as an item rather than a bare decision because it makes stone tools cost more
   **labor** than bone tools while costing less **material**, which is a gameplay claim rather than a
   tuning detail. **If it plays tedious the fix is a bigger yield per turn, never a free mechanism.**
-- **Forestry's kit does not exist, and the reason it could not be written is gone.** The objection
-  was that the natural tool is an axe and, with stone tools out of scope, it would have to be
-  bone-hafted — *"which sits oddly"*. Stone tools shipped (§8), so a knapped axe is now an ordinary
-  roster row: an item with a `flint` tier and a recipe reading stone's `hardness`, beside the three
-  that already exist. **It is still not written** — forestry ships kitless, so the branch has no gear
-  decision — and what it now waits on is only somebody cutting the item, not a missing material.
+- **Forestry's kit — answered (#663).** The objection was that the natural tool is an axe and, with
+  stone tools out of scope, it would have to be bone-hafted — *"which sits oddly"*. Stone tools
+  shipped (§8), so the axe shipped as an ordinary roster row: **`axe`, one `flint` tier and no bone
+  tier**, knapped from stone read on `hardness`. It declares a new stat, **`deposit_take`** — extra
+  units one equipped worker takes per turn, **added** to the rung's bare `yield_per_worker_turn` and
+  never replacing it — on **`forestry:felling` and `forestry:coppice` only**; `deadfall` stays bare,
+  so §4d holds. Beside it ship **quarrying `wedges`** (`flint`, `deposit_take` on `extraction:quarry`
+  only; `gathering` stays bare). Both ride one `deposit_tools` kit that is `default_kits.extract`,
+  and each tool is scoped by branch and rung so it adds nothing — and wears nothing — off its own
+  rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
+  working and the keepers holding one are geared by it through the rung requirement.
 - **The road tools' pacing moved a long way and nobody has played it.** `earthmoving` and
   `stone_dressing` cost 2 **stone** instead of 2 bone since §8's change: about 5 worker-turns on a
   scatter against about 22 turns of a whole band's hunting. `recipes.json`'s `_comment_road_tools`

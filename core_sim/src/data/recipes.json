@@ -9,6 +9,54 @@
     "progress_per_worker_turn": 1.0
   },
   "recipes": {
+    "axe": {
+      "craft": "knapping",
+      "work": 6.0,
+      "inputs": [
+        {
+          "material": "stone",
+          "amount": 1.0,
+          "reads": "hardness"
+        },
+        {
+          "material": "wood",
+          "amount": 2.0
+        },
+        {
+          "material": "fibre",
+          "amount": 1.0
+        }
+      ],
+      "outputs": [
+        {
+          "equipment": "axe",
+          "amount": 1.0,
+          "tier": "flint"
+        }
+      ]
+    },
+    "wedges": {
+      "craft": "knapping",
+      "work": 6.0,
+      "inputs": [
+        {
+          "material": "stone",
+          "amount": 2.0,
+          "reads": "hardness"
+        },
+        {
+          "material": "wood",
+          "amount": 1.0
+        }
+      ],
+      "outputs": [
+        {
+          "equipment": "wedges",
+          "amount": 1.0,
+          "tier": "flint"
+        }
+      ]
+    },
     "sled": {
       "label": "Hide",
       "craft": "tanning",

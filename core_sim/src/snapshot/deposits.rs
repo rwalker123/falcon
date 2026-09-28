@@ -221,7 +221,9 @@ fn deposit_row(
         // **WHAT ONE CUTTER MOVES PER TURN AT THIS RUNG**, in the material's own units — the deposit
         // twin of `ForagePatchState::per_worker_biomass` and named after it, because the client's
         // crew arithmetic (*clear it now* / *hold it after*) is the same division on either web.
-        // There is no seasonal weight and no kit term on this branch, so it is the rung's rate flat.
+        // There is no seasonal weight on this branch, and this is a SOURCE row with no band behind
+        // it, so it is the rung's BARE rate flat: a row's take tools add `deposit_take` per equipped
+        // worker on top (`extraction::deposit_take`).
         per_worker_biomass: payoff.yield_per_worker_turn,
         // **THIS DEPOSIT'S OWN GROWTH CURVE, SAMPLED** — the third model on the wire's one
         // x-axis, and a **quarry's is all zeros** rather than absent: *this does not grow* is a

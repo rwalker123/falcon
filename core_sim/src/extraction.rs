@@ -113,6 +113,12 @@ pub const NO_TAKE_THIS_TURN: f32 = 0.0;
 /// because each is a statement about the turn just resolved.
 pub const NOBODY_ASKED_FOR_A_FLOOR: Option<f32> = None;
 
+/// **A CREW CARRYING NOTHING THAT LIFTS THIS TAKE** — the neutral of
+/// [`crate::equipment_config::EquipmentStat::DepositTake`], and the `gear_take` a bare crew, a test
+/// fixture or a probe with no band behind it passes to [`deposit_take`]. Additive, so its neutral is
+/// `0`: a crew with no axe cuts at the rung's own bare rate and nothing more.
+pub const NO_DEPOSIT_GEAR: f32 = 0.0;
+
 /// **WHAT A DEPOSIT'S RUNGS COST THIS SOURCE** — the ladder's own price, unscaled.
 ///
 /// It is stated rather than left implicit because [`RungStanding::at`] takes a per-source price list
@@ -613,20 +619,27 @@ pub fn deposit_reachable(
 /// What warns the player is a readout (`docs/plan_extraction.md` §7 — the existing
 /// sustainable-versus-actual breakdown pointed at a new source), never a guard here.
 ///
-/// **There is no kit term.** The shipped roster declares no *take* gear on either branch — forestry
-/// deliberately (its natural tool is an axe and a bone-hafted axe is a roster question §9 leaves
-/// open) and extraction because its two tools are `build_work`, which lands on the pool that
-/// *raises* a working. `yield_per_worker_turn` is therefore a bare-handed rate throughout, which is
-/// what makes the free floor of both branches workable with an empty kit roster.
+/// **THE KIT TERM IS AN ADDITION, `gear_take`** — the summed
+/// [`crate::equipment_config::EquipmentStat::DepositTake`] of the crew's equipped workers
+/// ([`crate::equipment_config::EquipmentConfig::deposit_gear`]), added on top of the bare
+/// `workers × yield_per_worker_turn`. It never replaces the rung's rate — that rate is interpolated
+/// per rung, and an absolute gear rate would erase the climb — and it never touches the reach:
+/// `min(labor, reachable)` caps a geared crew exactly where it caps a bare one.
+///
+/// ⛔ **THE FLOOR RUNGS STAY BARE-WORKABLE** (`docs/plan_extraction.md` §4d). No shipped tool is
+/// bound to `forestry:deadfall` or `extraction:gathering`, so `yield_per_worker_turn` there is the
+/// whole rate a crew gets, and a band with no kit at all can start the material economy. Pass
+/// [`NO_DEPOSIT_GEAR`] where no band stands behind the take.
 pub fn deposit_take(
     workers: u32,
+    gear_take: f32,
     stock: f32,
     capacity: f32,
     regrowth_rate: f32,
     payoff: &RungExtractionPayoff,
     escapement: f32,
 ) -> f32 {
-    let labor = workers as f32 * payoff.yield_per_worker_turn;
+    let labor = deposit_crew_throughput(workers, gear_take, payoff);
     labor.max(DEPOSIT_EMPTY).min(deposit_reachable(
         stock,
         capacity,
@@ -635,6 +648,44 @@ pub fn deposit_take(
         escapement,
     ))
 }
+
+/// **WHAT THE CREW'S HANDS AND TOOLS CAN LIFT THIS TURN** — the unclamped half of
+/// [`deposit_take`]: `workers × yield_per_worker_turn + gear_take`. Read by the take, by
+/// [`deposit_take_overdraws`]' ability half and by the row's staffing inversion, so the three agree
+/// on one throughput.
+pub fn deposit_crew_throughput(workers: u32, gear_take: f32, payoff: &RungExtractionPayoff) -> f32 {
+    workers as f32 * payoff.yield_per_worker_turn + gear_take.max(NO_DEPOSIT_GEAR)
+}
+
+/// **THE UNITS OF THIS TAKE THE TOOL-HOLDERS CUT** — what
+/// [`crate::equipment_config::WearQuantum::DepositTaken`] is charged on.
+///
+/// `taken × equipped_labor / labor`, where `equipped_labor` is what the equipped workers could lift
+/// (`equipped × bare + gear_take`) and `labor` is the whole crew's
+/// ([`deposit_crew_throughput`]). **The holders' share of the throughput, applied to what was
+/// actually taken**, so a take capped by the reach bills the tools for the part they did and a
+/// bare crew bills nothing: the partly-equipped party's attribution, the one [`WearQuantum::Strike`]
+/// makes for a weapon.
+///
+/// [`WearQuantum::Strike`]: crate::equipment_config::WearQuantum::Strike
+pub fn deposit_geared_units(
+    taken: f32,
+    workers: u32,
+    equipped_workers: f32,
+    gear_take: f32,
+    payoff: &RungExtractionPayoff,
+) -> f32 {
+    let labor = deposit_crew_throughput(workers, gear_take, payoff);
+    if labor <= DEPOSIT_EMPTY || taken <= DEPOSIT_EMPTY {
+        return DEPOSIT_EMPTY;
+    }
+    let equipped_labor = equipped_workers.clamp(0.0, workers as f32) * payoff.yield_per_worker_turn
+        + gear_take.max(NO_DEPOSIT_GEAR);
+    taken * (equipped_labor / labor).min(WHOLE_TAKE)
+}
+
+/// **THE WHOLE OF A TAKE** — the ceiling on the tool-holders' share in [`deposit_geared_units`].
+const WHOLE_TAKE: f32 = 1.0;
 
 /// **ONE TURN OF RENEWAL** — the logistic curve every stock in this game grows on, evaluated at a
 /// **seeded** reading so a deposit taken to nothing can come back.
@@ -866,8 +917,9 @@ pub fn deposit_sustainable_take(
 /// that — not the row's raw `escapement` — is the floor the intent half is a question about. A
 /// gathering crew strands 85% of a seam whatever its dial says, and is not over-cutting anything.
 ///
-/// **The crew's throughput is the unclamped `workers × yield_per_worker_turn`**, the "what the hands
-/// can lift" half of [`deposit_take`] — the plant web's `crew_biomass_per_turn` exactly, and
+/// **The crew's throughput is the unclamped [`deposit_crew_throughput`]** — hands plus the
+/// `gear_take` the tools add, the "what the crew can lift" half of [`deposit_take`] — the plant web's
+/// `crew_biomass_per_turn` exactly, and
 /// deliberately not the take the turn landed: a first cut of a stocked working is its accumulated
 /// stock and exceeds one turn's regrowth under every floor, which is the mis-fire
 /// [`crate::components::floor_overdraws`] records.
@@ -879,9 +931,11 @@ pub fn deposit_sustainable_take(
 /// instead is [`deposit_runway`]. It is the ground's rate, un-scaled by
 /// [`RungExtractionPayoff::regrowth_multiplier`], [`deposit_effective_floor`]'s own reading: a rung
 /// scales a rate, it does not make the ground finite.
+#[allow(clippy::too_many_arguments)] // the take's own inputs, plus the ground and the two configs
 pub fn deposit_take_overdraws(
     source: &DepositSource,
     workers: u32,
+    gear_take: f32,
     stock: f32,
     escapement: f32,
     ground: &Tile,
@@ -904,7 +958,7 @@ pub fn deposit_take_overdraws(
     let (low, high) = crate::fauna::floor_reach_band(floor, stock, capacity);
     crate::components::take_overdraws(
         floor,
-        workers as f32 * payoff.yield_per_worker_turn,
+        deposit_crew_throughput(workers, gear_take, &payoff),
         // **THE WORKING'S OWN CURVE** — the rung's scaled rate at the seeded reading, which is the
         // seam [`renew_deposit`] grows the stock with, so the ⚠ is answered against the growth the
         // next Logistics pass will really apply.
@@ -1072,6 +1126,9 @@ pub struct DepositTake {
 pub fn take_from_deposit(
     source: &mut DepositSource,
     workers: u32,
+    // **What the crew's tools add** ([`deposit_take`]'s `gear_take`) — struck by the caller at the
+    // rung this working holds, because the kit and the ledger are the band's and not the deposit's.
+    gear_take: f32,
     escapement: f32,
     ground: &Tile,
     config: &ExtractionConfig,
@@ -1086,6 +1143,7 @@ pub fn take_from_deposit(
         deposit_reachable(source.stock, capacity, regrowth_rate, &payoff, escapement);
     let taken = deposit_take(
         workers,
+        gear_take,
         source.stock,
         capacity,
         regrowth_rate,
@@ -1380,6 +1438,7 @@ mod tests {
         assert_eq!(
             deposit_take(
                 1000,
+                NO_DEPOSIT_GEAR,
                 A_ROCK_BODY,
                 A_ROCK_BODY,
                 NEVER_RENEWS,
@@ -1403,6 +1462,7 @@ mod tests {
         for _ in 0..20 {
             let taken = deposit_take(
                 10,
+                NO_DEPOSIT_GEAR,
                 stock,
                 capacity,
                 A_RENEWING_RATE,
@@ -1598,7 +1658,15 @@ mod tests {
         let mut last_take = 0.0;
         for turn in 0..60 {
             stock = deposit_regrowth(stock, CAPACITY, RATE, A_SEED);
-            let taken = deposit_take(CREW, stock, CAPACITY, RATE, &felling, HALF_THE_BODY);
+            let taken = deposit_take(
+                CREW,
+                NO_DEPOSIT_GEAR,
+                stock,
+                CAPACITY,
+                RATE,
+                &felling,
+                HALF_THE_BODY,
+            );
             stock = (stock - taken).max(DEPOSIT_EMPTY);
             assert!(
                 stock >= floor_stock - A_ROUNDING,
@@ -1636,6 +1704,7 @@ mod tests {
         assert_eq!(
             deposit_take(
                 50,
+                NO_DEPOSIT_GEAR,
                 A_ROCK_BODY,
                 A_ROCK_BODY,
                 NEVER_RENEWS,
@@ -1663,7 +1732,15 @@ mod tests {
         // Four bands of five, one after another: `4 x 5 x 2.0 = 40` against a reach of 30.
         let mut total = 0.0;
         for _ in 0..4 {
-            let taken = deposit_take(5, stock, capacity, A_RENEWING_RATE, &felling, NO_CREW_FLOOR);
+            let taken = deposit_take(
+                5,
+                NO_DEPOSIT_GEAR,
+                stock,
+                capacity,
+                A_RENEWING_RATE,
+                &felling,
+                NO_CREW_FLOOR,
+            );
             total += taken;
             stock = (stock - taken).max(DEPOSIT_EMPTY);
         }
@@ -1674,6 +1751,114 @@ mod tests {
         assert!(
             total > 0.0 && stock < capacity,
             "**LIVENESS**: they must actually have taken something"
+        );
+    }
+
+    /// **TAKE GEAR IS AN ADDITION ON TOP OF THE RUNG'S BARE RATE, AND THE REACH STILL CAPS IT**
+    /// (#663). Three arms on one felling payoff: a bare crew cuts `workers × rate` exactly as it did
+    /// before the term existed; the same crew with two axes' worth of gear cuts that **plus** the
+    /// gear and nothing else (never a replacement rate); and a geared crew against a stand with
+    /// less reachable than its hands can lift cuts the reach — no more — because the tool never
+    /// moves the floor.
+    #[test]
+    fn take_gear_adds_on_top_of_the_bare_rate_and_the_reach_still_caps_it() {
+        const CREW: u32 = 5;
+        /// Two equipped workers at the flint axe's `+1.0`.
+        const TWO_AXES: f32 = 2.0;
+        let felling = payoff(2.0, WHOLE_DEPOSIT_REACHED, REGROWTH_UNCHANGED);
+        let capacity = 600.0;
+        let bare = deposit_take(
+            CREW,
+            NO_DEPOSIT_GEAR,
+            capacity,
+            capacity,
+            A_RENEWING_RATE,
+            &felling,
+            NO_CREW_FLOOR,
+        );
+        assert_eq!(
+            bare,
+            CREW as f32 * felling.yield_per_worker_turn,
+            "zero gear is the bare take, unchanged"
+        );
+        let geared = deposit_take(
+            CREW,
+            TWO_AXES,
+            capacity,
+            capacity,
+            A_RENEWING_RATE,
+            &felling,
+            NO_CREW_FLOOR,
+        );
+        assert_eq!(
+            geared,
+            bare + TWO_AXES,
+            "the gear is added on top, and only it"
+        );
+
+        // A stand drawn down to a sliver above its floor: the hands alone out-lift what is left.
+        let thin_stock = bare / 2.0;
+        let reach = deposit_reachable(
+            thin_stock,
+            capacity,
+            A_RENEWING_RATE,
+            &felling,
+            NO_CREW_FLOOR,
+        );
+        assert!(
+            reach < bare,
+            "fixture: the reach must bind below the bare hands, or this asserts nothing"
+        );
+        assert_eq!(
+            deposit_take(
+                CREW,
+                TWO_AXES,
+                thin_stock,
+                capacity,
+                A_RENEWING_RATE,
+                &felling,
+                NO_CREW_FLOOR,
+            ),
+            reach,
+            "a tool never reaches past the floor: the geared take is the reach"
+        );
+    }
+
+    /// **THE TOOLS ARE BILLED FOR THE UNITS THEIR HOLDERS CUT** — `taken × equipped_labor / labor`.
+    /// A bare crew bills nothing; a fully equipped crew bills the whole take; a half-axed crew bills
+    /// exactly the holders' share of the throughput; and a take capped by the reach is billed the
+    /// same share of the smaller number rather than the uncapped one.
+    #[test]
+    fn the_take_tools_wear_on_the_share_their_holders_cut() {
+        const CREW: u32 = 4;
+        const AXE: f32 = 1.0;
+        let felling = payoff(2.0, WHOLE_DEPOSIT_REACHED, REGROWTH_UNCHANGED);
+        let bare_labor = CREW as f32 * felling.yield_per_worker_turn;
+        assert_eq!(
+            deposit_geared_units(bare_labor, CREW, 0.0, NO_DEPOSIT_GEAR, &felling),
+            DEPOSIT_EMPTY,
+            "a crew holding nothing wears nothing"
+        );
+        let full_gear = CREW as f32 * AXE;
+        let full_take = bare_labor + full_gear;
+        assert!(
+            (deposit_geared_units(full_take, CREW, CREW as f32, full_gear, &felling) - full_take)
+                .abs()
+                < 1e-5,
+            "a fully equipped crew is billed the whole take"
+        );
+        // Two of four hold an axe: they lift 2 × (2.0 + 1.0) = 6 of the crew's 8 + 2 = 10.
+        let half_gear = 2.0 * AXE;
+        let half_take = bare_labor + half_gear;
+        let billed = deposit_geared_units(half_take, CREW, 2.0, half_gear, &felling);
+        assert!(
+            (billed - 6.0).abs() < 1e-5,
+            "the holders' share of the throughput: {billed}"
+        );
+        let capped = deposit_geared_units(half_take / 2.0, CREW, 2.0, half_gear, &felling);
+        assert!(
+            (capped - billed / 2.0).abs() < 1e-5,
+            "a capped take bills the same share of what was actually cut: {capped}"
         );
     }
 }

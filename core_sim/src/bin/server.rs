@@ -3635,8 +3635,33 @@ fn seed_source_yield(
             // renews, so a quarry's seeded figure is the one its crew will actually cut.
             let regrowth_rate =
                 core_sim::extraction::tile_deposit_regrowth(&extraction, material, &ground);
+            // **The crew's take gear, through the seam the turn strikes it at** — this row's own
+            // coverage off its share of the band's gear, at the rung the projected working HOLDS
+            // (`EquipmentConfig::deposit_gear`). A seed priced bare would promise an axe-carrying
+            // crew the bare-handed cut and jump the moment the turn landed.
+            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+            let band_wear = app
+                .world
+                .get::<BandEquipment>(band)
+                .cloned()
+                .unwrap_or_default();
+            let crew_coverage = equipment_cfg.coverage_from_units(
+                &crew_kit,
+                workers as f32,
+                &band_wear,
+                item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
+            );
+            let held_rung = projected.standing().held;
+            let held_key = held_rung.wire_key();
+            let gear = equipment_cfg.deposit_gear(
+                &crew_coverage,
+                &band_wear,
+                held_rung.branch(),
+                Some(&held_key),
+            );
             let taken = core_sim::extraction::deposit_take(
                 workers,
+                gear.take,
                 projected.stock,
                 capacity,
                 regrowth_rate,
@@ -22955,6 +22980,170 @@ mod tests {
             0.0,
             "⛔ and it pays NO FOOD — `food_income` is `Sum(actual)` and one side of the larder \
              identity, so a working must contribute nothing to it"
+        );
+    }
+
+    /// **A `forestry:felling` working seated on [`WORKING`] at the top of its rung**, full stand —
+    /// the rung the axe serves. Returns the rung's bare per-worker rate at that position.
+    fn seat_a_felling_working(app: &mut bevy::prelude::App, tile: Entity) -> f32 {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+        let ground = app
+            .world
+            .get::<Tile>(tile)
+            .cloned()
+            .expect("the working's tile");
+        let capacity = core_sim::extraction::tile_deposit_capacity(&extraction, "wood", &ground);
+        let mut working = core_sim::extraction::DepositSource::opening(
+            WORKING,
+            "wood",
+            capacity,
+            core_sim::RungBranch::Forestry,
+        );
+        let (base, width) =
+            core_sim::extraction::deposit_rung_span(core_sim::RungKey::ForestryFelling, &ladder);
+        working.set_ladder_position(base + width, &ladder, core_sim::RungBranch::Forestry);
+        assert_eq!(
+            working.rung(),
+            core_sim::RungKey::ForestryFelling,
+            "fixture: the working must hold the felling rung the axe serves"
+        );
+        let bare_rate =
+            core_sim::extraction::deposit_payoff(working.standing(), &ladder).yield_per_worker_turn;
+        app.world
+            .resource_mut::<core_sim::DepositRegistry>()
+            .insert(working);
+        bare_rate
+    }
+
+    /// One full turn as a deposit row spans it — Logistics' renewal and bill, then the labour pass.
+    fn resolve_deposit_turn(app: &mut bevy::prelude::App) {
+        {
+            use bevy_ecs::system::RunSystemOnce;
+            app.world.run_system_once(core_sim::advance_deposits);
+        }
+        resolve_labor(app);
+    }
+
+    /// **THE SEED IS RATIONED LIKE THE TURN WHEN A POOL SHARES THE AXES** (#663). Two axes, a
+    /// felling crew, and two quarrywork keepers holding the same working: the pools settle first and
+    /// take the axe the keepers' bill needs, so the fellers are armed out of what is left — and the
+    /// seed, which reads the same `LaborAllocation::item_budget` (less the pools' issued units the
+    /// turn parked on `last_pool_toe`), must quote exactly the cut the next turn pays.
+    #[test]
+    fn a_seed_beside_a_pool_holding_axes_quotes_the_cut_the_turn_pays() {
+        const AXES: u32 = 2;
+        const KEEPERS: u32 = 2;
+
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        seat_a_felling_working(&mut app, tile);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", AXES, "flint", None);
+        app.world.entity_mut(band).insert(ledger);
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .assignments
+            .push(core_sim::LaborAssignment {
+                party: None,
+                target: LaborTarget::Quarrywork,
+                workers: KEEPERS,
+                kit: None,
+                priority: core_sim::SourcePriority::default(),
+                upkeep_kit: None,
+            });
+        // One turn so the settlement has parked what the pools were issued.
+        resolve_deposit_turn(&mut app);
+        let pool_axes: f32 = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .last_pool_toe
+            .iter()
+            .filter(|line| line.item == "axe")
+            .map(|line| line.filled)
+            .sum();
+        assert!(
+            pool_axes >= 1.0,
+            "fixture: the keepers must hold an axe, or the seed has nothing to be rationed by — \
+             {pool_axes}"
+        );
+
+        // Re-seed the row through the seam the assign command calls, then resolve the turn it
+        // quotes.
+        seed_source_yield(
+            &mut app,
+            band,
+            &LaborTarget::Extract {
+                tile: WORKING,
+                material: "wood".to_string(),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+            },
+            None,
+            BAND_WORKERS,
+        );
+        let seeded = source_materials(&app, band)
+            .first()
+            .expect("a staffed working publishes the material it will cut")
+            .amount;
+        resolve_deposit_turn(&mut app);
+        let resolved = source_materials(&app, band)
+            .first()
+            .expect("the turn paid the working's material")
+            .amount;
+        assert!(
+            (resolved - seeded).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the turn must pay the seeded cut (seed {seeded}, resolved {resolved})"
+        );
+    }
+
+    /// **A CREW HOLDING AXES IS SEEDED THE CUT THE TURN WILL PAY** (#663) — the seed strikes the
+    /// take gear through `EquipmentConfig::deposit_gear` at the rung the working holds, the same seam
+    /// the turn's `Extract` arm reads, so the quoted figure does not jump when the turn lands.
+    ///
+    /// Two axes among five fellers on a seated `forestry:felling` working: the expectation is written
+    /// out from the rung's own rate plus the two axes' `deposit_take`, independently of the seam, and
+    /// the resolved turn is then required to pay exactly the seed. The stand is at capacity, where the
+    /// logistic term is zero, so the regrowth the seed projects and the one the turn applies agree.
+    #[test]
+    fn a_deposit_crew_with_axes_is_seeded_the_cut_the_turn_pays() {
+        /// Fewer axes than fellers, so the partly-equipped sum is what is priced.
+        const AXES: u32 = 2;
+        /// The shipped flint axe's `deposit_take` on felling (`equipment.json`).
+        const AXE_TAKE: f32 = 1.0;
+
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        let bare_rate = seat_a_felling_working(&mut app, tile);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", AXES, "flint", None);
+        app.world.entity_mut(band).insert(ledger);
+
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+        let seeded = source_materials(&app, band)
+            .first()
+            .expect("a staffed working publishes the material it will cut")
+            .amount;
+        let expected = bare_rate * BAND_WORKERS as f32 + AXES as f32 * AXE_TAKE;
+        assert!(
+            (seeded - expected).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the seed is the crew's bare rate plus two axes' take: {seeded} against {expected}"
+        );
+
+        resolve_deposit_turn(&mut app);
+        let resolved = source_materials(&app, band)
+            .first()
+            .expect("the turn paid the working's material")
+            .amount;
+        assert!(
+            (resolved - seeded).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the turn must pay the seeded cut (seed {seeded}, resolved {resolved})"
         );
     }
 

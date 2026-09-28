@@ -2806,10 +2806,9 @@ fn route_keeping_claims(
 /// funds in, stated here because `distribute_upkeep_pool` funds in slice order and the caller owns
 /// the ranking.
 ///
-/// **No claim can carry a NAMED kit.** `upkeep_kit` is a property of a *labor row*, and it is the
-/// row's own site that it names — but the shipped roster declares no keeping gear on either deposit
-/// branch, so every working takes the roster's derivation and a named kit would resolve to the same
-/// empty `none`. The day one ships, the row's selection is where it is read from.
+/// **No claim carries a NAMED kit.** A pool's tools follow from each working's own rung
+/// ([`crate::equipment_config::EquipmentConfig::pool_toe`] — the axe on a forestry working, the
+/// stone-dressing gear on a quarry), so there is no per-site selection for a claim to carry.
 fn extraction_keeping_claims(
     allocation: &LaborAllocation,
     deposits: &crate::extraction::DepositRegistry,
@@ -2896,8 +2895,8 @@ fn extraction_keeping_claims(
 /// `build_work` on `extraction:quarry`, but no roster kit offers the `quarrywork` **job** — so the
 /// retired kit lookup answered `none` and a quarry crew worked bare-handed however many chisels the
 /// band owned. The requirement asks the **rung**, so the tool reaches this pool
-/// (`docs/plan_pool_toe.md` §1). The `forestry` branch is still served by nothing, and the day a
-/// propping set declares one this seam picks it up with no code change.
+/// (`docs/plan_pool_toe.md` §1). The `forestry` branch is served the same way since the axe
+/// shipped (#663): it declares `build_work` on `forestry`, and no kit had to list `quarrywork`.
 ///
 /// **`upkeep_supplied` accumulates (`+=`)**, §2.5's rule: two bands each holding a row on one
 /// working each put a part of its keeping on the ground. It is cleared once per turn by
@@ -8407,9 +8406,25 @@ pub fn advance_labor_allocation(
                     // **The stock this turn's crew is FACING** — read before the take, the term the
                     // ⚠ below is answered at, exactly as the two food webs' `biomass_before` is.
                     let stock_before = working.stock;
+                    // **THE CREW'S TAKE GEAR, struck at the rung the working HOLDS** — the rate the
+                    // take runs at is that rung's, so the tool that lifts it must be the one bound
+                    // to it (`deposit_take` on `forestry:felling`, never on `deadfall`). Through this
+                    // row's own coverage, the seam the gather reads its baskets off: two axes among
+                    // five fellers add two tools' worth, not five.
+                    let held_rung = working.standing().held;
+                    let held_key = held_rung.wire_key();
+                    let deposit_gear = equipment_cfg.deposit_gear(
+                        &crew_coverage,
+                        &band_kit,
+                        held_rung.branch(),
+                        Some(&held_key),
+                    );
+                    let take_payoff =
+                        crate::extraction::deposit_payoff(working.standing(), &ladder);
                     let outcome = crate::extraction::take_from_deposit(
                         working,
                         workers,
+                        deposit_gear.take,
                         // **THE PLAYER'S OWN FLOOR, composed with the RUNG'S inside the take** —
                         // `deposit_effective_floor` takes the greater of the two, so this row asks
                         // the crew to leave more standing than its rung already cannot reach, never
@@ -8458,9 +8473,28 @@ pub fn advance_labor_allocation(
                     // the peak and holds there is drawing nothing below what the wood sustains,
                     // whatever the dial says. **A working at `NEVER_RENEWS` never lights it** — §7's
                     // fork: a finite working warns with its runway instead.
+                    // **The tools are charged for the units their holders cut, and only those**
+                    // (`WearQuantum::DepositTaken`, `docs/plan_denial_raid.md` §1.2) — against the
+                    // kit narrowed to what served this rung, so a woodcutter's wedges wear nothing.
+                    // After the take, the accrue-after-take ordering every other charge site uses.
+                    if let Some(kit) = band_equipment.as_mut() {
+                        kit.wear_kit(
+                            &equipment_cfg,
+                            &deposit_gear.wear_kit,
+                            crate::equipment_config::WearQuantum::DepositTaken,
+                            crate::extraction::deposit_geared_units(
+                                outcome.taken,
+                                workers,
+                                deposit_gear.equipped_workers,
+                                deposit_gear.take,
+                                &take_payoff,
+                            ),
+                        );
+                    }
                     yields[idx].overdraws = crate::extraction::deposit_take_overdraws(
                         working,
                         workers,
+                        deposit_gear.take,
                         stock_before,
                         *floor,
                         ground,
@@ -8489,9 +8523,19 @@ pub fn advance_labor_allocation(
                     // **This is a WORKER COUNT and no part of the food identity** — `actual` stays
                     // `SourceYield::ZERO` on this arm, and the take keeps paying only into
                     // `yields[idx].materials`.
-                    let per_worker_take =
-                        crate::extraction::deposit_payoff(working.standing(), &ladder)
-                            .yield_per_worker_turn;
+                    //
+                    // **The per-worker rate is the crew's MEAN, gear included** — the plant web's
+                    // own reading of a partly-basketed crew (`KitCoverage::weighted_rate`), so the
+                    // inversion divides the take by the throughput it actually ran at.
+                    let per_worker_take = if workers > crate::extraction::NO_CREW_ON_THE_DEPOSIT {
+                        crate::extraction::deposit_crew_throughput(
+                            workers,
+                            deposit_gear.take,
+                            &take_payoff,
+                        ) / workers as f32
+                    } else {
+                        take_payoff.yield_per_worker_turn
+                    };
                     yields[idx].workers_needed =
                         workers_needed_for_take(outcome.taken, per_worker_take, workers);
                     // **THE LESSON, on the rung the working STANDS on** — `deadfall` teaches
@@ -11368,11 +11412,16 @@ mod keeping_split_tests {
     /// no single rate to divide by, and two sites owing the same work on rungs that want different
     /// tools need **different numbers of hands**.
     ///
-    /// ⛔ **THE `Quarrywork` POOL IS THE CASE, BECAUSE IT HOLDS TWO BRANCHES.** A coppice
-    /// (`forestry`) is served by no shipped tool at all and a quarry (`extraction:quarry`) by
-    /// stone-dressing gear, so one pool genuinely carries two rates — which is the thing one kit
-    /// could not express and which this test would not have been able to state on the plant web,
-    /// where every rung resolves the same hoe.
+    /// ⛔ **THE `Quarrywork` POOL IS THE CASE.** A quarry (`extraction:quarry`) is served by
+    /// stone-dressing gear and the loose-stone floor below it (`extraction:gathering`) by no shipped
+    /// tool at all, so one pool genuinely carries two rates — which is the thing one kit could not
+    /// express and which this test would not have been able to state on the plant web, where every
+    /// rung resolves the same hoe.
+    ///
+    /// **The bare rung's bill is the fixture's, not the ladder's.** Since the axe shipped (#663)
+    /// every rung that owes upkeep has a serving tool, so the only rung left that no tool serves is a
+    /// free floor, which owes nothing in config; `keeping_worker_need` reads the claim's own demand,
+    /// so handing it one isolates the rate term, which is all this test is about.
     ///
     /// **Both halves.** The mixed pair lands strictly between the two uniform answers — which is
     /// what a per-site sum means and what any single-rate reading gets wrong in one direction or the
@@ -11395,8 +11444,8 @@ mod keeping_split_tests {
         };
 
         let bare = need([
-            crate::intensification::RungKey::ForestryCoppice,
-            crate::intensification::RungKey::ForestryCoppice,
+            crate::intensification::RungKey::ExtractionGathering,
+            crate::intensification::RungKey::ExtractionGathering,
         ]);
         let tooled = need([
             crate::intensification::RungKey::ExtractionQuarry,
@@ -11404,7 +11453,7 @@ mod keeping_split_tests {
         ]);
         let mixed = need([
             crate::intensification::RungKey::ExtractionQuarry,
-            crate::intensification::RungKey::ForestryCoppice,
+            crate::intensification::RungKey::ExtractionGathering,
         ]);
 
         assert_eq!(
@@ -11526,9 +11575,11 @@ mod keeping_split_tests {
     /// **A POOL WHOSE RUNGS WANT NO TOOL IS NEVER GATED** — there is nothing for it to be short of,
     /// so its spare keepers are the ungated count whatever the band owns.
     ///
-    /// `forestry:coppice` is served by no shipped tool, and the band here owns **nothing at all** —
-    /// the harshest ledger there is. A gate keyed on *"does the band hold gear"* rather than on
-    /// *"does this pool require any"* would zero this pool's surplus.
+    /// `extraction:gathering` is served by no shipped tool (picking loose stone stays bare-handed,
+    /// `docs/plan_extraction.md` §4d), and the band here owns **nothing at all** — the harshest
+    /// ledger there is. A gate keyed on *"does the band hold gear"* rather than on *"does this pool
+    /// require any"* would zero this pool's surplus. The bill is the fixture's: a free floor owes
+    /// none in config, and since the axe shipped (#663) it is the only rung left that no tool serves.
     #[test]
     fn a_pool_that_requires_no_tool_keeps_its_spare_keepers() {
         const A_BILL: f32 = 1.0;
@@ -11539,7 +11590,7 @@ mod keeping_split_tests {
         let claims = [claim(
             0,
             A_BILL,
-            crate::intensification::RungKey::ForestryCoppice,
+            crate::intensification::RungKey::ExtractionGathering,
         )];
 
         let ungated = spare_keepers(
@@ -11561,7 +11612,7 @@ mod keeping_split_tests {
                 &claims,
             ),
             ungated,
-            "a coppice wants no tool, so a band owning nothing is short of nothing"
+            "loose-stone gathering wants no tool, so a band owning nothing is short of nothing"
         );
     }
 
