@@ -2124,6 +2124,119 @@ fn log_herd_spawn(herd: &Herd) {
     );
 }
 
+/// **A MIGRATORY HERD'S WHOLE CORRIDOR**, anchor to anchor round the cycle (last → first included),
+/// traced one hex at a time with [`best_land_neighbor_toward`] — the very step a `Migrate` leg takes
+/// in [`advance_herd_roam`], against the same land and graze layer — so the tiles are the ones the
+/// live herd walks from its anchors.
+///
+/// **Each leg is bounded**: every step strictly closes the hex distance to the next anchor, so a leg
+/// is at most that distance long, and a leg with no land step that gets closer is **hemmed** — it
+/// stops where it stands, exactly as the live herd does (`!moved` ends a Migrate leg), and the next
+/// leg sets out from there. Returns the tiles in walk order (duplicates where legs share ground) and
+/// how many legs were hemmed short.
+///
+/// ⛔ **It traces from the ANCHORS, and the live herd starts each leg from wherever its loiter left
+/// it** (up to `loiter_radius` off the anchor). The two converge on the same target and share most of
+/// the corridor, but the first few hexes of a live leg can differ from the traced ones.
+#[allow(clippy::too_many_arguments)]
+pub fn migratory_corridor_tiles(
+    herd: &Herd,
+    registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    graze: &GrazeRegistry,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> (Vec<UVec2>, usize) {
+    let mut walked = Vec::new();
+    let mut hemmed_legs = 0;
+    let anchors = &herd.route;
+    if anchors.len() < MIN_CORRIDOR_ANCHORS {
+        return (walked, hemmed_legs);
+    }
+    // **The walk is continuous across legs**: a hemmed leg ends where the herd stands, and the live
+    // herd starts its next leg from there, not from the anchor it never reached.
+    let mut cursor = anchors[0];
+    walked.push(cursor);
+    for i in 0..anchors.len() {
+        let target = anchors[(i + 1) % anchors.len()];
+        while cursor != target {
+            match best_land_neighbor_toward(
+                cursor, target, registry, tiles, graze, width, height, wrap,
+            ) {
+                Some(next) => {
+                    cursor = next;
+                    walked.push(cursor);
+                }
+                None => {
+                    hemmed_legs += 1;
+                    break;
+                }
+            }
+        }
+    }
+    (walked, hemmed_legs)
+}
+
+/// The fewest anchors a route needs to have a corridor at all — two distinct grounds to walk between.
+const MIN_CORRIDOR_ANCHORS: usize = 2;
+
+/// **THE GAME TRAILS THE HERDS WORE BEFORE THE GAME BEGAN** (issue #215) — every migratory herd's
+/// corridor stamped as a full `route:trail` at world creation.
+///
+/// The herds did not come into existence at turn 0; they have walked these corridors for
+/// generations. Worn in live, a corridor took ~300 turns to become a trail, by which time the map
+/// has built roads and the herds may be hunted out — so the world starts with the trails already in
+/// the ground: position at [`crate::routes::traffic_ceiling`] (the top of the free floor, never
+/// a billed road), no keeper, a fresh idle count, and `herd_idle_turns` at `Some(0)` so the game
+/// trail's own disuse grace starts now. A tile already above the ceiling keeps its position.
+///
+/// **It runs once, in the Startup worldgen chain after the graze layer** — the live Migrate step
+/// reads that layer, so the trace must too — and so never on a load (`save::worldgen_wanted`
+/// suppresses the chain; the saved `RoadRegistry` carries the trails) and never for a herd that
+/// arrives mid-game, which wears its trail in live. **It draws no random numbers**: a pure function
+/// of the herds' routes and the land, so no seeded roll anywhere shifts.
+#[allow(clippy::too_many_arguments)]
+pub fn stamp_migratory_game_trails(
+    herds: Res<HerdRegistry>,
+    mut roads: ResMut<crate::routes::RoadRegistry>,
+    ladder_config: Res<LadderConfigHandle>,
+    config: Res<SimulationConfig>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
+    graze: Option<Res<GrazeRegistry>>,
+) {
+    let ladder = ladder_config.get();
+    let ceiling = crate::routes::traffic_ceiling(&ladder);
+    let width = config.grid_size.x.max(1);
+    let height = config.grid_size.y.max(1);
+    let wrap = config.map_topology.wrap_horizontal;
+    let empty_graze = GrazeRegistry::default();
+    let graze = graze.as_deref().unwrap_or(&empty_graze);
+    for herd in herds
+        .herds
+        .iter()
+        .filter(|herd| herd.size_class == SizeClass::Migratory)
+    {
+        let (corridor, hemmed_legs) =
+            migratory_corridor_tiles(herd, &tile_registry, &tiles, graze, width, height, wrap);
+        for tile in &corridor {
+            let road = roads.road_or_trail(*tile, &ladder);
+            let worn = road.position().max(ceiling);
+            road.set_position(worn, &ladder);
+            road.idle_turns = crate::intensification::NEGLECT_NONE;
+            road.herd_idle_turns = Some(crate::intensification::NEGLECT_NONE);
+        }
+        info!(
+            target: "shadow_scale::analytics",
+            event = "herd_corridor_stamped",
+            herd = %herd.id,
+            tiles = corridor.len(),
+            hemmed_legs,
+        );
+    }
+}
+
 /// Long-range migratory herds: a handful of cross-region walkers, as many as
 /// `abundance.migratory` budgets for the map size, species drawn from the config's migratory rows.
 ///

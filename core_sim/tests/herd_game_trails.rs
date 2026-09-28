@@ -530,6 +530,17 @@ fn report_migration_corridor_pass_cadence() {
         };
         let mut before = snapshot(&app);
         total_herds += before.len();
+        let herds_at_start = before.len();
+        // **The trails worn before the game began** — every road standing at the rung after Startup
+        // and the opening turn is a stamped corridor tile (one turn of any traffic cannot wear a
+        // trail from nothing).
+        let seeded: HashSet<UVec2> = app
+            .world
+            .resource::<RoadRegistry>()
+            .iter()
+            .filter(|(_, r)| r.position() >= ceiling - TOLERANCE)
+            .map(|(tile, _)| tile)
+            .collect();
         let mut steps: Vec<ObservedStep> = Vec::new();
         let mut corridor: HashMap<UVec2, f32> = HashMap::new();
         let mut ever_at_ceiling: HashSet<UVec2> = HashSet::new();
@@ -608,6 +619,28 @@ fn report_migration_corridor_pass_cadence() {
             .iter()
             .filter(|(_, r)| r.position() >= ceiling - TOLERANCE)
             .count();
+        let seeded_standing = seeded
+            .iter()
+            .filter(|tile| {
+                roads
+                    .road(**tile)
+                    .is_some_and(|r| r.position() >= ceiling - TOLERANCE)
+            })
+            .count();
+        let live_step_tiles: Vec<UVec2> = steps.iter().flat_map(|s| [s.from, s.to]).collect();
+        let live_on_seeded = live_step_tiles
+            .iter()
+            .filter(|t| seeded.contains(t))
+            .count();
+        println!(
+            "seed {seed}: seeded trails after the opening turn={}, of them still a trail at turn \
+             {REPORT_TURNS}={seeded_standing}; migratory herds {herds_at_start} -> {}; live Migrate \
+             step tiles on a seeded trail {live_on_seeded}/{} ({:.0}%)",
+            seeded.len(),
+            before.len(),
+            live_step_tiles.len(),
+            100.0 * live_on_seeded as f64 / live_step_tiles.len().max(1) as f64,
+        );
         let mut seed_turns_to_trail: Vec<u32> = first_at_ceiling
             .iter()
             .map(|(tile, at)| at - first_crossed[tile])
