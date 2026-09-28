@@ -835,7 +835,7 @@ the frame with the open water (`terrain-blend-shader.md` → Water surface). Fra
 
 The second phase is `OCEAN_MOTION_DT` (**2 s**) set on the `water_time_offset` uniform, since the
 harness clock is frozen. The frames that show the open surface's own terms (`OCEAN_off` / `_static` / `_waves` /
-`_chop`) switch the coastal swell off too, so its crests round the island do not muddy them. Eight PNG-less
+`_chop`) switch the shore pulse off too, so the island's surf does not muddy them. Eight PNG-less
 claims ride it, and each fails on its own:
 
 - **The repeat measure.** Over a deep-only box, mean |ΔL| between each pixel and the one ONE TEXTURE
@@ -883,16 +883,14 @@ claims ride it, and each fails on its own:
   retired swell: **0.43**, fail. (The small travelling train reads 0.02 here and fails only the
   direction claim — the two measure different things.) The margin is honest rather than wide: a 3 r
   wavelength is partly averaged by 2 r blocks, and `chop_scale` near 0.7 r approaches the bar.
-- **Open water has NO caps.** At two phases (0 and 1.3 s), the shipped frame against its coastal-off twin
-  (`COAST_OFF` over `coastal_swell`): over the deep-ocean box, every pixel past the swell's reach, they
-  must be byte-identical. The premise is that the pair DOES differ somewhere, at the island's coast;
-  without it the claim passes on a swell that never drew. Shipped: **0 deep px differ, 646 677 in the whole
-  frame**. **Sabotaged** with the coastal weight forced to 1 everywhere: **1 359 842 deep px**, fail.
-  - **What went with the open-water caps.** Their seven claims (coverage band, elongation, neutral core,
-    change in place, regional orientation, length variation, fade-in) and the `OCEAN_no_whitecaps` and
-    `OCEAN_cap_life0..4` frames are retired from this state. Two of them followed the generator to state
-    31 (COAST) and were retired again when the coastal foam went; state 31's claim (e) now asserts there
-    is no foam on the water at all.
+- **Open water has NO caps.** At two phases (0 and 1.3 s), the shipped frame against its pulse-off twin
+  (`SHORE_PULSE_OFF` over `shore`): over the deep-ocean box they must be byte-identical — the pulse moves only
+  the surf. The premise is that the pair DOES differ somewhere, at the island's surf. Shipped: **0 deep px differ,
+  14 023 in the whole frame**. **Sabotaged** by feeding the pulse into the open-water motion: **1 363 738 deep
+  px**, fail. A SWELL is state 31's claim (f): with the swell in both frames it would cancel here.
+  - **What went with the open-water caps.** Their seven claims and the `OCEAN_no_whitecaps` and
+    `OCEAN_cap_life0..4` frames are retired from this state. Two followed the generator to state 31 and were
+    retired again with the coastal foam.
 - **The `O` toggle.** With `TerrainRenderer.set_water_motion_enabled(false)`, two phases of the SHIPPED
   surface `OCEAN_MOTION_DT` apart differ by **exactly 0 px** (the magnitude claim is its premise:
   toggled on, they differ). The toggle is restored after.
@@ -940,90 +938,47 @@ Three PNG-less claims, each sabotage-verified to fail on its own:
   (COAST) with the coastal foam and went when that foam was removed: with no foam laid on the water there
   is no colour for the grade to tint.
 
-**One more state (31, COAST): the COASTAL SHORE SWELL** → `COAST*.png`, at the game's r ≈ 45, grid OFF
-(`terrain-blend-shader.md` → Coastal shore swell). The fixture:
-- **Land:** from the east edge in by `COAST_LAND_DEPTH[row]` hexes, which gives bays and headlands (row 8
-  reaches furthest west) and one one-hex inlet, with a `COAST_SHELF_WIDTH`-hex shelf off it and deep ocean
-  beyond.
-- **Plus:** a three-hex island in the deep ocean, open water on its west side, and a three-hex `inland_sea`
-  lake inland, all placed from the EAST edge so the same geography fits the narrower 2.0× grid.
-- **Temperature:** every tile at the warm end of the sim's own climate anchors, the grade's strongest tint.
+**One more state (31, SHORE): the SHORE PULSE** → `SHORE*.png`, at the game's r ≈ 45, grid OFF
+(`terrain-blend-shader.md` → Shore pulse). It replaced the COAST state, whose incoming-swell claims went with the
+swell. The fixture is a JAGGED coastline: land from the east edge in by `COAST_LAND_DEPTH[row]` hexes (bays,
+headlands, a one-hex inlet), a `COAST_SHELF_WIDTH`-hex shelf off it, deep ocean beyond, a three-hex island and a
+three-hex `inland_sea` lake, all placed from the EAST edge so the geography fits the narrower grids.
 
 | frame | reads for |
 |---|---|
-| `COAST_off` | the same frame with the coastal swell off — the reference for what the swell adds |
-| `COAST`, `_t2`, `COAST_motion_diff` | the rows at two phases: straight, arriving from the open water, across the shelf, landing on the beach |
-| `COAST_seq0..3` | a 3.5-radius crop of a bay at 0 / 0.9 / 1.8 / 2.7 s (half a 5.6 s wave): rows rolling in and the surf pulsing |
-| `COAST_island` | the island: rows on its windward (west) side, calm on its lee (east) side |
-| `COAST_headland` | the headland: the rows stay straight past it, not wrapping round it |
-| `COAST_lake` | the lake: no swell, no surge |
-| `COAST_2x` | the same fixture on a 23×16 grid at r ≈ 47, Ray's 2.0× |
-| `COAST_live` | the same fixture on a 31×21 grid at r ≈ 35, Ray's 1.5× |
+| `SHORE_off` | the pulse off — the reference for what it adds |
+| `SHORE`, `_t2`, `SHORE_motion_diff` | two phases 2 s apart: the surf surging on some stretches and drawing back on others |
+| `SHORE_seq0..3` | a 5-radius crop of a jagged stretch at 0 / 1.1 / 2.3 / 3.4 s (about a quarter cycle apart): the crashes STAGGERED along the coast |
+| `SHORE_lake` | the lake: its surf never surges |
+| `SHORE_2x` / `SHORE_live` | the same fixture at r ≈ 47 (Ray's 2.0×) and r ≈ 35 (his 1.5×) |
 
-**S** below is the shipped frame minus a coastal-off twin (`COAST_OFF`, over `coastal_swell`). The chop and
-the art cancel, so S is the coastal term alone. For (b), (c), (d) and the lee claim both frames also have
-`chop_strength` 0, so S is the swell with no chop residue. Pixel → field values go through
-`TerrainRenderer.coast_distance_at` / `coast_direction_at` / `coast_shelf_at`, which sample the CPU copies
-exactly as the shader samples the textures. Eight claims, each sabotage-verified to fail on its own:
+**S** below is the shipped frame minus its pulse-off twin (`SHORE_PULSE_OFF`, over the `shore` block). Six claims,
+each sabotage-verified to fail on its own:
 
-- **(a) Shelf-bounded.** Mean |S| over shelf pixels with a shelf zone of at least 0.9 must reach 1.0
-  levels. In OPEN deep water — past `reach` + 0.1 r (1.83 r) of land and with a shelf zone of exactly 0
-  under the pixel — and on the lake, S must be EXACTLY 0.
-  - **Which open-water pixels count:** those with a shelf zone of exactly 0 one field texel around them,
-    not only at them. The GPU's bilinear filter weights at 8-bit sub-texel precision, so right at the
-    zone's last texel it read a hair above the CPU copy's exact 0 (4 px, when the facing edge widened).
-  - **Shipped:** **4.01 levels** on the shelf; **0 of 261 521 px** moved in open water; **0 of 3 941** on
-    the lake.
-  - **Sabotaged** with the coastal weight ignoring the zone and the band (eligibility alone):
-    **226 361 of 261 521** open px moved, fail.
-  - **Sabotaged** by adding `inland_sea` to `swell_terrains`: **2 598 of 3 941 lake px** moved, fail.
-- **(b) Travels along the regional direction.** At shelf points, S's profile along the ROW direction is
-  compared 0.5 s apart. The summed cross-correlation over shifts ±8 px must peak at a POSITIVE shift. A row
-  moves ~4 px in that time, and the search stays well under half the ~45 px wavelength so it cannot lock
-  onto the neighbouring row. Shipped **+3 px** over 1 643 points. **Sabotaged** with `speed` −0.18:
-  **−3 px**, fail.
-- **(c) Straight rows**, over shelf water past the surf (0.6 r of land), from S's gradient (a ±2 px
-  stencil) as doubled-angle means weighted by its strength:
-  - **Round the headland** — where the coast normal is at least 30° off the row direction — the crests
-    must line up with the ROW direction (≥ 0.7). Shipped **0.89** with the rows, **−0.27** with the coast.
-  - **Uniform orientation:** in 3 r windows the mean resultant length of the doubled angles, averaged over
-    windows with at least 40 samples, must reach 0.75. Shipped **0.85** over 20 windows (0.92 with the thin
-    crest: a broad soft band has weaker gradients, so its angles are noisier).
-  - **Sabotaged** with the old CONTOUR phase (the crest a contour of the distance to land): **−0.29** with
-    the rows and **0.77** with the coast, and uniformity **0.55**, both fail.
-- **(d) No hex structure.** Straddle-ratio lines (the OCEANTEMP idea) across the edges between two
-  same-terrain water hexes 0.3–1.5 r from land: the 2-px |Δ| of S straddling the edge over the largest 2-px
-  |Δ| elsewhere on the line. It must be at most 1.5. Shipped **0.38** over 231 lines.
-  - **Sabotaged** by reading the field at the fragment's HEX CENTRE: it PASSES (d). The rows'
-    phase reads the fragment's own position, so a per-hex field steps only the weight and the shoaling,
-    and those vary slowly. The sabotage still fails (a): 1 open-water px moved.
-- **(e) No foam chips.** Past `COAST_SURF_BAND` (0.6 r) of land, S may not reach `COAST_CHIP_DL` (60
-  levels) in a blob of `COAST_CHIP_MIN_PX` (4) or more, pooled over three phases.
-  - **Shipped:** **0 blobs**; the peak S past the band is **37.0 levels**, printed beside the claim. The
-    retired chips were ~115 levels over the water.
-  - **Sabotaged** by restoring a chip (a grey disc on a 0.8 r grid, 0.6–1.2 r from land): **219 blobs
-    (9 663 px)**, fail.
-- **LEE CALM (the island).** Water 0.2–1.0 r from land within 3 r of the island's centre, split by
-  dot(row direction, toward land): windward at or above 0.6, lee at or below −0.3. Mean |S| (chop off,
-  pooled over three phases) must reach 1.0 levels on the windward side, and stay at or under 0.2 × that on
-  the lee side.
-  - **Shipped:** windward **7.89 levels** (5 346 px), lee **0.00** (8 370 px).
-  - **Sabotaged** with the facing factor forced to 1: lee **6.66** against windward 7.89, fail.
-- **(f) The shore pulse moves the surf and never the sand.** The shipped frame against its surge-0 twin,
-  at the three phases. Pixels must change on WATER hexes, and none may change on a LAND hex.
-  - **Which land pixels count:** only those that are land for 2 px in every direction. A pixel on the
-    hex line is rasterised by the shader's own point-in-hex pick, which need not be this probe's; the
-    first cut counted 110 such boundary pixels.
-  - **Shipped:** **48 330 water px, 0 land px**. A lee shore does not pulse.
-  - **Reported, not asserted:** the brightest 5% of the surged water renders saturation **0.141**, RGB
-    about **(124, 141, 144)**. That is the shoreline's own muted grey-blue `foam_color` at the surf's
-    `foam_opacity`, an earlier decision this state does not own.
-  - **Sabotaged** by surging the surf's inland wash too: **21 845 land px**, fail.
-- **(g) `O` off gives byte-identical phases.** With the toggle off, two phases 2 s apart differ by **0 px**.
-  **Sabotaged** by leaving the shore surge ungated by the motion switch: **17 410 px**, fail.
-
-**The field's build time is printed with the state** (`COAST field built in … ms`): ~7 ms for the 24×16
-fixture. The Huge map (128×80) measured ~135–148 ms in a standalone headless run, not in this harness.
+- **(a) The pulse moves the surf on sea coasts**, (b) **never on the lake**, (c) **never a land pixel**: shipped vs
+  pulse-off at 0.7 / 1.9 / 3.1 s. At least 1 000 sea pixels must change; 0 lake and 0 land. A land pixel counts only
+  if the land reaches 2 px past it in every direction (a pixel ON the hex line is rasterised by the shader's own
+  point-in-hex pick, which need not be this probe's).
+  - **Shipped:** **90 020 sea px, 0 lake, 0 land**.
+  - **Sabotaged** with `surge` 0: **0 sea px**, fail.
+  - **Sabotaged** with the lake's `surge_scale` 1: **11 600 lake px**, fail.
+  - **Sabotaged** by surging the inland wash too: **42 666 land px**, fail.
+  - **Reported, not asserted:** the brightest 5% of the surged surf renders saturation **0.131**, RGB about
+    **(126, 142, 145)** — the shoreline's own muted grey-blue `foam_color`, an earlier decision.
+- **(d) Not in unison.** S (chop off) at 12 phases evenly across one crash cycle. The frame is binned into 1 r
+  cells; a cell whose summed |S| peaks at 200 levels·px or more is a coastal sample point, and its peak sample is
+  its crash time. The circular spread of those times (1 − the mean resultant length: 0 = the whole coast crashes
+  together) must reach 0.5.
+  - **Shipped:** **0.83** over 94 points.
+  - **Sabotaged** with a constant offset (no along-shore noise): **0.00**, fail.
+- **(e) `O` off gives byte-identical phases.** Two phases 2 s apart with motion toggled off: **0 px**.
+  **Sabotaged** by leaving the pulse ungated by the motion switch: **34 390 px**, fail.
+- **(f) No swell anywhere.** With the chop off, two phases 2 s apart may differ only on the coast's own hexes (the
+  surf). In every water hex with no land neighbour — beyond the foam band, whose reach is well under one hex —
+  **0 px** may change; the premise is that the pair differs somewhere.
+  - **Shipped:** 34 390 px move, **0** of them beyond the coast's own hexes.
+  - **Sabotaged** by adding a travelling swell to the water motion (and running it with the chop off): **1 175 901
+    px**, fail. It also fails (d) at 0.06: a swell makes the whole coast crash together.
 
 ## Worked-source mark states (issue #412)
 

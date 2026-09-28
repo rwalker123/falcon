@@ -1,7 +1,6 @@
 //! GDScript-facing `GodotClass` types. Everything the engine can call lives here;
 //! the decode work itself lives in [`crate::snapshot`] and [`mod@crate::dict`].
 
-pub(crate) mod coast_field;
 pub(crate) mod command;
 pub(crate) mod command_link;
 pub(crate) mod decoder;
@@ -9,7 +8,6 @@ pub(crate) mod query;
 pub(crate) mod script_host;
 pub(crate) mod variant;
 
-pub use coast_field::CoastField;
 pub use command::CommandBridge;
 pub use decoder::SnapshotDecoder;
 pub use script_host::ScriptHostBridge;

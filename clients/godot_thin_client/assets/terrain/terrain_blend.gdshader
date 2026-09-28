@@ -152,7 +152,8 @@ uniform sampler2D layer_luma_map : filter_nearest;
 //                    per-water one. foam_scale = 0 is not a legal profile.
 //   B = wisp_scale — multiplies the secondary offshore disturbance: its centre distance, its half-width AND
 //                    its strength. 0 = no second disturbance.
-// Terrains with no `shore_profile` block read the neutral (1, 1, 1), which is a bit-exact no-op.
+//   A = surge_scale — multiplies the shore pulse (see shore_surge). 0 = the surf never surges (a lake).
+// Terrains with no `shore_profile` block read the neutral (1, 1, 1, 1), which is a bit-exact no-op.
 // Built by TerrainTextureManager.
 uniform sampler2D layer_shore_map : filter_nearest;
 // PER-TERRAIN BLEND PROFILE, the same 1×N RGBA-float-by-layer-index table — the flat↔flat seam's twin of
@@ -224,7 +225,7 @@ uniform float water_variation_cell;     // patch noise cell, px (variation_cell 
 uniform float water_variation_rotation; // radians: the second sample's UV rotation
 uniform float water_variation_scale;    // the second sample's UV scale, relative to the base UV
 // WAVES (animated): two scrolling samples of the same layer add a luma ripple. Gated, with the chop and the
-// coastal swell, by water_motion_enabled (radius ≥ motion_min_radius, AND the player's `O` toggle), so the far
+// shore pulse, by water_motion_enabled (radius ≥ motion_min_radius, AND the player's `O` toggle), so the far
 // zoom — where the unmipmapped base art is minified — never shimmers.
 uniform float water_wave_strength;      // multiplies the waves' luma deviation from the layer mean
 uniform float water_wave_speed;         // wave-texture UV per second (a UV of 1.0 = one wave tile)
@@ -235,29 +236,17 @@ uniform float water_wave_scale;         // wave UV scale, relative to the base U
 uniform float water_chop_strength;      // peak luma offset of a bright (+) / dark (−) patch, 0..1 luma units
 uniform float water_chop_scale;         // feature size of the coarse octave, in HEX RADII (zoom-invariant)
 uniform float water_chop_rate;          // how fast the field evolves: noise cells of its TIME axis per second
-// THE COASTAL SHORE SWELL (config "coastal_swell"; see apply_water_motion and swell_rows). Open ocean reads through
-// the chop and its colour alone; across the continental shelf STRAIGHT ROWS of swell run in from open water and land
-// on the facing shore, surging its surf, while lee shores stay calm. It runs off fields built once per world.
-uniform sampler2D coast_map : filter_linear, repeat_disable;   // R = distance to land (hex radii), G = eligibility, BA = row direction
-uniform sampler2D coast_shelf_map : filter_linear, repeat_disable;   // R = the shelf zone 0..1
-uniform vec2 coast_origin;              // the field's corner, in hex radii from hex (0, 0)'s centre
-uniform vec2 coast_size;                // the field's extent, in hex radii
-uniform float coast_wrap_width;         // the map's wrap period in hex radii; 0 = the map does not wrap
-uniform bool coastal_enabled;           // false = no field yet, or strength 0: the open-ocean term everywhere
-uniform float swell_strength;           // a crest's luma offset at full amplitude (luma units)
-uniform float swell_wavelength;         // row spacing, hex radii
-uniform float swell_speed;              // row speed, hex radii per second
-uniform float swell_reach;              // the no-shelf band from land, hex radii (and the shoaling's reach)
-uniform float swell_shoal_gain;         // the amplitude at the shore, × the amplitude swell_reach out
-uniform float swell_surge;              // the shoreline surf reaches this much further (× its reach) as a row lands
-uniform float swell_region_cell;        // hex radii: each cell of this grid runs one straight row set
-uniform float swell_facing_lo;          // dot(row direction, toward land): calm at or below this ...
-uniform float swell_facing_hi;          // ... and full swell at or above this
-// The motion gate for the waves, chop and coastal swell (and the shore surge it drives): TerrainRenderer ANDs the
+// THE SHORE PULSE (config "shore" → surge*; see shore_surge): the only wave modelled AGAINST the shore. The surf's
+// seaward reach surges as each wave lands, on a clock that drifts slowly along the coast so neighbouring stretches
+// crash at different moments. Nothing travels across open water: incoming swell was tried twice and removed.
+uniform float shore_surge_amount;       // the surf's seaward reach grows by this fraction at the top of a crash
+uniform float shore_surge_rate;         // crashes per second on any one stretch of shore
+uniform float shore_surge_cell;         // HEX RADII: the along-shore offset noise's cell (several hexes)
+// The motion gate for the waves, the chop and the shore pulse: TerrainRenderer ANDs the
 // zoom LOD (radius ≥ motion_min_radius) with the session-only `O` toggle. The static anti-tiling and the
 // temperature grade always run.
 uniform bool water_motion_enabled;
-// Added to TIME for the wave, chop and swell phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
+// Added to TIME for the wave, chop and shore-pulse phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
 // harness frozen at Engine.time_scale 0 can render the surface at two known phases, deterministically.
 uniform float water_time_offset;
 // THE WATER TEMPERATURE GRADE (config "water_temperature"; see water_temperature_grade()). Graded open water
@@ -687,49 +676,20 @@ const float CHOP_PAIR_TIME_SHIFT = 0.5;
 const vec3 CHOP_PAIR_OFFSET = vec3(173.0, 293.0, 0.0);
 const float CHOP_PAIR_NORM = 0.70710678;
 const float VNOISE_MEAN = 0.5;                               // vnoise3's mid-value: subtracting it centres it
-// THE SWELL (see swell_rows / coastal_swell_luma). Swell arrives as STRAIGHT ROWS from open water, never as
-// contours of the coastline (those wrapped round every headland in a "C" and ringed an island from all sides).
-// The row direction is REGIONAL: CoastField's direction field (coast_map BA) points from open water toward land,
-// smoothed over several hexes. A phase `dot(p, dir(p))` would bend wherever that field turns, so instead the map is
-// cut into square cells of swell_region_cell hex radii; each cell runs ONE set of plane waves along the direction
-// sampled at its centre, and a fragment sums the four nearest cells' wave SIGNALS (never their phases) with smooth
-// partition-of-unity weights. Within a cell's reach a row is a straight line; where two cells' directions differ
-// the rows cross-fade over a cell rather than bend. Neighbouring cells share the phase origin (the map's), so where
-// their directions agree their rows agree exactly and the blend cannot double a row. A cell whose sampled
-// direction is shorter than SWELL_DIR_MIN (no field says anything there) draws nothing.
-const float SWELL_DIR_MIN = 0.05;
-// No wavelength shoaling: a wavelength that changed with distance to land would bend the plane-wave phase. Only
-// the AMPLITUDE shoals, toward swell_shoal_gain at the shore.
-// SETS: the amplitude swells and eases every SWELL_SET_WAVES rows (the envelope rides the phase, so a set travels
-// in with its waves).
-const float SWELL_SET_WAVES = 5.0;
-const float SWELL_SET_DEPTH = 0.65;                            // how far a lull drops, × the peak amplitude
-// SECTIONS: each row is CUT into long pieces with soft ends, so the rows read as swells with gaps, not ruled
-// lines. The cut is a value noise in the cell's own frame — SWELL_SECTION_LENGTH hex radii (several hexes) per cell
-// ALONG the row, one cell per wave ACROSS it (its coordinate is the phase) — so each row carries its own pieces in
-// with it, and the pieces are segments of the straight row: nothing bends them. Smoothstepped over the wide
-// SWELL_SECTION_LO.._HI ramp, so a piece fades out over a long way (soft ends) and varies mildly along its length.
-const float SWELL_SECTION_LENGTH = 6.0;                        // hex radii
-const float SWELL_SECTION_LO = 0.3;
-const float SWELL_SECTION_HI = 0.7;
-const vec2 SWELL_SECTION_OFFSET = vec2(59.0, 887.0);
-// THE PROFILE of a crest, over one wave (`fract(phase)`, the crest at 0): a BROAD, soft swell band, close to a
-// raised cosine but leaning shoreward — it rises over the last SWELL_FRONT_FACE of the wave and falls over the first
-// SWELL_BACK_FACE, so its bright half is ~45% of the wavelength. A thin bright line (0.12 / 0.45) read as rain.
-// The offset is `amplitude · (crest − SWELL_TROUGH_LEVEL)`, so the trough reads only slightly darker; hue preserved.
-const float SWELL_FRONT_FACE = 0.3;
-const float SWELL_BACK_FACE = 0.6;
-const float SWELL_TROUGH_LEVEL = 0.12;
-// WHERE: the rows run on the shelf (coast_shelf_map, already faded in from the shelf's seaward edge), and where
-// land meets open water with no shelf, in a band that is full out to SWELL_RAMP_START × swell_reach and 0 from
-// swell_reach out. The open chop keeps SWELL_CHOP_UNDER of its strength underneath the swell.
-const float SWELL_RAMP_START = 0.5;
-const float SWELL_CHOP_UNDER = 0.8;
-// SHELTER: the swell is multiplied by smoothstep(swell_facing_lo, swell_facing_hi, dot(row direction,
-// toward land)), so a shore the rows run INTO takes them and a lee shore is calm. "Toward land" is minus the
-// distance field's central difference over SWELL_SHELTER_STEP hex radii, NOT normalised: it is ~unit on an open
-// slope and shrinks smoothly across a ridge between two shores, so the facing never flips on a line in open water.
-const float SWELL_SHELTER_STEP = 0.5;
+// THE SHORE PULSE (see shore_surge). Each wave's landing is a smooth shape over one cycle (`fract(phase)`): a
+// quick run-up over the first SHORE_PULSE_RISE of the cycle, then a slower draw-back over the rest — smoothstep at
+// both ends, so it never snaps. The phase is `t · shore_surge_rate` plus an ALONG-SHORE offset: a low-frequency
+// world noise (cell shore_surge_cell hex radii) spread over SHORE_PULSE_OFFSET_SPAN cycles, so neighbouring
+// stretches crash at different moments and the coast never breathes in unison. It has no direction: nothing
+// travels, each stretch only rises and falls. The offset is sampled in map space, so the pulse is the same value
+// on both sides of a hex edge at a given world point, as every other shore term is.
+const float SHORE_PULSE_RISE = 0.25;
+const float SHORE_PULSE_OFFSET_SPAN = 3.0;                     // cycles across the noise's 0..1 range
+const vec2 SHORE_PULSE_NOISE_OFFSET = vec2(431.0, 97.0);
+// SETS: the crash height swells and eases every SHORE_PULSE_SET_WAVES waves (riding the same phase, so a set
+// arrives at different moments along the shore too): an occasional bigger crash, never a metronome.
+const float SHORE_PULSE_SET_WAVES = 4.0;
+const float SHORE_PULSE_SET_DEPTH = 0.5;                       // how far a lull drops, × the peak
 // hash13's input scale (Hoskins' "hash without sine": no sin(), so no precision loss as TIME grows).
 const vec3 HASH3_SCALE = vec3(0.1031, 0.1030, 0.0973);
 const float HASH3_ADD = 33.33;
@@ -796,7 +756,7 @@ vec2 rotate_uv(vec2 uv, float angle) {
 //      1 / sqrt(wA² + wB²), applied as a LUMA offset so the hue is untouched.
 //   2. WAVES — two more samples of the same layer at a wave scale, scrolled with time in two non-opposite
 //      directions; their mean luma minus the layer mean, × water_wave_strength, is added to rgb.
-// 2 runs only with water_motion_enabled (the chop and coastal swell are applied per fragment — see
+// 2 runs only with water_motion_enabled (the chop is applied per fragment — see
 // apply_water_motion). With strength and waves both 0 this returns the plain sample A, bit-exact.
 vec3 water_surface(int layer, vec2 map_px) {
 	vec2 uv_a = map_px / (2.0 * hex_radius) * base_scale;   // == base_uv at the call site, same expression
@@ -901,131 +861,29 @@ float open_chop(vec2 map_px, float t) {
 	return 2.0 * dot(vec2(coarse, fine), CHOP_OCTAVE_WEIGHTS);
 }
 
-// A point `p` (hex radii from hex (0, 0)'s centre) wrapped horizontally into the field on a wrapping map.
-vec2 coast_wrap(vec2 p) {
-	if (coast_wrap_width > 0.0) {
-		p.x = p.x - coast_wrap_width * floor(p.x / coast_wrap_width);
+// THE SHORE PULSE at `map_px`: the factor the shoreline surf's SEAWARD reach is multiplied by —
+// 1 + shore_surge_amount × `scale` × pulse (see SHORE_PULSE_*). `scale` is the water's own `surge_scale` from its
+// shore_profile (0 on a lake). Exactly 1 with motion gated off (LOD or `O`), at amount 0, and where the scale is 0,
+// so those coasts are bit-exact.
+float shore_surge(vec2 map_px, float scale) {
+	if (!water_motion_enabled || shore_surge_amount <= 0.0 || scale <= 0.0) {
+		return 1.0;
 	}
-	return p;
-}
-
-// THE COAST FIELD at `p`: R = distance to land in hex radii, G = how coastal (eligible for the swell) this water
-// is, 0..1, BA = the regional row direction (unit where a field says anything, else shorter).
-vec4 coast_sample(vec2 p) {
-	return texture(coast_map, (coast_wrap(p) - coast_origin) / coast_size);
-}
-
-// THE SHELF ZONE at `p`, 0..1: where the rows run, faded in from the shelf's seaward edge.
-float coast_shelf(vec2 p) {
-	return texture(coast_shelf_map, (coast_wrap(p) - coast_origin) / coast_size).r;
-}
-
-// Toward land at `p`, unnormalised (see SWELL_SHELTER_STEP): minus the distance field's central difference.
-vec2 coast_toward_land(vec2 p) {
-	vec2 e = vec2(SWELL_SHELTER_STEP, 0.0);
-	return -vec2(coast_sample(p + e.xy).r - coast_sample(p - e.xy).r,
-		coast_sample(p + e.yx).r - coast_sample(p - e.yx).r) / (2.0 * SWELL_SHELTER_STEP);
-}
-
-// SHELTER at `p`, 0..1 (see SWELL_SHELTER_STEP): 1 where the rows run into the shore, 0 on a lee shore.
-float swell_facing(vec2 p) {
-	return smoothstep(swell_facing_lo, swell_facing_hi, dot(coast_sample(p).ba, coast_toward_land(p)));
-}
-
-// A crest's height 0..1 at `phase` (see SWELL_FRONT_FACE / SWELL_BACK_FACE): 1 on each whole number.
-float swell_crest(float phase) {
+	vec2 p = map_px / hex_radius;
+	float offset = SHORE_PULSE_OFFSET_SPAN
+		* vnoise(p / max(shore_surge_cell, BLEND_SOFT_MIN) + SHORE_PULSE_NOISE_OFFSET);
+	float phase = (TIME + water_time_offset) * shore_surge_rate + offset;
 	float y = fract(phase);
-	return max(1.0 - smoothstep(0.0, SWELL_BACK_FACE, y), smoothstep(1.0 - SWELL_FRONT_FACE, 1.0, y));
+	float pulse = y < SHORE_PULSE_RISE ? smoothstep(0.0, SHORE_PULSE_RISE, y)
+		: 1.0 - smoothstep(SHORE_PULSE_RISE, 1.0, y);
+	float sets = mix(1.0 - SHORE_PULSE_SET_DEPTH, 1.0, 0.5 + 0.5 * cos(TAU * phase / SHORE_PULSE_SET_WAVES));
+	return 1.0 + shore_surge_amount * scale * pulse * sets;
 }
 
-// THE ROWS at `p` (hex radii) and time `t` (see the SWELL block): the four nearest region cells' plane waves, cut
-// into sections, blended by smooth partition-of-unity weights. x = Σ w · sets · section · (crest − SWELL_TROUGH_LEVEL),
-// the luma signal; y = Σ w · section · crest, how hard a row is landing here (the shore pulse). Each cell's phase is
-// (t · speed − p · dir) / λ: whole numbers are crests, and a crest moves along `dir`, toward land.
-vec2 swell_rows(vec2 p, float t) {
-	float cell = max(swell_region_cell, BLEND_SOFT_MIN);
-	float wl = max(swell_wavelength, BLEND_SOFT_MIN);
-	vec2 q = p / cell - 0.5;
-	vec2 base = floor(q);
-	vec2 f = q - base;
-	vec2 s = f * f * (3.0 - 2.0 * f);
-	vec2 acc = vec2(0.0);
-	for (int j = 0; j <= 1; j++) {
-		for (int i = 0; i <= 1; i++) {
-			vec2 ci = base + vec2(float(i), float(j));
-			vec2 dir = coast_sample((ci + 0.5) * cell).ba;
-			float len = length(dir);
-			if (len < SWELL_DIR_MIN) {
-				continue;
-			}
-			dir /= len;
-			float w = (i == 0 ? 1.0 - s.x : s.x) * (j == 0 ? 1.0 - s.y : s.y);
-			float phase = (t * swell_speed - dot(p, dir)) / wl;
-			float sets = mix(1.0 - SWELL_SET_DEPTH, 1.0, 0.5 + 0.5 * cos(TAU * phase / SWELL_SET_WAVES));
-			float along = dot(p, vec2(-dir.y, dir.x)) / SWELL_SECTION_LENGTH;
-			float section = smoothstep(SWELL_SECTION_LO, SWELL_SECTION_HI,
-				vnoise(vec2(along, phase) + SWELL_SECTION_OFFSET));
-			float crest = swell_crest(phase) * section;
-			acc += w * vec2(sets * (crest - SWELL_TROUGH_LEVEL * section), crest);
-		}
-	}
-	return acc;
-}
-
-// THE SWELL's luma offset at distance `d` from land, from the rows' signal: amplitude shoaled toward the shore.
-// (Shelter and the coastal weight are the caller's.)
-float coastal_swell_luma(float d, float rows) {
-	float shoaled = mix(swell_shoal_gain, 1.0, smoothstep(0.0, max(swell_reach, BLEND_SOFT_MIN), d));
-	return swell_strength * shoaled * rows;
-}
-
-// How much of the coastal term a water point takes (see the WHERE note): the shelf zone, or the no-shelf band
-// within swell_reach of land, whichever is more — times the eligibility, so a lake takes none.
-float coastal_weight(float d, float elig, float shelf) {
-	float reach = max(swell_reach, BLEND_SOFT_MIN);
-	float band = 1.0 - smoothstep(reach * SWELL_RAMP_START, reach, d);
-	return clamp(elig, 0.0, 1.0) * max(clamp(shelf, 0.0, 1.0), band);
-}
-
-// THE SHORE SURGE at `map_px`: the factor the shoreline surf's SEAWARD reach is multiplied by — 1, plus
-// swell_surge × how hard a row is landing on this stretch of shore right now (the same rows, the same shelter).
-// Exactly 1 with no coastal swell, with motion gated off (LOD or `O`), and on water the swell does not run on, so
-// every other coast is bit-exact.
-float shore_surge(vec2 map_px) {
-	if (!coastal_enabled || !water_motion_enabled || swell_surge <= 0.0) {
-		return 1.0;
-	}
-	vec2 p = map_px / hex_radius;
-	vec4 field = coast_sample(p);
-	if (field.g <= 0.0) {
-		return 1.0;
-	}
-	float landing = swell_rows(p, TIME + water_time_offset).y * swell_facing(p);
-	return 1.0 + swell_surge * clamp(field.g, 0.0, 1.0) * landing;
-}
-
-// THE WATER MOTION applied to a water fragment's colour `c`:
-//   open · (1 − coastal_w) + coastal · coastal_w
-// OPEN is the chop alone (a luma offset, hue preserved) — open water has no caps. COASTAL is the shore swell, with
-// the chop at SWELL_CHOP_UNDER underneath; nothing is laid over it. `field_px` is where the coast field is
-// read (the fragment itself; it is a separate argument only so the harness can pin it to the hex centre).
-vec3 apply_water_motion(vec3 c, vec2 map_px, vec2 field_px) {
-	float t = TIME + water_time_offset;
-	float chop = open_chop(map_px, t) * water_chop_strength;
-	vec3 open = c + vec3(chop);
-	if (!coastal_enabled) {
-		return open;
-	}
-	vec2 p = map_px / hex_radius;
-	vec2 fp = field_px / hex_radius;
-	vec4 field = coast_sample(fp);
-	float cw = coastal_weight(field.r, field.g, coast_shelf(fp));
-	if (cw <= 0.0) {
-		return open;
-	}
-	float swell = coastal_swell_luma(field.r, swell_rows(p, t).x) * swell_facing(p);
-	vec3 coastal = c + vec3(chop * SWELL_CHOP_UNDER + swell);
-	return mix(open, coastal, cw);
+// THE WATER MOTION applied to a water fragment's colour `c`: the chop alone, a luma offset with the hue preserved.
+// Open and coastal water alike — no swell runs anywhere (the shore pulse moves the surf, in the shore pass).
+vec3 apply_water_motion(vec3 c, vec2 map_px) {
+	return c + vec3(open_chop(map_px, TIME + water_time_offset) * water_chop_strength);
 }
 
 // A BASE sample of any layer: water layers go through the one water sampler above, land keeps the plain
@@ -1037,10 +895,10 @@ vec3 base_sample(int layer, bool is_water, vec2 base_uv, vec2 map_px) {
 	return texture(biome_array, vec3(base_uv, float(layer))).rgb;
 }
 
-// Shore profile of a terrain: (sand_scale, foam_scale, wisp_scale), fetched by layer index. Neutral
-// (1, 1, 1) for any terrain without a `shore_profile` block. See layer_shore_map.
-vec3 shore_profile(int layer) {
-	return texelFetch(layer_shore_map, ivec2(layer, 0), 0).rgb;
+// Shore profile of a terrain: (sand_scale, foam_scale, wisp_scale, surge_scale), fetched by layer index. Neutral
+// (1, 1, 1, 1) for any terrain without a `shore_profile` block. See layer_shore_map.
+vec4 shore_profile(int layer) {
+	return texelFetch(layer_shore_map, ivec2(layer, 0), 0);
 }
 
 // Blend profile of a terrain: (width_scale, noise_scale, noise_cell_scale), fetched by layer index. Neutral
@@ -1725,15 +1583,14 @@ void fragment() {
 			}
 		}
 
-		// --- WATER MOTION: the directionless chop, and beside a coast the shore swell, once per water fragment.
+		// --- WATER MOTION: the directionless chop, once per water fragment (open and coastal water alike).
 		// AFTER the temperature grade, so the grade never rescales the motion's luma offsets (it once also
 		// recoloured the whitecaps laid on here, which are gone). After the depth field too — it is the same field
 		// for every water layer, so adding it to the mean equals adding it to each sample — and before the shore,
 		// so the surf is untouched. Near a coast the waterline cross-fade blends toward an estimate without it, so
 		// it eases out at the shore.
-		if (water_motion_enabled && (water_chop_strength > 0.0 || coastal_enabled)
-				&& own_class == CLASS_WATER) {
-			result = apply_water_motion(result, v_map, v_map);
+		if (water_motion_enabled && water_chop_strength > 0.0 && own_class == CLASS_WATER) {
+			result = apply_water_motion(result, v_map);
 		}
 
 		// A NAVIGABLE river hex, by terrain id. It is a water TERRAIN in the sim, but its blend_class is
@@ -1767,7 +1624,7 @@ void fragment() {
 			//     field's discipline). See SHORE_PROFILE_REACH_APOTHEMS for why that mean is EXACTLY
 			//     continuous across every hex edge — including the land↔water edge, where it must be.
 			// Own water carries weight 1 by construction; land contributes nothing (it has no profile).
-			vec3 prof_sum = own_water ? shore_profile(own_layer) : vec3(0.0);
+			vec4 prof_sum = own_water ? shore_profile(own_layer) : vec4(0.0);
 			float prof_w = own_water ? 1.0 : 0.0;
 			// THE LAND'S OWN SAND GATE — the land-side twin of the field above, over the LAND hexes of
 			// {own + 6 neighbours} and reading only `sand_scale` (the R channel of the same layer_shore_map:
@@ -1850,10 +1707,11 @@ void fragment() {
 				// (1, 1, 1) for any water terrain without a `shore_profile` — a bit-exact no-op below (the
 				// mean of a set of identical neutral profiles is exactly 1.0 in float, so every ocean renders
 				// as it did before this table existed).
-				vec3 profile = prof_sum / max(prof_w, SHORE_PROFILE_WEIGHT_MIN);
+				vec4 profile = prof_sum / max(prof_w, SHORE_PROFILE_WEIGHT_MIN);
 				float sand_scale = profile.r;  // scales the beach's inland reach (0 = a CLIFF: no beach)
 				float foam_scale = profile.g;  // scales the MAIN WAVE's reaches (both ways) — never its peak
 				float wisp_scale = profile.b;  // scales the offshore wisp's centre, half-width AND strength
+				float surge_scale = profile.a; // scales the shore pulse (0 = a lake's surf never surges)
 				float dist_in = max(-best_d, 0.0);            // 0 at the coast edge, grows away from it
 				// THE SIGNED COAST COORDINATE. dist_in → 0 at the shared edge on BOTH sides, so negating it
 				// on the land side gives one coordinate that runs continuously through the coastline:
@@ -1888,10 +1746,10 @@ void fragment() {
 				float sand_reach_raw = sand_band * sand_wobble;                              // inland, u < 0
 				float sand_reach = max(sand_reach_raw, SHORE_REACH_MIN_PX);
 				float wash_reach = max(foam_inland_band * foam_wobble, SHORE_REACH_MIN_PX);  // surf up the beach, u < 0
-				// surf out to sea, u > 0 — surging a little as each coastal swell crest lands (see shore_surge; exactly
-				// 1 wherever there is no swell, so every other coast is bit-exact). The inland wash and the sand
-				// above do NOT surge: the beach never moves.
-				float foam_reach = max(foam_band * foam_wobble, SHORE_REACH_MIN_PX) * shore_surge(v_map);
+				// surf out to sea, u > 0 — surging as each wave lands on this stretch of shore (see shore_surge; exactly
+				// 1 with motion off and where the water's surge_scale is 0, so those coasts are bit-exact). The inland
+				// wash and the sand above do NOT surge: the beach never moves.
+				float foam_reach = max(foam_band * foam_wobble, SHORE_REACH_MIN_PX) * shore_surge(v_map, surge_scale);
 
 				// 0. THE WATERLINE BASE CROSS-FADE — kill the base's OWN step at u = 0, so the surf above it
 				// no longer has to be an opaque cover-up (see the waterline_band uniform). A short WET EDGE:

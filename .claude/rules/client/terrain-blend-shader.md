@@ -461,8 +461,8 @@ foam↔water.
   **CLIFF** (no beach at all, full dramatic surf), the **shelf** is the ordinary **beach** (sand, a muted
   wave), and an **`inland_sea`** is a handful of hexes that the ocean profile swamps (its offshore **wisp**
   reads as noise across the middle of a lake). So a WATER terrain entry in `terrain_config.json` may carry an
-  optional block scaling the profile of **its own** coastline, along **three independent axes**:
-  `{ "id": 1, "name": "continental_shelf", …, "shore_profile": { "sand_scale": 1.0, "foam_scale": 0.75, "wisp_scale": 0.5 } }`
+  optional block scaling the profile of **its own** coastline, along **four independent axes**:
+  `{ "id": 1, "name": "continental_shelf", …, "shore_profile": { "sand_scale": 1.0, "foam_scale": 0.75, "wisp_scale": 0.5, "surge_scale": 1.0 } }`
   - `sand_scale` multiplies the beach's INLAND reach (`sand_band`). **`0.0` = no beach at all** (the cliff).
   - `foam_scale` multiplies the MAIN WAVE's reaches **both ways** (`foam_inland_band` = the wash up the beach
     **and** `foam_band` = the surf's seaward reach). **REACH only — the surf's PEAK is the GLOBAL
@@ -470,13 +470,15 @@ foam↔water.
     profile.
   - `wisp_scale` multiplies the secondary offshore disturbance — its **centre distance, its half-width AND its
     strength** — so it recedes toward the shore and fades as one gesture; `0.0` removes it cleanly.
-  - **A water terrain with no `shore_profile` gets the neutral default (1, 1, 1)** —
-    `SHORE_PROFILE_DEFAULT_{SAND,FOAM,WISP}_SCALE` in `TerrainTextureManager` — a bit-exact no-op (a partial
-    block is legal too: a missing key is neutral on that axis).
+  - `surge_scale` multiplies the **shore pulse** (see **Shore pulse** below); `0.0` = the surf never surges (a
+    lake).
+  - **A water terrain with no `shore_profile` gets the neutral default (1, 1, 1, 1)** —
+    `SHORE_PROFILE_DEFAULT_{SAND,FOAM,WISP,SURGE}_SCALE` in `TerrainTextureManager` — a bit-exact no-op (a
+    partial block is legal too: a missing key is neutral on that axis).
   - **Plumbing mirrors the per-layer mean-luminance table** (`layer_luma_texture`): `TerrainTextureManager`
     packs the profiles into `layer_shore_texture`, a **1×N FORMAT_RGBAF** image (R = sand_scale, G =
-    foam_scale, B = wisp_scale, one texel per terrain id), bound once by MapView as the `layer_shore_map`
-    uniform and fetched in-shader by layer index (`shore_profile(layer)` → `vec3`).
+    foam_scale, B = wisp_scale, A = surge_scale, one texel per terrain id), bound once by MapView as the
+    `layer_shore_map` uniform and fetched in-shader by layer index (`shore_profile(layer)` → `vec4`).
     `rebuild_layer_shore_map()` is public and **updates the ImageTexture in place** (so the binding survives)
     — that is how `blend_probe` sweeps profiles live.
   - **THE PROFILE IS KEYED ON THE WATER, on BOTH sides of the waterline.** A *correctness* requirement, not a
@@ -524,7 +526,7 @@ foam↔water.
     and the effective sand reach is `water sand field × land sand field`.
     * **Plumbing reuses `layer_shore_map`'s R channel** for land layers — no new texture. The loader
       (`TerrainTextureManager.rebuild_layer_shore_map`) clamps a land `sand_scale` to [0, 1] (a gate, never a
-      widening) and `push_error`s on a land entry naming `foam_scale` / `wisp_scale`, which are the water's
+      widening) and `push_error`s on a land entry naming `foam_scale` / `wisp_scale` / `surge_scale`, which are the water's
       alone. A land terrain with no block is neutral 1.0; land is `blend_class != "water"`, the class the
       shader keys on (so `navigable_river`, category water but class flat, is land here).
     * **The land field is the water field's twin**: a weighted mean over the LAND hexes of {own + 6
@@ -1160,15 +1162,15 @@ waterline cross-fade blends toward a water estimate without it, so it eases out 
 > any net travel reads as one. So the open-water term evolves in place, and `blend_probe` state 29 now
 > asserts both halves — no net direction, no map-scale pattern — and fails on the retired swell.
 
-**Water motion is shaped `open · (1 − coastal_w) + coastal · coastal_w`.** The OPEN term is the chop
-alone. The COASTAL term is the shore swell — see **Coastal shore swell** below.
+**Water motion is the chop alone**, on open and coastal water alike. The only coastal motion is the shore
+pulse, which moves the surf in the shore pass — see **Shore pulse** below.
 
 **3 — no whitecaps anywhere.** Open water reads through the chop and its colour alone, and the coast's
-only foam is the shoreline surf (see **Coastal shore swell** → "WHY THERE IS NO FOAM ON THE WATER").
-`blend_probe` state 29 asserts the open half: past the swell's reach the shipped frame and its
-coastal-off twin are byte-identical.
+only foam is the shoreline surf (see **Shore pulse** → "WHY THERE IS NO FOAM ON THE WATER").
+`blend_probe` state 29 asserts that the pulse never reaches open water (the shipped frame and its pulse-off
+twin are byte-identical over the deep ocean); state 31's claim (f) asserts no swell runs anywhere.
 
-**LOD gate and the `O` toggle.** Waves, chop and the coastal swell (with its shore surge) run only
+**LOD gate and the `O` toggle.** Waves, chop and the shore pulse run only
 while `water_motion_enabled`, which
 `TerrainRenderer` pushes as `radius ≥ motion_min_radius` (the way `rivers_lod_enabled` is) AND the
 player's `O` toggle (`toggle_water_motion`, session-only, not persisted). Below the gate, or toggled off,
@@ -1176,7 +1178,7 @@ the static anti-tiling and the temperature grade still run and nothing reads `TI
 cannot shimmer. `O` is a look-dev aid: it tells whether a "cloudy" sea is the motion or the static
 surface under it.
 
-**Bit-exact when off.** With `variation_strength`, `wave_strength` and `chop_strength` all 0 (and the coastal swell off) the
+**Bit-exact when off.** With `variation_strength`, `wave_strength` and `chop_strength` all 0 (and the shore pulse off) the
 function returns sample A through the same expression the call site used before. Verified: a full
 `blend_probe` run on zeroed levers is byte-identical to the pre-surface render on all 291 frames. On the
 shipped levers 117 of them moved, every one with water in it; every land-only frame is byte-identical.
@@ -1184,7 +1186,7 @@ shipped levers 117 of them moved, every one with water in it; every land-only fr
 **Continuous redraw.** The client does not run `low_processor_mode`, so Godot renders the canvas every
 frame and `TIME` advances without `MapView` calling `queue_redraw` — the same mechanism the river
 scroll relies on. Shader `TIME` rolls over (`rendering/limits/time/time_rollover_secs`, 3600 s by
-default), so the wave, chop and swell phase jump once an hour, as the river scroll does.
+default), so the wave, chop and shore-pulse phase jump once an hour, as the river scroll does.
 
 **Harness phase.** `water_time_offset` is added to `TIME` for every animated term. `TerrainRenderer`
 never pushes it (0 in the game); `blend_probe` sets it on the material to render several phases while
@@ -1194,8 +1196,8 @@ time axis), so phase 0 still draws it — the harness freeze's re-check rule.
 **Cost.** Per `water_surface` call with the shipped levers: up to 2 `biome_array` fetches (A, and B where
 its patch weight is non-zero; the two wave fetches are skipped at `wave_strength` 0) plus 1
 `layer_luma_map` texel fetch and 1 value-noise evaluation, against 1 fetch before. The chop adds two 3D
-value-noise evaluations per octave pair — four in all (32 hashes) — once per water fragment; the coastal
-swell's cost is in its own section. An open-water pixel whose neighbours share its id makes one call; the depth field
+value-noise evaluations per octave pair — four in all (32 hashes) — once per water fragment; the shore
+pulse's cost is in its own section. An open-water pixel whose neighbours share its id makes one call; the depth field
 adds one call per differing water neighbour **within reach** (the loop skips a zero-weight neighbour),
 and the waterline cross-fade adds up to seven calls in its narrow band at a coast.
 
@@ -1211,7 +1213,7 @@ and the waterline cross-fade adds up to seven calls in its narrow band at a coas
 | `chop_strength` | 0.05 | peak luma offset of a bright / dark chop patch (luma units, 0..1). 0.06 read live as drifting clouds; 0.035 was too faint once the caps left open water; 0.05 sits between |
 | `chop_scale` | 0.5 | the coarse octave's feature size, in hex radii |
 | `chop_rate` | 0.4 | how fast the chop evolves — cells of its time axis per second. 0.8 read live as clouds changing too fast |
-| `motion_min_radius` | 24 | px; below it the waves, chop and coastal swell are off |
+| `motion_min_radius` | 24 | px; below it the waves, chop and shore pulse are off |
 
 Fallbacks are the `WATER_SURFACE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
 lever; the fixed feel (directions, cells, offsets, rotations) is the `WATER_*` / `CHOP_*` consts in the shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
@@ -1225,127 +1227,43 @@ fast, so it went to **0.035 / 0.4**. Once the caps left open water, 0.035 was to
 (ratio 1.05). The texture waves alone moved 0.94 levels per second and were invisible, so the usable band
 is narrow: below ~1 level/s the sea reads still, and ~5 reads as weather.
 
-## Coastal shore swell
+## Shore pulse
 
-**What it is.** Straight rows of swell arrive from open water, run in across the continental shelf and land
-on the shore that faces them, surging its surf. A lee shore is calm. Where land meets open water with no
-shelf, the rows run only in the first water hex. Open water keeps the chop alone. Everything here is
-`apply_water_motion`'s coastal term, blended in by the coastal weight, and it runs off fields built once
-per world.
+**What it is.** The only wave modelled is the one AGAINST the shore: the shoreline surf's seaward reach surges
+as each wave lands, then draws back. Nothing travels across open water, and open and coastal water alike carry
+the chop alone (`apply_water_motion`). The beach and the inland wash never move.
 
-> #### ⛔ WHY NOT CONTOURS OF THE COAST — every wave copied the coastline
+> #### ⛔ WHY ONLY THE SHORE PULSE — incoming waves were tried twice and removed
 >
-> The first two cuts made each crest a contour of the distance to land. Live, Ray saw every wave take the
-> coast's shape: "C"-shaped crests wrapping round each headland, and a four-hex island with waves coming
-> in from all sides. Real swell arrives as straight rows from open water. So the direction is REGIONAL,
-> taken from where the open ocean is, and the rows are plane waves.
-
-**The fields** (`TerrainRenderer.rebuild_coast_field` → the native `CoastField`,
-`native/src/bridge/coast_field.rs`).
-- **The mask:** each hex is land (any non-water blend class, navigable rivers included), shelf water
-  (`coastal_swell.swell_terrains` — `continental_shelf`, `coral_shelf`), open water
-  (`open_water_terrains` — `deep_ocean`), or other water (a lake: no swell).
-- **The build:** rasterised at `COAST_FIELD_TEXELS_PER_RADIUS` (8) texels per hex radius. Two EXACT
-  Euclidean distance transforms (Felzenszwalb, two separable 1D passes each): to the nearest land texel
-  and to the nearest open-water texel, both capped at `COAST_FIELD_CAP_RADII` (8 r). The land distance is
-  box-blurred twice over `COAST_FIELD_BLUR_RADII` (0.25 r).
-- **`coast_map` (`RGBAF`, `filter_linear`):**
-  - R = the distance to land, hex radii.
-  - G = the coastal eligibility 0..1, a WATER-ONLY blur of the shelf-or-open flag, so land does not drag
-    a coast's eligibility down and a lake's 0 does not leak far.
-  - BA = the regional row DIRECTION (below), unit or zero.
-- **`coast_shelf_map` (`RF`):** the SHELF ZONE 0..1, where the rows run. It is the water-only blur of the
-  shelf flag × `smoothstep(0, shelf_fade, distance to open water)`, so a row appears at the shelf's
-  seaward edge and is at full strength `shelf_fade` (0.87 r, about half a hex) in. On open water the
-  distance to open water is 0, so the zone is exactly 0 there.
-- **Wrap:** on a wrapping map the build wraps columns and the shader wraps x into the map's period.
-- **Why native, and its cost:** one GDScript chamfer pass over the Huge map (128×80 hexes, ~1.8M texels)
-  measured **191 ms**. The native build measures **~135–148 ms** on Huge (release, 1797×980 texels, a
-  coastline mask; ~120 ms before the direction field and the shelf zone were added) and ~7 ms on the
-  harness's 24×16 fixture. The direction's heavy blur is a running-sum box blur, so its cost does not
-  grow with the smoothing radius.
-- **When it rebuilds:** with the other shader maps, and only when the mask or a build lever
-  (`direction_smoothing`, `shelf_fade`) changed. Terrain is static within a world, so an unchanged mask
-  re-pushes the uniforms and skips the build.
-- **Probes:** `coast_distance_at`, `coast_direction_at` and `coast_shelf_at` sample the CPU copies
-  exactly as the shader samples the textures.
-
-**The regional direction** points from open water toward land. Three sources are each a field of unit
-vectors, box-blurred twice over `direction_smoothing` (5 r). They are blended by how much each says: a
-blurred field of unit vectors is short where its inputs disagree or are absent, and below
-`DIR_FULL_LENGTH` (0.25) the next source fills in, in proportion. They are never switched.
-1. **Away from open water:** the gradient of the distance to open water, over the non-open WATER texels
-   where open water lies within the cap. The gradient must rise at least `DIR_MIN_SLOPE` (0.5 per radius),
-   so a ridge between two open waters says nothing.
-2. **The fallback, the coast-normal:** toward the nearest land, over water with NO open water within the
-   cap (an enclosed shelf, far from any deep water).
-3. **The last fallback, the map's mean** of source 1 (or of source 2 where the map has no open water). This
-   is what an island alone in the ocean takes: the prevailing swell on one side, not rows from every side.
-- **Land texels contribute nothing.** An island's own land texels would add radial vectors round it.
-
-**Straight rows** (`swell_rows`).
-- **Not one phase with a varying direction.** A phase like `dot(p, dir(p))` bends wherever the direction
-  field turns.
-- **Cells:** the map is cut into square cells of `region_cell` (8 r). Each cell runs ONE set of plane
-  waves along the direction sampled at its centre.
-- **The phase** of a cell's waves is `(t · speed − p · dir) / wavelength`: whole numbers are crests, and a
-  crest moves along `dir`, toward land.
-- **The blend:** a fragment sums the four nearest cells' wave SIGNALS (never their phases), with
-  smoothstepped bilinear partition-of-unity weights. Within a cell's reach a row is a straight line; where
-  two cells' directions differ, the rows cross-fade over a cell rather than bend.
-- **No per-cell phase offset.** The cells share the map's phase origin, so neighbouring cells whose
-  directions agree draw exactly the same rows, and the blend cannot double a row.
-- **A cell with no direction** (sampled shorter than `SWELL_DIR_MIN`) draws nothing.
-- **No wavelength shoaling.** A wavelength that changed with the distance to land would bend the
-  plane-wave phase, so it was dropped. Only the AMPLITUDE shoals: it rises toward `shoal_gain` (1.25 ×) as
-  the distance to land falls from `reach` to 0. At 1.6 the rows brightened into hard streaks at the shore.
-- **Timing:** a row lands every `wavelength / speed` = 1.0 / 0.18 ≈ **5.6 s**.
-- **Sections:** each row is CUT into long pieces with soft ends, so the rows read as swells with gaps, not
-  ruled lines. The cut is a value noise in the cell's own frame — `SWELL_SECTION_LENGTH` (6 r, several
-  hexes) per cell ALONG the row, one cell per wave ACROSS it (its coordinate is the phase) — so each row
-  carries its own pieces in with it. It is smoothstepped over the wide `SWELL_SECTION_LO` (0.3) to `_HI`
-  (0.7) ramp, so a piece fades out over a long way and varies mildly along its length.
-- **Sets:** an envelope riding each cell's phase eases the amplitude every `SWELL_SET_WAVES` rows.
-- **The profile:** a BROAD, soft swell band, close to a raised cosine but leaning shoreward: it rises over
-  the last `SWELL_FRONT_FACE` (0.3) of a wave and falls over the first `SWELL_BACK_FACE` (0.6), so its
-  bright half is ~45% of the wavelength. It is applied as a LUMA offset,
-  `amplitude · (crest − SWELL_TROUGH_LEVEL)`, hue preserved, after the grade like the chop. The trough sits
-  `SWELL_TROUGH_LEVEL` (0.12) below the mean; at 0.25 it read as a dark band hugging a small island.
-
-> #### ⛔ THE FIRST ROWS READ AS RAIN
+> - **Contours of the coast:** the first swell made each crest a contour of the distance to land, so every
+>   wave copied the coastline. Ray saw "C"-shaped crests wrapping round each headland, and a four-hex island
+>   with waves coming in from all sides.
+> - **Straight rows from open water:** the second ran plane waves along a regional direction taken from where
+>   the open ocean is, on the shelf, with lee shores sheltered. On jagged coastlines, which most are, the rows
+>   still met the shore at wrong-looking angles whatever the direction model, and on a straight coast they
+>   read as rain.
 >
-> The first plane-wave cut kept the contour swell's crest: a thin bright line (a 0.12 front and a 0.45
-> back) every 0.65 r, cut into 2–3.5 r dashes, and shoaled to 1.6 × at the shore. On `COAST_2x` the rows
-> read as thin, hard, vertical streaks: rain. The fix was broad, soft bands (the profile above), a longer
-> 1.0 r wavelength, long soft-ended sections (6 r), a gentler shoal (1.25) and a stronger 0.2 strength,
-> so the band reads through its softness. A narrow one-hex shelf still shows one to two rows.
+> So Ray abandoned incoming waves entirely. The shore pulse ("looks nice enough by itself") is kept alone.
+> Its native distance/direction field (`CoastField`) went with the swell: the shore pass has its own waterline
+> distance, so nothing needed it, and each world load saves its build (~135–148 ms on the Huge map).
 
-**Where the rows run.**
-- **The coastal weight** is `eligibility × max(shelf zone, band)`. The band is the no-shelf fallback:
-  full out to half of `reach` and exactly 0 from `reach` (1.73 r, √3: one hex across, flat side to flat
-  side) out. So land meeting open water with no shelf still takes rows in its first water hex.
-- **Exactly 0** in open water past the band and on a lake, so open water is bit-identical to the
-  chop-only surface.
-- **The chop** keeps `SWELL_CHOP_UNDER` (0.8) of its strength under the swell; at 0.5 its absence read as
-  a calm halo.
-
-**Shelter.** The swell is multiplied by `smoothstep(facing_lo, facing_hi, dot(row direction, toward
-land))`, −0.2 → 0.5. The low edge sits a little below 0 so a coast running along the rows still carries them
-rather than cutting each row off where the coast turns; a shore facing away (dot ≤ −0.2) is calm.
-- **Toward land** is minus the distance field's central difference over `SWELL_SHELTER_STEP` (0.5 r),
-  NOT normalised. It is ~unit on an open slope and shrinks smoothly across a ridge between two shores, so
-  the facing never flips on a line in open water.
-- A shore the rows run INTO takes them; a lee shore gets ~0.
-- **The convergence fade the contour swell needed is gone.** Plane waves cannot close into a lens round
-  a pocket.
-
-**The shore pulse** (`shore_surge`). The shoreline surf's SEAWARD reach (`foam_band`) is multiplied by
-`1 + surge × eligibility × landing × facing`, where `landing` is the same rows' crest signal at the
-fragment. So the surf surges exactly where and when a row lands, and not at all on a lee shore. Ray,
-live: the pulse "looks nice enough by itself".
-- **What does not move:** the inland wash and the sand, so the beach never moves.
-- **Exactly 1** with no coastal swell, with motion gated off (LOD or `O`), and on a lake, so every other
-  coast is bit-exact.
+**The shape** (`shore_surge`). The surf's seaward reach is `foam_reach × (1 + surge × surge_scale × pulse ×
+sets)`.
+- **The pulse** over one cycle (`fract(phase)`): a quick run-up over the first `SHORE_PULSE_RISE` (0.25) of the
+  cycle, then a slower draw-back over the rest, smoothstep at both ends, so it never snaps.
+- **The phase** is `t · surge_rate` plus an ALONG-SHORE offset: a low-frequency world noise (cell
+  `surge_variation_cell` hex radii) spread over `SHORE_PULSE_OFFSET_SPAN` (3) cycles. Neighbouring stretches
+  crash at different moments, so the coast never breathes in unison. It has no direction: each stretch only
+  rises and falls.
+- **Sets:** the crash height swells and eases every `SHORE_PULSE_SET_WAVES` (4) waves, by up to
+  `SHORE_PULSE_SET_DEPTH` (0.5), riding the same phase, so an occasional bigger crash arrives at different
+  moments along the shore too.
+- **Continuity:** the offset noise is sampled in map space, so the pulse is the same value on both sides of a
+  hex edge at a given world point, like every other shore term.
+- **Per water terrain:** `surge_scale` is the water's `shore_profile` A channel, blended across the water
+  neighbours with the other three scales (see the shore profile above). It is 0 on a lake.
+- **Exactly 1** with motion gated off (the LOD or `O`), at `surge` 0 and where `surge_scale` is 0, so those
+  coasts are bit-exact.
 
 > #### ⛔ WHY THERE IS NO FOAM ON THE WATER — whitecaps were tried twice and removed twice
 >
@@ -1359,41 +1277,28 @@ live: the pulse "looks nice enough by itself".
 >   through. Made bold, it rendered grey-white but read as chips popping up mid-hex (Ray: "popup waves"
 >   that "don't look natural").
 >
-> Both went, generator and all (`crest_group_alpha`, `break_foam_alpha`, the `WHITECAP_*` and
-> `SWELL_FOAM_*` consts, the `foam_*` levers). The coast's foam is the shoreline surf, and the shore pulse
-> is what makes it move. `blend_probe` state 31's claim (e) fails if a chip comes back.
+> Both went, generator and all. The coast's foam is the shoreline surf, and the shore pulse is what makes it
+> move.
 
-**Cost** (per coastal water fragment, shipped).
-- **Within the weight:** the field is read once for the weight and once for the shelf zone, plus four
-  cell-direction fetches for the rows (each cell also takes a value noise for its sections and a cosine
-  for its set), and five more fetches for the shelter (the direction and a four-tap difference).
-- **At the shore:** the pulse evaluates the same rows and shelter once more, on the surf band's fragments.
-- **Everywhere else:** open water past the weight pays the two fetches and nothing else.
+**Cost:** one 2D value noise and a cosine per shore-band fragment on a surging coast; nothing elsewhere.
 
-| Lever (`terrain_config.json` → `coastal_swell`) | Shipped | Meaning |
+| Lever (`terrain_config.json` → `shore`) | Shipped | Meaning |
 |---|---|---|
-| `swell_terrains` | `continental_shelf`, `coral_shelf` | where the rows run, by name |
-| `open_water_terrains` | `deep_ocean` | where they come FROM, by name; also takes the no-shelf band where it touches land |
-| `strength` | 0.2 | a crest's luma offset at full amplitude (luma units) |
-| `wavelength` | 1.0 | row spacing, hex radii |
-| `speed` | 0.18 | row speed, hex radii per second (a row every ~5.6 s) |
-| `reach` | 1.73 | the no-shelf band from land, hex radii: √3, one hex across; also the shoaling's reach |
-| `shoal_gain` | 1.25 | the amplitude at the shore, × the amplitude `reach` out |
-| `surge` | 0.35 | the shoreline surf's seaward reach grows by this fraction as a row lands |
-| `region_cell` | 8.0 | hex radii: each cell of this grid runs one straight row set |
-| `direction_smoothing` | 5.0 | hex radii: the direction field's blur radius (a build lever) |
-| `shelf_fade` | 0.87 | hex radii in from the shelf's seaward edge to full swell (a build lever) |
-| `facing_lo` / `facing_hi` | −0.2 / 0.5 | dot(row direction, toward land): calm at or below lo, full at or above hi |
+| `surge` | 0.4 | the surf's seaward reach grows by this fraction at the top of a crash |
+| `surge_rate` | 0.22 | crashes per second on any one stretch of shore (one every ~4.5 s) |
+| `surge_variation_cell` | 4.0 | hex radii: the along-shore offset noise's cell, so a stretch of a few hexes crashes together |
 
-Fallbacks are the `COASTAL_SWELL_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
-lever; the fixed feel is the `SWELL_*` consts in the shader and the `DIR_*` consts in `coast_field.rs`.
-Chosen by eye on `blend_probe` state **31 (COAST)** (`harness-map-probes.md`) at r ≈ 45, r ≈ 47 (Ray's
-2.0×) and r ≈ 35 (his 1.5×).
-- **Strength:** at 0.05 the swell was barely visible over the warm shelf. It went to 0.08, then to 0.14
-  once the section cut left fewer crests standing, then to 0.2 when the crest went broad and soft.
-- **The band:** the contour swell first ran 4 r out, with a 1.3 r wavelength at 0.3 r/s. Ray: it started
-  too far out, so it was confined to the water hex next to the shore; with the rows it is the no-shelf
-  fallback only.
+| `shore_profile.surge_scale` | Shipped |
+|---|---|
+| `deep_ocean` | 1.0 (a cliff coast crashes) |
+| `continental_shelf` | 1.0 |
+| `inland_sea` | 0.0 (a lake's surf never surges) |
+| others (`coral_shelf`, `hydrothermal_vent_field`) | neutral 1.0 |
+
+Fallbacks are the `SHORE_DEFAULT_SURGE*` consts in `ui/TerrainRenderer.gd`, which also clamps each lever, and
+`SHORE_PROFILE_DEFAULT_SURGE_SCALE` in `TerrainTextureManager`. The fixed feel is the `SHORE_PULSE_*` consts in the
+shader. Chosen by eye on `blend_probe` state **31 (SHORE)** (`harness-map-probes.md`) on a jagged coast at r ≈ 45,
+r ≈ 47 (Ray's 2.0×) and r ≈ 35 (his 1.5×); `surge` 0.4 sits by the 0.35 Ray approved live, with a slower crash.
 
 ## Water temperature grade
 
@@ -1432,7 +1337,7 @@ temperature step between two hexes, and a graded↔ungraded (deep↔coral) seam,
 instead of stepping on it.
 
 **The grade** (`water_temperature_grade`, applied to the water fragment's `result` after the depth field,
-before the water motion and the shore — the swell and the shore foam are unchanged): cold desaturates toward luma by
+before the water motion and the shore — the shore foam is unchanged): cold desaturates toward luma by
 `cold_desaturate × cold`, pulls toward `cold_tint`'s hue by `cold`, and scales by
 `mix(1, cold_brightness, cold)`; warm pulls toward `warm_tint`'s hue by `warm` and scales by
 `mix(1, warm_brightness, warm)`. **The tint pull keeps luma** (`tint_keep_luma`): multiply by the tint —
