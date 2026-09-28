@@ -76,25 +76,6 @@ const SEAM_PAN_MAP_WIDTHS := 0.5
 const SEAM_OUTLINE_MIN_PIXELS := 200
 # The clicked box, in hex radii from the pressed pixel — see `_assert_selection_outline_wraps`.
 const SEAM_BOX_RADII := 2.0
-# ---- THE SEAM-CROSSING HERD TRAIL (the guard is `_assert_herd_trail_unwraps`) --------------------
-# A migrating herd's trail banks DATA columns, so a herd that has just stepped over the seam records
-# the map's LAST columns and then its FIRST. The fixture walks exactly that — two hexes west of the
-# seam, then two east of it — with the head on the herd's own tile, because that is the point the
-# trail's frame is anchored to.
-const HERD_TRAIL_SEAM_ID := "game_deer_seam"
-const HERD_TRAIL_SEAM_Y := 3
-const HERD_TRAIL_SEAM_COLS := [GRID_W - 2, GRID_W - 1, 0, 1]
-# How wide the trail's ink may run, in hex COLUMNS. **Set from the two MEASURED spans, not from the
-# arithmetic**: the honest trail inks 224px = 3.0 columns (its four hexes are three steps apart) and
-# the unwrapped defect inks 456px = 6.1. The defect's segment is 15 columns WIDE but runs off-frame
-# west and is CLIPPED, which is why the gap is 2× rather than 5× and why a bound reasoning from the
-# map's width would sit above BOTH. 4.0 splits what was measured: a third of a hex of headroom over
-# the honest drawing, and the defect exceeds it by half as much again.
-const HERD_TRAIL_SEAM_MAX_SPAN_COLS := 4.0
-# A 2px polyline over three hex steps runs to a few hundred pixels; the floor only has to clear
-# antialiasing noise. It exists because a span bound ALONE passes when the trail draws NOTHING —
-# the tightest possible span is the empty one.
-const HERD_TRAIL_SEAM_MIN_PIXELS := 50
 const TRAVEL_EXPEDITION_ENTITY := 9301
 const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex herd fixture
 # Quarry-targeting state: the band's hunt reach and the two herd offsets that straddle it (one inside
@@ -512,27 +493,31 @@ const ROAD_AT_RISK_ROW := 9
 # clear of the minimap's own CanvasLayer in the bottom-right, which is not hidden with the map and sat
 # squarely on top of the one tile this case exists to show.
 const ROAD_LONE_TILE := [[4, 11]]
-# State "road vs herd trail". ⛔ **THE ONE FRAME WHERE THE TWO AMBERS CAN BE JUDGED TOGETHER.** Herd
-# trails stay in the ANNOTATION layer while a road is now painted into the terrain composite, so this
-# is the only place a reviewer can see both at once and check they do not read as the same thing.
-#
-# The measured reason it is staged at the TRAIL rung specifically, and not at dirt: against
-# `MapView.HERD_TRAIL_COLOR` (0.97, 0.69, 0.25) every road surface sits within 0.8°–6.3° of the herd
-# trail's HUE — dirt is amber by nature and that cannot be designed away — so the entire separation is
-# carried by SATURATION, 0.09–0.33 against the trail's 0.92. `01_trail.png` is the closest call of the
-# four: 0.8° of hue and near-identical luminance (0.64 vs 0.61). A road has been read as a herd trail
-# once already; this frame is what stops it recurring.
-const ROAD_TRAIL_CROSS_ROW := 6
-const ROAD_TRAIL_CROSS_COL_START := 3
-const ROAD_TRAIL_CROSS_COL_END := 13   # exclusive
-# The herd walks NORTH→SOUTH across the road, so the two inks cross at a right angle rather than
-# running alongside each other — a parallel pair is the easy case, and it is not the one that misled.
-const ROAD_TRAIL_HERD_ID := "game_deer_road"
+# State "herd corridor trail" (issue #215). A migrating herd's Migrate legs bank route traffic, so the
+# corridor it walks wears into `route:path` → `route:trail` rows on the ordinary `routes` section and is
+# drawn by the ordinary road art — there is no herd-specific trail ink any more. The fixture is that
+# corridor mid-wear: the herd walks NORTH→SOUTH down one column, its oldest tiles already worn to an
+# idle TRAIL and its newest ones still PATH rows climbing toward it, down to the tile it has just
+# stepped onto — ONE pass in, a small fraction of the trail rung.
+const HERD_CORRIDOR_HERD_ID := "game_deer_corridor"
 # Clear of BAND_X/BAND_Y (8, 6) — the fixture band's tent marker stands on that hex in every state
-# built from `_base_snapshot`, and it landed squarely on the crossing this frame exists to show.
-const ROAD_TRAIL_HERD_COL := 5
-const ROAD_TRAIL_HERD_ROWS := [3, 4, 5, 6, 7, 8, 9]
-const ROAD_TRAIL_HERD_BIOMASS := 600.0
+# built from `_base_snapshot`.
+const HERD_CORRIDOR_COL := 5
+const HERD_CORRIDOR_ROWS := [3, 4, 5, 6, 7, 8, 9]
+const HERD_CORRIDOR_BIOMASS := 600.0
+# Per corridor row, north → south: the rung the tile HOLDS and its meter toward the next one. The two
+# trail tiles are idle (`ROAD_IDLE_RUNG_METER`, nothing rising); the path tiles are climbing, and the
+# last — the herd's own tile — is the LOW-WEAR case: one pass past a fresh path.
+const HERD_CORRIDOR_LOW_WEAR := 0.05
+const HERD_CORRIDOR_WEAR := [
+	[HudRouteVocab.RUNG_KEY_TRAIL, ROAD_IDLE_RUNG_METER],
+	[HudRouteVocab.RUNG_KEY_TRAIL, ROAD_IDLE_RUNG_METER],
+	[HudRouteVocab.RUNG_KEY_PATH, 0.75],
+	[HudRouteVocab.RUNG_KEY_PATH, 0.5],
+	[HudRouteVocab.RUNG_KEY_PATH, 0.25],
+	[HudRouteVocab.RUNG_KEY_PATH, 0.1],
+	[HudRouteVocab.RUNG_KEY_PATH, HERD_CORRIDOR_LOW_WEAR],
+]
 
 # The bill a road in shortfall carries. Any figure at or above `SourceForecast.UPKEEP_WORK_MIN` puts
 # it in the danger ink; these are the middle rung's own numbers so the frame states a real road.
@@ -1219,10 +1204,6 @@ func _ready() -> void:
 	# repans the map, so it comes AFTER the frame it borrows the snapshot from; the next state's
 	# `_fit_map_to_view` puts the camera back.
 	await _assert_selection_outline_wraps()
-
-	# A SECOND PNG-less seam guard, on its own wrapping fixture — the CONNECTED-PATH half of the
-	# question the selection outline asks about a single tile.
-	await _assert_herd_trail_unwraps()
 
 	# State P — selected TRAVELLING expedition: a detached scout party in transit draws the same
 	# destination reticle + line (the draw is unit-agnostic — band OR expedition).
@@ -1931,23 +1912,18 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_road_network")
 
-	# State "road vs herd trail" — THE ONE FRAME WHERE THE TWO AMBERS MEET. A herd trail is an
-	# annotation drawn OVER the map; a road is painted INTO the terrain composite; and they are within a
-	# degree of hue of each other (see the ROAD_TRAIL_CROSS_* consts for the measurement). Staged at the
-	# TRAIL rung, the closest call of the four, with the herd crossing the road at a right angle. Read
-	# for: the trail's saturated amber line staying obviously a LINE ON the map while the road stays
-	# obviously part of the ground — if the crossing point is ambiguous, the road art is too saturated.
-	_map.display_snapshot(_snapshot_road_vs_herd_trail())
+	# State "herd corridor trail" (issue #215) — a migrating herd's corridor worn into the ground as
+	# ordinary road rows, trail-rung at the north end down to a one-pass path under the herd. Read for:
+	# the corridor reading as ONE worn line with no amber polyline over it, and what the low-wear tiles
+	# at the south end look like against the idle path/trail art.
+	_map.display_snapshot(_snapshot_herd_corridor_trail())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
-	var road_herd_trail: Array = []
-	for row in ROAD_TRAIL_HERD_ROWS:
-		road_herd_trail.append(Vector2i(ROAD_TRAIL_HERD_COL, int(row)))
-	_map.herd_trails[ROAD_TRAIL_HERD_ID] = road_herd_trail
-	_map.queue_redraw()
 	await _settle()
-	await _save("map_road_vs_herd_trail")
-	_map.herd_trails.clear()
+	await _save("map_herd_corridor_trail")
+
+	# …and the PNG-less half: a herd draws NO path of its own, however many snapshots it has walked.
+	await _assert_herd_draws_no_trail()
 
 	# State "max zoom" — the ZOOM CAP raised from 4× to 7× in issue #375. Every other state renders at
 	# the cover fit (MIN_ZOOM_FACTOR), so nothing here had ever judged the OTHER end of the rail, and
@@ -3010,79 +2986,54 @@ func _assert_selection_outline_wraps() -> void:
 	)
 	_map.selected_tile = Vector2i(-1, -1)
 
-## THE SEAM-CROSSING HERD TRAIL IS ONE PATH, NOT A LINE BACK ACROSS THE MAP. A PNG-less guard in the
-## shape of `_assert_selection_outline_wraps`, and PIXEL-based for its reason: it drives the real
-## draw and reads what landed, rather than re-asking `MapView._unwrapped_path_points` the question
-## the frame asks it.
+## A HERD DRAWS NO PATH OF ITS OWN (issue #215). The map used to keep a client-side breadcrumb per
+## herd id — every tile a herd had stood on across successive snapshots, drawn as an amber polyline.
+## The worn corridor is now road rows from the sim, so the map must draw a herd from the CURRENT
+## snapshot alone. PNG-less and pixel-based: walk the herd down the whole corridor one snapshot per
+## step, then compare against the same final snapshot shown to a map with no history at all. Any
+## pixel that differs is ink the walk left behind.
 ##
-## The trail banks DATA columns, so a herd stepping over the seam records `15` and then `0`; a
-## polyline through the raw `_hex_center` of each drew ONE segment the FULL WIDTH of the map at
-## nearly constant row — the defect, and what the span bound below fails on. No PNG here could ever
-## have caught it: a trail needs TWO successive snapshots to reach a second point and every fixture
-## in this harness is one snapshot, so the trail had no coverage of any kind.
-func _assert_herd_trail_unwraps() -> void:
+## Paired with a LIVENESS check — the herd's own marker must change pixels against a herd-less frame —
+## because a diff of zero also passes when the herd draws nothing at all.
+func _assert_herd_draws_no_trail() -> void:
 	_map.set_fow_enabled(false)
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_herd_trail_seam())
-	_map._fit_map_to_view()
-	# Pan half a map west, as the selection guard does, so the seam sits mid-frame and all four trail
-	# hexes are on screen: the honest drawing has to be VISIBLE for a span bound to mean anything.
-	_map.pan_offset.x = -_map.last_map_size.x * SEAM_PAN_MAP_WIDTHS
-	_map.queue_redraw()
-	await _settle()
+	var last_row: int = int(HERD_CORRIDOR_ROWS[HERD_CORRIDOR_ROWS.size() - 1])
 
-	# BEFORE already carries the herd and its marker; what it has not got is a TRAIL, because the
-	# snapshot banks exactly one tile per herd and a one-point trail draws nothing. So every pixel
-	# that changes from here is the trail and only the trail.
-	var before: Image = await _capture()
-	var trail: Array = []
-	for col in HERD_TRAIL_SEAM_COLS:
-		trail.append(Vector2i(int(col), HERD_TRAIL_SEAM_Y))
-	_map.herd_trails[HERD_TRAIL_SEAM_ID] = trail
-	_map.queue_redraw()
+	_map.reset_world_state()
+	for row in HERD_CORRIDOR_ROWS:
+		_map.display_snapshot(_snapshot_herd_walk(int(row)))
+	_map._fit_map_to_view()
 	await _settle()
-	var after: Image = await _capture()
-	if before == null or after == null:
+	var walked: Image = await _capture()
+
+	_map.reset_world_state()
+	_map.display_snapshot(_snapshot_herd_walk(last_row))
+	_map._fit_map_to_view()
+	await _settle()
+	var fresh: Image = await _capture()
+
+	var no_herd := _snapshot_herd_walk(last_row)
+	no_herd["herds"] = []
+	_map.reset_world_state()
+	_map.display_snapshot(no_herd)
+	_map._fit_map_to_view()
+	await _settle()
+	var empty: Image = await _capture()
+	if walked == null or fresh == null or empty == null:
 		return
 
-	var inked: int = _count_changed_pixels(before, after, Rect2i())
+	var herd_ink: int = _count_changed_pixels(empty, fresh, Rect2i())
+	_assert_map("the corridor herd's marker DRAWS — %d px against a herd-less frame" % herd_ink,
+		herd_ink > 0)
+	var history_ink: int = _count_changed_pixels(fresh, walked, Rect2i())
 	_assert_map(
-		"a seam-crossing herd trail DRAWS — %d px changed (min %d)"
-			% [inked, HERD_TRAIL_SEAM_MIN_PIXELS],
-		inked >= HERD_TRAIL_SEAM_MIN_PIXELS
+		"…and a herd that walked %d snapshots draws exactly what a fresh one does — %d px differ"
+			% [HERD_CORRIDOR_ROWS.size(), history_ink],
+		history_ink == 0
 	)
-
-	# Logical map units → captured-image pixels: the capture matches the pinned WINDOW while the
-	# viewport reports the `expand` projection (the `_assert_selection_outline_wraps` conversion).
-	var viewport := Rect2(Vector2.ZERO, _map._get_adjusted_viewport_size())
-	var to_image: float = float(before.get_width()) / viewport.size.x
-	var max_span: float = HERD_TRAIL_SEAM_MAX_SPAN_COLS * MapView.SQRT3 * _map.last_hex_radius * to_image
-	var span: int = _changed_pixel_bounds(before, after).size.x
-	_assert_map(
-		"…and stays ONE path across the seam — its ink spans %d px, within %d (%.0f hex columns)"
-			% [span, int(max_span), HERD_TRAIL_SEAM_MAX_SPAN_COLS],
-		float(span) <= max_span
-	)
-	_map.herd_trails.clear()
-
-## The bounding box of the pixels differing between two captures — the EXTENT of one overlay's ink,
-## which `_count_changed_pixels`' tally cannot see (a short line and a map-wide one can change the
-## same NUMBER of pixels). Empty when nothing changed.
-func _changed_pixel_bounds(before: Image, after: Image) -> Rect2i:
-	var bounds := Rect2i()
-	var found := false
-	for y in range(before.get_height()):
-		for x in range(before.get_width()):
-			if before.get_pixel(x, y) == after.get_pixel(x, y):
-				continue
-			if found:
-				bounds = bounds.expand(Vector2i(x, y))
-			else:
-				bounds = Rect2i(Vector2i(x, y), Vector2i.ZERO)
-				found = true
-	return bounds
 
 ## Pixels differing between two captures of the same frame, within `rect` (an EMPTY rect means the
 ## whole image). The images are the same scene rendered twice with one thing changed, and this
@@ -4837,21 +4788,6 @@ func _snapshot_travel_seam() -> Dictionary:
 		"herds": [],
 	}
 
-## A horizontally-wrapping map carrying ONE herd, parked one hex EAST of the seam — the head of the
-## trail `_assert_herd_trail_unwraps` seeds. No band on it: that guard diffs two captures of this
-## same frame, so anything else standing on it is noise it would have to exclude.
-func _snapshot_herd_trail_seam() -> Dictionary:
-	var head_col: int = int(HERD_TRAIL_SEAM_COLS[HERD_TRAIL_SEAM_COLS.size() - 1])
-	return {
-		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": true},
-		"overlays": {"terrain": _terrain_array()},
-		"populations": [],
-		"herds": [{
-			"id": HERD_TRAIL_SEAM_ID, "label": "Red Deer (%s)" % HERD_TRAIL_SEAM_ID,
-			"x": head_col, "y": HERD_TRAIL_SEAM_Y, "biomass": 600.0, "huntable": true,
-		}],
-	}
-
 ## A selected scouting expedition in transit → the same destination reticle + line (unit-agnostic).
 func _snapshot_travel_expedition() -> Dictionary:
 	var snap := _base_snapshot(_band([], 2, 0), [])
@@ -5637,22 +5573,26 @@ func _snapshot_road_network() -> Dictionary:
 	snap["routes"] = rows
 	return snap
 
-## The road-vs-herd-trail backdrop: a TRAIL-rung road running west→east, and one herd standing on it.
-## The herd's own trail is written straight into `MapView.herd_trails` by the state (the snapshot banks
-## exactly ONE tile per herd, and a one-point trail draws nothing) — the seam guard's idiom.
-func _snapshot_road_vs_herd_trail() -> Dictionary:
-	var snap := _base_snapshot(_band([], 2, 0), [{
-		"id": ROAD_TRAIL_HERD_ID, "label": "Red Deer (%s)" % ROAD_TRAIL_HERD_ID,
-		"x": ROAD_TRAIL_HERD_COL,
-		"y": int(ROAD_TRAIL_HERD_ROWS[ROAD_TRAIL_HERD_ROWS.size() - 1]),
-		"biomass": ROAD_TRAIL_HERD_BIOMASS, "huntable": true,
-	}])
-	var tiles: Array = []
-	for col in range(ROAD_TRAIL_CROSS_COL_START, ROAD_TRAIL_CROSS_COL_END):
-		tiles.append([col, ROAD_TRAIL_CROSS_ROW])
-	snap["routes"] = _road_run(
-		tiles, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_KEPT, ROAD_IDLE_RUNG_METER)
+## The herd-corridor backdrop: one herd at the south end of a north→south corridor whose tiles carry
+## the road rows its Migrate legs wore in — see `HERD_CORRIDOR_WEAR` for each tile's rung and meter.
+func _snapshot_herd_corridor_trail() -> Dictionary:
+	var snap := _snapshot_herd_walk(int(HERD_CORRIDOR_ROWS[HERD_CORRIDOR_ROWS.size() - 1]))
+	var rows: Array = []
+	for i in range(HERD_CORRIDOR_ROWS.size()):
+		var wear: Array = HERD_CORRIDOR_WEAR[i]
+		rows.append(_road(
+			[HERD_CORRIDOR_COL, int(HERD_CORRIDOR_ROWS[i])], String(wear[0]), ROAD_KEPT, float(wear[1])))
+	snap["routes"] = rows
 	return snap
+
+## The resident band and ONE herd on `row` of the corridor column — no roads. The herd id is held
+## fixed across calls, so a sequence of these is one herd walking.
+func _snapshot_herd_walk(row: int) -> Dictionary:
+	return _base_snapshot(_band([], 2, 0), [{
+		"id": HERD_CORRIDOR_HERD_ID, "label": "Red Deer (%s)" % HERD_CORRIDOR_HERD_ID,
+		"x": HERD_CORRIDOR_COL, "y": row,
+		"biomass": HERD_CORRIDOR_BIOMASS, "huntable": true,
+	}])
 
 ## The routes backdrop: flat terrain, the resident band for scale, and four orders — three multi-hop
 ## routes covering the int/string/unknown faction-color lookups, and one one-waypoint order the draw

@@ -343,7 +343,7 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 	if tiles.size() < ROUTE_MIN_POINTS:
 		return
 	# A route's waypoints are DATA columns, so a seam-crossing leg drawn from the raw `_hex_center`
-	# would shoot back across the whole map — the herd-trail bug, in the same shape. Unwrap the whole
+	# would shoot back across the whole map. Unwrap the whole
 	# path into one column frame first (`MapView._unwrapped_path_points`).
 	var points := _view._unwrapped_path_points(tiles, radius, origin)
 	for i in range(points.size() - 1):

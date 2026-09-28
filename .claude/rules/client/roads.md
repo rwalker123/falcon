@@ -50,11 +50,13 @@ has a `"routes"` state and it is the order-path one.
 
 ## ⛔ THE FLOOR RUNG IS `route:path` / `Path`, AND IT WAS RENAMED OUT OF A FALSE ORIGIN
 
-It was `route:game_trail` / `Game trail`. Nothing in the simulation makes one: exactly ONE pass banks
-route work — the pooling-link pass in `core_sim/src/supply.rs` — and no animal has ever worn a step
-of any road. The commonest way a tile comes to hold the floor rung is the player's own bands walking
-the same ground while their food pools, so `Road  Game trail · 1% to trail` was the client telling
-him an animal made the path his own trade traffic wore in.
+It was `route:game_trail` / `Game trail`. When it was renamed nothing in the simulation made one:
+the only pass banking route work was the pooling-link pass in `core_sim/src/supply.rs`, and no animal
+wore a step of any road. The commonest way a tile came to hold the floor rung was the player's own
+bands walking the same ground while their food pools, so `Road  Game trail · 1% to trail` was the
+client telling him an animal made the path his own trade traffic wore in. Migratory herds now bank
+route traffic on their Migrate legs too (issue #215), so a path can have either origin — the rung
+name states neither.
 
 It is the second half of the fix that deleted the tile card's `nothing — a path the animals made`
 clause (issue #566, below): that sentence and this rung name asserted the same unmodelled cause, and
@@ -365,9 +367,9 @@ Three clauses, each off a published field:
 
 **A rung buying nothing on every axis RENDERS NO ROW**, which is both free rungs. It used to say so in
 words — `nothing — a path the animals made`, in dim ink — and that sentence was **factually wrong, not
-merely wordy**: it asserted an ORIGIN the sim does not model. A path is a rung a tile HOLDS, and
-the commonest way a tile comes to hold one is the player's own bands walking the same ground and
-banking traffic into the meter; nothing about it is a path animals made. The row's absence states the
+merely wordy**: it asserted an ORIGIN as the rung's meaning. A path is a rung a tile HOLDS, worn
+in by bands pooling food over the same ground or by a migratory herd's Migrate legs (issue #215), and
+a sentence naming one cause is false of the other. The row's absence states the
 same fact — both of the floor's terms are at their own neutral — and cannot state a false one beside
 it.
 
@@ -1645,14 +1647,19 @@ the ordinary case, so a renderer that still thinks in polylines fails visibly on
 > from a CONNECTION MASK built out of adjacency, so a gapped run is not a road — it is five lone
 > tiles, each drawing its centre disc and nothing else.
 
-`map_preview`'s `map_road_vs_herd_trail` is the ONE frame where the two ambers can be judged together:
-herd trails stayed in the annotation layer while a road went into the terrain composite, so nowhere
-else shows both. Measured against `MapView.HERD_TRAIL_COLOR` (0.97, 0.69, 0.25), **every** road
-surface sits within 0.8°–6.3° of the herd trail's HUE — dirt is amber by nature and that cannot be
-designed away — and the entire separation is carried by SATURATION, 0.09–0.33 against the trail's
-0.92. `01_trail.png` is the closest call of the four (0.8° of hue, 0.64 vs 0.61 luminance), which is
-why the frame stages the TRAIL rung rather than dirt, with the herd crossing the road at a right
-angle. A road has been read as a herd trail once already.
+**A HERD'S TRAIL IS A ROAD, AND THE MAP DRAWS NO OTHER** (issue #215). Migratory herds bank route
+traffic on their Migrate legs, so the corridor a herd walks wears into `route:path` → `route:trail`
+rows on the ordinary `routes` section and this pass paints it. The client-side breadcrumb that used
+to stand in for it — `MapView.herd_trails`, an amber polyline through every tile a herd had stood on
+across successive snapshots — is deleted, state and draw both. A herd marker is drawn from the
+current snapshot alone.
+
+`map_preview`'s `map_herd_corridor_trail` stages that corridor mid-wear: one north→south column, two
+idle `route:trail` tiles at the old end, then `route:path` tiles climbing toward trail at falling
+meters (`HERD_CORRIDOR_WEAR`) down to the herd's own tile at one pass in (`HERD_CORRIDOR_LOW_WEAR`,
+0.05). The low-wear end DRAWS — a path at climb 0.05 is the path rung's own thin, faint, greyish
+line, so on the desert fixture ground it is legible only on a close look. Its PNG-less twin,
+`_assert_herd_draws_no_trail`, is in `harness-map-probes.md`.
 
 `blend_probe`'s four road states are where the pass itself is judged, all rendered at `ISO_HEX_RADIUS`
 because the road's widths and its softness ramp are hex-radius fractions and a frame at any other
