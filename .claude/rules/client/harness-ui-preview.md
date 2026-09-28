@@ -2993,8 +2993,10 @@ byte-identical**, that frame the only mover.
 
 ## The `workings` chapter, reworked to the three surfaces (issue #650)
 
-**Nineteen frames and one hundred and eighteen checkpoints**, `EXPECTED_CHECKPOINTS` **118** —
-RE-MEASURED by raising the const to an impossible number and reading `reached` back, as this file's
+**Twenty frames and one hundred and thirty checkpoints**, `EXPECTED_CHECKPOINTS` **130** —
+counted off a clean run's own `PASS`/`saved` lines between the chapter's first claim and the
+postlude (the declared 118 had drifted to a real 121 before the Cutting-kit state added nine) — the
+other measure being to raise the const to an impossible number and read `reached` back, as this file's
 own rule says. **The const in `chapters/workings.gd` is the authority and this paragraph is the
 description**: a figure here that disagrees with it is this file being stale, never a licence to lower
 the const to match. The chapter has been re-measured that way repeatedly — a declared 43 against a
@@ -3012,7 +3014,18 @@ branch says those things now. `workings_unopened` kept its name and its subject.
 `workings_just_assigned` below, the THREE `workings_floor_*` frames the preset loop emits
 (`SourceForecast.FLOOR_PRESETS`, one frame per preset) with `workings_floor_held` and
 `workings_floor_stripped` beside them, `workings_fresh_runway`, `workings_quarry_reach`,
-`workings_out_of_range`, and the pair `workings_tile_crews` / `workings_tile_crews_other_band`.
+`workings_out_of_range`, the pair `workings_tile_crews` / `workings_tile_crews_other_band`, and
+`workings_forestry_kit` last (issue #663).
+
+**`workings_forestry_kit` PUSHES A ROSTER OF ITS OWN AND HANDS THE PREVIOUS ONE BACK.** The shared
+`BandFx.kit_roster_fixture()` carries no `extract` kit and its `none` does not list the job, so every
+deposit sheet earlier in the walk renders with no kit row; the state builds the Cutting kit plus an
+extract-listing `none` locally, which keeps those frames where they were. Its claims are the picker's
+two entries in wire order, NO `(default)` mark (the wire names no extract default), and the REAL
+commit's line carrying `kit <id>` for BOTH kits — a builder that appended a fixed id satisfies either
+one alone. The pick itself is written through `ComposeState.set_deposit_kit_id` and the sheet
+re-opened, since the claim is about what the commit carries rather than about the popup; the pending
+entry each press writes is rolled back through `HudLayer.drop_pending_assign`.
 
 ### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
 

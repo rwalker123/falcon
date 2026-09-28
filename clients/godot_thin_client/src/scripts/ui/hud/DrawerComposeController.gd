@@ -5241,9 +5241,14 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     if capped_by_seam:
         target.add_child(HudWidgets.alloc_hint_label(
             HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()]))
-    # **THE KIT ROW.** The shipped roster declares no TAKE gear on either deposit branch, so
-    # `KitRoster.build_kit_row` mounts nothing today — which is the honest answer rather than an empty
-    # picker, and the row appears by itself the day a felling axe declares a take stat.
+    # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Cutting kit (axe + wedges,
+    # each lifting `deposit_take` on its own rung) beside `none`, so the picker's selection moves the
+    # take and rides the commit as `kit <id>` — see the commit button below.
+    #
+    # ⛔ **NO ENTRY IS MARKED `(default)`, AND THAT IS THE HONEST ANSWER.** The wire publishes a
+    # default per job (`defaultHuntKitId` …) and names none for `extract`, so
+    # `HudBandLaborState.default_kit_id` answers `""` here and the sheet opens on the roster's first
+    # extract kit. Marking one would be a client-side guess at `default_kits.extract`.
     #
     # ⛔ **THE CREW IS HANDED ON**, because omitting it is what made the forage sheet's shortfall line
     # mute for the whole life of that line: `crew` then defaults to `KIT_CREW_UNCOMPOSED` and the
@@ -5308,10 +5313,12 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # **A FINITE WORKING SENDS NO FLOOR AT ALL, because it was never asked** — `named_floor` is
     # `FLOOR_UNNAMED` there and `Main`'s extract arm drops the token, leaving the sim to answer what
     # silence means on ground that never renews. A renewing working rides the player's own dial.
-    # **Still no kit token** — the shipped roster declares no take gear on either branch.
+    # **THE KIT RIDES IT** (issue #663): the picker above offers the Cutting kit, and a selection the
+    # line dropped would be a choice the sim never heard. `Main._kit_token` renders it.
     assign_btn.pressed.connect(func() -> void:
         _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, _compose.deposit_count(),
-            tile.x, tile.y, "", named_floor, material)
+            tile.x, tile.y, "", named_floor, material, SourceForecast.IMPROVEMENT_NONE,
+            _compose.deposit_kit_id())
         close_compose_sheet())
     target.add_child(assign_btn)
 

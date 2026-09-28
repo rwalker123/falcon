@@ -492,11 +492,14 @@ Top to bottom, with `_build_deposit_assign_controls` the one builder:
    `_mount_crew_row`'s own `known` gate drops them rather than a branch here. That mount's trailing
    `label_tooltip` carries `CARD_CREW_HINT`, the sheet's one place to say that these hands CUT and the
    hands that HOLD are a pool on another panel.
-4. **the `Kit` row** through `_mount_kit_row`, at `KitRoster.JOB_EXTRACT`. **The shipped roster
-   declares no take gear on either branch**, so `build_kit_row` mounts nothing today — the honest
-   answer rather than an empty picker, and the row appears by itself the day a felling axe declares a
-   take stat. ⛔ **THE CREW IS HANDED ON**: omitting it is what made the forage sheet's shortfall line
-   mute for the whole life of that line.
+4. **the `Kit` row** through `_mount_kit_row`, at `KitRoster.JOB_EXTRACT`. The roster's `extract`
+   job lists the **Cutting kit** (`deposit_tools`: an axe lifting `deposit_take` on felling and
+   coppice, wedges lifting it on the quarry) beside `none`, so the row is a real picker and its
+   selection moves the take (issue #663). **No entry is marked `(default)`**: the wire publishes a
+   default per job and names none for `extract`, so the sheet opens on the roster's first extract kit
+   and marks nothing, rather than guessing `default_kits.extract` client-side. ⛔ **THE CREW IS HANDED
+   ON**: omitting it is what made the forage sheet's shortfall line mute for the whole life of that
+   line.
 5. ⛔ **NO SPECIES CHIPS** — a deposit takes one material by construction.
 6. **the improvement POINTER LINE**, in the retired-`_emit_improvement` pattern and through the SAME
    `HudWidgets.build_improvement_control` the forage sheet's offered rung uses: `⛏ Quarry this rock
@@ -1237,8 +1240,8 @@ anywhere.
   from and which means the same kind of thing on a forage row (*which of the things on this ground are
   you here for*). **The FLOOR follows it in forage's own position** (issue #650), a validated NUMBER at
   `Main.FLOOR_COMMAND_DECIMALS` — never `str(float)` — with the four retired stance words refused BY
-  NAME at parse. Still no kit token: `default_kits.extract` is the bare `none` kit with no picker
-  anywhere in reach, so the tail is closed after the worker count.
+  NAME at parse. **The kit rides the tail as `kit <id>`** (issue #663), after the worker count — the
+  named pair the parser lifts out before the positional `[floor] <workers>` is read.
 - ⛔ **THE FLOOR TOKEN IS SENT ONLY WHERE A DIAL WAS OFFERED, AND THE LINE THEREFORE HAS TWO SHAPES.**
   A finite seam has no dial, so there is no floor the player named — and sending the sheet's default
   anyway was writing a conservation choice onto a row where nobody made one, indistinguishable in the
@@ -1251,20 +1254,28 @@ anywhere.
   collide with. **An earlier arc kept ONE line shape deliberately** and that is what this replaced: one
   shape cost the sim its own fork.
 
-⛔ **THE SHEET'S KIT ROW IS MOUNTED AND ITS SELECTION HAS NO TOKEN TO RIDE.** `extract`'s grammar is
-closed after the worker count, and the shipped roster offers `extract` no kit at all — so the row
-never draws and the mismatch is inert. **A take tool added to `equipment.json` needs the token first**,
-or the sheet would show a picker whose answer the line silently drops.
-`HudBandLaborState.default_kit_id` answers `NO_KIT_ID` for `JOB_EXTRACT` explicitly rather than by
-fall-through, on `builders`' own reasoning: falling through would mark the HUNT kit as this job's
-default and `Main._kit_token` would then omit the token for a selection the player made.
+⛔ **THE SHEET'S KIT SELECTION RIDES THE COMMAND, and a picker whose answer the line dropped would be
+worse than none.** The deposit sheet's commit passes `ComposeState.deposit_kit_id()` into
+`_emit_assign_labor`, and `Main.format_assign_labor`'s `extract` arm appends `_kit_token` after the
+worker count (issue #663). `HudBandLaborState.default_kit_id` answers `NO_KIT_ID` for `JOB_EXTRACT`
+explicitly rather than by fall-through, on `builders`' own reasoning: falling through would mark the
+HUNT kit as this job's default and `Main._kit_token` would then omit the token for a selection the
+player made. **With `""` as the default every named selection is sent** — pinning the kit the sim would
+have resolved anyway is harmless, `assign_labor` having no override to clear — and no entry wears the
+`(default)` mark, because `SubsistenceSection` publishes no `defaultExtractKitId` to mark it from.
+
+⛔ **THE COMPLETE-OUTFIT SHORTFALL COUNTS BOTH TOOLS ON EITHER BRANCH.** The Cutting kit carries an
+axe AND wedges, and `KitRoster.shortfall_line` — like the sim's own `kitWorkersHolding` it reads on a
+committed row — takes the `min` over every item the kit uses. So a wood crew fully armed with axes and
+holding no wedges reads as short, though the wedges add nothing on felling or coppice. The wire states
+no per-item branch, so the client cannot narrow it.
 
 **`command_guard` is what keeps the two enumerations in step, and it now drives both.** `quarrywork`
 joined `ASSIGN_LABOR_ROLES` (the sweep asserts every role in that list builds a line AND that an
 unknown one builds none) and `extract` is the FOURTH targeted drive — the sweep cannot reach it, a role
-in that list taking a bare count. **`extract` is driven in BOTH of its shapes** — floored and unnamed —
-since the token's presence is now a fork the real parser has to accept on either side;
-`ASSIGN_LABOR_GRAMMAR_DRIVES` is **5** and `ASSIGN_LABOR_EXPECTED` **13**, re-derived at runtime from
+in that list taking a bare count. **`extract` is driven in THREE shapes** — floored, unnamed, and
+floored with a `kit` tail — since each token's presence is a fork the real parser has to accept;
+`ASSIGN_LABOR_GRAMMAR_DRIVES` is **6** and `ASSIGN_LABOR_EXPECTED` **15**, re-derived at runtime from
 the drives plus the role list, so the literal cannot go stale unnoticed.
 
 ## Tests

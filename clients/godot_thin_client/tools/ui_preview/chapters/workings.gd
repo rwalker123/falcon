@@ -31,10 +31,13 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
+## `format_assign_labor` is `static`, so the Cutting-kit state reads the line the commit would send
+## without standing a `Main` up.
+const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 118
+const EXPECTED_CHECKPOINTS := 130
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -1255,6 +1258,136 @@ func run(harness) -> void:
 	h._assert_hud("a hex whose ground holds no deposit offers neither assign action",
 		not h._hud.forestry_assign_controls.visible
 			and not h._hud.extraction_assign_controls.visible)
+
+	await _cutting_kit_state()
+
+# ---- THE CUTTING KIT (issue #663) -------------------------------------------------------------
+#
+# The `extract` job gained a real kit — `deposit_tools`, the Cutting kit: an axe lifting `deposit_take`
+# on felling and coppice, wedges lifting it on the quarry — beside `none`. **APPENDED LAST**, so no
+# frame above moves; it pushes a roster of its own and hands the previous one back.
+
+## The id and face the sim ships (`equipment.json` → `kits[].id` / `display_name`).
+const CUTTING_KIT_ID := "deposit_tools"
+const CUTTING_KIT_NAME := "Cutting kit"
+const CUTTING_KIT_ITEMS := ["axe", "wedges"]
+
+## The shared roster plus the Cutting kit, with `none` listing `extract` — the shipped `none` lists
+## every job, and the shared fixture's copy predates this one. Built LOCALLY rather than in
+## `BandFx.kit_roster_fixture()` so no deposit sheet rendered earlier in the walk grows a kit row.
+func _cutting_kit_roster() -> Array:
+	var roster: Array = []
+	for entry_variant in BandFx.kit_roster_fixture():
+		var entry: Dictionary = (entry_variant as Dictionary).duplicate(true)
+		if String(entry.get(KitRoster.KIT_ID_KEY, "")) == BandFx.KIT_ID_NONE:
+			var jobs: Array = entry.get(KitRoster.KIT_JOBS_KEY, [])
+			jobs.append(KitRoster.JOB_EXTRACT)
+			entry[KitRoster.KIT_JOBS_KEY] = jobs
+			# `none` is authored LAST (the wire's own order), so the Cutting kit goes in just before it.
+			roster.append({
+				KitRoster.KIT_ID_KEY: CUTTING_KIT_ID,
+				KitRoster.KIT_DISPLAY_NAME_KEY: CUTTING_KIT_NAME,
+				KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_EXTRACT],
+				"attack": BandFx.KIT_ATTACK_BARE,
+				"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_BARE,
+				"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
+				"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_BARE,
+				"expedition_sight_range": BandFx.KIT_EXPEDITION_SIGHT_BARE,
+				"build_work_per_worker": BandFx.KIT_BUILD_WORK_NEUTRAL,
+				"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
+				KitRoster.KIT_ITEM_IDS_KEY: CUTTING_KIT_ITEMS,
+			})
+		roster.append(entry)
+	return roster
+
+## ⛔ **STATE workings-forestry-kit — the foresters' sheet offers the Cutting kit, and the pick rides
+## the command.** Three claims no frame can make on its own: the picker lists exactly the two extract
+## kits in the wire's order, it marks NO entry `(default)` (the wire names no extract default, so a mark
+## would be a client-side guess), and the commit's line carries `kit <id>` for whichever was composed —
+## asserted for BOTH kits, since a builder that appended a fixed id satisfies either one alone.
+func _cutting_kit_state() -> void:
+	var labor = h._hud._band_labor
+	var prev_kits: Array = labor.kits()
+	var prev_defaults := [
+		labor.default_kit_id(KitRoster.JOB_HUNT), labor.default_kit_id(KitRoster.JOB_FORAGE),
+		labor.default_kit_id(KitRoster.JOB_SCOUT), labor.default_kit_id(KitRoster.JOB_WARRIOR),
+		labor.default_kit_id(KitRoster.JOB_EXPEDITION)]
+	h._hud.update_kit_roster(_cutting_kit_roster(), BandFx.KIT_DEFAULT_HUNT,
+		BandFx.KIT_DEFAULT_FORAGE, BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
+	h._hud.update_band_alerts([_band_at_the_working()])
+	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
+	await h._settle()
+	var foresters := _assign_button(h._hud.forestry_assign_controls,
+		HudDepositVocab.BRANCH_FORESTRY)
+	h._assert_hud("the kit state has a foresters' button to open", foresters != null)
+	if foresters != null:
+		foresters.pressed.emit()
+		await h._settle()
+		h._hud._compose.set_deposit_count(SHEET_CREW)
+		h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
+		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
+		await h._settle()
+		var sheet: Node = h._hud._drawercompose._compose_sheet
+		var picker := _first_meta(sheet, KitRoster.KIT_PICKER_META) as OptionButton
+		h._assert_hud("the foresters' sheet mounts a KIT picker for the extract job",
+			picker != null)
+		if picker != null:
+			var items: Array[String] = []
+			for i in picker.item_count:
+				items.append(picker.get_item_text(i))
+			h._assert_hud("…listing the Cutting kit and No kit, in the wire's order (%s)" % [items],
+				items.size() == 2 and items[0].begins_with(CUTTING_KIT_NAME)
+					and items[1].begins_with(String((BandFx.kit_roster_fixture().back()
+						as Dictionary).get(KitRoster.KIT_DISPLAY_NAME_KEY, ""))))
+			h._assert_hud("…marking NO entry `(default)`, the wire naming no extract default (%s)"
+					% [items],
+				not items.any(func(t: String) -> bool:
+					return t.ends_with(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX)))
+			h._assert_hud("…and opening on the Cutting kit, the roster's first extract kit (%s)"
+					% picker.text,
+				picker.selected == 0 and picker.text.contains(CUTTING_KIT_NAME))
+		await h._save("workings_forestry_kit")
+		h._assert_hud("…and the commit carries `kit %s`" % CUTTING_KIT_ID,
+			(await _committed_line(sheet)).ends_with(" kit %s" % CUTTING_KIT_ID))
+		# The picker's own `on_pick` writes this model and re-renders; the claim here is that the
+		# COMMIT carries whatever the sheet composed, so the model is written and the sheet re-opened.
+		h._hud._compose.set_deposit_kit_id(BandFx.KIT_ID_NONE)
+		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
+		await h._settle()
+		sheet = h._hud._drawercompose._compose_sheet
+		picker = _first_meta(sheet, KitRoster.KIT_PICKER_META) as OptionButton
+		h._assert_hud("…and a sheet composed bare-handed shows No kit on its face",
+			picker != null and picker.selected == 1)
+		h._assert_hud("…and its commit carries `kit %s` rather than dropping the pick"
+				% BandFx.KIT_ID_NONE,
+			(await _committed_line(sheet)).ends_with(" kit %s" % BandFx.KIT_ID_NONE))
+		h._hud._drawercompose.close_compose_sheet()
+		await h._settle()
+	h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
+	h._hud.update_kit_roster(prev_kits, prev_defaults[0], prev_defaults[1], prev_defaults[2],
+		prev_defaults[3], prev_defaults[4])
+	h._show_tile(_workings_tile([]))
+	await h._settle()
+
+## Press the sheet's REAL commit and return the line `Main` would send for it. The optimistic pending
+## entry the press writes is rolled back through the HUD's own `drop_pending_assign`, so the next claim
+## (and the next state) reads the band as it was.
+func _committed_line(sheet: Node) -> String:
+	var commit := Q.find_meta_node(sheet, HudWidgets.COMPOSE_COMMIT_META) as Button
+	if commit == null:
+		return ""
+	var captured: Array = []
+	var sink := func(payload: Dictionary) -> void: captured.append(payload)
+	h._hud.assign_labor_requested.connect(sink)
+	commit.pressed.emit()
+	h._hud.assign_labor_requested.disconnect(sink)
+	await h._settle()
+	if captured.is_empty():
+		return ""
+	var payload: Dictionary = captured[0]
+	h._hud.drop_pending_assign(payload)
+	return String(MAIN_SCRIPT.format_assign_labor(payload).get("line", ""))
 
 # ---- THE RUNG CATALOG -------------------------------------------------------------------------
 #

@@ -409,9 +409,10 @@ const JOB_BUILDERS := "builders"
 ## …and the two deposit branches' TAKE job (issue #650) — `equipment.json`'s own `extract`, the job a
 ## felling axe or a stone hammer would declare a take stat on.
 ##
-## **THE SHIPPED ROSTER DECLARES NONE**, so `build_kit_row` mounts nothing on either compose sheet
-## today and `default_kits.extract` is the bare `none` kit. That is the honest answer rather than an
-## empty picker, and the row appears by itself the day a tool declares one.
+## **THE SHIPPED ROSTER DECLARES ONE** (issue #663): `deposit_tools`, the Cutting kit — an axe
+## lifting `deposit_take` on felling and coppice, wedges lifting it on the quarry — which is
+## `default_kits.extract`, beside `none`. The wire names no per-job default for this job, so the
+## deposit sheets mark no entry `(default)` (`HudBandLaborState.default_kit_id`).
 const JOB_EXTRACT := "extract"
 
 ## **THE AXIS EACH BAND-WIDE ROLE IS PRICED ON** — a Scout's kit buys what a posted vantage can make

@@ -154,11 +154,13 @@ func default_kit_id(job: String) -> String:
 		KitRoster.JOB_EXPEDITION:
 			return _default_expedition_kit_id
 		KitRoster.JOB_EXTRACT:
-			# **THE WIRE NAMES NO EXTRACT DEFAULT IN THIS INGEST**, so this answers `""` — stated
-			# rather than reached by fall-through, for the reason the builders arm below is: falling
-			# through would hand the deposit sheets the HUNT kit as their marked `(default)`, and
-			# `Main._kit_token` would then omit the token for a selection that happened to equal it.
-			# The shipped roster offers `extract` no kit at all, so nothing renders either way.
+			# **THE WIRE NAMES NO EXTRACT DEFAULT** (`SubsistenceSection` publishes no
+			# `defaultExtractKitId`), so this answers `""` — stated rather than reached by
+			# fall-through, for the reason the builders arm below is: falling through would hand the
+			# deposit sheets the HUNT kit as their marked `(default)`, and `Main._kit_token` would then
+			# omit the token for a selection that happened to equal it. With `""` the deposit picker
+			# marks no entry and every named selection rides the command, which is correct whatever
+			# `default_kits.extract` says (issue #663: it is the Cutting kit now).
 			return KitRoster.NO_KIT_ID
 		KitRoster.JOB_BUILDERS:
 			# **THE WIRE NAMES NO BUILDERS DEFAULT**, so this answers `""` — the "a job the wire has
