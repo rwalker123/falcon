@@ -677,6 +677,11 @@ const EXPEDITION_DISC_ALPHA := 0.55              # dark backing disc (glyph legi
 const EXPEDITION_RING_FACTOR := 1.02             # faction-tinted outer ring radius, of marker radius
 const EXPEDITION_RING_WIDTH := 3.0
 const EXPEDITION_GLYPH_SIZE_FACTOR := 1.15       # glyph size, of marker radius
+# The mission ART's box (`ExpeditionSprites`), of marker radius, per side half: the keyed PNGs carry
+# their own padding inside the 256 frame, so a box a little under the ring's diameter lands the
+# outlined subject inside the ring — the glyph factor would overrun it.
+const EXPEDITION_SPRITE_SIZE_FACTOR := 0.95
+const EXPEDITION_SPRITE_MIN_SIZE := 12.0         # px — the glyph path's own floor
 const EXPEDITION_GLYPH_COLOR := Color(0.96, 0.97, 0.92, 1.0)
 # Awaiting-orders idle indicator: a pulsing amber (WARN) ring signalling the party has reached its
 # objective and needs a command. `expeditionPhase == "awaiting"` drives it; the pulse is animated

@@ -430,6 +430,11 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 	# decorations stay OFF (`is_hunt` gates those below) — the green food pip is a haul cue, and a
 	# denial party's haul is a rounding error it should not advertise.
 	var glyph := _view.EXPEDITION_GLYPH
+	# The mission's ART key: a party that is not hunting, denying or trading is a SCOUTING party,
+	# whatever its mission string says, exactly as the glyph default above reads it.
+	var art_mission := HudExpeditionVocab.EXPEDITION_MISSION_SCOUT
+	if is_hunt or mission == _view.EXPEDITION_DENY_MISSION or mission == _view.EXPEDITION_TRADE_MISSION:
+		art_mission = mission
 	if is_hunt:
 		glyph = _view.EXPEDITION_HUNT_GLYPH
 	elif mission == _view.EXPEDITION_DENY_MISSION:
@@ -443,14 +448,27 @@ func _draw_expedition_body(unit: Dictionary, center: Vector2, marker_radius: flo
 	_view.draw_circle(center, marker_radius, Color(0.04, 0.06, 0.07, _view.EXPEDITION_DISC_ALPHA))
 	# Hollow faction ring — no solid fill, so it never reads as a resident band's dot.
 	_view.draw_arc(center, marker_radius * _view.EXPEDITION_RING_FACTOR, 0, TAU, 24, color, _view.EXPEDITION_RING_WIDTH)
-	# Mission glyph at the center.
+	# Mission ART at the center (`ExpeditionSprites`), drawn the fauna marker's way (`_draw_marker_sprite`,
+	# the same drop shadow, untinted, under the renderer's pinned filter); the glyph is the fallback for
+	# a mission with no art — the hunting party, which keeps its bow.
+	var sprite := ExpeditionSprites.for_mission(art_mission)
+	if sprite != null:
+		_view._draw_marker_sprite(center, sprite,
+			int(maxf(_view.EXPEDITION_SPRITE_MIN_SIZE, marker_radius * _view.EXPEDITION_SPRITE_SIZE_FACTOR * 2.0)))
+		_draw_expedition_phase_marks(unit, center, marker_radius, is_hunt)
+		return
 	var font: Font = ThemeDB.fallback_font
 	if font != null:
 		var glyph_size: int = int(maxf(12.0, marker_radius * _view.EXPEDITION_GLYPH_SIZE_FACTOR * 2.0))
 		var text_size: Vector2 = font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size)
 		var pos := Vector2(center.x - text_size.x * 0.5, center.y + glyph_size * 0.34)
 		_view.draw_string(font, pos, glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph_size, _view.EXPEDITION_GLYPH_COLOR)
+	_draw_expedition_phase_marks(unit, center, marker_radius, is_hunt)
 
+## The expedition marker's PHASE decorations, drawn over its face whichever face it wears (art or
+## glyph): the hunt party's delivering pip / hunting cue, and the awaiting-orders pulse.
+func _draw_expedition_phase_marks(unit: Dictionary, center: Vector2, marker_radius: float,
+		is_hunt: bool) -> void:
 	# Hunt phase decoration: hauling a haul home (delivering/returning) → a solid green food pip;
 	# gathering at the herd (hunting) → a small red "working" cue ring. Mutually exclusive phases.
 	if is_hunt:

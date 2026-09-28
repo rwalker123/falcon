@@ -1,7 +1,7 @@
 # Bundled Icon Generation Prompts
 #
 # The icon twin of assets/terrain/texture_prompts.txt. These prompts generate the
-# bundled PNG art behind the seven icon families:
+# bundled PNG art behind the nine icon families:
 #
 #   assets/icons/fauna/    herd map markers      (ui/FaunaSprites.gd)
 #   assets/icons/sites/    food-site markers     (ui/SiteSprites.gd)
@@ -10,9 +10,12 @@
 #   assets/icons/crops/    crop-ROLE row marks   (ui/CropRoleSprites.gd)
 #   assets/icons/flora/    per-SPECIES row marks (ui/FloraSprites.gd)
 #   assets/icons/hud/      HUD chrome marks      (ui/HudSprites.gd)
+#   assets/icons/workings/ worked-deposit markers (ui/WorkingsSprites.gd)
+#   assets/icons/expeditions/ party markers      (ui/ExpeditionSprites.gd)
 #
-# THE FOUR MAP-MARKER FAMILIES — `fauna/`, `sites/`, `wonders/`, `stages/` — share ONE
-# pipeline and ONE house style, so both are documented once here rather than per family.
+# THE SIX MAP-MARKER FAMILIES — `fauna/`, `sites/`, `wonders/`, `stages/`, `workings/`,
+# `expeditions/` — share ONE pipeline and ONE house style, so both are documented once here
+# rather than per family.
 # THE OTHER THREE DO NOT. `crops/`, `flora/` and `hud/` are not map markers: they are small
 # marks drawn over a DARK HUD PANEL, in a text row or on a button face, and they override
 # several of the clauses below. Read their own sections before generating one; do not start
@@ -793,7 +796,7 @@ village: Flat vector game icon of a small cluster of three simple houses with pi
 #     the ramp per the catfish note (`--lo 85 --hi 240`) and count the residual.
 #   * `.import`: `process/size_limit=64` as everywhere else (headroom for HiDPI and
 #     the `expand` stretch), but MIPMAPS ARE LIVE HERE — `mipmaps/generate=true` is
-#     inert in all four marker families because `MapView` pins
+#     inert in all six marker families because `MapView` pins
 #     `TEXTURE_FILTER_NEAREST` on itself, and a RichTextLabel does NOT inherit that.
 #     `project.godot` sets no `default_texture_filter`, so this family draws through
 #     Godot's Linear default and genuinely uses the mip chain. Do not copy a fauna
@@ -1549,13 +1552,12 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 #      `InfluencerPanel`, `KnowledgePanel`, `PowerPanel`) — the whole PANEL is a placeholder
 #      saying a system is not built yet, so drawing its padlock is dressing a stub.
 #
-#   The map's expedition markers (`MapView.EXPEDITION_HUNT_GLYPH` and its 💀 / 📦 twins) — these
-#      draw over the MAP through `draw_string`, at marker size, over whatever terrain is under
-#      them. That is the house style's situation, NOT `hud/`'s: an outlined map marker, front-on
-#      pale-on-near-black art would vanish on it. If they move, they move as a new `expeditions/`
-#      map-marker family with the house style's outline clause, and `BandMarkerRenderer` draws a
-#      texture rather than a glyph — a different mechanism from either one `hud/` uses.
-#      Their prompts are in the EXPEDITION MARKERS section at the end of this file.
+#   The map's expedition markers (⚑ / 💀 / 📦, and the hunt party's 🏹) — these draw over the
+#      MAP, at marker size, over whatever terrain is under them. That is the house style's
+#      situation, NOT `hud/`'s: an outlined map marker, where front-on pale-on-near-black art
+#      would vanish. They are the `expeditions/` map-marker family, drawn by `BandMarkerRenderer`
+#      as a texture with the glyph as fallback — see the EXPEDITION MARKERS section at the end of
+#      this file. The hunt party's 🏹 stays a glyph: expedition hunt is being retired.
 #
 #   `FoodIcons.HERD_SPECIES` / `SITE_ICONS` / `CROP_ROLE_ICONS` — these are FALLBACKS behind
 #      `fauna/`, `sites/` and `crops/`, which already ship complete coverage. The emoji is the
@@ -1858,7 +1860,7 @@ kit_fallback: Flat vector interface mark of a simple shoulder satchel, one slim 
 
 
 # ============================================================================
-# WORKINGS  ->  assets/icons/workings/  (resolver arrives with the art)
+# WORKINGS  ->  assets/icons/workings/  (ui/WorkingsSprites.gd)
 # ============================================================================
 #
 # The eighth family, and the one added by issue #650 (the extraction arc's client half).
@@ -1869,10 +1871,15 @@ kit_fallback: Flat vector interface mark of a simple shoulder satchel, one slim 
 # Keyed by the sim's MATERIAL id from `core_sim/src/data/materials.json` — `wood`, `stone`,
 # and whatever the minerals arc adds. Two files today.
 #
-# STATUS: NOT GENERATED. `ui/FoodIcons.for_material` currently answers the OS emoji — 🪵 for
-# wood, 🪨 for stone — which is what `SecondaryMarkerRenderer.draw_workings` draws. The
-# emoji are the fallback the bundled art replaces, exactly as `stages/` replaced ⛺/🛖/🏘️.
-# The resolver lands with the PNGs; there is no empty table to fill in the meantime.
+# STATUS: SHIPPED AND WIRED. `ui/WorkingsSprites.for_material(id)` resolves both PNGs, read
+# through `SecondaryMarkerRenderer.face_for_material` — the one face the hex marker
+# (`draw_workings`) and the band source list's row icon share. `FoodIcons.for_material`'s OS
+# emoji (🪵 / 🪨) is the fallback for a material with no art, exactly as `stages/` keeps
+# ⛺/🛖/🏘️. A material the minerals arc adds gets a table entry when its PNG lands, not before.
+#
+# CHOSEN RENDERS, both keyed `--size 256 --lo 55 --hi 170`:
+#   wood  -0   fully solid; -1 keyed at alpha 213 at the rim.
+#   stone -1   paler blocks; -0 sank into the grey ground at 24px.
 #
 # ⛔ THE MARKER MEANS **A WORKING BEING WORKED**, NOT THE MATERIAL LYING THERE. Untouched
 # ground draws nothing at all (Ray's decision — nearly every land tile holds stone, so
@@ -1904,13 +1911,14 @@ stone: Flat vector game icon of a small stack of three squared cut stone blocks 
 
 
 # ============================================================================
-# EXPEDITION MARKERS  ->  assets/icons/expeditions/   (no lookup script yet)
+# EXPEDITION MARKERS  ->  assets/icons/expeditions/   (ui/ExpeditionSprites.gd)
 # ============================================================================
 #
-# The map marker a detached party wears while it is out: `MapView.EXPEDITION_GLYPH` (⚑, scout),
-# `EXPEDITION_DENY_GLYPH` (💀) and `EXPEDITION_TRADE_GLYPH` (📦), drawn today as TEXT through
-# `draw_string`, centred on a dark backing disc (`EXPEDITION_DISC_ALPHA` 0.55) inside a
-# faction-tinted ring. The hunt party's 🏹 has no prompt: expedition hunt is being retired.
+# The map marker a detached party wears while it is out, centred on a dark backing disc
+# (`EXPEDITION_DISC_ALPHA` 0.55) inside a faction-tinted ring. The glyphs it replaces —
+# `MapView.EXPEDITION_GLYPH` (⚑, scout), `EXPEDITION_DENY_GLYPH` (💀) and
+# `EXPEDITION_TRADE_GLYPH` (📦) — stay as the fallback. The hunt party's 🏹 has no prompt:
+# expedition hunt is being retired.
 #
 # THESE TAKE THE HOUSE STYLE, NOT `hud/`'s. They draw over the MAP, over whatever terrain is under
 # the half-transparent disc, at marker size — the fauna situation. So they keep the thick dark
@@ -1924,9 +1932,14 @@ stone: Flat vector game icon of a small stack of three squared cut stone blocks 
 # the `.import` sidecar (mipmaps on, `size_limit=64`) and judge at true marker size (24-41px),
 # composited over a dark disc over terrain, never at 1024.
 #
-# WIRING when the art lands: a new all-static `ui/ExpeditionSprites.gd` (the `HudSprites` shape),
-# keyed by the mission id, and the expedition-marker draw puts the texture where it draws the glyph
-# today. The glyph stays as the fallback.
+# STATUS: SHIPPED AND WIRED. `ui/ExpeditionSprites.for_mission(mission)` resolves the three PNGs
+# by mission id and answers `null` for hunt; `BandMarkerRenderer._draw_expedition_body` draws the
+# texture in the disc and ring and falls back to the glyph on `null`.
+#
+# CHOSEN RENDERS, all keyed `--size 256 --lo 55 --hi 170`:
+#   scout -0   coverage 13%, the faintest of the three: two small footprints.
+#   deny  -0   rounder skull, wider sockets.
+#   trade -0   body alpha 255, where -1 was 241 at the rim.
 
 # scout.png — a scouting party out on the map.
 scout: Flat vector game icon of two bare human footprints one ahead of the other as if walking away, seen from directly above, each footprint a simple bold rounded sole shape with a single separated toe pad and no individual toes, no boot tread, no compass, no flag, no arrow, no map, drawn as a bold simplified silhouette with a thick dark charcoal outline around each footprint, flat limited color palette in pale bone-cream with a warm mid tan inner sole, simple two-tone shading that stays clearly lighter than the outline, crisp clean edges, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the footprints on every side, no ground, no shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
