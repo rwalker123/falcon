@@ -649,6 +649,23 @@ pub fn deposit_take(
     ))
 }
 
+/// **THE KIT A CREW ON THIS WORKING IS SENT WITH WHEN NOBODY NAMES ONE** — the one function the
+/// `assign_labor` command (which stores it on the row, so the turn prices with it), the assign-time
+/// seed and the published `DepositState.defaultKitId` all resolve a working's default through, so
+/// the picker's `(default)` mark and the kit the turn arms are one answer.
+///
+/// Derived from the roster at the rung the working **holds**
+/// ([`crate::equipment_config::EquipmentConfig::deposit_kit_for`]): a wood defaults to the Felling
+/// kit, a scatter or a quarry to the Quarrying kit, even on the bare floor rungs where the tool adds
+/// nothing yet.
+pub fn working_default_kit(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    source: &DepositSource,
+) -> crate::equipment_config::KitChoice {
+    let held = source.rung();
+    equipment.extract_default_kit(held.branch(), Some(&held.wire_key()))
+}
+
 /// **WHAT THE CREW'S HANDS AND TOOLS CAN LIFT THIS TURN** — the unclamped half of
 /// [`deposit_take`]: `workers × yield_per_worker_turn + gear_take`. Read by the take, by
 /// [`deposit_take_overdraws`]' ability half and by the row's staffing inversion, so the three agree

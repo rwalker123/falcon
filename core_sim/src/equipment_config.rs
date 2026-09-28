@@ -962,6 +962,29 @@ impl ItemDefinition {
         self.build_work_serving(branch, rung).next().is_some()
     }
 
+    /// **Does this item lift a deposit take on this branch — on `rung`, or on ANY rung of the branch
+    /// when `rung` is `None`?** The roster question [`EquipmentConfig::deposit_kit_for`] derives a
+    /// working's default kit from, scanned across the item's shared effects and **every tier**
+    /// ([`Self::build_work_serving`]'s reason: which work a tool is for is a property of the roster,
+    /// not of how worn one band's is).
+    ///
+    /// ⛔ **`None` is "anywhere on the branch", not [`EquipmentEffect::serves_build`]'s
+    /// "unqualified caller"** — that predicate refuses a rung-bound tool where no rung was named,
+    /// which is right for pricing a take and wrong for asking which kit a branch's workings want.
+    pub fn declares_deposit_take_on(
+        &self,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&str>,
+    ) -> bool {
+        self.effects
+            .iter()
+            .chain(self.tiers.iter().flat_map(|tier| tier.effects.iter()))
+            .filter(|effect| {
+                effect.stat == EquipmentStat::DepositTake && effect.branch == Some(branch)
+            })
+            .any(|effect| rung.is_none_or(|asked| effect.serves_build(branch, Some(asked))))
+    }
+
     /// The tier with this id, or `None`.
     pub fn tier(&self, id: &str) -> Option<&EquipmentTier> {
         self.tiers.iter().find(|tier| tier.id == id)
@@ -1203,9 +1226,9 @@ pub enum KitJob {
     /// pool raises a working and this branch's keeping is [`KitJob::Builders`]'s twin over on the
     /// keeping side, both of which already exist. What this job names is the *take*.
     ///
-    /// **`default_kits.extract` is `deposit_tools`** — the axe and the wedges in one kit, each
-    /// declaring [`EquipmentStat::DepositTake`] bound to its own branch and rung, so one kit serves
-    /// every working and a crafted axe is used without the player having to pick it (#663).
+    /// **Its kits are `felling` (the axe) and `quarrying` (the wedges)**, one per branch, and a
+    /// working's default is DERIVED from them ([`EquipmentConfig::deposit_kit_for`]) rather than
+    /// authored, so `default_kits.extract` is only the `none` fall-back (#663).
     ///
     /// **Its token is `extract`, not `extraction`** — the same string
     /// [`crate::components::LaborTarget::kind`] publishes for the row
@@ -1471,6 +1494,10 @@ impl KitCoverage {
     }
 }
 
+/// **A working's default kit is derived only when exactly one kit answers** —
+/// [`EquipmentConfig::deposit_kit_for`].
+const ONE_SERVING_KIT: usize = 1;
+
 /// **ONE EXTRACT ROW'S TAKE GEAR, RESOLVED** — [`EquipmentConfig::deposit_gear`]'s answer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DepositGear {
@@ -1567,7 +1594,7 @@ impl BandItemBudget {
     /// The pools settle **first** (`systems::labor::plan_pool_tools` runs above every take row in
     /// `advance_labor_allocation`), so the take rows are rationed out of what the settlement left.
     /// Without it an item carried both in a take kit and in a pool's rung requirement — the `axe`,
-    /// on `deposit_tools` and on `forestry`'s `build_work` — armed a feller and a keeper off the same
+    /// on the `felling` kit and on `forestry`'s `build_work` — armed a feller and a keeper off the same
     /// unit, because the two allocations never saw each other.
     ///
     /// `issued` is in whole units per item (`PoolToeLine::filled`); a repeated id is summed.
@@ -2266,8 +2293,8 @@ impl EquipmentConfig {
 
     /// **The kit narrowed to the items whose rung-scoped `stat` served this branch and rung** —
     /// [`Self::build_gear_kit`]'s narrowing over either [`EquipmentStat::is_rung_scoped`] stat. It is
-    /// what keeps a woodcutter's wedges from wearing on a felling take: both ride the one
-    /// `deposit_tools` kit, and only the axe did the work.
+    /// what keeps a tool that rode along from wearing on a take it did not serve — the wear
+    /// follows the work actually done.
     fn scoped_gear_kit(
         &self,
         stat: EquipmentStat,
@@ -2288,6 +2315,60 @@ impl EquipmentConfig {
             .cloned()
             .collect();
         kit.restricted_to(serving)
+    }
+
+    /// **THE `extract` KIT THIS WORKING WANTS, DERIVED FROM THE ROSTER** — the working's default,
+    /// and what an `extract` row is assigned with when the command names no kit (#663). The one
+    /// seam the turn (through the kit the row stores), the assign-time seed and the published
+    /// `DepositState.defaultKitId` all resolve through, via
+    /// [`crate::extraction::working_default_kit`].
+    ///
+    /// **The kit whose items declare [`EquipmentStat::DepositTake`] serving this working** — first
+    /// at the rung it **holds**, then, if nothing serves that rung, at **any rung on its branch**. The
+    /// second pass is what puts the Felling kit on a `forestry:deadfall` working: the axe adds
+    /// nothing to a fallen-wood take (the floor stays bare, `docs/plan_extraction.md` §4d), but the
+    /// working can be raised to `felling` and the axe is the tool it will want there. The take and
+    /// the wear on deadfall are unmoved by this — they filter on the held rung
+    /// ([`Self::deposit_gear`]).
+    ///
+    /// **`None` unless exactly ONE kit answers**, so the caller falls back to
+    /// `default_kits.extract`: two kits serving one working is a roster the derivation cannot pick
+    /// between without an alphabetical accident, and no kit is a branch with no take tool at all.
+    /// It is the hunt's per-quarry derivation (`fauna::herd_default_hunt_kit`) with no score to
+    /// break a tie, because a take tool either serves a branch or does not.
+    pub fn deposit_kit_for(
+        &self,
+        branch: crate::intensification::RungBranch,
+        held_rung: Option<&str>,
+    ) -> Option<KitChoice> {
+        let serving = |rung: Option<&str>| -> Vec<KitChoice> {
+            self.kits_for_job(KitJob::Extraction)
+                .filter(|kit| {
+                    kit.uses().any(|item| {
+                        self.item(item)
+                            .is_some_and(|def| def.declares_deposit_take_on(branch, rung))
+                    })
+                })
+                .collect()
+        };
+        let mut found = held_rung
+            .map(|rung| serving(Some(rung)))
+            .unwrap_or_default();
+        if found.is_empty() {
+            found = serving(None);
+        }
+        (found.len() == ONE_SERVING_KIT).then(|| found.remove(0))
+    }
+
+    /// [`Self::deposit_kit_for`], falling back to `default_kits.extract` where the roster names no
+    /// single kit for the working.
+    pub fn extract_default_kit(
+        &self,
+        branch: crate::intensification::RungBranch,
+        held_rung: Option<&str>,
+    ) -> KitChoice {
+        self.deposit_kit_for(branch, held_rung)
+            .unwrap_or_else(|| self.default_kit(KitJob::Extraction))
     }
 
     /// **THE EXTRA DEPOSIT UNITS ONE WORKER CARRYING THIS KIT TAKES PER TURN ON THIS RUNG** —
@@ -5043,28 +5124,90 @@ mod tests {
         );
     }
 
-    /// **THE SHIPPED TAKE ROSTER LOADS, AND THE `extract` JOB DEFAULTS TO THE KIT THAT CARRIES IT**
-    /// (#663). `default_kits.extract` naming `none` would send every crew out bare however many axes
-    /// the band had made — so the default is asserted as a kit that actually carries the axe and the
-    /// wedges, not as a string.
+    /// **A WORKING'S DEFAULT KIT IS DERIVED FROM THE ROSTER, PER BRANCH** (#663). Every forestry rung
+    /// — deadfall included, where the axe adds nothing yet but the working can be raised to felling —
+    /// defaults to the Felling kit, and every extraction rung to the Quarrying kit. The job-level
+    /// `default_kits.extract` is only the `none` fall-back, which a branch with no take tool
+    /// (no shipped branch) or two serving kits would reach.
     #[test]
-    fn the_extract_job_defaults_to_the_kit_carrying_the_axe_and_the_wedges() {
+    fn a_workings_default_kit_is_the_one_whose_tool_serves_its_branch() {
+        use crate::intensification::RungKey;
         let config = EquipmentConfig::builtin();
-        let kit = config.default_kit(KitJob::Extraction);
-        assert_eq!(kit.id(), "deposit_tools");
-        let uses: Vec<&str> = kit.uses().collect();
-        assert!(
-            uses.contains(&"axe") && uses.contains(&"wedges"),
-            "the extract default must carry both take tools: {uses:?}"
+        for (rung, expected) in [
+            (RungKey::ForestryDeadfall, "felling"),
+            (RungKey::ForestryFelling, "felling"),
+            (RungKey::ForestryCoppice, "felling"),
+            (RungKey::ExtractionGathering, "quarrying"),
+            (RungKey::ExtractionQuarry, "quarrying"),
+        ] {
+            assert_eq!(
+                config
+                    .extract_default_kit(rung.branch(), Some(&rung.wire_key()))
+                    .id(),
+                expected,
+                "{} must default to {expected}",
+                rung.wire_key()
+            );
+        }
+        assert_eq!(
+            config.default_kit(KitJob::Extraction).id(),
+            "none",
+            "the job default is the fall-back, not a branch's kit"
         );
         assert_eq!(
             config.default_kit(KitJob::Quarrywork).id(),
             "none",
             "the keepers are geared through the rung requirement, not a default kit"
         );
+        // **Each shipped take kit is ONE item**, so complete-kit coverage on a wood crew is the axes
+        // it holds and is not zeroed by wedges it has no use for.
+        for id in ["felling", "quarrying"] {
+            assert_eq!(
+                config.kit(id).expect("shipped kit").uses().count(),
+                1,
+                "{id} carries one tool"
+            );
+        }
     }
 
-    /// **EACH TAKE TOOL SERVES ONLY ITS OWN BRANCH AND RUNG** (#663) — the one `deposit_tools` kit
+    /// **TWO KITS SERVING ONE BRANCH IS NO ANSWER**, and the fall-back takes over rather than the
+    /// roster order picking one — the derivation has no score to break a tie with.
+    #[test]
+    fn two_kits_serving_one_branch_fall_back_to_the_job_default() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
+        json["kits"]
+            .as_array_mut()
+            .expect("kits is a list")
+            .push(serde_json::json!({
+                "id": "second_felling",
+                "display_name": "Second felling kit",
+                "jobs": ["extract"],
+                "uses": ["axe"]
+            }));
+        let config = EquipmentConfig::from_json_str(&json.to_string()).expect("still valid");
+        let felling = crate::intensification::RungKey::ForestryFelling;
+        assert!(config
+            .deposit_kit_for(felling.branch(), Some(&felling.wire_key()))
+            .is_none());
+        assert_eq!(
+            config
+                .extract_default_kit(felling.branch(), Some(&felling.wire_key()))
+                .id(),
+            "none"
+        );
+    }
+
+    /// A fixture kit carrying BOTH take tools — the harshest bundle for the scoping claims below,
+    /// since each tool must still serve only its own rungs with the other in the same hands.
+    fn both_take_tools() -> KitChoice {
+        KitChoice {
+            id: Arc::from("fixture_both_take_tools"),
+            uses: Arc::from(vec![Arc::<str>::from("axe"), Arc::<str>::from("wedges")]),
+        }
+    }
+
+    /// **EACH TAKE TOOL SERVES ONLY ITS OWN BRANCH AND RUNG** (#663) — a kit carrying both tools
     /// resolved against every deposit rung, fully stocked. The axe lifts felling and coppice and
     /// nothing else; the wedges lift the quarry and nothing else; and **both floor rungs stay
     /// bare** (`docs/plan_extraction.md` §4d), which is what keeps the material economy startable
@@ -5076,7 +5219,7 @@ mod tests {
         let mut ledger = crate::components::BandEquipment::default();
         ledger.stock("axe", 1, "flint", None);
         ledger.stock("wedges", 1, "flint", None);
-        let kit = config.default_kit(KitJob::Extraction);
+        let kit = both_take_tools();
         let take = |rung: RungKey| {
             config.deposit_take_per_worker(&kit, &ledger, rung.branch(), Some(&rung.wire_key()))
         };
@@ -5141,7 +5284,7 @@ mod tests {
         let mut ledger = crate::components::BandEquipment::default();
         ledger.stock("axe", 2, "flint", None);
         ledger.stock("wedges", 5, "flint", None);
-        let kit = config.default_kit(KitJob::Extraction);
+        let kit = both_take_tools();
         let coverage = config.coverage(&kit, 5.0, &ledger);
         let felling = RungKey::ForestryFelling;
         let gear = config.deposit_gear(
@@ -5357,7 +5500,7 @@ mod tests {
     /// [`each_route_rung_derives_its_own_kit_and_the_other_rungs_tool_is_worth_nothing`].
     ///
     /// ⛔ **AND A BRANCH MAY SHIP WITH NO BUILDERS KIT, WHICH IS WHY THE MISSING-KIT ARM IS A FORK.**
-    /// `forestry` does: its build tool, the axe, rides `deposit_tools` — an `extract` kit — and
+    /// `forestry` does: its build tool, the axe, rides `felling` — an `extract` kit — and
     /// reaches the builders through the rung requirement ([`EquipmentConfig::pool_toe`]), which
     /// asks items rather than kits. The failure this test exists to catch is a **partial**
     /// roster — one rung's kit gone missing while its siblings keep theirs, after which every build

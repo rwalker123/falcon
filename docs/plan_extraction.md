@@ -401,9 +401,12 @@ not a blocker: the deposit works whatever the metal is for.
   units one equipped worker takes per turn, **added** to the rung's bare `yield_per_worker_turn` and
   never replacing it — on **`forestry:felling` and `forestry:coppice` only**; `deadfall` stays bare,
   so §4d holds. Beside it ship **quarrying `wedges`** (`flint`, `deposit_take` on `extraction:quarry`
-  only; `gathering` stays bare). Both ride one `deposit_tools` kit that is `default_kits.extract`,
-  and each tool is scoped by branch and rung so it adds nothing — and wears nothing — off its own
-  rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
+  only; `gathering` stays bare). Each rides its own `extract` kit — **`felling`** (the axe) and
+  **`quarrying`** (the wedges) — because the two serve disjoint branches, and a working's default kit
+  is **derived** from them per branch (the kit whose tool serves the branch, at any rung, so a
+  deadfall wood already defaults to `felling`) rather than authored; `default_kits.extract` is
+  `none`. Each tool is scoped by branch and rung so it adds nothing — and wears nothing — off its
+  own rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
   working and the keepers holding one are geared by it through the rung requirement.
 - **The road tools' pacing moved a long way and nobody has played it.** `earthmoving` and
   `stone_dressing` cost 2 **stone** instead of 2 bone since §8's change: about 5 worker-turns on a

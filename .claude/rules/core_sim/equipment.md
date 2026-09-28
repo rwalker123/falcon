@@ -45,7 +45,7 @@ cost a whole design conversation to unpick. **"Kit" now means only the roster en
 | **`axe`** — knapped, `flint` tier only | `deposit_take` **+1.0** per equipped worker on `forestry:felling` and `forestry:coppice`, and `build_work` **+0.5** on `forestry` — see "The take axis" | per **deposit unit cut by its holders**, **and** `build_progress` / `upkeep_work` at the hoes' 0.16 |
 | **`wedges`** — quarrying wedges, `flint` only | `deposit_take` **+1.0** per equipped worker on `extraction:quarry` | per **deposit unit cut by its holders** |
 
-Shipped kits: **`deposit_tools`** (`axe` + `wedges`, the `extract` job's default), **`big_game`** (`spears` + `sled`), **`trapping`** (`traps` + `sled`),
+Shipped kits: **`felling`** (`axe`) and **`quarrying`** (`wedges`), the two `extract` kits, **`big_game`** (`spears` + `sled`), **`trapping`** (`traps` + `sled`),
 **`gathering`** (`baskets`), **`hurdling`** (`crook`), **`tillage`** (`hoes`),
 **`wayfinding`** (`wayfinding`), **`warrior`** (`clubs`),
 **`ranging`** (`spears` + `sled` + `baskets` + `wayfinding`), **`none`** (nothing).
@@ -259,9 +259,20 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
 - **Both floor rungs stay bare** (`docs/plan_extraction.md` §4d): nothing ships bound to
   `forestry:deadfall` or `extraction:gathering`, so gear is only ever an addition above a rate the bare
   hand already has.
-- **One kit for the one `extract` job** — `deposit_tools` carries both tools and is
-  `default_kits.extract`; each serves only its own rungs, so the other contributes the neutral and is
-  narrowed out of the wear kit (`DepositGear::wear_kit`).
+- **Two `extract` kits, one tool each** — `felling` (the axe) and `quarrying` (the wedges). The
+  opposite of `ranging`'s bundle, because the two tools serve **disjoint** branches: no crew uses
+  both, and a bundled kit made complete-kit coverage (`workers_holding_whole_kit`, the min over the
+  kit's items) read a wood crew fully armed with axes as holding no kit, for want of wedges.
+- **A working's default kit is DERIVED, not authored** — `EquipmentConfig::deposit_kit_for`: the
+  `extract` kit whose items declare `deposit_take` serving the working's branch, at the rung it holds
+  or else at **any** rung on the branch (so a `deadfall` wood still defaults to `felling`, the kit it
+  will want once raised), and only where exactly one kit answers. It is scanned off the roster at
+  every tier (`ItemDefinition::declares_deposit_take_on`), never the ledger. `extraction::working_default_kit`
+  is the one function behind the kit `assign_labor extract` stores on a no-kit row, the seed that
+  prices it, and `DepositState.defaultKitId`. `default_kits.extract` is **`none`**, the fall-back for
+  no working in hand or no single serving kit — naming either branch's kit there would send the
+  other branch's crews out with a tool that serves nothing. On `deadfall` the default kit lifts
+  nothing and wears nothing: the take and the wear filter on the held rung (`deposit_gear`).
 - **Wear is `WearQuantum::DepositTaken`, on the units the holders cut** —
   `extraction::deposit_geared_units` = `taken ×` the equipped workers' share of the crew's
   throughput, `Strike`'s attribution applied to a continuous take. Gauge noun *"units cut"*.
@@ -769,7 +780,7 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > count** and the settlement splits **by priority**.
 >
 > ⛔ **ONE UNIT ARMS ONE PERSON PER TURN, ACROSS BOTH ACCOUNTS — AND THE POOLS SETTLE FIRST.** An item
-> can sit in a take kit *and* in a pool's rung requirement (the `axe`: `deposit_tools` on the
+> can sit in a take kit *and* in a pool's rung requirement (the `axe`: `felling` on the
 > `extract` row, `build_work` on `forestry` for the builders and quarrywork keepers), and two
 > allocations that never saw each other armed a feller and a keeper off one axe. So
 > `LaborAllocation::item_budget` is struck **less the units the pools were issued**

@@ -4683,6 +4683,34 @@ fn labor_event_kind(role: &str) -> CommandEventKind {
     }
 }
 
+/// **THE WORKING ON `(tile, material)` AS IT STANDS NOW** — the registry's live working, or, where no
+/// band has opened one, the derived opening state (`snapshot::deposits`' own rule). `None` for ground
+/// holding none of the material or a tile off the map.
+fn working_as_it_stands(
+    app: &bevy::prelude::App,
+    tile: UVec2,
+    material: &str,
+) -> Option<core_sim::extraction::DepositSource> {
+    if let Some(live) = app
+        .world
+        .resource::<core_sim::DepositRegistry>()
+        .source(tile, material)
+    {
+        return Some(live.clone());
+    }
+    let entity = app.world.resource::<TileRegistry>().index(tile.x, tile.y)?;
+    let ground = app.world.get::<Tile>(entity)?;
+    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+    let capacity = core_sim::extraction::tile_deposit_capacity(&extraction, material, ground);
+    if capacity <= core_sim::NO_DEPOSIT {
+        return None;
+    }
+    let branch = core_sim::extraction::deposit_branch(&extraction, material)?;
+    Some(core_sim::extraction::DepositSource::opening(
+        tile, material, capacity, branch,
+    ))
+}
+
 /// **What this row runs on when the player names no kit** — the herd's own default for a Hunt on a
 /// resolvable quarry, the job's default for everything else.
 ///
@@ -4704,6 +4732,17 @@ fn default_kit_for_target(
     target: &LaborTarget,
 ) -> KitChoice {
     let job = target.kit_job();
+    // **A WORKING'S DEFAULT IS DERIVED FROM ITS BRANCH** (#663) — the same
+    // `extraction::working_default_kit` the published `DepositState.defaultKitId` is read through, so
+    // the kit this command stores (and the turn and the seed then price with) is the picker's
+    // `(default)`. Ground holding none of the material falls to the job default;
+    // `validate_labor_policy` refuses that row anyway.
+    if let LaborTarget::Extract { tile, material, .. } = target {
+        return working_as_it_stands(app, *tile, material).map_or_else(
+            || equipment.default_kit(job),
+            |working| core_sim::extraction::working_default_kit(equipment, &working),
+        );
+    }
     let LaborTarget::Hunt { fauna_id, .. } = target else {
         return equipment.default_kit(job);
     };
@@ -23101,6 +23140,110 @@ mod tests {
         );
     }
 
+    /// The kit stored on this band's `extract` row for `material` — what the turn and the seed price
+    /// the crew with.
+    fn stored_extract_kit(app: &bevy::prelude::App, band: Entity, material: &str) -> String {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .assignments
+            .iter()
+            .find_map(|assignment| match &assignment.target {
+                LaborTarget::Extract { material: m, .. } if m == material => {
+                    assignment.kit.as_ref().map(|kit| kit.id().to_string())
+                }
+                _ => None,
+            })
+            .expect("the extract row stores the kit it was assigned with")
+    }
+
+    /// **Capture the deposit grid's frame.** The grid fixture runs no worldgen, so the one resource
+    /// the capture asks of it — an elevation field — is supplied flat over the grid.
+    fn capture_deposit_grid(app: &mut bevy::prelude::App) {
+        let cells = (DEPOSIT_GRID * DEPOSIT_GRID) as usize;
+        app.world
+            .insert_resource(core_sim::heightfield::ElevationField::new(
+                DEPOSIT_GRID,
+                DEPOSIT_GRID,
+                vec![0.0; cells],
+            ));
+        recapture_snapshot_in_place(&mut app.world);
+    }
+
+    /// **A NO-KIT `extract` ROW IS SENT WITH THE KIT THE WIRE PUBLISHES AS THAT WORKING'S DEFAULT**
+    /// (#663). Rolling hills carry timber and rock on one hex, so one fixture asks both branches: the
+    /// wood row stores `felling`, the stone row `quarrying`, and each equals the `defaultKitId` its
+    /// own `DepositState` row publishes — the kit the turn arms and the picker's `(default)` mark are
+    /// one answer, through `extraction::working_default_kit`.
+    #[test]
+    fn a_no_kit_extract_row_is_sent_with_the_kit_the_wire_publishes_for_that_working() {
+        let mut app = build_test_app();
+        app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, TWO_DEPOSIT_TERRAIN);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+        assign_extract(&mut app, faction, WORKING, "stone", None, BAND_WORKERS);
+        assert_eq!(stored_extract_kit(&app, band, "wood"), "felling");
+        assert_eq!(stored_extract_kit(&app, band, "stone"), "quarrying");
+
+        capture_deposit_grid(&mut app);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("a snapshot was captured");
+        for material in ["wood", "stone"] {
+            let row = snapshot
+                .deposits
+                .iter()
+                .find(|row| {
+                    row.tile_x == WORKING.x && row.tile_y == WORKING.y && row.material == material
+                })
+                .expect("the worked deposit publishes a row");
+            assert_eq!(
+                row.default_kit_id,
+                stored_extract_kit(&app, band, material),
+                "{material}: the published default is the kit the row was sent with"
+            );
+        }
+    }
+
+    /// **A WOOD CREW HOLDING AXES AND NO WEDGES READS ARMED** — the Felling kit carries the axe
+    /// alone, so its complete-kit coverage (`kitWorkersHolding`) is the axes the band holds, not the
+    /// zero a bundled axe-and-wedges kit read against a band with no wedges.
+    #[test]
+    fn a_felling_crew_holding_axes_publishes_the_axes_as_outfitted() {
+        const AXES: u32 = 3;
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", AXES, "flint", None);
+        app.world.entity_mut(band).insert(ledger);
+
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+        capture_deposit_grid(&mut app);
+        let row = app
+            .world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("a snapshot was captured")
+            .populations
+            .iter()
+            .flat_map(|cohort| cohort.labor_assignments.iter())
+            .find(|row| row.material == "wood")
+            .cloned()
+            .expect("the extract row is published");
+        assert_eq!(row.kit_id, "felling");
+        assert_eq!(
+            row.kit_workers_holding, AXES as f32,
+            "three axes outfit three of the five fellers"
+        );
+    }
+
     /// **A CREW HOLDING AXES IS SEEDED THE CUT THE TURN WILL PAY** (#663) — the seed strikes the
     /// take gear through `EquipmentConfig::deposit_gear` at the rung the working holds, the same seam
     /// the turn's `Extract` arm reads, so the quoted figure does not jump when the turn lands.
@@ -23123,9 +23266,13 @@ mod tests {
         let bare_rate = seat_a_felling_working(&mut app, tile);
         let mut ledger = BandEquipment::default();
         ledger.stock("axe", AXES, "flint", None);
+        // **Wedges in the same ledger**, so the command path's derived kit is what keeps them off a
+        // wood crew: a no-kit row on timber is sent with the Felling kit, which does not carry them.
+        ledger.stock("wedges", AXES, "flint", None);
         app.world.entity_mut(band).insert(ledger);
 
         assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+        assert_eq!(stored_extract_kit(&app, band, "wood"), "felling");
         let seeded = source_materials(&app, band)
             .first()
             .expect("a staffed working publishes the material it will cut")
@@ -23145,6 +23292,12 @@ mod tests {
             (resolved - seeded).abs() < A_CLOSE_ENOUGH_AMOUNT,
             "the turn must pay the seeded cut (seed {seeded}, resolved {resolved})"
         );
+        let wear = app
+            .world
+            .get::<BandEquipment>(band)
+            .expect("the band keeps its ledger");
+        assert!(wear.wear_of("axe") > 0.0, "the axes did the cutting");
+        assert_eq!(wear.wear_of("wedges"), 0.0, "the wedges never left camp");
     }
 
     /// **THE FLOOR BOUNDS THE SEEDED FIGURE, and at the top of the dial it bounds it to nothing** —

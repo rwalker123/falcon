@@ -3598,6 +3598,7 @@ pub fn capture_snapshot(
             config.fog_enabled,
             &ladder_config,
             &extraction_config,
+            &equipment_config,
             &build_kit_ids,
             deposit_tiles.iter().copied(),
         );
