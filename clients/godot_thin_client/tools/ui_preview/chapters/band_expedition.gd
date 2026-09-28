@@ -1864,8 +1864,8 @@ func _expedition_kit_states() -> void:
 	# wrong band measures the wrong thing while looking entirely ordinary.
 	h._hud._bandpanel.render_band(launch_band)
 	await h._settle()
-	# The sheet is opened the way a player opens it (issue #529): the Scout verb, then the target tile,
-	# and the sheet mounts in THAT tile's drawer.
+	# The sheet is opened the way a player opens it (issue #529): the band selected, then the Scout
+	# verb, and the sheet mounts in the band's own drawer.
 	await _open_scout_sheet(launch_band)
 	h._hud._bandpanel._send_expedition_count = EXPEDITION_KIT_COVERED_PARTY
 	h._hud._bandpanel.rerender()
@@ -1877,7 +1877,7 @@ func _expedition_kit_states() -> void:
 	# shortfall run renders.
 	await h._save("expedition_kit_ranging")
 	var sheet: Control = _scout_sheet()
-	h._assert_hud("the scout sheet mounts in the TARGET tile's drawer",
+	h._assert_hud("the scout sheet mounts in the band's own drawer",
 		sheet != null and String(sheet.get_meta(HudWidgets.VERB_FORM_META, ""))
 			== HudComposeVocab.COMPOSE_MISSION_SCOUT)
 	h._assert_hud("the scout launch sheet mounts a kit picker at all",
@@ -1951,7 +1951,7 @@ func _expedition_kit_states() -> void:
 			_expedition_sight_clause(BandFx.KIT_EXPEDITION_SIGHT_EQUIPPED)))
 
 	# **AND THE PICK REACHES THE COMMAND — PNG-LESS, because a tail is not a picture.** The send is
-	# driven through the REAL path (the sheet's confirm, on the tile the Scout verb's pick chose), so
+	# driven through the REAL path (the sheet's send arming the pick, then the click on the tile), so
 	# this covers the whole carry rather than a hand-built dictionary. The
 	# PAIR is the claim: the null pick emits the tail, and the DEFAULT pick emits none — a builder
 	# that always appended satisfies the first alone, and one that never did satisfies the second.
@@ -2111,20 +2111,22 @@ func _kit_hint_text(surface: Node) -> String:
 		return (node as Label).text
 	return ""
 
-## Press the scout sheet's confirm, click a destination, and return the command line `Main` built for
-## it — the whole emit path, driven the way a player drives it. `""` if any leg of it went missing,
-## which fails the claim rather than passing it quietly.
-## Open the Scout verb's sheet for `band` the way a player does: the verb, then a click on the
-## target tile — which selects that tile and resolves the pick, so the sheet mounts in its drawer.
+## Open the Scout verb's sheet for `band` the way a player does: the band selected on its own hex (the
+## map's `unit_selected` hop, which this harness has no map to make), then the verb — the sheet mounts
+## in that band's drawer.
 func _open_scout_sheet(band: Dictionary) -> void:
+	var selected := band.duplicate(true)
+	var tile := SourceForecast.band_tile(band)
+	selected["tile_info"] = {"x": tile.x, "y": tile.y, "visibility_state": "active"}
+	h._hud.show_unit_selection(selected)
 	h._hud._bandpanel.dispatch_verb(HudComposeVocab.COMPOSE_MISSION_SCOUT, band)
-	var target := {"x": EXPEDITION_KIT_TARGET_X, "y": EXPEDITION_KIT_TARGET_Y,
-		"visibility_state": "active"}
-	h._hud.show_tile_selection(target)
-	h._hud.notify_hex_selected(target)
 	await h._settle()
 
-## The Scout sheet as mounted in the target's drawer, or `null`.
+## Press the scout sheet's send — which arms the tile pick — then click the target, and return the
+## command line `Main` built for it: the whole emit path, driven the way a player drives it. `""` if any
+## leg of it went missing, which fails the claim rather than passing it quietly.
+
+## The Scout sheet as mounted in the band's drawer, or `null`.
 func _scout_sheet() -> Control:
 	return Q.find_meta_node(h._hud.allocation_panel, HudWidgets.VERB_FORM_META) as Control
 
@@ -2135,11 +2137,13 @@ func _expedition_command_line() -> String:
 		return ""
 	# ⛔ **THE WITNESS IS A CONTAINER, NEVER A LOCAL.** A GDScript lambda captures a local by VALUE, so
 	# a closure assigning to a `String` here reports that nothing was ever emitted — the harness trap
-	# `chapters/trade.gd`'s destination pick already cost a run over.
+	# cost a run before.
 	var caught: Array[String] = []
 	var record := func(payload: Dictionary) -> void:
 		caught.append(String(MAIN_SCRIPT.format_send_expedition(payload).get("line", "")))
 	h._hud.send_expedition_requested.connect(record)
 	confirm.pressed.emit()
+	h._hud.notify_targeting_click({"x": EXPEDITION_KIT_TARGET_X, "y": EXPEDITION_KIT_TARGET_Y,
+		"visibility_state": "active"})
 	h._hud.send_expedition_requested.disconnect(record)
 	return caught[0] if not caught.is_empty() else ""

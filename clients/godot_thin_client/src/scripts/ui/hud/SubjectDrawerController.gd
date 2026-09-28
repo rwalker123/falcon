@@ -20,7 +20,7 @@ extends RefCounted
 ## row built from `HudComposeVocab.BAND_VERBS` — the list the Band panel's action bar registers — with
 ## the panel controller's own `verb_enabled` predicate and `dispatch_verb`, so the two surfaces cannot
 ## offer different verbs or gate one differently. A pending verb's SHEET is mounted here too, in the
-## drawer of the target it was aimed at (`_mount_verb_form`). A selected EXPEDITION keeps its own Move,
+## drawer of the band it is for, under that band's verb row (`_mount_verb_form`). A selected EXPEDITION keeps its own Move,
 ## which is the typed `TargetingController.begin_move_band`. The is-this-mine test needs no
 ## collaborator at all: `HudConst.is_player_unit` is a `class_name` static, called directly.
 ##
@@ -836,23 +836,13 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         # tile leaves `panel_band` intact — the panel persists across selection changes"); this branch
         # was the one exception, and the faction page is where that exception starts doing damage.
         #
-        # **…AND A PENDING VERB HOLDS IT** (issue #529): while a verb is pending for the panel's band, a
-        # player band selected on its target — a Trade destination, a Scout target another band stands
-        # on — must not replace the band the verb is FOR (`BandPanelController.holds_panel_subject`).
+        # **…AND A PENDING VERB HOLDS IT** (issue #529): while a verb is pending for the panel's band,
+        # another player band selected on the same hex must not replace the band the verb is FOR
+        # (`BandPanelController.holds_panel_subject`).
         if (from_selection or not _bandpanel.is_faction_page()) and not _bandpanel.holds_panel_subject():
             _bandpanel.render_band(_selection.unit())
         if _herd_assign_controls != null:
             _herd_assign_controls.visible = false
-        # **THE TARGET OF ANOTHER BAND'S VERB SHOWS THAT VERB'S SHEET, AND ONLY THAT.** The pointer
-        # line ("labor allocation is in the Band panel") would point at a panel that is showing the
-        # SENDER, and this band's own verb row beside another band's sheet would offer two subjects'
-        # orders in one drawer. `_mount_verb_form` mounts the sheet after this branch.
-        var sender := _bandpanel.verb_band()
-        if _verb_form_matches() and not sender.is_empty() \
-                and int(sender.get("entity", -1)) != int(_selection.unit().get("entity", -1)):
-            _occupant_detail.visible = false
-            _clear_allocation_panel()
-            return
         # The drawer is now VISIBLE furniture rather than a hidden card, so an empty one reads as a
         # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
         _occupant_detail.visible = true
@@ -974,18 +964,18 @@ func _clear_allocation_panel() -> void:
         return
     HudWidgets.clear_children(_allocation_panel)
 
-## **IS THE SELECTION THE PENDING VERB'S TARGET?** A verb's sheet is anchored to the hex its target was
-## picked on (Split: the band's own hex), so any subject on that hex — the land, the herd, the band —
-## shows it. The drop rule is the other half: a selection that LEAVES the hex ends the verb
-## (`BandPanelController.note_selection_tile`).
+## **IS THE SELECTION THE BAND THE PENDING VERB IS FOR?** The sheet belongs to that band's drawer and
+## no other — not another band on its hex, not the hex's land or herds. The drop rule is the other
+## half: a selection that LEAVES the hex ends the verb (`BandPanelController.note_selection_tile`).
 func _verb_form_matches() -> bool:
     if not _bandpanel.verb_is_open():
         return false
-    var tile_info := _selection.tile_info()
-    return Vector2i(int(tile_info.get("x", -1)), int(tile_info.get("y", -1))) == _bandpanel.verb_target()
+    var sender := _bandpanel.verb_band()
+    return not sender.is_empty() \
+        and int(sender.get("entity", -1)) == int(_selection.unit().get("entity", -2))
 
-## Mount the pending verb's sheet under whatever this subject's branch drew, when the selection is the
-## verb's target. Always LAST, so the sheet sits at the bottom of the card with the other verbs.
+## Mount the pending verb's sheet under the band's verb row, when the selection is the band the verb is
+## for. Always LAST, so the sheet sits at the bottom of the card with the other verbs.
 func _mount_verb_form() -> void:
     if _allocation_panel == null or not _verb_form_matches():
         return

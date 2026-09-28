@@ -142,10 +142,11 @@ paths:
   connects straight to `TargetingController.begin_move_band`, which enters tile-targeting
   (`_pending_move_band` → `_current_targeting_info` returns `command: "move", need: "tile"`), the
   top-centre banner reads "MOVE … click a destination tile", and the destination click
-  (`_try_dispatch_pending_move_band`, driven by HudLayer's `show_tile_selection` / `notify_hex_selected`
-  → `_targeting.try_dispatch`) emits the controller's `move_band_requested(payload)` (relayed onto the
-  HudLayer signal) → `Main._on_hud_move_band` → `move_band <faction> <band> <x> <y>`. Esc/right-click
-  cancel via HudLayer's `cancel_active_targeting` delegator → `_targeting.cancel_active_targeting`.
+  (`_try_dispatch_pending_move_band`, driven by HudLayer's `notify_targeting_click` — MapView's
+  `targeting_clicked`, a click that selects nothing — → `_targeting.try_dispatch`) emits the
+  controller's `move_band_requested(payload)` (relayed onto the HudLayer signal) →
+  `Main._on_hud_move_band` → `move_band <faction> <band> <x> <y>`. Esc/right-click cancel via HudLayer's
+  `cancel_active_targeting` delegator → `_targeting.cancel_active_targeting`.
 - **Herd husbandry readout** (`Hud.gd` `_herd_summary_lines`): when a herd's
   `domestication` (snapshot `HerdTelemetryState.domestication`, 0–1) is above 0, a
   **Husbandry** row shows "Domesticating N%" while it's being tamed and "🐄 Domesticated"

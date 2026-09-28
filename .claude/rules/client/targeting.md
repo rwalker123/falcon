@@ -15,45 +15,71 @@ paths:
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/TargetingController.gd` | `RefCounted` controller (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **COMMAND-TARGETING** cluster — the band verbs' map picks (**move-band** picks a destination TILE, the **verb tile pick** is Scout's and Trade's, **pick-quarry** is Deny's HERD pick) plus the floating top-centre **targeting banner** that guides each. It holds the three pending dicts (`_pending_move_band` / `_pending_verb_pick` / `_pending_pick_quarry`), the banner (`_ensure_targeting_banner` / `_refresh_targeting` / `_current_targeting_info` / `_targeting_banner_bbcode`), the per-flow begin/cancel/dispatch functions (`_try_dispatch_pending_move_band` / `_try_verb_pick` / `_try_pick_quarry` / `_huntable_herd_on_tile`) and the wrap-aware `_hex_distance_wrapped`. **Public API:** `begin_move_band` / `begin_verb_pick` / `send_expedition_to` / `trade_destination_at` / `begin_pick_quarry` / `cancel_pick_quarry` / `disarm_verb_picks` / `is_expedition_quarry` (THE single quarry-eligibility definition — the pick, the sheet's re-validation, the tile chooser and MapView's glow all route through it) / `quarry_min_distance` (the one number that rule is expressed in, so the pick and the glow cannot derive it separately), plus `is_targeting_active` / `cancel_active_targeting` / `try_dispatch` (the last runs the three `_try_*` in the SAME order as before). Hud holds it as `_targeting`, constructed in `_ready` **AFTER `_drawercompose` and BEFORE `_bandpanel`** (which injects it — so `_targeting` must exist first). **It emits its OWN signals, HudLayer RELAYS each** (the `TurnOrbController` pattern; the controller never emits a HudLayer signal): `targeting_changed` (→ `MapView.set_targeting`) · `move_band_requested` · `send_expedition_requested` · `verb_pick_cancelled` (→ `BandPanelController.close_verb_form`). **The three reflective delegators STAY on HudLayer** — `is_targeting_active` (Main's escape_claimant path) / `cancel_active_targeting` (Main relays MapView's `targeting_cancel_requested` by name) / `try_dispatch` (called from `show_tile_selection` / `notify_hex_selected`), each probed BY NAME so a `has_method` miss fails SILENTLY. **The injection surface is TWO Callables** — `_resolve_assign_band` (STAYS on HudLayer, DrawerComposeController injects it too; reached through a typed adapter since `Callable.call` returns `Variant`) and `_after_pending_change` (STAYS on HudLayer, the `_emit_assign_labor` pending path owns it) — **plus, as construction-order and gap fixes not in the original decomposition spec: `_compose` (the parties compose's quarry/autofill one-shots, needed by the pick) and a lazily-bound `_bandpanel.rerender()` Callable (`_bandpanel` is built AFTER `_targeting`, so a direct ref is impossible at construction)**. Collaborators: `_band_labor` (`record_pending_move` + the grid pair), `_drawercompose` (the three `close_compose_sheet()` nudges), `_command_feed` (the quarry-pick miss/refusal `note()`s), and the HUD CanvasLayer as the **host** it parents the banner into — via the host's `LayoutRoot` (NOT the bare CanvasLayer) so the banner keeps insetting with the reserved-edge docks exactly as before. Behaviour identical to the old inlined targeting code |
+| `ui/hud/TargetingController.gd` | `RefCounted` controller (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **COMMAND-TARGETING** cluster — the band verbs' map picks (**move-band** picks a destination TILE, the **verb tile pick** is Scout's and Trade's, **pick-quarry** is Deny's HERD pick) plus the floating top-centre **targeting banner** that guides each. It holds the three pending dicts (`_pending_move_band` / `_pending_verb_pick` / `_pending_pick_quarry`), the banner (`_ensure_targeting_banner` / `_refresh_targeting` / `_current_targeting_info` / `_targeting_banner_bbcode`), the per-flow begin/cancel/dispatch functions (`_try_dispatch_pending_move_band` / `_try_verb_pick` / `_try_pick_quarry` / `_huntable_herd_on_tile`) and the wrap-aware `_hex_distance_wrapped`. **Public API:** `begin_move_band` / `begin_verb_pick` / `send_expedition_to` / `trade_destination_at` / `tie_at` / `begin_pick_quarry` / `cancel_pick_quarry` / `choose_quarry` / `quarry_chooser` / `disarm_verb_picks` / `is_verb_pick_armed` / `note_hover` / `refresh_hover` / `banner_text` / `is_expedition_quarry` (THE single quarry-eligibility definition — the pick, the chooser, the hover banner and MapView's glow all route through it) / `quarry_min_distance` (the one number that rule is expressed in, so the pick and the glow cannot derive it separately), plus `is_targeting_active` / `cancel_active_targeting` / `try_dispatch` (the last runs the three `_try_*` in the SAME order as before). Hud holds it as `_targeting`, constructed in `_ready` **AFTER `_drawercompose` and BEFORE `_bandpanel`** (which injects it — so `_targeting` must exist first). **It emits its OWN signals, HudLayer RELAYS each** (the `TurnOrbController` pattern; the controller never emits a HudLayer signal): `targeting_changed` (→ `MapView.set_targeting`) · `move_band_requested` · `send_expedition_requested` · `verb_pick_cancelled` (→ `BandPanelController.on_verb_pick_cancelled`). **The reflective delegators STAY on HudLayer** — `is_targeting_active` (Main's escape_claimant path) / `cancel_active_targeting` (Main relays MapView's `targeting_cancel_requested` by name) / `notify_targeting_click` (MapView's `targeting_clicked`, → `try_dispatch`) / `notify_hex_hovered` (MapView's `tile_hovered`, → `note_hover`), each probed BY NAME so a `has_method` miss fails SILENTLY. **The injection surface is TWO Callables** — `_resolve_assign_band` (STAYS on HudLayer, DrawerComposeController injects it too; reached through a typed adapter since `Callable.call` returns `Variant`) and `_after_pending_change` (STAYS on HudLayer, the `_emit_assign_labor` pending path owns it); an armed verb pick carries the SHEET's own `commit` / `hover` Callables, so the controller holds no reference to `BandPanelController`. Collaborators: `_band_labor` (`record_pending_move` + the grid pair + the roster and ties the picks resolve against), `_drawercompose` (the three `close_compose_sheet()` nudges), `_note_sink` (the picks' miss/refusal notes, to the event dock's System channel), and the HUD CanvasLayer as the **host** it parents the banner and the Deny chooser into — via the host's `LayoutRoot` (NOT the bare CanvasLayer) so the banner keeps insetting with the reserved-edge docks exactly as before |
 ## Command Targeting
 
-### THE BAND VERBS ARE TARGET-FIRST (issue #529)
+### THE BAND VERBS' TARGET IS THE LAST STEP, AND THE CLICK COMMITS (issue #529)
 
 Move, Scout, Deny, Trade and Split are one list (`HudComposeVocab.BAND_VERBS`), pressed from the Band
 panel's action bar or the tile panel's band drawer, and routed to ONE dispatch
-(`BandPanelController.dispatch_verb`). The pending verb — which one, for which band, aimed at what —
-is shared state on `ComposeState` (`open_verb` / `set_verb_target` / `clear_verb`), because both
-surfaces press verbs and the verb's sheet renders in the TARGET's drawer rather than on either.
+(`BandPanelController.dispatch_verb`). Move arms its tile pick straight away. The other four open their
+SHEET on the band's own drawer (the band is selected on its own hex), and the pending verb — which one,
+for which band, anchored on which hex — is shared state on `ComposeState` (`open_verb` / `clear_verb`).
 
-| verb | pick | the click | then |
+| verb | the sheet | its send | the click |
 |---|---|---|---|
-| Move | `begin_move_band(band)`, tile | emits `move_band_requested` | nothing — the click is the order |
-| Scout | `begin_verb_pick(band, scout)`, tile | writes the tile onto the verb | the Scout sheet (party + kit) opens in that tile's drawer; its Send calls `send_expedition_to` with the picked tile |
-| Deny | `begin_pick_quarry(band, deny)`, herd | writes the herd's hex and id, then `choose_quarry` | the Deny sheet opens in the herd's drawer with the prey stated read-only |
-| Trade | `begin_verb_pick(band, trade)`, tile | resolves a live-tie band on the tile (`trade_destination_at`), or says so and stays armed | the Trade sheet opens in that band's drawer with `To` stated read-only |
-| Split | none | — | the band is selected on its own hex through the ordinary band selection, and the Split sheet opens in its drawer |
+| Move | — | — | emits `move_band_requested` |
+| Scout | party + kit | arms `begin_verb_pick(band, scout, commit)`, tile | `send_expedition_to` the clicked tile |
+| Deny | party + kit | arms `begin_pick_quarry(band, deny, commit, hover)`, herd | `send_denial_raid` at the clicked herd; a hex holding several eligible herds opens the chooser first |
+| Trade | party + cargo + mass meter | arms `begin_verb_pick(band, trade, commit, hover)`, tile | `send_trade_expedition` to the tied band standing there |
+| Split | workers | commits `split_band` itself | — |
 
-- **Every banner names the band by its NAME** (`HudFormat.band_name`), never `Band <id>`: `MOVE
-  Saltmarch — click a destination tile`, `SCOUT Saltmarch — click a tile to scout toward`, `DENY
-  Saltmarch — click a herd to deny`, `TRADE Saltmarch — click a band to trade with`. The command token
-  and its instruction come from `DENY_PICK_COMMAND` / `VERB_PICK_COMMAND_*` / `MOVE_COMMAND` and the
-  `BANNER_INSTRUCTIONS` table; a hunt-mission quarry pick keeps `PICK_PREY_COMMAND`.
-- **A cancelled verb pick takes its verb with it.** `cancel_active_targeting` (the banner's Cancel,
-  Esc, right-click) emits `verb_pick_cancelled` when a verb pick was armed, and `HudLayer` routes it to
-  `close_verb_form`. `disarm_verb_picks` is the verb's OWN teardown (a sheet's ✕, a send, a new verb
-  pressed over the old one) and announces nothing. Esc keeps `Main.escape_claimant`'s order: an armed
-  pick is `ESC_TARGETING`; an OPEN verb sheet is not a claimant, so Esc past it opens the pause menu.
-- **The Scout send is a direct call, not a second pick.** The tile was chosen before the sheet opened,
-  so `send_expedition_to(band, workers, tile, kit_id, default_kit_id)` emits
-  `send_expedition_requested` on the press with the kit pair `Main._kit_token` omits at the default.
+- **The send arms the pick with the sheet's values captured** as a `commit` Callable
+  (`TargetingController.PICK_COMMIT_KEY`), and the sheet stays open with its send drawn `armed` (a
+  toggle, `HudComposeVocab.VERB_SEND_ARMED_STYLE`); pressing it again takes the pick down. The sheet
+  re-arms on every render while armed, which only swaps the pick's callables in place, so an edit made
+  while the pick is up is what the click sends.
+- **The click commits and selects nothing.** A left click while targeting is active is MapView's
+  `targeting_clicked`, never `tile_selected` (`Main` relays it to `HudLayer.notify_targeting_click` →
+  `try_dispatch`), so neither the selection nor the Band panel's subject moves off the band. A valid
+  click calls the commit, which emits the command and closes the sheet (`close_verb_form`, which also
+  clears the pending verb). A commit that answers a refusal posts it and leaves the pick armed.
+- **Invalid clicks stay armed**: a hex with no eligible herd posts `No huntable herd there`, a hunt-mission
+  herd inside `hunt_reach` posts `PREY_WITHIN_REACH_FORMAT`, a Trade click on anything but a live tie
+  posts `TRADE_PICK_MISS_TEXT`, and a Deny click on a herd the band cannot field the required party for
+  posts `SourceForecast.denial_short_handed_reason` — the one refusal the commit itself makes.
+- **The Deny chooser** (`_open_quarry_chooser`) is a `PopupMenu` at the pointer, one entry per eligible
+  herd on the clicked hex (`eligible_quarries_on_tile`, derived live from `world_herds`); choosing one
+  runs `choose_quarry`, the one adoption, which re-checks eligibility and commits. Dismissing it leaves
+  the pick armed.
+- **The hover states what the click would commit to.** `MapView.tile_hovered` also reaches
+  `HudLayer.notify_hex_hovered` → `note_hover`, and an armed pick's `hover` Callable
+  (`PICK_HOVER_KEY`) answers for that hex; a non-empty answer replaces the banner's instruction with
+  `→ <answer>` (`HudComposeVocab.VERB_HOVER_ARROW` / `VERB_HOVER_DETAIL_FORMAT`):
+  - **Deny** — `DENY Saltmarch → Wild Boar · <verdict>`, the collapse verdict for the captured party
+    and kit (`BandPanelController._deny_hover_detail`). The forecast is a SERVER query
+    (`ForecastQuery`, idempotent on its key, so hovering one herd twice asks once); until it answers
+    the line is `DENIAL_FORECAST_PENDING`, and its answer re-states the banner through `refresh_hover`.
+    A hex holding several eligible herds names the first and counts the rest (`VERB_HOVER_MORE_FORMAT`,
+    `Rabbit Warren +1 more`). A band short of the herd's requirement reads the short-handed sentence
+    in place of the verdict.
+  - **Trade** — `TRADE Ashfell → Brackwater · <last seen …> · <≈N turns out …>` over a tied band
+    (`_trade_hover_detail`, over `tie_at`, the same lookup the click resolves through), the parked
+    reason over a parked tie.
+  - **Scout** and Move state no hover detail. A hex with nothing to state keeps the base prompt.
+- **Every banner names the band by its NAME** (`HudFormat.band_name`), never `Band <id>`. The command
+  token and its instruction come from `DENY_PICK_COMMAND` / `VERB_PICK_COMMAND_*` / `MOVE_COMMAND` and
+  the `BANNER_INSTRUCTIONS` table; a hunt-mission quarry pick keeps `PICK_PREY_COMMAND`.
+- **Esc cancels the pick alone.** `cancel_active_targeting` (the banner's Cancel, Esc, right-click)
+  emits `verb_pick_cancelled`, which `HudLayer` routes to `BandPanelController.on_verb_pick_cancelled`:
+  the sheet re-renders with its values and its send un-armed. A second Esc is `Main.escape_claimant`'s
+  `ESC_VERB_FORM` — behind `ESC_TARGETING` — which closes the sheet (`HudLayer.is_verb_form_open` /
+  `close_verb_form`). `disarm_verb_picks` is the verb's OWN teardown and announces nothing.
 - **The Trade pick accepts only a LIVE tie** (`HudBandLaborState.tie_is_live`, strength above
-  `TIE_STRENGTH_NONE` — the one reading the sheet's destination and its live re-resolve use too). A
-  tied band still in the roster is found where it stands; one that is not is found where the tie last
-  saw it. A click on anything else posts `TRADE_PICK_MISS_TEXT` and stays armed, the quarry pick's rule
-  for a hex with no herd.
-- **The Deny pick's refusal notes post under the verb's name** (`_pick_note_title`); a hunt-mission
-  pick keeps `HUNT_PICK_NOTE_TITLE`. The herd-drawer hunt expedition does not use this pick at all.
+  `TIE_STRENGTH_NONE`). A tied band still in the roster is found where it stands; one that is not is
+  found where the tie last saw it.
+- **A pick's refusal notes post under the verb's name** (`_pick_note_title_for`); a hunt-mission pick
+  keeps `HUNT_PICK_NOTE_TITLE`. The herd-drawer hunt expedition does not use this pick at all.
 
 Labor allocation is source-centric (assign workers to a source/role, see the **Labor
 allocation UI** bullet below). The one remaining **targeting mode** is **move-band** —
@@ -64,10 +90,10 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   forage/scout/hunt/follow `_pending_*` flows were retired with labor allocation. Three targeting flows
   remain, all built on the same `_pending_*` → `_current_targeting_info()` → `_refresh_targeting()`
   machinery ON THE CONTROLLER: `_pending_move_band` (`command: "move"`, `need: "tile"`),
-  `_pending_verb_pick` (`command: "scout"` / `"trade"`, `need: "tile"`, carries the band and the
-  verb's mission), and `_pending_pick_quarry` (`command: "deny"` on the Deny verb, `"prey"`
-  (`PICK_PREY_COMMAND`) on a hunt-mission pick, `need: "herd"`, plus **`min_distance`** — it carries
-  only the band and the mission, dispatches nothing, and adopts the clicked herd).
+  `_pending_verb_pick` (`command: "scout"` / `"trade"`, `need: "tile"`, carries the band, the verb's
+  mission and the sheet's `commit` / `hover`), and `_pending_pick_quarry` (`command: "deny"` on the
+  Deny verb, `"prey"` (`PICK_PREY_COMMAND`) on a hunt-mission pick, `need: "herd"`, plus
+  **`min_distance`** — the band, the mission and the sheet's `commit` / `hover`).
   `_current_targeting_info()` returns a descriptor (`{active, command, need, origin_x/y,
   context_label}`) for whichever is set; `_refresh_targeting()` shows the floating **targeting
   banner** (top-centre, `HudStyle.banner_stylebox()`: cyan reticle + command + instruction + Cancel)
@@ -76,18 +102,21 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   player-facing string rather than plumbing: a hunt-mission herd pick reads `PREY  Saltmarch — click
   on a herd to hunt`, spelled `prey` since issue #650 because the sim's `quarry` verb opens a stone
   working.
-  MapView keys its halo off `need`, never off this token. HudLayer's
-  `show_tile_selection` + `notify_hex_selected` call `_targeting.try_dispatch(tile_info)`, which runs
-  all three pending flows on the click (the tile click carries `tile_info.herds`, which the hunt flow
-  resolves its target from).
-- **Main forwards** `hud.targeting_changed → map_view.set_targeting` and
+  MapView keys its halo off `need`, never off this token. HudLayer's `notify_targeting_click` (MapView's
+  `targeting_clicked`) calls `_targeting.try_dispatch(tile_info)`, which runs all three pending flows on
+  the click (the click carries `tile_info.herds`, which the herd pick resolves its target from).
+- **Main forwards** `hud.targeting_changed → map_view.set_targeting`,
   `map_view.targeting_cancel_requested → hud.cancel_active_targeting` (a HudLayer delegator →
-  `_targeting.cancel_active_targeting`).
+  `_targeting.cancel_active_targeting`), `map_view.targeting_clicked → hud.notify_targeting_click` and
+  `map_view.tile_hovered → hud.notify_hex_hovered` (beside the tooltip's own `show_tooltip`).
 - **MapView draws** the overlay (`AnnotationRenderer.draw_targeting`, reached through MapView's `set_targeting` pass-through): `need == "tile"` draws a reticle on the
   hovered hex (the `need == "band"` path is now unused). Esc / right-click during targeting emit
-  `targeting_cancel_requested` instead of panning; the pulse is animated from `_process`.
+  `targeting_cancel_requested` instead of panning, and a left click emits `targeting_clicked` instead of
+  selecting (`_emit_targeting_click`, the visibility-redacted `tile_info` with no `selected_tile` write);
+  the pulse is animated from `_process`. `focus_and_select_tile` still selects — it is the cycler's and
+  the attention jump's path, not a click.
 - **Resolution**: the destination tile click (`_try_dispatch_pending_move_band`) emits
-  `move_band_requested` → `Main._on_hud_move_band` → `move_band …`; the Scout sheet's Send
+  `move_band_requested` → `Main._on_hud_move_band` → `move_band …`; the Scout pick's click
   (`send_expedition_to`) emits `send_expedition_requested` → `Main._on_hud_send_expedition` →
   `send_expedition …`.
 - **The scouting party's kit rides the payload** beside the default `Main._kit_token` omits it at, so
@@ -113,9 +142,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `recall_expedition …`) + **Move** (`.connect()`ed straight to `TargetingController.begin_move_band`,
   which with no argument resolves the selected player unit — the expedition — and retargets it via
   `move_band`).
-  (3) **Outfit UI**: the **Scout** band verb — a tile pick, then the Scout sheet (a party stepper
-  capped at the band's idle workers, and the kit) in that tile's drawer, whose Send is the order; see
-  "THE BAND VERBS ARE TARGET-FIRST".
+  (3) **Outfit UI**: the **Scout** band verb — the Scout sheet (a party stepper capped at the band's
+  idle workers, and the kit) in the band's drawer, whose send arms the tile pick; the click is the
+  order. See "THE BAND VERBS' TARGET IS THE LAST STEP".
   (4) The `marker_field_guard` covers the four new marker keys (`is_expedition`,
   `expedition_mission`, `expedition_phase`, `max_expedition_party_size`). The server still rejects
   a genuinely over-cap request with a feed message as a backstop.
@@ -166,7 +195,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   of `Hud._is_expedition_quarry` — change the two together, in both directions.
 
   **THE BEYOND-REACH RULE IS THE HUNT'S, NOT THE EXPEDITION'S**, so `is_expedition_quarry` /
-  `eligible_quarries_on_tile` / `choose_quarry` / `begin_pick_quarry` all take the **mission**
+  `eligible_quarries_on_tile` / `begin_pick_quarry` all take the **mission**
   (`HudComposeVocab.COMPOSE_MISSION_*`), and the armed pick carries it in `_pending_pick_quarry` under
   `PICK_QUARRY_MISSION_KEY` so the rule the halo glowed under IS the rule the click is judged by. A
   hunting party exists for game the band cannot work from home; a **DENIAL** raid is not a way of

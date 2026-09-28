@@ -1216,34 +1216,35 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 **Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
 `selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly
-the case the release note at the end of this paragraph exists for. **Sixteen frames and eighty-four `PASS`**
-(`EXPECTED_CHECKPOINTS := 99`) — nine for the shipment itself, then seven for the typed cargo row
+the case the release note at the end of this paragraph exists for. **Sixteen frames and ninety `PASS`**
+(`EXPECTED_CHECKPOINTS := 106`) — nine for the shipment itself, then seven for the typed cargo row
 (issue #620): `trade_cargo_typed`, `_typed_invalid`, `_typed_held`, `_typed_cap`, `_max`,
 `_typed_then_stepped`, `_step_clamped`. Plus
 one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
 beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
 injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole shipment through the
-controls a player uses — the Trade verb on the shipper's band drawer, the destination pick on the map,
-the sheet in the destination's drawer — and releases the panel and hands the reference band back
+controls a player uses — the Trade verb on the shipper's band drawer, the sheet in that drawer, its send
+arming the destination pick, the click on the map — and releases the panel and hands the reference band back
 before it ends, so a chapter appended after it starts where every other one does.
 
 **Every control is driven, not set.** The drawer's Trade verb is pressed (by
-`HudWidgets.VERB_BUTTON_META`, never by face), the destination is picked the way the map picks it
-(`show_tile_selection` → `notify_hex_selected` → `show_unit_selection`, the neighbour's own tile
-stamped on the payload as `MapView._handle_entity_selection` does), the party is raised through its
+`HudWidgets.VERB_BUTTON_META`, never by face), the send is pressed by `SEND_TRADE_CONFIRM_META`, the
+hover and the click go through `HudLayer.notify_hex_hovered` / `notify_targeting_click` — MapView's
+`tile_hovered` / `targeting_clicked` edges — the party is raised through its
 stepper's `+` reading `PARTY_STEPPER_COUNT_META` back on each press, and each cargo row is loaded
 through the row's OWN handles — repeated presses of its `+` (`_load`), an amount TYPED into its field
 and committed with Enter (`_type_cargo`), or its `Max` (`_press_cargo_max`), all three since issue #620
 — which is what exercises the clamp to the row's ceiling and the per-commit rebuild rather than the
 members behind them.
 
-**THE DESTINATION IS A MAP PICK** — `trade_verb_row` (the verb row, and where the 📦 mark must DRAW),
-`trade_pick_armed` (the banner, no sheet yet), a click on the PARKED tie's last-seen tile refused with
-the pick still armed, then `trade_picker_destination`: the sheet in the destination's drawer with `To`
-stated read-only, the Band panel's subject still the SENDER and no panel pointer in that drawer. The
-pick is driven the way the map drives it, so every step between the click and the sheet — the pick
-resolving a live tie, the selection landing on the destination, the sheet mounting in its drawer — is
-exercised rather than set.
+**THE DESTINATION IS THE LAST STEP, AND THE CLICK COMMITS** — `trade_verb_row` (the verb row, and where
+the 📦 mark must DRAW), `trade_sheet` (the sheet on the sender's own drawer, no pick armed, no
+destination named on it), `trade_cargo_loaded`, then the send pressed: the pick armed and the send
+drawn armed, and `trade_hover_destination` — the banner over the tied neighbour naming it with its
+REMEMBERED position and the `≈` walk. Over the parked tie the banner gives the parked reason, and a
+click there sends nothing with the pick still armed; the click on the neighbour sends ONE shipment
+with the captured party, closes the sheet, and leaves both the selection and the Band panel on the
+SENDER. The sheet is then re-opened and re-loaded for the cargo states that follow.
 
 **A lambda captures a local by VALUE**, so a witness assigning to a `var` outside it reports nothing
 ever happened; the chapter's witnesses are containers.
@@ -1252,7 +1253,8 @@ ever happened; the chapter's witnesses are containers.
 
 | claim | why nothing else says it |
 |---|---|
-| a click on the PARKED tie's last-seen tile resolves nothing and the pick stays armed | a pick that accepted any tied band would open a sheet whose send the server refuses |
+| a click on the PARKED tie's last-seen tile sends nothing and the pick stays armed | a pick that accepted any tied band would send a shipment the server refuses |
+| the committing click moves neither the selection nor the panel's subject | a click that also selected would put the destination's drawer under a sheet it no longer shows |
 | the destination's position is worded as REMEMBERED, and the walk wears `≈` | the arc's keystone; a live-position render is indistinguishable in a screenshot |
 | a material row names the pile's RATING | the fixture holds TWO `hide` piles at different ratings, which is the only shape that can fail |
 | mass and cap composed from the FIXTURE's side | the harness and the sheet arrive at one number from opposite ends |
@@ -2833,8 +2835,7 @@ fixture is a DOMESTICATED herd and a different species** (`Red Deer`): it keeps 
 terms, not its name.
 
 Sabotage-verified two ways, DISJOINT: hard-wiring the ARMED remedy fails the two unarmed claims,
-hard-wiring the UNARMED one fails the three armed claims (and `band_panel_preview`, whose denial sheet
-composes `none` and therefore pins the unarmed arm on its own surface).
+hard-wiring the UNARMED one fails the three armed claims.
 
 ## The coverage blend, and the table that IS the regression (`chapters/compose_rungs.gd`)
 

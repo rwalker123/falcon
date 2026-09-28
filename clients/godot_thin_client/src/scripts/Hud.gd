@@ -435,7 +435,7 @@ var _banddetail: BandDetailLines = null
 # The COMMAND-TARGETING cluster (HUD decomposition): the three pending flows (move-band /
 # send-expedition / pick-quarry), the floating banner, and the dispatch. It emits its OWN signals;
 # HudLayer relays each. HudLayer keeps thin reflective delegators (`is_targeting_active` /
-# `cancel_active_targeting` / `try_dispatch`). Constructed AFTER `_drawercompose` + BEFORE `_bandpanel`.
+# `cancel_active_targeting` / `notify_targeting_click`). Constructed AFTER `_drawercompose` + BEFORE `_bandpanel`.
 var _targeting: TargetingController = null
 var travel_tiles_per_turn: float = DEFAULT_TRAVEL_SPEED
 var travel_preview_turn_cap: int = DEFAULT_TRAVEL_PREVIEW_LIMIT
@@ -699,7 +699,7 @@ func _ready() -> void:
     # **THE COMPOSE SHEET ASKS FOR THE WORK TAB; THE PANEL IS REACHED ONLY FROM HERE** (§4.7a ①).
     # `_bandpanel` is constructed BELOW this line, so the relay is a lambda rather than a direct
     # connection to its method — by the time a link can be clicked it is populated, which is the same
-    # lazy binding `TargetingController`'s `rerender` nudge takes for the same reason.
+    # lazy binding the `verb_pick_cancelled` relay below takes for the same reason.
     _drawercompose.work_tab_requested.connect(
         func(band_entity: int) -> void: _bandpanel.show_work_tab(band_entity))
     # **NO IMPROVEMENT RELAY FROM THE COMPOSE SHEET** (`docs/plan_standing_upkeep.md` §4.7a ①). It
@@ -707,22 +707,21 @@ func _ready() -> void:
     # untick; the checkbox was never the commit, so both moved to `BandPanelController` — the `⌃` on
     # a work row and the `✕` on a queue row. Their relays are wired beside that controller below.
     # The command-targeting cluster. Constructed AFTER `_drawercompose` (its three close-sheet nudges)
-    # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). The pick
-    # flow's `_bandpanel.rerender()` is therefore a lazily-bound lambda: `_bandpanel` is null now but
-    # populated by the time a quarry is picked. It emits its OWN signals; HudLayer relays each (the
+    # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). A verb
+    # pick carries the sheet's own commit Callable, so it needs no reference back to `_bandpanel`. It
+    # emits its OWN signals; HudLayer relays each (the
     # controller never emits a HudLayer signal). Handed the HUD CanvasLayer as the host it parents the
     # banner into (a RefCounted can't).
     _targeting = TargetingController.new(
-        _band_labor, _compose, _drawercompose, _note_sink, self,
-        _resolve_assign_band, _after_pending_change, func() -> void: _bandpanel.rerender())
+        _band_labor, _drawercompose, _note_sink, self, _resolve_assign_band, _after_pending_change)
     _targeting.targeting_changed.connect(func(info: Dictionary) -> void: targeting_changed.emit(info))
     _targeting.move_band_requested.connect(func(payload: Dictionary) -> void: move_band_requested.emit(payload))
     _targeting.send_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_expedition_requested.emit(payload))
-    # **A CANCELLED VERB PICK TAKES ITS VERB WITH IT** (issue #529) — Esc / the banner's Cancel /
-    # right-click end the verb the pick was the first step of. `_bandpanel` is constructed below, so
-    # the relay binds it lazily, the `rerender` nudge's own pattern.
-    _targeting.verb_pick_cancelled.connect(func() -> void: _bandpanel.close_verb_form())
+    # **A CANCELLED VERB PICK LEAVES ITS SHEET OPEN** (issue #529) — Esc / the banner's Cancel /
+    # right-click take the pick down and the sheet re-renders un-armed; a second Esc closes the sheet.
+    # `_bandpanel` is constructed below, so the relay binds it lazily, the `rerender` nudge's pattern.
+    _targeting.verb_pick_cancelled.connect(func() -> void: _bandpanel.on_verb_pick_cancelled())
     # The detail-row disclosure cluster (the Food/Morale carets + the breakdown popover they open).
     # It owns that cluster's ONLY `add_child`, so it is handed the HUD CanvasLayer as the host it
     # parents the popover into (the `TurnOrbController` pattern), plus `_refresh_disclosure_hosts` —
@@ -881,7 +880,9 @@ func _ready() -> void:
     _forecast_query.answered.connect(func(subject: String) -> void:
         _drawercompose.refresh_compose_sheet(false)
         _bandpanel.rerender()
-        _drawer.on_forecast_answered(subject))
+        _drawer.on_forecast_answered(subject)
+        # The Deny pick's hover banner prices the herd under the pointer through the same seam.
+        _targeting.refresh_hover())
     _turnorb.focus_requested.connect(_attention.on_turn_orb_focus)
     # The selection drawer's render dispatch. Constructed AFTER `_bandpanel` + `_drawercompose` (it
     # dispatches into both) and handed the SAME selection/labor models, the sibling controllers, the
@@ -959,6 +960,28 @@ func is_targeting_active() -> bool:
 ## Main relays MapView's targeting_cancel_requested to it BY NAME.
 func cancel_active_targeting() -> void:
     _targeting.cancel_active_targeting()
+
+## Is a band verb's sheet open (issue #529)? Reflective delegator: `Main.escape_claimant` asks it BY
+## NAME, behind targeting, so a first Esc takes an armed pick down and a second closes the sheet.
+func is_verb_form_open() -> bool:
+    return _bandpanel.verb_is_open()
+
+## Close the band verb's sheet — the `ESC_VERB_FORM` claimant. Reflective delegator.
+func close_verb_form() -> void:
+    _bandpanel.close_verb_form()
+
+## A LEFT CLICK ON THE MAP WHILE A COMMAND IS TARGETING (`MapView.targeting_clicked`, relayed by `Main`):
+## the click is the pick, and it neither selects the hex nor changes the panel's subject. Reflective
+## delegator, reached BY NAME.
+func notify_targeting_click(tile_info: Dictionary) -> void:
+    if tile_info.is_empty():
+        return
+    _targeting.try_dispatch(tile_info)
+
+## The hex under the pointer (`MapView.tile_hovered`, relayed by `Main`): an armed Deny or Trade pick
+## states what a click there would commit to in its banner. Reflective delegator, reached BY NAME.
+func notify_hex_hovered(tile_info: Dictionary) -> void:
+    _targeting.note_hover(tile_info)
 
 ## Bottom-CENTRE version overlay showing the client build and the streamed server build,
 ## so the running builds can be confirmed at a glance. It lives centre-bottom rather than
@@ -1990,17 +2013,12 @@ func reset_world_state() -> void:
     _loadout.reset_world_state()
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15) — and a pending band verb's
-    # sheet, unless the new tile is its target.
+    # sheet, unless the new tile is its band's. A targeting click never lands here: MapView hands it to
+    # `notify_targeting_click` instead of selecting.
     close_compose_sheet()
     _bandpanel.note_selection_tile(tile_info)
     _selection.select_tile(tile_info.duplicate(true) if tile_info is Dictionary else {})
     _render_selection_panel(_selection.tile_info(), {}, {})
-    _targeting.try_dispatch(_selection.tile_info())
-
-func notify_hex_selected(tile_info: Dictionary) -> void:
-    if tile_info.is_empty():
-        return
-    _targeting.try_dispatch(tile_info)
 
 func show_unit_selection(unit_data: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).

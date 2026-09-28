@@ -34,6 +34,12 @@ signal herd_selected(herd: Dictionary)
 # double-click is now just two selecting clicks. See `.claude/rules/client/map-renderers.md` →
 # "RETIRED — the double-click quick-hunt".
 signal tile_hovered(info: Dictionary)
+## **A LEFT CLICK WHILE A COMMAND IS TARGETING IS THE PICK, AND IT SELECTS NOTHING** (issue #529). A band
+## verb's target is the last step of its sheet and the click commits the order, so the click must not
+## move the selection — or the panel's subject — off the band whose sheet armed it. Emitted INSTEAD of
+## the selecting path (`handle_hex_click`), with the hex's visibility-redacted `tile_info`; `Main`
+## relays it to `HudLayer.notify_targeting_click`.
+signal targeting_clicked(info: Dictionary)
 signal selection_cleared()
 ## The select-then-cycle click reached the LAND stop of an OCCUPIED hex. Carries no payload: the
 ## `_emit_tile_selection` one call earlier in the same click already handed the HUD this hex's
@@ -2421,6 +2427,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			var offset := _point_to_offset(local_position)
 			var col: int = offset.x
 			var row: int = offset.y
+			if _annotations.is_targeting_active():
+				_emit_targeting_click(col, row)
+				_mark_input_handled()
+				return
 			handle_hex_click(col, row, mouse_event.button_index)
 			# ⛔ **NOTHING READS `mouse_event.double_click` HERE ANY MORE, and the click above is the
 			# whole handler.** The retired branch emitted `herd_quick_hunt_requested` for a herd under
@@ -3343,6 +3353,13 @@ func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8
 	var right := base_point - ortho * (size * 0.5)
 	var pts := PackedVector2Array([tip, left, right])
 	draw_polygon(pts, PackedColorArray([color, color, color]))
+
+## The targeting twin of `_emit_tile_selection`: the same visibility-redacted `tile_info`, and NO
+## `selected_tile` write — see `targeting_clicked`.
+func _emit_targeting_click(col: int, row: int) -> void:
+	if col < 0 or row < 0 or col >= grid_width or row >= grid_height:
+		return
+	emit_signal("targeting_clicked", _apply_visibility_to_info(_tile_info_at(col, row), col, row))
 
 func _emit_tile_selection(col: int, row: int) -> void:
 	if col < 0 or row < 0 or col >= grid_width or row >= grid_height:

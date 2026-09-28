@@ -1029,10 +1029,9 @@ is under-reported by everything it did not bring home in materials.
 >
 > The ruling is about the **waste** alone. `server::describe_denial_ledger` states the food ledger
 > **and one clause per delivered material**, off `DenialForecast::delivered_material` — the same
-> field the client's own take line (`SourceForecast.denial_take_bbcode`) reads off the same
-> forecast, so the launch ack and the sheet cannot disagree about one raid. It falls back to
-> *"nothing worth hauling from this quarry"* only when there is neither food nor material to weigh.
-> Pinned as a pairing by
+> field the client's denial forecast (`SourceForecast.denial_forecast`) reads off the same reply. It
+> falls back to *"nothing worth hauling from this quarry"* only when there is neither food nor material
+> to weigh. Pinned as a pairing by
 > `server::tests::an_inedible_raids_ack_names_the_materials_its_forecast_promises`, because *"always
 > name the hides"* would otherwise be satisfiable by deleting the fallback.
 

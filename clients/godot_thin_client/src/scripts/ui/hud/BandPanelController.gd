@@ -484,9 +484,9 @@ const TRADE_BATCH_KEY_SEPARATOR := "|"
 ## numbers and a block-glyph bar, so a text search would find whichever Label happened to hold them.
 const TRADE_MASS_METER_META := "trade_mass_meter"
 ## **THE PENDING BAND VERB'S SHEET IS NOT MOUNTED HERE** (issue #529). The verb itself — which one,
-## for which band, aimed at what — lives on `ComposeState` (`verb_mission` / `verb_target` / …),
-## because the Band panel's bar and the tile panel's drawer both press verbs and the sheet renders in
-## the TARGET's drawer. What stays here is the sheet's BUILDERS and the per-field state they edit.
+## for which band — lives on `ComposeState` (`verb_mission` / `verb_target` / …), because the Band
+## panel's bar and the tile panel's drawer both press verbs and the sheet renders in the band's own
+## drawer. What stays here is the sheet's BUILDERS and the per-field state they edit.
 ##
 ## The mounted sheet's wrapper, held so a rebuild can detach it synchronously inside the cargo-field
 ## teardown window (`detach_verb_form`).
@@ -500,8 +500,8 @@ var _rerender_drawer_fn: Callable
 ## sharing the field would clamp one of them against the other's ceiling.
 var _split_workers: int = 1
 ## --- THE SHIPMENT BEING LOADED (arc #527) ----------------------------------------------------
-## The destination is the Trade verb's TARGET (`ComposeState.verb_destination`), picked on the map
-## before the sheet opens; what is loaded for it is held here.
+## The destination is picked on the map AFTER the sheet is filled in — the send arms that pick — so what
+## is loaded is held here and captured when the pick is armed.
 ## How much FOOD the manifest carries. One number, because the larder is one commodity.
 var _trade_food: float = 0.0
 ## How much HAY the manifest carries (issue #590) — the food twin, and a SEPARATE number for the
@@ -7978,7 +7978,7 @@ func _trade_zone_is_on_screen() -> bool:
 ##
 ## **IT HOLDS NO COMMANDS (issue #529).** The Scout / Deny / Trade / Split buttons that used to sit in
 ## a footer here are the band VERBS now, on the panel's action bar and on the tile panel's band drawer
-## (`HudComposeVocab.BAND_VERBS`), and a verb's sheet opens in its TARGET's drawer rather than in this
+## (`HudComposeVocab.BAND_VERBS`), and a verb's sheet opens in its band's drawer rather than in this
 ## zone. What is left is the list of who is out, which is what the zone is named for.
 ##
 ## **THE LIST UNDER THE HEAD SCROLLS, AND IT IS THE ONLY THING IN THE PANEL THAT DOES.** The head is
@@ -8301,21 +8301,52 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
             rerender(),
         {}, "", _send_expedition_count)
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SEND_EXPEDITION_HINT))
-    var confirm := Button.new()
-    confirm.text = HudComposeVocab.SEND_EXPEDITION_BUTTON
-    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    confirm.set_meta(HudWidgets.SEND_EXPEDITION_CONFIRM_META, true)
-    HudStyle.apply_button(confirm, "primary")
-    confirm.tooltip_text = HudComposeVocab.SEND_EXPEDITION_HINT
-    var target := _compose.verb_target()
-    confirm.pressed.connect(func() -> void:
-        var workers := _send_expedition_count
-        close_verb_form()
-        # `Main._kit_token` omits the kit tail when the pick equals the job default, which is why the
-        # default travels beside it.
-        _targeting.send_expedition_to(band, workers, target, kit_id, default_kit))
-    sheet.add_child(confirm)
+    var workers := _send_expedition_count
+    sheet.add_child(_build_verb_send(HudComposeVocab.COMPOSE_MISSION_SCOUT,
+        HudComposeVocab.SEND_EXPEDITION_BUTTON, HudComposeVocab.SEND_EXPEDITION_HINT,
+        HudWidgets.SEND_EXPEDITION_CONFIRM_META,
+        func() -> void:
+            _targeting.begin_verb_pick(band, HudComposeVocab.COMPOSE_MISSION_SCOUT,
+                func(target: Dictionary) -> String:
+                    var tile: Vector2i = target.get(TargetingController.PICK_TILE_KEY,
+                        ComposeState.VERB_NO_TARGET)
+                    close_verb_form()
+                    # `Main._kit_token` omits the kit tail when the pick equals the job default,
+                    # which is why the default travels beside it.
+                    _targeting.send_expedition_to(band, workers, tile, kit_id, default_kit)
+                    return TargetingController.PICK_COMMITTED)))
     return sheet
+
+## **THE SEND ARMS THE MAP PICK** (issue #529). A verb's sheet is filled in on the band's own drawer and
+## its target is the LAST step: the send button arms the pick with the sheet's values captured, the
+## sheet stays open, and the valid click commits. The button is a TOGGLE drawn `armed` while its pick is
+## up, so the sheet itself says the pick is waiting; pressing it again takes the pick down.
+##
+## **THE CAPTURE IS RE-TAKEN ON EVERY RENDER WHILE ARMED** — `arm` runs again, and the controller swaps
+## the pick's callables in place (`TargetingController.begin_verb_pick` / `begin_pick_quarry` on a pick
+## already armed for this verb) — so a stepper tick or a kit switch while the pick is up changes what
+## the click sends, and the hover banner prices what the sheet shows rather than what it showed.
+func _build_verb_send(mission: String, face: String, tooltip: String, meta: String,
+        arm: Callable) -> Button:
+    var armed := _targeting.is_verb_pick_armed(mission)
+    if armed:
+        arm.call()
+    var confirm := Button.new()
+    confirm.text = face
+    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    confirm.toggle_mode = true
+    confirm.button_pressed = armed
+    confirm.tooltip_text = tooltip
+    confirm.set_meta(meta, true)
+    HudStyle.apply_button(confirm, HudComposeVocab.VERB_SEND_ARMED_STYLE if armed
+        else HudComposeVocab.VERB_SEND_STYLE)
+    confirm.pressed.connect(func() -> void:
+        if _targeting.is_verb_pick_armed(mission):
+            _targeting.disarm_verb_picks()
+        else:
+            arm.call()
+        rerender())
+    return confirm
 
 ## **The SPLIT form** (`docs/plan_band_fission.md` §Q6) — one stepper, two readouts and a verdict.
 ##
@@ -8477,219 +8508,120 @@ func _mount_kit_row(sheet: VBoxContainer, kits: Array, job: String, kit_id: Stri
     if row != null:
         sheet.add_child(row)
 
-## **THE ONE FORECAST THAT STAYS HONEST FOR EVERY KIT**, rendered where the estimate tables have been
-## suppressed. It is composed from wire terms — `max(0, attack − defense)` against the species'
-## durability — at the SELECTED kit's effective attack rather than at the band's default-kit tier, so
-## a bare-handed party against a defended species reads the plain refusal instead of a blank sheet.
-## Same ink and same meta as the herd drawer's gate line, so the two surfaces cannot state one fight
-## two ways.
-func _mount_kit_gate_line(sheet: VBoxContainer, kits: Array, kit_id: String, band: Dictionary,
-        herd: Dictionary, quarry: String) -> void:
-    var selected_kit := KitRoster.kit_by_id(kits, kit_id)
-    # The remedy is a fact about the KIT, the refusal about the band's resolved attack — see the
-    # compose sheet's twin, which carries the argument.
-    var gate := SourceForecast.hunt_gate_model_at(KitRoster.effective_attack_against(
-        kits, selected_kit, band,
-        float(herd.get(KitRoster.QUARRY_BODY_MASS_KEY, 0.0))), herd, quarry,
-        KitRoster.kit_arms_the_party(kits, selected_kit))
-    # **ONLY THE REFUSAL RENDERS.** The winnable branch used to state the effort in hunter-turns; that
-    # face is retired (a species constant beside a forecast that already prices the trip), so a fight
-    # this party CAN take says nothing here and the sheet's remaining lines are the answer.
-    #
-    # ⛔ **AND THE SPLIT-PARTY EXCEPTION IS RETIRED WITH IT** — quoted rather than deleted, because it
-    # was a deliberate arm: *"…EXCEPT WHEN THE PARTY IS SPLIT (issue #520). The gate answers at ONE
-    # tier and on a partly-equipped band that tier is the best-armed crew's, so a cleared gate here is
-    # the reassuring half. Same complement, same builder as the herd drawer's line."* It mounted
-    # `HudWidgets.mount_hunt_crew_split`, and Ray removed it as redundant with the kit line the same
-    # sheet already carries: *"we have the stalking kit message, it seems the second is redundant, you
-    # can remove it."* Both hosts dropped their mount in the same pass; the REFUSAL below is
-    # untouched.
-    if not bool(gate["blocked"]):
-        return
-    var gate_label := HudWidgets.forecast_label("[color=#%s]%s[/color]" % [
-        HudStyle.DANGER_HEX, String(gate["text"])])
-    gate_label.set_meta(HudWidgets.HUNT_GATE_META, true)
-    sheet.add_child(gate_label)
-
-## The DENIAL form (`docs/plan_denial_raid.md` §3): QUARRY → PARTY → the collapse verdict → send.
+## The DENIAL form (`docs/plan_denial_raid.md` §3): PARTY → KIT → send, and the herd is the click the
+## send arms.
 ##
 ## **WHAT IS ABSENT IS THE SPECIFICATION.** No floor picker, no floor hint, no fill target, no crew
 ## preset, no max-useful cap — a denial party never stops engaging, so there is no escapement to dial
 ## and no pack to fill, and any of those controls would be a lever the command grammar
-## (`send_denial_raid`, closed at four tokens) cannot even carry. The player chooses a herd and a
-## party size; everything else on this sheet is a READOUT.
+## (`send_denial_raid`, closed at four tokens) cannot even carry. The player chooses a party size and a
+## kit here and the herd on the map.
 ##
-## The prey is the herd the Deny verb's map pick landed on, stated read-only (`_build_quarry_row`).
-## **THE BEYOND-REACH RULE IS THE HUNT'S AND NOT THIS MISSION'S**, the one place the two genuinely
-## differ about what a quarry is
-## (`TargetingController.is_expedition_quarry`): a hunting party exists for game the band cannot work
-## from home, so a nearer herd is a local hunt — but denial is not a way of GETTING food, it is a way
-## of ERASING a herd, and hunting the warren next door at floor 0 cannot express that (a hunt is
-## carry-bounded and stops at the pack). A denial raid may therefore name any herd the band can see
-## and reach. It is still an EXPEDITION and deliberately not a labor assignment: the party detaches,
-## spends turns killing and comes back, and it has no floor and no rate to put on the assign dialog.
+## **THE VERDICT RIDES THE HOVER.** The collapse forecast is a function of the herd, and the herd is
+## chosen last, so the targeting banner states it for the herd under the pointer, priced for the party
+## and kit this sheet captured (`_deny_hover_detail`).
+##
+## **THE BEYOND-REACH RULE IS THE HUNT'S AND NOT THIS MISSION'S** (`TargetingController.is_expedition_quarry`):
+## a hunting party exists for game the band cannot work from home, but denial is not a way of GETTING
+## food, it is a way of ERASING a herd, so a denial raid may name any herd the band can see and reach.
 func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
-    # Re-resolved LIVE every render for the hunt form's reasons: a herd can be raided out or leave the
-    # snapshot while the sheet is open, and a form rendered against a stale id would forecast a
-    # collapse for a herd that is gone. **A herd that MIGRATES INTO REACH no longer clears the form** —
-    # under denial that was never a reason to drop it.
-    var herd := _band_labor.find_world_herd(_compose.party_quarry_id())
-    if herd.is_empty() or not _targeting.is_expedition_quarry(band, herd,
-            HudComposeVocab.COMPOSE_MISSION_DENY):
-        herd = {}
-        _clear_party_quarry()
-    sheet.add_child(_build_quarry_row(band, herd))
-    if _compose.party_quarry_id() == "":
-        # Visible-and-disabled-with-its-reason — the herd this raid was aimed at has left the snapshot.
-        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_DENY_PREY_HINT))
-        var blocked := Button.new()
-        blocked.text = String(SourceForecast.DENIAL_VERDICTS[
-            SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["button"])
-        blocked.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        blocked.disabled = true
-        blocked.tooltip_text = HudComposeVocab.COMPOSE_DENY_PREY_HINT
-        HudStyle.apply_button(blocked, "ghost")
-        sheet.add_child(blocked)
-        return
     # **THE PARTY IS CAPPED BY THE BAND'S OWN IDLE WORKERS, AND BY NOTHING ELSE.** There is
     # deliberately no `expedition_useful_cap` twin here: that cap exists because a hunting raid's
     # delivered payload PLATEAUS once the herd's surplus binds, and a denial raid has no payload to
-    # plateau. More hands always break the herd sooner, which is the whole lever this form offers.
-    #
-    # **`max_expedition_party_size` IS NOT A RULES CAP AND MUST NOT BE APPLIED HERE.** It echoed how far
-    # the retired pre-launch estimate tables had been sampled, and nothing in the client reads it any
-    # more: the sim answers the party this sheet composed, over a search bounded by the band's own idle
-    # workforce (`max_party_workers`), and it holds no rules cap on any of the three launch verbs. The
-    # client's own clamp was the last thing enforcing one — a band with 16 idle workers was held at 8
-    # while this very sheet told it to send more hunters. All three launch forms read the supply the
-    # same way now, which is why the `_scout_party_max` helper no longer exists.
+    # plateau. `max_expedition_party_size` is not a rules cap and nothing here reads it.
     var party_max := idle
-    # **SEEDED ON THE SIM'S OWN REQUIREMENT, ONCE PER QUARRY.** Below the reply's `party_needed` a raid
-    # accomplishes literally nothing however long it runs, and nothing else on the sheet said which
-    # number crossed that line — so the stepper opens there rather than on a guess. The one-shot is
-    # the hunt form's `arm_party_autofill` (armed by `TargetingController.choose_quarry`, the ONE
-    # adoption of a quarry on either route), so a manual −/+ tick survives every later rerender.
-    #
-    # **NEVER SEEDED TO 0.** `DENIAL_PARTY_NEEDED_NONE` means the sim quotes no party that drives this
-    # herd down at all — it is not "send nobody" — so the count is left where it was and the verdict
-    # line carries the answer. And the clamp to `party_max` is deliberate: a requirement ABOVE the
-    # band's idle workers opens on the most it can field, which is honest, because the sheet shows
-    # both numbers and the verdict still says it is not enough.
-    # **THE QUESTION IS COMPOSED BEFORE THE STEPPER, because the stepper's SEED is part of the
-    # answer.** The kit row is mounted below (a kit describes the party, so it reads under it), but the
-    # kit is resolved here so the ask can carry it — resolving it twice is how the sheet would come to
-    # ask about one kit and render another.
-    var deny_kits := _band_labor.kits()
-    var deny_default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
-    # **RESOLVED AGAINST THE QUARRY, exactly as the row below it is mounted.** `resolve_selection`
-    # skips a kit this animal withholds, so asking without the herd can settle on a kit the picker
-    # then greys out — the sheet would ask the sim about one kit and offer another.
-    var deny_kit_id := KitRoster.resolve_selection(deny_kits, KitRoster.JOB_HUNT, deny_default_kit,
-        _compose.party_kit_id(), herd, HudComposeVocab.BARE_FORECAST_PREFIX)
-    _compose.set_party_kit_id(deny_kit_id)
-    var deny_view := _denial_forecast_view(band, herd, deny_kit_id, _send_expedition_count, idle)
-    var deny_answer: Dictionary = deny_view["answer"]
-    var deny_ready := String(deny_view["state"]) == ForecastQuery.STATE_READY
-    var party_needed := SourceForecast.denial_party_needed(deny_answer)
-    # **THE SEED WAITS FOR THE ANSWER IT IS MADE OF** — `party_needed` is the reply's, and the render
-    # that ARMS the one-shot (adopting a quarry, opening the sheet) is the render that has just asked.
-    # Spending it there consumed the seed against a `party_needed` of 0 and the sheet opened on the
-    # stepper's floor instead of on the party the sim quotes. `ForecastQuery.answer_settled` holds the
-    # rule; a refusal counts as settled, so a dead socket cannot leave the seed armed for the act.
-    #
-    # **THIS IS THE SEAM THAT CAN WAIT, AND THE TWO HUNT SHEETS ARE NOT.** A requirement is not a cap:
-    # nothing below re-applies it, so a seed spent early is simply lost, where a hunt fill is re-clamped
-    # to the cap every render and converges anyway. Waiting is safe here because the party stepper never
-    # sits at 0 (`HudConst.WORKER_STEP` is its floor and its initial value), so the question is always
-    # asked and the answer always settles — which is exactly the condition a hunt sheet cannot meet.
-    if ForecastQuery.answer_settled(deny_view) and _compose.consume_party_autofill():
-        if party_needed > SourceForecast.DENIAL_PARTY_NEEDED_NONE:
-            _send_expedition_count = clampi(party_needed, HudConst.WORKER_STEP, party_max)
     _send_expedition_count = clampi(_send_expedition_count, HudConst.WORKER_STEP, party_max)
     sheet.add_child(HudWidgets.build_party_stepper_row(_send_expedition_count, party_max,
         func(n: int) -> void:
             _send_expedition_count = clampi(n, HudConst.WORKER_STEP, party_max)
             rerender()))
     sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_OF_IDLE_FORMAT % idle))
-    var quarry_name := SourceForecast.herd_display_name(herd)
     # **THE KIT, DIRECTLY UNDER THE PARTY IT DESCRIBES.** It is the only order this closed-grammar
-    # mission still has to give besides the party size, and it moves every figure below it — a `none`
-    # raid against a defended species has an effective attack of ZERO and no party size works at all.
-    var kits := deny_kits
-    var kit_id := deny_kit_id
-    # **A DENIAL RAID IS STILL A FIGHT, so the offer test applies to it unchanged.** Erasing a herd
-    # you cannot hurt is not a mission — it is the same zero take with a different name on it, so the
-    # quarry and its forecast prefix ride through to `KitRoster.kit_offer`'s greying exactly as they
-    # do on the hunt form.
+    # mission has to give besides the party size and the herd. No quarry is known yet, so nothing is
+    # withheld from the list; the combat gate is the hover's to state once a herd is under the pointer.
+    var kits := _band_labor.kits()
+    var deny_default_kit := _band_labor.default_kit_id(KitRoster.JOB_HUNT)
+    var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_HUNT, deny_default_kit,
+        _compose.party_kit_id())
+    _compose.set_party_kit_id(kit_id)
     _mount_kit_row(sheet, kits, KitRoster.JOB_HUNT, kit_id, deny_default_kit, band,
         func(picked: String) -> void:
             _compose.set_party_kit_id(picked)
             rerender(),
-        herd, HudComposeVocab.BARE_FORECAST_PREFIX, _send_expedition_count)
-    var confirm := Button.new()
-    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    confirm.set_meta(HudWidgets.SEND_DENIAL_CONFIRM_META, true)
-    var reason := ""
-    if not deny_ready:
-        # **NO ANSWER YET, OR NONE COMING** — where the kit-mismatch apology stood. What survives is the
-        # combat GATE, composed from wire terms and therefore honest with no reply at all, plus the
-        # line saying whether we are waiting or have failed. The send stays live and plainly styled:
-        # the raid launches; we simply cannot say yet how long it takes.
-        _mount_kit_gate_line(sheet, kits, kit_id, band, herd, quarry_name)
-        sheet.add_child(HudWidgets.alloc_hint_label(
-            HudComposeVocab.DENIAL_FORECAST_PENDING if String(deny_view["state"]) == ForecastQuery.STATE_PENDING
-            else HudComposeVocab.FORECAST_FAILED_FORMAT % String(deny_view["error"])))
-        SourceForecast.style_send_denial_button(confirm, {}, false)
-    else:
-        # THE COLLAPSE VERDICT — the reply's row for this party size, on the clock the player is on.
-        # **The band and the grid pair are passed for the OUTBOUND WALK**: the row counts raiding
-        # turns, and a verdict quoting bare raiding turns would name a shorter span than the trip the
-        # party actually walks.
-        var forecast := SourceForecast.denial_forecast(herd, deny_answer.get("at_composed", {}),
-            band, _band_labor.grid_width(), _band_labor.wrap_horizontal())
-        var verdict := SourceForecast.denial_verdict_bbcode(forecast, quarry_name)
-        if verdict != "":
-            sheet.add_child(HudWidgets.forecast_label(verdict))
-            # The caveat rides under the verdict WHENEVER THERE IS A NUMBER TO CAVEAT — the band is an
-            # integral over many stochastic draws and a lucky run really can finish sooner than the
-            # reported low. A verdict with no turn count (a repelled party, an unbounded horizon) has
-            # nothing for it to qualify, and a caveat about an absent number reads as one that is there.
-            if SourceForecast.denial_turns_phrase(forecast) != "":
-                sheet.add_child(HudWidgets.alloc_hint_label(SourceForecast.DENIAL_ESTIMATE_CAVEAT))
-        # …and the take beneath it: what the raid kills, what little it hauls, and what it leaves on
-        # the range. Quiet ink — the waste IS the mission, not a warning about it.
-        var take := SourceForecast.denial_take_bbcode(forecast, quarry_name)
-        if take != "":
-            sheet.add_child(HudWidgets.forecast_label(take))
-        # **THE SHORT-HANDED SENTENCE SUPERSEDES THE REFUSAL, it does not join it.** Both name the
-        # party the sim quotes (one reading, `denial_party_needed`), so printing the pair would state
-        # the requirement twice; the short-handed form also says what the band actually has.
-        var short_handed := SourceForecast.denial_is_short_handed(party_needed, idle)
-        reason = SourceForecast.denial_short_handed_reason(herd, party_needed, idle)
-        if reason == "":
-            reason = SourceForecast.denial_refusal_reason(forecast, herd, party_needed)
-        if reason != "":
-            sheet.add_child(HudWidgets.alloc_hint_label(reason))
-        # The button carries the verdict, and disables in EXACTLY ONE case — a band that cannot field
-        # the party this herd requires at all. A party the player CHOSE to under-size still launches:
-        # it works the herd until recalled, so that case warns and the player is trusted.
-        SourceForecast.style_send_denial_button(confirm, forecast, short_handed)
-    confirm.tooltip_text = reason if reason != "" else HudComposeVocab.SEND_DENIAL_RAID_HINT
-    var quarry_id := _compose.party_quarry_id()
-    confirm.pressed.connect(func() -> void:
-        emit_signal("send_denial_raid_requested", {
-            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-            "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
-            "party_workers": _send_expedition_count,
-            "fauna_id": quarry_id,
-            "fauna_label": quarry_name,
-            # The party's kit, and the job default `Main` omits the `kit <id>` token for — the only
-            # order the four-token grammar admits beyond the two it already carries.
-            "kit_id": kit_id,
-            "default_kit_id": deny_default_kit,
-        })
-        close_verb_form())
-    sheet.add_child(confirm)
+        {}, HudComposeVocab.BARE_FORECAST_PREFIX, _send_expedition_count)
+    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.SEND_DENIAL_RAID_HINT))
+    var workers := _send_expedition_count
+    sheet.add_child(_build_verb_send(HudComposeVocab.COMPOSE_MISSION_DENY,
+        String(SourceForecast.DENIAL_VERDICTS[SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["button"]),
+        HudComposeVocab.SEND_DENIAL_RAID_HINT, HudWidgets.SEND_DENIAL_CONFIRM_META,
+        func() -> void:
+            _targeting.begin_pick_quarry(band, HudComposeVocab.COMPOSE_MISSION_DENY,
+                func(target: Dictionary) -> String:
+                    return _commit_denial(band, target.get(TargetingController.PICK_HERD_KEY, {}),
+                        workers, kit_id, deny_default_kit, idle),
+                func(tile_info: Dictionary) -> String:
+                    return _deny_hover_detail(band, tile_info, workers, kit_id, idle))))
+
+## **THE DENY CLICK COMMITS** — `send_denial_raid` for the herd the pick resolved, with the party and kit
+## the sheet captured. Answers the refusal to post instead, and sends nothing, in the ONE case the old
+## sheet disabled its Send for: a band that cannot field the party this herd requires at all
+## (`SourceForecast.denial_is_short_handed`). A party the player CHOSE to under-size still launches — it
+## works the herd until recalled — so that case is the banner's to warn about and the click's to allow.
+func _commit_denial(band: Dictionary, herd: Dictionary, workers: int, kit_id: String,
+        default_kit: String, idle: int) -> String:
+    var herd_id := String(herd.get("id", "")).strip_edges()
+    if herd_id == "":
+        return HudComposeVocab.COMPOSE_DENY_PREY_HINT
+    var view := _denial_forecast_view(band, herd, kit_id, workers, idle)
+    if String(view.get("state", "")) == ForecastQuery.STATE_READY:
+        var needed := SourceForecast.denial_party_needed(view.get("answer", {}))
+        if SourceForecast.denial_is_short_handed(needed, idle):
+            return SourceForecast.denial_short_handed_reason(herd, needed, idle)
+    emit_signal("send_denial_raid_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "party_workers": workers,
+        "fauna_id": herd_id,
+        "fauna_label": SourceForecast.herd_display_name(herd),
+        # The party's kit, and the job default `Main` omits the `kit <id>` token for — the only order
+        # the four-token grammar admits beyond the two it already carries.
+        "kit_id": kit_id,
+        "default_kit_id": default_kit,
+    })
+    close_verb_form()
+    return TargetingController.PICK_COMMITTED
+
+## **WHAT THE DENY BANNER SAYS OVER A HEX** — `<herd> · <verdict>`, or `""` (the base prompt) where no
+## eligible herd stands. The verdict is the collapse forecast the sim answers for THIS party, kit and
+## herd (`_denial_forecast_view`, a query on the command socket, idempotent on its key — so hovering a
+## herd twice asks once, and the answer lands through the same `answered` edge that re-renders the
+## sheet). Until it lands the sheet's own pending wording stands in. A hex holding several eligible
+## herds names the first and counts the rest, because the click opens the chooser that tells them apart.
+func _deny_hover_detail(band: Dictionary, tile_info: Dictionary, workers: int, kit_id: String,
+        idle: int) -> String:
+    var candidates := _targeting.eligible_quarries_on_tile(band, int(tile_info.get("x", -1)),
+        int(tile_info.get("y", -1)), HudComposeVocab.COMPOSE_MISSION_DENY)
+    if candidates.is_empty():
+        return ""
+    var herd: Dictionary = candidates[0]
+    var herd_name := SourceForecast.herd_display_name(herd)
+    var subject := herd_name
+    if candidates.size() > 1:
+        subject = HudComposeVocab.VERB_HOVER_MORE_FORMAT % [herd_name, candidates.size() - 1]
+    var view := _denial_forecast_view(band, herd, kit_id, workers, idle)
+    var state := String(view.get("state", ForecastQuery.STATE_PENDING))
+    var line := HudComposeVocab.DENIAL_FORECAST_PENDING
+    if state == ForecastQuery.STATE_FAILED:
+        line = HudComposeVocab.FORECAST_FAILED_FORMAT % String(view.get("error", ""))
+    elif state == ForecastQuery.STATE_READY:
+        var answer: Dictionary = view.get("answer", {})
+        var needed := SourceForecast.denial_party_needed(answer)
+        line = SourceForecast.denial_short_handed_reason(herd, needed, idle)
+        if line == "":
+            line = SourceForecast.denial_verdict_text(SourceForecast.denial_forecast(herd,
+                answer.get("at_composed", {}), band, _band_labor.grid_width(),
+                _band_labor.wrap_horizontal()), herd_name)
+    return HudComposeVocab.VERB_HOVER_DETAIL_FORMAT % [subject, line]
 
 ## **THE SHIPMENT FORM** (arc #527, issue #517): DESTINATION → PARTY → CARGO → the mass meter → send.
 ##
@@ -8723,28 +8655,15 @@ func _fill_denial_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: in
 ## pack space is a property of the goods, not of who is carrying them.
 func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int) -> void:
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
-    var ties := _band_labor.connections_for_band(band_id)
-    sheet.add_child(_build_destination_row(ties))
-    if ties.is_empty():
-        # Visible-and-disabled-with-its-reason, the hunt form's own convention for a form whose first
-        # question has no answer yet. The sentence says how a tie FORMS, because that is the action
-        # the player has to take and no control on this sheet can take it for them.
+    var live_ties := _band_labor.connections_for_band(band_id).filter(
+        func(tie: Variant) -> bool: return HudBandLaborState.tie_is_live(tie as Dictionary))
+    if live_ties.is_empty():
+        # Visible-and-disabled-with-its-reason: a shipment needs a band to go to, and a band with no
+        # live tie has nobody the pick could accept. The sentence says how a tie FORMS, because that is
+        # the action the player has to take and no control on this sheet can take it for them.
         sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_DESTINATION_NO_TIES))
-        sheet.add_child(_blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON,
-            HudComposeVocab.COMPOSE_DESTINATION_NO_TIES))
+        sheet.add_child(_blocked_trade_send(HudComposeVocab.COMPOSE_DESTINATION_NO_TIES))
         return
-    # Re-resolve the chosen tie LIVE each render, the hunt form's rule: a tie decays, and a band that
-    # was a destination when the sheet opened can be parked by the time it is sent. A form rendered
-    # against a stale choice would quote a walk to a band nothing can flow to.
-    var tie := _live_trade_tie(ties)
-    if tie.is_empty():
-        # The destination was a live tie when it was picked; it has parked (or been reaped) since.
-        sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON))
-        sheet.add_child(_blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON,
-            HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON))
-        return
-    for line in _trade_destination_notes(band, tie):
-        sheet.add_child(HudWidgets.alloc_hint_label(line))
     # **THE PARTY IS THE CAP'S OTHER TERM**, so it is settled before the manifest is priced — the
     # "resolve the cap above the readout" ordering all three compose sheets follow. Its ceiling is the
     # band's IDLE WORKERS and nothing else: the sim carries no rules cap on party size, and a
@@ -8760,8 +8679,7 @@ func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int
     var rows := _trade_cargo_rows(band)
     if rows.is_empty():
         sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.COMPOSE_CARGO_NO_STORES))
-        sheet.add_child(_blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON,
-            HudComposeVocab.COMPOSE_CARGO_NO_STORES))
+        sheet.add_child(_blocked_trade_send(HudComposeVocab.COMPOSE_CARGO_NO_STORES))
         return
     for row_variant in rows:
         # The WHOLE row list rides along, because a row's `Max` is bounded by what the OTHER rows
@@ -8777,33 +8695,71 @@ func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int
         reason = HudComposeVocab.COMPOSE_CARGO_OVER_CAP_REASON
     if reason != "":
         sheet.add_child(HudWidgets.alloc_hint_label(reason))
-        sheet.add_child(_blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON, reason))
+        sheet.add_child(_blocked_trade_send(reason))
         return
-    var confirm := Button.new()
-    confirm.text = HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON
-    confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    confirm.tooltip_text = HudComposeVocab.SEND_TRADE_EXPEDITION_HINT
-    confirm.set_meta(HudWidgets.SEND_TRADE_CONFIRM_META, true)
-    HudStyle.apply_button(confirm, "primary")
-    var destination_band := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
-    var destination_label := _connection_subject_label(tie)
-    confirm.pressed.connect(func() -> void:
-        emit_signal("send_trade_expedition_requested", {
-            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-            "band_id": band_id,
-            "party_workers": _send_expedition_count,
-            # The KEY the command addresses, and beside it the string the feed note renders — the
-            # `fauna_id` / `fauna_label` pairing, for the same reason: a raw id is a database handle.
-            "destination_band_id": destination_band,
-            "destination_label": destination_label,
-            "cargo": _trade_manifest_lines(rows),
-        })
-        close_verb_form())
-    sheet.add_child(confirm)
+    var workers := _send_expedition_count
+    var cargo := _trade_manifest_lines(rows)
+    sheet.add_child(_build_verb_send(HudComposeVocab.COMPOSE_MISSION_TRADE,
+        HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON, HudComposeVocab.SEND_TRADE_EXPEDITION_HINT,
+        HudWidgets.SEND_TRADE_CONFIRM_META,
+        func() -> void:
+            _targeting.begin_verb_pick(band, HudComposeVocab.COMPOSE_MISSION_TRADE,
+                func(target: Dictionary) -> String:
+                    return _commit_trade(band, int(target.get(TargetingController.PICK_DESTINATION_KEY,
+                        HudConst.NO_BAND_ID)), workers, cargo),
+                func(tile_info: Dictionary) -> String:
+                    return _trade_hover_detail(band, tile_info))))
 
-## A send that cannot be pressed, showing its own reason — the "visible and disabled with its reason"
-## convention this zone uses everywhere, in one place because the shipment form reaches it from four
-## different dead ends (no ties, no destination, no stores, an unsendable manifest).
+## **THE TRADE CLICK COMMITS** — `send_trade_expedition` to the tied band the pick resolved, with the
+## party and the manifest the sheet captured.
+func _commit_trade(band: Dictionary, destination: int, workers: int, cargo: Array) -> String:
+    var label := _band_labor.band_label_for_id(destination)
+    for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
+        var tie: Dictionary = tie_variant as Dictionary
+        if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) == destination:
+            label = _connection_subject_label(tie)
+            break
+    emit_signal("send_trade_expedition_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+        "party_workers": workers,
+        # The KEY the command addresses, and beside it the string the feed note renders — the
+        # `fauna_id` / `fauna_label` pairing, for the same reason: a raw id is a database handle.
+        "destination_band_id": destination,
+        "destination_label": label,
+        "cargo": cargo,
+    })
+    close_verb_form()
+    return TargetingController.PICK_COMMITTED
+
+## **WHAT THE TRADE BANNER SAYS OVER A HEX** — `<destination> · <what is known of where they are>` over a
+## band this one is tied to, the parked reason over a parked tie, and `""` (the base prompt) anywhere
+## else. The sighting is REMEMBERED, never seen (`_trade_destination_notes`), because a connection can
+## only ever grant `Discovered`.
+func _trade_hover_detail(band: Dictionary, tile_info: Dictionary) -> String:
+    var tie := _targeting.tie_at(band, int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
+    if tie.is_empty():
+        return ""
+    var label := _connection_subject_label(tie)
+    if not HudBandLaborState.tie_is_live(tie):
+        return HudComposeVocab.VERB_HOVER_DETAIL_FORMAT % [label,
+            HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON]
+    var notes := _trade_destination_notes(band, tie)
+    if notes.is_empty():
+        return label
+    return HudComposeVocab.VERB_HOVER_DETAIL_FORMAT % [label,
+        HudComposeVocab.VERB_HOVER_JOIN.join(notes)]
+
+## The Trade send when it cannot be pressed, showing its own reason — the "visible and disabled with
+## its reason" convention this zone uses everywhere, in one place because the shipment form reaches it
+## from three dead ends (no live tie, no stores, an unsendable manifest). A pick armed for a manifest
+## that has since become unsendable comes down with it.
+func _blocked_trade_send(reason: String) -> Button:
+    if _targeting.is_verb_pick_armed(HudComposeVocab.COMPOSE_MISSION_TRADE):
+        _targeting.disarm_verb_picks()
+    return _blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON, reason)
+
+## A send that cannot be pressed, showing its own reason.
 func _blocked_send_button(face: String, reason: String) -> Button:
     var blocked := Button.new()
     blocked.text = face
@@ -8813,38 +8769,6 @@ func _blocked_send_button(face: String, reason: String) -> Button:
     blocked.set_meta(HudWidgets.SEND_TRADE_CONFIRM_META, true)
     HudStyle.apply_button(blocked, "ghost")
     return blocked
-
-## The DESTINATION row — READ-ONLY (issue #529). The destination is the Trade verb's target, picked
-## on the map before this sheet opened (`TargetingController.trade_destination_at`), so the row states
-## it rather than offering a list: a second chooser here could name a band other than the one whose
-## drawer the sheet is drawn in. A tie that has PARKED since the pick says so in the row itself — the
-## reason the send below it is blocked.
-func _build_destination_row(ties: Array) -> HBoxContainer:
-    var destination := _compose.verb_destination()
-    var text := _band_labor.band_label_for_id(destination)
-    for tie_variant in ties:
-        var tie: Dictionary = tie_variant as Dictionary
-        if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) != destination:
-            continue
-        text = _connection_subject_label(tie)
-        if not HudBandLaborState.tie_is_live(tie):
-            text = HudComposeVocab.COMPOSE_DESTINATION_ENTRY_PARKED_FORMAT % [
-                text, HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON]
-        break
-    return HudWidgets.build_read_only_field(HudComposeVocab.COMPOSE_FIELD_DESTINATION, text)
-
-## The chosen tie, re-read out of THIS render's rows — `{}` when nothing is chosen or when the choice
-## has since parked or been reaped.
-func _live_trade_tie(ties: Array) -> Dictionary:
-    var destination := _compose.verb_destination()
-    if destination == HudConst.NO_BAND_ID:
-        return {}
-    for tie_variant in ties:
-        var tie: Dictionary = tie_variant as Dictionary
-        if int(tie.get("subject_band_id", HudConst.NO_BAND_ID)) == destination \
-                and HudBandLaborState.tie_is_live(tie):
-            return tie
-    return {}
 
 ## **WHAT IS KNOWN ABOUT WHERE THEY ARE, WORDED AS SOMETHING REMEMBERED.** One line for the sighting
 ## the tie recorded, and — only where the band publishes a move rate and both tiles are known — one
@@ -9203,7 +9127,7 @@ func _on_cargo_field_input(event: InputEvent, field: LineEdit, amount: float) ->
 
 ## Re-take the keyboard on the row that had it, restoring the half-typed text and the caret. Deferred
 ## to `tree_entered` because a `Control` cannot hold focus before it is in the tree, and the row is
-## built detached and mounted afterwards (into the target's drawer).
+## built detached and mounted afterwards (into the band's drawer).
 func _restore_cargo_field_focus(field: LineEdit, key: String) -> void:
     if _trade_cargo_focus_key != key:
         return
@@ -9459,9 +9383,9 @@ func _trade_manifest_lines(rows: Array) -> Array:
         })
     return lines
 
-## Empty the manifest. **It goes with the verb**, for `_clear_party_quarry`'s reason: cargo loaded for
-## a shipment the player cancelled is not cargo they asked to send now, and the next composing act
-## would inherit it without ever being shown.
+## Empty the manifest. **It goes with the verb**: cargo loaded for a shipment the player cancelled is
+## not cargo they asked to send now, and the next composing act would inherit it without ever being
+## shown.
 func _clear_trade_manifest() -> void:
     _trade_food = 0.0
     _trade_fodder = 0.0
@@ -9470,79 +9394,6 @@ func _clear_trade_manifest() -> void:
     # named would have the NEXT composition open with a field grabbing the keyboard unasked.
     _forget_cargo_field_focus()
 
-## Drop the composed quarry AND the fill target it was counted in. **They are one act** — a target is
-## a count of a SPECIFIC herd's animals, so a target outliving its quarry would be handed to the next
-## one, where `raid_load` answers a target at or above capacity by returning the pack — which is why
-## the pairing now lives inside `ComposeState.clear_party_quarry` rather than being spelled out here:
-## the map re-pick sets a quarry WITHOUT reaching this function, and did carry the stale target over.
-## `ComposeState.seed_hunt` makes the same pairing on the herd drawer's side.
-func _clear_party_quarry() -> void:
-    _compose.clear_party_quarry()
-
-## The Prey row — READ-ONLY (issue #529). The prey is the Deny verb's target: the player clicked
-## this herd on the map before the sheet opened, and the sheet is drawn in that herd's own drawer, so
-## the row STATES it — the species' bundled art where it has any, its emoji where it does not — rather
-## than offering a re-pick that could aim the sheet at a herd somewhere else.
-##
-## The one choice it still offers is the `⋯` chooser at the end, and only where the hex genuinely holds
-## more than one eligible herd: the map click names a HEX, so which of its herds the raid is for is a
-## question the click cannot answer.
-func _build_quarry_row(band: Dictionary, herd: Dictionary) -> HBoxContainer:
-    var mission := _compose.verb_mission()
-    var name_text := SourceForecast.herd_display_name(herd) if not herd.is_empty() else ""
-    var sprite := FaunaSprites.for_herd(name_text) if name_text != "" else null
-    var face := name_text if sprite != null \
-        else HudComposeVocab.COMPOSE_PREY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text]
-    var row := HudWidgets.build_read_only_field(HudComposeVocab.COMPOSE_FIELD_PREY, face, sprite,
-        HudComposeVocab.COMPOSE_PREY_ICON_MAX_WIDTH)
-    # **THE HEX MAY HOLD MORE THAN ONE HERD, AND THE MAP CANNOT SAY WHICH** — `try_dispatch` is handed
-    # a TILE, so a rabbit warren sharing a hex with a wolf pack resolves to whichever the snapshot
-    # lists first. The chooser is the way to the others, and
-    # it lives HERE rather than at the click because the choice is made against the forecast: the
-    # collapse verdict, the raid payload and the useful party size are all functions of the herd, and
-    # they exist only once the form is rendered. Absent with one candidate, so the common case renders
-    # exactly as it did.
-    if not herd.is_empty():
-        var candidates := _targeting.eligible_quarries_on_tile(
-            band, int(herd.get("x", -1)), int(herd.get("y", -1)), mission)
-        # **THE CHOOSER'S WIDTH COMES OUT OF THE NAME, NOT OUT OF THE KEY** — `build_field_key` takes a
-        # DECLARED width and does not expand, so the name is the row's only expanding child whether the
-        # row has two children or three.
-        if candidates.size() > 1:
-            row.add_child(_build_quarry_choices_menu(band, herd, candidates, mission))
-    return row
-
-## The quarry chooser: the `⋯` menu the zone heads already use, so the panel keeps ONE "there are
-## choices here" glyph, with the candidates as radio-check items — a menu of plain items could not say
-## which herd is the current one. A pick routes through `TargetingController.choose_quarry`, the SAME
-## adoption the map click makes, so switching herds here and picking one there leave the composition
-## in one state — which is also why `mission` is threaded down to it rather than defaulted: the
-## adoption re-runs the eligibility test, and under denial the candidates include herds a hunt's rule
-## would refuse.
-func _build_quarry_choices_menu(band: Dictionary, chosen: Dictionary,
-        candidates: Array, mission: String) -> MenuButton:
-    var chosen_id := String(chosen.get("id", ""))
-    var entries: Array = []
-    for candidate_variant in candidates:
-        var candidate: Dictionary = candidate_variant as Dictionary
-        var name_text := SourceForecast.herd_display_name(candidate)
-        # The item names the herd exactly as the picked-quarry button does — bundled ART where the
-        # species has any, the emoji only where it does not — so the row and the menu cannot describe
-        # one herd two ways, and two species sharing an emoji (Unicode ships ONE deer) stay apart.
-        var sprite := FaunaSprites.for_herd(name_text)
-        var entry := {
-            "label": name_text if sprite != null \
-                else HudComposeVocab.COMPOSE_PREY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text],
-            HudWidgets.MENU_ENTRY_CHECKED: String(candidate.get("id", "")) == chosen_id,
-            "on_pick": func() -> void: _targeting.choose_quarry(band, candidate, mission),
-        }
-        if sprite != null:
-            entry[HudWidgets.MENU_ENTRY_ICON] = sprite
-        entries.append(entry)
-    var menu := HudWidgets.build_section_menu(entries,
-        HudComposeVocab.COMPOSE_PREY_CHOICES_TOOLTIP)
-    menu.set_meta(HudWidgets.QUARRY_CHOICES_META, true)
-    return menu
 
 # ---- the pending BAND VERB (issue #529) -------------------------------------
 
@@ -9588,11 +9439,10 @@ func verb_enabled(mission: String, band: Dictionary) -> bool:
 ## each surface is about. A verb pressed over a pending one replaces it.
 ##
 ## - **Move** arms the destination pick; the click is the order (`TargetingController.begin_move_band`).
-## - **Scout / Trade** open the verb ARMED and arm the tile pick; the click writes the target and the
-##   sheet opens in that tile's drawer.
-## - **Deny** opens the verb and arms the quarry pick; the herd click does the same.
-## - **Split** has no target: it opens on the band's own hex, and selects the band there through the
-##   ordinary band-selection path so the sheet shows in that band's drawer.
+## - **Scout / Deny / Trade / Split** open the verb's SHEET on the band's own hex: the band is selected
+##   there through the ordinary band-selection path, so the sheet shows in that band's drawer. The
+##   target, where the verb has one, is the sheet's LAST step — its send arms the map pick
+##   (`_build_verb_send`) and the valid click commits.
 func dispatch_verb(mission: String, band: Dictionary) -> void:
     if not verb_enabled(mission, band):
         return
@@ -9606,40 +9456,26 @@ func dispatch_verb(mission: String, band: Dictionary) -> void:
         rerender()
         return
     _compose.open_verb(mission, int(live.get("entity", ComposeState.NO_BAND_ENTITY)),
-        int(live.get("band_id", HudConst.NO_BAND_ID)))
-    match mission:
-        HudComposeVocab.COMPOSE_MISSION_SCOUT, HudComposeVocab.COMPOSE_MISSION_TRADE:
-            _targeting.begin_verb_pick(live, mission)
-        HudComposeVocab.COMPOSE_MISSION_DENY:
-            # **THE DENIAL SHEET OPENS ON THE PARTY THE SIM QUOTES**, so the seed is armed as the verb
-            # opens as well as when a quarry is adopted — the same one-shot either way
-            # (`consume_party_autofill`), so a manual −/+ tick survives every rerender after it.
-            _compose.arm_party_autofill()
-            _targeting.begin_pick_quarry(live, mission)
-        HudComposeVocab.COMPOSE_MISSION_SPLIT:
-            _compose.set_verb_target(SourceForecast.band_tile(live))
-            _select_band_on_map(live)
+        int(live.get("band_id", HudConst.NO_BAND_ID)), SourceForecast.band_tile(live))
+    _select_band_on_map(live)
     rerender()
 
-## Is a verb pending (armed or open)? The drawer asks it to keep a player-band selection from taking the
-## panel's subject away from the band the verb is FOR — see `holds_panel_subject`.
+## Is a verb pending? The drawer asks it to keep a player-band selection from taking the panel's
+## subject away from the band the verb is FOR — see `holds_panel_subject`.
 func has_pending_verb() -> bool:
     return _compose.has_verb()
 
-## **WHILE A VERB IS PENDING THE PANEL STAYS ON THE BAND IT IS FOR.** Picking a Trade destination
-## selects another of the player's own bands, and a Scout target can be a hex one stands on; selecting a
-## player band normally makes it the panel's subject, which would put a DIFFERENT band on the panel
-## while the sheet in the drawer is composing for this one. So the drawer asks this before re-rendering
-## the panel onto its selection.
+## **WHILE A VERB IS PENDING THE PANEL STAYS ON THE BAND IT IS FOR**, so a selection made elsewhere while
+## its sheet is open cannot put a different band on the panel under a sheet composing for this one.
 func holds_panel_subject() -> bool:
     return _compose.has_verb() \
         and _compose.verb_band_entity() == int(_band_labor.panel_band().get("entity", -1))
 
-## Is a verb OPEN — its target chosen, so its sheet shows in that target's drawer?
+## Is a verb OPEN — its sheet showing in its band's drawer?
 func verb_is_open() -> bool:
     return _compose.verb_has_target()
 
-## The hex the open verb's sheet is anchored to (`ComposeState.VERB_NO_TARGET` while armed).
+## The hex the open verb's sheet is anchored to — its band's own.
 func verb_target() -> Vector2i:
     return _compose.verb_target()
 
@@ -9650,10 +9486,9 @@ func verb_band() -> Dictionary:
     return _band_labor.player_band_by_entity(_compose.verb_band_entity())
 
 ## **THE SELECTION MOVED — does the pending sheet survive it?** Called by every player-made selection
-## change (`HudLayer`'s `show_*` / `clear_selection`), never by the per-snapshot restate. An OPEN verb is
-## anchored to its target's hex, so a selection landing anywhere else drops it — the sheet belongs to
-## the target it was aimed at, and following the player to another tile would aim it at nothing. An
-## ARMED verb is left alone: the click that selects is the click that picks.
+## change (`HudLayer`'s `show_*` / `clear_selection`), never by the per-snapshot restate. The sheet is
+## anchored to its band's hex, so a selection landing anywhere else drops it, and its armed pick with
+## it. A targeting click never reaches here: it commits without selecting (`MapView.targeting_clicked`).
 func note_selection_tile(tile_info: Dictionary) -> void:
     if not _compose.verb_has_target():
         return
@@ -9665,10 +9500,15 @@ func note_selection_tile(tile_info: Dictionary) -> void:
     _reset_verb_state()
     _targeting.disarm_verb_picks()
 
-## **BUILD THE PENDING VERB'S SHEET** for the drawer that is showing its target — the sheet the verb's
-## mission names, under a line stating the verb and the band that carries it out. `null` when no verb
-## is open or its band has gone. The drawer decides WHETHER this selection is the target; this only
-## builds.
+## The player backed out of the verb's armed pick (Esc, right-click, the banner's Cancel). **Only the
+## pick is cancelled**: the sheet stays open with its values and its send un-armed, and a second Esc
+## closes it (`Main.escape_claimant`'s `ESC_VERB_FORM`).
+func on_verb_pick_cancelled() -> void:
+    rerender()
+
+## **BUILD THE PENDING VERB'S SHEET** for the drawer showing its band — the sheet the verb's mission
+## names, under a line stating the verb and the band that carries it out. `null` when no verb is open or
+## its band has gone. The drawer decides WHETHER this selection is the band; this only builds.
 func build_verb_form() -> Control:
     if not _compose.verb_has_target():
         return null
@@ -9717,7 +9557,7 @@ func _reset_verb_state() -> void:
     _compose.clear_verb()
     _split_workers = 1
     _send_expedition_count = HudConst.WORKER_STEP
-    _clear_party_quarry()
+    _compose.set_party_kit_id(KitRoster.NO_KIT_ID)
     # …and the manifest with it: goods loaded for a shipment the player cancelled are not goods they
     # asked to send. `_clear_trade_manifest` carries the pairing rule.
     _clear_trade_manifest()

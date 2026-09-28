@@ -791,9 +791,9 @@ const BARE_FORECAST_PREFIX := ""
 
 const FORAGE_FORECAST_PREFIX := "patch_"
 
-## The scouting sheet opens on a tile the player has ALREADY picked (issue #529), so neither the
-## hint nor the button asks for a second pick: the send is the last step, not a step before a map click.
-const SEND_EXPEDITION_HINT := "Detach a party to scout toward this tile."
+## The scouting sheet's send ARMS the tile pick (issue #529), so the hint says where the order goes:
+## to the tile the player clicks next.
+const SEND_EXPEDITION_HINT := "Detach a party to scout toward the tile you click next."
 
 const SEND_EXPEDITION_BUTTON := "Send scouting party"
 
@@ -1222,10 +1222,27 @@ static func verb_for_id(id: StringName) -> Dictionary:
             return verb
     return {}
 
-## The line over a verb's sheet in the target's drawer: the verb, and the band that carries it out.
+## The line over a verb's sheet in its band's drawer: the verb, and the band that carries it out.
 ## **The band is stated, never offered** — it was chosen when the verb was pressed, so the sheet names
 ## it as text rather than as a picker.
 const VERB_FORM_HEADER_FORMAT := "%s · from %s"
+## The verb sheet's send, at rest and while its map pick is armed (`HudStyle.apply_button` variants) —
+## `armed` is the HUD's own face for "an action awaiting its target or its cancellation".
+const VERB_SEND_STYLE := "primary"
+const VERB_SEND_ARMED_STYLE := "armed"
+## **THE HOVER BANNER** (issue #529): over a hex a click would commit to, an armed Deny / Trade pick's
+## banner reads `DENY Saltmarch → Wild Boar · <verdict>` — the arrow, then the target and what is known
+## about it, joined by the middle dot. A hex holding several eligible herds names the first and counts
+## the rest, because the click opens the chooser that tells them apart.
+const VERB_HOVER_ARROW := "→"
+const VERB_HOVER_JOIN := " · "
+const VERB_HOVER_DETAIL_FORMAT := "%s · %s"
+const VERB_HOVER_MORE_FORMAT := "%s +%d more"
+## The Deny pick's herd chooser's node name — a `PopupMenu` at the pointer, opened by a click on a hex
+## holding more than one eligible herd (`TargetingController._open_quarry_chooser`).
+const QUARRY_CHOOSER_NAME := "QuarryChooser"
+## A chooser entry for a species with no bundled art: its emoji, then its name.
+const QUARRY_CHOOSER_LABEL_FORMAT := "%s %s"
 
 ## A shipment pick that landed on no band this one is tied to. Said, and the pick stays armed —
 ## the prey pick's rule for a click on a hex with no huntable herd.
@@ -1240,24 +1257,18 @@ const SEND_TRADE_EXPEDITION_HINT := "Detach a party to carry food and materials 
 
 const SEND_TRADE_EXPEDITION_BUTTON := "Send shipment"
 
-## The destination row's key. `To` rather than `Destination`: the row is one of the field stack that
-## `COMPOSE_FIELD_KEY_WIDTH` (64px, sized for the longest key) lines up, and the short word leaves the
-## destination its whole share of the sheet's width.
-const COMPOSE_FIELD_DESTINATION := "To"
-
-## **WHY THE LIST IS EMPTY, WHEN IT IS.** A band that has met nobody holds no ties, and a picker with
-## no entries says nothing at all — so the sheet states the gate in the sim's own terms rather than
-## rendering a dead control.
+## **WHY A SHIPMENT CANNOT BE ARMED, WHEN IT CANNOT.** A band holding no live tie has nobody the pick
+## could accept, so the sheet states the gate in the sim's own terms rather than arming a pick that
+## refuses every click.
 const COMPOSE_DESTINATION_NO_TIES := "This band knows no other band yet. Ties form by standing where you can see each other."
 
 
-## **A PARKED TIE IS SHOWN, DISABLED, WITH THIS AS ITS REASON — never hidden.** Strength `0` means
-## *"we know such a people exist and have no current dealings"*, which is a different statement from
-## having never met them, and it is the thing the player has to learn: the TIE is what gates trade,
-## so a destination that has decayed out of reach must be visible decaying rather than absent.
+## **A PARKED TIE IS NAMED, WITH THIS AS ITS REASON — never hidden.** The Trade pick's hover banner
+## states it over a parked tie's band. Strength `0` means *"we know such a people exist and have no
+## current dealings"*, which is a different statement from having never met them, and it is the thing
+## the player has to learn: the TIE is what gates trade.
 const COMPOSE_DESTINATION_PARKED_REASON := "no current tie — nothing can flow"
 
-const COMPOSE_DESTINATION_ENTRY_PARKED_FORMAT := "%s — %s"
 
 ## **THE REMEMBERED POSITION, WORDED AS ONE.** A connection grants `Discovered` and never `Seen`
 ## (`.claude/rules/core_sim/connections.md` → the keystone), so where a band was the last time this
@@ -1435,35 +1446,6 @@ const COMPOSE_FIELD_POLICY := "Policy"
 ## The PREY is the hunt form's FIRST question: the herd sets the useful party size, the per-policy
 ## take and the trip length, so every field below it is unanswerable until it is picked.
 ##
-## ⛔ **THE ROW SAYS `Prey`, NOT `Quarry` (issue #650).** `quarry` is the extraction ladder's own rung
-## (`HudDepositVocab.RUNG_KEY_QUARRY`), the command verb behind it and the word every deposit readout
-## uses, so one word on the hunted animal AND on the pit being dug is a collision a bug report cannot
-## survive. `Prey` also states what the row holds in a word a player reads as hunting on the first
-## pass rather than as mining.
-const COMPOSE_FIELD_PREY := "Prey"
-
-
-const COMPOSE_PREY_LABEL_FORMAT := "%s %s"
-
-# The picked prey's face carries the species' bundled ART where there is any (issue #439), as the
-# Button's own `icon` rather than a glyph in its text. The source PNGs are 256px, which a Button
-# would otherwise reserve in full and blow the compose row's width apart, so the icon is capped
-# through the stock `icon_max_width` theme constant — sized to sit with the button's label rather
-# than to be read on its own, the row already naming the herd in words beside it.
-const COMPOSE_PREY_ICON_MAX_WIDTH := 20
-
-## **A HEX CAN HOLD MORE THAN ONE HERD, AND THE MAP CLICK NAMES ONLY THE HEX.** `try_dispatch` is
-## handed a TILE, so a click on a tile carrying a rabbit warren and a wolf pack can resolve to just
-## one of them and re-clicking resolves to the same one — there was no way to reach the other. The
-## Prey row therefore grows a chooser LISTING the tile's eligible herds, and it appears ONLY
-## when there are two or more: one herd is the common case and it renders exactly as before.
-## It is the `⋯` the zone heads already use, so the panel keeps ONE "there are choices here" glyph.
-## A chooser entry names the herd the same way the picked-prey button does, so the row and the menu
-## cannot describe one herd differently: bundled ART where the species has any (as the item's own
-## icon), else the emoji through `COMPOSE_PREY_LABEL_FORMAT`. Unicode ships ONE deer, so two roster
-## species can share a glyph — which is exactly why the art branch exists in the menu too.
-const COMPOSE_PREY_CHOICES_TOOLTIP := "Another herd shares this hex — choose which one to raid."
-
 ## The refusal when the player picks a herd the band can already work from home. The hunt_reach split
 ## is a rule the map does not spell out, so the refusal is where it gets taught — it names the herd,
 ## the distance, the reach that binds and the local alternative.

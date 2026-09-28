@@ -1318,7 +1318,7 @@ the parties strip's seven-line worst case, which is a HUNT party's.
 - **`Bound for` renders a NAME and never `expeditionDestinationBand`** — the id is the key
   `send_trade_expedition` addresses and must never reach a label. The name comes from
   `HudFormat.expedition_destination_label`, which is **the one resolution the parties-strip row and
-  the Trade sheet's `To` row also use**, so a band cannot be called three things on three surfaces:
+  the Trade pick's hover banner also use**, so a band cannot be called three things on three surfaces:
   - **the sim's published `expeditionDestinationName` when it is non-empty** — it is resolved at
     LAUNCH and carried on the mission, because the destination is precisely the thing a party
     outlives (a band walks away, leaves the viewer's sight, or is gone while the shipment is still

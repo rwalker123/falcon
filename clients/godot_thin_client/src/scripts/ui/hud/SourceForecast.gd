@@ -3510,12 +3510,8 @@ const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on
 # bound, a herd out-growing the whole table), all told apart by the rows' own `outcome` — so the
 # client renders the verdict, never seeds the stepper here, and never invents a figure for the copy.
 const DENIAL_PARTY_NEEDED_NONE := 0
-# **THE SHORT-HANDED FACE — the one state in which this sheet's Send is DISABLED.** Named for the
-# BAND's shortfall rather than for the raid's outcome, because that is what the player has to fix; the
-# `repelled` face beside it ("Send Anyway") would read as an offer the button is refusing to honour.
-const DENIAL_SHORT_HANDED_BUTTON := "Not Enough Hunters"
-# …and the reason beneath it, in the sheet's own hint register, stating BOTH numbers: what the herd
-# requires and what the band actually has. The stepper above it is already sitting at the second.
+# **THE SHORT-HANDED REASON — the one case in which the Deny click commits nothing.** It states BOTH
+# numbers: what the herd requires and what the band actually has.
 const DENIAL_SHORT_HANDED_REASON_FORMAT := "%s needs %d hunters and this band has only %d idle. Free up workers before this raid can break the herd."
 # **`0` MEANS "NOT WITHIN THE HORIZON" ON THAT END, never "immediately".** `Low` is the FEWEST turns
 # — the optimistic draw, where more animals stay and more strikes land — so a positive `low` beside a
@@ -3594,8 +3590,6 @@ const DENIAL_TRAVEL_UNKNOWN := -1
 # the forecast so the `horizon` verdict can say it. `FORECAST_HORIZON_UNKNOWN` (`0`) when the caller had
 # no cohort carrying the lever, in which case the verdict keeps its hedge.
 const DENIAL_HORIZON_TURNS_KEY := "horizon_turns"
-# The caveat, in the panel's own hint register. It is what keeps the band from reading as a guarantee.
-const DENIAL_ESTIMATE_CAVEAT := "An estimate over many raids — the fight is chancy, so a lucky run finishes sooner."
 
 # **THE VERDICT TABLE — one entry per outcome, all four faces of it in ONE place** (the
 # `HUNT_EMPTY_REFUSALS` idiom, and for the same reason: the line, the button and the spelled-out
@@ -3668,23 +3662,6 @@ const DENIAL_VERDICTS := {
     },
 }
 
-# **THE WASTE READOUT — stated, never hidden, and never dressed as a warning** (§3). On a hunt
-# `wasted` is the occasional overflow of an animal too big to haul and wears `HUNT_WASTE_NOTE_FORMAT`'s
-# `⚠`; on a raid it is essentially the whole take, and it is the POINT of the mission. So it is a
-# quiet factual line — what the party kills, the little it hauls home, and what it leaves standing
-# dead on the range — in the aside's own ink rather than amber.
-#
-# **THE WASTE WAS A PAIR AND IS ONE FIGURE AGAIN** (arc #527). Its second half was the trade goods a
-# kill wasted beside its meat; that account is retired and the materials replacing it carry no raid
-# figure, so the line states the FOOD left standing dead on the range and nothing else.
-const DENIAL_TAKE_KILLS_FORMAT := "kills ≈%d %s"
-const DENIAL_TAKE_FOOD_FORMAT := " · brings home %s food"
-## Its MATERIAL twin, one clause per material — ` · brings home 3.20 hide`. The verb is repeated
-## rather than the two accounts sharing one "brings home", because the food clause is optional and a
-## shared verb would strand the materials on a quarry that pays no meat — which is precisely the
-## quarry this clause exists for.
-const DENIAL_TAKE_MATERIAL_FORMAT := " · brings home %s %s"
-const DENIAL_TAKE_LEFT_FORMAT := " · leaves %s on the range"
 # §7.2 — WORKERS ABOVE THE HOLD NUMBER ARE STILL NEVER RELEASED. At-the-floor is the most reversible
 # condition in the model (drop the floor, or let the season move the hold number, and they are wanted
 # again), and this repo only rewrites an assignment for PERMANENT conditions. What changed is that the
@@ -7294,9 +7271,8 @@ static func _denial_lead_turns(forecast: Dictionary) -> int:
     return int(forecast.get("low", DENIAL_TURNS_BEYOND_HORIZON))
 
 ## That figure as a phrase, or `""` when the forecast has no number to give — which is also the gate
-## every caller uses to decide whether a verdict quotes a number at all (`DENIAL_ESTIMATE_CAVEAT`
-## qualifies a figure, so it must not print where there is none). It wears `≈` because the band is a
-## claim about many draws, not a promise about this one.
+## `denial_verdict_text` uses to decide whether a verdict quotes a number at all. It wears `≈` because
+## the band is a claim about many draws, not a promise about this one.
 ##
 ## **IT IS THE LEAD ALONE, NOT THE WHOLE RANGE.** The spread rides `denial_turns_clause`, which is what
 ## keeps "which number leads" from being answerable in two places.
@@ -7403,118 +7379,33 @@ static func denial_verdict_bbcode(forecast: Dictionary, herd_name: String) -> St
         else HudStyle.WARN_HEX
     return "[color=#%s]%s[/color]" % [hex, text]
 
-## **THE WASTE, STATED AND NOT ALARMED ABOUT** — what the raid kills, the little it hauls home, and
-## what it leaves dead on the range. Quiet ink, no `⚠`: on a hunt an unhauled kill is a mistake, on a
-## raid it is the mission. `""` when the forecast has no take to describe.
-static func denial_take_bbcode(forecast: Dictionary, herd_name: String) -> String:
-    if not bool(forecast.get("available", false)):
-        return ""
-    var animals := int(forecast.get("animals", 0))
-    if animals <= 0:
-        return ""
-    var text := DENIAL_TAKE_KILLS_FORMAT % [animals, herd_name]
-    # The food only when the quarry actually pays it — the render-only-when-non-zero rule, so an
-    # inedible quarry's raid states its kills alone rather than a false `0.00 food`.
-    var food := float(forecast.get("food", 0.0))
-    if has_component(food):
-        text += DENIAL_TAKE_FOOD_FORMAT % format_magnitude(food)
-    # …and what it brings home in MATERIALS, one clause per material under the same rule. On an
-    # inedible quarry this is the whole of the haul: the raid's kills used to be all its take line
-    # could state, which read as a mission that destroys and salvages nothing.
-    for row in material_payoff_rows(forecast.get(TRIP_DELIVERED_MATERIAL_KEY, [])):
-        var amount := float(row[MATERIAL_PAYOFF_AMOUNT_KEY])
-        if has_component(amount):
-            text += DENIAL_TAKE_MATERIAL_FORMAT % [
-                format_magnitude(amount), String(row[MATERIAL_PAYOFF_ID_KEY])]
-    # …and the waste under the same rule, so nothing here can render a fabricated `0.00`.
-    var wasted := denial_waste_face(forecast)
-    if wasted != "":
-        text += DENIAL_TAKE_LEFT_FORMAT % wasted
-    return "[color=#%s]%s[/color]" % [HudStyle.INK_DIM_HEX, text]
-
-## **WHAT THE RAID LEAVES ON THE RANGE** — the subject of the take line's waste clause, and the ONE
-## spelling of it, so any second surface that states a raid's waste states it in the same words. `""`
-## when the forecast wastes nothing measurable, which is the caller's signal to render no clause at all
-## rather than an empty one.
-##
-## It renders BARE, the take line's own order and the reading an edible quarry has always had, under
-## the render-only-when-non-zero rule the delivered figure one line above already follows — so a wolf
-## pack (which binds no carry and therefore wastes nothing) renders no clause instead of an
-## honest-looking zero. It stated a second, trade-goods term until arc #527 retired that account.
-static func denial_waste_face(forecast: Dictionary) -> String:
-    var food := float(forecast.get("wasted", 0.0))
-    return format_magnitude(food) if has_component(food) else ""
-
 ## **THE ONE READING OF `DenialRaidForecastReply.party_needed`** — the smallest party the sim quotes whose raid actually
 ## SUCCEEDS in driving this herd past recovery (never a `horizon` row, which only means the projection
-## ran out), `DENIAL_PARTY_NEEDED_NONE` when it quotes none. The stepper's seed and the
-## repelled refusal's count BOTH come through here, so the control and the sentence beside it cannot
-## disagree about the number. It is NOT a cap and may exceed the band's idle workers — that is the
+## ran out), `DENIAL_PARTY_NEEDED_NONE` when it quotes none. The short-handed test and its sentence
+## both come through here, so the refusal and the words beside it cannot disagree about the number. It is NOT a cap and may exceed the band's idle workers — that is the
 ## honest "you need more people than you have", and only the stepper, which knows the band, clamps it.
 static func denial_party_needed(reply: Dictionary) -> int:
     return int(reply.get("party_needed", DENIAL_PARTY_NEEDED_NONE))
 
-## The spelled-out reason a denial raid will not get there — `""` for the two outcomes that do, so the
-## sheet renders no line rather than an empty one.
-##
-## **THE REPELLED REFUSAL NAMES THE PARTY THE SIM QUOTES, WHENEVER IT QUOTES ONE.** Which of the
-## outcome's two reasons renders is decided by `denial_party_needed`, never by the wording: with a
-## figure the sentence carries `[quarry, needed]`, without one it falls back to the numberless form
-## that takes the quarry alone. An outcome with no counted variant (every other one) is unaffected.
-static func denial_refusal_reason(forecast: Dictionary, herd: Dictionary, needed: int) -> String:
-    var entry := denial_verdict(forecast)
-    var counted := String(entry.get("reason_counted", ""))
-    if counted != "" and needed > DENIAL_PARTY_NEEDED_NONE:
-        return counted % [herd_display_name(herd), needed]
-    var reason := String(entry["reason"])
-    return "" if reason == "" else reason % herd_display_name(herd)
-
-## **THE ONE CONDITION THAT DISABLES A DENIAL SEND: the band cannot field the party this herd
+## **THE ONE CONDITION THAT REFUSES A DENIAL CLICK: the band cannot field the party this herd
 ## REQUIRES.** Not "the chosen party is too small" — that is the player's call to under-size a raid and
-## it is warned about, not blocked (see `style_send_denial_button`) — but "no party this band can put
-## in the field reaches the requirement at all", which is a fact about the BAND and not a choice.
+## it is warned about, not blocked — but "no party this band can put in the field reaches the
+## requirement at all", which is a fact about the BAND and not a choice.
 ##
 ## **`DENIAL_PARTY_NEEDED_NONE` IS NOT SHORT-HANDED.** `0` is not "not enough hunters": per
 ## `snapshot.fbs` it also covers a quarry nothing can bring into contact (wariness ≥ 1), where more
 ## hands never help, and a requirement past the sim's quoting bound. There is no number to compare, so
-## the verdict copy governs and the button behaves as it always has.
+## the verdict copy governs and the click commits.
 static func denial_is_short_handed(needed: int, idle: int) -> bool:
     return needed > DENIAL_PARTY_NEEDED_NONE and needed > idle
 
 ## …and the sentence that says so, `""` when the band is not short-handed. Both numbers, off the SAME
-## `denial_party_needed` reading the stepper's seed and the repelled refusal use, so the sheet cannot
-## disable a Send over one figure while quoting another.
+## `denial_party_needed` reading the refusal uses, so the banner cannot quote one figure while the click
+## refuses over another.
 static func denial_short_handed_reason(herd: Dictionary, needed: int, idle: int) -> String:
     if not denial_is_short_handed(needed, idle):
         return ""
     return DENIAL_SHORT_HANDED_REASON_FORMAT % [herd_display_name(herd), needed, idle]
-
-## The denial Send button, off the SAME entry the verdict line came from. With no forecast at all (a
-## party size the sim did not sample) it takes the plain primary face rather than a warning it cannot
-## justify.
-##
-## **IT DISABLES IN EXACTLY ONE CASE, AND THE DISTINCTION IS THE WHOLE RULE.** A party the player has
-## CHOSEN to under-size still launches: a raid that cannot break the herd keeps working it until it is
-## recalled (§6 Q2), so a stepped-down `repelled` party warns and the player is trusted, exactly as a
-## slow hunting raid is. That reasoning does not carry to a band that cannot field the required party
-## AT ALL (`short_handed`) — there is no party to trust the player with, so the button goes
-## visible-and-disabled-with-its-reason, the same shape as the sheet's no-quarry branch.
-static func style_send_denial_button(button: Button, forecast: Dictionary,
-        short_handed: bool = false) -> void:
-    if short_handed:
-        button.disabled = true
-        button.text = DENIAL_SHORT_HANDED_BUTTON
-        HudStyle.apply_button(button, "ghost")
-        return
-    button.disabled = false
-    if not bool(forecast.get("available", false)):
-        button.text = String(DENIAL_VERDICTS[DENIAL_OUTCOME_PAST_RECOVERY]["button"])
-        HudStyle.apply_button(button, "primary")
-        return
-    var entry := denial_verdict(forecast)
-    button.text = String(entry["button"])
-    HudStyle.apply_button(button,
-        "primary" if String(entry["severity"]) == VERDICT_OK else "armed")
 
 ## **THE SUPPLY SIDE OF THE PARTY STEPPER — the band's IDLE WORKFORCE, and nothing else.** What the
 ## band can spare is the only thing that bounds how many hunters may walk out of camp;

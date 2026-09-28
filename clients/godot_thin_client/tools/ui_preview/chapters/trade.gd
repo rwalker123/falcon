@@ -6,10 +6,10 @@ extends RefCounted
 ## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 ##
-## **THE TWO HALVES ANSWER DIFFERENT QUESTIONS, so both are here.** The SHEET is the only surface in
-## the client that reads the `connections` section at all, and its whole point is what it refuses:
-## a parked tie cannot be picked, a remembered position is worded as remembered, and the mass
-## meter moves before the server ever sees a manifest. The PARTY is the readout on the other side of
+## **THE TWO HALVES ANSWER DIFFERENT QUESTIONS, so both are here.** The SHEET and its destination
+## pick are the only surfaces in the client that read the `connections` section at all, and their
+## whole point is what they refuse: a parked tie cannot be picked, a remembered position is worded as
+## remembered, and the mass meter moves before the server ever sees a manifest. The PARTY is the readout on the other side of
 ## the send, whose rows are its own — no quarry, no floor, no delivery ETA.
 ##
 ## It ends by releasing the panel and handing the reference band back, so a chapter appended after it
@@ -17,13 +17,13 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 99
+const EXPECTED_CHECKPOINTS := 106
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
 
-## The shared pointer-input layer — the destination pick below goes through the engine's real
+## The shared pointer-input layer — the cargo row's controls below go through the engine's real
 ## dispatch, the `crafting_bench` gesture probe's convention.
 const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 
@@ -215,73 +215,22 @@ func run(harness) -> void:
 	if trade_btn != null:
 		trade_btn.emit_signal("pressed")
 	await h._settle()
-	# **STATE — THE DESTINATION PICK, ARMED.** Pressing the verb opens no sheet: the target comes
-	# first, on the map, and the banner says so in the band's own name.
-	await h._save("trade_pick_armed")
-	h._assert_hud("pressing Trade arms the destination pick", h._hud.is_targeting_active())
-	h._assert_hud("…and opens no sheet before a destination is picked", _verb_form() == null)
-	# **A PARKED TIE IS NOT A DESTINATION**, and the pick is where that is enforced now: the band it
-	# names is still known, but a click on where it was last seen resolves nothing and the pick stays
-	# armed — the same rule the prey pick applies to a hex with no herd on it.
-	h._hud.show_tile_selection(_tile_info(PARKED_LAST_SEEN))
-	h._hud.notify_hex_selected(_tile_info(PARKED_LAST_SEEN))
-	await h._settle()
-	h._assert_hud("a click on a PARKED tie's last-seen tile is refused — the pick stays armed",
-		h._hud.is_targeting_active() and _verb_form() == null)
-	# **STATE — THE LIVE TIE PICKED, THE SHEET IN THE DESTINATION'S DRAWER.** The click selects the
-	# neighbour's hex and then the neighbour itself, exactly the map's `tile_selected` →
-	# `unit_selected` pair.
-	h._hud.show_tile_selection(_tile_info(NEIGHBOUR_LAST_SEEN))
-	h._hud.notify_hex_selected(_tile_info(NEIGHBOUR_LAST_SEEN))
-	# The map stamps the band's OWN tile onto the payload (`MapView._handle_entity_selection`); the
-	# shared band fixture carries the reference band's, so it is restated here.
-	var picked_neighbour := _neighbour_band()
-	picked_neighbour["tile_info"] = _tile_info(NEIGHBOUR_LAST_SEEN)
-	h._hud.show_unit_selection(picked_neighbour)
-	await h._settle()
-	await h._save("trade_picker_destination")
-	h._assert_hud("…a click on the live tie's band resolves the pick and opens the shipment sheet",
-		not h._hud.is_targeting_active() and _verb_form() != null)
-	h._assert_hud("…in the DESTINATION's drawer, as the Trade verb's sheet",
+	# **STATE — THE SHIPMENT SHEET, ON THE SENDER'S OWN DRAWER.** Pressing the verb opens the sheet in
+	# the band's drawer with no pick armed: the destination is the LAST step, so the sheet names none.
+	await h._save("trade_sheet")
+	h._assert_hud("pressing Trade opens the shipment sheet in the sender's drawer",
 		_verb_form() != null and String(_verb_form().get_meta(HudWidgets.VERB_FORM_META, ""))
-			== HudComposeVocab.COMPOSE_MISSION_TRADE)
-	# **THE DESTINATION IS STATED, NEVER OFFERED** — read-only text naming the band by NAME, with no
-	# chooser left on the sheet that could aim it somewhere else.
-	var to_row := Q.find_meta_node(h._hud.allocation_panel, HudWidgets.READ_ONLY_FIELD_META)
-	h._assert_hud("the destination row is read-only and names the band",
-		to_row != null and _collect_text(to_row).contains(NEIGHBOUR_DISPLAY_NAME))
-	h._assert_hud("…and the sheet holds no destination picker",
-		_find_option_button(_parties_zone()) == null)
-	# **THE BAND PANEL STAYS ON THE SENDER.** Selecting a player band normally makes it the panel's
-	# subject; while a verb is pending for the shipper that would put the wrong band's page behind the
-	# sheet it is composing.
-	h._assert_hud("the Band panel's subject stays on the SENDER while the shipment is composed",
-		int(h._hud._band_labor.panel_band().get("entity", -1)) == SHIPPER_ENTITY)
-	h._assert_hud("…and the destination's drawer drops the \"labor is in the panel\" pointer",
-		not h._hud.occupant_detail.visible)
-	var sheet_text := _sheet_text()
-	# THE KEYSTONE, RENDERED: the position under the destination is where they WERE, and it says so.
-	h._assert_hud("the destination's position is worded as REMEMBERED, not live",
-		sheet_text.contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
-			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, NEIGHBOUR_LAST_SEEN_TURN]))
-	h._assert_hud("…and the walk quoted from it is approximate",
-		sheet_text.contains(TRADE_APPROXIMATE_MARK))
+			== HudComposeVocab.COMPOSE_MISSION_TRADE
+			and int(h._hud._selection.unit().get("entity", -1)) == SHIPPER_ENTITY)
+	h._assert_hud("…with no pick armed yet", not h._hud.is_targeting_active())
+	h._assert_hud("…and no destination on it — no band named, no picker",
+		not _sheet_text().contains(NEIGHBOUR_DISPLAY_NAME)
+			and _find_option_button(_parties_zone()) == null)
 	# **A MATERIAL ROW SHOWS ITS RATING.** Two piles of `hide` are two rows and are not the same
 	# thing; the assertion names the rating so a row that dropped it cannot pass.
 	h._assert_hud("a material row names the pile's rating, not just its material",
-		sheet_text.contains(EXCELLENT_HIDE_ROW))
-
-	# **STATE — A LOADED MANIFEST AND A LIVE MASS METER.** The party is raised through its own
-	# stepper first, because the party is the CAP's other term: a manifest priced against whatever
-	# count the previous chapter left behind would be measured against a pack nobody chose.
-	_set_party(TRADE_PARTY_WORKERS)
-	await h._settle()
-	# Loaded through the rows' own `+` presses, so the clamp-to-the-pile and the meter are both
-	# exercised by the controls a player uses.
-	_load(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, LOADED_FOOD)
-	await h._settle()
-	_load(EXCELLENT_HIDE_ROW, LOADED_HIDE)
-	await h._settle()
+		_sheet_text().contains(EXCELLENT_HIDE_ROW))
+	await _load_reference_manifest()
 	await h._save("trade_cargo_loaded")
 	# The meter reads the sim's own expression — food + fodder_carry_weight × fodder
 	# + material_carry_weight × Σ materials — against party × the pack lever, composed here from the
@@ -299,6 +248,68 @@ func run(harness) -> void:
 	var live_send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
 	h._assert_hud("a manifest under the cap can be sent",
 		live_send is Button and not (live_send as Button).disabled)
+
+	# **STATE — THE SEND ARMS THE DESTINATION PICK, AND THE HOVER STATES WHAT IS KNOWN.** The sheet
+	# stays up with its send drawn armed; over the tied neighbour the banner names the band and what is
+	# REMEMBERED of where it is — the lines the retired `To` row carried — and over a parked tie it
+	# gives the reason no shipment can flow.
+	_press_send()
+	await h._settle()
+	h._assert_hud("the send arms the destination pick and leaves the sheet open",
+		h._hud.is_targeting_active() and _verb_form() != null)
+	var armed_send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
+	h._assert_hud("…with the send drawn armed",
+		armed_send is Button and (armed_send as Button).button_pressed)
+	h._hud.notify_hex_hovered(_tile_info(NEIGHBOUR_LAST_SEEN))
+	await h._settle()
+	await h._save("trade_hover_destination")
+	var banner: String = h._hud._targeting.banner_text()
+	h._assert_hud("hovering the tied band names it in the banner (%s)" % banner,
+		banner.contains("%s %s" % [HudComposeVocab.VERB_HOVER_ARROW, NEIGHBOUR_DISPLAY_NAME]))
+	# THE KEYSTONE, RENDERED: the position under the destination is where they WERE, and it says so.
+	h._assert_hud("…with its position worded as REMEMBERED, not live",
+		banner.contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
+			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, NEIGHBOUR_LAST_SEEN_TURN]))
+	h._assert_hud("…and the walk quoted from it approximate", banner.contains(TRADE_APPROXIMATE_MARK))
+	h._hud.notify_hex_hovered(_tile_info(PARKED_LAST_SEEN))
+	await h._settle()
+	h._assert_hud("hovering a PARKED tie's band gives the reason nothing can flow (%s)"
+			% h._hud._targeting.banner_text(),
+		h._hud._targeting.banner_text().contains(HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON))
+	# **A PARKED TIE IS NOT A DESTINATION**: a click on where it was last seen commits nothing and the
+	# pick stays armed — the same rule the herd pick applies to a hex with no herd on it.
+	var caught: Array[Dictionary] = []
+	var record := func(payload: Dictionary) -> void: caught.append(payload)
+	h._hud.send_trade_expedition_requested.connect(record)
+	h._hud.notify_targeting_click(_tile_info(PARKED_LAST_SEEN))
+	await h._settle()
+	h._assert_hud("a click on a PARKED tie is refused — nothing sent, the pick still armed",
+		caught.is_empty() and h._hud.is_targeting_active())
+	# **THE CLICK COMMITS.** On the live tie it sends ONE shipment carrying the captured party and
+	# manifest, the sheet closes, and neither the selection nor the panel's subject moves off the
+	# sender — a targeting click selects nothing.
+	h._hud.notify_targeting_click(_tile_info(NEIGHBOUR_LAST_SEEN))
+	h._hud.send_trade_expedition_requested.disconnect(record)
+	await h._settle()
+	h._assert_hud("a click on the live tie sends ONE shipment (%d sent)" % caught.size(),
+		caught.size() == 1)
+	if caught.size() == 1:
+		h._assert_hud("…to that band, with the captured party",
+			int(caught[0]["destination_band_id"]) == int(_neighbour_band().get("band_id", -1))
+				and int(caught[0]["party_workers"]) == TRADE_PARTY_WORKERS)
+	h._assert_hud("…and the pick is down and the sheet closed",
+		not h._hud.is_targeting_active() and _verb_form() == null)
+	h._assert_hud("…while the selection and the Band panel both stay on the SENDER",
+		int(h._hud._selection.unit().get("entity", -1)) == SHIPPER_ENTITY
+			and int(h._hud._band_labor.panel_band().get("entity", -1)) == SHIPPER_ENTITY)
+	h._hud.notify_hex_hovered({})
+
+	# The cargo states below compose on an open sheet: re-open it and load the same manifest.
+	var reopen := _verb_button(HudComposeVocab.VERB_TRADE)
+	if reopen != null:
+		reopen.emit_signal("pressed")
+	await h._settle()
+	await _load_reference_manifest()
 
 	# **STATE — A BALE ON THE SAME MANIFEST** (issue #590). Hay is the THIRD cargo account: its own
 	# row beside the food one, drawn off the band's fodder larder rather than its provisions, and
@@ -861,6 +872,24 @@ func _find_verb_button(root: Node, verb_id: StringName) -> Button:
 		if found != null:
 			return found
 	return null
+
+## The reference manifest the loaded states compose: the party raised through its own stepper first,
+## because the party is the CAP's other term, then the food and hide rows loaded through their own `+`
+## presses, so the clamp-to-the-pile and the meter are both exercised by the controls a player uses.
+func _load_reference_manifest() -> void:
+	_set_party(TRADE_PARTY_WORKERS)
+	await h._settle()
+	_load(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, LOADED_FOOD)
+	await h._settle()
+	_load(EXCELLENT_HIDE_ROW, LOADED_HIDE)
+	await h._settle()
+
+## Press the shipment sheet's send — the REAL button, found by its meta.
+func _press_send() -> void:
+	var send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META) as Button
+	h._assert_hud("the shipment sheet carries its send", send != null)
+	if send != null:
+		send.emit_signal("pressed")
 
 ## A map click's `tile_info` for `tile` — all the verb pick reads off one.
 func _tile_info(tile: Vector2i) -> Dictionary:

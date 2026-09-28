@@ -135,24 +135,15 @@ var _hunt_autofill := false
 var _hunt_band: int = NO_BAND_ENTITY
 # The hunt twin of `_forage_seeded_band` — same contract.
 var _hunt_seeded_band: int = NO_BAND_ENTITY
-# ---- Party compose (the Band panel's PARTIES zone — NOT drawer state) ----------------------------
-# The quarry the party compose sheet is aimed at (a world herd id), "" until one is picked. It is the
-# FIRST question the hunt form asks, because the herd sets the useful party size, the per-floor take
-# and the trip length — everything below it in the form.
-var _party_quarry_id: String = ""
-# The sheet's OWN autofill one-shot. Deliberately NOT `_hunt_autofill`: sharing it would let one
-# surface's floor click refill the other surface's stepper.
-var _party_autofill := false
 # ---- THE KIT each group is composing (`docs/plan_denial_raid.md`) ---------------------------------
 # The roster id the crew will be sent out with, per compose group — `KitRoster.NO_KIT_ID` until the
 # first render resolves one.
 #
 # **THREE FIELDS, NOT ONE, AND THE SPLIT FOLLOWS THE GROUPS ABOVE.** A kit is dialed on a SHEET, and
 # the three sheets are independently open: composing `none` in the herd drawer must not silently
-# re-arm the dock's party form with it. The hunt and denial missions share `_party_kit_id` because
-# they are one sheet under two missions and both send on the `hunt` job — `KitRoster.resolve_selection`
-# re-validates against the mission's own job on every render, so a selection can never survive into a
-# verb that would refuse it.
+# re-arm the Band panel's Deny sheet with it. `_party_kit_id` is that sheet's, reset with the verb
+# (`BandPanelController._reset_verb_state`); `KitRoster.resolve_selection` re-validates it against the
+# `hunt` job on every render, so a selection can never survive into a verb that would refuse it.
 var _forage_kit_id: String = KitRoster.NO_KIT_ID
 var _hunt_kit_id: String = KitRoster.NO_KIT_ID
 var _party_kit_id: String = KitRoster.NO_KIT_ID
@@ -535,36 +526,6 @@ func consume_hunt_autofill() -> bool:
 func clamp_hunt_count(cap: int) -> void:
 	_hunt_count = clampi(_hunt_count, 0, cap)
 
-# ---- Party compose (parties zone) ----------------------------------------------------------------
-
-func party_quarry_id() -> String:
-	return _party_quarry_id
-
-## The quarry is now `herd_id` — a fresh pick, a re-pick on the map, or a switch between the herds
-## sharing one hex.
-##
-## **THE COMPOSED KIT GOES WITH IT**, the dock's twin of `reset_hunt_kit`: the default is a fact about
-## the quarry now, so a kit resolved against the last animal is not the player's choice about this one.
-## Reached only from the targeting pick (never per render), so a live selection is never wiped
-## mid-compose.
-func set_party_quarry(herd_id: String) -> void:
-	_party_quarry_id = herd_id
-	_party_kit_id = KitRoster.NO_KIT_ID
-
-## No quarry: a fresh compose act, a cancelled one, a quarry that left the snapshot or migrated into
-## the band's hunt reach, or a panel-band swap (a quarry is chosen FOR a band).
-func clear_party_quarry() -> void:
-	_party_quarry_id = ""
-	_party_kit_id = KitRoster.NO_KIT_ID
-
-func arm_party_autofill() -> void:
-	_party_autofill = true
-
-func consume_party_autofill() -> bool:
-	var armed := _party_autofill
-	_party_autofill = false
-	return armed
-
 # ---- The composed KIT, one accessor pair per group ------------------------------------------------
 # Read RAW: the value the player last picked, which may name a kit the current roster/job no longer
 # offers. Every render passes it through `KitRoster.resolve_selection` before using it, so the
@@ -609,29 +570,21 @@ func clear_composing() -> void:
 # ---- The PENDING BAND VERB (issue #529) ----------------------------------------------------------
 #
 # **ONE VERB IN FLIGHT, SHARED BY THE TWO SURFACES THAT OFFER IT.** A verb is pressed on the Band
-# panel's action bar OR on the tile panel's band drawer, its target is picked on the map, and its
-# sheet renders in the TARGET's drawer — so neither controller owns it, and it lives here beside the
-# party sheet's quarry and kit. `BandPanelController` opens and closes it; `TargetingController` writes
-# the target the map pick resolves; `SubjectDrawerController` reads it to decide whether the selection
-# it is drawing is the one the sheet belongs to.
-#
-# Two phases, told apart by `verb_has_target()`: ARMED (the map pick is up, nothing chosen yet) and
-# OPEN (the target is chosen and the sheet shows in that target's drawer). Split skips the first — it
-# has no target to pick, so it opens on the band's own hex.
+# panel's action bar OR on the tile panel's band drawer, and its sheet renders in the drawer of the
+# band it is FOR, on that band's own hex — so neither controller owns it, and it lives here beside the
+# party sheet's kit. `BandPanelController` opens and closes it; `SubjectDrawerController` reads it to
+# decide whether the selection it is drawing is the band the sheet belongs to. The verb's map pick is
+# the sheet's LAST step and is held by `TargetingController`, not here.
 
 ## No verb pending.
 const VERB_NONE := ""
-## No tile yet — the armed phase's target.
+## No anchor tile.
 const VERB_NO_TARGET := Vector2i(-1, -1)
 
 var _verb_mission: String = VERB_NONE
 var _verb_band_entity: int = NO_BAND_ENTITY
 var _verb_band_id: int = HudConst.NO_BAND_ID
 var _verb_target: Vector2i = VERB_NO_TARGET
-## The herd a Deny targets, `""` for every other verb.
-var _verb_herd_id: String = ""
-## The band a Trade ships to (its durable `band_id`), `HudConst.NO_BAND_ID` for every other verb.
-var _verb_destination: int = HudConst.NO_BAND_ID
 
 func verb_mission() -> String:
 	return _verb_mission
@@ -642,14 +595,9 @@ func verb_band_entity() -> int:
 func verb_band_id() -> int:
 	return _verb_band_id
 
+## The hex the sheet is anchored to — the band's own.
 func verb_target() -> Vector2i:
 	return _verb_target
-
-func verb_herd_id() -> String:
-	return _verb_herd_id
-
-func verb_destination() -> int:
-	return _verb_destination
 
 func has_verb() -> bool:
 	return _verb_mission != VERB_NONE
@@ -657,26 +605,13 @@ func has_verb() -> bool:
 func verb_has_target() -> bool:
 	return has_verb() and _verb_target != VERB_NO_TARGET
 
-## A verb was pressed for the band `band_entity` / `band_id`: ARMED, with no target yet.
-func open_verb(mission: String, band_entity: int, band_id: int) -> void:
+## A verb was pressed for the band `band_entity` / `band_id`, its sheet anchored on `tile`.
+func open_verb(mission: String, band_entity: int, band_id: int,
+		tile: Vector2i = VERB_NO_TARGET) -> void:
 	_verb_mission = mission
 	_verb_band_entity = band_entity
 	_verb_band_id = band_id
-	_verb_target = VERB_NO_TARGET
-	_verb_herd_id = ""
-	_verb_destination = HudConst.NO_BAND_ID
-
-## The target the map pick resolved (or, for Split, the band's own hex). `herd_id` / `destination`
-## are the verb-specific halves; each verb sets the one it has.
-func set_verb_target(tile: Vector2i, herd_id: String = "",
-		destination: int = HudConst.NO_BAND_ID) -> void:
 	_verb_target = tile
-	_verb_herd_id = herd_id
-	_verb_destination = destination
-
-## Re-aim a Deny at another herd on the SAME hex — the sheet's `⋯` chooser.
-func set_verb_herd(herd_id: String) -> void:
-	_verb_herd_id = herd_id
 
 func clear_verb() -> void:
 	open_verb(VERB_NONE, NO_BAND_ENTITY, HudConst.NO_BAND_ID)

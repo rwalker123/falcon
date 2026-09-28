@@ -371,8 +371,8 @@ func _drive_move_band() -> void:
 	_hud._targeting.try_dispatch({"x": TARGET_X, "y": TARGET_Y})
 	await _settle()
 
-## `send_expedition` — the Scout verb: its target tile picked on the map, then a party outfitted with
-## a KIT on the sheet that opens in that tile's drawer, and its send pressed.
+## `send_expedition` — the Scout verb: a party outfitted with a KIT on the sheet that opens in the
+## band's own drawer, its send pressed (which arms the tile pick), then the click on the target.
 ##
 ## **A NON-DEFAULT KIT, so the line carries the `kit <id>` tail rather than omitting it.**
 ## `Main._kit_token` omits the token when the selection equals the job default — which is the shipped
@@ -381,8 +381,7 @@ func _drive_move_band() -> void:
 ## reason, and `_record` fails loudly if a drive ever composes the default by accident.
 func _drive_send_expedition() -> void:
 	var band: Dictionary = _hud._band_labor.panel_band()
-	_hud._bandpanel.dispatch_verb(HudComposeVocab.COMPOSE_MISSION_SCOUT, band)
-	_pick_tile({"x": TARGET_X, "y": TARGET_Y})
+	_open_verb_sheet(HudComposeVocab.COMPOSE_MISSION_SCOUT)
 	_hud._bandpanel._role_kit_ids[_hud._bandpanel._role_kit_key(band, KitRoster.JOB_EXPEDITION)] = \
 		BandFx.KIT_ID_NONE
 	_hud._bandpanel._send_expedition_count = PARTY_WORKERS
@@ -391,12 +390,17 @@ func _drive_send_expedition() -> void:
 	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_EXPEDITION_CONFIRM_META,
 		"scout verb sheet")
 	await _settle()
+	_hud.notify_targeting_click({"x": TARGET_X, "y": TARGET_Y})
+	await _settle()
 
-## A map click on `tile_info`: the map's `tile_selected` → `show_tile_selection` + `notify_hex_selected`,
-## which is what resolves an armed verb pick.
-func _pick_tile(tile_info: Dictionary) -> void:
-	_hud.show_tile_selection(tile_info)
-	_hud.notify_hex_selected(tile_info)
+## Open a verb's sheet for the panel band: the band selected on its own hex (the map's `unit_selected`
+## hop, which this headless gate has no map to make), then the verb — the sheet mounts in its drawer.
+func _open_verb_sheet(mission: String) -> void:
+	var band: Dictionary = _hud._band_labor.panel_band().duplicate(true)
+	var tile := SourceForecast.band_tile(band)
+	band["tile_info"] = {"x": tile.x, "y": tile.y, "visibility_state": "active"}
+	_hud.show_unit_selection(band)
+	_hud._bandpanel.dispatch_verb(mission, _hud._band_labor.panel_band())
 
 ## `recall_expedition` — the parties zone's row `✕` (its confirm dialog wraps this same call).
 func _drive_recall_expedition() -> void:
@@ -410,8 +414,8 @@ func _drive_split_band() -> void:
 	_hud._bandpanel._on_split_band_pressed(_band_fixture(), SPLIT_WORKERS)
 	await _settle()
 
-## `send_denial_raid` (`docs/plan_denial_raid.md`) — the Deny verb's sheet, opened on the herd its pick
-## landed on. Its
+## `send_denial_raid` (`docs/plan_denial_raid.md`) — the Deny verb's sheet on the band's drawer, its send
+## arming the herd pick, then the click on the herd. Its
 ## own driver and its own confirm meta, because it is its own command: the grammar is CLOSED at four
 ## tokens (`send_denial_raid <faction> <band> <party> <fauna_id>`) and a fifth is a hard parse error,
 ## so a payload that picked up a floor or a fill target would be REJECTED by the real parser this
@@ -419,18 +423,15 @@ func _drive_split_band() -> void:
 func _drive_send_denial_raid() -> void:
 	_hud._selection.clear()
 	var herd := _far_herd_fixture()
-	_hud._bandpanel.dispatch_verb(HudComposeVocab.COMPOSE_MISSION_DENY, _hud._band_labor.panel_band())
-	var tile := {"x": FAR_HERD_X, "y": FAR_HERD_Y, "herds": [herd]}
-	_pick_tile(tile)
-	var picked: Dictionary = herd.duplicate(true)
-	picked["tile_info"] = tile
-	_hud.show_herd_selection(picked)
+	_open_verb_sheet(HudComposeVocab.COMPOSE_MISSION_DENY)
 	# The one order the closed four-token grammar still admits, and the reason this drive matters
 	# most: a `kit <id>` pair the parser refuses would be a hard parse error here.
 	_hud._compose.set_party_kit_id(BandFx.KIT_ID_NONE)
 	_hud._bandpanel.rerender()
 	await _settle()
 	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_DENIAL_CONFIRM_META, "deny verb sheet")
+	await _settle()
+	_hud.notify_targeting_click({"x": FAR_HERD_X, "y": FAR_HERD_Y, "herds": [herd]})
 	await _settle()
 
 ## `send_hunt_expedition` — the herd drawer's assign control, which flips to the
@@ -610,9 +611,8 @@ const BUILD_ORDER_POSITION := 2
 ## whole-unit step cannot reach. What is under test is the AMOUNT the client then spells, so a drive
 ## that wrote the manifest directly would test its own arithmetic instead of the sheet's.
 ##
-## The destination is seated directly rather than picked through the popup: an `OptionButton`'s popup
-## is an embedded subwindow and this half runs `--headless`, and WHICH tie is chosen is asserted by
-## `ui_preview`'s `trade_picker_destination`, where the pick is a real pointer gesture.
+## The destination is the click the sheet's send arms — on where the tie last saw the band, the only
+## position the client holds for a band it is tied to but does not command.
 func _drive_send_trade_expedition() -> void:
 	_hud._selection.clear()
 	# ⛔ **DROP THE ROLE SWEEP'S OPTIMISTIC OVERLAY FIRST, or this drive is testing the wrong band.**
@@ -629,10 +629,7 @@ func _drive_send_trade_expedition() -> void:
 	# to these entries, so the drive starts from the band the wire describes rather than from the
 	# previous drive's optimism.
 	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
-	# The Trade verb, then a click on where the tie last saw the destination — the only position the
-	# client holds for a band it is tied to but does not command.
-	_hud._bandpanel.dispatch_verb(HudComposeVocab.COMPOSE_MISSION_TRADE, _hud._band_labor.panel_band())
-	_pick_tile({"x": DESTINATION_LAST_SEEN_X, "y": DESTINATION_LAST_SEEN_Y})
+	_open_verb_sheet(HudComposeVocab.COMPOSE_MISSION_TRADE)
 	await _settle()
 	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
 	# **THE HAY ROW IS DRIVEN BESIDE THE FOOD ONE, and that is the point of driving it at all**
@@ -647,6 +644,8 @@ func _drive_send_trade_expedition() -> void:
 	await _load_pile_with_max(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL)
 	await _load_whole_pile(TRADE_HIDE_MATERIAL)
 	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "trade verb sheet")
+	await _settle()
+	_hud.notify_targeting_click({"x": DESTINATION_LAST_SEEN_X, "y": DESTINATION_LAST_SEEN_Y})
 	await _settle()
 
 ## Press one cargo row's `+` until the pile is loaded whole — the button DISABLES at the ceiling, which

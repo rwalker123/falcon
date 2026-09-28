@@ -289,7 +289,7 @@ paths:
   has no camp action — the `found_camp` command was removed end-to-end.)
 
 
-## THE BAND DRAWER'S VERB ROW, AND THE VERB SHEET IN THE TARGET'S DRAWER (issue #529)
+## THE BAND DRAWER'S VERB ROW, AND THE VERB SHEET UNDER IT (issue #529)
 
 A selected PLAYER band's drawer offers the same five verbs the Band panel's action bar registers —
 Move, Scout, Deny, Trade, Split — built from **`HudComposeVocab.BAND_VERBS`**, in the same order, with
@@ -306,26 +306,26 @@ instance), the same `enabled` predicate (`BandPanelController.verb_enabled`) and
 - **Each button carries `HudWidgets.VERB_BUTTON_META`** (the verb's registry id) — the faces are art or
   a glyph and are never matched on.
 
-**A pending verb's sheet mounts in the drawer of its TARGET** (`_mount_verb_form`), under whatever that
-subject's branch drew, whenever the selection's hex is the verb's target hex — the land, the herd or
-the band on it. `render_subject_drawer` detaches the previous sheet FIRST, synchronously
+**A pending verb's sheet mounts in the drawer of the band it is FOR** (`_mount_verb_form`), under that
+band's verb row — and only there: `_verb_form_matches` requires the selected unit to BE the verb's
+band, so another band on the same hex, the hex's land or its herds never show it. Pressing a sheet verb
+selects the band on its own hex (`BandPanelController._select_band_on_map`), so the sheet opens where
+it was asked for. `render_subject_drawer` detaches the previous sheet FIRST, synchronously
 (`BandPanelController.detach_verb_form`), because every branch clears or hides `%AllocationPanel` and
 the sheet may hold a focused cargo field whose `focus_exited` must land inside the teardown window. A
 branch that HID the host leaves the previous subject's content parented under it, so the mount clears
 the host before showing it again.
 
-- **On a player band that is NOT the verb's sender** (a Trade destination; a Scout target another band
-  stands on) the drawer shows the sheet INSTEAD of the pointer line and the verb row: the pointer would
-  name a panel that is showing the sender, and this band's verbs beside another band's sheet would
-  offer two subjects' orders in one drawer. **The Band panel's subject stays on the sender** while a
-  verb is pending for it (`BandPanelController.holds_panel_subject`), so the drawer does not call
-  `render_band` on that selection.
+- **The sheet's target is a map click that selects nothing** (`targeting.md` → "THE BAND VERBS' TARGET
+  IS THE LAST STEP"), so the drawer keeps showing the band and its sheet — send drawn armed — while the
+  player picks, and the commit closes the sheet under the same selection.
+- **The Band panel's subject stays on the sender** while a verb is pending for it
+  (`BandPanelController.holds_panel_subject`), so another band selected on the hex does not take the
+  panel.
 - **The sheet drops when the selection leaves its hex.** `HudLayer`'s `show_tile_selection` /
   `show_unit_selection` / `show_herd_selection` / `clear_selection` call
-  `BandPanelController.note_selection_tile` before rendering; an OPEN verb whose anchor differs is
-  closed, an ARMED one is left alone (the click that selects is the click that picks). The per-snapshot
-  restate (`reapply_selection`) does not call it, so a herd migrating under an open Deny sheet does not
-  drop it.
+  `BandPanelController.note_selection_tile` before rendering; a verb whose anchor differs is closed and
+  its armed pick with it. The per-snapshot restate (`reapply_selection`) does not call it.
 
 ## The roster row's leading MARK is a node, and the patch path must SWAP it (issue #439)
 
