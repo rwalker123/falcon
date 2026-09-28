@@ -1160,21 +1160,146 @@ waterline cross-fade blends toward a water estimate without it, so it eases out 
 > any net travel reads as one. So the open-water term evolves in place, and `blend_probe` state 29 now
 > asserts both halves — no net direction, no map-scale pattern — and fails on the retired swell.
 
-> #### THE COASTAL SWELL HOOK — the structure for waves rolling INTO the shore, not the feature
->
-> Water motion is shaped `open · (1 − coastal_w) + coastal_swell · coastal_w`, where the OPEN-ocean term
-> is the chop with the whitecaps over it. `coastal_swell()` and `coastal_weight()` are STUBS returning 0,
-> and `COASTAL_SWELL_ENABLED` (false) skips the blend, so the shelf keeps the full open chop and caps
-> today. Turning it on needs: (1) a per-hex **distance-to-coast**
-> field — the shore pass's own `u` reaches only ~0.41 r, far too short for a swell crossing a shelf;
-> (2) a `coastal_terrains` config list for `coastal_weight()` to key its shelf-ness on, computed as the
-> neighbour-weighted mean over {own + 6 neighbours} with the depth field's weights (the temperature
-> grade's graded-ness is the model); and (3) `coastal_swell()` built from that field.
+**Water motion is shaped `open · (1 − coastal_w) + coastal · coastal_w`.** The OPEN term is the chop
+alone. The COASTAL term is the shore swell — see **Coastal shore swell** below.
 
-**3 — whitecaps (animated, directionless).** They carry the visible motion: at the strength that stopped
-the chop reading as clouds (0.035), the chop alone is close to imperceptible. A whitecap is a SHAPE: a
-crest GROUP of 1–3 thin, broken foam streaks strung along one line, a light neutral GREY at its peak. It
-fades in, holds and fades out where it was born (`open_whitecap`, `whitecap_grid`).
+**3 — open water has NO whitecaps.** It reads through the chop and its colour alone. The caps were built
+for open water first. Scattered at random, each one looked like a wave, but together they did not read
+as ocean whitecaps (Ray, live), so open water lost them. Their crest-group generator now draws only
+where a coastal swell breaks — see **Coastal shore swell** below. `blend_probe` state 29 asserts it: past
+the swell's reach the shipped frame and its coastal-off twin are byte-identical.
+
+**LOD gate and the `O` toggle.** Waves, chop and the coastal swell (with its foam and shore surge) run only
+while `water_motion_enabled`, which
+`TerrainRenderer` pushes as `radius ≥ motion_min_radius` (the way `rivers_lod_enabled` is) AND the
+player's `O` toggle (`toggle_water_motion`, session-only, not persisted). Below the gate, or toggled off,
+the static anti-tiling and the temperature grade still run and nothing reads `TIME`, so the far zoom
+cannot shimmer. `O` is a look-dev aid: it tells whether a "cloudy" sea is the motion or the static
+surface under it.
+
+**Bit-exact when off.** With `variation_strength`, `wave_strength` and `chop_strength` all 0 (and the coastal swell off) the
+function returns sample A through the same expression the call site used before. Verified: a full
+`blend_probe` run on zeroed levers is byte-identical to the pre-surface render on all 291 frames. On the
+shipped levers 117 of them moved, every one with water in it; every land-only frame is byte-identical.
+
+**Continuous redraw.** The client does not run `low_processor_mode`, so Godot renders the canvas every
+frame and `TIME` advances without `MapView` calling `queue_redraw` — the same mechanism the river
+scroll relies on. Shader `TIME` rolls over (`rendering/limits/time/time_rollover_secs`, 3600 s by
+default), so the wave, chop and swell phase jump once an hour, as the river scroll does.
+
+**Harness phase.** `water_time_offset` is added to `TIME` for every animated term. `TerrainRenderer`
+never pushes it (0 in the game); `blend_probe` sets it on the material to render several phases while
+frozen at `Engine.time_scale` 0. Every term enters as an offset (a UV scroll, a position on the chop's
+time axis), so phase 0 still draws it — the harness freeze's re-check rule.
+
+**Cost.** Per `water_surface` call with the shipped levers: up to 2 `biome_array` fetches (A, and B where
+its patch weight is non-zero; the two wave fetches are skipped at `wave_strength` 0) plus 1
+`layer_luma_map` texel fetch and 1 value-noise evaluation, against 1 fetch before. The chop adds two 3D
+value-noise evaluations per octave pair — four in all (32 hashes) — once per water fragment; the coastal
+swell's cost is in its own section. An open-water pixel whose neighbours share its id makes one call; the depth field
+adds one call per differing water neighbour **within reach** (the loop skips a zero-weight neighbour),
+and the waterline cross-fade adds up to seven calls in its narrow band at a coast.
+
+| Lever (`terrain_config.json` → `water_surface`) | Shipped | Meaning |
+|---|---|---|
+| `variation_strength` | 1.0 | 0..1, sample B's peak weight; 0 = the plain sample, bit-exact |
+| `variation_cell` | 3.0 | the A/B patch noise cell, in hex radii (× radius → px) |
+| `variation_rotation_deg` | 37 | sample B's UV rotation |
+| `variation_scale` | 0.83 | sample B's UV scale against the base UV — off 1, so the two periods differ |
+| `wave_strength` | 0.0 | × the texture waves' luma deviation from the layer mean. **Ships off** — see 2 |
+| `wave_speed` | 0.012 | wave-texture UV per second (≈ 7 px/s at r ≈ 45) |
+| `wave_scale` | 0.6 | wave UV against the base UV; < 1 is broader and no minifying |
+| `chop_strength` | 0.05 | peak luma offset of a bright / dark chop patch (luma units, 0..1). 0.06 read live as drifting clouds; 0.035 was too faint once the caps left open water; 0.05 sits between |
+| `chop_scale` | 0.5 | the coarse octave's feature size, in hex radii |
+| `chop_rate` | 0.4 | how fast the chop evolves — cells of its time axis per second. 0.8 read live as clouds changing too fast |
+| `motion_min_radius` | 24 | px; below it the waves, chop and coastal swell are off |
+
+Fallbacks are the `WATER_SURFACE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
+lever; the fixed feel (directions, cells, offsets, rotations) is the `WATER_*` / `CHOP_*` consts in the shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
+`variation_cell` (4) let one rotated sample cover most of the frame and showed B's own repeat on a
+diagonal; 3 keeps both samples in view. The repeat measure there reads **0.15** on the plain sample
+and **0.73** with the anti-tiling (1 = no correlation at the tile period). The chop was chosen on a
+four-phase sequence and a 1.0×-like frame (`OCEAN_zoomed_out`, r ≈ 25.7), then **toned down live**: at
+`chop_strength` 0.06 / `chop_rate` 0.8 (a steady ~5 levels/s) Ray read it in play as clouds, changing too
+fast, so it went to **0.035 / 0.4**. Once the caps left open water, 0.035 was too faint, and it ships at
+**0.05 / 0.4**. Measured: **3.3 levels mean over two seconds**, a steady **2.09–2.19 levels per second**
+(ratio 1.05). The texture waves alone moved 0.94 levels per second and were invisible, so the usable band
+is narrow: below ~1 level/s the sea reads still, and ~5 reads as weather.
+
+## Coastal shore swell
+
+**What it is.** Near a coast, crests run PARALLEL to the shore and roll IN. They shorten and steepen as
+they shoal, and break into foam in the last stretch before land; each crest landing surges the shoreline
+surf a little. Open water keeps the chop alone. Everything here is `apply_water_motion`'s coastal term,
+blended in by the coastal weight, and it runs off one field.
+
+**The distance-to-coast field** (`TerrainRenderer.rebuild_coast_field` → the native `CoastField`,
+`native/src/bridge/coast_field.rs`).
+- **The mask:** each hex is land (any non-water blend class, navigable rivers included), coastal water (a
+  `coastal_swell.coastal_terrains` terrain — `deep_ocean`, `continental_shelf`, `coral_shelf`), or other
+  water (a lake: no swell).
+- **The build:** rasterised at `COAST_FIELD_TEXELS_PER_RADIUS` (8) texels per hex radius. An EXACT
+  Euclidean distance transform (Felzenszwalb, two separable 1D passes) gives each texel's distance to the
+  nearest land texel, capped at `COAST_FIELD_CAP_RADII` (8 r). Then it is box-blurred twice over
+  `COAST_FIELD_BLUR_RADII` (0.25 r), so a crest — a contour of this field — rounds a hex corner instead of
+  tracing it.
+- **The texture:** an `RGF` float texture sampled `filter_linear`. R is the distance in hex radii. G is
+  the coastal eligibility 0..1, a WATER-ONLY blur of the per-hex flag, so land does not drag a coast's
+  eligibility down and a lake's 0 does not leak far.
+- **Wrap:** on a wrapping map the build wraps columns and the shader wraps x into the map's period.
+- **Why native:** one GDScript chamfer pass over the Huge map (128×80 hexes, ~1.8M texels) measured
+  **191 ms**, so a full build would be over a second of hitch per world. The native build measures
+  **~120 ms** on Huge (release build, 1797×980 texels) and ~5 ms on the harness's 24×16 fixture.
+- **When it rebuilds:** with the other shader maps, and only when the land/water mask actually changed
+  (terrain is static within a world); an unchanged mask re-pushes the uniforms and skips the build.
+- **Its gradient** (central differences, `COAST_GRAD_STEP`) is the direction away from the coast.
+- **Probes:** `coast_distance_at(map_px)` samples the CPU copy exactly as the shader samples the texture.
+
+**Crests** (`swell_phase`, `coastal_swell_luma`).
+- **The phase** is `F(d) + t · speed / wavelength + warp`, so crests are contours of the distance and
+  travel TOWARD the coast.
+- **Shoaling:** the wavelength shrinks linearly from `wavelength` at `reach` to `shoal_length` × it at the
+  shore, and `F` is the exact integral of `1 / λ(d)`. That makes crests bunch up as they come in, rather
+  than being stretched or doubled by a phase that divides by the local wavelength. The amplitude grows
+  toward `shoal_gain` × at the shore.
+- **Not contour rings:** a low-frequency world-noise warp bends each crest along the coast
+  (`SWELL_WARP_*`). A world noise about a crest's length (`SWELL_ALONG_CELL`, 1 r) CUTS each crest into
+  sections: it is smoothstepped between `SWELL_SECTION_LO` (0.5) and `_HI` (0.7), so below the low edge
+  the crest is absent, not dimmed. An envelope riding the phase eases the amplitude every
+  `SWELL_SET_WAVES` crests, so sets arrive.
+  - The first cut, with a weaker along-shore modulation and a symmetric profile, drew concentric contour
+    rings round an island.
+  - A modulation that only DIMMED a crest (a floor of 0.1) still closed into a ring round a small island,
+    and so did a cut at 0.4–0.65 over a 1.3 r cell: value noise clusters near 0.5, so too few sections
+    fell below the edge. At 0.5–0.7 over 1 r the island's crests read as broken arcs.
+- **The profile:** a steep shoreward face over `SWELL_FRONT_FACE` of a wave and a long seaward back over
+  `SWELL_BACK_FACE`. It is applied as a LUMA offset, `amplitude · (crest − SWELL_TROUGH_LEVEL)`, hue
+  preserved, after the grade like the chop. The trough sits only `SWELL_TROUGH_LEVEL` (0.12) below the
+  mean: the shoaled amplitude peaks at the shore, and at 0.25 the trough read as a dark band hugging a
+  small island.
+- **The blend:** the coastal weight is `eligibility × (1 − smoothstep(0.5 · reach, reach, d))`, EXACTLY
+  0 past `reach`, so open water is bit-identical to the chop-only surface. The chop keeps
+  `SWELL_CHOP_UNDER` (0.8) of its strength under the swell; at 0.5 its absence read as a calm halo.
+
+**Breaking foam** (`break_foam_alpha`, the crest-group generator `crest_group_alpha`).
+- **Where:** one foam grid (`foam_cell`); each cell holds one crest group at a fixed jittered spot, and a
+  group is drawn only if its centre lies in the break zone (`break_zone` r of land, full chance inside
+  `SWELL_BREAK_INNER` of it), on coastal water, and at least `SWELL_FOAM_SHORE_GAP` off the land.
+- **When:** each group breaks on every crest reaching it, with chance `foam_coverage`. Its life is KEYED
+  TO THE CREST — `f = fract(phase)` at its centre, 0 as the crest arrives. It fades in over
+  `SWELL_FOAM_FADE_IN` (0.2 of a wave; 0.12 popped), holds, and fades out by `SWELL_FOAM_LIFE`, so the
+  foam appears as the crest breaks and trails behind it as the crest runs on.
+- **Why the life ends before 1:** the wave's number is read at the cell centre and the group sits up to
+  a margin off it. That mismatch is a fraction of a wave, and a group already gone when the number turns
+  over cannot pop.
+- **Orientation:** ALONG the crest, perpendicular to the field's gradient at the group's centre.
+- **Shape and colour:** the generator's shape — 1–3 broken, ragged streaks with a faint trailing wash and
+  dissolving tips — with a BOLD cross-section: `WHITECAP_WIDTH_RATIO` 0.4 of the streak's length, and a
+  FULL-opacity core plateau from `WHITECAP_BACK_FULL` (−0.45) to the lead (`WHITECAP_LEAD_FRESH` 0.5,
+  sliding to `_SPENT` 0.0 as it fades), with a soft fall-off outside it. The foam is laid on as the light
+  neutral grey `foam_color` by opacity (`foam_strength` 0.97), after the grade.
+
+The generator's own history, which is why it has the shape above (it was built for open-water caps):
 
 > #### ⛔ WHY NOT NOISE PEAKS — the first whitecaps read as CYAN BLOBS
 >
@@ -1202,8 +1327,8 @@ fades in, holds and fades out where it was born (`open_whitecap`, `whitecap_grid
 > passes may recolour the pixel; the FoW mist multiply darkens everything alike, which is fine.
 >
 > **`blend_probe` state 29 could not catch this:** it carries no temperatures, so the grade never runs
-> there. State 30 now asks the whiteness claim of the cold rows and the warm rows (see
-> `harness-map-probes.md`).
+> there. The claim now lives on state 31 (COAST), whose sea is warm-graded throughout: it asks that the
+> foam's solid core RENDER neutral (see `harness-map-probes.md`).
 
 > #### ⛔ THE CAPS POPPED IN, PEAKED TOO BRIGHT, AND READ AS DRAWN MARKS
 >
@@ -1217,152 +1342,55 @@ fades in, holds and fades out where it was born (`open_whitecap`, `whitecap_grid
 >   wash went fainter, dashes dissolve rather than cut, and the tips fade out.
 >
 > The goal is foam the eye barely registers until it looks.
-**Spawn.** Two jittered cell grids (`whitecap_cell` hex radii) hold at most one crest group per cell at a
-time.
-- **No lattice shows:** each grid is rotated off the screen axes and off the other
-  (`WHITECAP_GRID_ROTATION`), and grid B is offset (`WHITECAP_GRID_B_OFFSET`).
-- **Per cell:** a hash gives the lifecycle PHASE.
-- **Per cell and cycle** (`floor(t·rate + phase)`): hashes give the group's position in the cell (kept
-  `WHITECAP_CELL_MARGIN` off its edge), whether it spawns, its streak count, lengths and angle jitter. So a
-  cell respawns somewhere new each cycle, and a group never moves during its life.
-- **Spawn chance:** `whitecap_coverage` × a smoothstep (`WHITECAP_ROUGH_*`) over the chop's COARSE octave
-  at the group's centre, read **at the moment it spawned**. Caps therefore cluster where the sea is rough,
-  and a group's fate is fixed for its whole life.
-- **Reach:** a fragment visits its own cell and the 8 around it in each grid. A group two cells away is
-  centred at least (1 + margin) cells off, so that is the furthest one may reach. A longer group is SCALED
-  to fit (`fit`), never clipped at a cell line.
 
-**Shape.** Each streak, in its own axes (u along, v across, +v the leading edge):
-- **Body:** its half-width is `WHITECAP_WIDTH_RATIO` (0.16) of its half-length along a blunt body
-  (`1 − s⁴`). Its opacity falls off over the outer part of its length (`WHITECAP_TIP_SOFT`), so the tips
-  dissolve. Its centreline bows `WHITECAP_CURVE` (0.12) half-lengths: a gentle
-  arc.
-- **Length:** `whitecap_length` × a per-group draw in [`WHITECAP_LENGTH_MIN`, `_MAX`] (0.4–1.4) × a
-  per-streak draw in [`WHITECAP_SEGMENT_MIN`, 1].
-- **Crest group:** 1..`WHITECAP_GROUP_MAX` streaks stand end to end along one angle, `WHITECAP_GROUP_GAP`
-  apart. Each breaks `WHITECAP_GROUP_PHASE_STEP` of a cycle after the one before, so the crest breaks
-  along its line.
-- **Broken and ragged:** a 1D value noise along the crest (`WHITECAP_BREAK_*`) thins it into dashes over
-  a WIDE ramp, so a dash dissolves into its gap rather than being cut. A finer one (`WHITECAP_EDGE_*`)
-  wobbles its width, so the outline is irregular rather than a clean lens.
-- **Opacity across it:** it peaks in a narrow band between `WHITECAP_BACK_FULL` and `lead` and falls off
-  smoothly both ways: up from the trailing side, down to the leading edge. There is no crisp outline even
-  at the peak.
-- **Trailing wash:** the trailing side is `WHITECAP_TRAIL_WIDTH` × wider and only
-  `WHITECAP_TRAIL_OPACITY` as opaque at its far edge, a faint wash behind the crest.
-- **Why soft edges are safe now:** the colour is a neutral grey laid on by opacity, so a soft edge reads
-  as thinner foam, not a tint. The cyan the crescents' soft rims once showed came from a tinted colour and
-  the grade order, both since fixed.
+> #### ⛔ THIN BREAKING FOAM RENDERED CYAN — the colour laid on was grey, the pixels were not
+>
+> The first coastal cut used the generator as the open-water caps left it: hairline streaks
+> (`WHITECAP_WIDTH_RATIO` 0.16, a narrow peak) at 0.75 opacity. The colour it LAID ON was a neutral grey,
+> and the harness's claim on that colour passed. But a streak ~3 px across at play zoom never reaches
+> full coverage, so the warm turquoise under it showed through everywhere. On `COAST_2x.png`, the
+> brightest 0.3% of the blue-dominant water pixels averaged **(113, 147, 152)**: cyan. Ray had rejected
+> cyan foam twice before. The fix is the bold core above, at 0.97 opacity. Its core pixels now render
+> about **(190, 198, 203)**, and state 31 judges the RENDERED core, not the colour laid on.
 
-**Lifecycle.** `fract(t·whitecap_rate + phase)`, per group (each streak lagged as above):
-- **Fade in:** over `WHITECAP_FADE_IN` (38%) of the cycle, a smoothstep, so it never pops.
-- **Hold:** briefly, for `WHITECAP_HOLD` (8%).
-- **Fade out:** over the rest, a smoothstep. As a streak fades out it STRETCHES (`WHITECAP_STRETCH`) and
-  SPREADS (`WHITECAP_SPREAD`), and `lead` slides from `WHITECAP_LEAD_FRESH` to `_SPENT`.
-- **Rate:** phases are per cell, so the sea has no global pulse.
+**The shore pulse** (`shore_surge`). The shoreline surf's SEAWARD reach (`foam_band`) is multiplied by
+`1 + surge × eligibility × crest(phase at d = 0)`, so the surf reaches a little further as each crest
+lands.
+- **What does not move:** the inland wash and the sand, so the beach never moves.
+- **Exactly 1** with no coastal swell, with motion gated off (LOD or `O`), and on a lake, so every other
+  coast is bit-exact.
 
-**Colour.** `mix(c, whitecap_color, opacity · whitecap_strength)`, a light neutral grey at 0.75 at its
-peak. The colour is laid over the water as COVERAGE after the grade, and never tinted through `foam_color`
-or the water's hue. At 0.75 over dark blue water the cap still reads a little blue (saturation ~0.1), which
-is the water through translucent foam rather than a tint.
+**Cost** (per coastal water fragment, shipped).
+- **Always:** the field is read once (one texture fetch), plus the phase (one 2D value noise) and the
+  amplitude (one more).
+- **In the break zone (+ one foam cell):** the foam grid adds up to 9 cells. Each costs a `hash33`, a
+  distance test, and for a nearby group a field fetch, its phase, two `hash33`s, the gradient (four
+  fetches), two 1D noises and up to 3 streak evaluations.
+- **Everywhere else:** open water past `reach` pays one field fetch and nothing else.
 
-**Orientation is REGIONAL.** A group's angle comes from a very-low-frequency world VECTOR noise at its
-centre, plus a per-group jitter (`WHITECAP_ANGLE_JITTER`).
-- **The noise:** two value noises, the atan of their centred pair, so every direction is equally likely.
-  Its cell is `WHITECAP_ANGLE_CELL`, 12 r.
-- **The result:** caps agree within a region and disagree across the map. There is no single map-wide
-  direction, and nothing moves.
-- **The coastal swell hook is where a coast can later align them:** the same `coastal_weight` that will
-  blend in the swell can blend the regional angle toward the shore-normal.
-
-**Cost** (per water fragment, shipped). 2 grids × 9 cells, each a `hash13` + a `hash33` and a distance test.
-A cell whose group can reach the fragment then adds:
-- the spawn test (the coarse chop: two 3D value noises);
-- two `hash33`s, the angle field (two 2D value noises and an `atan`);
-- two 1D noises (4 `hash13`);
-- up to 3 streak evaluations.
-
-At `whitecap_cell` 2.0 that is 0–2 cells per fragment.
-
-**The glint and the noise-peak caps are both gone.** The glint (the product of two drifting ridge nets,
-masked into patches) read at map scale as white curls, scratches on the water rather than whitecaps.
-
-**LOD gate and the `O` toggle.** Waves, chop and whitecaps run only while `water_motion_enabled`, which
-`TerrainRenderer` pushes as `radius ≥ motion_min_radius` (the way `rivers_lod_enabled` is) AND the
-player's `O` toggle (`toggle_water_motion`, session-only, not persisted). Below the gate, or toggled off,
-the static anti-tiling and the temperature grade still run and nothing reads `TIME`, so the far zoom
-cannot shimmer. `O` is a look-dev aid: it tells whether a "cloudy" sea is the motion or the static
-surface under it.
-
-**Bit-exact when off.** With `variation_strength`, `wave_strength`, `chop_strength` and `whitecap_strength` all 0 the
-function returns sample A through the same expression the call site used before. Verified: a full
-`blend_probe` run on zeroed levers is byte-identical to the pre-surface render on all 291 frames. On the
-shipped levers 117 of them moved, every one with water in it; every land-only frame is byte-identical.
-
-**Continuous redraw.** The client does not run `low_processor_mode`, so Godot renders the canvas every
-frame and `TIME` advances without `MapView` calling `queue_redraw` — the same mechanism the river
-scroll relies on. Shader `TIME` rolls over (`rendering/limits/time/time_rollover_secs`, 3600 s by
-default), so the wave, chop and whitecap phase jump once an hour, as the river scroll does.
-
-**Harness phase.** `water_time_offset` is added to `TIME` for every animated term. `TerrainRenderer`
-never pushes it (0 in the game); `blend_probe` sets it on the material to render several phases while
-frozen at `Engine.time_scale` 0. Every term enters as an offset (a UV scroll, a position on the chop's
-time axis), so phase 0 still draws it — the harness freeze's re-check rule.
-
-**Cost.** Per `water_surface` call with the shipped levers: up to 2 `biome_array` fetches (A, and B where
-its patch weight is non-zero; the two wave fetches are skipped at `wave_strength` 0) plus 1
-`layer_luma_map` texel fetch and 1 value-noise evaluation, against 1 fetch before. The chop adds two 3D
-value-noise evaluations per octave pair — four in all (32 hashes) — once per water fragment; the whitecaps'
-cost is under 3 above. An open-water pixel whose neighbours share its id makes one call; the depth field
-adds one call per differing water neighbour **within reach** (the loop skips a zero-weight neighbour),
-and the waterline cross-fade adds up to seven calls in its narrow band at a coast.
-
-| Lever (`terrain_config.json` → `water_surface`) | Shipped | Meaning |
+| Lever (`terrain_config.json` → `coastal_swell`) | Shipped | Meaning |
 |---|---|---|
-| `variation_strength` | 1.0 | 0..1, sample B's peak weight; 0 = the plain sample, bit-exact |
-| `variation_cell` | 3.0 | the A/B patch noise cell, in hex radii (× radius → px) |
-| `variation_rotation_deg` | 37 | sample B's UV rotation |
-| `variation_scale` | 0.83 | sample B's UV scale against the base UV — off 1, so the two periods differ |
-| `wave_strength` | 0.0 | × the texture waves' luma deviation from the layer mean. **Ships off** — see 2 |
-| `wave_speed` | 0.012 | wave-texture UV per second (≈ 7 px/s at r ≈ 45) |
-| `wave_scale` | 0.6 | wave UV against the base UV; < 1 is broader and no minifying |
-| `chop_strength` | 0.035 | peak luma offset of a bright / dark chop patch (luma units, 0..1). 0.06 read live as drifting clouds |
-| `chop_scale` | 0.5 | the coarse octave's feature size, in hex radii |
-| `chop_rate` | 0.4 | how fast the chop evolves — cells of its time axis per second. 0.8 read live as clouds changing too fast |
-| `whitecap_strength` | 0.75 | a cap's peak opacity over the water; 0 = none, bit-exact |
-| `whitecap_coverage` | 0.85 | 0..1 — a cell's chance to spawn a crest group each cycle, where the sea is rough |
-| `whitecap_cell` | 2.0 | the spawn grids' cell, in hex radii — the caps' density scale |
-| `whitecap_length` | 0.7 | a fresh streak's nominal length, in hex radii (× 0.4–1.4 per group; it stretches as it fades) |
-| `whitecap_rate` | 0.3 | lifecycles per second — a cap lives ~3.3 s |
-| `whitecap_color` | `[196, 202, 206]` | a light neutral grey, laid over the water by opacity after the grade |
-| `motion_min_radius` | 24 | px; below it the waves, chop and whitecaps are off |
+| `coastal_terrains` | `deep_ocean`, `continental_shelf`, `coral_shelf` | the water the swell runs on, by name; lakes get none |
+| `strength` | 0.14 | a crest's luma offset in deep coastal water (luma units) |
+| `wavelength` | 1.3 | crest spacing in deep coastal water, hex radii |
+| `speed` | 0.3 | crest speed in deep coastal water, hex radii per second (a wave every ~4.3 s) |
+| `reach` | 4.0 | how far from land the swell runs, hex radii (≤ the field's 8 r cap) |
+| `shoal_length` | 0.5 | the wavelength at the shore, × the deep one |
+| `shoal_gain` | 1.6 | the amplitude at the shore, × the deep one |
+| `break_zone` | 1.0 | crests break into foam within this many hex radii of land |
+| `surge` | 0.35 | the shoreline surf's seaward reach grows by this fraction as a crest lands |
+| `foam_strength` | 0.97 | breaking foam's peak opacity over the water |
+| `foam_coverage` | 0.7 | 0..1, a foam cell's chance to break on a given crest |
+| `foam_cell` | 0.8 | the foam grid's cell, hex radii |
+| `foam_length` | 0.8 | a fresh foam streak's nominal length, hex radii (× 0.4–1.4 per group) |
+| `foam_color` | `[196, 202, 206]` | a light neutral grey, laid over the water by opacity after the grade |
 
-Fallbacks are the `WATER_SURFACE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
-lever; the fixed feel (directions, cells, offsets, rotations, and the whitecaps' shape, lifecycle, orientation
-field and clustering) is the `WATER_*` / `CHOP_*` / `WHITECAP_*` consts in the shader. Chosen on `blend_probe` state **29 (OCEAN)** at r ≈ 45 (`harness-map-probes.md`): a larger
-`variation_cell` (4) let one rotated sample cover most of the frame and showed B's own repeat on a
-diagonal; 3 keeps both samples in view. The repeat measure there reads **0.15** on the plain sample
-and **0.73** with the anti-tiling (1 = no correlation at the tile period). The chop was chosen on a
-four-phase sequence and a 1.0×-like frame (`OCEAN_zoomed_out`, r ≈ 25.7), then **toned down live**: at
-`chop_strength` 0.06 / `chop_rate` 0.8 (a steady ~5 levels/s) Ray read it in play as clouds, changing too
-fast. It ships at **0.035 / 0.4**: **2.3 levels mean over two seconds**, a steady **1.47–1.53 levels per
-second** (luma ≈ 30). The texture waves alone moved 0.94 levels per second and were invisible, so the
-usable band is narrow — below ~1 level/s the sea reads still, and ~5 reads as weather. The whitecaps were
-chosen by eye at r ≈ 45, on `OCEAN_live` (r ≈ 35, Ray's 1.5×) and on `OCEAN_live_2x` (r ≈ 47, Ray's
-2.0×). The radius is the cover-fit base × `zoom_factor` (`MapView._update_layout_metrics`), so 35 px at
-1.5× puts 2.0× at ~47 px.
-- **The crescent** read as rice (see the box above).
-- **Width 0.11 with a `1 − s²` taper and no trailing wash:** the streaks were hairlines that read as
-  scratches or rain.
-- **`whitecap_coverage` 0.5 on a 2.4 r cell:** almost empty.
-- **The crest groups at white, 0.95, width 0.12 with a hard body** (the round before this): Ray, live —
-  pop-in, too bright, drawn marks (see the box above).
-- **Shipped:** the soft grey streaks at width 0.16, 0.75 opacity and the long fade read as faint, broken
-  foam, mostly dark sea between.
-  - **Judged against the rice read honestly:** each streak is still a tapered lens, so a close crop can
-    read as soft grains. At 2.0× they read as foam streaks, sparse and low-contrast.
-
-With them the open water moves **2.95 levels over two seconds**, a **1.77–2.05 levels/s** series.
+Fallbacks are the `COASTAL_SWELL_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each lever;
+the fixed feel is the `SWELL_*` / `WHITECAP_*` consts in the shader. Chosen by eye on `blend_probe` state
+**31 (COAST)** (`harness-map-probes.md`) at r ≈ 45 and r ≈ 47 (Ray's 2.0×). At `strength` 0.05 the swell
+was barely visible over the warm shelf. It went to 0.08, then to 0.14 once the section cut left fewer
+crests standing: the sections that remain carry more contrast. Fewer, bolder foam groups (`foam_cell`
+0.8, `foam_coverage` 0.7) replaced many hairlines when the foam went bold.
 
 ## Water temperature grade
 
@@ -1401,7 +1429,7 @@ temperature step between two hexes, and a graded↔ungraded (deep↔coral) seam,
 instead of stepping on it.
 
 **The grade** (`water_temperature_grade`, applied to the water fragment's `result` after the depth field,
-before the water motion and the shore — the whitecaps and the foam colour are unchanged): cold desaturates toward luma by
+before the water motion and the shore — the swell, its foam and the shore foam are unchanged): cold desaturates toward luma by
 `cold_desaturate × cold`, pulls toward `cold_tint`'s hue by `cold`, and scales by
 `mix(1, cold_brightness, cold)`; warm pulls toward `warm_tint`'s hue by `warm` and scales by
 `mix(1, warm_brightness, warm)`. **The tint pull keeps luma** (`tint_keep_luma`): multiply by the tint —

@@ -224,7 +224,7 @@ uniform float water_variation_cell;     // patch noise cell, px (variation_cell 
 uniform float water_variation_rotation; // radians: the second sample's UV rotation
 uniform float water_variation_scale;    // the second sample's UV scale, relative to the base UV
 // WAVES (animated): two scrolling samples of the same layer add a luma ripple. Gated, with the chop and the
-// whitecaps, by water_motion_enabled (radius ≥ motion_min_radius, AND the player's `O` toggle), so the far
+// coastal swell, by water_motion_enabled (radius ≥ motion_min_radius, AND the player's `O` toggle), so the far
 // zoom — where the unmipmapped base art is minified — never shimmers.
 uniform float water_wave_strength;      // multiplies the waves' luma deviation from the layer mean
 uniform float water_wave_speed;         // wave-texture UV per second (a UV of 1.0 = one wave tile)
@@ -235,19 +235,32 @@ uniform float water_wave_scale;         // wave UV scale, relative to the base U
 uniform float water_chop_strength;      // peak luma offset of a bright (+) / dark (−) patch, 0..1 luma units
 uniform float water_chop_scale;         // feature size of the coarse octave, in HEX RADII (zoom-invariant)
 uniform float water_chop_rate;          // how fast the field evolves: noise cells of its TIME axis per second
-// THE WHITECAPS: small breaking-wave streaks, one per cell of two jittered grids, that flash white and fade IN
-// PLACE, clustered where the chop is rough (see WHITECAP_* and open_whitecap). Applied with the chop, once per
-// water fragment.
-uniform float water_whitecap_strength;  // peak opacity of a cap over the water (0 = none, bit-exact)
-uniform float water_whitecap_coverage;  // 0..1: the chance a cell spawns a cap in a cycle, where the sea is rough
-uniform float water_whitecap_cell;      // the spawn grid's cell, in HEX RADII — the caps' density scale
-uniform float water_whitecap_length;    // a fresh cap's length, in HEX RADII
-uniform float water_whitecap_rate;      // cap lifecycles per second (1 / a cap's life)
-uniform vec3 water_whitecap_color;      // the cap's colour — laid OVER the water by opacity, never tinted into it
-// The motion gate for the waves, chop and whitecaps: TerrainRenderer ANDs the zoom LOD (radius ≥
-// motion_min_radius) with the session-only `O` toggle. The static anti-tiling and the temperature grade always run.
+// THE COASTAL SHORE SWELL (config "coastal_swell"; see apply_water_motion and swell_phase). Open ocean reads through
+// the chop and its colour alone; near a coast, crests run PARALLEL to the shore and roll IN, and break into foam
+// in the last stretch before land. It all runs off a distance-to-coast field built once per world on the CPU.
+uniform sampler2D coast_map : filter_linear, repeat_disable;   // R = distance to land (hex radii), G = eligibility
+uniform vec2 coast_origin;              // the field's corner, in hex radii from hex (0, 0)'s centre
+uniform vec2 coast_size;                // the field's extent, in hex radii
+uniform float coast_wrap_width;         // the map's wrap period in hex radii; 0 = the map does not wrap
+uniform bool coastal_enabled;           // false = no field yet, or strength 0: the open-ocean term everywhere
+uniform float swell_strength;           // a crest's luma offset in deep coastal water (luma units)
+uniform float swell_wavelength;         // crest spacing in deep coastal water, hex radii
+uniform float swell_speed;              // crest speed in deep coastal water, hex radii per second
+uniform float swell_reach;              // how far from land the swell runs, hex radii
+uniform float swell_shoal_length;       // the wavelength at the shore, as a fraction of swell_wavelength
+uniform float swell_shoal_gain;         // the amplitude at the shore, × the deep-water amplitude
+uniform float swell_break_zone;         // crests break into foam within this many hex radii of land
+uniform float swell_surge;              // the shoreline surf reaches this much further (× its reach) as a crest lands
+uniform float swell_foam_strength;      // breaking foam's peak opacity over the water
+uniform float swell_foam_coverage;      // 0..1: a foam cell's chance to break on a given crest
+uniform float swell_foam_cell;          // the foam grid's cell, hex radii
+uniform float swell_foam_length;        // a fresh foam streak's nominal length, hex radii
+uniform vec3 swell_foam_color;          // the foam's colour — laid over the water by opacity after the grade
+// The motion gate for the waves, chop and coastal swell (and the shore surge it drives): TerrainRenderer ANDs the
+// zoom LOD (radius ≥ motion_min_radius) with the session-only `O` toggle. The static anti-tiling and the
+// temperature grade always run.
 uniform bool water_motion_enabled;
-// Added to TIME for the wave, chop and whitecap phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
+// Added to TIME for the wave, chop and swell phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
 // harness frozen at Engine.time_scale 0 can render the surface at two known phases, deterministically.
 uniform float water_time_offset;
 // THE WATER TEMPERATURE GRADE (config "water_temperature"; see water_temperature_grade()). Graded open water
@@ -677,23 +690,19 @@ const float CHOP_PAIR_TIME_SHIFT = 0.5;
 const vec3 CHOP_PAIR_OFFSET = vec3(173.0, 293.0, 0.0);
 const float CHOP_PAIR_NORM = 0.70710678;
 const float VNOISE_MEAN = 0.5;                               // vnoise3's mid-value: subtracting it centres it
-// THE WHITECAPS (see open_whitecap). Why not noise peaks: thresholding a noise field gave ROUND blobs whose soft
-// rims, mixed with the blue water under them, read CYAN — and every rim is a soft rim. A cap is a SHAPE instead:
-// a crest GROUP of 1–3 thin, broken foam streaks strung along one line, spawned per cell of two jittered grids,
-// flashing white and fading where it was born. (A single fat crescent per cell, all one size, read as RICE.)
-// The two grids: each rotated off the screen axes (and off each other) and offset, so neither lattice shows.
-const vec2 WHITECAP_GRID_ROTATION = vec2(0.31, 1.12);        // radians, grid A / grid B
-const vec2 WHITECAP_GRID_B_OFFSET = vec2(0.37, 0.61);        // cells — grid A sits at 0
-const float WHITECAP_GRID_B_SALT = 719.0;                     // decorrelates grid B's hashes from grid A's
-// A group's centre keeps this far (cells) off its cell edge. A fragment visits its own cell and the 8 around it,
-// and a group two cells away is centred at least (1 + margin) cells off, so that is the furthest a group may reach
-// — a longer one is SCALED to fit, never clipped at a cell line.
-const float WHITECAP_CELL_MARGIN = 0.15;
+// THE CREST-GROUP GENERATOR (crest_group_alpha) — the foam shape, now drawn ONLY where a coastal swell breaks. It
+// was the open ocean's whitecaps first; scattered at random over open water they each looked like a wave but did
+// not read as whitecaps, so open water lost them and the coast took the generator. Why this shape and not noise
+// peaks: thresholding a noise field gave ROUND blobs whose soft rims, mixed with the blue water under them, read
+// CYAN. A single fat crescent per cell, all one size, read as RICE. A group is 1–3 broken streaks along one line, a
+// light neutral GREY laid on by opacity. As BREAKING foam the streaks are bold rather than hairline: a dash only
+// ~3 px across at play zoom never reaches full coverage, so the water under it shows through everywhere and the
+// foam renders CYAN over a warm sea whatever colour it is laid on in — which is what the first coastal cut did.
 // THE STREAK, in its own axes (u along its length, v across, +v the leading edge): half-width WHITECAP_WIDTH_RATIO
 // of its half-length along a blunt body (1 − s⁴, so a thin streak keeps its width to near its tips), its centreline bowed WHITECAP_CURVE half-lengths — a
-// gentle arc. Its length is whitecap_length × a per-group draw in [WHITECAP_LENGTH_MIN, _MAX] × a per-streak
+// gentle arc. Its length is swell_foam_length × a per-group draw in [WHITECAP_LENGTH_MIN, _MAX] × a per-streak
 // draw in [WHITECAP_SEGMENT_MIN, 1], so lengths vary widely rather than every cap being one grain size.
-const float WHITECAP_WIDTH_RATIO = 0.16;
+const float WHITECAP_WIDTH_RATIO = 0.4;
 const float WHITECAP_CURVE = 0.12;
 const float WHITECAP_LENGTH_MIN = 0.4;
 const float WHITECAP_LENGTH_MAX = 1.4;
@@ -715,53 +724,86 @@ const float WHITECAP_EDGE_CELL = 0.1;
 const float WHITECAP_EDGE_WOBBLE = 0.45;
 const float WHITECAP_NOISE_SEED_RANGE = 997.0;               // the 1D noises' per-group seed spans this many cells
 const float WHITECAP_NOISE_SALT = 53.0;
-// ACROSS the streak the opacity peaks between WHITECAP_BACK_FULL and `lead` and falls off smoothly to both sides —
-// up from the trailing side (−1), down to the leading edge (+1) — so there is no crisp outline even at the peak.
-// A fresh streak's lead sits a little forward, a spent one's has slid back, so the fall-off spreads as it fades.
-// (The cap is a neutral GREY laid on by opacity — see whitecap_color — so a soft edge reads as thinner foam, not
-// as a tint; the cyan the soft rims once showed came from a tinted colour and the grade, both since removed.)
-const float WHITECAP_BACK_FULL = -0.15;
-const float WHITECAP_LEAD_FRESH = 0.15;
-const float WHITECAP_LEAD_SPENT = -0.3;
+// ACROSS the streak the opacity is FULL on a solid core between WHITECAP_BACK_FULL and `lead` — several px wide at
+// play zoom, so the foam there covers the water completely and renders as the grey it is — and falls off smoothly
+// to both sides, up from the trailing side (−1) and down to the leading edge (+1), so the outer edge stays soft.
+// A fresh streak's lead sits well forward, a spent one's has slid back, so the core narrows as it fades.
+const float WHITECAP_BACK_FULL = -0.45;
+const float WHITECAP_LEAD_FRESH = 0.5;
+const float WHITECAP_LEAD_SPENT = 0.0;
 // The TRAILING side (−v) is WHITECAP_TRAIL_WIDTH × wider than the leading side and only WHITECAP_TRAIL_OPACITY as
 // opaque at its far edge: a faint wash of foam behind the crest rather than a second body.
 const float WHITECAP_TRAIL_WIDTH = 1.8;
 const float WHITECAP_TRAIL_OPACITY = 0.45;
 // THE TIPS dissolve: the opacity falls off over the outer (1 − WHITECAP_TIP_SOFT) of the half-length.
 const float WHITECAP_TIP_SOFT = 0.45;
-// THE LIFECYCLE: fract(t·rate + phase), per group. The cap FADES IN over WHITECAP_FADE_IN of the cycle, holds for
-// WHITECAP_HOLD, then fades out over the rest while the streak STRETCHES along its length and SPREADS across it —
-// smoothstep ramps at both ends, so it never pops. (A 12% attack read live as caps that "just appear".)
-const float WHITECAP_FADE_IN = 0.38;
-const float WHITECAP_HOLD = 0.08;
+// THE LIFECYCLE is its caller's (see SWELL_FOAM_*): smoothstep ramps at both ends, so a group never pops (a 12%
+// attack once read live as caps that "just appear"). As it fades out it STRETCHES along its length and SPREADS
+// across it.
 const float WHITECAP_STRETCH = 0.6;                           // extra length at the end of the fade, × fresh length
 const float WHITECAP_SPREAD = 0.8;                            // extra width at the end of the fade, × fresh width
-// ORIENTATION IS REGIONAL: the angle of a very-low-frequency world VECTOR noise (two value noises, as the atan of
-// their centred pair, so every direction is equally likely) at the group's centre, plus a small per-group jitter.
-// Caps agree within a region and disagree across the map — no single map-wide direction — and nothing moves.
-const float WHITECAP_ANGLE_CELL = 12.0;                        // hex radii — a region spans a few hexes
-const vec2 WHITECAP_ANGLE_OFFSET_A = vec2(613.0, 29.0);
-const vec2 WHITECAP_ANGLE_OFFSET_B = vec2(83.0, 457.0);
-const float WHITECAP_ANGLE_JITTER = 0.35;                     // ± radians per group
-// CLUSTERING: a cell spawns with chance whitecap_coverage × a smoothstep over the COARSE chop octave at the group's
-// centre, read at the moment it spawns — so caps gather where the sea is rough, and a group's fate is fixed for
-// its life (it never pops in or out halfway because the chop moved on).
-const float WHITECAP_ROUGH_LO = 0.0;
-const float WHITECAP_ROUGH_HI = 0.25;
-// Salts for the per-cycle hashes, so a cell's position, spawn, size, angle and group are independent draws.
-const vec3 WHITECAP_HASH_SPAWN = vec3(0.0, 0.0, 0.0);
+// Salts for the per-cycle hashes, so a group's shape, count and lengths are independent draws.
 const vec3 WHITECAP_HASH_SHAPE = vec3(131.0, 257.0, 0.5);
 const vec3 WHITECAP_HASH_GROUP = vec3(389.0, 71.0, 0.25);
+// THE SWELL (see swell_phase / coastal_swell_luma). Crests are contours of the distance to land, so they run
+// parallel to the shore; the phase grows with that distance and with time, so they travel TOWARD it.
+// SHOALING: the wavelength shrinks linearly from swell_wavelength at `swell_reach` to swell_shoal_length of it at
+// the shore, and the phase is its exact integral (∫ dd / λ(d)), so crests bunch up as they come in rather than
+// being stretched or doubled by a phase that divides by the local wavelength.
+const float SWELL_SHOAL_MIN = 0.05;                            // floor on swell_shoal_length (the log below)
+const float SWELL_SHOAL_NONE = 0.999;                          // at or above this, no shoaling: a straight d / λ
+// Crests are not perfect contour lines: a low-frequency world noise adds up to ± half SWELL_WARP_AMOUNT of a
+// wavelength to the phase, so a crest bends along the coast.
+const float SWELL_WARP_CELL = 3.5;                             // hex radii
+const float SWELL_WARP_AMOUNT = 0.6;                           // wavelengths, peak to peak
+const vec2 SWELL_WARP_OFFSET = vec2(271.0, 613.0);
+// SETS: the amplitude swells and eases every SWELL_SET_WAVES crests (the envelope rides the phase, so a set
+// travels in with its waves), and a world noise at about a crest's own length breaks each crest into SECTIONS
+// that rise and die along it — sets of waves arriving in pieces, not a metronome, and not a ring of contour lines
+// (which is what an unbroken crest around an island reads as).
+const float SWELL_SET_WAVES = 5.0;
+const float SWELL_SET_DEPTH = 0.65;                            // how far a lull drops, × the peak amplitude
+// Each crest is CUT into sections, not merely dimmed: the along-shore noise is smoothstepped between
+// SWELL_SECTION_LO and _HI, so below the low edge a crest is simply absent and it reads as broken arcs — round a
+// small island a merely-modulated crest still closed into a ring.
+const float SWELL_ALONG_CELL = 1.0;                            // hex radii
+const float SWELL_SECTION_LO = 0.5;
+const float SWELL_SECTION_HI = 0.7;
+const vec2 SWELL_ALONG_OFFSET = vec2(59.0, 887.0);
+// THE PROFILE of a crest, over one wave (`fract(phase)`, the crest at 0): a STEEP shoreward face rising over the
+// last SWELL_FRONT_FACE of the wave, and a long gentle seaward back falling over the first SWELL_BACK_FACE — the
+// shape of a wave that is running at the shore, not a symmetric ripple. The offset is
+// `amplitude · (crest − SWELL_TROUGH_LEVEL)`, so the long trough reads slightly darker; hue preserved.
+const float SWELL_FRONT_FACE = 0.12;
+const float SWELL_BACK_FACE = 0.45;
+const float SWELL_TROUGH_LEVEL = 0.12;
+// THE COASTAL WEIGHT ramps from 1 (at the coast) to 0 between SWELL_RAMP_START and 1 × swell_reach, and the open
+// chop keeps SWELL_CHOP_UNDER of its strength underneath the swell.
+const float SWELL_RAMP_START = 0.5;
+const float SWELL_CHOP_UNDER = 0.8;
+// The finite-difference step the field's gradient (the direction AWAY from the coast) is taken over, hex radii.
+const float COAST_GRAD_STEP = 0.25;
+const float COAST_GRAD_MIN = 1e-5;
+// BREAKING FOAM (see break_foam_alpha): one crest group per foam cell, at a fixed jittered spot, that breaks on
+// every crest reaching it inside the break zone, with probability swell_foam_coverage. Its life is keyed to the
+// crest: `f` = fract(phase) at its centre, 0 as the crest arrives. It fades in over SWELL_FOAM_FADE_IN of a
+// wave, holds for SWELL_FOAM_HOLD, and fades out by SWELL_FOAM_LIFE — trailing behind the crest as it runs on.
+// The life ends before 1 because the WAVE's number is read at the cell centre and the group sits up to a margin
+// off it: that mismatch is at most a fraction of a wave, and a group already gone when the number turns over
+// cannot pop.
+const float SWELL_FOAM_FADE_IN = 0.2;
+const float SWELL_FOAM_HOLD = 0.05;
+const float SWELL_FOAM_LIFE = 0.75;
+const float SWELL_FOAM_SALT = 811.0;
+const float SWELL_FOAM_MARGIN = 0.2;                           // cells: a group's centre keeps this far off its edge
+// The break zone's own ramp: full chance inside SWELL_BREAK_INNER × swell_break_zone, none beyond it; and no foam
+// closer to land than SWELL_FOAM_SHORE_GAP hex radii (the shoreline's own surf owns that).
+const float SWELL_BREAK_INNER = 0.6;
+const float SWELL_FOAM_SHORE_GAP = 0.1;
+const float SWELL_ELIGIBLE_MIN = 0.5;                          // a group breaks only on coastal (eligible) water
 // hash13's input scale (Hoskins' "hash without sine": no sin(), so no precision loss as TIME grows).
 const vec3 HASH3_SCALE = vec3(0.1031, 0.1030, 0.0973);
 const float HASH3_ADD = 33.33;
-// THE COASTAL SWELL HOOK — a second water-motion term, for waves rolling across the shelf INTO the shore. OFF:
-// with this false the coastal term is never read, so every water fragment gets the open chop at full strength
-// and the shelf moves exactly as open water does. Turning it on needs (1) a per-hex DISTANCE-TO-COAST field —
-// the shore pass's own distance reaches only ~0.41 r, far too short for a swell crossing a shelf — (2) a
-// `coastal_terrains` config list for coastal_weight() to key its shelf-ness on, and (3) coastal_swell() built
-// from that field.
-const bool COASTAL_SWELL_ENABLED = false;
 // Divide-by-zero guard for tint_keep_luma's rescale on a black texel.
 const float WATER_TEMP_LUMA_MIN = 1e-4;
 
@@ -825,7 +867,7 @@ vec2 rotate_uv(vec2 uv, float angle) {
 //      1 / sqrt(wA² + wB²), applied as a LUMA offset so the hue is untouched.
 //   2. WAVES — two more samples of the same layer at a wave scale, scrolled with time in two non-opposite
 //      directions; their mean luma minus the layer mean, × water_wave_strength, is added to rgb.
-// 2 runs only with water_motion_enabled (the chop and whitecaps are applied per fragment — see
+// 2 runs only with water_motion_enabled (the chop and coastal swell are applied per fragment — see
 // apply_water_motion). With strength and waves both 0 this returns the plain sample A, bit-exact.
 vec3 water_surface(int layer, vec2 map_px) {
 	vec2 uv_a = map_px / (2.0 * hex_radius) * base_scale;   // == base_uv at the call site, same expression
@@ -922,8 +964,7 @@ float chop_octave(vec3 q) {
 	return (a + b) * CHOP_PAIR_NORM;
 }
 
-// The chop's COARSE octave at `p` (in chop cells) and time-axis position `z` — open_chop's own, and the whitecaps'
-// roughness gate.
+// The chop's COARSE octave at `p` (in chop cells) and time-axis position `z`.
 float chop_coarse(vec2 p, float z) {
 	return chop_octave(vec3(rotate_uv(p, CHOP_COARSE_ROTATION), z) + CHOP_OFFSET_COARSE);
 }
@@ -938,20 +979,7 @@ float open_chop(vec2 map_px, float t) {
 	return 2.0 * dot(vec2(coarse, fine), CHOP_OCTAVE_WEIGHTS);
 }
 
-// THE COASTAL SWELL — a STUB (see COASTAL_SWELL_ENABLED). It will need a per-hex distance-to-coast field; until
-// that exists it returns 0 and nothing reads it.
-float coastal_swell(vec2 map_px, float t) {
-	return 0.0;
-}
-
-// How COASTAL a water fragment is (0 open ocean … 1 on the shelf) — the future blend weight between the two
-// motion terms. It will be the neighbour-weighted shelf-ness over {own + 6 neighbours} with the depth field's
-// weights (the temperature grade's graded-ness is the model), keyed on a `coastal_terrains` list. A STUB today.
-float coastal_weight() {
-	return 0.0;
-}
-
-// A smooth 1D value noise at `x` (in cells), one sequence per `seed` — the whitecaps' along-streak break-up.
+// A smooth 1D value noise at `x` (in cells), one sequence per `seed` — a crest group's along-streak break-up.
 float vnoise1(float x, float seed) {
 	float i = floor(x);
 	float f = x - i;
@@ -959,112 +987,198 @@ float vnoise1(float x, float seed) {
 	return mix(hash13(vec3(i, seed, WHITECAP_NOISE_SALT)), hash13(vec3(i + 1.0, seed, WHITECAP_NOISE_SALT)), f);
 }
 
-// ONE WHITECAP GRID (see WHITECAP_*): the opacity of the crest groups of one jittered grid at `p` (hex radii). The
-// grid is rotated by `rot` and offset by `off` cells; `salt` separates its hashes from the other grid's. It visits
-// the fragment's cell and its 8 neighbours (see WHITECAP_CELL_MARGIN) and keeps the most opaque streak.
-float whitecap_grid(vec2 p, float t, float rot, vec2 off, float salt) {
-	float cell = max(water_whitecap_cell, BLEND_SOFT_MIN);
-	vec2 q = rotate_uv(p, rot) / cell + off;
-	vec2 base = floor(q);
-	float reach = (1.0 + WHITECAP_CELL_MARGIN) * cell;
-	float chop_cell = hex_radius * max(water_chop_scale, BLEND_SOFT_MIN);
+// ONE CREST GROUP's opacity at `d` (fragment − group centre, hex radii): 1..WHITECAP_GROUP_MAX broken streaks along
+// `angle`. `g`, `k3`, `hx` are its three hashes; `seg_half` its nominal streak half-length and `fit_reach` the
+// furthest it may reach; `f` its life 0..`life` (fade in over `fade_in`, hold `hold`, fade out by `life`).
+float crest_group_alpha(vec2 d, float angle, vec3 g, vec3 k3, vec3 hx, float seg_half, float fit_reach, float f,
+		float fade_in, float hold, float life) {
+	int n = 1 + int(min(k3.x * float(WHITECAP_GROUP_MAX), float(WHITECAP_GROUP_MAX - 1)));
+	float spacing = 2.0 * seg_half * (1.0 + WHITECAP_GROUP_GAP);
+	float group_half = (0.5 * float(n - 1) * spacing + seg_half) * (1.0 + WHITECAP_STRETCH);
+	float fit = min(1.0, fit_reach / max(group_half, BLEND_SOFT_MIN));
+	seg_half *= fit;
+	spacing *= fit;
+	vec2 uv = rotate_uv(d, -angle);                         // u along the crest, v across (+v leading)
+	float seed = k3.y * WHITECAP_NOISE_SEED_RANGE;
+	float broken = smoothstep(WHITECAP_BREAK_LO, WHITECAP_BREAK_HI, vnoise1(uv.x / WHITECAP_BREAK_CELL, seed));
+	if (broken <= 0.0) {
+		return 0.0;
+	}
+	float edge = 1.0 + WHITECAP_EDGE_WOBBLE * (2.0 * vnoise1(uv.x / WHITECAP_EDGE_CELL, seed + 1.0) - 1.0);
+	vec3 seg_len = mix(vec3(WHITECAP_SEGMENT_MIN), vec3(1.0), vec3(g.z, k3.z, hx.x));
 	float best = 0.0;
-	for (int j = -1; j <= 1; j++) {
-		for (int i = -1; i <= 1; i++) {
-			vec2 ci = base + vec2(float(i), float(j));
-			float life = t * water_whitecap_rate + hash13(vec3(ci, salt));
-			float cycle = floor(life);
-			float f = life - cycle;
-			vec3 h = hash33(vec3(ci, cycle + salt) + WHITECAP_HASH_SPAWN);
-			vec2 cap_q = ci + WHITECAP_CELL_MARGIN + h.xy * (1.0 - 2.0 * WHITECAP_CELL_MARGIN);
-			vec2 d = rotate_uv((q - cap_q) * cell, -rot);            // fragment − group centre, world hex radii
-			if (dot(d, d) > reach * reach) {
-				continue;
-			}
-			// The group's centre in world hex radii, and the moment it spawned — its spawn is decided there, then.
-			vec2 centre = p - d;
-			float t_spawn = water_whitecap_rate > 0.0 ? (cycle - (life - t * water_whitecap_rate)) / water_whitecap_rate : 0.0;
-			float rough = smoothstep(WHITECAP_ROUGH_LO, WHITECAP_ROUGH_HI,
-				chop_coarse(centre * hex_radius / chop_cell, t_spawn * water_chop_rate));
-			if (h.z >= water_whitecap_coverage * rough) {
-				continue;
-			}
-			vec3 g = hash33(vec3(ci, cycle + salt) + WHITECAP_HASH_SHAPE);
-			vec3 k3 = hash33(vec3(ci, cycle + salt) + WHITECAP_HASH_GROUP);
-			float angle = atan(vnoise(centre / WHITECAP_ANGLE_CELL + WHITECAP_ANGLE_OFFSET_B) - VNOISE_MEAN,
-				vnoise(centre / WHITECAP_ANGLE_CELL + WHITECAP_ANGLE_OFFSET_A) - VNOISE_MEAN)
-				+ WHITECAP_ANGLE_JITTER * (2.0 * g.x - 1.0);
-			// The group: its streak count, their shared nominal length and spacing, scaled to fit the reach.
-			int n = 1 + int(min(k3.x * float(WHITECAP_GROUP_MAX), float(WHITECAP_GROUP_MAX - 1)));
-			float seg_half = 0.5 * water_whitecap_length * mix(WHITECAP_LENGTH_MIN, WHITECAP_LENGTH_MAX, g.y);
-			float spacing = 2.0 * seg_half * (1.0 + WHITECAP_GROUP_GAP);
-			float group_half = (0.5 * float(n - 1) * spacing + seg_half) * (1.0 + WHITECAP_STRETCH);
-			float fit = min(1.0, reach / max(group_half, BLEND_SOFT_MIN));
-			seg_half *= fit;
-			spacing *= fit;
-			vec2 uv = rotate_uv(d, -angle);                         // u along the crest, v across (+v leading)
-			float seed = k3.y * WHITECAP_NOISE_SEED_RANGE;
-			float broken = smoothstep(WHITECAP_BREAK_LO, WHITECAP_BREAK_HI, vnoise1(uv.x / WHITECAP_BREAK_CELL, seed));
-			if (broken <= 0.0) {
-				continue;
-			}
-			float edge = 1.0 + WHITECAP_EDGE_WOBBLE * (2.0 * vnoise1(uv.x / WHITECAP_EDGE_CELL, seed + 1.0) - 1.0);
-			vec3 seg_len = mix(vec3(WHITECAP_SEGMENT_MIN), vec3(1.0), vec3(g.z, k3.z, h.x));
-			for (int k = 0; k < WHITECAP_GROUP_MAX; k++) {
-				if (k >= n) {
-					break;
-				}
-				// Each streak breaks a little after the one before, and lives out the rest of the cycle.
-				float lag = float(k) * WHITECAP_GROUP_PHASE_STEP;
-				float fk = clamp((f - lag) / (1.0 - lag), 0.0, 1.0);
-				float out_start = WHITECAP_FADE_IN + WHITECAP_HOLD;
-				float fade = clamp((fk - out_start) / (1.0 - out_start), 0.0, 1.0);
-				float intensity = smoothstep(0.0, WHITECAP_FADE_IN, fk) * (1.0 - smoothstep(out_start, 1.0, fk));
-				float half_len = seg_half * seg_len[k] * (1.0 + WHITECAP_STRETCH * fade);
-				float s = (uv.x - (float(k) - 0.5 * float(n - 1)) * spacing) / half_len;
-				if (abs(s) >= 1.0) {
-					continue;
-				}
-				float s2 = s * s;
-				float taper = 1.0 - s2 * s2;                             // blunt along the body, pointed at the tips
-				float half_w = half_len * WHITECAP_WIDTH_RATIO * (1.0 + WHITECAP_SPREAD * fade) * edge * taper;
-				float v = uv.y + WHITECAP_CURVE * half_len * s2;        // a gentle arc, ends trailing
-				float x = v / max(half_w * (v < 0.0 ? WHITECAP_TRAIL_WIDTH : 1.0), BLEND_SOFT_MIN);
-				float lead = mix(WHITECAP_LEAD_FRESH, WHITECAP_LEAD_SPENT, fade);
-				float across = smoothstep(-1.0, min(WHITECAP_BACK_FULL, lead), x) * (1.0 - smoothstep(lead, 1.0, x));
-				float wash = mix(1.0, WHITECAP_TRAIL_OPACITY, 1.0 - smoothstep(-1.0, 0.0, x));
-				float tips = 1.0 - smoothstep(WHITECAP_TIP_SOFT, 1.0, abs(s));
-				best = max(best, across * wash * tips * intensity * broken);
-			}
+	for (int k = 0; k < WHITECAP_GROUP_MAX; k++) {
+		if (k >= n) {
+			break;
 		}
+		// Each streak breaks a little after the one before, and lives out the rest of the life.
+		float lag = float(k) * WHITECAP_GROUP_PHASE_STEP;
+		float fk = clamp((f - lag) / max(life - lag, BLEND_SOFT_MIN), 0.0, 1.0);
+		float out_start = (fade_in + hold) / max(life, BLEND_SOFT_MIN);
+		float fade = clamp((fk - out_start) / max(1.0 - out_start, BLEND_SOFT_MIN), 0.0, 1.0);
+		float intensity = smoothstep(0.0, fade_in / max(life, BLEND_SOFT_MIN), fk) * (1.0 - smoothstep(out_start, 1.0, fk));
+		float half_len = seg_half * seg_len[k] * (1.0 + WHITECAP_STRETCH * fade);
+		float s = (uv.x - (float(k) - 0.5 * float(n - 1)) * spacing) / half_len;
+		if (abs(s) >= 1.0) {
+			continue;
+		}
+		float s2 = s * s;
+		float taper = 1.0 - s2 * s2;                             // blunt along the body, pointed at the tips
+		float half_w = half_len * WHITECAP_WIDTH_RATIO * (1.0 + WHITECAP_SPREAD * fade) * edge * taper;
+		float v = uv.y + WHITECAP_CURVE * half_len * s2;        // a gentle arc, ends trailing
+		float x = v / max(half_w * (v < 0.0 ? WHITECAP_TRAIL_WIDTH : 1.0), BLEND_SOFT_MIN);
+		float lead = mix(WHITECAP_LEAD_FRESH, WHITECAP_LEAD_SPENT, fade);
+		float across = smoothstep(-1.0, min(WHITECAP_BACK_FULL, lead), x) * (1.0 - smoothstep(lead, 1.0, x));
+		float wash = mix(1.0, WHITECAP_TRAIL_OPACITY, 1.0 - smoothstep(-1.0, 0.0, x));
+		float tips = 1.0 - smoothstep(WHITECAP_TIP_SOFT, 1.0, abs(s));
+		best = max(best, across * wash * tips * intensity * broken);
 	}
 	return best;
 }
 
-// THE WHITECAPS (see WHITECAP_*): a cap's OPACITY over the water at this fragment, 0..whitecap_strength — the max
-// of the two grids.
-float open_whitecap(vec2 map_px, float t) {
-	vec2 p = map_px / hex_radius;
-	float a = whitecap_grid(p, t, WHITECAP_GRID_ROTATION.x, vec2(0.0), 0.0);
-	float b = whitecap_grid(p, t, WHITECAP_GRID_ROTATION.y, WHITECAP_GRID_B_OFFSET, WHITECAP_GRID_B_SALT);
-	return max(a, b) * water_whitecap_strength;
+// THE COAST FIELD at `p` (hex radii from hex (0, 0)'s centre): R = distance to land in hex radii, G = how coastal
+// (eligible for the swell) this water is, 0..1. Wrapped horizontally on a wrapping map.
+vec2 coast_sample(vec2 p) {
+	if (coast_wrap_width > 0.0) {
+		p.x = p.x - coast_wrap_width * floor(p.x / coast_wrap_width);
+	}
+	return texture(coast_map, (p - coast_origin) / coast_size).rg;
 }
 
-// THE WATER MOTION applied to a water fragment's colour `c`. The OPEN-OCEAN term is the chop (a luma offset, hue
-// preserved) with the whitecaps over it; the coastal term will be the swell:
+// The field's gradient at `p`: the unit direction AWAY from the coast (zero where the field is flat).
+vec2 coast_gradient(vec2 p) {
+	vec2 e = vec2(COAST_GRAD_STEP, 0.0);
+	vec2 g = vec2(coast_sample(p + e.xy).r - coast_sample(p - e.xy).r,
+		coast_sample(p + e.yx).r - coast_sample(p - e.yx).r);
+	float len = length(g);
+	return len > COAST_GRAD_MIN ? g / len : vec2(0.0);
+}
+
+// THE SWELL'S PHASE at distance `d` from land, point `p` (hex radii) and time `t`: crests sit at whole numbers, and
+// the phase grows with `d` and with `t`, so a crest travels toward the coast. The distance term is the exact
+// integral of 1 / λ(d) under the shoaling (see SWELL_SHOAL_*); the warp bends each crest along the shore.
+float swell_phase(float d, vec2 p, float t) {
+	float wl = max(swell_wavelength, BLEND_SOFT_MIN);
+	float reach = max(swell_reach, BLEND_SOFT_MIN);
+	float shoal = clamp(swell_shoal_length, SWELL_SHOAL_MIN, 1.0);
+	float dist_phase;
+	if (shoal >= SWELL_SHOAL_NONE) {
+		dist_phase = d / wl;
+	} else {
+		float u = min(d, reach);
+		dist_phase = reach / (wl * (1.0 - shoal)) * log((shoal + (1.0 - shoal) * u / reach) / shoal)
+			+ max(d - reach, 0.0) / wl;
+	}
+	float warp = SWELL_WARP_AMOUNT * (vnoise(p / SWELL_WARP_CELL + SWELL_WARP_OFFSET) - VNOISE_MEAN);
+	return dist_phase + t * swell_speed / wl + warp;
+}
+
+// A crest's height 0..1 at `phase` (see SWELL_FRONT_FACE / SWELL_BACK_FACE): 1 on each whole number.
+float swell_crest(float phase) {
+	float y = fract(phase);
+	return max(1.0 - smoothstep(0.0, SWELL_BACK_FACE, y), smoothstep(1.0 - SWELL_FRONT_FACE, 1.0, y));
+}
+
+// THE SWELL's luma offset at distance `d`, point `p`, phase `phase`: amplitude shoaled toward the shore, eased in
+// sets, and varied along the coast.
+float coastal_swell_luma(float d, vec2 p, float phase) {
+	float shoaled = mix(swell_shoal_gain, 1.0, smoothstep(0.0, max(swell_reach, BLEND_SOFT_MIN), d));
+	float sets = mix(1.0 - SWELL_SET_DEPTH, 1.0, 0.5 + 0.5 * cos(TAU * phase / SWELL_SET_WAVES));
+	float along = smoothstep(SWELL_SECTION_LO, SWELL_SECTION_HI, vnoise(p / SWELL_ALONG_CELL + SWELL_ALONG_OFFSET));
+	return swell_strength * shoaled * sets * along * (swell_crest(phase) - SWELL_TROUGH_LEVEL);
+}
+
+// How much of the coastal term a water point at distance `d` with eligibility `elig` takes: 1 at the coast, 0 from
+// swell_reach out, and 0 on water the swell does not run on (a lake).
+float coastal_weight(float d, float elig) {
+	float reach = max(swell_reach, BLEND_SOFT_MIN);
+	return clamp(elig, 0.0, 1.0) * (1.0 - smoothstep(reach * SWELL_RAMP_START, reach, d));
+}
+
+// BREAKING FOAM's opacity at `p` (hex radii), 0..swell_foam_strength: the crest groups of the one foam grid whose
+// cells sit in the break zone (see SWELL_FOAM_*), each oriented ALONG the crest (across the field's gradient).
+float break_foam_alpha(vec2 p, float t) {
+	float cell = max(swell_foam_cell, BLEND_SOFT_MIN);
+	vec2 q = p / cell;
+	vec2 base = floor(q);
+	float reach = (1.0 + SWELL_FOAM_MARGIN) * cell;
+	float best = 0.0;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 ci = base + vec2(float(i), float(j));
+			vec3 h = hash33(vec3(ci, SWELL_FOAM_SALT));
+			vec2 centre = (ci + SWELL_FOAM_MARGIN + h.xy * (1.0 - 2.0 * SWELL_FOAM_MARGIN)) * cell;
+			vec2 d = p - centre;
+			if (dot(d, d) > reach * reach) {
+				continue;
+			}
+			vec2 field = coast_sample(centre);
+			if (field.r > swell_break_zone || field.r < SWELL_FOAM_SHORE_GAP || field.g < SWELL_ELIGIBLE_MIN) {
+				continue;
+			}
+			float phase = swell_phase(field.r, centre, t);
+			float wave = floor(phase);
+			float f = phase - wave;
+			if (f >= SWELL_FOAM_LIFE) {
+				continue;
+			}
+			vec3 g = hash33(vec3(ci, wave + SWELL_FOAM_SALT) + WHITECAP_HASH_SHAPE);
+			vec3 k3 = hash33(vec3(ci, wave + SWELL_FOAM_SALT) + WHITECAP_HASH_GROUP);
+			float chance = swell_foam_coverage
+				* (1.0 - smoothstep(swell_break_zone * SWELL_BREAK_INNER, swell_break_zone, field.r));
+			if (h.z >= chance) {
+				continue;
+			}
+			vec2 away = coast_gradient(centre);
+			float angle = atan(away.y, away.x) + 0.5 * PI;   // along the crest: across the way to the coast
+			float seg_half = 0.5 * swell_foam_length * mix(WHITECAP_LENGTH_MIN, WHITECAP_LENGTH_MAX, g.y);
+			best = max(best, crest_group_alpha(d, angle, g, k3, h, seg_half, reach, f,
+				SWELL_FOAM_FADE_IN, SWELL_FOAM_HOLD, SWELL_FOAM_LIFE));
+		}
+	}
+	return best * swell_foam_strength;
+}
+
+// THE SHORE SURGE at `map_px`: the factor the shoreline surf's SEAWARD reach is multiplied by — 1, plus
+// swell_surge × how hard a crest is landing on this stretch of coast right now. Exactly 1 with no coastal swell,
+// with motion gated off (LOD or `O`), and on water the swell does not run on, so every other coast is bit-exact.
+float shore_surge(vec2 map_px) {
+	if (!coastal_enabled || !water_motion_enabled || swell_surge <= 0.0) {
+		return 1.0;
+	}
+	vec2 p = map_px / hex_radius;
+	vec2 field = coast_sample(p);
+	if (field.g <= 0.0) {
+		return 1.0;
+	}
+	float landing = swell_crest(swell_phase(0.0, p, TIME + water_time_offset));
+	return 1.0 + swell_surge * clamp(field.g, 0.0, 1.0) * landing;
+}
+
+// THE WATER MOTION applied to a water fragment's colour `c`:
 //   open · (1 − coastal_w) + coastal · coastal_w
-// With COASTAL_SWELL_ENABLED false the blend is never taken, so the shelf keeps the full open chop + caps.
-vec3 apply_water_motion(vec3 c, vec2 map_px) {
+// OPEN is the chop alone (a luma offset, hue preserved) — open water has no caps. COASTAL is the shore swell, with
+// the chop at SWELL_CHOP_UNDER underneath and the breaking foam over it. `field_px` is where the coast field is
+// read (the fragment itself; it is a separate argument only so the harness can pin it to the hex centre).
+vec3 apply_water_motion(vec3 c, vec2 map_px, vec2 field_px) {
 	float t = TIME + water_time_offset;
-	float chop = open_chop(map_px, t);
-	vec3 open = c + vec3(chop * water_chop_strength);
-	if (water_whitecap_strength > 0.0) {
-		open = mix(open, water_whitecap_color, open_whitecap(map_px, t));
+	float chop = open_chop(map_px, t) * water_chop_strength;
+	vec3 open = c + vec3(chop);
+	if (!coastal_enabled) {
+		return open;
 	}
-	if (COASTAL_SWELL_ENABLED) {
-		open = mix(open, c + vec3(coastal_swell(map_px, t)), coastal_weight());
+	vec2 p = map_px / hex_radius;
+	vec2 field = coast_sample(field_px / hex_radius);
+	float cw = coastal_weight(field.r, field.g);
+	if (cw <= 0.0) {
+		return open;
 	}
-	return open;
+	float phase = swell_phase(field.r, p, t);
+	vec3 coastal = c + vec3(chop * SWELL_CHOP_UNDER + coastal_swell_luma(field.r, p, phase));
+	if (swell_foam_strength > 0.0 && field.r < swell_break_zone + (1.0 + SWELL_FOAM_MARGIN) * swell_foam_cell) {
+		coastal = mix(coastal, swell_foam_color, break_foam_alpha(p, t));
+	}
+	return mix(open, coastal, cw);
 }
 
 // A BASE sample of any layer: water layers go through the one water sampler above, land keeps the plain
@@ -1764,17 +1878,17 @@ void fragment() {
 			}
 		}
 
-		// --- WATER MOTION: the directionless chop + whitecaps (and, later, the coastal swell), once per water
-		// fragment. AFTER the temperature grade: the whitecaps are laid on as white COVERAGE, and anything that
-		// recolours the pixel after them recolours the caps — the grade ran after them once, and its warm tint
+		// --- WATER MOTION: the directionless chop, and near a coast the shore swell with its breaking foam, once
+		// per water fragment. AFTER the temperature grade: the foam is laid on as grey COVERAGE, and anything that
+		// recolours the pixel after it recolours the foam — the grade ran after the motion once, and its warm tint
 		// (luma-kept) turned every cap on a warm sea cyan. Nothing between here and the shore / FoW passes may
 		// touch the colour (the FoW mist multiply darkens everything alike, which is fine). After the depth field
 		// too — it is the same field for every water layer, so adding it to the mean equals adding it to each
 		// sample — and before the shore, so the foam is untouched. Near a coast the waterline cross-fade blends
 		// toward an estimate without it, so it eases out at the shore.
-		if (water_motion_enabled && (water_chop_strength > 0.0 || water_whitecap_strength > 0.0)
+		if (water_motion_enabled && (water_chop_strength > 0.0 || coastal_enabled)
 				&& own_class == CLASS_WATER) {
-			result = apply_water_motion(result, v_map);
+			result = apply_water_motion(result, v_map, v_map);
 		}
 
 		// A NAVIGABLE river hex, by terrain id. It is a water TERRAIN in the sim, but its blend_class is
@@ -1929,7 +2043,10 @@ void fragment() {
 				float sand_reach_raw = sand_band * sand_wobble;                              // inland, u < 0
 				float sand_reach = max(sand_reach_raw, SHORE_REACH_MIN_PX);
 				float wash_reach = max(foam_inland_band * foam_wobble, SHORE_REACH_MIN_PX);  // surf up the beach, u < 0
-				float foam_reach = max(foam_band * foam_wobble, SHORE_REACH_MIN_PX);         // surf out to sea, u > 0
+				// surf out to sea, u > 0 — surging a little as each coastal swell crest lands (see shore_surge; exactly
+				// 1 wherever there is no swell, so every other coast is bit-exact). The inland wash and the sand
+				// above do NOT surge: the beach never moves.
+				float foam_reach = max(foam_band * foam_wobble, SHORE_REACH_MIN_PX) * shore_surge(v_map);
 
 				// 0. THE WATERLINE BASE CROSS-FADE — kill the base's OWN step at u = 0, so the surf above it
 				// no longer has to be an opaque cover-up (see the waterline_band uniform). A short WET EDGE:

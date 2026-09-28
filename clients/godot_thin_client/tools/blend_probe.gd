@@ -1110,16 +1110,11 @@ const OCEAN_COAST_CROP := Vector2i(20, 8)               # the island's coast
 const OCEAN_DETAIL_CROP_RADII := 2.4
 # The levers each variant sets inside the `water_surface` block (merged over the shipped block, so the
 # levers it does not name stay shipped). OFF is the plain single sample — the pre-surface render, bit-exact.
-const OCEAN_OFF_SURFACE := {
-	"variation_strength": 0.0, "wave_strength": 0.0, "chop_strength": 0.0, "whitecap_strength": 0.0,
-}
-const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "chop_strength": 0.0, "whitecap_strength": 0.0}
+const OCEAN_OFF_SURFACE := {"variation_strength": 0.0, "wave_strength": 0.0, "chop_strength": 0.0}
+const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "chop_strength": 0.0}
 # The scrolled-TEXTURE wave term alone — kept as a frame because it is the term that measured as invisible.
-const OCEAN_WAVES_SURFACE := {"chop_strength": 0.0, "whitecap_strength": 0.0}
-const OCEAN_CHOP_SURFACE := {"wave_strength": 0.0, "whitecap_strength": 0.0}   # the chop alone
-# The whitecaps' twin with them OFF: the shipped surface minus the caps, so (shipped − this) is the caps alone
-# (the chop and art cancel — the caps' clustering reads the chop's FIELD, not its strength).
-const OCEAN_NO_WHITECAP_SURFACE := {"whitecap_strength": 0.0}
+const OCEAN_WAVES_SURFACE := {"chop_strength": 0.0}
+const OCEAN_CHOP_SURFACE := {"wave_strength": 0.0}   # the chop alone
 const OCEAN_SHIPPED_SURFACE := {}
 # The SECOND motion phase, in seconds of shader time (the `water_time_offset` uniform — the harness runs at
 # Engine.time_scale 0, so TIME itself never moves). ONE second: the claim is that a player sees the water move
@@ -1194,71 +1189,103 @@ const OCEAN_LIVE_GRID := Vector2i(31, 21)
 # …and at 2.0× — radius = cover-fit base × zoom_factor (MapView._update_layout_metrics), so 35 px at 1.5× puts
 # 2.0× at ~47 px: a grid that fits at r ≈ 47.
 const OCEAN_LIVE_2X_GRID := Vector2i(23, 16)
-# One cap's LIFE: crops at these fractions of one whitecap cycle — five, so a group can be followed through its
-# fade-in, hold and fade-out (see WHITECAP_FADE_IN / _HOLD in the shader).
-const OCEAN_CAP_LIFE_FRACTIONS := [0.0, 0.2, 0.42, 0.65, 0.88]
-const OCEAN_CAP_LIFE_CROP_RADII := 3.0
-# THE WHITECAPS (five claims, on the cap MASK: open-ocean pixels at least OCEAN_WHITECAP_MIN_DL levels brighter
-# than the whitecap-off twin at the same phase — the chop and art cancel, so the mask is the caps alone).
-const OCEAN_WHITECAP_MIN_DL := 8.0
-# (a) COVERAGE: the mask's fraction of open-ocean pixels. Sparse caps, never a carpet: at least one pixel in a
-# thousand and at most one in twenty (beyond that they stop reading as caps and start to whiten the sea).
-const OCEAN_WHITECAP_COVERAGE_MIN := 0.001
-const OCEAN_WHITECAP_COVERAGE_MAX := 0.05
-# (b) ELONGATION: each blob's aspect ratio, sqrt(λmax / λmin) of its pixel second moments (each λ taken with a
-# pixel's own 1/12 variance, so a one-pixel-wide line is not infinite), averaged over the blobs of at least
-# OCEAN_WHITECAP_MIN_BLOB_PX pixels (a smaller one has no shape to measure). A streak is several times longer than
-# wide; a round blob is ~1. Measured on the soft streaks: shipped 3.19; an ISOTROPIC cap (width = length) 2.36, not
-# ~1, because the along-crest break-up and the dissolving tips still stretch its blobs. The bar sits between.
-const OCEAN_WHITECAP_MIN_BLOB_PX := 8
-const OCEAN_WHITECAP_PIXEL_VARIANCE := 1.0 / 12.0
-const OCEAN_WHITECAP_SEGMENT_VARIANCE_RATIO := 12.0      # a uniform segment of length L has variance L² / 12
-const OCEAN_WHITECAP_ASPECT_MIN := 2.75
-# THE PEAK a cap reaches over this deep water: whitecap_strength 0.75 × (the grey's luma ~201 − the water's ~30)
-# ≈ 128 levels. The core and fade-in bars are fractions of it.
-# (c) NEUTRAL: the cap CORE — mask pixels at least OCEAN_WHITECAP_CORE_DL levels over the twin (~0.6 of the peak,
-# where the cap covers most of the water) — must be near-neutral (mean HSV saturation ≤
-# OCEAN_WHITECAP_CORE_SAT_MAX) and well above the water (mean luma ≥ the box's water luma +
-# OCEAN_WHITECAP_CORE_LUMA_ABOVE levels). A neutral grey at partial opacity over blue water still reads a little
-# blue (a 0.75 cover of (196, 202, 206) over deep water is ~0.09); the bar sits between that and a TINTED cap —
-# pale foam_color (176, 194, 205) at the same cover reads ~0.18, and a cap recoloured by the warm grade ~0.4.
-const OCEAN_WHITECAP_CORE_DL := 105.0
-const OCEAN_WHITECAP_CORE_SAT_MAX := 0.15
-const OCEAN_WHITECAP_CORE_LUMA_ABOVE := 70.0
-# (g) FADE-IN: the NEWBORN caps between two phases OCEAN_WHITECAP_FADE_STEP apart — blobs at the second phase none
-# of whose pixels was a cap at the first — and the fraction of them already reaching OCEAN_WHITECAP_FADE_BRIGHT_DL
-# (half the peak) anywhere. A cap that FADES IN is faint when first seen; one that pops in is bright at once.
-# Blobs, not pixels: a fading cap's stretch also adds new pixels at its tips, all faint, which would swamp a
-# per-pixel count and hide a pop-in. Pooled over OCEAN_WHITECAP_FADE_PHASES (seconds). 0.25 s is 7.5% of a 3.3 s
-# cycle: a 12% attack reaches ~0.7 of its peak there, the shipped 38% fade-in ~0.1.
-const OCEAN_WHITECAP_FADE_STEP := 0.25
-const OCEAN_WHITECAP_FADE_BRIGHT_DL := 64.0
-const OCEAN_WHITECAP_FADE_PHASES := [0.0, 0.55, 1.1, 1.65, 2.3, 2.85]
-const OCEAN_WHITECAP_FADE_BRIGHT_MAX := 0.1
-# (d) IN PLACE: the fraction of the caps at t still capped at t + OCEAN_WHITECAP_DT. A cap lives one cycle
-# (1 / whitecap_rate, 3.3 s shipped) where it spawned, so over OCEAN_WHITECAP_DT it keeps SOME of its pixels;
-# caps that jumped keep only chance (≈ the coverage, under 0.02); frozen caps keep nearly all.
-const OCEAN_WHITECAP_DT := 1.0
-const OCEAN_WHITECAP_OVERLAP_MIN := 0.2
-const OCEAN_WHITECAP_OVERLAP_MAX := 0.85
-# (e) REGIONAL ORIENTATION: the mean resultant length R of the blobs' DOUBLED orientation angles (a streak's
-# axis has no head) — 1 when all agree, ~0 when they are spread. Over the whole box it must stay under
-# OCEAN_WHITECAP_GLOBAL_R_MAX (no map-wide direction); averaged over OCEAN_WHITECAP_WINDOW_RADII-hex-radius
-# windows holding at least OCEAN_WHITECAP_WINDOW_MIN_BLOBS blobs it must reach OCEAN_WHITECAP_LOCAL_R_MIN (caps
-# agree within a region). The local bar sits halfway between CHANCE — per-cap random angles measured 0.25 here
-# (n random axes average R ≈ 0.89/√n) — and the shipped caps, which read 0.57–0.68 across different phases of
-# the same frame; the window is ~half an orientation region (WHITECAP_ANGLE_CELL, 12 r) so a window mostly sits
-# inside one.
-# (f) LENGTH VARIATION: the coefficient of variation (std / mean) of the blobs' major-axis length, sqrt(12·λmax)
-# (a uniform segment's length from its variance). Caps of one grain size read as RICE; real crests vary widely.
-# Measured: the RICE form — one unbroken streak per cell, no length jitter — still reads 0.29 (the fade's stretch
-# and the antialiased tips vary it that much on their own); length jitter alone reads 0.39; shipped, with the
-# break-up and the crest groups, 0.58. The bar asks for more than the stretch alone can give.
-const OCEAN_WHITECAP_LENGTH_CV_MIN := 0.4
-const OCEAN_WHITECAP_GLOBAL_R_MAX := 0.5
-const OCEAN_WHITECAP_WINDOW_RADII := 6.0
-const OCEAN_WHITECAP_WINDOW_MIN_BLOBS := 6
-const OCEAN_WHITECAP_LOCAL_R_MIN := 0.45
+# OPEN WATER HAS NO CAPS: over the deep-ocean box (every pixel past the coastal swell's reach), the shipped frame
+# and its COAST_OFF twin are byte-identical at each of OCEAN_NO_CAPS_PHASES — the premise being that the same pair
+# DOES differ somewhere in the frame (the island's coast), or the claim passes on a swell that never drew.
+const OCEAN_NO_CAPS_PHASES := [0.0, 1.3]
+# THE FOAM BLOBS (shared by the COAST foam claims, see _blob_shapes): a blob is a 4-connected component of at
+# least FOAM_BLOB_MIN_PX pixels (a smaller one has no shape to measure). Each second-moment λ carries a pixel's own
+# FOAM_PIXEL_VARIANCE, so a one-pixel line is not infinitely thin; a uniform segment of length L has variance
+# L² / FOAM_SEGMENT_VARIANCE_RATIO.
+const FOAM_BLOB_MIN_PX := 8
+const FOAM_PIXEL_VARIANCE := 1.0 / 12.0
+const FOAM_SEGMENT_VARIANCE_RATIO := 12.0
+
+# State 31 (COAST): the COASTAL SHORE SWELL (`terrain-blend-shader.md` → Coastal shore swell). Land from the east
+# edge in by COAST_LAND_DEPTH[row] hexes (bays and headlands), a shelf COAST_SHELF_WIDTH hexes wide off it, deep
+# ocean beyond, a small island and an inland lake — placed from the EAST edge so the geography holds on the 2.0×
+# grid — on a WARM-graded sea (every tile at the warm end: the grade-order regression's worst case).
+const COAST_LAND_DEPTH := [6, 7, 9, 8, 6, 5, 6, 8, 10, 9, 7, 6, 7, 8, 7, 6]
+const COAST_SHELF_WIDTH := 3
+const COAST_LAND_ID := COAST_SHORE_ID                   # prairie
+const COAST_LAKE_ID := LAKE_WATER_ID                    # inland_sea — not a coastal terrain
+const COAST_ISLAND_FROM_EAST := [Vector2i(14, 5), Vector2i(13, 5), Vector2i(14, 6)]   # (hexes from east, row)
+const COAST_LAKE_FROM_EAST := [Vector2i(3, 9), Vector2i(2, 9), Vector2i(3, 10)]
+const COAST_2X_GRID := Vector2i(23, 16)                 # fits at r ≈ 47, Ray's 2.0× (see OCEAN_LIVE_2X_GRID)
+const COAST_SEQ_PHASES := [0.0, 1.1, 2.2, 3.3]          # seconds: a set rolling in and breaking
+const COAST_SEQ_CROP_FROM_EAST := Vector2i(7, 4)
+const COAST_SEQ_CROP_RADII := 3.5
+const COAST_LAKE_CROP_FROM_EAST := Vector2i(3, 9)
+const COAST_LAKE_CROP_RADII := 2.5
+# The twins the claims subtract (each laid over the shipped `coastal_swell` block).
+const COAST_OFF := {"strength": 0.0, "foam_strength": 0.0, "surge": 0.0}
+const COAST_NO_FOAM := {"foam_strength": 0.0}
+const COAST_NO_SURGE := {"surge": 0.0}
+const COAST_NO_CHOP := {"chop_strength": 0.0}           # over `water_surface`: S is then the swell alone
+# (a) PRESENCE: mean |S| (S = shipped − COAST_OFF, 8-bit levels) over water COAST_NEAR_BAND hex radii from land must
+# reach COAST_NEAR_MIN_DL; past `reach` + COAST_FAR_MARGIN, and on the lake, S must be EXACTLY 0 (the coastal
+# weight is 0 there, not small). Sampled every COAST_SAMPLE_STRIDE px.
+const COAST_SAMPLE_STRIDE := 2
+const COAST_NEAR_BAND := Vector2(0.4, 2.5)
+const COAST_NEAR_MIN_DL := 1.0
+const COAST_FAR_MARGIN := 0.1
+const COAST_ELIGIBLE_MIN := 0.5
+# (b) TRAVEL: the swell profile along the way to the coast, at points COAST_TRAVEL_BAND from land (every
+# COAST_POINT_STRIDE px), half-length COAST_PROFILE_HALF_PX, compared COAST_DT apart over shifts ±COAST_TRAVEL_SEARCH_PX.
+# (c) ALIGNMENT: the swell's gradient against the coast field's, doubled-angle, over COAST_ALIGN_BAND.
+const COAST_DT := 0.5
+const COAST_TRAVEL_BAND := Vector2(1.2, 3.2)
+const COAST_TRAVEL_SEARCH_PX := 16
+const COAST_PROFILE_HALF_PX := 20
+const COAST_POINT_STRIDE := 10
+const COAST_GRAD_STEP_PX := 4.0
+const COAST_ALIGN_BAND := Vector2(1.5, 3.5)
+const COAST_ALIGN_MIN := 0.5
+const COAST_ALIGN_STENCIL_PX := 2                       # the swell gradient's half-stencil, px
+# (d) NO HEX STRUCTURE: straddle-ratio lines across same-terrain water hex edges within COAST_HEX_BAND of land.
+const COAST_HEX_BAND := Vector2(0.5, 3.0)
+const COAST_HEX_EDGE_SAMPLES := 7
+const COAST_HEX_EDGE_SPAN := 0.35                       # of the radius, either side of the edge midpoint
+const COAST_HEX_EDGE_REACH := 0.6                       # of the radius, how far each line runs either side
+const COAST_HEX_STEP_PX := 2
+const COAST_HEX_GUARD_PX := 3.0
+const COAST_HEX_FLOOR_DL := 0.5                         # levels: a flat line is not a divide by zero
+const COAST_HEX_RATIO_MAX := 1.5
+# (e) BREAKING FOAM: the mask is shipped vs COAST_NO_FOAM, ≥ COAST_FOAM_MIN_DL levels, pooled over COAST_FOAM_PHASES.
+# All of it must lie within `break_zone` + COAST_FOAM_GROUP_REACH_CELLS × `foam_cell` of land (a group is centred
+# in the zone and reaches up to (1 + its margin) cells) — at most COAST_FOAM_OUTSIDE_MAX of it beyond — and its
+# blobs lie ALONG the crest (doubled-angle alignment with the perpendicular to the way to the coast).
+# NEUTRAL, on the RENDERED pixels — what the player sees, not the colour the foam was laid on in (that claim passed
+# while every dash rendered cyan: dashes too thin to ever reach full coverage let the turquoise through). The foam
+# CORE is the pixels where the foam covers at least COAST_FOAM_CORE_ALPHA of the water — its opacity follows from
+# the foam-on/off lumas, α = Δ / (foam luma − water luma) — and there the RENDERED pixel's mean HSV saturation must
+# be ≤ COAST_FOAM_SAT_MAX and its luma ≥ water + COAST_FOAM_CORE_LUMA_ABOVE, over at least COAST_FOAM_MIN_CORE_PX
+# pixels (a foam with no solid core has no subject, and fails). Asked on this warm-graded sea, it also catches the
+# grade running after the motion. FADE-IN (moved from state 29 (g)): of the foam blobs newborn since COAST_FADE_STEP
+# earlier, at most COAST_FOAM_BRIGHT_MAX already reach COAST_FOAM_BRIGHT_DL.
+const COAST_FOAM_PHASES := [0.7, 1.9, 3.1]
+const COAST_FOAM_MIN_DL := 8.0
+const COAST_FOAM_GROUP_REACH_CELLS := 1.2
+const COAST_FOAM_OUTSIDE_MAX := 0.02
+const COAST_FOAM_ALIGN_MIN := 0.4
+const COAST_FOAM_CORE_ALPHA := 0.8
+const COAST_FOAM_SAT_MAX := 0.12
+const COAST_FOAM_CORE_LUMA_ABOVE := 50.0
+const COAST_FOAM_MIN_CORE_PX := 30
+const COAST_FOAM_ALPHA_MIN := 1.0                       # levels: floor on (foam luma − water luma)
+# The shore pulse's surf is REPORTED, not asserted, on its brightest COAST_SURF_TOP_FRACTION of changed pixels —
+# it is the shoreline's own foam_color, an earlier decision this arc does not own.
+const COAST_SURF_TOP_FRACTION := 0.05
+# (f) THE SHORE PULSE: a LAND pixel counts only this far inside its hex (see _assert_coast_shore_pulse).
+const COAST_LAND_INTERIOR_PX := 2.0
+const COAST_FADE_STEP := 0.25
+const COAST_FOAM_BRIGHT_DL := 64.0
+const COAST_FOAM_BRIGHT_MAX := 0.1
+const COAST_BOX_WEST_FROM_EAST := 16                     # the foam claims read the frame from this column east
+# Rec.709 luma weights (Color.get_luminance's), for reading a whole frame off its raw bytes.
+const LUMA_R := 0.2126
+const LUMA_G := 0.7152
+const LUMA_B := 0.0722
 
 # State 30 (OCEANTEMP): the WATER TEMPERATURE GRADE (`terrain-blend-shader.md` → Water temperature grade).
 # State 29's geography at r ≈ 45 on a temperature gradient running polar (top) → tropical (bottom), with the
@@ -1272,16 +1299,6 @@ const OCEANTEMP_CORAL_HEXES := [Vector2i(9, 12), Vector2i(10, 12), Vector2i(9, 1
 # then sit at FULL cold / FULL warm rather than just touching them.
 const OCEANTEMP_OVERSHOOT := 0.25
 const OCEANTEMP_OFF := {"strength": 0.0}
-# (d) THE CAPS ON A GRADED SEA: hex rows above OCEANTEMP_CAP_COLD_ROWS are the cold band, rows from
-# OCEANTEMP_CAP_WARM_FROM_ROW the warm one (the grade is near full at each end, see OCEANTEMP_OVERSHOOT). Cores are
-# pooled over OCEANTEMP_CAP_PHASES (seconds, spread across a whitecap cycle so different caps are caught), and a
-# band needs OCEANTEMP_CAP_MIN_CORE_PX of them for the claim to have a subject.
-const OCEANTEMP_CAP_COLD_ROWS := 5
-const OCEANTEMP_CAP_WARM_FROM_ROW := 11
-const OCEANTEMP_CAP_PHASES := [0.0, 1.1, 2.3]
-const OCEANTEMP_CAP_MIN_CORE_PX := 100
-const OCEANTEMP_CAP_CROP_WARM := Vector2i(10, 12)
-const OCEANTEMP_CAP_CROP_COLD := Vector2i(10, 3)
 # (b) MONOTONE: per hex row over the deep-ocean columns, the graded frame minus the ungraded one. The mean luma
 # and saturation shifts must not DROP from one row to the next by more than this (8-bit levels / HSV units),
 # and must be negative at the top and positive at the bottom.
@@ -1359,7 +1376,7 @@ func _ready() -> void:
 	# `process_frame`, which still fires at time_scale 0.
 	#
 	# The WATER SURFACE (state 29) later became a third TIME reader, and was classified the same way: its
-	# waves are a UV scroll, and its chop and whitecaps positions on their noise fields' time axis — all
+	# waves are a UV scroll, and its chop and coastal swell positions on their phase axes — all
 	# offsets, so phase 0 still draws them. States 29/30 render other phases through the `water_time_offset`
 	# uniform, never by un-freezing.
 	#
@@ -1603,6 +1620,10 @@ func _ready() -> void:
 	if _want("30/OCEANTEMP"):
 		# --- state 30 (OCEANTEMP): the water temperature grade, polar → tropical (see OCEANTEMP_*) ---
 		await _render_ocean_temperature_state()
+
+	if _want("31/COAST"):
+		# --- state 31 (COAST): the coastal shore swell and its breaking foam (see COAST_*) ---
+		await _render_coast_state()
 
 	_finish()
 
@@ -2349,20 +2370,19 @@ func _bank_neighbor(hex: Vector2i, dir: int) -> Vector2i:
 func _render_ocean_state() -> void:
 	## State 29 (OCEAN) at the game's r ≈ 45, grid OFF (a drawn hexagon is itself a lattice over the water):
 	## OCEAN_off (the plain single sample — the repeat grid, i.e. the BEFORE) → OCEAN_static (anti-tiling only)
-	## → OCEAN_waves (chop + whitecaps off) at two phases and their amplified diff, so the wave term is judged apart →
+	## → OCEAN_waves (chop off) at two phases and their amplified diff, so the wave term is judged apart →
 	## OCEAN_shipped at two phases + their diff (the whole surface MOVES). Then the PNG-less claims: the repeat
 	## measure (the grid is gone, not merely changed) and the motion LOD gate at game vs far zoom.
 	_map._show_grid_lines = false
 	_map.display_snapshot(_snapshot_ocean(GRID_W, GRID_H))
 	await _refit(GAME_HEX_RADIUS)
-	var off_ratio: float = await _render_ocean_frame(OCEAN_OFF_SURFACE, "OCEAN_off", 0.0, true)
-	var static_ratio: float = await _render_ocean_frame(OCEAN_STATIC_SURFACE, "OCEAN_static", 0.0, true)
-	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves", 0.0, false)
-	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves_t2", OCEAN_MOTION_DT, false)
+	var off_ratio: float = await _render_ocean_frame(OCEAN_OFF_SURFACE, "OCEAN_off", 0.0, true, COAST_OFF)
+	var static_ratio: float = await _render_ocean_frame(OCEAN_STATIC_SURFACE, "OCEAN_static", 0.0, true, COAST_OFF)
+	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves", 0.0, false, COAST_OFF)
+	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves_t2", OCEAN_MOTION_DT, false, COAST_OFF)
 	_save_diff("OCEAN_waves", "OCEAN_waves_t2", "OCEAN_waves_motion_diff")
-	await _render_ocean_frame(OCEAN_NO_WHITECAP_SURFACE, "OCEAN_no_whitecaps", 0.0, false)
-	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop", 0.0, false)
-	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop_t2", OCEAN_MOTION_DT, false)
+	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop", 0.0, false, COAST_OFF)
+	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop_t2", OCEAN_MOTION_DT, false, COAST_OFF)
 	_save_diff("OCEAN_chop", "OCEAN_chop_t2", "OCEAN_chop_motion_diff")
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped", 0.0, true)
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped_t2", OCEAN_MOTION_DT, false)
@@ -2379,7 +2399,7 @@ func _render_ocean_state() -> void:
 		_fail("OCEAN: the water surface leaves the exact-copy repeat standing (ratio %.3f < %.2f)"
 			% [static_ratio, OCEAN_REPEAT_ON_MIN])
 	await _assert_ocean_no_net_direction_or_pattern()
-	await _assert_ocean_whitecaps()
+	await _assert_ocean_no_open_caps()
 	await _assert_ocean_motion_toggle()
 	await _assert_ocean_motion(GRID_W, GRID_H, GAME_HEX_RADIUS, true)
 	await _assert_ocean_motion(
@@ -2400,24 +2420,18 @@ func _render_ocean_state() -> void:
 	_map.display_snapshot(_snapshot_ocean(OCEAN_LIVE_2X_GRID.x, OCEAN_LIVE_2X_GRID.y))
 	await _refit(GAME_HEX_RADIUS * GRID_W / OCEAN_LIVE_2X_GRID.x)
 	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_live_2x", 0.0, false)
-	# One cap's LIFE: the same small open-water crop at game zoom, at fractions of one whitecap cycle.
-	_map.display_snapshot(_snapshot_ocean(GRID_W, GRID_H))
-	await _refit(GAME_HEX_RADIUS)
-	var ws: Dictionary = TerrainTextureManager.terrain_config.get("water_surface", {})
-	var cycle_s: float = 1.0 / maxf(float(ws.get("whitecap_rate", 0.0)), OCEAN_CORR_EPSILON)
-	for i in range(OCEAN_CAP_LIFE_FRACTIONS.size()):
-		_set_water_time_offset(OCEAN_CAP_LIFE_FRACTIONS[i] * cycle_s)
-		await _settle()
-		await _save_crop("OCEAN_cap_life%d" % i, OCEAN_OPEN_CROP.x, OCEAN_OPEN_CROP.y, OCEAN_CAP_LIFE_CROP_RADII)
 	_set_water_time_offset(0.0)
 	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
 
 
-func _render_ocean_frame(surface: Dictionary, name: String, time_offset: float, crops: bool) -> float:
-	## One OCEAN frame with `surface` merged over the shipped `water_surface` block, at shader phase
+func _render_ocean_frame(surface: Dictionary, name: String, time_offset: float, crops: bool,
+		coastal: Dictionary = {}) -> float:
+	## One OCEAN frame with `surface` merged over the shipped `water_surface` block (and `coastal` over the
+	## `coastal_swell` one — COAST_OFF for the frames that show the open surface's own terms), at shader phase
 	## `time_offset`. `crops` adds the native-res open-water / deep↔shelf / coast close-ups. Returns the
 	## frame's repeat ratio, measured before the config is restored.
-	var token: Array = _override_config({"water_surface": _ocean_surface(surface)})
+	var token: Array = _override_config({"water_surface": _ocean_surface(surface),
+		"coastal_swell": _coastal_block(coastal)})
 	_set_water_time_offset(time_offset)
 	_map._fit_map_to_view()
 	await _settle()
@@ -2446,7 +2460,7 @@ func _ocean_surface(changes: Dictionary) -> Dictionary:
 
 
 func _set_water_time_offset(seconds: float) -> void:
-	## The shader phase of the waves, chop and whitecaps. Set on the material directly: TerrainRenderer never pushes it.
+	## The shader phase of the waves, chop and coastal swell. Set on the material directly: TerrainRenderer never pushes it.
 	_map._terrain._terrain_blend_material.set_shader_parameter(OCEAN_TIME_OFFSET_UNIFORM, seconds)
 	_map.queue_redraw()
 
@@ -2567,178 +2581,35 @@ func _assert_ocean_no_net_direction_or_pattern() -> void:
 			% [lf_fraction, OCEAN_LOWFREQ_BLOCK_RADII, OCEAN_LOWFREQ_MAX_FRACTION])
 
 
-func _assert_ocean_whitecaps() -> void:
-	## THE WHITECAP CLAIMS (see OCEAN_WHITECAP_*) on state 29's fixture at r ≈ 45: coverage in a band, elongated
-	## streaks, white cores, change in place, and orientation that agrees by region but not across the map.
-	var on_a: Image = await _ocean_capture({}, 0.0)
-	var off_a: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, 0.0)
-	var on_b: Image = await _ocean_capture({}, OCEAN_WHITECAP_DT)
-	var off_b: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, OCEAN_WHITECAP_DT)
-	if on_a == null or off_a == null or on_b == null or off_b == null:
-		return
-	var box: Rect2i = _ocean_box_px(on_a)
-	var mask_a: PackedByteArray = _whitecap_mask(on_a, off_a, box, OCEAN_WHITECAP_MIN_DL)
-	var mask_b: PackedByteArray = _whitecap_mask(on_b, off_b, box, OCEAN_WHITECAP_MIN_DL)
-	var core: PackedByteArray = _whitecap_mask(on_a, off_a, box, OCEAN_WHITECAP_CORE_DL)
-	var total: int = mask_a.size()
-	var caps_a := 0
-	var kept := 0
-	var core_n := 0
-	var core_sat := 0.0
-	var core_luma := 0.0
-	var water_luma := 0.0
-	for i in range(total):
-		var px: int = box.position.x + i % box.size.x
-		var py: int = box.position.y + i / box.size.x
-		water_luma += off_a.get_pixel(px, py).get_luminance()
-		if mask_a[i] != 0:
-			caps_a += 1
-			if mask_b[i] != 0:
-				kept += 1
-		if core[i] != 0:
-			var c: Color = on_a.get_pixel(px, py)
-			core_n += 1
-			core_sat += c.s
-			core_luma += c.get_luminance()
-	var coverage: float = float(caps_a) / maxf(total, 1)
-	var overlap: float = float(kept) / maxf(caps_a, 1)
-	water_luma = water_luma / maxf(total, 1) * LUMA_LEVELS
-	core_sat /= maxf(core_n, 1)
-	core_luma = core_luma / maxf(core_n, 1) * LUMA_LEVELS
-	# Shapes: aspect and axis per blob, then the resultant of the doubled axes over the box and per window.
-	var shapes: Array = _blob_shapes(mask_a, box.size.x, box.size.y)
-	var aspect_sum := 0.0
-	var global_vec := Vector2.ZERO
-	var windows := {}
-	var window_px: float = OCEAN_WHITECAP_WINDOW_RADII * _map.last_hex_radius
-	for shape: Dictionary in shapes:
-		aspect_sum += float(shape["aspect"])
-		var axis := Vector2(cos(2.0 * float(shape["angle"])), sin(2.0 * float(shape["angle"])))
-		global_vec += axis
-		var key := Vector2i(int(float(shape["cx"]) / window_px), int(float(shape["cy"]) / window_px))
-		var w: Array = windows.get(key, [Vector2.ZERO, 0])
-		windows[key] = [w[0] + axis, w[1] + 1]
-	var mean_aspect: float = aspect_sum / maxf(shapes.size(), 1)
-	# (g) Caps being born: new cap pixels between two close phases, and how many are already bright.
-	var born := 0
-	var born_bright := 0
-	var box_w: int = box.size.x
-	for phase: float in OCEAN_WHITECAP_FADE_PHASES:
-		var on_0: Image = await _ocean_capture({}, phase)
-		var off_0: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, phase)
-		var on_1: Image = await _ocean_capture({}, phase + OCEAN_WHITECAP_FADE_STEP)
-		var off_1: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, phase + OCEAN_WHITECAP_FADE_STEP)
-		if on_0 == null or off_0 == null or on_1 == null or off_1 == null:
+func _assert_ocean_no_open_caps() -> void:
+	## OPEN WATER HAS NO CAPS (see OCEAN_NO_CAPS_PHASES): the open-ocean term is the chop alone, and the coastal term
+	## is exactly 0 past its reach — so over the deep box the shipped frame and its coastal-off twin are identical.
+	var deep_changed := 0
+	var frame_changed := 0
+	for phase: float in OCEAN_NO_CAPS_PHASES:
+		var on: Image = await _ocean_capture({}, phase)
+		var token: Array = _override_config({"coastal_swell": _coastal_block(COAST_OFF)})
+		_set_water_time_offset(phase)
+		await _settle()
+		var off: Image = await _capture()
+		_restore_config(token)
+		_map.queue_redraw()
+		if on == null or off == null:
 			return
-		var before: PackedByteArray = _whitecap_mask(on_0, off_0, box, OCEAN_WHITECAP_MIN_DL)
-		var after: PackedByteArray = _whitecap_mask(on_1, off_1, box, OCEAN_WHITECAP_MIN_DL)
-		var bright: PackedByteArray = _whitecap_mask(on_1, off_1, box, OCEAN_WHITECAP_FADE_BRIGHT_DL)
-		var labels: PackedInt32Array = _blob_labels(after, box_w, box.size.y)
-		var blob_old := {}      # label -> true once any of its pixels was already a cap
-		var blob_bright := {}   # label -> true once any of its pixels is bright
-		for i in range(labels.size()):
-			var label: int = labels[i]
-			if label == 0:
-				continue
-			if before[i] != 0:
-				blob_old[label] = true
-			if bright[i] != 0:
-				blob_bright[label] = true
-		var seen := {}
-		for i in range(labels.size()):
-			var label: int = labels[i]
-			if label == 0 or seen.has(label):
-				continue
-			seen[label] = true
-			if blob_old.has(label):
-				continue
-			born += 1
-			if blob_bright.has(label):
-				born_bright += 1
-	var fade_bright: float = float(born_bright) / maxf(born, 1)
-	var lengths := PackedFloat32Array()
-	for shape: Dictionary in shapes:
-		lengths.append(float(shape["length"]))
-	var mean_len := 0.0
-	for l in lengths:
-		mean_len += l
-	mean_len /= maxf(lengths.size(), 1)
-	var length_cv: float = _std(lengths) / maxf(mean_len, OCEAN_CORR_EPSILON)
-	var global_r: float = global_vec.length() / maxf(shapes.size(), 1)
-	var local_sum := 0.0
-	var local_n := 0
-	for key: Vector2i in windows:
-		var w: Array = windows[key]
-		if int(w[1]) >= OCEAN_WHITECAP_WINDOW_MIN_BLOBS:
-			local_sum += (w[0] as Vector2).length() / float(w[1])
-			local_n += 1
-	var local_r: float = local_sum / maxf(local_n, 1)
-	print("blend_probe: OCEAN whitecaps — (a) coverage %.4f (%d of %d px, band %.3f–%.3f)"
-		% [coverage, caps_a, total, OCEAN_WHITECAP_COVERAGE_MIN, OCEAN_WHITECAP_COVERAGE_MAX])
-	print("blend_probe: OCEAN whitecaps — (b) mean aspect %.2f over %d blobs of ≥ %d px (min %.2f)"
-		% [mean_aspect, shapes.size(), OCEAN_WHITECAP_MIN_BLOB_PX, OCEAN_WHITECAP_ASPECT_MIN])
-	print("blend_probe: OCEAN whitecaps — (g) fade-in: %.3f of %d newborn caps already reach %.0f levels after %.2f s (max %.2f)"
-		% [fade_bright, born, OCEAN_WHITECAP_FADE_BRIGHT_DL, OCEAN_WHITECAP_FADE_STEP, OCEAN_WHITECAP_FADE_BRIGHT_MAX])
-	print("blend_probe: OCEAN whitecaps — (f) length CV %.2f (mean %.1f px, min %.2f)"
-		% [length_cv, mean_len, OCEAN_WHITECAP_LENGTH_CV_MIN])
-	print("blend_probe: OCEAN whitecaps — (c) core %d px: saturation %.3f (max %.2f), luma %.1f vs water %.1f (≥ +%.0f)"
-		% [core_n, core_sat, OCEAN_WHITECAP_CORE_SAT_MAX, core_luma, water_luma, OCEAN_WHITECAP_CORE_LUMA_ABOVE])
-	print("blend_probe: OCEAN whitecaps — (d) overlap over %.1f s %.2f (band %.2f–%.2f)"
-		% [OCEAN_WHITECAP_DT, overlap, OCEAN_WHITECAP_OVERLAP_MIN, OCEAN_WHITECAP_OVERLAP_MAX])
-	print("blend_probe: OCEAN whitecaps — (e) orientation R global %.2f (max %.2f) · local %.2f over %d windows (min %.2f)"
-		% [global_r, OCEAN_WHITECAP_GLOBAL_R_MAX, local_r, local_n, OCEAN_WHITECAP_LOCAL_R_MIN])
-	if coverage < OCEAN_WHITECAP_COVERAGE_MIN:
-		_fail("OCEAN: whitecaps ABSENT — %.4f of the open ocean capped (want ≥ %.3f)"
-			% [coverage, OCEAN_WHITECAP_COVERAGE_MIN])
-		return
-	elif coverage > OCEAN_WHITECAP_COVERAGE_MAX:
-		_fail("OCEAN: whitecaps CARPET the sea — %.4f of the open ocean capped (want ≤ %.3f)"
-			% [coverage, OCEAN_WHITECAP_COVERAGE_MAX])
-	if mean_aspect < OCEAN_WHITECAP_ASPECT_MIN:
-		_fail("OCEAN: whitecaps are BLOBS, not streaks — mean aspect %.2f (want ≥ %.2f)"
-			% [mean_aspect, OCEAN_WHITECAP_ASPECT_MIN])
-	if born == 0:
-		_fail("OCEAN: no whitecap was born between phases %.2f s apart — the fade-in claim has no subject"
-			% OCEAN_WHITECAP_FADE_STEP)
-	elif fade_bright > OCEAN_WHITECAP_FADE_BRIGHT_MAX:
-		_fail("OCEAN: whitecaps POP IN — %.3f of newborn caps already reach %.0f levels after %.2f s (want ≤ %.2f)"
-			% [fade_bright, OCEAN_WHITECAP_FADE_BRIGHT_DL, OCEAN_WHITECAP_FADE_STEP, OCEAN_WHITECAP_FADE_BRIGHT_MAX])
-	if length_cv < OCEAN_WHITECAP_LENGTH_CV_MIN:
-		_fail("OCEAN: whitecaps are ONE SIZE (rice) — length CV %.2f (want ≥ %.2f)" % [length_cv, OCEAN_WHITECAP_LENGTH_CV_MIN])
-	if core_n == 0:
-		_fail("OCEAN: no whitecap reaches a CORE (%.0f levels over the water)" % OCEAN_WHITECAP_CORE_DL)
-	elif core_sat > OCEAN_WHITECAP_CORE_SAT_MAX:
-		_fail("OCEAN: whitecap cores are TINTED, not neutral — saturation %.3f (want ≤ %.2f)"
-			% [core_sat, OCEAN_WHITECAP_CORE_SAT_MAX])
-	elif core_luma < water_luma + OCEAN_WHITECAP_CORE_LUMA_ABOVE:
-		_fail("OCEAN: whitecap cores are DIM — luma %.1f over water %.1f (want ≥ +%.0f)"
-			% [core_luma, water_luma, OCEAN_WHITECAP_CORE_LUMA_ABOVE])
-	if overlap < OCEAN_WHITECAP_OVERLAP_MIN:
-		_fail("OCEAN: whitecaps JUMP — only %.2f of them survive %.1f s in place (want ≥ %.2f)"
-			% [overlap, OCEAN_WHITECAP_DT, OCEAN_WHITECAP_OVERLAP_MIN])
-	elif overlap > OCEAN_WHITECAP_OVERLAP_MAX:
-		_fail("OCEAN: whitecaps are STATIC — %.2f of them unchanged after %.1f s (want ≤ %.2f)"
-			% [overlap, OCEAN_WHITECAP_DT, OCEAN_WHITECAP_OVERLAP_MAX])
-	if global_r > OCEAN_WHITECAP_GLOBAL_R_MAX:
-		_fail("OCEAN: whitecaps share ONE map-wide direction — orientation R %.2f over the box (want ≤ %.2f)"
-			% [global_r, OCEAN_WHITECAP_GLOBAL_R_MAX])
-	if local_n == 0 or local_r < OCEAN_WHITECAP_LOCAL_R_MIN:
-		_fail("OCEAN: whitecap orientation is not REGIONAL — local R %.2f over %d windows (want ≥ %.2f)"
-			% [local_r, local_n, OCEAN_WHITECAP_LOCAL_R_MIN])
-
-
-func _whitecap_mask(on: Image, off: Image, box: Rect2i, min_dl: float) -> PackedByteArray:
-	## 1 where `on` is at least `min_dl` levels brighter than `off`, over `box` (row-major).
-	var mask := PackedByteArray()
-	mask.resize(box.size.x * box.size.y)
-	var bar: float = min_dl / LUMA_LEVELS
-	for y in range(box.size.y):
-		for x in range(box.size.x):
-			var px: int = box.position.x + x
-			var py: int = box.position.y + y
-			var d: float = on.get_pixel(px, py).get_luminance() - off.get_pixel(px, py).get_luminance()
-			mask[y * box.size.x + x] = 1 if d >= bar else 0
-	return mask
+		var box: Rect2i = _ocean_box_px(on)
+		for y in range(on.get_height()):
+			for x in range(on.get_width()):
+				if on.get_pixel(x, y) != off.get_pixel(x, y):
+					frame_changed += 1
+					if box.has_point(Vector2i(x, y)):
+						deep_changed += 1
+	print("blend_probe: OCEAN no open caps — %d deep-ocean px differ from the coastal-off twin (%d in the whole frame)"
+		% [deep_changed, frame_changed])
+	if frame_changed == 0:
+		_fail("OCEAN: the coastal term drew NOTHING, even at the island — the no-open-caps claim has no premise")
+	if deep_changed > 0:
+		_fail("OCEAN: %d open-ocean px carry coastal swell or foam — open water must read through the chop alone"
+			% deep_changed)
 
 
 func _blob_labels(mask: PackedByteArray, w: int, h: int) -> PackedInt32Array:
@@ -2767,7 +2638,7 @@ func _blob_labels(mask: PackedByteArray, w: int, h: int) -> PackedInt32Array:
 
 
 func _blob_shapes(mask: PackedByteArray, w: int, h: int) -> Array:
-	## The 4-connected blobs of `mask` (w × h, row-major) of at least OCEAN_WHITECAP_MIN_BLOB_PX pixels, each as
+	## The 4-connected blobs of `mask` (w × h, row-major) of at least FOAM_BLOB_MIN_PX pixels, each as
 	## {cx, cy, aspect, angle}: its centroid, sqrt(λmax / λmin) of its second moments, and its major axis angle.
 	var seen := PackedByteArray()
 	seen.resize(mask.size())
@@ -2800,19 +2671,19 @@ func _blob_shapes(mask: PackedByteArray, w: int, h: int) -> Array:
 				if nb >= 0 and mask[nb] != 0 and seen[nb] == 0:
 					seen[nb] = 1
 					stack.append(nb)
-		if n < OCEAN_WHITECAP_MIN_BLOB_PX:
+		if n < FOAM_BLOB_MIN_PX:
 			continue
 		var cx: float = sx / n
 		var cy: float = sy / n
-		var vxx: float = sxx / n - cx * cx + OCEAN_WHITECAP_PIXEL_VARIANCE
-		var vyy: float = syy / n - cy * cy + OCEAN_WHITECAP_PIXEL_VARIANCE
+		var vxx: float = sxx / n - cx * cx + FOAM_PIXEL_VARIANCE
+		var vyy: float = syy / n - cy * cy + FOAM_PIXEL_VARIANCE
 		var vxy: float = sxy / n - cx * cy
 		var mid: float = 0.5 * (vxx + vyy)
 		var spread: float = sqrt(0.25 * (vxx - vyy) * (vxx - vyy) + vxy * vxy)
 		shapes.append({
 			"cx": cx, "cy": cy,
-			"aspect": sqrt((mid + spread) / maxf(mid - spread, OCEAN_WHITECAP_PIXEL_VARIANCE)),
-			"length": sqrt(OCEAN_WHITECAP_SEGMENT_VARIANCE_RATIO * (mid + spread)),
+			"aspect": sqrt((mid + spread) / maxf(mid - spread, FOAM_PIXEL_VARIANCE)),
+			"length": sqrt(FOAM_SEGMENT_VARIANCE_RATIO * (mid + spread)),
 			"angle": 0.5 * atan2(2.0 * vxy, vxx - vyy),
 		})
 	return shapes
@@ -3010,70 +2881,8 @@ func _render_ocean_temperature_state() -> void:
 	var split: Image = await _render_oceantemp_frame({}, "OCEANTEMP_split", false)
 	if split_off != null and split != null:
 		_assert_oceantemp_no_hex_step(split_off, split)
-	# (d) — the whitecaps stay WHITE on a graded sea, cold and warm.
-	_map.display_snapshot(_snapshot_ocean_temperature(climate, false, true))
-	await _refit(GAME_HEX_RADIUS)
-	await _assert_oceantemp_caps_white()
 	_set_water_time_offset(0.0)
 	_map._show_grid_lines = true
-
-
-func _assert_oceantemp_caps_white() -> void:
-	## (d) THE CAPS ON A GRADED SEA (see OCEANTEMP_CAP_*): state 29's whiteness claim — core saturation and luma,
-	## the same OCEAN_WHITECAP_CORE_* bars — asked of the COLD rows and the WARM rows separately, pooled over
-	## OCEANTEMP_CAP_PHASES so each band holds enough cores. State 29 carries no temperatures, so the grade
-	## never runs there, and a grade that recoloured the caps could not show in it.
-	var bands := {"cold": [0, 0, 0.0, 0.0, 0.0], "warm": [0, 0, 0.0, 0.0, 0.0]}   # core px, all px, sat, luma, water
-	for phase: float in OCEANTEMP_CAP_PHASES:
-		var on: Image = await _ocean_capture({}, phase)
-		var off: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, phase)
-		if on == null or off == null:
-			return
-		var box: Rect2i = _ocean_box_px(on)
-		var px_scale: float = float(on.get_width()) / get_viewport().get_visible_rect().size.x
-		var radius: float = _map.last_hex_radius
-		var cold_y: float = _map._hex_center(0, OCEANTEMP_CAP_COLD_ROWS, radius, _map.last_origin).y * px_scale
-		var warm_y: float = _map._hex_center(0, OCEANTEMP_CAP_WARM_FROM_ROW, radius, _map.last_origin).y * px_scale
-		var core: PackedByteArray = _whitecap_mask(on, off, box, OCEAN_WHITECAP_CORE_DL)
-		for i in range(core.size()):
-			var px: int = box.position.x + i % box.size.x
-			var py: int = box.position.y + i / box.size.x
-			var key: String = "cold" if py < cold_y else ("warm" if py >= warm_y else "")
-			if key == "":
-				continue
-			var b: Array = bands[key]
-			b[1] += 1
-			b[4] += off.get_pixel(px, py).get_luminance()
-			if core[i] != 0:
-				var c: Color = on.get_pixel(px, py)
-				b[0] += 1
-				b[2] += c.s
-				b[3] += c.get_luminance()
-	# The last capture restored the config without a redraw, so the uniforms still hold its caps-OFF twin: redraw.
-	_map.queue_redraw()
-	await _settle()
-	await _save("OCEANTEMP_caps")
-	await _settle()
-	await _save_crop("OCEANTEMP_caps_warm", OCEANTEMP_CAP_CROP_WARM.x, OCEANTEMP_CAP_CROP_WARM.y, OCEAN_OPEN_CROP_RADII)
-	await _settle()
-	await _save_crop("OCEANTEMP_caps_cold", OCEANTEMP_CAP_CROP_COLD.x, OCEANTEMP_CAP_CROP_COLD.y, OCEAN_OPEN_CROP_RADII)
-	for key: String in ["cold", "warm"]:
-		var b: Array = bands[key]
-		var n: int = b[0]
-		var sat: float = b[2] / maxf(n, 1)
-		var luma: float = b[3] / maxf(n, 1) * LUMA_LEVELS
-		var water: float = b[4] / maxf(b[1], 1) * LUMA_LEVELS
-		print("blend_probe: OCEANTEMP caps on the %s sea — %d core px: saturation %.3f (max %.2f), luma %.1f vs water %.1f"
-			% [key, n, sat, OCEAN_WHITECAP_CORE_SAT_MAX, luma, water])
-		if n < OCEANTEMP_CAP_MIN_CORE_PX:
-			_fail("OCEANTEMP: only %d whitecap core px on the %s sea (want ≥ %d) — the claim has no subject"
-				% [n, key, OCEANTEMP_CAP_MIN_CORE_PX])
-		elif sat > OCEAN_WHITECAP_CORE_SAT_MAX:
-			_fail("OCEANTEMP: whitecaps on the %s sea are TINTED — core saturation %.3f (want ≤ %.2f)"
-				% [key, sat, OCEAN_WHITECAP_CORE_SAT_MAX])
-		elif luma < water + OCEAN_WHITECAP_CORE_LUMA_ABOVE:
-			_fail("OCEANTEMP: whitecaps on the %s sea are DIM — core luma %.1f over water %.1f (want ≥ +%.0f)"
-				% [key, luma, water, OCEAN_WHITECAP_CORE_LUMA_ABOVE])
 
 
 func _render_oceantemp_frame(changes: Dictionary, name: String, crops: bool = true) -> Image:
@@ -4256,3 +4065,541 @@ func _save_contact_sheet(names: Array[String], labels: Array[String], out_name: 
 	await _save(out_name)
 	layer.queue_free()
 	_map.visible = true
+
+
+func _render_coast_state() -> void:
+	## State 31 (COAST) at the game's r ≈ 45, grid OFF: an irregular coastline (bays and headlands), a small island
+	## and an inland lake, on a WARM-graded sea (so the foam is asked to stay neutral where the grade is strongest).
+	## Frames: COAST at two phases + their diff, COAST_2x (r ≈ 47), a four-phase sequence crop of a set rolling in
+	## and breaking, and the lake. Then the claims (see COAST_*).
+	var climate: Dictionary = _oceantemp_sim_climate()
+	if climate.is_empty():
+		_fail("COAST: could not read the sim's climate anchors from %s" % OCEANTEMP_SIM_CONFIG)
+		return
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_coast_swell(GRID_W, GRID_H, climate))
+	await _refit(GAME_HEX_RADIUS)
+	print("blend_probe: COAST field built in %.1f ms (%d x %d hexes)" % [_map._terrain.coast_build_ms, GRID_W, GRID_H])
+	await _coast_frame(COAST_OFF, "COAST_off", 0.0)
+	await _coast_frame({}, "COAST", 0.0)
+	await _coast_frame({}, "COAST_t2", OCEAN_MOTION_DT)
+	_save_diff("COAST", "COAST_t2", "COAST_motion_diff")
+	for i in range(COAST_SEQ_PHASES.size()):
+		_set_water_time_offset(COAST_SEQ_PHASES[i])
+		await _settle()
+		await _save_crop("COAST_seq%d" % i, GRID_W - COAST_SEQ_CROP_FROM_EAST.x, COAST_SEQ_CROP_FROM_EAST.y,
+			COAST_SEQ_CROP_RADII)
+	_set_water_time_offset(0.0)
+	await _settle()
+	await _save_crop("COAST_lake", GRID_W - COAST_LAKE_CROP_FROM_EAST.x, COAST_LAKE_CROP_FROM_EAST.y, COAST_LAKE_CROP_RADII)
+	await _assert_coast_presence()
+	await _assert_coast_travel_and_alignment()
+	await _assert_coast_no_hex_structure()
+	await _assert_coast_break_foam()
+	await _assert_coast_shore_pulse()
+	await _assert_coast_toggle()
+	# The 2.0× frame, last: it leaves the map on a different grid.
+	_map.display_snapshot(_snapshot_coast_swell(COAST_2X_GRID.x, COAST_2X_GRID.y, climate))
+	await _refit(GAME_HEX_RADIUS * GRID_W / COAST_2X_GRID.x)
+	await _coast_frame({}, "COAST_2x", 0.0)
+	_set_water_time_offset(0.0)
+	_map._show_grid_lines = true
+
+
+func _snapshot_coast_swell(w: int, h: int, climate: Dictionary) -> Dictionary:
+	## The COAST fixture on a `w × h` grid: land from the east edge in by COAST_LAND_DEPTH[row] hexes, a shelf
+	## COAST_SHELF_WIDTH hexes wide off it, deep ocean beyond, a small island and an inland lake — all placed from
+	## the EAST edge, so the geography holds on the narrower 2.0× grid. Every tile warm, with the sim's anchors.
+	var arr: Array = []
+	arr.resize(w * h)
+	for y in range(h):
+		var coast_col: int = w - int(COAST_LAND_DEPTH[y % COAST_LAND_DEPTH.size()])
+		for x in range(w):
+			if x >= coast_col:
+				arr[y * w + x] = COAST_LAND_ID
+			elif x >= coast_col - COAST_SHELF_WIDTH:
+				arr[y * w + x] = OCEAN_SHELF_ID
+			else:
+				arr[y * w + x] = OCEAN_DEEP_ID
+	for hex: Vector2i in COAST_ISLAND_FROM_EAST:
+		arr[hex.y * w + (w - hex.x)] = COAST_LAND_ID
+	for hex: Vector2i in COAST_LAKE_FROM_EAST:
+		arr[hex.y * w + (w - hex.x)] = COAST_LAKE_ID
+	var snap: Dictionary = _snapshot(arr, w, h)
+	var temperate: float = float(climate["temperate_max_temp"])
+	var neutral: float = 0.5 * (float(climate["boreal_max_temp"]) + temperate)
+	var warmest: float = temperate + OCEANTEMP_OVERSHOOT * (temperate - neutral)
+	var tiles: Array = []
+	for y in range(h):
+		for x in range(w):
+			tiles.append({"entity": y * w + x, "x": x, "y": y, "temperature": warmest})
+	snap["tiles"] = tiles
+	snap["overlays"]["climate_polar_max_temp"] = float(climate["polar_max_temp"])
+	snap["overlays"]["climate_boreal_max_temp"] = float(climate["boreal_max_temp"])
+	snap["overlays"]["climate_temperate_max_temp"] = temperate
+	return snap
+
+
+func _coastal_block(changes: Dictionary) -> Dictionary:
+	## The shipped `coastal_swell` block with `changes` laid over it.
+	var block: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("coastal_swell", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in changes:
+		block[key] = changes[key]
+	return block
+
+
+func _coast_frame(changes: Dictionary, name: String, time_offset: float) -> void:
+	var token: Array = _override_config({"coastal_swell": _coastal_block(changes)})
+	_set_water_time_offset(time_offset)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save(name)
+	_restore_config(token)
+	_map.queue_redraw()
+
+
+func _coast_capture(changes: Dictionary, time_offset: float, water: Dictionary = {}) -> Image:
+	## One capture with `changes` laid over the shipped `coastal_swell` block (and `water` over `water_surface`), at
+	## phase `time_offset`. The config is restored and a redraw queued after, so the next frame is back on the
+	## shipped levers.
+	var token: Array = _override_config({"coastal_swell": _coastal_block(changes), "water_surface": _ocean_surface(water)})
+	_set_water_time_offset(time_offset)
+	await _settle()
+	var image: Image = await _capture()
+	_restore_config(token)
+	_map.queue_redraw()
+	return image
+
+
+func _luma_levels(image: Image) -> PackedFloat32Array:
+	## Rec.709 luma of every pixel, in 8-bit levels, row-major — read once off the raw bytes (get_pixel per probe
+	## is what makes a whole-frame claim slow).
+	var img := image
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img = image.duplicate()
+		img.convert(Image.FORMAT_RGBA8)
+	var bytes := img.get_data()
+	var n := img.get_width() * img.get_height()
+	var out := PackedFloat32Array()
+	out.resize(n)
+	for i in range(n):
+		out[i] = LUMA_R * bytes[i * 4] + LUMA_G * bytes[i * 4 + 1] + LUMA_B * bytes[i * 4 + 2]
+	return out
+
+
+func _luma_box(image: Image, box: Rect2i) -> PackedFloat32Array:
+	## `_luma_levels` over a sub-rectangle, row-major within it.
+	var full := _luma_levels(image)
+	var w := image.get_width()
+	var out := PackedFloat32Array()
+	out.resize(box.size.x * box.size.y)
+	for y in range(box.size.y):
+		for x in range(box.size.x):
+			out[y * box.size.x + x] = full[(box.position.y + y) * w + box.position.x + x]
+	return out
+
+
+func _coast_box(image: Image) -> Rect2i:
+	## The part of the frame the coast's foam can reach: from COAST_BOX_WEST_FROM_EAST hexes in from the east edge.
+	var px_scale := _coast_px_scale(image)
+	var west: Vector2 = _map._hex_center(maxi(_map.grid_width - COAST_BOX_WEST_FROM_EAST, 0), 0, _map.last_hex_radius,
+		_map.last_origin) * px_scale
+	var x0: int = clampi(int(west.x), 0, image.get_width() - 1)
+	return Rect2i(x0, 0, image.get_width() - x0, image.get_height())
+
+
+func _coast_px_scale(image: Image) -> float:
+	return float(image.get_width()) / get_viewport().get_visible_rect().size.x
+
+
+func _coast_at_pixel(px: Vector2, px_scale: float) -> Vector2:
+	## The coast field (distance in hex radii, eligibility) under an image pixel.
+	return _map._terrain.coast_distance_at(px / px_scale - _map.last_origin)
+
+
+func _coast_dir_at_pixel(px: Vector2, px_scale: float) -> Vector2:
+	## The unit direction TOWARD the coast at an image pixel (minus the field's gradient), or zero where flat.
+	var step: float = COAST_GRAD_STEP_PX
+	var gx: float = (_coast_at_pixel(px + Vector2(step, 0.0), px_scale).x
+		- _coast_at_pixel(px - Vector2(step, 0.0), px_scale).x)
+	var gy: float = (_coast_at_pixel(px + Vector2(0.0, step), px_scale).x
+		- _coast_at_pixel(px - Vector2(0.0, step), px_scale).x)
+	var g := Vector2(gx, gy)
+	return -g.normalized() if g.length() > OCEAN_CORR_EPSILON else Vector2.ZERO
+
+
+func _pixel_hex_id(px: Vector2, px_scale: float) -> int:
+	var hex: Vector2i = _map._point_to_offset(px / px_scale)
+	return _map._terrain_id_at(hex.x, hex.y)
+
+
+func _assert_coast_presence() -> void:
+	## (a) THE SWELL IS WHERE THE COAST IS. S = shipped − the coastal-off twin (the chop and the art cancel, so S is
+	## the coastal term alone). Near the coast it moves the water; past `reach` and on the lake it is EXACTLY 0 —
+	## the coastal weight is 0 there, not small.
+	var reach: float = float(_coastal_block({}).get("reach", 0.0))
+	var on: Image = await _coast_capture({}, 0.0)
+	var off: Image = await _coast_capture(COAST_OFF, 0.0)
+	if on == null or off == null:
+		return
+	var a := _luma_levels(on)
+	var b := _luma_levels(off)
+	var px_scale := _coast_px_scale(on)
+	var w := on.get_width()
+	var h := on.get_height()
+	var near_sum := 0.0
+	var near_n := 0
+	var far_changed := 0
+	var far_n := 0
+	var lake_changed := 0
+	var lake_n := 0
+	for y in range(0, h, COAST_SAMPLE_STRIDE):
+		for x in range(0, w, COAST_SAMPLE_STRIDE):
+			var px := Vector2(x, y)
+			var tid := _pixel_hex_id(px, px_scale)
+			var diff: float = absf(a[y * w + x] - b[y * w + x])
+			if tid == COAST_LAKE_ID:
+				lake_n += 1
+				if diff > 0.0:
+					lake_changed += 1
+				continue
+			if tid == COAST_LAND_ID or tid < 0:
+				continue
+			var d: float = _coast_at_pixel(px, px_scale).x
+			if d >= COAST_NEAR_BAND.x and d <= COAST_NEAR_BAND.y:
+				near_sum += diff
+				near_n += 1
+			elif d >= reach + COAST_FAR_MARGIN:
+				far_n += 1
+				if diff > 0.0:
+					far_changed += 1
+	var near_mean: float = near_sum / maxf(near_n, 1)
+	print("blend_probe: COAST (a) swell |ΔL| %.2f levels mean at %.1f–%.1f r (%d px, min %.2f) · beyond %.1f r %d of %d px moved · lake %d of %d px moved"
+		% [near_mean, COAST_NEAR_BAND.x, COAST_NEAR_BAND.y, near_n, COAST_NEAR_MIN_DL, reach + COAST_FAR_MARGIN,
+			far_changed, far_n, lake_changed, lake_n])
+	if near_n == 0 or near_mean < COAST_NEAR_MIN_DL:
+		_fail("COAST: the swell is too faint near the coast — %.2f levels mean (want ≥ %.2f)" % [near_mean, COAST_NEAR_MIN_DL])
+	if far_n == 0 or far_changed > 0:
+		_fail("COAST: the swell reaches past its reach — %d of %d px moved beyond %.1f r" % [far_changed, far_n, reach])
+	if lake_n == 0 or lake_changed > 0:
+		_fail("COAST: the LAKE swells — %d of %d lake px moved (a lake is not coastal water)" % [lake_changed, lake_n])
+
+
+func _assert_coast_travel_and_alignment() -> void:
+	## (b) CRESTS TRAVEL TOWARD THE COAST: along the coast-normal at points in COAST_TRAVEL_BAND, the swell profile
+	## one COAST_DT later is the earlier one moved SHOREWARD — the summed cross-correlation over shifts peaks at a
+	## positive shift. (c) CRESTS RUN PARALLEL TO THE COAST: the swell's own gradient lines up with the coast
+	## field's (doubled-angle mean, weighted by the gradient's strength).
+	var off0: Image = await _coast_capture(COAST_OFF, 0.0, COAST_NO_CHOP)
+	var on0: Image = await _coast_capture(COAST_NO_FOAM, 0.0, COAST_NO_CHOP)
+	var off1: Image = await _coast_capture(COAST_OFF, COAST_DT, COAST_NO_CHOP)
+	var on1: Image = await _coast_capture(COAST_NO_FOAM, COAST_DT, COAST_NO_CHOP)
+	if off0 == null or on0 == null or off1 == null or on1 == null:
+		return
+	var w := on0.get_width()
+	var h := on0.get_height()
+	var s0 := _luma_levels(on0)
+	var o0 := _luma_levels(off0)
+	var s1 := _luma_levels(on1)
+	var o1 := _luma_levels(off1)
+	for i in range(s0.size()):
+		s0[i] -= o0[i]
+		s1[i] -= o1[i]
+	var px_scale := _coast_px_scale(on0)
+	var shifts := COAST_TRAVEL_SEARCH_PX * 2 + 1
+	var corr := PackedFloat32Array()
+	corr.resize(shifts)
+	var align_num := 0.0
+	var align_den := 0.0
+	var points := 0
+	for y in range(COAST_PROFILE_HALF_PX + COAST_TRAVEL_SEARCH_PX, h - COAST_PROFILE_HALF_PX - COAST_TRAVEL_SEARCH_PX, COAST_POINT_STRIDE):
+		for x in range(COAST_PROFILE_HALF_PX + COAST_TRAVEL_SEARCH_PX, w - COAST_PROFILE_HALF_PX - COAST_TRAVEL_SEARCH_PX, COAST_POINT_STRIDE):
+			var px := Vector2(x, y)
+			var field := _coast_at_pixel(px, px_scale)
+			if field.y < COAST_ELIGIBLE_MIN:
+				continue
+			var tid := _pixel_hex_id(px, px_scale)
+			if tid == COAST_LAND_ID or tid == COAST_LAKE_ID:
+				continue
+			var toward := _coast_dir_at_pixel(px, px_scale)
+			if toward == Vector2.ZERO:
+				continue
+			if field.x >= COAST_TRAVEL_BAND.x and field.x <= COAST_TRAVEL_BAND.y:
+				points += 1
+				for k in range(-COAST_TRAVEL_SEARCH_PX, COAST_TRAVEL_SEARCH_PX + 1):
+					var acc := 0.0
+					for s in range(-COAST_PROFILE_HALF_PX, COAST_PROFILE_HALF_PX + 1):
+						var p0 := (px + toward * s).round()
+						var p1 := (px + toward * (s + k)).round()
+						acc += s0[int(p0.y) * w + int(p0.x)] * s1[int(p1.y) * w + int(p1.x)]
+					corr[k + COAST_TRAVEL_SEARCH_PX] += acc
+			if field.x >= COAST_ALIGN_BAND.x and field.x <= COAST_ALIGN_BAND.y:
+				var i := y * w + x
+				var gx: float = s0[i + COAST_ALIGN_STENCIL_PX] - s0[i - COAST_ALIGN_STENCIL_PX]
+				var gy: float = s0[i + w * COAST_ALIGN_STENCIL_PX] - s0[i - w * COAST_ALIGN_STENCIL_PX]
+				var mag2: float = gx * gx + gy * gy
+				if mag2 > OCEAN_CORR_EPSILON:
+					var ang: float = atan2(gy, gx) - atan2(toward.y, toward.x)
+					align_num += mag2 * cos(2.0 * ang)
+					align_den += mag2
+	var best_k := 0
+	var best := -INF
+	for k in range(-COAST_TRAVEL_SEARCH_PX, COAST_TRAVEL_SEARCH_PX + 1):
+		if corr[k + COAST_TRAVEL_SEARCH_PX] > best:
+			best = corr[k + COAST_TRAVEL_SEARCH_PX]
+			best_k = k
+	var alignment: float = align_num / maxf(align_den, OCEAN_CORR_EPSILON)
+	print("blend_probe: COAST (b) over %.2f s the swell profile moves %+d px along the way to the coast (%d points) · (c) crest alignment with the coast %.2f (min %.2f)"
+		% [COAST_DT, best_k, points, alignment, COAST_ALIGN_MIN])
+	if points == 0 or best_k <= 0:
+		_fail("COAST: the swell does not travel toward the coast — best shift %+d px along the way to it" % best_k)
+	if alignment < COAST_ALIGN_MIN:
+		_fail("COAST: crests do not run parallel to the coast — alignment %.2f (want ≥ %.2f)" % [alignment, COAST_ALIGN_MIN])
+
+
+func _assert_coast_no_hex_structure() -> void:
+	## (d) NO HEX STRUCTURE: on S (shipped − coastal-off, no foam), along lines crossing the edges between two
+	## coastal WATER hexes within COAST_HEX_BAND of land, the 2-px |Δ| straddling the edge over the largest 2-px |Δ|
+	## elsewhere on the line (the OCEANTEMP straddle idea). A field read per hex steps at every edge.
+	var on: Image = await _coast_capture(COAST_NO_FOAM, 0.0, COAST_NO_CHOP)
+	var off: Image = await _coast_capture(COAST_OFF, 0.0, COAST_NO_CHOP)
+	if on == null or off == null:
+		return
+	var w := on.get_width()
+	var sa := _luma_levels(on)
+	var sb := _luma_levels(off)
+	for i in range(sa.size()):
+		sa[i] -= sb[i]
+	var px_scale := _coast_px_scale(on)
+	var radius: float = _map.last_hex_radius
+	var ratio_sum := 0.0
+	var lines := 0
+	for row in range(_map.grid_height):
+		for col in range(_map.grid_width):
+			var tid: int = _map._terrain_id_at(col, row)
+			if tid != OCEAN_DEEP_ID and tid != OCEAN_SHELF_ID:
+				continue
+			var c0: Vector2 = _map._hex_center(col, row, radius, _map.last_origin)
+			for nb_col in [col + 1]:
+				if nb_col >= _map.grid_width or _map._terrain_id_at(nb_col, row) != tid:
+					continue
+				var c1: Vector2 = _map._hex_center(nb_col, row, radius, _map.last_origin)
+				var mid: Vector2 = (c0 + c1) * 0.5
+				var d: float = _map._terrain.coast_distance_at(mid - _map.last_origin).x
+				if d < COAST_HEX_BAND.x or d > COAST_HEX_BAND.y:
+					continue
+				var dir: Vector2 = (c1 - c0).normalized()
+				var along := Vector2(-dir.y, dir.x)
+				for j in range(COAST_HEX_EDGE_SAMPLES):
+					var t: float = (float(j) / float(COAST_HEX_EDGE_SAMPLES - 1) - 0.5) * 2.0 * COAST_HEX_EDGE_SPAN * radius
+					var centre: Vector2 = (mid + along * t) * px_scale
+					var reach_px: float = COAST_HEX_EDGE_REACH * radius * px_scale
+					var straddle := 0.0
+					var elsewhere := 0.0
+					var n: int = int(reach_px)
+					for s in range(-n, n):
+						var pa := (centre + dir * s).round()
+						var pb := (centre + dir * (s + COAST_HEX_STEP_PX)).round()
+						var dv: float = absf(sa[int(pb.y) * w + int(pb.x)] - sa[int(pa.y) * w + int(pa.x)])
+						if s >= -COAST_HEX_STEP_PX and s <= 0:
+							straddle = maxf(straddle, dv)
+						elif absf(float(s)) > COAST_HEX_GUARD_PX:
+							elsewhere = maxf(elsewhere, dv)
+					ratio_sum += straddle / maxf(elsewhere, COAST_HEX_FLOOR_DL)
+					lines += 1
+	var ratio: float = ratio_sum / maxf(lines, 1)
+	print("blend_probe: COAST (d) hex-edge step ratio %.2f over %d lines (max %.2f)" % [ratio, lines, COAST_HEX_RATIO_MAX])
+	if lines == 0 or ratio > COAST_HEX_RATIO_MAX:
+		_fail("COAST: the swell STEPS at hex edges — ratio %.2f (want ≤ %.2f)" % [ratio, COAST_HEX_RATIO_MAX])
+
+
+func _assert_coast_break_foam() -> void:
+	## (e) BREAKING FOAM ONLY IN THE BREAK ZONE, ORIENTED ALONG THE CREST; plus the two whitecap claims that moved here
+	## with the generator: NEUTRAL cores on this warm-graded sea (the grade-order regression), and FADE-IN (newborn
+	## foam is faint). The foam mask is shipped vs its foam-off twin at the same phase, ≥ COAST_FOAM_MIN_DL.
+	var block: Dictionary = _coastal_block({})
+	var allowance: float = float(block.get("break_zone", 0.0)) + COAST_FOAM_GROUP_REACH_CELLS * float(block.get("foam_cell", 0.0))
+	var foam_rgb: Array = block.get("foam_color", [0, 0, 0])
+	var foam_luma: float = LUMA_R * float(foam_rgb[0]) + LUMA_G * float(foam_rgb[1]) + LUMA_B * float(foam_rgb[2])
+	var foam_px := 0
+	var outside := 0
+	var core_n := 0
+	var core_sat := 0.0
+	var core_luma := 0.0
+	var water_luma := 0.0
+	var water_n := 0
+	var align_num := 0.0
+	var align_n := 0
+	var born := 0
+	var born_bright := 0
+	for phase: float in COAST_FOAM_PHASES:
+		var on: Image = await _coast_capture({}, phase)
+		var off: Image = await _coast_capture(COAST_NO_FOAM, phase)
+		var on_prev: Image = await _coast_capture({}, phase - COAST_FADE_STEP)
+		var off_prev: Image = await _coast_capture(COAST_NO_FOAM, phase - COAST_FADE_STEP)
+		if on == null or off == null or on_prev == null or off_prev == null:
+			return
+		var px_scale := _coast_px_scale(on)
+		var box := _coast_box(on)
+		var la := _luma_box(on, box)
+		var lb := _luma_box(off, box)
+		var lp := _luma_box(on_prev, box)
+		var lq := _luma_box(off_prev, box)
+		var n := la.size()
+		var mask := PackedByteArray()
+		mask.resize(n)
+		var bright := PackedByteArray()
+		bright.resize(n)
+		var before := PackedByteArray()
+		before.resize(n)
+		for i in range(n):
+			var dl: float = la[i] - lb[i]
+			var px := Vector2(box.position.x + i % box.size.x, box.position.y + i / box.size.x)
+			# The foam's opacity here, from the foam-on/off lumas (the foam is mix(water, foam, α)); the CORE is
+			# where it covers most of the water, and there the RENDERED pixel is what is judged.
+			if dl > 0.0 and dl / maxf(foam_luma - lb[i], COAST_FOAM_ALPHA_MIN) >= COAST_FOAM_CORE_ALPHA:
+				var c1: Color = on.get_pixel(int(px.x), int(px.y))
+				core_n += 1
+				core_sat += c1.s
+				core_luma += la[i]
+				water_luma += lb[i]
+				water_n += 1
+			bright[i] = 1 if dl >= COAST_FOAM_BRIGHT_DL else 0
+			before[i] = 1 if lp[i] - lq[i] >= COAST_FOAM_MIN_DL else 0
+			if dl < COAST_FOAM_MIN_DL:
+				continue
+			mask[i] = 1
+			foam_px += 1
+			if _coast_at_pixel(px, px_scale).x > allowance:
+				outside += 1
+		for shape: Dictionary in _blob_shapes(mask, box.size.x, box.size.y):
+			var centre := Vector2(box.position.x + float(shape["cx"]), box.position.y + float(shape["cy"]))
+			var toward := _coast_dir_at_pixel(centre, px_scale)
+			if toward == Vector2.ZERO:
+				continue
+			var along_crest: float = atan2(toward.x, -toward.y)   # perpendicular to the way to the coast
+			align_num += cos(2.0 * (float(shape["angle"]) - along_crest))
+			align_n += 1
+		var labels: PackedInt32Array = _blob_labels(mask, box.size.x, box.size.y)
+		var old := {}
+		var lit := {}
+		for i in range(labels.size()):
+			var label: int = labels[i]
+			if label == 0:
+				continue
+			if before[i] != 0:
+				old[label] = true
+			if bright[i] != 0:
+				lit[label] = true
+		var seen := {}
+		for i in range(labels.size()):
+			var label: int = labels[i]
+			if label == 0 or seen.has(label):
+				continue
+			seen[label] = true
+			if old.has(label):
+				continue
+			born += 1
+			if lit.has(label):
+				born_bright += 1
+	var outside_frac: float = float(outside) / maxf(foam_px, 1)
+	var alignment: float = align_num / maxf(align_n, 1)
+	var sat: float = core_sat / maxf(core_n, 1)
+	var luma: float = core_luma / maxf(core_n, 1)
+	var water: float = water_luma / maxf(water_n, 1)
+	var fade_bright: float = float(born_bright) / maxf(born, 1)
+	print("blend_probe: COAST (e) foam %d px, %.3f beyond %.2f r of land (max %.2f) · along-crest alignment %.2f over %d blobs (min %.2f)"
+		% [foam_px, outside_frac, allowance, COAST_FOAM_OUTSIDE_MAX, alignment, align_n, COAST_FOAM_ALIGN_MIN])
+	print("blend_probe: COAST (e) foam core (α ≥ %.1f) %d px: RENDERED saturation %.3f (max %.2f), luma %.1f vs water %.1f (≥ +%.0f) · fade-in %.3f of %d newborn (max %.2f)"
+		% [COAST_FOAM_CORE_ALPHA, core_n, sat, COAST_FOAM_SAT_MAX, luma, water, COAST_FOAM_CORE_LUMA_ABOVE, fade_bright, born,
+			COAST_FOAM_BRIGHT_MAX])
+	if foam_px == 0:
+		_fail("COAST: no breaking foam at all")
+		return
+	if outside_frac > COAST_FOAM_OUTSIDE_MAX:
+		_fail("COAST: foam OUTSIDE the break zone — %.3f of it beyond %.2f r of land (want ≤ %.2f)"
+			% [outside_frac, allowance, COAST_FOAM_OUTSIDE_MAX])
+	if align_n == 0 or alignment < COAST_FOAM_ALIGN_MIN:
+		_fail("COAST: foam is not oriented along the crest — alignment %.2f (want ≥ %.2f)" % [alignment, COAST_FOAM_ALIGN_MIN])
+	if core_n < COAST_FOAM_MIN_CORE_PX:
+		_fail("COAST: only %d foam px reach %.1f coverage (want ≥ %d) — the foam has no solid core, so the water shows through it everywhere"
+			% [core_n, COAST_FOAM_CORE_ALPHA, COAST_FOAM_MIN_CORE_PX])
+	elif sat > COAST_FOAM_SAT_MAX:
+		_fail("COAST: foam on the warm sea is TINTED — core saturation %.3f (want ≤ %.2f)" % [sat, COAST_FOAM_SAT_MAX])
+	elif luma < water + COAST_FOAM_CORE_LUMA_ABOVE:
+		_fail("COAST: foam cores are DIM — luma %.1f over water %.1f (want ≥ +%.0f)" % [luma, water, COAST_FOAM_CORE_LUMA_ABOVE])
+	if born == 0:
+		_fail("COAST: no foam was born between phases %.2f s apart — the fade-in claim has no subject" % COAST_FADE_STEP)
+	elif fade_bright > COAST_FOAM_BRIGHT_MAX:
+		_fail("COAST: foam POPS IN — %.3f of newborn foam already reaches %.0f levels (want ≤ %.2f)"
+			% [fade_bright, COAST_FOAM_BRIGHT_DL, COAST_FOAM_BRIGHT_MAX])
+
+
+func _assert_coast_shore_pulse() -> void:
+	## (f) THE SHORE PULSE moves the surf and never the sand: shipped vs its surge-0 twin at several phases — pixels
+	## change on WATER hexes (the surf's seaward reach), and not one pixel of a LAND hex changes.
+	var water_changed := 0
+	var land_changed := 0
+	var surf: Array = []   # [luma, saturation] of every surge-changed water pixel, for the colour report
+	for phase: float in COAST_FOAM_PHASES:
+		var on: Image = await _coast_capture({}, phase)
+		var still: Image = await _coast_capture(COAST_NO_SURGE, phase)
+		if on == null or still == null:
+			return
+		var px_scale := _coast_px_scale(on)
+		var a := _luma_levels(on)
+		var b := _luma_levels(still)
+		var w := on.get_width()
+		for i in range(a.size()):
+			if a[i] == b[i]:
+				continue
+			var p := Vector2(i % w, i / w)
+			var tid := _pixel_hex_id(p, px_scale)
+			if tid != COAST_LAND_ID:
+				water_changed += 1
+				var c: Color = on.get_pixel(int(p.x), int(p.y))
+				surf.append([a[i], c.s, c])
+				continue
+			# A land pixel counts only if the land reaches COAST_LAND_INTERIOR_PX past it in every direction: a
+			# pixel ON the hex line is rasterised by whichever hex the shader's own point-in-hex picks, which
+			# need not be this probe's.
+			var interior := true
+			for o: Vector2 in [Vector2(COAST_LAND_INTERIOR_PX, 0), Vector2(-COAST_LAND_INTERIOR_PX, 0),
+					Vector2(0, COAST_LAND_INTERIOR_PX), Vector2(0, -COAST_LAND_INTERIOR_PX)]:
+				if _pixel_hex_id(p + o, px_scale) != COAST_LAND_ID:
+					interior = false
+			if interior:
+				land_changed += 1
+	surf.sort_custom(func(x: Array, y: Array) -> bool: return x[0] > y[0])
+	var top: int = maxi(int(surf.size() * COAST_SURF_TOP_FRACTION), 1)
+	var surf_sat := 0.0
+	var surf_rgb := Color(0, 0, 0)
+	for k in range(mini(top, surf.size())):
+		surf_sat += float(surf[k][1])
+		surf_rgb += surf[k][2]
+	var shown: int = maxi(mini(top, surf.size()), 1)
+	surf_rgb = surf_rgb / float(shown)
+	print("blend_probe: COAST (f) shore surge moved %d water px and %d land px · the brightest %.0f%% of the surged surf renders saturation %.3f, RGB (%d, %d, %d)"
+		% [water_changed, land_changed, COAST_SURF_TOP_FRACTION * 100.0, surf_sat / float(shown),
+			int(surf_rgb.r * 255.0), int(surf_rgb.g * 255.0), int(surf_rgb.b * 255.0)])
+	if water_changed == 0:
+		_fail("COAST: the shore surge moves nothing")
+	if land_changed > 0:
+		_fail("COAST: the shore surge moved %d LAND px — the beach must never move" % land_changed)
+
+
+func _assert_coast_toggle() -> void:
+	## (g) `O` OFF: two phases of the shipped COAST frame are byte-identical — the swell, its foam and the shore
+	## surge all stop with the rest of the water motion.
+	_map._terrain.set_water_motion_enabled(false)
+	var a: Image = await _coast_capture({}, 0.0)
+	var b: Image = await _coast_capture({}, OCEAN_MOTION_DT)
+	_map._terrain.set_water_motion_enabled(true)
+	if a == null or b == null:
+		return
+	var changed: int = _changed_pixel_count(a, b)
+	print("blend_probe: COAST (g) motion toggled OFF — %d px differ over %.1f s" % [changed, OCEAN_MOTION_DT])
+	if changed != 0:
+		_fail("COAST: with `O` off the coast still moves — %d px differ" % changed)

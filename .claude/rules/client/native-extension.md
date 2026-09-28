@@ -26,6 +26,7 @@ server side, so the two ends of the wire have the same shape.
 | `bridge/command_link.rs` | **The seated command connection** — one long-lived socket that holds this client's faction seat, its reader thread, its reconnect/re-claim clock, and `dispatch`, the one place that decides whether a command rides it or a throwaway one (`.claude/rules/client/command-transport.md`) |
 | `bridge/script_host.rs` | `ScriptHostBridge` (`#[godot_api]`) over the embedded script runtime |
 | `bridge/decoder.rs` | `SnapshotDecoder` (`#[godot_api]`) + the free `decode_snapshot` / `decode_delta`. **The only entry into the decode path** (`SnapshotLoader.gd` is its one caller) |
+| `bridge/coast_field.rs` | `CoastField` (`#[godot_api]`, one static `build`) — the terrain shader's distance-to-coast field: rasterise the per-hex land/coastal/other mask, exact Euclidean distance transform, light blur. Native because the GDScript version would hitch every world load (`.claude/rules/client/terrain-blend-shader.md` → Coastal shore swell) |
 | `bridge/variant.rs` | `Variant` ↔ `serde_json` marshalling shared by the bridges |
 | `snapshot/mod.rs` | The two top-level assemblers: `snapshot_dict` (rasters + sections → the client dict) and `snapshot_to_dict` (walks a `WorldSnapshot`) |
 | `snapshot/raster.rs` | `GridSize`, `OverlaySlices`, `TerrainSlices`, `OverlayChannelParams`, `packed_from_slice`, `insert_overlay_channel`, `normalize_overlay` |

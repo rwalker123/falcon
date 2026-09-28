@@ -826,17 +826,17 @@ the frame with the open water (`terrain-blend-shader.md` → Water surface). Fra
 | `OCEAN_off` (+ `_open` / `_seam` / `_coast`) | variation, waves, chop, whitecaps all 0 | the BEFORE: the grid, unmistakable |
 | `OCEAN_static` (+ crops) | waves, chop and whitecaps 0 | the anti-tiling alone; no flat blotches where the patches meet |
 | `OCEAN_waves`, `_t2`, `_motion_diff` | chop and whitecaps 0, two phases | the scrolled-texture term alone (it ships off) — kept because it is the term that measured as invisible |
-| `OCEAN_no_whitecaps` | whitecaps 0 | the shipped surface without its caps — the twin every whitecap claim subtracts |
 | `OCEAN_chop`, `_t2`, `_motion_diff` | waves and whitecaps 0, two phases | the chop alone |
 | `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s; `OCEAN_shipped_open` is the r ≈ 45 crop the whitecaps are judged on |
 | `OCEAN_seq0..3` | shipped, four phases a second apart | the look-at sequence the chop was tuned on |
 | `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop and caps are ON — the zoom where the retired swell drew a map-wide diagonal, and where the caps must stay sparse, never a carpet or map-scale patches. Below the gate (the r ≈ 22.8 far-zoom grid) the motion is off and the water is static |
-| `OCEAN_live` (+ `_open`) | shipped, on a 31×21 grid at r ≈ 35 | the LIVE-like frame, the radius of Ray's 1.5× screenshots: the caps must read as broken foam streaks, not rice, dots, stars, scratches or snow |
+| `OCEAN_live` (+ `_open`) | shipped, on a 31×21 grid at r ≈ 35 | the LIVE-like frame, the radius of Ray's 1.5× screenshots: open water, chop only |
 | `OCEAN_live_2x` | shipped, on a 23×16 grid at r ≈ 47 | Ray's 2.0× (radius = cover-fit base × zoom_factor, so 35 px at 1.5× → ~47 at 2.0×). `_snapshot_ocean` floors its scale at 1, so a grid smaller than `GRID_W` keeps the base geography |
-| `OCEAN_cap_life0..4` | shipped, a 3-radius crop at r ≈ 45, at 0 / 0.2 / 0.42 / 0.65 / 0.88 of one whitecap cycle | a crest group's life: absent, fading in, at its peak, fading out and stretching, gone — and a second group fading in as the first goes |
 
 The second phase is `OCEAN_MOTION_DT` (**2 s**) set on the `water_time_offset` uniform, since the
-harness clock is frozen. Fourteen PNG-less claims ride it, and each fails on its own:
+harness clock is frozen. The frames that show the open surface's own terms (`OCEAN_off` / `_static` / `_waves` /
+`_chop`) switch the coastal swell off too, so its crests round the island do not muddy them. Eight PNG-less
+claims ride it, and each fails on its own:
 
 - **The repeat measure.** Over a deep-only box, mean |ΔL| between each pixel and the one ONE TEXTURE
   PERIOD east (`2·r / base_scale` px), over the same at half a period. An exact copy scores ~0, an
@@ -848,9 +848,10 @@ harness clock is frozen. Fourteen PNG-less claims ride it, and each fails on its
   number, when retuning the cell.
 - **Motion at game zoom, measured as MAGNITUDE.** Over the deep-ocean box, the mean |ΔL| between two
   phases `OCEAN_MOTION_DT` (2 s) apart must reach `OCEAN_MOTION_MIN_MEAN_DL` (**1.5 levels** on this
-  water, luma ≈ 30); measured **2.95** with the whitecaps (2.3 on the chop alone). The bar guards against the term going invisible, NOT the tuned
-  look — that is Ray's live call: at `chop_strength` 0.06 / `chop_rate` 0.8 (~4 levels/s) the chop read
-  in play as clouds changing too fast, so it ships at 0.035 / 0.4 and the window doubled with the rate.
+  water, luma ≈ 30); measured **3.28** at `chop_strength` 0.05. The bar guards against the term going
+  invisible, NOT the tuned look — that is Ray's live call: at `chop_strength` 0.06 / `chop_rate` 0.8 (~4
+  levels/s) the chop read in play as clouds changing too fast, so it went to 0.035 / 0.4 and the window
+  doubled with the rate; 0.035 was too faint once the caps left open water, and it ships at 0.05.
   ⛔ **It was a changed-pixel COUNT, and the count passed a sea that looked still.** A scrolled texture
   moves nearly every pixel by a level or two, so the first claim read 1.55M of 2.07M pixels changed
   while the whole frame had moved **1.18 levels mean over eight seconds** — Ray ran it live and saw no
@@ -863,7 +864,7 @@ harness clock is frozen. Fourteen PNG-less claims ride it, and each fails on its
   period — each read as a rate (mean |ΔL| / dt). The slowest must reach the magnitude bar's own rate,
   `OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT` (`OCEAN_STEADY_MIN_FRACTION` 1.0: a window's change is at
   most the sum of its interval changes, so only a pause drops one below it), and max/min ≤
-  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **1.77–2.05 levels/s** — ratio **1.16** (the chop alone held
+  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **2.09–2.19 levels/s** — ratio **1.05** (at 0.035 it held
   1.47–1.53, ratio 1.04). (At the earlier 0.06 / 0.8 tuning it held
   5.01–5.23, and the single-copy sabotage swung 2.59–6.74, ratio 2.60.)
   **Sabotaged** with one noise copy per octave (the form before `CHOP_PAIR_*`): **2.74, 6.21, 6.74, 4.86,
@@ -873,68 +874,25 @@ harness clock is frozen. Fourteen PNG-less claims ride it, and each fails on its
   chop, waves AND whitecaps off), so the art cancels and the caps are part of the field — at two phases
   `OCEAN_DIRECTION_DT` (1 s) apart is cross-correlated at every offset within ±24 px; the best
   correlation more than 4 px from zero may not beat zero's by more than 0.02. Shipped with the caps:
-  **0.529 at zero, 0.257 at best elsewhere** (the chop alone: 0.740 vs 0.619). **Sabotaged** with a single travelling sine train at the chop's own size:
+  **0.739 at zero, 0.618 at best elsewhere**. **Sabotaged** with a single travelling sine train at the chop's own size:
   **−0.807 at zero, 0.999 at (10, 12) px**, fail; and with the retired swell: **0.800 vs 0.984**, fail.
 - **No map-scale pattern.** The same motion field block-averaged over 2-hex-radius blocks — a low-pass —
   and its std taken as a FRACTION of the per-pixel std (an absolute bar would scale with
   `chop_strength`). Independent ~0.5 r patches keep about feature/block ≈ 0.25 of their std; bands or
-  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.18** with the caps (0.29
-  on the chop alone); **sabotaged** with the
+  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.29**; **sabotaged** with the
   retired swell: **0.43**, fail. (The small travelling train reads 0.02 here and fails only the
   direction claim — the two measure different things.) The margin is honest rather than wide: a 3 r
   wavelength is partly averaged by 2 r blocks, and `chop_scale` near 0.7 r approaches the bar.
-- **The seven whitecap claims** ride one pair of phases `OCEAN_WHITECAP_DT` (1 s) apart. Each phase is
-  captured with and without the caps. The cap MASK is every open-ocean pixel at least
-  `OCEAN_WHITECAP_MIN_DL` (8 levels) brighter than its whitecap-off twin (the chop and the art cancel, so
-  the mask is the caps alone), and blobs are its 4-connected components.
-  - **(a) Coverage in a band.** The mask's fraction of the box lies in [0.001, 0.05]: present, and nowhere
-    near a carpet. Shipped **0.0101**. **Sabotaged** with `whitecap_strength` 0: **0.0000**, fail.
-  - **(b) Elongation.** The mean aspect ratio, `sqrt(λmax / λmin)` of each blob's pixel second moments,
-    over blobs of ≥ 8 px, is ≥ 2.75. Each λ carries a pixel's own 1/12 variance, so a 1-px line is not
-    infinite. Shipped **3.19** over 96 blobs.
-    - **Sabotaged** with an isotropic cap (width = length): **2.36**, fail. It is not ~1: the break-up
-      along the crest and the dissolving tips still stretch an isotropic cap's blobs.
-    - **The bar rose from 2.5 to sit between the two.** At 2.5 the isotropic sabotage (2.36) passed by
-      only 0.14; the crescents' isotropic sabotage had read 1.32.
-  - **(c) Neutral.** The cap CORE is mask pixels ≥ 105 levels over the twin. That is ~0.8 of the grey
-    peak, 0.75 × (201 − 30) ≈ 128 levels over this water. The core's mean HSV saturation must be ≤ 0.15, and
-    its luma ≥ the water's + 70. Shipped **0.115 / 145 vs water 30**.
-    - **Sabotaged** by laying `foam_color` in place of `whitecap_color`: **0.194**, fail.
-    - **Why the bars moved:** the old bars (core ≥ 140 levels, saturation ≤ 0.08, luma + 100) were set for
-      a near-white cap at 0.95. A grey at 0.75 over blue water peaks near 128 levels, so no pixel reached
-      140. It is also inherently a little blue (~0.1), the water showing through translucent foam.
-    - **Where the bar sits:** above that and below a TINTED cap. `foam_color` reads 0.194; the old
-      grade-recoloured warm cap reads 0.49 (state 30 (d)).
-  - **(d) Change in place.** Of the caps at t, the fraction still capped at t + 1 s lies in [0.2, 0.85].
-    Shipped **0.53** — the longer fade did not move it. **Sabotaged** with `whitecap_rate` 0: **1.00**, fail.
-  - **(e) Regional, not global, orientation.** Each blob's axis is `½·atan2(2·μxy, μxx − μyy)`, and R is
-    the mean resultant length of the DOUBLED axes.
-    - **The two bars:** R over the whole box must be ≤ 0.5. R averaged over 6-hex-radius windows holding
-      ≥ 6 blobs must be ≥ 0.45, halfway between chance (per-cap random angles: 0.25) and the shipped caps.
-    - **Shipped:** **global 0.24, local 0.64**.
-    - **Sabotaged:** one fixed global angle gave global **0.91**, fail; random angles gave local **0.25**,
-      fail. Both were measured on the crescents; the orientation code did not change.
-  - **(f) Length VARIATION.** The coefficient of variation of the blobs' major-axis length, `sqrt(12·λmax)`
-    (a uniform segment's length from its variance), must be ≥ 0.4. Shipped **0.58**.
-    - **The RICE form fails:** one unbroken streak per cell with no length jitter
-      (`WHITECAP_LENGTH_MIN = MAX = SEGMENT_MIN = 1`, no break-up, `WHITECAP_GROUP_MAX` 1) reads **0.29**.
-      That much comes from the fade's stretch and the antialiased tips alone.
-    - **Removing the length jitter ALONE does not fail it:** that reads **0.73**, because the break-up and
-      the crest groups vary the drawn dashes more than the jitter does. That is why the sabotage that
-      fails is the rice form.
-    - **Length jitter with no break-up and no groups** reads **0.39**, just under the bar.
-    - **Shipped on the soft grey streaks:** **0.58**, unchanged.
-  - **(g) FADE-IN.** Caps must not pop in.
-    - **What is measured:** caps are captured at six phases (0, 0.55 … 2.85 s) and again 0.25 s later. The
-      NEWBORN caps are the blobs at the later phase none of whose pixels was a cap at the earlier one. The
-      claim is the fraction of them already reaching 64 levels (half the peak) anywhere: at most 0.10.
-    - **Why 0.25 s:** it is 7.5% of a 3.3 s cycle. A 12% attack reaches ~0.7 of its peak there; the
-      shipped 38% fade-in, ~0.1.
-    - **Why BLOBS, not pixels:** a fading streak's stretch also adds new pixels at its tips, all faint.
-      Counted per pixel, they swamped the metric: the old attack read 0.022 against the shipped 0.000,
-      which no bar separates.
-    - **Shipped: 0.000 of 81 newborn caps.** **Sabotaged** with the old 12% attack and no hold: **0.207
-      of 58**, fail.
+- **Open water has NO caps.** At two phases (0 and 1.3 s), the shipped frame against its coastal-off twin
+  (`COAST_OFF` over `coastal_swell`): over the deep-ocean box, every pixel past the swell's reach, they
+  must be byte-identical. The premise is that the pair DOES differ somewhere, at the island's coast;
+  without it the claim passes on a swell that never drew. Shipped: **0 deep px differ, 267 188 in the whole
+  frame**. **Sabotaged** with the coastal weight forced to 1 everywhere: **1 413 905 deep px**, fail.
+  - **What went with the open-water caps.** Their seven claims (coverage band, elongation, neutral core,
+    change in place, regional orientation, length variation, fade-in) and the `OCEAN_no_whitecaps` and
+    `OCEAN_cap_life0..4` frames are retired from this state. The foam claims that still describe
+    something moved to state 31 (COAST) with the generator: its neutral core and its fade-in. Regional
+    orientation became "along the crest".
 - **The `O` toggle.** With `TerrainRenderer.set_water_motion_enabled(false)`, two phases of the SHIPPED
   surface `OCEAN_MOTION_DT` apart differ by **exactly 0 px** (the magnitude claim is its premise:
   toggled on, they differ). The toggle is restored after.
@@ -962,7 +920,7 @@ and bottom rows sit at FULL cold and FULL warm (`terrain-blend-shader.md` → Wa
 | `OCEANTEMP_zero` | the no-coral geography at strength 0 — claim (a)'s subject |
 | `OCEANTEMP_split_off` / `OCEANTEMP_split` | top half polar, bottom half tropical — the largest step two neighbouring hexes can carry, claim (c)'s subject |
 
-Four PNG-less claims, each sabotage-verified to fail on its own:
+Three PNG-less claims, each sabotage-verified to fail on its own:
 
 - **(a) Strength 0 is bit-exact** — the temperature fixture WITH temperatures and published anchors, at
   strength 0, against state 29's own fixture captured first: **0 px** differ.
@@ -972,22 +930,101 @@ Four PNG-less claims, each sabotage-verified to fail on its own:
   `OCEANTEMP_SAT_TOLERANCE`. Measured **−4.4 / −0.27 → +4.7 / +0.14**. The saturation tolerance is 0.02
   because the full-cold rows share one grade over different texture and wobble by ~0.01. **Sabotaged**
   by swapping the cold and warm weights: 23 failures.
-- **(d) The caps stay NEUTRAL on a graded sea.** State 29's claim (c) — the same core and bars —
-  asked of the COLD rows (above row 5) and the WARM rows (from row 11) separately, with cores pooled over
-  three phases (0 / 1.1 / 2.3 s). Shipped: **cold 0.087 over 547 core px, warm 0.126 over 154**.
-  **Sabotaged** by moving the water motion back BEFORE the grade: **cold 0.144, warm 0.488**. The warm
-  band fails, which fails the run; the cold one passes by 0.006. The grade's cold tint is slate — a far
-  smaller hue shift than the warm turquoise — so the warm band is the half of this claim with teeth.
-  - **Why this is state 30's claim and not state 29's:** state 29 carries no temperatures, so the grade
-    never runs there. The motion-before-grade order passes state 29's claim (c) untouched while turning
-    every cap on a warm sea turquoise — which is what Ray saw live, and what this state was blind to until
-    now.
-  - **Frames:** `OCEANTEMP_caps` (the graded sea with its caps) and `_caps_warm` / `_caps_cold` crops.
 - **(c) No hex step.** On the SPLIT fixture, along 216 lines crossing the cold|warm hex edges, on the
   graded-minus-off luma: the 2-px |Δ| straddling the edge over the largest 2-px |Δ| elsewhere on the
   same line (the ECO straddle-ratio idea, asked of the grade alone). A blended edge is no steeper than
   the ramp around it: measured **0.13** against a bar of 1.5. **Sabotaged** by grading each hex on its
   own temperature (no neighbour blend): **6.61**, fail.
+
+- **RETIRED — (d), the caps on the graded sea.** Its subject was the open-water caps. The claim it made — foam
+  is neutral on a warm-graded sea, which is what catches the grade running after the motion — is state 31
+  (COAST)'s foam claim now, and its fixture is warm-graded throughout for that reason.
+
+**One more state (31, COAST): the COASTAL SHORE SWELL** → `COAST*.png`, at the game's r ≈ 45, grid OFF
+(`terrain-blend-shader.md` → Coastal shore swell). The fixture:
+- **Land:** from the east edge in by `COAST_LAND_DEPTH[row]` hexes, which gives bays and headlands, with a
+  `COAST_SHELF_WIDTH`-hex shelf off it and deep ocean beyond.
+- **Plus:** a three-hex island offshore and a three-hex `inland_sea` lake inland, all placed from the EAST
+  edge so the same geography fits the narrower 2.0× grid.
+- **Temperature:** every tile at the warm end of the sim's own climate anchors, so the foam is judged
+  where the grade's tint is strongest.
+
+| frame | reads for |
+|---|---|
+| `COAST_off` | the same frame with the coastal swell off — the reference for what the swell adds |
+| `COAST`, `_t2`, `COAST_motion_diff` | the swell at two phases: crests parallel to the coast, rolling in, breaking at the shore |
+| `COAST_seq0..3` | a 3.5-radius crop of a bay at 0 / 1.1 / 2.2 / 3.3 s: a set rolling in and breaking |
+| `COAST_lake` | the lake: no swell, no foam, no surge |
+| `COAST_2x` | the same fixture on a 23×16 grid at r ≈ 47, Ray's 2.0× |
+
+**S** below is the shipped frame minus a coastal-off twin (`COAST_OFF`, over `coastal_swell`). The chop and
+the art cancel, so S is the coastal term alone. For (b)–(d) both frames also have `chop_strength` 0, so S is
+the swell with no chop residue. Pixel → field distance goes through `TerrainRenderer.coast_distance_at`,
+which samples the CPU copy of the field exactly as the shader samples the texture. Seven claims, each
+sabotage-verified to fail on its own:
+
+- **(a) Present near the coast, absent far out and on the lake.** Mean |S| over water 0.4–2.5 r from land
+  must be at least 1.0 levels. Past `reach` + 0.1 r, and on the lake, S must be EXACTLY 0 — the coastal
+  weight is 0 there, not small.
+  - **Shipped:** **3.12 levels** near; **0 of 225 923 px** moved far; **0 of 3 941** on the lake.
+  - **Sabotaged** by adding `inland_sea` to `coastal_terrains`: **3 728 of 3 941 lake px** moved, fail.
+- **(b) Travels toward the coast.** At points 1.2–3.2 r from land, S's profile along the direction to the
+  coast is compared 0.5 s apart. The summed cross-correlation over shifts ±16 px must peak at a POSITIVE
+  (shoreward) shift. Shipped **+5 px** over 2 339 points. **Sabotaged** with `speed` −0.3: **−5 px**, fail.
+- **(c) Crests run parallel to the coast.** S's gradient (a ±2 px stencil) against the coast field's, as
+  a doubled-angle mean weighted by the gradient's strength, over 1.5–3.5 r. It must be at least 0.5.
+  - **Shipped:** **0.77**.
+  - **Sabotaged** with the phase keyed on a fixed map axis (`p.y`) instead of the coast distance:
+    **0.10**, fail.
+  - **The fixed axis is `y` on purpose:** the fixture's mainland coast runs north–south, so a fixed `x`
+    phase would largely agree with the coast normal and pass.
+- **(d) No hex structure.** Straddle-ratio lines (the OCEANTEMP idea) across the edges between two
+  same-terrain water hexes 0.5–3 r from land: the 2-px |Δ| of S straddling the edge over the largest 2-px
+  |Δ| elsewhere on the line. It must be at most 1.5. Shipped **0.24** over 357 lines.
+  - **Sabotaged** by reading the field at the fragment's HEX CENTRE (per-hex distance): **3.39**, fail.
+  - **The same sabotage also fails (a)** (2 569 far px moved), (b) (+0 px) and (c) (−0.04).
+- **(e) Breaking foam only in the break zone, oriented along the crest** — plus the two whitecap claims that
+  moved here with the generator. The foam mask is shipped vs its foam-off twin, ≥ 8 levels, pooled over
+  phases 0.7 / 1.9 / 3.1 s.
+  - **Where:** at most 0.02 of the foam may lie beyond `break_zone` + 1.2 × `foam_cell` of land (a group
+    is centred in the zone and reaches up to (1 + its margin) cells). Shipped **0.000** of 30 912 px.
+    **Sabotaged** by spawning foam out to `reach`: **0.436**, fail.
+  - **Along the crest:** the blobs' axes against the perpendicular to the way to the coast, as a
+    doubled-angle mean, must be at least 0.4. Shipped **0.56** over 203 blobs. The bold groups are
+    fatter than the hairlines were (0.86), so a blob's axis is less sharply defined.
+  - **NEUTRAL, measured on the RENDERED pixels of the foam's solid core.** The foam is
+    `mix(water, foam, α)`, so a pixel's α follows from the foam-on/off lumas; the CORE is where α ≥ 0.8.
+    There the rendered pixel's mean HSV saturation must be ≤ 0.12 and its mean luma at least 50 levels
+    over the water under it, over at least 30 core pixels.
+    - **Shipped:** **2 080 core px**, saturation **0.092**, luma **187.0** over water **72.4**.
+    - **Sabotaged** with the first coastal cut's foam (hairline streaks at 0.75 opacity): **0 core px**,
+      fail. That foam never covered the water, which is why it rendered cyan.
+    - **Sabotaged** by moving the water motion back BEFORE the grade: saturation **0.645**, fail.
+    - **Sabotaged** with a turquoise `foam_color` `[150, 200, 212]`: saturation **0.320**, fail.
+    - **What it does not catch:** the hairline SHAPE at full opacity passes (563 core px, saturation
+      0.093). Its cores are grey; what is wrong with it is its width, which is judged by eye.
+    - **Why it replaced the laid-on claim.** That claim recovered the colour the foam was laid on in,
+      `water + Δ / α`, and asked that it be neutral. It passed at **0.050** while every dash rendered cyan:
+      the colour was grey, but the thin foam never covered the water under it
+      (`terrain-blend-shader.md` → "THIN BREAKING FOAM RENDERED CYAN").
+  - **FADE-IN:** of the foam blobs newborn since 0.25 s earlier, at most 0.10 may already reach 64
+    levels. Shipped **0.000** of 58. **Sabotaged** with `SWELL_FOAM_FADE_IN` 0.02: **0.429**, fail. The
+    shipped fade-in went from 0.12 to 0.2 of a wave because 0.12 read 0.129 here.
+- **(f) The shore pulse moves the surf and never the sand.** The shipped frame against its surge-0 twin,
+  at the three foam phases. Pixels must change on WATER hexes, and none may change on a LAND hex.
+  - **Which land pixels count:** only those that are land for 2 px in every direction. A pixel on the
+    hex line is rasterised by the shader's own point-in-hex pick, which need not be this probe's; the
+    first cut counted 110 such boundary pixels.
+  - **Shipped:** **51 494 water px, 0 land px**.
+  - **Reported, not asserted:** the brightest 5% of the surged water renders saturation **0.133**, RGB
+    about **(127, 144, 146)**. That is the shoreline's own muted grey-blue `foam_color` at the surf's
+    `foam_opacity`, an earlier decision this state does not own.
+  - **Sabotaged** by surging the surf's inland wash too: **23 545 land px**, fail.
+- **(g) `O` off gives byte-identical phases.** With the toggle off, two phases 2 s apart differ by **0 px**.
+  **Sabotaged** by leaving the shore surge ungated by the motion switch: **36 331 px**, fail.
+
+**The field's build time is printed with the state** (`COAST field built in … ms`): ~5 ms for the 24×16
+fixture. The Huge map (128×80) measured ~120 ms in a standalone run, not in this harness.
 
 ## Worked-source mark states (issue #412)
 

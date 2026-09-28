@@ -99,7 +99,8 @@ const WATER_BLEND_DEFAULT_NOISE_AMOUNT := 0.45   # wobble amplitude, vs 0.30 on 
 # --- WATER SURFACE levers (terrain_config's "water_surface" block; the shader's water_surface()) ---
 # One base texture repeats as an EXACT COPY every 1/base_scale hex-rows, and open ocean has nothing to hide the
 # repeat under, so it read as a grid. The shader breaks it with a second rotated/rescaled sample mixed in by
-# broad world-noise patches (static), and adds an in-place chop + whitecaps (animated, LOD-gated, `O` toggles).
+# broad world-noise patches (static), and adds an in-place chop (animated, LOD-gated, `O` toggles). Open water has no
+# whitecaps; foam belongs to the coastal swell (see COASTAL_SWELL_* below).
 # Chosen on blend_probe state 29/OCEAN at the game's r ≈ 45. Everything subtle: the ocean must not compete with
 # units and markers.
 const WATER_SURFACE_DEFAULT_VARIATION_STRENGTH := 1.0   # 0..1, B's peak weight; 0 = one plain sample (bit-exact)
@@ -111,30 +112,55 @@ const WATER_SURFACE_DEFAULT_WAVE_SPEED := 0.012         # wave-texture UV per se
 const WATER_SURFACE_DEFAULT_WAVE_SCALE := 0.6           # wave UV vs base UV (< 1 = broader swells, and no minifying)
 # THE CHOP — small patches that brighten, dim and morph in place: movement with no direction (the travelling
 # swell it replaced read live as the whole sea flowing one way, and drew a map-wide diagonal at 1.0×).
-const WATER_SURFACE_DEFAULT_CHOP_STRENGTH := 0.035      # peak luma offset of a bright / dark patch (luma units)
+# 0.06 read live as drifting clouds; 0.035 was too faint once the caps left open water; 0.05 sits between.
+const WATER_SURFACE_DEFAULT_CHOP_STRENGTH := 0.05       # peak luma offset of a bright / dark patch (luma units)
 const WATER_SURFACE_DEFAULT_CHOP_SCALE := 0.5           # coarse feature size, in HEX RADII
 const WATER_SURFACE_DEFAULT_CHOP_RATE := 0.4            # evolution: noise cells of its time axis per second
 const WATER_SURFACE_MAX_CHOP_STRENGTH := 0.2
 const WATER_SURFACE_MIN_CHOP_SCALE := 0.1               # hex radii — finer is per-pixel sparkle, not chop
 const WATER_SURFACE_MAX_CHOP_SCALE := 2.0               # hex radii — broader starts to read as map-scale pattern
 const WATER_SURFACE_MAX_CHOP_RATE := 5.0
-# THE WHITECAPS — crest groups of thin, broken foam streaks spawned per cell of two jittered grids: each fades in,
-# holds and fades out in place, clustered where the chop is rough, oriented by region. A light neutral GREY at its
-# peak, laid on by opacity: foam the eye barely registers until it looks, not a bright mark.
-const WATER_SURFACE_DEFAULT_WHITECAP_STRENGTH := 0.75   # a cap's peak opacity over the water
-const WATER_SURFACE_DEFAULT_WHITECAP_COVERAGE := 0.85   # 0..1: a cell's chance to spawn a group, where the sea is rough
-const WATER_SURFACE_DEFAULT_WHITECAP_CELL := 2.0        # the spawn grid's cell, in HEX RADII (density)
-const WATER_SURFACE_DEFAULT_WHITECAP_LENGTH := 0.7      # a fresh streak's nominal length, in HEX RADII
-const WATER_SURFACE_DEFAULT_WHITECAP_RATE := 0.3        # lifecycles per second — a cap lives ~3.3 s
-const WATER_SURFACE_DEFAULT_WHITECAP_COLOR := Vector3(196.0, 202.0, 206.0) / 255.0  # light neutral grey
-const WATER_SURFACE_MAX_WHITECAP_STRENGTH := 1.0
-const WATER_SURFACE_MAX_WHITECAP_COVERAGE := 1.0
-const WATER_SURFACE_MIN_WHITECAP_CELL := 0.2            # hex radii — denser reads as a carpet of foam
-const WATER_SURFACE_MAX_WHITECAP_CELL := 4.0
-const WATER_SURFACE_MIN_WHITECAP_LENGTH := 0.05         # hex radii — shorter is a single pixel
-const WATER_SURFACE_MAX_WHITECAP_LENGTH := 1.0          # hex radii (the shader also caps it at one cell)
-const WATER_SURFACE_MAX_WHITECAP_RATE := 5.0
-const WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS := 24.0   # px: below this the waves, chop and whitecaps are off
+# --- THE COASTAL SHORE SWELL (terrain_config's "coastal_swell" block; the shader's apply_water_motion) ---
+# Crests run parallel to the coast and roll in, shoaling (shorter and taller) as they near land, and break into foam
+# in the last stretch. It runs off a distance-to-coast field built once per world (see rebuild_coast_field).
+const COASTAL_SWELL_DEFAULT_STRENGTH := 0.14           # a crest's luma offset in deep coastal water (luma units)
+const COASTAL_SWELL_DEFAULT_WAVELENGTH := 1.3          # crest spacing in deep coastal water, HEX RADII
+const COASTAL_SWELL_DEFAULT_SPEED := 0.3               # crest speed in deep coastal water, hex radii per second
+const COASTAL_SWELL_DEFAULT_REACH := 4.0               # how far from land the swell runs, HEX RADII
+const COASTAL_SWELL_DEFAULT_SHOAL_LENGTH := 0.5        # the wavelength at the shore, × the deep one
+const COASTAL_SWELL_DEFAULT_SHOAL_GAIN := 1.6          # the amplitude at the shore, × the deep one
+const COASTAL_SWELL_DEFAULT_BREAK_ZONE := 1.0          # crests break into foam within this many HEX RADII of land
+const COASTAL_SWELL_DEFAULT_SURGE := 0.35              # the shoreline surf's seaward reach grows by this as a crest lands
+const COASTAL_SWELL_DEFAULT_FOAM_STRENGTH := 0.97      # breaking foam's peak opacity over the water
+const COASTAL_SWELL_DEFAULT_FOAM_COVERAGE := 0.7       # 0..1: a foam cell's chance to break on a given crest
+const COASTAL_SWELL_DEFAULT_FOAM_CELL := 0.8           # the foam grid's cell, HEX RADII
+const COASTAL_SWELL_DEFAULT_FOAM_LENGTH := 0.8         # a fresh foam streak's nominal length, HEX RADII
+const COASTAL_SWELL_DEFAULT_FOAM_COLOR := Vector3(196.0, 202.0, 206.0) / 255.0  # light neutral grey
+const COASTAL_SWELL_DEFAULT_TERRAINS := ["deep_ocean", "continental_shelf", "coral_shelf"]  # by NAME; lakes excluded
+const COASTAL_SWELL_MAX_STRENGTH := 0.2
+const COASTAL_SWELL_MIN_WAVELENGTH := 0.2              # hex radii — shorter is shimmer, not a swell
+const COASTAL_SWELL_MAX_WAVELENGTH := 6.0
+const COASTAL_SWELL_MAX_SPEED := 3.0
+const COASTAL_SWELL_MIN_REACH := 0.5
+const COASTAL_SWELL_MIN_SHOAL_LENGTH := 0.1
+const COASTAL_SWELL_MAX_SHOAL_GAIN := 4.0
+const COASTAL_SWELL_MAX_SURGE := 1.5
+const COASTAL_SWELL_MIN_FOAM_CELL := 0.2
+const COASTAL_SWELL_MAX_FOAM_CELL := 3.0
+const COASTAL_SWELL_MIN_FOAM_LENGTH := 0.05
+const COASTAL_SWELL_MAX_FOAM_LENGTH := 2.0
+# THE COAST FIELD (built by the native `CoastField`; see rebuild_coast_field). Sub-hex resolution, so a crest — a
+# contour of this field — rounds a hex corner instead of tracing it; blurred a little for the same reason.
+const COAST_FIELD_TEXELS_PER_RADIUS := 8.0
+const COAST_FIELD_BLUR_RADII := 0.25
+const COAST_FIELD_PAD_RADII := 1.0                      # beyond the grid, so filtering at the map edge reads the field
+# Distances are capped here (hex radii); swell_reach is clamped to it, since nothing past the cap is measured.
+const COAST_FIELD_CAP_RADII := 8.0
+# The cell codes CoastField.build reads (mirrors its CELL_* consts).
+const COAST_CELL_LAND := 0
+const COAST_CELL_COASTAL_WATER := 1
+const COAST_CELL_OTHER_WATER := 2
+const WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS := 24.0   # px: below this the waves, chop and coastal swell are off
 # Clamp ceilings, so a config typo cannot turn the ocean into strobing noise (the floors are all 0).
 const WATER_SURFACE_MAX_VARIATION_STRENGTH := 1.0
 const WATER_SURFACE_MIN_VARIATION_CELL := 0.25          # hex radii — below this the patches are speckle, not patches
@@ -378,6 +404,16 @@ var _terrain_blend_quad: Node2D = null
 var _terrain_blend_material: ShaderMaterial = null
 # The water-motion gate is two halves: the zoom LOD (set on every uniform push) and the player's `O` toggle.
 var _water_motion_lod_on := false
+# THE COAST FIELD (see rebuild_coast_field): its texture, the CPU copy the harness samples, and the key it was
+# built from (so a rebuild that changed no land/water skips the build).
+var _coast_tex: ImageTexture = null
+var _coast_data := PackedFloat32Array()
+var _coast_width := 0
+var _coast_height := 0
+var _coast_origin := Vector2.ZERO
+var _coast_wrap_width := 0.0
+var _coast_key: Array = []
+var coast_build_ms := 0.0
 var _water_motion_toggle_on := true
 var _terrain_blend_ready: bool = false
 var _terrain_id_map_tex: ImageTexture = null   # RGBA8: R=terrain id, G=blend_class code (0 water/1 flat/2 rugged), B=canopy code (0=none else layer+1), A=peak code (0=none else layer+1)
@@ -711,6 +747,7 @@ func update_shader_quad(radius: float, origin: Vector2, viewport_size: Vector2) 
 	m.set_shader_parameter("water_blend_soft", water_soft)
 	m.set_shader_parameter("water_blend_noise_amount", water_noise_amount)
 	_push_water_surface(m, config, radius)
+	_push_coastal_swell(m, config)
 	_push_water_temperature(m, config)
 	m.set_shader_parameter("noise_cell", feature_noise_cell)   # shore/canopy/peak grain — raw px, decoupled
 	# Base biome texture is sampled in continuous world space (kills the per-hex repeat grid); one tile
@@ -891,19 +928,6 @@ func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -
 		WATER_SURFACE_MIN_CHOP_SCALE, WATER_SURFACE_MAX_CHOP_SCALE)
 	var chop_rate: float = clampf(float(ws.get("chop_rate", WATER_SURFACE_DEFAULT_CHOP_RATE)),
 		0.0, WATER_SURFACE_MAX_CHOP_RATE)
-	var whitecap_strength: float = clampf(
-		float(ws.get("whitecap_strength", WATER_SURFACE_DEFAULT_WHITECAP_STRENGTH)),
-		0.0, WATER_SURFACE_MAX_WHITECAP_STRENGTH)
-	var whitecap_coverage: float = clampf(
-		float(ws.get("whitecap_coverage", WATER_SURFACE_DEFAULT_WHITECAP_COVERAGE)),
-		0.0, WATER_SURFACE_MAX_WHITECAP_COVERAGE)
-	var whitecap_cell: float = clampf(float(ws.get("whitecap_cell", WATER_SURFACE_DEFAULT_WHITECAP_CELL)),
-		WATER_SURFACE_MIN_WHITECAP_CELL, WATER_SURFACE_MAX_WHITECAP_CELL)
-	var whitecap_length: float = clampf(float(ws.get("whitecap_length", WATER_SURFACE_DEFAULT_WHITECAP_LENGTH)),
-		WATER_SURFACE_MIN_WHITECAP_LENGTH, WATER_SURFACE_MAX_WHITECAP_LENGTH)
-	var whitecap_color: Vector3 = _shore_color(ws.get("whitecap_color"), WATER_SURFACE_DEFAULT_WHITECAP_COLOR)
-	var whitecap_rate: float = clampf(float(ws.get("whitecap_rate", WATER_SURFACE_DEFAULT_WHITECAP_RATE)),
-		0.0, WATER_SURFACE_MAX_WHITECAP_RATE)
 	var motion_min_radius: float = maxf(
 		float(ws.get("motion_min_radius", WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS)), 0.0)
 	m.set_shader_parameter("water_variation_strength", strength)
@@ -916,16 +940,10 @@ func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -
 	m.set_shader_parameter("water_chop_strength", chop_strength)
 	m.set_shader_parameter("water_chop_scale", chop_scale)               # hex radii (the shader works in them)
 	m.set_shader_parameter("water_chop_rate", chop_rate)                 # time-axis noise cells per second
-	m.set_shader_parameter("water_whitecap_strength", whitecap_strength)
-	m.set_shader_parameter("water_whitecap_coverage", whitecap_coverage)
-	m.set_shader_parameter("water_whitecap_cell", whitecap_cell)         # hex radii
-	m.set_shader_parameter("water_whitecap_length", whitecap_length)     # hex radii
-	m.set_shader_parameter("water_whitecap_rate", whitecap_rate)         # lifecycles per second
-	m.set_shader_parameter("water_whitecap_color", whitecap_color)
 	_water_motion_lod_on = radius >= motion_min_radius
 	m.set_shader_parameter("water_motion_enabled", _water_motion_lod_on and _water_motion_toggle_on)
 
-## THE `O` TOGGLE — water motion (chop + whitecaps + waves) on / off, for look-dev: it tells whether a "cloudy"
+## THE `O` TOGGLE — water motion (chop + coastal swell + waves) on / off, for look-dev: it tells whether a "cloudy"
 ## sea is the motion or the static surface. Session-only (not persisted); the static anti-tiling and the
 ## temperature grade are untouched. ANDed with the zoom LOD, so it can only turn motion OFF.
 func toggle_water_motion() -> void:
@@ -1075,6 +1093,116 @@ func rebuild_shader_maps() -> void:
 		_terrain_blend_material.set_shader_parameter("road_map", _terrain_road_map_tex)
 	_warn_orphan_navigable_rivers(navigable_hexes)
 	rebuild_temperature_map()
+	rebuild_coast_field()
+
+func rebuild_coast_field() -> void:
+	## (Re)build the DISTANCE-TO-COAST field the coastal swell runs on (the shader's coast_map): per hex, land (any
+	## non-water blend class), coastal water (a `coastal_swell.coastal_terrains` terrain) or other water (a lake),
+	## handed to the native CoastField, which rasterises it at COAST_FIELD_TEXELS_PER_RADIUS, runs an exact distance
+	## transform and blurs it. Terrain is static within a world, so an unchanged mask (the FoW toggle, a delta that
+	## moved no terrain) skips the build and only re-pushes the uniforms.
+	if _view.grid_width <= 0 or _view.grid_height <= 0:
+		return
+	var w := _view.grid_width
+	var h := _view.grid_height
+	var coastal_ids := _resolve_coastal_ids()
+	var cells := PackedByteArray()
+	cells.resize(w * h)
+	for y in range(h):
+		for x in range(w):
+			var tid := _view._terrain_id_at(x, y)
+			var code := COAST_CELL_LAND
+			if _blend_class_code(tid) == 0:
+				code = COAST_CELL_COASTAL_WATER if coastal_ids.has(tid) else COAST_CELL_OTHER_WATER
+			cells[y * w + x] = code
+	var key: Array = [cells, w, h, _view._wrap_horizontal]
+	if key != _coast_key or _coast_tex == null:
+		var built: Dictionary = CoastField.build(cells, w, h, COAST_FIELD_TEXELS_PER_RADIUS, COAST_FIELD_PAD_RADII,
+			_view._wrap_horizontal, COAST_FIELD_BLUR_RADII, COAST_FIELD_CAP_RADII)
+		if built.is_empty():
+			return
+		_coast_key = key
+		_coast_width = int(built["width"])
+		_coast_height = int(built["height"])
+		_coast_origin = built["origin"]
+		_coast_data = built["data"]
+		coast_build_ms = float(built["build_ms"])
+		_coast_wrap_width = MapView.SQRT3 * float(w) if _view._wrap_horizontal else 0.0
+		var image := Image.create_from_data(_coast_width, _coast_height, false, Image.FORMAT_RGF,
+			_coast_data.to_byte_array())
+		_coast_tex = ImageTexture.create_from_image(image)
+	if _terrain_blend_material != null:
+		_terrain_blend_material.set_shader_parameter("coast_map", _coast_tex)
+		_terrain_blend_material.set_shader_parameter("coast_origin", _coast_origin)
+		_terrain_blend_material.set_shader_parameter("coast_size",
+			Vector2(_coast_width, _coast_height) / COAST_FIELD_TEXELS_PER_RADIUS)
+		_terrain_blend_material.set_shader_parameter("coast_wrap_width", _coast_wrap_width)
+
+func coast_distance_at(map_px: Vector2) -> Vector2:
+	## The coast field at a MAP-space point (px from hex (0, 0)'s centre, the shader's v_map): (distance to land in
+	## hex radii, eligibility 0..1), bilinearly sampled from the CPU copy exactly as the shader samples the texture.
+	## (-1, 0) before a field exists. For probes; the renderer never needs it.
+	if _coast_data.is_empty() or _view.last_hex_radius <= 0.0:
+		return Vector2(-1.0, 0.0)
+	var p := map_px / _view.last_hex_radius
+	if _coast_wrap_width > 0.0:
+		p.x = fposmod(p.x, _coast_wrap_width)
+	var t := (p - _coast_origin) * COAST_FIELD_TEXELS_PER_RADIUS - Vector2(0.5, 0.5)
+	var x0 := clampi(int(floor(t.x)), 0, _coast_width - 1)
+	var y0 := clampi(int(floor(t.y)), 0, _coast_height - 1)
+	var x1 := mini(x0 + 1, _coast_width - 1)
+	var y1 := mini(y0 + 1, _coast_height - 1)
+	var fx := clampf(t.x - floor(t.x), 0.0, 1.0)
+	var fy := clampf(t.y - floor(t.y), 0.0, 1.0)
+	var out := Vector2.ZERO
+	for c in range(2):
+		var a := lerpf(_coast_data[(y0 * _coast_width + x0) * 2 + c], _coast_data[(y0 * _coast_width + x1) * 2 + c], fx)
+		var b := lerpf(_coast_data[(y1 * _coast_width + x0) * 2 + c], _coast_data[(y1 * _coast_width + x1) * 2 + c], fx)
+		out[c] = lerpf(a, b, fy)
+	return out
+
+func _resolve_coastal_ids() -> Dictionary:
+	var block: Dictionary = TerrainTextureManager.terrain_config.get("coastal_swell", {})
+	var names: Array = block.get("coastal_terrains", COASTAL_SWELL_DEFAULT_TERRAINS)
+	var ids: Dictionary = {}
+	for terrain_name in names:
+		var tid := _terrain_id_for_name(String(terrain_name))
+		if tid >= 0:
+			ids[tid] = true
+		else:
+			push_warning("[TerrainRenderer] coastal_swell.coastal_terrains names unknown terrain '%s'" % terrain_name)
+	return ids
+
+func _push_coastal_swell(m: ShaderMaterial, config: Dictionary) -> void:
+	## The coastal swell's levers (see COASTAL_SWELL_DEFAULT_*). OFF (`coastal_enabled` false) until the coast field
+	## exists, or with both the swell and its foam at 0.
+	var cs: Dictionary = config.get("coastal_swell", {})
+	var strength: float = clampf(float(cs.get("strength", COASTAL_SWELL_DEFAULT_STRENGTH)), 0.0, COASTAL_SWELL_MAX_STRENGTH)
+	var foam_strength: float = clampf(float(cs.get("foam_strength", COASTAL_SWELL_DEFAULT_FOAM_STRENGTH)), 0.0, 1.0)
+	m.set_shader_parameter("coastal_enabled", _coast_tex != null and (strength > 0.0 or foam_strength > 0.0))
+	m.set_shader_parameter("swell_strength", strength)
+	m.set_shader_parameter("swell_wavelength", clampf(float(cs.get("wavelength", COASTAL_SWELL_DEFAULT_WAVELENGTH)),
+		COASTAL_SWELL_MIN_WAVELENGTH, COASTAL_SWELL_MAX_WAVELENGTH))
+	m.set_shader_parameter("swell_speed", clampf(float(cs.get("speed", COASTAL_SWELL_DEFAULT_SPEED)),
+		-COASTAL_SWELL_MAX_SPEED, COASTAL_SWELL_MAX_SPEED))
+	m.set_shader_parameter("swell_reach", clampf(float(cs.get("reach", COASTAL_SWELL_DEFAULT_REACH)),
+		COASTAL_SWELL_MIN_REACH, COAST_FIELD_CAP_RADII))
+	m.set_shader_parameter("swell_shoal_length", clampf(float(cs.get("shoal_length", COASTAL_SWELL_DEFAULT_SHOAL_LENGTH)),
+		COASTAL_SWELL_MIN_SHOAL_LENGTH, 1.0))
+	m.set_shader_parameter("swell_shoal_gain", clampf(float(cs.get("shoal_gain", COASTAL_SWELL_DEFAULT_SHOAL_GAIN)),
+		0.0, COASTAL_SWELL_MAX_SHOAL_GAIN))
+	m.set_shader_parameter("swell_break_zone", clampf(float(cs.get("break_zone", COASTAL_SWELL_DEFAULT_BREAK_ZONE)),
+		0.0, COAST_FIELD_CAP_RADII))
+	m.set_shader_parameter("swell_surge", clampf(float(cs.get("surge", COASTAL_SWELL_DEFAULT_SURGE)),
+		0.0, COASTAL_SWELL_MAX_SURGE))
+	m.set_shader_parameter("swell_foam_strength", foam_strength)
+	m.set_shader_parameter("swell_foam_coverage", clampf(float(cs.get("foam_coverage", COASTAL_SWELL_DEFAULT_FOAM_COVERAGE)),
+		0.0, 1.0))
+	m.set_shader_parameter("swell_foam_cell", clampf(float(cs.get("foam_cell", COASTAL_SWELL_DEFAULT_FOAM_CELL)),
+		COASTAL_SWELL_MIN_FOAM_CELL, COASTAL_SWELL_MAX_FOAM_CELL))
+	m.set_shader_parameter("swell_foam_length", clampf(float(cs.get("foam_length", COASTAL_SWELL_DEFAULT_FOAM_LENGTH)),
+		COASTAL_SWELL_MIN_FOAM_LENGTH, COASTAL_SWELL_MAX_FOAM_LENGTH))
+	m.set_shader_parameter("swell_foam_color", _shore_color(cs.get("foam_color"), COASTAL_SWELL_DEFAULT_FOAM_COLOR))
 
 func rebuild_temperature_map() -> void:
 	## (Re)build the whole temp_map (see TEMP_MAP_*) from `MapView.tile_temperature`. Called with every
