@@ -107,6 +107,21 @@ const PICK_COMMITTED := ""
 const PICK_TILE_KEY := "tile"
 const PICK_DESTINATION_KEY := "destination"
 const PICK_HERD_KEY := "herd"
+## A hover Callable may answer a Dictionary instead of a String: the banner's text under
+## `PICK_HOVER_TEXT_KEY` and, under `PICK_HOVER_TOOLTIP_KEY`, a line too long for the banner that rides
+## its tooltip (the Deny take line).
+const PICK_HOVER_TEXT_KEY := "text"
+const PICK_HOVER_TOOLTIP_KEY := "tooltip"
+## The targeting descriptor's PASSIVE flag: the highlight an open Deny or Trade sheet draws while NO
+## pick is armed. MapView glows the sheet's eligible targets exactly as it does for the armed pick, but
+## the flag keeps it from counting as targeting — no banner, Esc and every other click behave normally,
+## and only a click on a highlighted target is captured (it PRE-SELECTS the sheet's target).
+const TARGETING_PASSIVE_KEY := "passive"
+## The descriptor's explicit highlight set, `Array[Vector2i]` — the hexes a Trade sheet's pick would
+## accept (the bands this one holds a LIVE tie with). MapView rings each and, under the passive
+## highlight, captures a click on one. The herd glow needs no list: MapView derives it from `need:
+## "herd"` and `min_distance`.
+const TARGETING_HIGHLIGHT_TILES_KEY := "highlight_tiles"
 ## The note title a quarry pick's refusal posts under, per mission — the hunt title predates the verbs
 ## and keeps its word; a denial raid is named by its verb.
 const HUNT_PICK_NOTE_TITLE := "Hunt expedition"
@@ -137,6 +152,10 @@ var _targeting_banner_label: RichTextLabel = null
 var _hovered_tile_info: Dictionary = {}
 # The Deny pick's herd chooser, open while a clicked hex holds more than one eligible herd.
 var _quarry_chooser: PopupMenu = null
+# The PRE-SELECTION an open Deny or Trade sheet registers (`set_preselect`): {band, mission, choose}
+# while the sheet is open, {} otherwise. `choose` is the sheet's `func(target: Dictionary)` taking the
+# same target dictionary a commit does (`PICK_HERD_KEY` / `PICK_DESTINATION_KEY`).
+var _preselect: Dictionary = {}
 
 func _init(band_labor: HudBandLaborState,
 		drawercompose: DrawerComposeController, note_sink: Callable, host: Node,
@@ -220,26 +239,34 @@ func _ensure_targeting_banner() -> void:
 func _refresh_targeting() -> void:
 	_ensure_targeting_banner()
 	var info := _current_targeting_info()
-	if info.is_empty():
+	if info.is_empty() or bool(info.get(TARGETING_PASSIVE_KEY, false)):
 		_targeting_banner.visible = false
 	else:
 		_targeting_banner.visible = true
 		_targeting_banner_label.text = _targeting_banner_bbcode(info)
+		_targeting_banner.tooltip_text = _hover_tooltip()
 	targeting_changed.emit(info)
 
 ## The banner's TEXT alone — a hover or a forecast answer changes what it says, never what MapView
 ## draws, so this does not re-emit `targeting_changed`.
 func _refresh_banner_text() -> void:
 	var info := _current_targeting_info()
-	if info.is_empty() or _targeting_banner_label == null:
+	if info.is_empty() or _targeting_banner_label == null or bool(info.get(TARGETING_PASSIVE_KEY, false)):
 		return
 	_targeting_banner_label.text = _targeting_banner_bbcode(info)
+	_targeting_banner.tooltip_text = _hover_tooltip()
 
 ## The banner as the player reads it now — `""` while nothing is targeting. What the harnesses judge.
 func banner_text() -> String:
 	if _targeting_banner_label == null or not _targeting_banner.visible:
 		return ""
 	return _targeting_banner_label.get_parsed_text()
+
+## The banner's tooltip — `""` when the hovered hex has nothing beyond the banner's own line.
+func banner_tooltip() -> String:
+	if _targeting_banner == null or not _targeting_banner.visible:
+		return ""
+	return _targeting_banner.tooltip_text
 
 ## MapView reported the hex under the pointer (`{}` off the map). An armed Deny / Trade pick re-states
 ## its banner for it.
@@ -253,18 +280,74 @@ func refresh_hover() -> void:
 
 ## The armed pick's hover detail for the hex under the pointer, `""` when there is none to state.
 func _hover_detail() -> String:
+	var answer: Variant = _hover_answer()
+	if answer is Dictionary:
+		return String((answer as Dictionary).get(PICK_HOVER_TEXT_KEY, ""))
+	return String(answer)
+
+## The hover's tooltip line, `""` when the hover answered a plain String.
+func _hover_tooltip() -> String:
+	var answer: Variant = _hover_answer()
+	if answer is Dictionary:
+		return String((answer as Dictionary).get(PICK_HOVER_TOOLTIP_KEY, ""))
+	return ""
+
+func _hover_answer() -> Variant:
 	if _hovered_tile_info.is_empty():
 		return ""
 	var pending := _pending_verb_pick if not _pending_verb_pick.is_empty() else _pending_pick_quarry
 	var hover: Callable = pending.get(PICK_HOVER_KEY, Callable())
 	if not hover.is_valid():
 		return ""
-	return String(hover.call(_hovered_tile_info))
+	return hover.call(_hovered_tile_info)
 
 ## True while any command-targeting flow is armed. The ESC pause menu (Main._unhandled_input) checks
 ## this so it yields ESC to MapView's targeting-cancel path instead of stealing it to open the menu.
+## The PASSIVE herd highlight is not targeting.
 func is_targeting_active() -> bool:
-	return not _current_targeting_info().is_empty()
+	var info := _current_targeting_info()
+	return not info.is_empty() and not bool(info.get(TARGETING_PASSIVE_KEY, false))
+
+## **AN OPEN DENY OR TRADE SHEET HIGHLIGHTS EVERY TARGET ITS PICK WOULD ACCEPT** — the eligible herds,
+## the bands tied LIVE to this one — for as long as the sheet is open, armed or not, and a click on a
+## highlighted target PRE-SELECTS it (`choose`, `func(target)`) without committing or selecting.
+## Re-registering for the same band and mission only swaps `choose` in place, since the sheet
+## re-registers on every render.
+func set_preselect(band: Dictionary, mission: String, choose: Callable) -> void:
+	var same := not _preselect.is_empty() \
+		and int((_preselect.get("band", {}) as Dictionary).get("entity", -1)) \
+			== int(band.get("entity", -2)) \
+		and String(_preselect.get(PICK_QUARRY_MISSION_KEY, "")) == mission
+	_preselect = {"band": band.duplicate(true), PICK_QUARRY_MISSION_KEY: mission,
+		PICK_COMMIT_KEY: choose}
+	if not same:
+		_refresh_targeting()
+
+## The sheet closed: the highlight and its pre-selection go with it.
+func clear_preselect() -> void:
+	if _preselect.is_empty():
+		return
+	_preselect = {}
+	_close_quarry_chooser()
+	_refresh_targeting()
+
+## Is the passive highlight up? What the harnesses judge the highlight by.
+func is_preselect_on() -> bool:
+	return bool(_current_targeting_info().get(TARGETING_PASSIVE_KEY, false))
+
+## The hexes holding a band `band` holds a LIVE tie with — where a Trade pick would resolve, and so
+## what the Trade sheet highlights. `tie_at`'s position rule: where the band stands if the roster holds
+## it, else where the tie last saw it.
+func live_tie_tiles(band: Dictionary) -> Array[Vector2i]:
+	var tiles: Array[Vector2i] = []
+	for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
+		var tie: Dictionary = tie_variant as Dictionary
+		if not HudBandLaborState.tie_is_live(tie):
+			continue
+		var tile := _tie_tile(tie)
+		if tile.x >= 0 and tile.y >= 0 and not tiles.has(tile):
+			tiles.append(tile)
+	return tiles
 
 ## The active targeting descriptor, or {} when nothing is targeting. Move-band is the one flow that
 ## needs a destination tile; send-expedition also a tile; pick-quarry a herd.
@@ -288,7 +371,7 @@ func _current_targeting_info() -> Dictionary:
 		var oy := int(pos[1]) if pos.size() == 2 else int(band.get("current_y", -1))
 		var trade := String(_pending_verb_pick.get(VERB_PICK_MISSION_KEY, "")) \
 			== HudComposeVocab.COMPOSE_MISSION_TRADE
-		return {
+		var info := {
 			"active": true,
 			"command": VERB_PICK_COMMAND_TRADE if trade else VERB_PICK_COMMAND_SCOUT,
 			"need": "tile",
@@ -296,6 +379,10 @@ func _current_targeting_info() -> Dictionary:
 			"origin_y": oy,
 			"context_label": HudFormat.band_name(band),
 		}
+		# The Trade pick rings the bands it would accept — the same set the sheet highlights unarmed.
+		if trade:
+			info[TARGETING_HIGHLIGHT_TILES_KEY] = live_tie_tiles(band)
+		return info
 	if not _pending_pick_quarry.is_empty():
 		var band: Dictionary = _pending_pick_quarry.get("band", {})
 		var pos: Array = Array(band.get("pos", []))
@@ -320,6 +407,25 @@ func _current_targeting_info() -> Dictionary:
 			"min_distance": quarry_min_distance(band, _pick_quarry_mission()),
 			"context_label": HudFormat.band_name(band),
 		}
+	if not _preselect.is_empty():
+		var band: Dictionary = _preselect.get("band", {})
+		var mission := String(_preselect.get(PICK_QUARRY_MISSION_KEY, ""))
+		var passive := {
+			"active": true,
+			TARGETING_PASSIVE_KEY: true,
+			"origin_x": SourceForecast.band_tile(band).x,
+			"origin_y": SourceForecast.band_tile(band).y,
+			"context_label": HudFormat.band_name(band),
+		}
+		if mission == HudComposeVocab.COMPOSE_MISSION_TRADE:
+			passive["command"] = VERB_PICK_COMMAND_TRADE
+			passive["need"] = "tile"
+			passive[TARGETING_HIGHLIGHT_TILES_KEY] = live_tie_tiles(band)
+		else:
+			passive["command"] = DENY_PICK_COMMAND
+			passive["need"] = "herd"
+			passive["min_distance"] = quarry_min_distance(band, mission)
+		return passive
 	return {}
 
 func _targeting_banner_bbcode(info: Dictionary) -> String:
@@ -504,18 +610,21 @@ func tie_at(band: Dictionary, x: int, y: int) -> Dictionary:
 	var parked: Dictionary = {}
 	for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
 		var tie: Dictionary = tie_variant as Dictionary
-		var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
-		var tile := Vector2i(int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1)))
-		var standing := _band_labor.player_band_by_band_id(subject)
-		if not standing.is_empty():
-			tile = SourceForecast.band_tile(standing)
-		if tile != Vector2i(x, y):
+		if _tie_tile(tie) != Vector2i(x, y):
 			continue
 		if HudBandLaborState.tie_is_live(tie):
 			return tie
 		if parked.is_empty():
 			parked = tie
 	return parked
+
+## Where a tie's band is: where it stands if the roster holds it, else where the tie last saw it.
+func _tie_tile(tie: Dictionary) -> Vector2i:
+	var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
+	var standing := _band_labor.player_band_by_band_id(subject)
+	if not standing.is_empty():
+		return SourceForecast.band_tile(standing)
+	return Vector2i(int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1)))
 
 ## Send a scouting party of `party_workers` from `band` to `tile` — what the Scout pick's click commits.
 ##
@@ -638,7 +747,7 @@ func choose_quarry(herd: Dictionary) -> bool:
 ## into the host, one entry per herd named exactly as the herd drawer names it. Dismissing it leaves the
 ## pick armed. Its entries are re-checked on choice (`choose_quarry`), so a herd that walked off the hex
 ## while it stood open cannot be committed.
-func _open_quarry_chooser(candidates: Array) -> void:
+func _open_quarry_chooser(candidates: Array, on_choose: Callable = Callable()) -> void:
 	_close_quarry_chooser()
 	var popup := PopupMenu.new()
 	popup.name = HudComposeVocab.QUARRY_CHOOSER_NAME
@@ -652,8 +761,8 @@ func _open_quarry_chooser(candidates: Array) -> void:
 		var sprite := FaunaSprites.for_herd(name_text)
 		var entry := {
 			"label": name_text if sprite != null
-				else HudComposeVocab.QUARRY_CHOOSER_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text],
-			"on_pick": func() -> void: choose_quarry(herd),
+				else HudComposeVocab.COMPOSE_PREY_LABEL_FORMAT % [FoodIcons.for_herd(name_text), name_text],
+			"on_pick": func() -> void: _on_chooser_pick(herd, on_choose),
 		}
 		if sprite != null:
 			entry[HudWidgets.MENU_ENTRY_ICON] = sprite
@@ -664,6 +773,15 @@ func _open_quarry_chooser(candidates: Array) -> void:
 	var viewport := _host.get_viewport()
 	var at := viewport.get_mouse_position() if viewport != null else Vector2.ZERO
 	popup.popup(Rect2i(Vector2i(at), Vector2i.ZERO))
+
+## A chooser entry was picked: the armed pick commits it (`choose_quarry`), or — for the passive
+## highlight's chooser — the sheet pre-selects it.
+func _on_chooser_pick(herd: Dictionary, on_choose: Callable) -> void:
+	if not on_choose.is_valid():
+		choose_quarry(herd)
+		return
+	_close_quarry_chooser()
+	on_choose.call(herd)
 
 func _close_quarry_chooser() -> void:
 	if _quarry_chooser != null and is_instance_valid(_quarry_chooser):
@@ -753,9 +871,40 @@ func _huntable_herd_on_tile(tile_info: Dictionary) -> Dictionary:
 ## Try to resolve every armed flow against a clicked tile: move-band, the verb tile pick, the quarry
 ## pick. HudLayer's `notify_targeting_click` (a targeting click, which selects nothing) calls this.
 func try_dispatch(tile_info: Dictionary) -> void:
+	if not is_targeting_active():
+		_try_preselect(tile_info)
+		return
 	_try_dispatch_pending_move_band(tile_info)
 	_try_verb_pick(tile_info)
 	_try_pick_quarry(tile_info)
+
+## **THE PASSIVE HIGHLIGHT'S CLICK PRE-SELECTS, IT DOES NOT COMMIT.** A click MapView captured on a
+## highlighted target hands the sheet the same target dictionary the armed pick's commit would get —
+## the herd (straight away for one eligible herd, through the chooser for several) or the tied band
+## standing there. Nothing is sent and nothing is selected. One path for both verbs.
+func _try_preselect(tile_info: Dictionary) -> void:
+	if _preselect.is_empty() or tile_info.is_empty():
+		return
+	var band: Dictionary = _preselect.get("band", {})
+	var mission := String(_preselect.get(PICK_QUARRY_MISSION_KEY, ""))
+	var choose: Callable = _preselect.get(PICK_COMMIT_KEY, Callable())
+	if not choose.is_valid():
+		return
+	var x := int(tile_info.get("x", -1))
+	var y := int(tile_info.get("y", -1))
+	if mission == HudComposeVocab.COMPOSE_MISSION_TRADE:
+		var destination := trade_destination_at(band, x, y)
+		if destination != HudConst.NO_BAND_ID:
+			choose.call({PICK_TILE_KEY: Vector2i(x, y), PICK_DESTINATION_KEY: destination})
+		return
+	var candidates := eligible_quarries_on_tile(band, x, y, mission)
+	if candidates.is_empty():
+		return
+	if candidates.size() == 1:
+		choose.call({PICK_HERD_KEY: candidates[0] as Dictionary})
+		return
+	_open_quarry_chooser(candidates, func(herd: Dictionary) -> void:
+		choose.call({PICK_HERD_KEY: herd}))
 
 ## Wrap-aware odd-r hex distance between two offset tiles, supplying the snapshot's grid geometry to
 ## the ONE implementation (`SourceForecast.hex_distance_wrapped`). The grid pair lives on `_band_labor`

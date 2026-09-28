@@ -135,6 +135,14 @@ var _hunt_autofill := false
 var _hunt_band: int = NO_BAND_ENTITY
 # The hunt twin of `_forage_seeded_band` — same contract.
 var _hunt_seeded_band: int = NO_BAND_ENTITY
+# ---- The Deny sheet's PREY (the Band panel's party compose — NOT drawer state) ---------------------
+# The herd the Deny sheet is aimed at (a world herd id), "" until the player pre-selects one on the map
+# — optional: with none the sheet's send arms the herd pick instead. It sets the verdict, the take and
+# the party the sim requires, so every readout below it on the sheet hangs off it.
+var _party_quarry_id: String = ""
+# The sheet's OWN autofill one-shot. Deliberately NOT `_hunt_autofill`: sharing it would let one
+# surface's floor click refill the other surface's stepper.
+var _party_autofill := false
 # ---- THE KIT each group is composing (`docs/plan_denial_raid.md`) ---------------------------------
 # The roster id the crew will be sent out with, per compose group — `KitRoster.NO_KIT_ID` until the
 # first render resolves one.
@@ -525,6 +533,35 @@ func consume_hunt_autofill() -> bool:
 ## The hunt twin of `clamp_forage_count` — the same read-modify-write, kept off the call site.
 func clamp_hunt_count(cap: int) -> void:
 	_hunt_count = clampi(_hunt_count, 0, cap)
+
+# ---- The Deny sheet's PREY -------------------------------------------------------------------------
+
+func party_quarry_id() -> String:
+	return _party_quarry_id
+
+## The prey is now `herd_id` — a pre-selection on the map, or a switch between the herds sharing one
+## hex through the chooser.
+##
+## **THE COMPOSED KIT GOES WITH IT**, the herd drawer's `reset_hunt_kit` twin: the default is a fact
+## about the quarry, so a kit resolved against the last animal is not the player's choice about this
+## one. Reached only from a pre-selection (never per render), so a live selection is never wiped
+## mid-compose.
+func set_party_quarry(herd_id: String) -> void:
+	_party_quarry_id = herd_id
+	_party_kit_id = KitRoster.NO_KIT_ID
+
+## No prey: a fresh compose act, the Prey row's `✕`, a prey that left the snapshot, or the verb closing.
+func clear_party_quarry() -> void:
+	_party_quarry_id = ""
+	_party_kit_id = KitRoster.NO_KIT_ID
+
+func arm_party_autofill() -> void:
+	_party_autofill = true
+
+func consume_party_autofill() -> bool:
+	var armed := _party_autofill
+	_party_autofill = false
+	return armed
 
 # ---- The composed KIT, one accessor pair per group ------------------------------------------------
 # Read RAW: the value the player last picked, which may name a kit the current roster/job no longer

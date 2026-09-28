@@ -1216,16 +1216,16 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 **Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
 `selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly
-the case the release note at the end of this paragraph exists for. **Sixteen frames and ninety `PASS`**
-(`EXPECTED_CHECKPOINTS := 106`) — nine for the shipment itself, then seven for the typed cargo row
-(issue #620): `trade_cargo_typed`, `_typed_invalid`, `_typed_held`, `_typed_cap`, `_max`,
-`_typed_then_stepped`, `_step_clamped`. Plus
-one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
-beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
-injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole shipment through the
-controls a player uses — the Trade verb on the shipper's band drawer, the sheet in that drawer, its send
-arming the destination pick, the click on the map — and releases the panel and hands the reference band back
-before it ends, so a chapter appended after it starts where every other one does.
+the case the release note at the end of this paragraph exists for. **Seventeen frames and one hundred
+and three `PASS`** (`EXPECTED_CHECKPOINTS := 120`) — nine for the shipment itself, then seven for the
+typed cargo row (issue #620): `trade_cargo_typed`, `_typed_invalid`, `_typed_held`, `_typed_cap`,
+`_max`, `_typed_then_stepped`, `_step_clamped`. Plus one more in `chapters/event_dock.gd`, where the
+shipment's `destination=` label swap belongs beside the band-label trio it extends rather than in a
+chapter that instantiates no dock. It injects a real `BandCityPanel` docked RIGHT on the PARTIES tab,
+drives the whole shipment through the controls a player uses — the Trade verb on the shipper's band
+drawer, the sheet in that drawer, its send arming the destination pick, the click on the map — and
+releases the panel and hands the reference band back before it ends, so a chapter appended after it
+starts where every other one does.
 
 **Every control is driven, not set.** The drawer's Trade verb is pressed (by
 `HudWidgets.VERB_BUTTON_META`, never by face), the send is pressed by `SEND_TRADE_CONFIRM_META`, the
@@ -1244,7 +1244,15 @@ drawn armed, and `trade_hover_destination` — the banner over the tied neighbou
 REMEMBERED position and the `≈` walk. Over the parked tie the banner gives the parked reason, and a
 click there sends nothing with the pick still armed; the click on the neighbour sends ONE shipment
 with the captured party, closes the sheet, and leaves both the selection and the Band panel on the
-SENDER. The sheet is then re-opened and re-loaded for the cargo states that follow.
+SENDER, and the tie highlight goes with the closed sheet.
+
+**THE DESTINATION PRE-SELECTED ON THE MAP** — the sheet re-opened and re-loaded: its highlight rings
+the live tie's hex and never the parked one (`TARGETING_HIGHLIGHT_TILES_KEY` read off the descriptor)
+and is not targeting; a click on the ringed band sets the destination — `trade_sheet_destination`: the
+`To` row naming it, the REMEMBERED sighting under it — sending nothing and moving neither the
+selection nor the panel's subject. The row's `✕` (`HudWidgets.FIELD_CLEAR_META`) clears it, a second
+click sets it again, and the Send then sends ONE shipment to it with no pick and closes the sheet. The
+sheet is then re-opened and re-loaded for the cargo states that follow.
 
 **A lambda captures a local by VALUE**, so a witness assigning to a `var` outside it reports nothing
 ever happened; the chapter's witnesses are containers.

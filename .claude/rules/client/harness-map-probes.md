@@ -382,6 +382,22 @@ the liveness alone (`0 px changed`).
 `herd_trails` behind it and the next state re-fits the camera, and since the unwrapping is an
 identity on the non-wrapping fixtures the trail and the routes actually appear on.
 
+### `map_deny_highlight` / `map_trade_highlight` — the verb sheets' PASSIVE highlight (issue #529)
+
+An open Deny or Trade sheet highlights every target its pick would accept, with NO pick armed
+(`targeting.md` → "THE BAND VERBS' TARGET IS THE LAST STEP"). Both states set the passive descriptor
+straight after `map_quarry_targeting` and clear it again, so no later frame inherits it:
+
+- **`map_deny_highlight`** — `need: "herd"` at the denial raid's `QUARRY_NO_REACH_BOUND`, so BOTH herds
+  of the quarry snapshot glow (a hunt pick glows only the far one). Asserted: the overlay is drawn but
+  `is_targeting_active()` is false; `MapView.targeting_click_captures` takes a click on either glowing
+  herd and refuses one on an empty hex.
+- **`map_trade_highlight`** — `need: "tile"` with an explicit `TARGETING_HIGHLIGHT_TILES_KEY` set of one
+  hex, ringed the herd glow's way. Asserted: a click there is captured, a click on a herd or the band's
+  own hex is not.
+
+Both rings pulse off `delta`, so both frames rely on the frozen animation time above.
+
 ### `map_overlay_picker` — the channel picker OPEN, and the two claims a picture cannot carry
 
 `docs/plan_knowledge_screen.md` §6. The picker is mounted on the MINIMAP, so its `◐` button rides

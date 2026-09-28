@@ -2011,6 +2011,80 @@ func _ready() -> void:
 	await _settle()
 	await _assert_denial_click_commits()
 
+	# ---- THE PREY, PRE-SELECTED ON THE MAP ------------------------------------------------------
+	# **AN OPEN DENY SHEET HIGHLIGHTS EVERY ELIGIBLE HERD**, armed or not, and the highlight goes when
+	# the sheet does. It is the PASSIVE glow: drawn, but not targeting — no banner, and Esc and every
+	# other click behave normally.
+	await _open_verb_sheet(HudComposeVocab.VERB_DENY)
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	_assert_prey_highlight("the Deny sheet opens", true)
+	# **A CLICK ON A HIGHLIGHTED HERD PRE-SELECTS IT** — the prey stated on the sheet, nothing sent,
+	# the selection still the band — and the sheet then states everything the herd sets: the verdict,
+	# the caveat, the take.
+	var band_entity := int(_hud._band_labor.panel_band().get("entity", -1))
+	var preselect_sent: Array[Dictionary] = []
+	var record_preselect := func(payload: Dictionary) -> void: preselect_sent.append(payload)
+	_hud.send_denial_raid_requested.connect(record_preselect)
+	_hud.notify_targeting_click(_quarry_tile_info(_quarry_herd_fixtures()[0]))
+	_hud.send_denial_raid_requested.disconnect(record_preselect)
+	await _settle()
+	# **RE-PINNED, because pre-selecting a prey SEEDS the party** on the sim's requirement; stating the
+	# party is what keeps the verdict and take this frame asserts its own.
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_compose_deny_prey")
+	_assert_band_panel("a click on a highlighted herd sends nothing (%d sent)" % preselect_sent.size(),
+		preselect_sent.is_empty())
+	_assert_band_panel("…leaves the band selected and the pick unarmed",
+		int(_hud._selection.unit().get("entity", -1)) == band_entity and not _hud.is_targeting_active())
+	_assert_prey_is_stated(QUARRY_FAR_HERD_ID)
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_denial_sheet_viable()
+	_assert_denial_pelt_take()
+	# **WITH A PREY, THE SEND IS THE ORDER** — one raid at that herd, no pick, the sheet closed.
+	await _assert_prey_send_commits(QUARRY_FAR_HERD_ID)
+	_assert_prey_highlight("the Deny sheet closes", false)
+
+	# **THE ONE STATE IN WHICH THE SHEET REFUSES** — the reference band's three idle against a herd that
+	# needs eleven: Send disabled, the reason naming both numbers.
+	var deep_prey := _quarry_herd_fixtures(_denial_needs_deep_party_rows())
+	_set_world_herds(deep_prey)
+	await _open_verb_sheet(HudComposeVocab.VERB_DENY)
+	_hud.notify_targeting_click(_quarry_tile_info(deep_prey[0]))
+	await _settle()
+	await _save("band_panel_compose_deny_short_handed")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_denial_sheet_short_handed()
+	# **THE `✕` CLEARS THE PREY**, and the send goes back to arming the herd pick.
+	var clear := _find_meta_control(_sheet_root(), HudWidgets.FIELD_CLEAR_META) as Button
+	_assert_band_panel("the Prey row carries its ✕", clear != null)
+	if clear != null:
+		clear.emit_signal("pressed")
+	await _settle()
+	_assert_band_panel("…which clears the prey",
+		_find_meta_control(_sheet_root(), HudWidgets.READ_ONLY_FIELD_META) == null
+			and _hud._compose.party_quarry_id() == "")
+	_press_verb_send(HudWidgets.SEND_DENIAL_CONFIRM_META)
+	await _settle()
+	_assert_band_panel("…and the send then arms the herd pick",
+		_hud._targeting.is_verb_pick_armed(HudComposeVocab.COMPOSE_MISSION_DENY))
+	_hud._bandpanel.close_verb_form()
+	_set_world_herds(_quarry_herd_fixtures())
+
+	# **TWO HERDS ON ONE HEX** — the pre-selecting click opens the chooser; choosing the wolf makes it
+	# the prey, and the Prey row then offers the `⋯` to switch.
+	_set_world_herds(_shared_tile_quarry_fixtures())
+	await _open_verb_sheet(HudComposeVocab.VERB_DENY)
+	await _assert_prey_chooser()
+	await _save("band_panel_compose_deny_two_prey")
+	_set_world_herds(_quarry_herd_fixtures())
+
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	_set_world_herds(_quarry_herd_fixtures())
 	_hud._bandpanel.close_verb_form()
@@ -15312,6 +15386,196 @@ func _assert_quarry_chooser() -> void:
 		caught.size() == 1 and String(caught[0].get("fauna_id", "")) == SHARED_TILE_PELT_HERD_ID)
 	_assert_band_panel("…after which the pick is down and the sheet closed",
 		not _hud.is_targeting_active() and _verb_sheet() == null)
+
+## **WHAT AN INEDIBLE QUARRY'S DENIAL RAID BRINGS HOME.** Its take line's food clause is correctly
+## absent — the render-only-when-non-zero rule, a wolf paying no meat — which for a release left the
+## line stating kills alone. The material clause is what it salvages, and it is asserted BY EQUALITY
+## over the whole line for `_assert_denial_sheet_viable`'s reason: half the claim is what the sentence must
+## not also say, and a `contains` passes on a line that also prints a false `0.00 food` or a
+## fabricated waste. The expectation is composed from the VOCABULARY and this fixture's own
+## arithmetic, never through `denial_take_bbcode`.
+##
+## **A WOLF WASTES NOTHING, and that is a fact about the PRODUCT** — `carry_room_biomass` answers
+## `NO_CARRY_BOUND` for a species paying no provisions, so the pack never fills and the party hauls
+## every kill. The absent waste clause is therefore part of the equality rather than an omission.
+func _assert_denial_pelt_take() -> void:
+	var quarry := SHARED_TILE_PELT_SPECIES
+	var killed: int = DENIAL_KILLS_ROW[DENIAL_PARTY - 1]
+	var row: Dictionary = _denial_pelt_only_rows()[DENIAL_PARTY - 1]
+	var forecast := SourceForecast.denial_forecast({}, row)
+	var got := SourceForecast.denial_take_bbcode(forecast, quarry)
+	var want := SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry]
+	want += SourceForecast.DENIAL_TAKE_MATERIAL_FORMAT % [
+		SourceForecast.format_magnitude(float(killed) * DENIAL_PELT_PER_ANIMAL),
+		DENIAL_PELT_MATERIAL_ID]
+	_assert_band_panel(
+		"an inedible quarry's denial take states the pelts it salvages — want \"%s\", got \"%s\""
+			% [want, got],
+		got.contains(want))
+
+## THE PRE-SELECTED SHEET, VIABLE — the verdict, the take, the caveat, and the plain live Send.
+func _assert_denial_sheet_viable() -> void:
+	var quarry := "Wild Boar"
+	# Composed from the VOCABULARY, never from `denial_verdict_text` — an expectation re-derived
+	# through the formatter under test asserts nothing.
+	var want := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["line"]) % quarry
+	# **THE RANGE IS FROM LAUNCH, SO BOTH ENDS CARRY THE WALK OUT.** The sim's table counts raiding
+	# turns; the party has to get there first, and the HUNT readout has always
+	# headlined a round-trip total — so an unqualified collapse count read as the same span and was
+	# short by the outbound leg. The expectation is stated from the harness's side (the constant
+	# below, derived from this fixture's own geometry) so the two arrive at one string from opposite
+	# ends; re-deriving it through `outbound_travel_turns` would assert nothing.
+	# **THE EXPECTATION LEADS AND THE SPREAD FOLLOWS IT**, because the take line under this sentence is
+	# priced at the expectation: a verdict leading with the lucky end describes a different raid from
+	# the kill count two rows down.
+	want += SourceForecast.DENIAL_TURNS_LEAD_FORMAT % [
+		SourceForecast.DENIAL_TURNS_ONE_FORMAT % (
+			DENIAL_TURNS_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS),
+		SourceForecast.DENIAL_SPAN_FROM_LAUNCH]
+	want += SourceForecast.DENIAL_SPREAD_RANGE_FORMAT % [
+		DENIAL_LOW_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS,
+		DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS]
+	want += SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % DENIAL_OUTBOUND_TRAVEL_TURNS
+	_assert_band_panel("the denial form leads with the EXPECTATION and states the spread — \"%s\"" % want,
+		_rich_text_containing(_sheet_root(), want) == want)
+	# **THE WASTE IS STATED, IN EVERY PRODUCT IT IS WASTED IN, AND IS NOT DRESSED AS A WARNING.** On a
+	# hunt an unhauled kill wears `HUNT_FORECAST_WARN_GLYPH`; on a raid it IS the mission, so the line
+	# is quiet and factual. The whole line is asserted BY EQUALITY rather than by `contains`, because
+	# half the claim is what the sentence must not also say — a `contains` passes on a line carrying an
+	# extra clause. (It stated a second, trade-goods figure on both the delivered and the wasted half
+	# until arc #527 retired that account.) The expectation is composed from the VOCABULARY and from
+	# this fixture's own arithmetic, never through `denial_take_bbcode` — re-deriving it through the
+	# formatter under test asserts nothing.
+	var killed: int = DENIAL_KILLS_ROW[DENIAL_PARTY - 1]
+	var killed_food := float(killed) * QUARRY_FOOD_PER_ANIMAL
+	var hauled_food := minf(killed_food, float(DENIAL_PARTY) * DENIAL_CARRY_PER_WORKER)
+	var left := killed_food - hauled_food
+	var want_take := SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry]
+	want_take += SourceForecast.DENIAL_TAKE_FOOD_FORMAT % SourceForecast.format_magnitude(hauled_food)
+	want_take += SourceForecast.DENIAL_TAKE_LEFT_FORMAT % SourceForecast.format_magnitude(left)
+	var take_line := _rich_text_containing(_sheet_root(),
+		SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry])
+	_assert_band_panel("…and states the take PLAINLY, with its waste — wanted \"%s\", got \"%s\""
+			% [want_take, take_line],
+		take_line == want_take
+			and not take_line.contains(SourceForecast.HUNT_FORECAST_WARN_GLYPH))
+	# NO FLOOR ANYWHERE — not a picker, not even the row heading. Two surfaces,
+	# one claim. **The heading is matched UPPER-CASED because `alloc_section_label` upper-cases what it
+	# is given**, so the vocabulary const as written matches nothing and that clause would be vacuous
+	# — which is exactly how it first shipped, passing with a Policy row put back on the form.
+	_assert_band_panel("…and offers NO floor picker and no Policy row",
+		_find_meta_control(_sheet_root(), HudWidgets.POLICY_RUNG_META) == null
+			and not _has_label_containing(_sheet_root(), HudComposeVocab.COMPOSE_FIELD_POLICY.to_upper()))
+	# **THE BAND IS AN ESTIMATE, NOT A PROMISE, AND THE PANEL SAYS SO** — `turns_to_collapse` is an
+	# integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
+	# reported low. The caveat rides under every verdict that quotes a number (and, per the repelled
+	# frame, under none that does not).
+	_assert_band_panel("…and words the band as an estimate rather than a promise",
+		_has_label_containing(_sheet_root(), SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+	# The Send is the plain primary one and is ENABLED — this raid works.
+	var send := _find_meta_control(_sheet_root(), HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…and its Send is the plain primary one, enabled",
+		send != null and not send.disabled
+			and send.text == String(SourceForecast.DENIAL_VERDICTS[
+				SourceForecast.DENIAL_OUTCOME_PAST_RECOVERY]["button"]))
+
+## **THE ONE STATE IN WHICH THIS SHEET REFUSES.** The band cannot field the party the herd requires at
+## all — there is no stepper setting that reaches it — so the Send goes visible-and-disabled with its
+## reason. Composed from the VOCABULARY, and read as a PAIR with `_assert_denial_sheet_viable`'s live
+## Send: a rule that disabled every raid would pass the disable claim alone.
+func _assert_denial_sheet_short_handed() -> void:
+	var quarry := "Wild Boar"
+	var idle := _hud._band_labor.effective_idle(_hud._band_labor.panel_band())
+	_assert_band_panel("the band can field %d of the %d hunters this herd needs — the precondition"
+			% [idle, DENIAL_DEEP_PARTY_NEEDED],
+		idle < DENIAL_DEEP_PARTY_NEEDED)
+	var send := _find_meta_control(_sheet_root(), HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("…so the Send is DISABLED and says which shortfall it is",
+		send != null and send.disabled
+			and send.text == SourceForecast.DENIAL_SHORT_HANDED_BUTTON)
+	var want := SourceForecast.DENIAL_SHORT_HANDED_REASON_FORMAT % [
+		quarry, DENIAL_DEEP_PARTY_NEEDED, idle]
+	_assert_band_panel("…and the reason beneath it names BOTH numbers — \"%s\"" % want,
+		_has_label_containing(_sheet_root(), want))
+	# …and it SUPERSEDES the repelled refusal rather than printing beside it: both name the party the
+	# sim quotes, so a sheet carrying the pair states the requirement twice.
+	var counted := String(SourceForecast.DENIAL_VERDICTS[
+		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason_counted"]) % [quarry, DENIAL_DEEP_PARTY_NEEDED]
+	_assert_band_panel("…and the counted refusal is not printed beside it",
+		not _has_label_containing(_sheet_root(), counted))
+
+## THE PREY IS STATED, NEVER OFFERED — a read-only row naming the herd the map click pre-selected, with
+## its `✕` to clear it.
+func _assert_prey_is_stated(herd_id: String) -> void:
+	var row := _find_meta_control(_sheet_root(), HudWidgets.READ_ONLY_FIELD_META)
+	var herd := _quarry_herd_by_id(herd_id)
+	_assert_band_panel("the Deny sheet states its prey read-only (%s)" % herd_id,
+		row != null and String(row.get_meta(HudWidgets.READ_ONLY_FIELD_META, ""))
+			== HudComposeVocab.COMPOSE_FIELD_PREY
+			and _has_label_containing(row, SourceForecast.herd_display_name(herd))
+			and _hud._compose.party_quarry_id() == herd_id)
+	_assert_band_panel("…with the ✕ that clears it",
+		row != null and _find_meta_control(row, HudWidgets.FIELD_CLEAR_META) != null)
+
+## **THE PASSIVE HIGHLIGHT FOLLOWS THE SHEET** — up while the Deny sheet is open, gone when it closes,
+## and never targeting: MapView reads `passive` off the descriptor and draws the herd glow alone.
+func _assert_prey_highlight(label: String, want: bool) -> void:
+	var info: Dictionary = _hud._targeting._current_targeting_info()
+	_assert_band_panel("%s: the herd highlight is %s" % [label, "up" if want else "down"],
+		_hud._targeting.is_preselect_on() == want
+			and (not want or (String(info.get("need", "")) == "herd"
+				and int(info.get("min_distance", 0)) == TargetingController.QUARRY_NO_REACH_BOUND)))
+	_assert_band_panel("%s: …and it is not targeting" % label, not _hud.is_targeting_active()
+		or _hud._targeting.is_verb_pick_armed(HudComposeVocab.COMPOSE_MISSION_DENY))
+
+## **WITH A PREY THE SEND IS THE ORDER** — exactly one `send_denial_raid` at that herd, no pick armed,
+## the sheet closed.
+func _assert_prey_send_commits(herd_id: String) -> void:
+	var caught: Array[Dictionary] = []
+	var record := func(payload: Dictionary) -> void: caught.append(payload)
+	_hud.send_denial_raid_requested.connect(record)
+	_press_verb_send(HudWidgets.SEND_DENIAL_CONFIRM_META)
+	_hud.send_denial_raid_requested.disconnect(record)
+	await _settle()
+	_assert_band_panel("the prey's Send sends ONE raid at it (%s)" % str(caught),
+		caught.size() == 1 and String(caught[0].get("fauna_id", "")) == herd_id)
+	_assert_band_panel("…arming no pick and closing the sheet",
+		not _hud.is_targeting_active() and _verb_sheet() == null)
+
+## **TWO HERDS ON ONE HEX: THE PRE-SELECTING CLICK OPENS THE CHOOSER.** Choosing the wolf through the
+## popup's REAL `id_pressed` makes it the prey and sends nothing, and the Prey row then carries the `⋯`
+## to switch — listing both, marking the wolf.
+func _assert_prey_chooser() -> void:
+	var caught: Array[Dictionary] = []
+	var record := func(payload: Dictionary) -> void: caught.append(payload)
+	_hud.send_denial_raid_requested.connect(record)
+	_hud.notify_targeting_click(_quarry_tile_info_all(_shared_tile_quarry_fixtures()))
+	await _settle()
+	var chooser: PopupMenu = _hud._targeting.quarry_chooser()
+	_assert_band_panel("a pre-selecting click on a two-herd hex opens the chooser (%s)"
+			% ("none" if chooser == null else "%d items" % chooser.item_count),
+		chooser != null and chooser.item_count == 2)
+	if chooser == null:
+		_hud.send_denial_raid_requested.disconnect(record)
+		return
+	var wolf := -1
+	for i in chooser.item_count:
+		if chooser.get_item_text(i).contains(SHARED_TILE_PELT_SPECIES):
+			wolf = i
+	chooser.id_pressed.emit(chooser.get_item_id(wolf))
+	_hud.send_denial_raid_requested.disconnect(record)
+	await _settle()
+	_assert_band_panel("…choosing the wolf makes it the prey and sends nothing",
+		_hud._compose.party_quarry_id() == SHARED_TILE_PELT_HERD_ID and caught.is_empty())
+	var menu := _find_meta_control(_sheet_root(), HudWidgets.QUARRY_CHOICES_META) as MenuButton
+	var checked := ""
+	if menu != null:
+		for i in menu.get_popup().item_count:
+			if menu.get_popup().is_item_checked(i):
+				checked = menu.get_popup().get_item_text(i)
+	_assert_band_panel("…and the Prey row offers the ⋯ over both, marking the wolf (%s)" % checked,
+		menu != null and menu.get_popup().item_count == 2 and checked.contains(SHARED_TILE_PELT_SPECIES))
 
 ## **THE DENY CLICK COMMITS** — one herd on the hex, so exactly one `send_denial_raid` with the sheet's
 ## captured party and kit, the pick down, the sheet closed, and the band still the selection.

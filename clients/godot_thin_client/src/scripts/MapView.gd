@@ -2427,7 +2427,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			var offset := _point_to_offset(local_position)
 			var col: int = offset.x
 			var row: int = offset.y
-			if _annotations.is_targeting_active():
+			if targeting_click_captures(col, row):
 				_emit_targeting_click(col, row)
 				_mark_input_handled()
 				return
@@ -3353,6 +3353,15 @@ func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8
 	var right := base_point - ortho * (size * 0.5)
 	var pts := PackedVector2Array([tip, left, right])
 	draw_polygon(pts, PackedColorArray([color, color, color]))
+
+## **DOES A LEFT CLICK ON (col, row) GO TO `targeting_clicked` RATHER THAN SELECT?** Every click while a
+## command is targeting; and, under the PASSIVE highlight an open Deny or Trade sheet draws, a click on
+## a highlighted target only — it pre-selects the sheet's target, and every other click selects as
+## usual.
+func targeting_click_captures(col: int, row: int) -> bool:
+	if _annotations.is_targeting_active():
+		return true
+	return _annotations.is_passive_highlight() and _annotations.highlighted_at(col, row)
 
 ## The targeting twin of `_emit_tile_selection`: the same visibility-redacted `tile_info`, and NO
 ## `selected_tile` write — see `targeting_clicked`.
@@ -5450,9 +5459,9 @@ func _process(delta: float) -> void:
 			# `_apply_zoom`'s pivot is in LOCAL coords, so the centre is measured in them too.
 			var viewport_center: Vector2 = screen_size_local() * 0.5
 			_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * ClientSettings.zoom_speed_multiplier * delta, viewport_center)
-	# Animate the targeting overlay (pulsing glow / reticle) while a command is
-	# being targeted.
-	if _annotations.is_targeting_active():
+	# Animate the targeting overlay (pulsing glow / reticle) while a command is being targeted, and
+	# the passive herd highlight while a Deny sheet is open.
+	if _annotations.has_targeting_overlay():
 		_annotations.advance_targeting_time(delta)
 		queue_redraw()
 	# Animate the awaiting-orders pulse on any expedition idle at its objective.

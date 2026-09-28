@@ -6037,19 +6037,30 @@ party launches from the herd drawer's sheet.
   Deny, Trade and Split open their sheet on the band's own hex — the band is selected there through the
   ordinary band-selection path (`_select_band_on_map`) and the pending verb is anchored on its tile
   (`ComposeState.open_verb`) — so the sheet renders in THAT band's drawer, under its verb row. The sheets
-  keep their form builders in this controller (`build_verb_form`, over `_build_compose_sheet`) and carry
-  NO target field: Scout is party + kit, Deny party + kit, Trade party + cargo + the mass meter, Split
-  its workers stepper. The pick rules, banners, hover and cancellation are `targeting.md` → "THE BAND
-  VERBS' TARGET IS THE LAST STEP".
-- **The send arms the pick; the click commits** (`_build_verb_send`). Scout, Deny and Trade's send is
-  a toggle that arms `TargetingController.begin_verb_pick` / `begin_pick_quarry` with the sheet's values
-  captured in a `commit` Callable — `_commit_denial` / `_commit_trade`, and Scout's
-  `send_expedition_to` — and, for Deny and Trade, a `hover` Callable (`_deny_hover_detail` /
-  `_trade_hover_detail`) that states in the banner what a click on the hovered hex would commit to.
-  The sheet stays open with its send drawn `armed` (`HudComposeVocab.VERB_SEND_ARMED_STYLE`), and
-  re-arms on every render while armed, so an edit made while the pick is up is what the click sends.
-  Split's button commits `split_band` itself. The labels stay `Send scouting party` / `Send Denial
-  Raid` / `Send shipment`.
+  keep their form builders in this controller (`build_verb_form`, over `_build_compose_sheet`): Scout is
+  party + kit, Deny party + kit, Trade party + cargo + the mass meter, Split its workers stepper. Deny
+  and Trade take an OPTIONAL target, pre-selected on the map (next bullet). The pick rules, banners,
+  hover, pre-selection and cancellation are `targeting.md` → "THE BAND VERBS' TARGET IS THE LAST STEP".
+- **A Deny or Trade target can be PRE-SELECTED on the map while the sheet is open.** The sheet
+  registers `TargetingController.set_preselect` on every render, so the map highlights every target its
+  pick would accept — every eligible herd, every band tied LIVE to this one — for as long as the sheet
+  is open, armed or not. While nothing is armed a click on a highlighted target sets the sheet's target
+  (`_set_denial_prey` → `ComposeState.set_party_quarry`; `_set_trade_destination` →
+  `_trade_destination`) and sends and selects nothing; another highlighted target replaces it. The sheet
+  then shows a read-only `Prey` / `To` row (`HudWidgets.build_read_only_field`) with a `✕`
+  (`HudWidgets.FIELD_CLEAR_META`, `_build_field_clear_button`) that clears it, and its Send COMMITS
+  straight away — no pick — through the same `_commit_denial` / `_commit_trade` the armed click uses.
+  Both targets are re-resolved live every render and dropped when the herd leaves the snapshot or the
+  tie parks, and both are reset with the verb.
+- **With no target, the send arms the pick; the click commits** (`_build_verb_send`). Scout's send, and
+  Deny and Trade's when no target is set, is a toggle that arms `TargetingController.begin_verb_pick` /
+  `begin_pick_quarry` with the sheet's values captured in a `commit` Callable — `_commit_denial` /
+  `_commit_trade`, and Scout's `send_expedition_to` — and, for Deny and Trade, a `hover` Callable
+  (`_deny_hover_detail` / `_trade_hover_detail`) that states in the banner what a click on the hovered
+  hex would commit to. The sheet stays open with its send drawn `armed`
+  (`HudComposeVocab.VERB_SEND_ARMED_STYLE`), and re-arms on every render while armed, so an edit made
+  while the pick is up is what the click sends. Split's button commits `split_band` itself. The labels
+  stay `Send scouting party` / `Send Denial Raid` / `Send shipment`.
 - **The panel's subject stays on the sender** while a verb is pending for the panel band
   (`holds_panel_subject`). A targeting click never moves it either: it commits without selecting.
 - **The sheet's lifetime.** A sheet's `✕`, a commit, a new verb pressed over it, a second Esc
@@ -6073,8 +6084,8 @@ was nothing for a floor to unclamp. `ExpeditionMission::Deny` drops that arm (`E
 the party never stops engaging.
 
 **WHAT THE FORM DOES NOT CARRY IS ITS SPECIFICATION.** `_fill_denial_compose_sheet` renders
-QUARRY → PARTY → verdict → take → send and **no floor picker, no floor hint, no crew preset and no
-max-useful cap**. Each absence has its own reason and none is an oversight:
+[PREY] → PARTY → KIT → (with a prey) verdict → caveat → take → send and **no floor picker, no floor
+hint, no crew preset and no max-useful cap**. Each absence has its own reason and none is an oversight:
 
 - A floor would be a control the **command grammar cannot express**.
   `send_denial_raid <faction> <band> <party_workers> <fauna_id>` is closed at four tokens and a fifth
@@ -6102,12 +6113,26 @@ scout-side supply helper: a function that clamps nothing is an invitation to put
 `SourceForecast.expedition_party_cap` is the named seam, for the herd drawer's expedition branch
 (`labor-ui.md`).
 
-**The Deny stepper opens at `HudConst.WORKER_STEP` and never seeds.** The requirement the sim quotes
-(`party_needed`, the smallest party whose raid SUCCEEDS — `SourceForecast.denial_outcome_succeeds` over
-`DENIAL_SUCCESS_OUTCOMES` is the client's ONE spelling of that set) is a fact about a HERD, and the herd
-is the click the send arms, so the sheet has no requirement to seed from. It reaches the player in the
-hover banner instead: a band that cannot field it reads `SourceForecast.denial_short_handed_reason`
-(both numbers) in place of the verdict, and the click on that herd is refused with the same sentence.
+**The stepper SEEDS on the reply's `party_needed` once a prey is set** — the smallest party the sim
+quotes whose raid SUCCEEDS (`SourceForecast.denial_outcome_succeeds` over `DENIAL_SUCCESS_OUTCOMES` is
+the client's ONE spelling of that set). Three invariants:
+
+- **Seeded once per prey**, through `ComposeState`'s `arm_party_autofill` / `consume_party_autofill`
+  one-shot, armed by `_set_denial_prey` — so a manual `−`/`+` tick survives every later rerender — and
+  consumed only once the answer it is made of has landed (`ForecastQuery.answer_settled`).
+- **Never seeded to `SourceForecast.DENIAL_PARTY_NEEDED_NONE`.** `0` means the sim quotes no party at
+  all, not "send nobody", so the count stays where it was and the verdict line carries the answer.
+- **Clamped into `[WORKER_STEP, idle]`.** A requirement above the band's idle workers opens on the most
+  it can field, which is honest: the sheet shows both numbers and the verdict still says it is not
+  enough.
+
+With no prey the stepper opens at `HudConst.WORKER_STEP`, and a band that cannot field a hovered herd's
+requirement reads `SourceForecast.denial_short_handed_reason` in the banner in place of the verdict.
+
+**The `repelled` refusal names that party whenever there is one.** `DENIAL_VERDICTS`' repelled entry
+carries TWO reason strings and `denial_refusal_reason` picks between them on the herd's own
+`denial_party_needed`, never on the wording: `reason_counted` takes `[quarry, needed]` and states the
+count, and where the sim quotes none the numberless `reason` stands verbatim.
 
 ### The BEYOND-REACH rule is the hunt's, and denial does not inherit it
 
@@ -6146,26 +6171,30 @@ chose. Every hunt-only readout is therefore gated on
 
 `SourceForecast` holds the layer, over the `denial_raid_forecast` query's reply (`ForecastQuery`):
 `denial_forecast` → `denial_verdict` (the ONE resolution of the outcome key) → `denial_verdict_text`
-(the Deny pick's hover banner) / `denial_verdict_bbcode` (the in-flight `Collapse:` row).
-**`DENIAL_VERDICTS` holds every face of an outcome in one entry** — line, whether it quotes turns, the
-severity — the `HUNT_EMPTY_REFUSALS` idiom, and for the same reason: separate lookups are free to
+(the hover banner) / `denial_verdict_bbcode` (the pre-selected sheet, the in-flight `Collapse:` row) /
+`denial_take_bbcode` / `denial_refusal_reason` / `style_send_denial_button`. **`DENIAL_VERDICTS` holds
+all four faces of an outcome in one entry** — line, whether it quotes turns, the button, the severity,
+the reason — the `HUNT_EMPTY_REFUSALS` idiom, and for the same reason: separate lookups are free to
 disagree.
 
 - **`repelled` and `horizon` are NOT interchangeable, and the arc has already shipped that confusion
   twice.** `repelled` is a verdict about the **PARTY** (its kills do not outpace the herd's regrowth,
   so no amount of waiting gets there — the remedy is HANDS); `horizon` is a verdict about the
   **CLOCK**. Rendering one for the other blames the herd for the party's problem.
-- **NEITHER OUTCOME REFUSES THE CLICK, and the ONE case that does is not an outcome at all.** A raid
+- **NEITHER OUTCOME BLOCKS THE SEND, and the ONE case that does is not an outcome at all.** A raid
   that cannot get there keeps working the herd until it is recalled (`plan_denial_raid.md` §6 Q2), so
-  the banner states the verdict and the player is trusted, exactly as a slow hunting raid is —
-  **including a party the player has deliberately stepped DOWN below the requirement**.
+  the launch verdict warns (`armed`) and the player is trusted, exactly as a slow hunting raid is —
+  **including a party the player has deliberately stepped DOWN below the requirement**, which is the
+  `repelled` warn-and-trust case and keeps `Send Anyway (never collapses)`.
   **`SourceForecast.denial_is_short_handed(needed, idle)` is the exception**: `denial_party_needed >
   idle` with a `denial_party_needed > 0`, i.e. the band cannot field the party this herd REQUIRES
-  however it dials the stepper. That is a fact about the BAND rather than a choice, so the banner
-  states `denial_short_handed_reason` (BOTH numbers) in place of the verdict and the click on that
-  herd commits nothing. **`DENIAL_PARTY_NEEDED_NONE` never refuses** — `0` is not "not enough hunters"
-  but "no quoted party drives this herd down", which covers a quarry nothing can bring into contact
-  (wariness ≥ 1) where more hands never help.
+  however it dials the stepper. That is a fact about the BAND rather than a choice, so the pre-selected
+  sheet's Send goes visible-and-disabled-with-its-reason (`DENIAL_SHORT_HANDED_BUTTON`, ghost), the
+  banner states `denial_short_handed_reason` (BOTH numbers) in place of the verdict, and an armed
+  click on that herd commits nothing. **`DENIAL_PARTY_NEEDED_NONE` never refuses** — `0` is not "not
+  enough hunters" but "no quoted party drives this herd down", which covers a quarry nothing can bring
+  into contact (wariness ≥ 1) where more hands never help. `denial_short_handed_reason`
+  **SUPERSEDES the repelled refusal rather than joining it**: both name the party the sim quotes.
 - **THE OUTCOME LEADS THE SENTENCE AND THE NUMBER IS A CLAUSE ON IT.** That is the structural form of
   *"never render a blank turn count without its outcome"*: there is no branch in which the number can
   render alone, and none in which its absence renders as silence. An outcome that quotes no turns
@@ -6195,9 +6224,27 @@ disagree.
   ran past the horizon, so luck genuinely is the only way there, and the clause says so outright.
   `denial_turns_phrase` is the LEAD figure alone; the spread lives in the clause, so "which number
   leads" is answerable in exactly one place.
-- **THE BAND IS AN ESTIMATE, NOT A PROMISE.** `turns_to_collapse` is an integral over many stochastic
-  retreat draws, so a lucky run really can finish sooner than the reported low (measured: a seeded raid
-  landed on turn 7 against a reported low of 8). Every form wears `≈`.
+- **THE BAND IS AN ESTIMATE, NOT A PROMISE, AND THE SHEET SAYS SO.** `turns_to_collapse` is an
+  integral over many stochastic retreat draws, so a lucky run really can finish sooner than the reported
+  low (measured: a seeded raid landed on turn 7 against a reported low of 8). Every form wears `≈`, and
+  `DENIAL_ESTIMATE_CAVEAT` rides under any sheet verdict that quotes a number — and under none that does
+  not, since a caveat about an absent number reads as one that is there.
+
+### The waste is STATED, and it is not dressed as a warning
+
+On a hunt an unhauled kill is an occasional overflow and wears `HUNT_FORECAST_WARN_GLYPH`'s `⚠`; on a
+raid it is essentially the whole take and it is the **point** of the mission. `denial_take_bbcode` is
+therefore a quiet `INK_DIM` line — `kills ≈55 Wild Boar · brings home 6.00 food · leaves 214.00 on the
+range` — with each account rendered only when the quarry pays it (the render-only-when-non-zero rule),
+and no alarm glyph anywhere. It renders under the pre-selected sheet's verdict, and as the hover
+banner's TOOLTIP (the banner itself would pass 1500px with it beside the verdict).
+
+- **It salvages MATERIALS, one ` · brings home 22.00 hide` clause per material, never summed**: on an
+  inedible quarry that is the whole of what it brings home (`carry_room_biomass` answers
+  `NO_CARRY_BOUND` for a species paying no provisions, so the pack never fills). The verb is repeated
+  rather than shared with the food clause, which is optional.
+- **`SourceForecast.denial_waste_face` is the ONE spelling of "what was left on the range"**, and a
+  quarry that wastes nothing renders NO clause, not a zero.
 
 ### The verdict counts from LAUNCH, and the span is named in the sentence
 
@@ -6402,12 +6449,14 @@ idle` note)** — the spec, the effective-tier rule and the command token all li
 - **The denial payload carries `kit_id` + `default_kit_id`** and nothing else; the four-token grammar
   admits the named `kit <id>` pair and no positional. `_mount_kit_row` is `BandPanelController`'s
   small helper for it.
-- **No quarry is known on the sheet, so nothing is withheld from the list.** The kit is resolved
-  against the `hunt` job alone (`resolve_selection` with no quarry), and the composed choice is reset
-  with the verb (`_reset_verb_state`).
-- **The kit prices the hover.** The captured kit rides the pick's `hover` into the forecast question,
-  so the banner's verdict is the one for the kit the sheet shows; until the answer lands the banner
-  reads `DENIAL_FORECAST_PENDING`, and a failed query `FORECAST_FAILED_FORMAT`.
+- **The kit is resolved against the PREY when one is set**, exactly as the row is mounted —
+  `resolve_selection` skips a kit this animal withholds, so a question asked without the herd could
+  settle on a kit the picker then greys out. With no prey nothing is withheld. The composed choice is
+  reset with a new prey (`set_party_quarry`) and with the verb.
+- **Until the forecast answers, the pre-selected sheet renders the COMBAT GATE and the pending (or
+  failed) line and NOTHING ELSE below the kit hint** (`_mount_kit_gate_line`) — no verdict, no caveat,
+  no take line. The Send stays live and plainly styled. With no prey the kit prices the hover instead:
+  the banner reads `DENIAL_FORECAST_PENDING` until the answer lands.
 
 ### …and the SCOUT sheet mounts it too, on the `expedition` job
 
@@ -6440,12 +6489,16 @@ line, which is what stops "quote the bare tier for everything" passing instead) 
 **`band_panel_compose_deny_kit_open`** (the popup — an embedded subwindow, so it lands in the capture;
 the structural claims ride the assertion, a screenshot being unable to say which item carries the
 radio dot: this verb's kits and only those, the default TAGGED, `none` LAST, exactly one marked) ·
-**`band_panel_compose_deny`** (the sheet on the band's drawer: party, kit, the plain send, and the
-three absent floor surfaces) · **`band_panel_deny_hover`** (the send armed and the pointer over the
+**`band_panel_compose_deny`** (the sheet on the band's drawer, no prey: party, kit, the plain send, and
+the three absent floor surfaces) · **`band_panel_deny_hover`** (the send armed and the pointer over the
 boar: `DENY Saltmarch → Wild Boar · <the range verdict>`) · **`band_panel_deny_hover_two_prey`** (a hex
-holding two eligible herds before the answer lands: `Rabbit Warren +1 more · Costing the raid's toll…`).
-The repelled, zero-travel, open-high and short-handed verdicts are asserted PNG-less on the same
-banner, by equality, each against a table staged for it. `cargo xtask command-guard` carries the
+holding two eligible herds before the answer lands: `Rabbit Warren +1 more · Costing the raid's toll…`)
+· **`band_panel_compose_deny_prey`** (the boar pre-selected: the Prey row, the verdict, the caveat, the
+take, a plain live Send) · **`band_panel_compose_deny_short_handed`** (a herd needing eleven against
+three idle: `Not Enough Hunters`, disabled, the reason naming both numbers) ·
+**`band_panel_compose_deny_two_prey`** (the wolf chosen off a two-herd hex, the Prey row's `⋯` marking
+it). The repelled, zero-travel, open-high and short-handed verdicts are also asserted PNG-less on the
+hover banner, by equality, each against a table staged for it. `cargo xtask command-guard` carries the
 token's half — it composes a non-default kit on every grammar that takes one and parses every line with
 the real server parser, which is the only thing that can assert the four-token grammar. The in-flight
 half is `ui_preview`'s `expedition_denial_panel`.
@@ -6459,9 +6512,12 @@ answer with the hex's first eligible herd, and re-clicking answers the same one.
 anywhere that named a herd within a tile.
 
 **The click opens a CHOOSER where the hex holds more than one eligible herd**
-(`TargetingController._open_quarry_chooser`), and choosing a herd there commits. The hover already
-names the first and counts the rest (`Rabbit Warren +1 more`), so the player knows before clicking that
-the click will ask.
+(`TargetingController._open_quarry_chooser`): choosing a herd there commits under an armed pick, and
+pre-selects it as the sheet's prey under the passive highlight. The hover already names the first and
+counts the rest (`Rabbit Warren +1 more`), so the player knows before clicking that the click will
+ask. Once a prey is set, the Prey row carries its own `⋯` (`_build_quarry_choices_menu`,
+`HudWidgets.QUARRY_CHOICES_META`) listing the hex's eligible herds as radio-check items, the current one
+marked, so the choice between two herds on one hex can be made against the sheet's own forecast.
 
 - **It is a `PopupMenu` at the pointer**, parented into the HUD host and styled as the console's own
   menu (`HudStyle.apply_popup_menu`), one entry per eligible herd named as the herd drawer names it,
@@ -6489,8 +6545,9 @@ sends ONE raid at the wolf, after which the pick is down and the sheet closed.
 `BandPanelController._fill_trade_compose_sheet`. **`📦 Trade`** is a verb of its own rather than a mode
 of a hunting party for the plainest reason available: there is no field the two have in common. A
 shipment names another BAND, not a herd; it carries a manifest, not a floor; and its readout is a mass
-meter, not a trip forecast. The sheet is **PARTY → CARGO → the mass meter → send**, on the sender's own
-drawer, and the destination is the click the send arms.
+meter, not a trip forecast. The sheet is **[To] → PARTY → CARGO → the mass meter → send**, on the
+sender's own drawer; the destination is pre-selected on the map while the sheet is open, or, with none
+set, the click the send arms.
 
 **The launch grammar is its own** — `send_trade_expedition <faction> <band> <party_workers>
 <destination_band_id> [food <amount>] [material <material_id> <amount>]... [kit <id>]` — whose tail
@@ -6501,27 +6558,33 @@ is its own builder for the same reason.
 
 ### THE TIE IS THE GATE, AND THE PICK TEACHES IT RATHER THAN ENFORCING IT SILENTLY
 
-A shipment has one site: its subject is a band, reached by the Trade verb's map pick, and the herd
-drawer's hunting-party branch has nothing to stay in step with. The pick resolves only a band the
-sender holds a LIVE tie to (`TargetingController.trade_destination_at` over
-`HudBandLaborState.connections_for_band`, keyed on the durable `band_id`, and `tie_is_live`), because
-`ConnectionLedger::get(..).strength > NO_TIE` is what the sim gates the launch on.
+A shipment has one site: its subject is a band, reached on the map — pre-selected while the sheet is
+open, or by the armed pick's click — and the herd drawer's hunting-party branch has nothing to stay in
+step with. Both resolve only a band the sender holds a LIVE tie to
+(`TargetingController.trade_destination_at` over `HudBandLaborState.connections_for_band`, keyed on the
+durable `band_id`, and `tie_is_live`), because `ConnectionLedger::get(..).strength > NO_TIE` is what the
+sim gates the launch on.
 
 - **A PARKED tie (strength 0) is named in the hover with its reason** (`COMPOSE_DESTINATION_PARKED_REASON`)
   **and refused at the click** (`TRADE_PICK_MISS_TEXT`), the pick staying armed. Zero means *"we know
   such a people exist and have no current dealings"*, and the thing the player has to learn is that the
   TIE is what gates trade. The hover and the click both read `TargetingController.tie_at`, so the
   banner cannot name a band the click would not resolve.
+- **Only LIVE ties are highlighted** (`TargetingController.live_tie_tiles`, the ring set the sheet and
+  the armed pick both draw), so a parked tie's band is never offered as a pre-selection.
 - **The `📦 Trade` verb is gated on IDLE WORKERS and never on the ties**; a sender with no live tie
   gets `COMPOSE_DESTINATION_NO_TIES` on the sheet over a visible-and-disabled send, since no click could
   be accepted.
+- **The `To` row states a pre-selected destination** — named as the cycler names it
+  (`_connection_subject_label`), the REMEMBERED sighting and the `≈` walk under it — with a `✕` that
+  clears it. The tie is re-resolved live every render; one that parks drops the destination.
 
 ### THE DESTINATION IS REMEMBERED, NEVER SEEN — the arc's keystone, rendered
 
 A connection can only ever grant `Discovered` (`.claude/rules/core_sim/connections.md`), so
-`lastSeen{X,Y,Turn}` is where the subject WAS and nothing may render it as a live position. The Trade
-pick's hover banner states it through `_trade_destination_notes` — the sighting and its turn in those
-words, and the walk
+`lastSeen{X,Y,Turn}` is where the subject WAS and nothing may render it as a live position. The `To`
+row and the Trade pick's hover banner both state it through `_trade_destination_notes` — the sighting
+and its turn in those words, and the walk
 quoted from it wears a **`≈`** and the clause *"if they are still there"*. A remembered band behaves
 exactly like a remembered herd, which every player has already been taught by a herd that moved.
 
@@ -6792,7 +6855,8 @@ sheet follows. What bounds a shipment is the meter, not a head count.
 proves the `📦` mark DRAWS — a mark missing from this client's fallback font renders as an invisible
 gap that no assertion catches), `trade_sheet` (the sheet on the sender's drawer, no destination on it),
 `trade_cargo_loaded`, `trade_hover_destination` (the send armed and the pointer over the tied band:
-`TRADE Ashfell → Brackwater · Last seen … · ≈5 turns out …`), `trade_cargo_hay` (the hay row loaded
+`TRADE Ashfell → Brackwater · Last seen … · ≈5 turns out …`), `trade_sheet_destination` (the band
+pre-selected: the `To` row, its sighting, its `✕`), `trade_cargo_hay` (the hay row loaded
 beside the food and hide ones, the meter carrying its 0.5-weighted mass), and `trade_cargo_over_cap`.
 
 ## The work row states its RUNG in two registers, and the ring is declared from the mark

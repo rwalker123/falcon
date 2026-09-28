@@ -172,8 +172,12 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 216 frames / 1602 `PASS` / 541 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 219 frames / 1629 `PASS` / 547 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
+
+**THE DENY SHEET'S PRE-SELECTED PREY MOVED IT 216 / 1602 / 541 → 219 / 1629 / 547**: three frames
+(`band_panel_compose_deny_prey`, `_short_handed`, `_two_prey`), the restored sheet take, short-handed
+and pelt claims, and the highlight, pre-selection, clear and chooser claims.
 
 **THE BAND VERBS' TARGET MOVED LAST (issue #529) AND MOVED IT 222 / 1601 / 565 → 216 / 1602 / 541**:
 the Deny sheet's per-herd frames became hover-banner claims on three frames, and the sheet-content
@@ -890,11 +894,12 @@ the LAND. Both jump assertions are mutation-tested.
 
 ## The DENIAL raid's states (`docs/plan_denial_raid.md` slice 2)
 
-The Deny sheet carries party and kit; the herd is the click its send arms, and the collapse verdict is
-the hover banner's (`targeting.md` → "THE BAND VERBS' TARGET IS THE LAST STEP"). So the verdict claims
-are made on `TargetingController.banner_text()` after `HudLayer.notify_hex_hovered`, each by EQUALITY
-on the banner's tail (`_assert_banner_states`) — half of every claim is what the line must NOT also
-say.
+The Deny sheet carries party and kit, and its herd arrives one of two ways (`targeting.md` → "THE BAND
+VERBS' TARGET IS THE LAST STEP"): PRE-SELECTED by a click on a highlighted herd while the sheet is
+open, after which the sheet states every readout and its Send commits; or, with no prey, as the click
+the Send arms, the verdict then riding the hover banner. The banner claims are made on
+`TargetingController.banner_text()` after `HudLayer.notify_hex_hovered`, each by EQUALITY on the
+banner's tail (`_assert_banner_states`) — half of every claim is what the line must NOT also say.
 
 - **`band_panel_compose_deny`** — the sheet on the band's drawer: party, kit, a plain live send, and
   the floor surfaces ABSENT (`_assert_denial_sheet_carries_no_floor`, the heading matched
@@ -917,6 +922,24 @@ say.
   about can show the in-flight state. `_assert_quarry_chooser` then clicks the hex: the chooser opens
   and nothing is sent, it lists exactly the two, and choosing the wolf through the popup's REAL
   `id_pressed` sends ONE raid at the wolf.
+- **THE PRE-SELECTED PREY** — `_assert_prey_highlight` holds the passive herd highlight up while the
+  sheet is open (`TargetingController.is_preselect_on`, `need: "herd"` at `QUARRY_NO_REACH_BOUND`,
+  never targeting) and down once it closes. **`band_panel_compose_deny_prey`**: a click on the boar
+  sends nothing, leaves the band selected and the pick unarmed, and the Prey row states it with its
+  `✕` (`_assert_prey_is_stated`); the party is re-pinned after the pre-selection, which SEEDS it.
+  `_assert_denial_sheet_viable` then reads the sheet by EQUALITY — the range verdict, the take line
+  (`kills … · brings home … food · leaves … on the range`, composed from the VOCABULARY and the
+  fixture's own arithmetic, never through `denial_take_bbcode`), the estimate caveat, and a plain live
+  Send — and `_assert_denial_pelt_take` pins the inedible quarry's take on the producer (pelts, no
+  false `0.00 food`). `_assert_prey_send_commits`: the Send sends ONE raid at the prey, arms no pick,
+  closes the sheet.
+- **`band_panel_compose_deny_short_handed`** — the deep-party herd pre-selected on the reference band's
+  three idle: Send DISABLED as `Not Enough Hunters`, the reason naming both numbers, the counted repelled
+  refusal not printed beside it (`_assert_denial_sheet_short_handed`). The Prey row's `✕` then clears
+  the prey, and the Send goes back to arming the pick.
+- **`band_panel_compose_deny_two_prey`** — a pre-selecting click on the two-herd hex opens the chooser;
+  choosing the wolf makes it the prey and sends nothing, and the Prey row's `⋯`
+  (`HudWidgets.QUARRY_CHOICES_META`) lists both and marks the wolf (`_assert_prey_chooser`).
 - **`_assert_denial_click_commits`** — one herd on the hex, so the click sends exactly one
   `send_denial_raid` with the sheet's party and kit, the pick comes down, the sheet closes, and the
   band is still the selection.

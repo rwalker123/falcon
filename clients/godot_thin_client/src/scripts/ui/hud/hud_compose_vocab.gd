@@ -1241,8 +1241,19 @@ const VERB_HOVER_MORE_FORMAT := "%s +%d more"
 ## The Deny pick's herd chooser's node name — a `PopupMenu` at the pointer, opened by a click on a hex
 ## holding more than one eligible herd (`TargetingController._open_quarry_chooser`).
 const QUARRY_CHOOSER_NAME := "QuarryChooser"
-## A chooser entry for a species with no bundled art: its emoji, then its name.
-const QUARRY_CHOOSER_LABEL_FORMAT := "%s %s"
+
+## **THE DENY SHEET'S PREY ROW** — the herd pre-selected on the map while the sheet is open, stated
+## read-only. ⛔ **`Prey`, NOT `Quarry` (issue #650)**: `quarry` is the extraction ladder's own rung,
+## its command verb and the word every deposit readout uses.
+const COMPOSE_FIELD_PREY := "Prey"
+## A prey face (and a chooser entry) for a species with no bundled art: its emoji, then its name.
+const COMPOSE_PREY_LABEL_FORMAT := "%s %s"
+## The prey's bundled ART on the row, capped — the source PNGs are 256px.
+const COMPOSE_PREY_ICON_MAX_WIDTH := 20
+## The `⋯` beside the prey when its hex holds more than one eligible herd.
+const COMPOSE_PREY_CHOICES_TOOLTIP := "Another herd shares this hex — choose which one to raid."
+## The row's `✕`: clear the prey, after which the send arms the herd pick instead.
+const COMPOSE_PREY_CLEAR_TOOLTIP := "Clear the prey — Send then asks for a herd on the map."
 
 ## A shipment pick that landed on no band this one is tied to. Said, and the pick stays armed —
 ## the prey pick's rule for a click on a hex with no huntable herd.
@@ -1256,6 +1267,13 @@ const COMPOSE_TITLE_TRADE := "Load a shipment…"
 const SEND_TRADE_EXPEDITION_HINT := "Detach a party to carry food and materials to another band you have a tie with."
 
 const SEND_TRADE_EXPEDITION_BUTTON := "Send shipment"
+
+## The Trade sheet's `To` row — a tied band pre-selected on the map while the sheet is open, stated
+## read-only. `To` rather than `Destination`: the key shares `COMPOSE_FIELD_KEY_WIDTH` with the rest of
+## the field stack, and the short word leaves the name its share of the row.
+const COMPOSE_FIELD_DESTINATION := "To"
+## The row's `✕`: clear the destination, after which the send arms the pick instead.
+const COMPOSE_DESTINATION_CLEAR_TOOLTIP := "Clear the destination — Send then asks for a band on the map."
 
 ## **WHY A SHIPMENT CANNOT BE ARMED, WHEN IT CANNOT.** A band holding no live tie has nobody the pick
 ## could accept, so the sheet states the gate in the sim's own terms rather than arming a pick that

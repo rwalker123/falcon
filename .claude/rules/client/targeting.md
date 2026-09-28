@@ -15,7 +15,7 @@ paths:
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/TargetingController.gd` | `RefCounted` controller (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **COMMAND-TARGETING** cluster — the band verbs' map picks (**move-band** picks a destination TILE, the **verb tile pick** is Scout's and Trade's, **pick-quarry** is Deny's HERD pick) plus the floating top-centre **targeting banner** that guides each. It holds the three pending dicts (`_pending_move_band` / `_pending_verb_pick` / `_pending_pick_quarry`), the banner (`_ensure_targeting_banner` / `_refresh_targeting` / `_current_targeting_info` / `_targeting_banner_bbcode`), the per-flow begin/cancel/dispatch functions (`_try_dispatch_pending_move_band` / `_try_verb_pick` / `_try_pick_quarry` / `_huntable_herd_on_tile`) and the wrap-aware `_hex_distance_wrapped`. **Public API:** `begin_move_band` / `begin_verb_pick` / `send_expedition_to` / `trade_destination_at` / `tie_at` / `begin_pick_quarry` / `cancel_pick_quarry` / `choose_quarry` / `quarry_chooser` / `disarm_verb_picks` / `is_verb_pick_armed` / `note_hover` / `refresh_hover` / `banner_text` / `is_expedition_quarry` (THE single quarry-eligibility definition — the pick, the chooser, the hover banner and MapView's glow all route through it) / `quarry_min_distance` (the one number that rule is expressed in, so the pick and the glow cannot derive it separately), plus `is_targeting_active` / `cancel_active_targeting` / `try_dispatch` (the last runs the three `_try_*` in the SAME order as before). Hud holds it as `_targeting`, constructed in `_ready` **AFTER `_drawercompose` and BEFORE `_bandpanel`** (which injects it — so `_targeting` must exist first). **It emits its OWN signals, HudLayer RELAYS each** (the `TurnOrbController` pattern; the controller never emits a HudLayer signal): `targeting_changed` (→ `MapView.set_targeting`) · `move_band_requested` · `send_expedition_requested` · `verb_pick_cancelled` (→ `BandPanelController.on_verb_pick_cancelled`). **The reflective delegators STAY on HudLayer** — `is_targeting_active` (Main's escape_claimant path) / `cancel_active_targeting` (Main relays MapView's `targeting_cancel_requested` by name) / `notify_targeting_click` (MapView's `targeting_clicked`, → `try_dispatch`) / `notify_hex_hovered` (MapView's `tile_hovered`, → `note_hover`), each probed BY NAME so a `has_method` miss fails SILENTLY. **The injection surface is TWO Callables** — `_resolve_assign_band` (STAYS on HudLayer, DrawerComposeController injects it too; reached through a typed adapter since `Callable.call` returns `Variant`) and `_after_pending_change` (STAYS on HudLayer, the `_emit_assign_labor` pending path owns it); an armed verb pick carries the SHEET's own `commit` / `hover` Callables, so the controller holds no reference to `BandPanelController`. Collaborators: `_band_labor` (`record_pending_move` + the grid pair + the roster and ties the picks resolve against), `_drawercompose` (the three `close_compose_sheet()` nudges), `_note_sink` (the picks' miss/refusal notes, to the event dock's System channel), and the HUD CanvasLayer as the **host** it parents the banner and the Deny chooser into — via the host's `LayoutRoot` (NOT the bare CanvasLayer) so the banner keeps insetting with the reserved-edge docks exactly as before |
+| `ui/hud/TargetingController.gd` | `RefCounted` controller (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **COMMAND-TARGETING** cluster — the band verbs' map picks (**move-band** picks a destination TILE, the **verb tile pick** is Scout's and Trade's, **pick-quarry** is Deny's HERD pick) plus the floating top-centre **targeting banner** that guides each. It holds the three pending dicts (`_pending_move_band` / `_pending_verb_pick` / `_pending_pick_quarry`), the banner (`_ensure_targeting_banner` / `_refresh_targeting` / `_current_targeting_info` / `_targeting_banner_bbcode`), the per-flow begin/cancel/dispatch functions (`_try_dispatch_pending_move_band` / `_try_verb_pick` / `_try_pick_quarry` / `_huntable_herd_on_tile`) and the wrap-aware `_hex_distance_wrapped`. **Public API:** `begin_move_band` / `begin_verb_pick` / `send_expedition_to` / `trade_destination_at` / `tie_at` / `live_tie_tiles` / `set_preselect` / `clear_preselect` / `is_preselect_on` / `begin_pick_quarry` / `cancel_pick_quarry` / `choose_quarry` / `quarry_chooser` / `disarm_verb_picks` / `is_verb_pick_armed` / `note_hover` / `refresh_hover` / `banner_text` / `banner_tooltip` / `is_expedition_quarry` (THE single quarry-eligibility definition — the pick, the chooser, the hover banner and MapView's glow all route through it) / `quarry_min_distance` (the one number that rule is expressed in, so the pick and the glow cannot derive it separately), plus `is_targeting_active` / `cancel_active_targeting` / `try_dispatch` (the last runs the three `_try_*` in the SAME order as before). Hud holds it as `_targeting`, constructed in `_ready` **AFTER `_drawercompose` and BEFORE `_bandpanel`** (which injects it — so `_targeting` must exist first). **It emits its OWN signals, HudLayer RELAYS each** (the `TurnOrbController` pattern; the controller never emits a HudLayer signal): `targeting_changed` (→ `MapView.set_targeting`) · `move_band_requested` · `send_expedition_requested` · `verb_pick_cancelled` (→ `BandPanelController.on_verb_pick_cancelled`). **The reflective delegators STAY on HudLayer** — `is_targeting_active` (Main's escape_claimant path) / `cancel_active_targeting` (Main relays MapView's `targeting_cancel_requested` by name) / `notify_targeting_click` (MapView's `targeting_clicked`, → `try_dispatch`) / `notify_hex_hovered` (MapView's `tile_hovered`, → `note_hover`), each probed BY NAME so a `has_method` miss fails SILENTLY. **The injection surface is TWO Callables** — `_resolve_assign_band` (STAYS on HudLayer, DrawerComposeController injects it too; reached through a typed adapter since `Callable.call` returns `Variant`) and `_after_pending_change` (STAYS on HudLayer, the `_emit_assign_labor` pending path owns it); an armed verb pick carries the SHEET's own `commit` / `hover` Callables, so the controller holds no reference to `BandPanelController`. Collaborators: `_band_labor` (`record_pending_move` + the grid pair + the roster and ties the picks resolve against), `_drawercompose` (the three `close_compose_sheet()` nudges), `_note_sink` (the picks' miss/refusal notes, to the event dock's System channel), and the HUD CanvasLayer as the **host** it parents the banner and the Deny chooser into — via the host's `LayoutRoot` (NOT the bare CanvasLayer) so the banner keeps insetting with the reserved-edge docks exactly as before |
 ## Command Targeting
 
 ### THE BAND VERBS' TARGET IS THE LAST STEP, AND THE CLICK COMMITS (issue #529)
@@ -30,10 +30,25 @@ for which band, anchored on which hex — is shared state on `ComposeState` (`op
 |---|---|---|---|
 | Move | — | — | emits `move_band_requested` |
 | Scout | party + kit | arms `begin_verb_pick(band, scout, commit)`, tile | `send_expedition_to` the clicked tile |
-| Deny | party + kit | arms `begin_pick_quarry(band, deny, commit, hover)`, herd | `send_denial_raid` at the clicked herd; a hex holding several eligible herds opens the chooser first |
-| Trade | party + cargo + mass meter | arms `begin_verb_pick(band, trade, commit, hover)`, tile | `send_trade_expedition` to the tied band standing there |
+| Deny | [Prey] + party + kit (+ the verdict, caveat, take, refusal once a prey is set) | with a prey: commits `send_denial_raid`; without: arms `begin_pick_quarry(band, deny, commit, hover)`, herd | `send_denial_raid` at the clicked herd; a hex holding several eligible herds opens the chooser first |
+| Trade | [To] + party + cargo + mass meter | with a destination: commits `send_trade_expedition`; without: arms `begin_verb_pick(band, trade, commit, hover)`, tile | `send_trade_expedition` to the tied band standing there |
 | Split | workers | commits `split_band` itself | — |
 
+- **An open Deny or Trade sheet HIGHLIGHTS every target its pick would accept, and a click on one
+  PRE-SELECTS it.** The sheet registers `TargetingController.set_preselect(band, mission, choose)` on
+  every render and `_reset_verb_state` clears it (`clear_preselect`), so the highlight lives exactly as
+  long as the sheet, armed or not. While no pick is armed the descriptor is PASSIVE
+  (`TARGETING_PASSIVE_KEY`): MapView draws the Deny sheet's herds through the herd glow (`need: "herd"`,
+  `min_distance`) and the Trade sheet's live-tie bands through an explicit ring set
+  (`TARGETING_HIGHLIGHT_TILES_KEY`, `live_tie_tiles` — parked ties excluded), with no reticle and no
+  banner, and it is NOT targeting: `is_targeting_active` is false, so Esc, right-click and every other
+  click behave normally. `MapView.targeting_click_captures` takes only a click on a highlighted target
+  (`AnnotationRenderer.highlighted_at`) into `targeting_clicked`, and `try_dispatch`, with nothing
+  armed, runs the ONE pre-select path for both verbs (`_try_preselect`): the sheet's `choose` is handed
+  the same target dictionary a commit gets — the herd (the chooser first for a hex holding several), or
+  the tied band standing there. Nothing is sent and nothing is selected; the sheet then shows its `Prey`
+  or `To` row with a `✕` to clear it, and its Send commits straight away. The armed Trade pick carries
+  the same ring set, so the highlight does not change when the Send arms it.
 - **The send arms the pick with the sheet's values captured** as a `commit` Callable
   (`TargetingController.PICK_COMMIT_KEY`), and the sheet stays open with its send drawn `armed` (a
   toggle, `HudComposeVocab.VERB_SEND_ARMED_STYLE`); pressing it again takes the pick down. The sheet
@@ -49,9 +64,10 @@ for which band, anchored on which hex — is shared state on `ComposeState` (`op
   posts `TRADE_PICK_MISS_TEXT`, and a Deny click on a herd the band cannot field the required party for
   posts `SourceForecast.denial_short_handed_reason` — the one refusal the commit itself makes.
 - **The Deny chooser** (`_open_quarry_chooser`) is a `PopupMenu` at the pointer, one entry per eligible
-  herd on the clicked hex (`eligible_quarries_on_tile`, derived live from `world_herds`); choosing one
-  runs `choose_quarry`, the one adoption, which re-checks eligibility and commits. Dismissing it leaves
-  the pick armed.
+  herd on the clicked hex (`eligible_quarries_on_tile`, derived live from `world_herds`, entries built
+  through `HudWidgets.fill_menu_popup`). Under an armed pick choosing one runs `choose_quarry`, the one
+  adoption, which re-checks eligibility and commits; under the passive highlight it pre-selects.
+  Dismissing it leaves the pick (or the highlight) as it was.
 - **The hover states what the click would commit to.** `MapView.tile_hovered` also reaches
   `HudLayer.notify_hex_hovered` → `note_hover`, and an armed pick's `hover` Callable
   (`PICK_HOVER_KEY`) answers for that hex; a non-empty answer replaces the banner's instruction with
@@ -62,7 +78,10 @@ for which band, anchored on which hex — is shared state on `ComposeState` (`op
     the line is `DENIAL_FORECAST_PENDING`, and its answer re-states the banner through `refresh_hover`.
     A hex holding several eligible herds names the first and counts the rest (`VERB_HOVER_MORE_FORMAT`,
     `Rabbit Warren +1 more`). A band short of the herd's requirement reads the short-handed sentence
-    in place of the verdict.
+    in place of the verdict. **The take line rides the banner's TOOLTIP, not the banner**: the verdict
+    alone runs ~120 characters, and with the take beside it the banner passed 1500px — so a hover may
+    answer a Dictionary (`PICK_HOVER_TEXT_KEY` / `PICK_HOVER_TOOLTIP_KEY`) and the banner shows the
+    text and carries the tooltip (`banner_tooltip`).
   - **Trade** — `TRADE Ashfell → Brackwater · <last seen …> · <≈N turns out …>` over a tied band
     (`_trade_hover_detail`, over `tie_at`, the same lookup the click resolves through), the parked
     reason over a parked tie.

@@ -718,6 +718,26 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
 ## (`HudComposeVocab.COMPOSE_FIELD_KEY_WIDTH`) that makes rows built by different modules line their
 ## value controls up; the reasoning is on that constant. `SIZE_FILL`, not `EXPAND` — the key takes
 ## exactly its declared width and the CONTROL is the row's only expanding child.
+## **A FIELD THE SHEET STATES RATHER THAN ASKS** — the field-stack's key label (`build_field_key`, so
+## it lines up with the rows that ARE controls) and the value as plain INK text, optionally led by
+## `icon` at `icon_px`. It carries `READ_ONLY_FIELD_META` = the key. The value expands and clips, so a
+## long species name cannot push the row wider than the sheet.
+static func build_read_only_field(key: String, text: String, icon: Texture2D = null,
+        icon_px: float = 0.0) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    row.set_meta(READ_ONLY_FIELD_META, key)
+    row.add_child(build_field_key(key))
+    if icon != null:
+        row.add_child(build_marker_icon(icon, "", icon_px, 0))
+    var value := Label.new()
+    value.text = text
+    value.clip_text = true
+    value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    value.add_theme_color_override("font_color", HudStyle.INK)
+    row.add_child(value)
+    return row
+
 static func build_field_key(text: String) -> Label:
     var key := Label.new()
     key.text = text
@@ -1015,6 +1035,20 @@ const VERB_BUTTON_META := "band_verb"
 ## sheet it is replacing, and how a harness finds which verb's sheet a drawer is showing.
 const VERB_FORM_NAME := "BandVerbForm"
 const VERB_FORM_META := "band_verb_form"
+
+## A READ-ONLY field row on a verb's sheet (`build_read_only_field`), as meta carrying the field's
+## key — the Deny sheet's pre-selected PREY, the Trade sheet's pre-selected destination (`To`). The handle a harness proves "stated, not offered" by, since
+## the row holds a `Label` where a chooser would hold a `Button`.
+const READ_ONLY_FIELD_META := "read_only_field"
+
+## The Deny sheet's PREY CHOOSER, as `MenuButton` meta — the `⋯` that appears only when the prey's hex
+## holds more than one eligible herd. Its own handle because the parties zone builds a `⋯` section menu
+## too, and the claim a harness makes is an ABSENCE with one candidate.
+const QUARRY_CHOICES_META := "quarry_choices"
+
+## A read-only field row's `✕`, as `Button` meta — clears the Deny sheet's pre-selected prey or the
+## Trade sheet's pre-selected destination back to unset.
+const FIELD_CLEAR_META := "field_clear"
 
 ## A compose sheet's COMMIT button, as `Button` meta — set by both sheets' builders. Its face is the
 ## thing under test whenever the crew noun moves (`Forage` / `Tend` / `Unassign` on the plant web,

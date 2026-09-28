@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 106
+const EXPECTED_CHECKPOINTS := 120
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -303,6 +303,59 @@ func run(harness) -> void:
 		int(h._hud._selection.unit().get("entity", -1)) == SHIPPER_ENTITY
 			and int(h._hud._band_labor.panel_band().get("entity", -1)) == SHIPPER_ENTITY)
 	h._hud.notify_hex_hovered({})
+	h._assert_hud("…and the tie highlight goes with the closed sheet",
+		not h._hud._targeting.is_preselect_on())
+
+	# **STATE — THE DESTINATION PRE-SELECTED ON THE MAP.** While the sheet is open, armed or not, the
+	# map rings every band tied LIVE to the sender — the neighbour, never the parked tie — and a click
+	# on a ringed band sets the sheet's destination without sending or selecting. The `To` row then
+	# states it, with what is REMEMBERED of where it is, and a `✕` to clear it.
+	var reopen_for_preselect := _verb_button(HudComposeVocab.VERB_TRADE)
+	if reopen_for_preselect != null:
+		reopen_for_preselect.emit_signal("pressed")
+	await h._settle()
+	await _load_reference_manifest()
+	var highlight: Array = h._hud._targeting._current_targeting_info().get(
+		TargetingController.TARGETING_HIGHLIGHT_TILES_KEY, [])
+	h._assert_hud("the open sheet rings the live tie's band, not the parked one (%s)" % str(highlight),
+		h._hud._targeting.is_preselect_on() and highlight.has(NEIGHBOUR_LAST_SEEN)
+			and not highlight.has(PARKED_LAST_SEEN))
+	h._assert_hud("…and the ring is not targeting — nothing is armed", not h._hud.is_targeting_active())
+	var preselect_sent: Array[Dictionary] = []
+	var record_preselect := func(payload: Dictionary) -> void: preselect_sent.append(payload)
+	h._hud.send_trade_expedition_requested.connect(record_preselect)
+	h._hud.notify_targeting_click(_tile_info(NEIGHBOUR_LAST_SEEN))
+	await h._settle()
+	await h._save("trade_sheet_destination")
+	var to_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("a click on the ringed band sets the destination — the To row names it",
+		to_row != null and _collect_text(to_row).contains(NEIGHBOUR_DISPLAY_NAME))
+	h._assert_hud("…with where it was last seen worded as REMEMBERED",
+		_sheet_text().contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
+			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, NEIGHBOUR_LAST_SEEN_TURN]))
+	h._assert_hud("…sending nothing and moving neither the selection nor the panel",
+		preselect_sent.is_empty()
+			and int(h._hud._selection.unit().get("entity", -1)) == SHIPPER_ENTITY
+			and int(h._hud._band_labor.panel_band().get("entity", -1)) == SHIPPER_ENTITY)
+	# **THE `✕` CLEARS IT**, and a second click sets it again.
+	var clear := Q.find_meta_node(_parties_zone(), HudWidgets.FIELD_CLEAR_META) as Button
+	h._assert_hud("the To row carries its ✕", clear != null)
+	if clear != null:
+		clear.emit_signal("pressed")
+	await h._settle()
+	h._assert_hud("…which clears the destination",
+		Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META) == null)
+	h._hud.notify_targeting_click(_tile_info(NEIGHBOUR_LAST_SEEN))
+	await h._settle()
+	# **WITH A DESTINATION, THE SEND IS THE ORDER** — one shipment to it, no pick, the sheet closed.
+	_press_send()
+	h._hud.send_trade_expedition_requested.disconnect(record_preselect)
+	await h._settle()
+	h._assert_hud("the Send with a destination sends ONE shipment to it (%d sent)" % preselect_sent.size(),
+		preselect_sent.size() == 1 and int(preselect_sent[0]["destination_band_id"])
+			== int(_neighbour_band().get("band_id", -1)))
+	h._assert_hud("…arming no pick and closing the sheet",
+		not h._hud.is_targeting_active() and _verb_form() == null)
 
 	# The cargo states below compose on an open sheet: re-open it and load the same manifest.
 	var reopen := _verb_button(HudComposeVocab.VERB_TRADE)
