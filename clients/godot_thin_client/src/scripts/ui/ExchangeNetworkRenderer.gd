@@ -39,18 +39,20 @@ extends RefCounted
 ## Open ground (`HudTradeVocab.OPEN_GROUND_RUNG`): within the free reach, no kept road. The thin,
 ## dim rung — the terrain already draws the roads (#554), so this layer stays quiet.
 const LOCAL_OPEN_CORE_WIDTH := 1.5
-const LOCAL_OPEN_CORE_OPACITY := 0.55
+const LOCAL_OPEN_CORE_OPACITY := 0.32
 const LOCAL_OPEN_HALO_WIDTH := 5.0
-const LOCAL_OPEN_HALO_OPACITY := 0.14
+const LOCAL_OPEN_HALO_OPACITY := 0.07
 ## A link whose whole run is on a kept road rung — thicker and brighter, so a road-held network reads
 ## as one.
 const LOCAL_ROAD_CORE_WIDTH := 2.5
-const LOCAL_ROAD_CORE_OPACITY := 0.85
+const LOCAL_ROAD_CORE_OPACITY := 0.5
 const LOCAL_ROAD_HALO_WIDTH := 8.0
-const LOCAL_ROAD_HALO_OPACITY := 0.22
+const LOCAL_ROAD_HALO_OPACITY := 0.12
+## Every opacity above is deliberately MUTED: at full strength the gold network dominated the terrain
+## in play. It is a background layer the player reads when looking for it, not a foreground mark.
 ## A link touching the SELECTED band: this much more opacity (both strokes) and width (the core) than
 ## its rung's own, and the halo widened by the same step times `SELECTED_HALO_WIDTH_SCALE`.
-const SELECTED_OPACITY_BOOST := 0.15
+const SELECTED_OPACITY_BOOST := 0.12
 const SELECTED_WIDTH_BOOST := 1.0
 const SELECTED_HALO_WIDTH_SCALE := 2.0
 ## Cap on a boosted opacity, so a boost never overflows the colour's alpha.
