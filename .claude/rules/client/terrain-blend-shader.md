@@ -1173,8 +1173,8 @@ waterline cross-fade blends toward a water estimate without it, so it eases out 
 
 **3 — whitecaps (animated, directionless).** They carry the visible motion: at the strength that stopped
 the chop reading as clouds (0.035), the chop alone is close to imperceptible. A whitecap is a SHAPE: a
-crest GROUP of 1–3 thin, broken white foam streaks strung along one line. It flashes on and fades where
-it was born (`open_whitecap`, `whitecap_grid`).
+crest GROUP of 1–3 thin, broken foam streaks strung along one line, a light neutral GREY at its peak. It
+fades in, holds and fades out where it was born (`open_whitecap`, `whitecap_grid`).
 
 > #### ⛔ WHY NOT NOISE PEAKS — the first whitecaps read as CYAN BLOBS
 >
@@ -1205,6 +1205,18 @@ it was born (`open_whitecap`, `whitecap_grid`).
 > there. State 30 now asks the whiteness claim of the cold rows and the warm rows (see
 > `harness-map-probes.md`).
 
+> #### ⛔ THE CAPS POPPED IN, PEAKED TOO BRIGHT, AND READ AS DRAWN MARKS
+>
+> Ray, on the crest-group streaks live: **"they just appear, almost immediately, and fade out; they should
+> fade IN and out"**, **"at their brightest it looks bad; make a light gray the brightest"**, and **"they
+> don't look near realistic and natural at all."** The fixes:
+> - **The fade:** a 12% attack became a 38% fade-in, a short hold and a fade-out, with smoothstep ends.
+> - **The colour:** the near-white `[240, 244, 246]` at 0.95 opacity became a light neutral grey
+>   `[196, 202, 206]` at 0.75.
+> - **The shape:** its hard full-opacity body became a soft falloff with no crisp outline. The trailing
+>   wash went fainter, dashes dissolve rather than cut, and the tips fade out.
+>
+> The goal is foam the eye barely registers until it looks.
 **Spawn.** Two jittered cell grids (`whitecap_cell` hex radii) hold at most one crest group per cell at a
 time.
 - **No lattice shows:** each grid is rotated off the screen axes and off the other
@@ -1221,29 +1233,38 @@ time.
   to fit (`fit`), never clipped at a cell line.
 
 **Shape.** Each streak, in its own axes (u along, v across, +v the leading edge):
-- **Body:** its half-width is `WHITECAP_WIDTH_RATIO` (0.12) of its half-length along a blunt body
-  (`1 − s⁴`), pointed only at the tips. Its centreline bows `WHITECAP_CURVE` (0.12) half-lengths: a gentle
+- **Body:** its half-width is `WHITECAP_WIDTH_RATIO` (0.16) of its half-length along a blunt body
+  (`1 − s⁴`). Its opacity falls off over the outer part of its length (`WHITECAP_TIP_SOFT`), so the tips
+  dissolve. Its centreline bows `WHITECAP_CURVE` (0.12) half-lengths: a gentle
   arc.
 - **Length:** `whitecap_length` × a per-group draw in [`WHITECAP_LENGTH_MIN`, `_MAX`] (0.4–1.4) × a
   per-streak draw in [`WHITECAP_SEGMENT_MIN`, 1].
 - **Crest group:** 1..`WHITECAP_GROUP_MAX` streaks stand end to end along one angle, `WHITECAP_GROUP_GAP`
   apart. Each breaks `WHITECAP_GROUP_PHASE_STEP` of a cycle after the one before, so the crest breaks
   along its line.
-- **Broken and ragged:** a 1D value noise along the crest (`WHITECAP_BREAK_*`) cuts it into dashes, and a
-  finer one (`WHITECAP_EDGE_*`) wobbles its width, so the outline is irregular rather than a clean lens.
-- **Opacity across it:** it ramps up from the trailing side, is FULL between `WHITECAP_BACK_FULL` and
-  `lead`, then drops to the leading edge. The trailing side is `WHITECAP_TRAIL_WIDTH` × wider (foam washing
-  behind the crest). The full body is load-bearing: every partly covered pixel is white over blue and
-  reads cyan.
+- **Broken and ragged:** a 1D value noise along the crest (`WHITECAP_BREAK_*`) thins it into dashes over
+  a WIDE ramp, so a dash dissolves into its gap rather than being cut. A finer one (`WHITECAP_EDGE_*`)
+  wobbles its width, so the outline is irregular rather than a clean lens.
+- **Opacity across it:** it peaks in a narrow band between `WHITECAP_BACK_FULL` and `lead` and falls off
+  smoothly both ways: up from the trailing side, down to the leading edge. There is no crisp outline even
+  at the peak.
+- **Trailing wash:** the trailing side is `WHITECAP_TRAIL_WIDTH` × wider and only
+  `WHITECAP_TRAIL_OPACITY` as opaque at its far edge, a faint wash behind the crest.
+- **Why soft edges are safe now:** the colour is a neutral grey laid on by opacity, so a soft edge reads
+  as thinner foam, not a tint. The cyan the crescents' soft rims once showed came from a tinted colour and
+  the grade order, both since fixed.
 
 **Lifecycle.** `fract(t·whitecap_rate + phase)`, per group (each streak lagged as above):
-- **Attack:** a fast attack to full opacity over `WHITECAP_ATTACK` (12%) of the cycle.
-- **Fade:** a slow fade over the rest. As a streak fades it STRETCHES (`WHITECAP_STRETCH`) and SPREADS
-  (`WHITECAP_SPREAD`), and `lead` slides from `WHITECAP_LEAD_FRESH` to `_SPENT`.
+- **Fade in:** over `WHITECAP_FADE_IN` (38%) of the cycle, a smoothstep, so it never pops.
+- **Hold:** briefly, for `WHITECAP_HOLD` (8%).
+- **Fade out:** over the rest, a smoothstep. As a streak fades out it STRETCHES (`WHITECAP_STRETCH`) and
+  SPREADS (`WHITECAP_SPREAD`), and `lead` slides from `WHITECAP_LEAD_FRESH` to `_SPENT`.
 - **Rate:** phases are per cell, so the sea has no global pulse.
 
-**Colour.** `mix(c, whitecap_color, opacity · whitecap_strength)`. The colour is laid over the water as
-COVERAGE and never tinted through `foam_color` or the water's hue.
+**Colour.** `mix(c, whitecap_color, opacity · whitecap_strength)`, a light neutral grey at 0.75 at its
+peak. The colour is laid over the water as COVERAGE after the grade, and never tinted through `foam_color`
+or the water's hue. At 0.75 over dark blue water the cap still reads a little blue (saturation ~0.1), which
+is the water through translucent foam rather than a tint.
 
 **Orientation is REGIONAL.** A group's angle comes from a very-low-frequency world VECTOR noise at its
 centre, plus a per-group jitter (`WHITECAP_ANGLE_JITTER`).
@@ -1308,12 +1329,12 @@ and the waterline cross-fade adds up to seven calls in its narrow band at a coas
 | `chop_strength` | 0.035 | peak luma offset of a bright / dark chop patch (luma units, 0..1). 0.06 read live as drifting clouds |
 | `chop_scale` | 0.5 | the coarse octave's feature size, in hex radii |
 | `chop_rate` | 0.4 | how fast the chop evolves — cells of its time axis per second. 0.8 read live as clouds changing too fast |
-| `whitecap_strength` | 0.95 | a cap's peak opacity over the water; 0 = none, bit-exact |
+| `whitecap_strength` | 0.75 | a cap's peak opacity over the water; 0 = none, bit-exact |
 | `whitecap_coverage` | 0.85 | 0..1 — a cell's chance to spawn a crest group each cycle, where the sea is rough |
 | `whitecap_cell` | 2.0 | the spawn grids' cell, in hex radii — the caps' density scale |
 | `whitecap_length` | 0.7 | a fresh streak's nominal length, in hex radii (× 0.4–1.4 per group; it stretches as it fades) |
 | `whitecap_rate` | 0.3 | lifecycles per second — a cap lives ~3.3 s |
-| `whitecap_color` | `[240, 244, 246]` | near-pure white, laid over the water by opacity |
+| `whitecap_color` | `[196, 202, 206]` | a light neutral grey, laid over the water by opacity after the grade |
 | `motion_min_radius` | 24 | px; below it the waves, chop and whitecaps are off |
 
 Fallbacks are the `WATER_SURFACE_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
@@ -1334,10 +1355,14 @@ chosen by eye at r ≈ 45, on `OCEAN_live` (r ≈ 35, Ray's 1.5×) and on `OCEAN
 - **Width 0.11 with a `1 − s²` taper and no trailing wash:** the streaks were hairlines that read as
   scratches or rain.
 - **`whitecap_coverage` 0.5 on a 2.4 r cell:** almost empty.
-- **Shipped:** the blunt `1 − s⁴` body, the trailing wash and 0.85 on 2.0 r read as broken, irregular
-  foam streaks, mostly dark sea between.
+- **The crest groups at white, 0.95, width 0.12 with a hard body** (the round before this): Ray, live —
+  pop-in, too bright, drawn marks (see the box above).
+- **Shipped:** the soft grey streaks at width 0.16, 0.75 opacity and the long fade read as faint, broken
+  foam, mostly dark sea between.
+  - **Judged against the rice read honestly:** each streak is still a tapered lens, so a close crop can
+    read as soft grains. At 2.0× they read as foam streaks, sparse and low-contrast.
 
-With them the open water moves **3.8 levels over two seconds**, a **2.2–2.8 levels/s** series.
+With them the open water moves **2.95 levels over two seconds**, a **1.77–2.05 levels/s** series.
 
 ## Water temperature grade
 

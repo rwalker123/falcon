@@ -1194,9 +1194,9 @@ const OCEAN_LIVE_GRID := Vector2i(31, 21)
 # …and at 2.0× — radius = cover-fit base × zoom_factor (MapView._update_layout_metrics), so 35 px at 1.5× puts
 # 2.0× at ~47 px: a grid that fits at r ≈ 47.
 const OCEAN_LIVE_2X_GRID := Vector2i(23, 16)
-# One cap's LIFE: crops at these fractions of one whitecap cycle — fresh, at the peak of its attack, mid-fade and
-# late in the fade (see WHITECAP_ATTACK in the shader).
-const OCEAN_CAP_LIFE_FRACTIONS := [0.0, 0.1, 0.35, 0.7]
+# One cap's LIFE: crops at these fractions of one whitecap cycle — five, so a group can be followed through its
+# fade-in, hold and fade-out (see WHITECAP_FADE_IN / _HOLD in the shader).
+const OCEAN_CAP_LIFE_FRACTIONS := [0.0, 0.2, 0.42, 0.65, 0.88]
 const OCEAN_CAP_LIFE_CROP_RADII := 3.0
 # THE WHITECAPS (five claims, on the cap MASK: open-ocean pixels at least OCEAN_WHITECAP_MIN_DL levels brighter
 # than the whitecap-off twin at the same phase — the chop and art cancel, so the mask is the caps alone).
@@ -1208,19 +1208,33 @@ const OCEAN_WHITECAP_COVERAGE_MAX := 0.05
 # (b) ELONGATION: each blob's aspect ratio, sqrt(λmax / λmin) of its pixel second moments (each λ taken with a
 # pixel's own 1/12 variance, so a one-pixel-wide line is not infinite), averaged over the blobs of at least
 # OCEAN_WHITECAP_MIN_BLOB_PX pixels (a smaller one has no shape to measure). A streak is several times longer than
-# wide; a round blob is ~1.
+# wide; a round blob is ~1. Measured on the soft streaks: shipped 3.19; an ISOTROPIC cap (width = length) 2.36, not
+# ~1, because the along-crest break-up and the dissolving tips still stretch its blobs. The bar sits between.
 const OCEAN_WHITECAP_MIN_BLOB_PX := 8
 const OCEAN_WHITECAP_PIXEL_VARIANCE := 1.0 / 12.0
 const OCEAN_WHITECAP_SEGMENT_VARIANCE_RATIO := 12.0      # a uniform segment of length L has variance L² / 12
-const OCEAN_WHITECAP_ASPECT_MIN := 2.5
-# (c) WHITE: the cap CORE — mask pixels at least OCEAN_WHITECAP_CORE_DL levels over the twin, i.e. where the cap
-# covers at least ~3/4 of the water (a fully opaque cap sits ~200 levels over it) — must be near-neutral (mean
-# HSV saturation ≤ OCEAN_WHITECAP_CORE_SAT_MAX) and far brighter than the water (mean luma ≥ the box's water luma
-# + OCEAN_WHITECAP_CORE_LUMA_ABOVE levels). Pale foam_color is (176, 194, 205): saturation 0.14, where the
-# shipped near-white is 0.02 — the core reads ~0.05 with the water still showing through its rim.
-const OCEAN_WHITECAP_CORE_DL := 140.0
-const OCEAN_WHITECAP_CORE_SAT_MAX := 0.08
-const OCEAN_WHITECAP_CORE_LUMA_ABOVE := 100.0
+const OCEAN_WHITECAP_ASPECT_MIN := 2.75
+# THE PEAK a cap reaches over this deep water: whitecap_strength 0.75 × (the grey's luma ~201 − the water's ~30)
+# ≈ 128 levels. The core and fade-in bars are fractions of it.
+# (c) NEUTRAL: the cap CORE — mask pixels at least OCEAN_WHITECAP_CORE_DL levels over the twin (~0.6 of the peak,
+# where the cap covers most of the water) — must be near-neutral (mean HSV saturation ≤
+# OCEAN_WHITECAP_CORE_SAT_MAX) and well above the water (mean luma ≥ the box's water luma +
+# OCEAN_WHITECAP_CORE_LUMA_ABOVE levels). A neutral grey at partial opacity over blue water still reads a little
+# blue (a 0.75 cover of (196, 202, 206) over deep water is ~0.09); the bar sits between that and a TINTED cap —
+# pale foam_color (176, 194, 205) at the same cover reads ~0.18, and a cap recoloured by the warm grade ~0.4.
+const OCEAN_WHITECAP_CORE_DL := 105.0
+const OCEAN_WHITECAP_CORE_SAT_MAX := 0.15
+const OCEAN_WHITECAP_CORE_LUMA_ABOVE := 70.0
+# (g) FADE-IN: the NEWBORN caps between two phases OCEAN_WHITECAP_FADE_STEP apart — blobs at the second phase none
+# of whose pixels was a cap at the first — and the fraction of them already reaching OCEAN_WHITECAP_FADE_BRIGHT_DL
+# (half the peak) anywhere. A cap that FADES IN is faint when first seen; one that pops in is bright at once.
+# Blobs, not pixels: a fading cap's stretch also adds new pixels at its tips, all faint, which would swamp a
+# per-pixel count and hide a pop-in. Pooled over OCEAN_WHITECAP_FADE_PHASES (seconds). 0.25 s is 7.5% of a 3.3 s
+# cycle: a 12% attack reaches ~0.7 of its peak there, the shipped 38% fade-in ~0.1.
+const OCEAN_WHITECAP_FADE_STEP := 0.25
+const OCEAN_WHITECAP_FADE_BRIGHT_DL := 64.0
+const OCEAN_WHITECAP_FADE_PHASES := [0.0, 0.55, 1.1, 1.65, 2.3, 2.85]
+const OCEAN_WHITECAP_FADE_BRIGHT_MAX := 0.1
 # (d) IN PLACE: the fraction of the caps at t still capped at t + OCEAN_WHITECAP_DT. A cap lives one cycle
 # (1 / whitecap_rate, 3.3 s shipped) where it spawned, so over OCEAN_WHITECAP_DT it keeps SOME of its pixels;
 # caps that jumped keep only chance (≈ the coverage, under 0.02); frozen caps keep nearly all.
@@ -2579,6 +2593,43 @@ func _assert_ocean_whitecaps() -> void:
 		var w: Array = windows.get(key, [Vector2.ZERO, 0])
 		windows[key] = [w[0] + axis, w[1] + 1]
 	var mean_aspect: float = aspect_sum / maxf(shapes.size(), 1)
+	# (g) Caps being born: new cap pixels between two close phases, and how many are already bright.
+	var born := 0
+	var born_bright := 0
+	var box_w: int = box.size.x
+	for phase: float in OCEAN_WHITECAP_FADE_PHASES:
+		var on_0: Image = await _ocean_capture({}, phase)
+		var off_0: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, phase)
+		var on_1: Image = await _ocean_capture({}, phase + OCEAN_WHITECAP_FADE_STEP)
+		var off_1: Image = await _ocean_capture(OCEAN_NO_WHITECAP_SURFACE, phase + OCEAN_WHITECAP_FADE_STEP)
+		if on_0 == null or off_0 == null or on_1 == null or off_1 == null:
+			return
+		var before: PackedByteArray = _whitecap_mask(on_0, off_0, box, OCEAN_WHITECAP_MIN_DL)
+		var after: PackedByteArray = _whitecap_mask(on_1, off_1, box, OCEAN_WHITECAP_MIN_DL)
+		var bright: PackedByteArray = _whitecap_mask(on_1, off_1, box, OCEAN_WHITECAP_FADE_BRIGHT_DL)
+		var labels: PackedInt32Array = _blob_labels(after, box_w, box.size.y)
+		var blob_old := {}      # label -> true once any of its pixels was already a cap
+		var blob_bright := {}   # label -> true once any of its pixels is bright
+		for i in range(labels.size()):
+			var label: int = labels[i]
+			if label == 0:
+				continue
+			if before[i] != 0:
+				blob_old[label] = true
+			if bright[i] != 0:
+				blob_bright[label] = true
+		var seen := {}
+		for i in range(labels.size()):
+			var label: int = labels[i]
+			if label == 0 or seen.has(label):
+				continue
+			seen[label] = true
+			if blob_old.has(label):
+				continue
+			born += 1
+			if blob_bright.has(label):
+				born_bright += 1
+	var fade_bright: float = float(born_bright) / maxf(born, 1)
 	var lengths := PackedFloat32Array()
 	for shape: Dictionary in shapes:
 		lengths.append(float(shape["length"]))
@@ -2598,8 +2649,10 @@ func _assert_ocean_whitecaps() -> void:
 	var local_r: float = local_sum / maxf(local_n, 1)
 	print("blend_probe: OCEAN whitecaps — (a) coverage %.4f (%d of %d px, band %.3f–%.3f)"
 		% [coverage, caps_a, total, OCEAN_WHITECAP_COVERAGE_MIN, OCEAN_WHITECAP_COVERAGE_MAX])
-	print("blend_probe: OCEAN whitecaps — (b) mean aspect %.2f over %d blobs of ≥ %d px (min %.1f)"
+	print("blend_probe: OCEAN whitecaps — (b) mean aspect %.2f over %d blobs of ≥ %d px (min %.2f)"
 		% [mean_aspect, shapes.size(), OCEAN_WHITECAP_MIN_BLOB_PX, OCEAN_WHITECAP_ASPECT_MIN])
+	print("blend_probe: OCEAN whitecaps — (g) fade-in: %.3f of %d newborn caps already reach %.0f levels after %.2f s (max %.2f)"
+		% [fade_bright, born, OCEAN_WHITECAP_FADE_BRIGHT_DL, OCEAN_WHITECAP_FADE_STEP, OCEAN_WHITECAP_FADE_BRIGHT_MAX])
 	print("blend_probe: OCEAN whitecaps — (f) length CV %.2f (mean %.1f px, min %.2f)"
 		% [length_cv, mean_len, OCEAN_WHITECAP_LENGTH_CV_MIN])
 	print("blend_probe: OCEAN whitecaps — (c) core %d px: saturation %.3f (max %.2f), luma %.1f vs water %.1f (≥ +%.0f)"
@@ -2616,14 +2669,20 @@ func _assert_ocean_whitecaps() -> void:
 		_fail("OCEAN: whitecaps CARPET the sea — %.4f of the open ocean capped (want ≤ %.3f)"
 			% [coverage, OCEAN_WHITECAP_COVERAGE_MAX])
 	if mean_aspect < OCEAN_WHITECAP_ASPECT_MIN:
-		_fail("OCEAN: whitecaps are BLOBS, not streaks — mean aspect %.2f (want ≥ %.1f)"
+		_fail("OCEAN: whitecaps are BLOBS, not streaks — mean aspect %.2f (want ≥ %.2f)"
 			% [mean_aspect, OCEAN_WHITECAP_ASPECT_MIN])
+	if born == 0:
+		_fail("OCEAN: no whitecap was born between phases %.2f s apart — the fade-in claim has no subject"
+			% OCEAN_WHITECAP_FADE_STEP)
+	elif fade_bright > OCEAN_WHITECAP_FADE_BRIGHT_MAX:
+		_fail("OCEAN: whitecaps POP IN — %.3f of newborn caps already reach %.0f levels after %.2f s (want ≤ %.2f)"
+			% [fade_bright, OCEAN_WHITECAP_FADE_BRIGHT_DL, OCEAN_WHITECAP_FADE_STEP, OCEAN_WHITECAP_FADE_BRIGHT_MAX])
 	if length_cv < OCEAN_WHITECAP_LENGTH_CV_MIN:
 		_fail("OCEAN: whitecaps are ONE SIZE (rice) — length CV %.2f (want ≥ %.2f)" % [length_cv, OCEAN_WHITECAP_LENGTH_CV_MIN])
 	if core_n == 0:
 		_fail("OCEAN: no whitecap reaches a CORE (%.0f levels over the water)" % OCEAN_WHITECAP_CORE_DL)
 	elif core_sat > OCEAN_WHITECAP_CORE_SAT_MAX:
-		_fail("OCEAN: whitecap cores are TINTED, not white — saturation %.3f (want ≤ %.2f)"
+		_fail("OCEAN: whitecap cores are TINTED, not neutral — saturation %.3f (want ≤ %.2f)"
 			% [core_sat, OCEAN_WHITECAP_CORE_SAT_MAX])
 	elif core_luma < water_luma + OCEAN_WHITECAP_CORE_LUMA_ABOVE:
 		_fail("OCEAN: whitecap cores are DIM — luma %.1f over water %.1f (want ≥ +%.0f)"
@@ -2654,6 +2713,31 @@ func _whitecap_mask(on: Image, off: Image, box: Rect2i, min_dl: float) -> Packed
 			var d: float = on.get_pixel(px, py).get_luminance() - off.get_pixel(px, py).get_luminance()
 			mask[y * box.size.x + x] = 1 if d >= bar else 0
 	return mask
+
+
+func _blob_labels(mask: PackedByteArray, w: int, h: int) -> PackedInt32Array:
+	## Each set pixel of `mask` (w × h, row-major) labelled with its 4-connected blob, from 1; 0 elsewhere.
+	var labels := PackedInt32Array()
+	labels.resize(mask.size())
+	var next := 0
+	var stack := PackedInt32Array()
+	for start in range(mask.size()):
+		if mask[start] == 0 or labels[start] != 0:
+			continue
+		next += 1
+		labels[start] = next
+		stack.append(start)
+		while not stack.is_empty():
+			var i: int = stack[stack.size() - 1]
+			stack.remove_at(stack.size() - 1)
+			var x: int = i % w
+			var y: int = i / w
+			for nb: int in [i - 1 if x > 0 else -1, i + 1 if x < w - 1 else -1,
+					i - w if y > 0 else -1, i + w if y < h - 1 else -1]:
+				if nb >= 0 and mask[nb] != 0 and labels[nb] == 0:
+					labels[nb] = next
+					stack.append(nb)
+	return labels
 
 
 func _blob_shapes(mask: PackedByteArray, w: int, h: int) -> Array:

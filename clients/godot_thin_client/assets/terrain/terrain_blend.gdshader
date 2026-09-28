@@ -693,7 +693,7 @@ const float WHITECAP_CELL_MARGIN = 0.15;
 // of its half-length along a blunt body (1 − s⁴, so a thin streak keeps its width to near its tips), its centreline bowed WHITECAP_CURVE half-lengths — a
 // gentle arc. Its length is whitecap_length × a per-group draw in [WHITECAP_LENGTH_MIN, _MAX] × a per-streak
 // draw in [WHITECAP_SEGMENT_MIN, 1], so lengths vary widely rather than every cap being one grain size.
-const float WHITECAP_WIDTH_RATIO = 0.12;
+const float WHITECAP_WIDTH_RATIO = 0.16;
 const float WHITECAP_CURVE = 0.12;
 const float WHITECAP_LENGTH_MIN = 0.4;
 const float WHITECAP_LENGTH_MAX = 1.4;
@@ -704,29 +704,36 @@ const float WHITECAP_SEGMENT_MIN = 0.6;
 const int WHITECAP_GROUP_MAX = 3;
 const float WHITECAP_GROUP_GAP = 0.25;
 const float WHITECAP_GROUP_PHASE_STEP = 0.05;
-// BROKEN, RAGGED FOAM: a 1D value noise along the streak's axis (cell WHITECAP_BREAK_CELL hex radii) cuts it into
-// dashes — below WHITECAP_BREAK_LO it is a gap, above _HI solid — and a finer one (WHITECAP_EDGE_CELL) wobbles
-// its half-width by ± WHITECAP_EDGE_WOBBLE, so its outline is irregular rather than a clean lens.
+// BROKEN, RAGGED FOAM: a 1D value noise along the streak's axis (cell WHITECAP_BREAK_CELL hex radii) thins it into
+// dashes — below WHITECAP_BREAK_LO it is a gap, above _HI full — over a WIDE ramp, so a dash DISSOLVES into its
+// gap rather than being cut; a finer one (WHITECAP_EDGE_CELL) wobbles its half-width by ± WHITECAP_EDGE_WOBBLE,
+// so its outline is irregular rather than a clean lens.
 const float WHITECAP_BREAK_CELL = 0.3;
-const float WHITECAP_BREAK_LO = 0.22;
-const float WHITECAP_BREAK_HI = 0.34;
+const float WHITECAP_BREAK_LO = 0.15;
+const float WHITECAP_BREAK_HI = 0.5;
 const float WHITECAP_EDGE_CELL = 0.1;
 const float WHITECAP_EDGE_WOBBLE = 0.45;
 const float WHITECAP_NOISE_SEED_RANGE = 997.0;               // the 1D noises' per-group seed spans this many cells
 const float WHITECAP_NOISE_SALT = 53.0;
-// The opacity is FULL between WHITECAP_BACK_FULL and `lead` — a solid white body, since every partially covered
-// pixel is white mixed with blue water and reads cyan — ramps up from the trailing side (−1) to it, and drops from
-// `lead` to the leading edge (+1). A fresh streak's lead sits near the front, so its crest is a sharp edge; a
-// spent one's has slid back, so the drop softens and spreads.
-const float WHITECAP_BACK_FULL = -0.4;
-const float WHITECAP_LEAD_FRESH = 0.55;
-const float WHITECAP_LEAD_SPENT = -0.4;
-// The TRAILING side (−v) is WHITECAP_TRAIL_WIDTH × wider than the leading side: foam spilling behind a crest, so a
-// cap reads as a crest with its wash rather than a scratch of constant width.
+// ACROSS the streak the opacity peaks between WHITECAP_BACK_FULL and `lead` and falls off smoothly to both sides —
+// up from the trailing side (−1), down to the leading edge (+1) — so there is no crisp outline even at the peak.
+// A fresh streak's lead sits a little forward, a spent one's has slid back, so the fall-off spreads as it fades.
+// (The cap is a neutral GREY laid on by opacity — see whitecap_color — so a soft edge reads as thinner foam, not
+// as a tint; the cyan the soft rims once showed came from a tinted colour and the grade, both since removed.)
+const float WHITECAP_BACK_FULL = -0.15;
+const float WHITECAP_LEAD_FRESH = 0.15;
+const float WHITECAP_LEAD_SPENT = -0.3;
+// The TRAILING side (−v) is WHITECAP_TRAIL_WIDTH × wider than the leading side and only WHITECAP_TRAIL_OPACITY as
+// opaque at its far edge: a faint wash of foam behind the crest rather than a second body.
 const float WHITECAP_TRAIL_WIDTH = 1.8;
-// THE LIFECYCLE: fract(t·rate + phase), per group. A fast attack to full white over WHITECAP_ATTACK of the cycle,
-// then a slow fade over the rest while the streak STRETCHES along its length and SPREADS across it.
-const float WHITECAP_ATTACK = 0.12;
+const float WHITECAP_TRAIL_OPACITY = 0.45;
+// THE TIPS dissolve: the opacity falls off over the outer (1 − WHITECAP_TIP_SOFT) of the half-length.
+const float WHITECAP_TIP_SOFT = 0.45;
+// THE LIFECYCLE: fract(t·rate + phase), per group. The cap FADES IN over WHITECAP_FADE_IN of the cycle, holds for
+// WHITECAP_HOLD, then fades out over the rest while the streak STRETCHES along its length and SPREADS across it —
+// smoothstep ramps at both ends, so it never pops. (A 12% attack read live as caps that "just appear".)
+const float WHITECAP_FADE_IN = 0.38;
+const float WHITECAP_HOLD = 0.08;
 const float WHITECAP_STRETCH = 0.6;                           // extra length at the end of the fade, × fresh length
 const float WHITECAP_SPREAD = 0.8;                            // extra width at the end of the fade, × fresh width
 // ORIENTATION IS REGIONAL: the angle of a very-low-frequency world VECTOR noise (two value noises, as the atan of
@@ -1010,8 +1017,9 @@ float whitecap_grid(vec2 p, float t, float rot, vec2 off, float salt) {
 				// Each streak breaks a little after the one before, and lives out the rest of the cycle.
 				float lag = float(k) * WHITECAP_GROUP_PHASE_STEP;
 				float fk = clamp((f - lag) / (1.0 - lag), 0.0, 1.0);
-				float fade = clamp((fk - WHITECAP_ATTACK) / (1.0 - WHITECAP_ATTACK), 0.0, 1.0);
-				float intensity = smoothstep(0.0, WHITECAP_ATTACK, fk) * (1.0 - smoothstep(WHITECAP_ATTACK, 1.0, fk));
+				float out_start = WHITECAP_FADE_IN + WHITECAP_HOLD;
+				float fade = clamp((fk - out_start) / (1.0 - out_start), 0.0, 1.0);
+				float intensity = smoothstep(0.0, WHITECAP_FADE_IN, fk) * (1.0 - smoothstep(out_start, 1.0, fk));
 				float half_len = seg_half * seg_len[k] * (1.0 + WHITECAP_STRETCH * fade);
 				float s = (uv.x - (float(k) - 0.5 * float(n - 1)) * spacing) / half_len;
 				if (abs(s) >= 1.0) {
@@ -1024,7 +1032,9 @@ float whitecap_grid(vec2 p, float t, float rot, vec2 off, float salt) {
 				float x = v / max(half_w * (v < 0.0 ? WHITECAP_TRAIL_WIDTH : 1.0), BLEND_SOFT_MIN);
 				float lead = mix(WHITECAP_LEAD_FRESH, WHITECAP_LEAD_SPENT, fade);
 				float across = smoothstep(-1.0, min(WHITECAP_BACK_FULL, lead), x) * (1.0 - smoothstep(lead, 1.0, x));
-				best = max(best, across * intensity * broken);
+				float wash = mix(1.0, WHITECAP_TRAIL_OPACITY, 1.0 - smoothstep(-1.0, 0.0, x));
+				float tips = 1.0 - smoothstep(WHITECAP_TIP_SOFT, 1.0, abs(s));
+				best = max(best, across * wash * tips * intensity * broken);
 			}
 		}
 	}

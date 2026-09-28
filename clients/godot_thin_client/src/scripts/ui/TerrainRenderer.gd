@@ -118,15 +118,15 @@ const WATER_SURFACE_MAX_CHOP_STRENGTH := 0.2
 const WATER_SURFACE_MIN_CHOP_SCALE := 0.1               # hex radii — finer is per-pixel sparkle, not chop
 const WATER_SURFACE_MAX_CHOP_SCALE := 2.0               # hex radii — broader starts to read as map-scale pattern
 const WATER_SURFACE_MAX_CHOP_RATE := 5.0
-# THE WHITECAPS — small breaking-wave streaks spawned per cell of two jittered grids: each flashes white and fades
-# in place, clustered where the chop is rough, oriented by region.
-# They carry the visible motion: the chop alone, at the strength that stopped it reading as clouds, is faint.
-const WATER_SURFACE_DEFAULT_WHITECAP_STRENGTH := 0.9    # a cap's peak opacity over the water
-const WATER_SURFACE_DEFAULT_WHITECAP_COVERAGE := 0.35   # 0..1: a cell's chance to spawn a cap, where the sea is rough
-const WATER_SURFACE_DEFAULT_WHITECAP_CELL := 0.6        # the spawn grid's cell, in HEX RADII (density)
-const WATER_SURFACE_DEFAULT_WHITECAP_LENGTH := 0.35     # a fresh cap's length, in HEX RADII
-const WATER_SURFACE_DEFAULT_WHITECAP_RATE := 0.3        # lifecycles per second — a cap lives ~3 s
-const WATER_SURFACE_DEFAULT_WHITECAP_COLOR := Vector3(240.0, 244.0, 246.0) / 255.0  # near-pure white
+# THE WHITECAPS — crest groups of thin, broken foam streaks spawned per cell of two jittered grids: each fades in,
+# holds and fades out in place, clustered where the chop is rough, oriented by region. A light neutral GREY at its
+# peak, laid on by opacity: foam the eye barely registers until it looks, not a bright mark.
+const WATER_SURFACE_DEFAULT_WHITECAP_STRENGTH := 0.75   # a cap's peak opacity over the water
+const WATER_SURFACE_DEFAULT_WHITECAP_COVERAGE := 0.85   # 0..1: a cell's chance to spawn a group, where the sea is rough
+const WATER_SURFACE_DEFAULT_WHITECAP_CELL := 2.0        # the spawn grid's cell, in HEX RADII (density)
+const WATER_SURFACE_DEFAULT_WHITECAP_LENGTH := 0.7      # a fresh streak's nominal length, in HEX RADII
+const WATER_SURFACE_DEFAULT_WHITECAP_RATE := 0.3        # lifecycles per second — a cap lives ~3.3 s
+const WATER_SURFACE_DEFAULT_WHITECAP_COLOR := Vector3(196.0, 202.0, 206.0) / 255.0  # light neutral grey
 const WATER_SURFACE_MAX_WHITECAP_STRENGTH := 1.0
 const WATER_SURFACE_MAX_WHITECAP_COVERAGE := 1.0
 const WATER_SURFACE_MIN_WHITECAP_CELL := 0.2            # hex radii — denser reads as a carpet of foam
