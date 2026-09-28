@@ -31,13 +31,13 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
-## `format_assign_labor` is `static`, so the Cutting-kit state reads the line the commit would send
+## `format_assign_labor` is `static`, so the deposit-kit states read the line the commit would send
 ## without standing a `Main` up.
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 130
+const EXPECTED_CHECKPOINTS := 137
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -1259,23 +1259,51 @@ func run(harness) -> void:
 		not h._hud.forestry_assign_controls.visible
 			and not h._hud.extraction_assign_controls.visible)
 
-	await _cutting_kit_state()
+	await _deposit_kit_states()
 
-# ---- THE CUTTING KIT (issue #663) -------------------------------------------------------------
+# ---- THE TAKE KITS (issue #663) ---------------------------------------------------------------
 #
-# The `extract` job gained a real kit — `deposit_tools`, the Cutting kit: an axe lifting `deposit_take`
-# on felling and coppice, wedges lifting it on the quarry — beside `none`. **APPENDED LAST**, so no
-# frame above moves; it pushes a roster of its own and hands the previous one back.
+# The `extract` job carries two real kits beside `none` — the Felling kit (an axe) and the Quarrying
+# kit (wedges), ONE ITEM EACH — and the default is not the job's but the WORKING's own: every
+# `deposits` row publishes `default_kit_id`, `felling` on wood and `quarrying` on stone. **APPENDED
+# LAST**, so no frame above moves; it pushes a roster of its own and hands the previous one back.
 
-## The id and face the sim ships (`equipment.json` → `kits[].id` / `display_name`).
-const CUTTING_KIT_ID := "deposit_tools"
-const CUTTING_KIT_NAME := "Cutting kit"
-const CUTTING_KIT_ITEMS := ["axe", "wedges"]
+## The ids and faces the sim ships (`equipment.json` → `kits[].id` / `display_name` / `uses`).
+const FELLING_KIT_ID := "felling"
+const FELLING_KIT_NAME := "Felling kit"
+const FELLING_KIT_ITEMS := ["axe"]
+const QUARRYING_KIT_ID := "quarrying"
+const QUARRYING_KIT_NAME := "Quarrying kit"
+const QUARRYING_KIT_ITEMS := ["wedges"]
 
-## The shared roster plus the Cutting kit, with `none` listing `extract` — the shipped `none` lists
+## The picker's three entries in the wire's order: the two take kits, then `none` authored last.
+const DEPOSIT_KIT_PICKER_ENTRIES := 3
+## …and where each one sits in it.
+const FELLING_KIT_INDEX := 0
+const QUARRYING_KIT_INDEX := 1
+const NONE_KIT_INDEX := 2
+
+## One extract kit's roster entry, carrying the bare tier on every axis it does not touch — an axe and
+## a wedge move `deposit_take`, which no roster axis on this wire states.
+func _extract_kit_entry(kit_id: String, display_name: String, items: Array) -> Dictionary:
+	return {
+		KitRoster.KIT_ID_KEY: kit_id,
+		KitRoster.KIT_DISPLAY_NAME_KEY: display_name,
+		KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_EXTRACT],
+		"attack": BandFx.KIT_ATTACK_BARE,
+		"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_BARE,
+		"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
+		"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_BARE,
+		"expedition_sight_range": BandFx.KIT_EXPEDITION_SIGHT_BARE,
+		"build_work_per_worker": BandFx.KIT_BUILD_WORK_NEUTRAL,
+		"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
+		KitRoster.KIT_ITEM_IDS_KEY: items,
+	}
+
+## The shared roster plus the two take kits, with `none` listing `extract` — the shipped `none` lists
 ## every job, and the shared fixture's copy predates this one. Built LOCALLY rather than in
 ## `BandFx.kit_roster_fixture()` so no deposit sheet rendered earlier in the walk grows a kit row.
-func _cutting_kit_roster() -> Array:
+func _deposit_kit_roster() -> Array:
 	var roster: Array = []
 	for entry_variant in BandFx.kit_roster_fixture():
 		var entry: Dictionary = (entry_variant as Dictionary).duplicate(true)
@@ -1283,36 +1311,42 @@ func _cutting_kit_roster() -> Array:
 			var jobs: Array = entry.get(KitRoster.KIT_JOBS_KEY, [])
 			jobs.append(KitRoster.JOB_EXTRACT)
 			entry[KitRoster.KIT_JOBS_KEY] = jobs
-			# `none` is authored LAST (the wire's own order), so the Cutting kit goes in just before it.
-			roster.append({
-				KitRoster.KIT_ID_KEY: CUTTING_KIT_ID,
-				KitRoster.KIT_DISPLAY_NAME_KEY: CUTTING_KIT_NAME,
-				KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_EXTRACT],
-				"attack": BandFx.KIT_ATTACK_BARE,
-				"hunt_carry_per_worker_biomass": BandFx.KIT_HUNT_CARRY_BARE,
-				"forage_carry_per_worker_biomass": BandFx.KIT_FORAGE_CARRY_BARE,
-				"scout_vantage_range": BandFx.KIT_SCOUT_VANTAGE_BARE,
-				"expedition_sight_range": BandFx.KIT_EXPEDITION_SIGHT_BARE,
-				"build_work_per_worker": BandFx.KIT_BUILD_WORK_NEUTRAL,
-				"build_work_branch": KitRoster.BUILD_BRANCH_NONE,
-				KitRoster.KIT_ITEM_IDS_KEY: CUTTING_KIT_ITEMS,
-			})
+			# `none` is authored LAST (the wire's own order), so the take kits go in just before it.
+			roster.append(_extract_kit_entry(FELLING_KIT_ID, FELLING_KIT_NAME, FELLING_KIT_ITEMS))
+			roster.append(_extract_kit_entry(QUARRYING_KIT_ID, QUARRYING_KIT_NAME,
+				QUARRYING_KIT_ITEMS))
 		roster.append(entry)
 	return roster
 
-## ⛔ **STATE workings-forestry-kit — the foresters' sheet offers the Cutting kit, and the pick rides
-## the command.** Three claims no frame can make on its own: the picker lists exactly the two extract
-## kits in the wire's order, it marks NO entry `(default)` (the wire names no extract default, so a mark
-## would be a client-side guess), and the commit's line carries `kit <id>` for whichever was composed —
-## asserted for BOTH kits, since a builder that appended a fixed id satisfies either one alone.
-func _cutting_kit_state() -> void:
+## The picker's entry texts, in order.
+func _picker_items(picker: OptionButton) -> Array[String]:
+	var items: Array[String] = []
+	for i in picker.item_count:
+		items.append(picker.get_item_text(i))
+	return items
+
+## The entries wearing the `(default)` mark — exactly one, and it must be the working's own kit.
+func _default_marked(items: Array[String]) -> Array[String]:
+	var marked: Array[String] = []
+	for text in items:
+		if text.ends_with(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX):
+			marked.append(text)
+	return marked
+
+## ⛔ **STATES workings-forestry-kit / workings-extraction-kit — each sheet opens on, and marks
+## `(default)`, the kit its OWN working publishes, and the pick rides the command.** A wood and a rock
+## on one hex are the pair that makes the claim about the WORKING rather than the job: a job-wide
+## default would mark the same entry on both. The wood's commit carries `kit felling`, and a sheet
+## composed bare-handed carries `kit none` — the one pick an omitted token would get wrong, since an
+## absent token means the working's derived kit to the sim.
+func _deposit_kit_states() -> void:
 	var labor = h._hud._band_labor
 	var prev_kits: Array = labor.kits()
 	var prev_defaults := [
 		labor.default_kit_id(KitRoster.JOB_HUNT), labor.default_kit_id(KitRoster.JOB_FORAGE),
 		labor.default_kit_id(KitRoster.JOB_SCOUT), labor.default_kit_id(KitRoster.JOB_WARRIOR),
 		labor.default_kit_id(KitRoster.JOB_EXPEDITION)]
-	h._hud.update_kit_roster(_cutting_kit_roster(), BandFx.KIT_DEFAULT_HUNT,
+	h._hud.update_kit_roster(_deposit_kit_roster(), BandFx.KIT_DEFAULT_HUNT,
 		BandFx.KIT_DEFAULT_FORAGE, BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
 		BandFx.KIT_DEFAULT_EXPEDITION)
 	h._hud.update_band_alerts([_band_at_the_working()])
@@ -1333,35 +1367,74 @@ func _cutting_kit_state() -> void:
 		h._assert_hud("the foresters' sheet mounts a KIT picker for the extract job",
 			picker != null)
 		if picker != null:
-			var items: Array[String] = []
-			for i in picker.item_count:
-				items.append(picker.get_item_text(i))
-			h._assert_hud("…listing the Cutting kit and No kit, in the wire's order (%s)" % [items],
-				items.size() == 2 and items[0].begins_with(CUTTING_KIT_NAME)
-					and items[1].begins_with(String((BandFx.kit_roster_fixture().back()
+			var items := _picker_items(picker)
+			h._assert_hud(("…listing the Felling kit, the Quarrying kit and No kit, in the wire's "
+					+ "order (%s)") % [items],
+				items.size() == DEPOSIT_KIT_PICKER_ENTRIES
+					and items[FELLING_KIT_INDEX].begins_with(FELLING_KIT_NAME)
+					and items[QUARRYING_KIT_INDEX].begins_with(QUARRYING_KIT_NAME)
+					and items[NONE_KIT_INDEX].begins_with(String((BandFx.kit_roster_fixture().back()
 						as Dictionary).get(KitRoster.KIT_DISPLAY_NAME_KEY, ""))))
-			h._assert_hud("…marking NO entry `(default)`, the wire naming no extract default (%s)"
-					% [items],
-				not items.any(func(t: String) -> bool:
-					return t.ends_with(HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX)))
-			h._assert_hud("…and opening on the Cutting kit, the roster's first extract kit (%s)"
-					% picker.text,
-				picker.selected == 0 and picker.text.contains(CUTTING_KIT_NAME))
+			h._assert_hud("…marking the WOOD's own kit `(default)` and nothing else (%s)" % [items],
+				_default_marked(items) == [FELLING_KIT_NAME
+					+ HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX])
+			h._assert_hud("…and opening on it (%s)" % picker.text,
+				picker.selected == FELLING_KIT_INDEX and picker.text.contains(FELLING_KIT_NAME))
 		await h._save("workings_forestry_kit")
-		h._assert_hud("…and the commit carries `kit %s`" % CUTTING_KIT_ID,
-			(await _committed_line(sheet)).ends_with(" kit %s" % CUTTING_KIT_ID))
+		h._assert_hud("…and the commit carries `kit %s`" % FELLING_KIT_ID,
+			(await _committed_line(sheet)).ends_with(" kit %s" % FELLING_KIT_ID))
 		# The picker's own `on_pick` writes this model and re-renders; the claim here is that the
 		# COMMIT carries whatever the sheet composed, so the model is written and the sheet re-opened.
+		# ⛔ **OPEN FIRST, THEN WRITE, THEN RE-OPEN.** The commit closed the sheet, and a close clears
+		# the deposit source — so the next open IS a source change, which drops any kit composed
+		# ahead of it (the rule the rock half below exists to test). Re-opening the SAME key over an
+		# open sheet is not a source change, so the pick survives it.
+		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
+		await h._settle()
 		h._hud._compose.set_deposit_kit_id(BandFx.KIT_ID_NONE)
 		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
 		await h._settle()
 		sheet = h._hud._drawercompose._compose_sheet
 		picker = _first_meta(sheet, KitRoster.KIT_PICKER_META) as OptionButton
 		h._assert_hud("…and a sheet composed bare-handed shows No kit on its face",
-			picker != null and picker.selected == 1)
+			picker != null and picker.selected == NONE_KIT_INDEX)
 		h._assert_hud("…and its commit carries `kit %s` rather than dropping the pick"
 				% BandFx.KIT_ID_NONE,
 			(await _committed_line(sheet)).ends_with(" kit %s" % BandFx.KIT_ID_NONE))
+		# **THE WOOD'S SHEET IS LEFT OPEN, holding `felling` composed**, for the rock half below.
+		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
+		await h._settle()
+	# **THE ROCK BESIDE IT, OPENED STRAIGHT OVER THE WOOD'S OPEN SHEET.** No close between them, so the
+	# composed `felling` is dropped by the SOURCE changing and by nothing else — every render writes the
+	# resolved id back, so a kit left standing would read as the player's own choice and outrank the
+	# rock's `quarrying`. The precondition is what keeps that a claim: without `felling` composed here,
+	# "the rock opens on quarrying" passes on a sheet that never had anything to drop.
+	h._assert_hud("the wood's sheet leaves `felling` composed as the rock is opened (%s)"
+			% h._hud._compose.deposit_kit_id(),
+		h._hud._compose.deposit_kit_id() == FELLING_KIT_ID)
+	var diggers := _assign_button(h._hud.extraction_assign_controls,
+		HudDepositVocab.BRANCH_EXTRACTION)
+	h._assert_hud("the kit state has a diggers' button to open", diggers != null)
+	if diggers != null:
+		diggers.pressed.emit()
+		await h._settle()
+		h._hud._compose.set_deposit_count(SHEET_CREW)
+		h._hud._drawercompose.open_deposit_compose(_stone_working(STONE_TAKE))
+		await h._settle()
+		var sheet: Node = h._hud._drawercompose._compose_sheet
+		var picker := _first_meta(sheet, KitRoster.KIT_PICKER_META) as OptionButton
+		h._assert_hud("the diggers' sheet mounts the same KIT picker", picker != null)
+		if picker != null:
+			var items := _picker_items(picker)
+			h._assert_hud("…marking the ROCK's own kit `(default)` and nothing else (%s)" % [items],
+				_default_marked(items) == [QUARRYING_KIT_NAME
+					+ HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX])
+			h._assert_hud("…and opening on it, the wood's `felling` pick dropped with the source (%s)"
+					% picker.text,
+				picker.selected == QUARRYING_KIT_INDEX and picker.text.contains(QUARRYING_KIT_NAME))
+		await h._save("workings_extraction_kit")
+		h._assert_hud("…and the commit carries `kit %s`" % QUARRYING_KIT_ID,
+			(await _committed_line(sheet)).ends_with(" kit %s" % QUARRYING_KIT_ID))
 		h._hud._drawercompose.close_compose_sheet()
 		await h._settle()
 	h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
@@ -1716,6 +1789,9 @@ func _wood_working(actual_take: float) -> Dictionary:
 		"build_kit_id": "",
 		"upkeep_kit_id": "",
 		"upkeep_kit_named": false,
+		# The take kit this working's MATERIAL wants — `dict/deposits.rs`' `default_kit_id`, published
+		# on every wood row whatever rung it stands on.
+		"default_kit_id": FELLING_KIT_ID,
 		"rung_floor_fraction": FORESTRY_RUNG_FLOOR,
 		"per_worker_biomass": FELLING_PER_WORKER,
 		"regrowth_samples": _deposit_regrowth_samples(WOOD_CAPACITY, WOOD_REGROWTH),
@@ -1764,6 +1840,7 @@ func _stone_working(actual_take: float) -> Dictionary:
 		"build_kit_id": "",
 		"upkeep_kit_id": "",
 		"upkeep_kit_named": false,
+		"default_kit_id": QUARRYING_KIT_ID,
 		"rung_floor_fraction": GATHERING_RUNG_FLOOR,
 		"per_worker_biomass": GATHERING_PER_WORKER,
 		# **ALL ZEROS, AND THAT IS A READING RATHER THAN AN ABSENCE.** Rock's rate is zero, so every

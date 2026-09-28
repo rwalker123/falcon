@@ -2993,11 +2993,10 @@ byte-identical**, that frame the only mover.
 
 ## The `workings` chapter, reworked to the three surfaces (issue #650)
 
-**Twenty frames and one hundred and thirty checkpoints**, `EXPECTED_CHECKPOINTS` **130** —
-counted off a clean run's own `PASS`/`saved` lines between the chapter's first claim and the
-postlude (the declared 118 had drifted to a real 121 before the Cutting-kit state added nine) — the
-other measure being to raise the const to an impossible number and read `reached` back, as this file's
-own rule says. **The const in `chapters/workings.gd` is the authority and this paragraph is the
+**Twenty-one frames and one hundred and thirty-seven checkpoints**, `EXPECTED_CHECKPOINTS` **137**
+— RE-MEASURED by raising the const to an impossible number and reading `reached` back, as this
+file's own rule says (the declared 118 had drifted to a real 121 before the first take-kit state
+landed). **The const in `chapters/workings.gd` is the authority and this paragraph is the
 description**: a figure here that disagrees with it is this file being stale, never a licence to lower
 the const to match. The chapter has been re-measured that way repeatedly — a declared 43 against a
 real 47, then a declared 91 against a real 95 — which is why a DELTA is never applied to the figure
@@ -3007,7 +3006,7 @@ written down: a delta on a stale count sets a floor the chapter can fall through
 **FOUR FRAMES WERE RETIRED WITH THE `Workings ▸` POPUP** — `workings_two_seams`, `workings_over_cut`,
 `workings_runway` and `workings_idle` — and their claims did not go with them: they are re-made
 against the tile card's rows, the two compose sheets and the ladder's producer, which is where the
-branch says those things now. `workings_unopened` kept its name and its subject. **The chapter's whole frame set is nineteen** —
+branch says those things now. `workings_unopened` kept its name and its subject. **The chapter's whole frame set is twenty-one** —
 `workings_tile_card` / `workings_payoff_rows` / `workings_forestry_sheet` /
 `workings_extraction_sheet` / `workings_unopened`, the two ORDER frames
 (`workings_road_last` / `workings_road_remembered`), `workings_worked_buttons` and
@@ -3015,17 +3014,30 @@ branch says those things now. `workings_unopened` kept its name and its subject.
 (`SourceForecast.FLOOR_PRESETS`, one frame per preset) with `workings_floor_held` and
 `workings_floor_stripped` beside them, `workings_fresh_runway`, `workings_quarry_reach`,
 `workings_out_of_range`, the pair `workings_tile_crews` / `workings_tile_crews_other_band`, and
-`workings_forestry_kit` last (issue #663).
+the take-kit pair `workings_forestry_kit` / `workings_extraction_kit` last (issue #663).
 
-**`workings_forestry_kit` PUSHES A ROSTER OF ITS OWN AND HANDS THE PREVIOUS ONE BACK.** The shared
+**THE TAKE-KIT PAIR PUSHES A ROSTER OF ITS OWN AND HANDS THE PREVIOUS ONE BACK.** The shared
 `BandFx.kit_roster_fixture()` carries no `extract` kit and its `none` does not list the job, so every
-deposit sheet earlier in the walk renders with no kit row; the state builds the Cutting kit plus an
-extract-listing `none` locally, which keeps those frames where they were. Its claims are the picker's
-two entries in wire order, NO `(default)` mark (the wire names no extract default), and the REAL
-commit's line carrying `kit <id>` for BOTH kits — a builder that appended a fixed id satisfies either
-one alone. The pick itself is written through `ComposeState.set_deposit_kit_id` and the sheet
-re-opened, since the claim is about what the commit carries rather than about the popup; the pending
-entry each press writes is rolled back through `HudLayer.drop_pending_assign`.
+deposit sheet earlier in the walk renders with no kit row; the states build the Felling and Quarrying
+kits plus an extract-listing `none` locally, which keeps those frames where they were. `_wood_working`
+/ `_stone_working` publish `default_kit_id` (`felling` / `quarrying`) as `dict/deposits.rs` does.
+
+- **A wood and a rock on ONE hex are the claim**: each sheet marks exactly ONE entry `(default)` and
+  it is its OWN working's kit — a job-wide default would mark the same entry on both. Asserted as the
+  whole set of marked entries, so a mark on two rows fails too.
+- **The commit's line is asserted for `kit felling` and for `kit none`** — the second being the one
+  pick an omitted token would get wrong, an absent token meaning the working's derived kit.
+- ⛔ **THE ROCK IS OPENED STRAIGHT OVER THE WOOD'S OPEN SHEET, with `felling` composed** — asserted as
+  a precondition. A commit CLOSES the sheet and a close clears the deposit source, so a rock opened
+  after a close would drop the pick for that reason and the claim would say nothing about the
+  source-change reset. The same fact is why the `none` pick is written AFTER the sheet re-opens: a
+  kit written before the open is dropped by the open.
+- The pick itself is written through `ComposeState.set_deposit_kit_id` and the sheet re-opened, since
+  the claim is about what the commit carries rather than about the popup; the pending entry each
+  press writes is rolled back through `HudLayer.drop_pending_assign`.
+- **Sabotage-verified twice, disjointly**: `JOB_EXTRACT` dropped from `SOURCE_DEFAULT_KIT_JOBS` fails
+  both default-mark claims and the rock's opening/commit (4); the source-change reset removed fails
+  the precondition and the rock's opening/commit (3), reading `No kit` where `Quarrying kit` belongs.
 
 ### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
 

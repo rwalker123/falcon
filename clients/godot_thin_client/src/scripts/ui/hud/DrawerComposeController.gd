@@ -5135,6 +5135,11 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     if source_changed:
         _compose.begin_deposit_source(subject_key,
             int(resolved.get("entity", ComposeState.NO_BAND_ENTITY)))
+        # **THE COMPOSED KIT IS DROPPED ON A SOURCE CHANGE** (issue #663) — the hunt sheet's
+        # `reset_hunt_kit` rule: every render writes the RESOLVED id back, so a `felling` resolved
+        # on a wood would read as the player's own choice on the next rock and outrank that
+        # working's own `default_kit_id`.
+        _compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
     var band := _band_labor.player_band_by_entity(_compose.deposit_band())
     if band.is_empty():
         band = resolved
@@ -5241,14 +5246,15 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     if capped_by_seam:
         target.add_child(HudWidgets.alloc_hint_label(
             HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()]))
-    # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Cutting kit (axe + wedges,
-    # each lifting `deposit_take` on its own rung) beside `none`, so the picker's selection moves the
-    # take and rides the commit as `kit <id>` — see the commit button below.
+    # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Felling kit (an axe) and the
+    # Quarrying kit (wedges) beside `none`, so the picker's selection moves the take and rides the
+    # commit as `kit <id>` — see the commit button below.
     #
-    # ⛔ **NO ENTRY IS MARKED `(default)`, AND THAT IS THE HONEST ANSWER.** The wire publishes a
-    # default per job (`defaultHuntKitId` …) and names none for `extract`, so
-    # `HudBandLaborState.default_kit_id` answers `""` here and the sheet opens on the roster's first
-    # extract kit. Marking one would be a client-side guess at `default_kits.extract`.
+    # ⛔ **THE DEFAULT IS THE WORKING'S OWN, NOT THE JOB'S.** `default_kits.extract` is `none` and
+    # means nothing here; each `deposits` row publishes the kit its own material wants
+    # (`default_kit_id` — `felling` on wood, `quarrying` on stone), so the deposit is passed as the
+    # SOURCE and `KitRoster.default_kit_for` — the one precedence — answers both the opening
+    # selection and the `(default)` mark off it, exactly as a herd's does on the hunt sheet.
     #
     # ⛔ **THE CREW IS HANDED ON**, because omitting it is what made the forage sheet's shortfall line
     # mute for the whole life of that line: `crew` then defaults to `KIT_CREW_UNCOMPOSED` and the
@@ -5257,13 +5263,13 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     var kits := _band_labor.kits()
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_EXTRACT)
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_EXTRACT, default_kit,
-        _compose.deposit_kit_id())
+        _compose.deposit_kit_id(), deposit)
     _compose.set_deposit_kit_id(kit_id)
     _mount_kit_row(target, kits, KitRoster.JOB_EXTRACT, kit_id, default_kit, band,
         func(picked: String) -> void:
             _compose.set_deposit_kit_id(picked)
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
-        {}, "", _compose.deposit_count(),
+        deposit, "", _compose.deposit_count(),
         _band_labor.extract_assignment_of(band, tile.x, tile.y, material))
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's two zero-crew cases, verbatim: `0` on a
     # working this band does not hold is a no-op (dead button), `0` on one it does is the sim's own
@@ -5313,8 +5319,8 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # **A FINITE WORKING SENDS NO FLOOR AT ALL, because it was never asked** — `named_floor` is
     # `FLOOR_UNNAMED` there and `Main`'s extract arm drops the token, leaving the sim to answer what
     # silence means on ground that never renews. A renewing working rides the player's own dial.
-    # **THE KIT RIDES IT** (issue #663): the picker above offers the Cutting kit, and a selection the
-    # line dropped would be a choice the sim never heard. `Main._kit_token` renders it.
+    # **THE KIT RIDES IT** (issue #663): the picker above offers the Felling and Quarrying kits, and a
+    # selection the line dropped would be a choice the sim never heard. `Main._kit_token` renders it.
     assign_btn.pressed.connect(func() -> void:
         _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, _compose.deposit_count(),
             tile.x, tile.y, "", named_floor, material, SourceForecast.IMPROVEMENT_NONE,

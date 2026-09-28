@@ -409,11 +409,18 @@ const JOB_BUILDERS := "builders"
 ## …and the two deposit branches' TAKE job (issue #650) — `equipment.json`'s own `extract`, the job a
 ## felling axe or a stone hammer would declare a take stat on.
 ##
-## **THE SHIPPED ROSTER DECLARES ONE** (issue #663): `deposit_tools`, the Cutting kit — an axe
-## lifting `deposit_take` on felling and coppice, wedges lifting it on the quarry — which is
-## `default_kits.extract`, beside `none`. The wire names no per-job default for this job, so the
-## deposit sheets mark no entry `(default)` (`HudBandLaborState.default_kit_id`).
+## **THE SHIPPED ROSTER DECLARES ONE KIT PER BRANCH** (issue #663): `felling` (the axe, lifting
+## `deposit_take` on felling and coppice) and `quarrying` (the wedges, on the quarry), beside `none`.
+## One item per kit, so a complete outfit is exactly one tool. **The default is the WORKING's, not the
+## job's**: `default_kits.extract` is `none`, and each `DepositState` publishes its own
+## `default_kit_id` (`felling` on wood, `quarrying` on stone) — `default_kit_for` reads it off the
+## source, as it reads a herd's.
 const JOB_EXTRACT := "extract"
+
+## **THE JOBS WHOSE SOURCE PUBLISHES ITS OWN DEFAULT KIT** under `HERD_DEFAULT_KIT_KEY` — a herd its
+## derived quarry kit, a deposit working the kit its material wants. Every other job's source carries
+## no such field and `default_kit_for` answers the job default for it.
+const SOURCE_DEFAULT_KIT_JOBS := [JOB_HUNT, JOB_EXTRACT]
 
 ## **THE AXIS EACH BAND-WIDE ROLE IS PRICED ON** — a Scout's kit buys what a posted vantage can make
 ## out, a Warrior's buys the `attack` the camp is defended at. Only the two roles with no source to
@@ -524,13 +531,14 @@ static func display_name_for_id(kits: Array, kit_id: String) -> String:
 ## estimate tables' honesty test cannot each answer it differently.
 ##
 ## **THE SOURCE OVERRIDES THE JOB, and it is a narrower answer rather than a competing one**
-## (`HERD_DEFAULT_KIT_KEY`). Only a HUNT row has a source that publishes one: the forage web's patches
-## carry no such field, and passing them through here is what keeps the two webs on one call.
+## (`HERD_DEFAULT_KIT_KEY`). A HUNT row's herd and an EXTRACT row's working publish one
+## (`SOURCE_DEFAULT_KIT_JOBS`); the forage web's patches carry no such field, and passing them through
+## here is what keeps every web on one call.
 ##
 ## **THE SOURCE ARRIVES AS A PARAMETER, never reached for.** The two sheets that price a herd already
 ## hold it — it is the same dict the offer test reads `corralled` off — so this layer stays stateless.
 static func default_kit_for(job: String, source: Dictionary, job_default_id: String) -> String:
-	if job != JOB_HUNT:
+	if not SOURCE_DEFAULT_KIT_JOBS.has(job):
 		return job_default_id
 	var stated := String(source.get(HERD_DEFAULT_KIT_KEY, "")).strip_edges()
 	return stated if stated != "" else job_default_id

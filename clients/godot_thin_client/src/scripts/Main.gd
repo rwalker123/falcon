@@ -1390,12 +1390,12 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # **THE KIT RIDES THE TAIL AS A NAMED PAIR** (issue #663), after the worker count, on
             # `_kit_token`'s own omission rule. The grammar lifts `kit <id>` out of the tail before the
             # positional `[floor] <workers>` is read, so it never competes with the optional floor.
-            # `default_kits.extract` is the Cutting kit now and the deposit sheet mounts a real
-            # picker for it, so a selection with no token to ride would be a choice this line
-            # silently dropped. **The wire names no extract default** (see
-            # `HudBandLaborState.default_kit_id`), so the payload's `default_kit_id` is `""` and every
-            # named selection is sent: pinning the kit the sim would have resolved anyway is harmless,
-            # because `assign_labor` has no override to clear.
+            # The deposit sheet mounts a real picker (the Felling and Quarrying kits beside `none`),
+            # so a selection with no token to ride would be a choice this line silently dropped. An
+            # ABSENT token means *the working's own derived kit* to the sim; the payload's
+            # `default_kit_id` is the job's `""` (see `HudBandLaborState.default_kit_id`), so every
+            # named selection is sent — `none` included, which is the one pick an omitted token
+            # would get wrong — and pinning the kit the sim would have derived anyway is harmless.
             var ex := int(payload.get("x", -1))
             var ey := int(payload.get("y", -1))
             var material := String(payload.get("species", "")).strip_edges().to_lower()

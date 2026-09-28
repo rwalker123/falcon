@@ -154,13 +154,17 @@ func default_kit_id(job: String) -> String:
 		KitRoster.JOB_EXPEDITION:
 			return _default_expedition_kit_id
 		KitRoster.JOB_EXTRACT:
-			# **THE WIRE NAMES NO EXTRACT DEFAULT** (`SubsistenceSection` publishes no
-			# `defaultExtractKitId`), so this answers `""` — stated rather than reached by
-			# fall-through, for the reason the builders arm below is: falling through would hand the
-			# deposit sheets the HUNT kit as their marked `(default)`, and `Main._kit_token` would then
-			# omit the token for a selection that happened to equal it. With `""` the deposit picker
-			# marks no entry and every named selection rides the command, which is correct whatever
-			# `default_kits.extract` says (issue #663: it is the Cutting kit now).
+			# **THE EXTRACT DEFAULT IS PER WORKING, NOT PER JOB** (issue #663). Each `deposits` row
+			# publishes its own `default_kit_id` (`felling` on wood, `quarrying` on stone), which the
+			# deposit sheet reads off the SOURCE through `KitRoster.default_kit_for`; the job itself
+			# names none on the wire, so this answers `""` — stated rather than reached by
+			# fall-through, for the builders arm's reason below.
+			#
+			# ⛔ **AND IT MUST STAY `""`, BECAUSE THIS IS ALSO WHAT `Main._kit_token` OMITS AGAINST.**
+			# An `extract` line with no `kit` token means *the working's derived kit* to the sim, so
+			# a job default of `none` here would omit the token for a player's deliberate bare-handed
+			# pick and the sim would put the axe back in their hands. With `""` every named selection
+			# — `none` included — rides the command.
 			return KitRoster.NO_KIT_ID
 		KitRoster.JOB_BUILDERS:
 			# **THE WIRE NAMES NO BUILDERS DEFAULT**, so this answers `""` — the "a job the wire has

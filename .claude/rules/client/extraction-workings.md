@@ -36,7 +36,7 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | `ui/hud/ComposeState.gd` → the `deposit_*` group | The composition: a source key, a crew, **a floor and its autofill one-shot**, the acting band and the band it was seeded from, and a kit. Still **no take species, no commit crop and no second axis** — a working takes one material and its rung is declared from the Work board. The floor is real on BOTH branches and offered on one: on a finite seam the member sits at its default for the sheet's own arithmetic and **does not ride the command** — the token is omitted so the sim's `unnamed_deposit_floor` fork answers, § "THE FLOOR TOKEN IS SENT ONLY WHERE A DIAL WAS OFFERED". `seed_deposit(count, floor)` seeds both from the band's own `extract` row |
 | `ui/hud/HudBandLaborState.gd` → `floor_for_extract` | The dial's SEED, and the rule it exists to keep: a reopened sheet seeds from the ASSIGNMENT, never from `DepositState.floor` (see the note under the decoder's row) |
 | `MapView.gd` → `_ingest_deposit_workings` / `_workings_on_tile` / `deposit_tile_lookup` | The per-TILE index the card's rows and its two actions read out of, `_ingest_road_network`'s twin. ⛔ **It does NOT de-duplicate on the tile** — two rows on one hex is the ordinary case here — and it holds the frame's rows **by reference** with its own profile span (`layers.deposits`), this being the widest section the client ingests |
-| `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per DEPOSIT-BEARING TILE, keyed `(tile, material)`, carrying the live working's state where a band has opened one — and `deposit_rungs_to_array`, the per-world CATALOG for both branches, `route_rungs_to_array`'s twin. The module header carries the whole field contract. The escapement three are appended last: `rung_floor_fraction` · `per_worker_biomass` · `regrowth_samples`, the curve through the SHARED `subsistence::regrowth_samples_packed` so an ABSENT vector stays EMPTY (*no curve was sent*) and a quarry's all-zero one stays a reading (*this does not grow*) |
+| `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per DEPOSIT-BEARING TILE, keyed `(tile, material)`, carrying the live working's state where a band has opened one — and `deposit_rungs_to_array`, the per-world CATALOG for both branches, `route_rungs_to_array`'s twin. The module header carries the whole field contract. The escapement three are appended last: `rung_floor_fraction` · `per_worker_biomass` · `regrowth_samples`, the curve through the SHARED `subsistence::regrowth_samples_packed` so an ABSENT vector stays EMPTY (*no curve was sent*) and a quarry's all-zero one stays a reading (*this does not grow*). **`default_kit_id`** rides every row too (issue #663) — the take kit the working's MATERIAL wants, which the deposit sheet reads as its source default |
 
 ## ⛔ THE WORD "QUARRY" NAMES ONE RUNG, NEVER THIS BRANCH
 
@@ -493,13 +493,19 @@ Top to bottom, with `_build_deposit_assign_controls` the one builder:
    `label_tooltip` carries `CARD_CREW_HINT`, the sheet's one place to say that these hands CUT and the
    hands that HOLD are a pool on another panel.
 4. **the `Kit` row** through `_mount_kit_row`, at `KitRoster.JOB_EXTRACT`. The roster's `extract`
-   job lists the **Cutting kit** (`deposit_tools`: an axe lifting `deposit_take` on felling and
-   coppice, wedges lifting it on the quarry) beside `none`, so the row is a real picker and its
-   selection moves the take (issue #663). **No entry is marked `(default)`**: the wire publishes a
-   default per job and names none for `extract`, so the sheet opens on the roster's first extract kit
-   and marks nothing, rather than guessing `default_kits.extract` client-side. ⛔ **THE CREW IS HANDED
-   ON**: omitting it is what made the forage sheet's shortfall line mute for the whole life of that
-   line.
+   job lists the **Felling kit** (`felling`, an axe) and the **Quarrying kit** (`quarrying`, wedges)
+   beside `none`, so the row is a real picker and its selection moves the take (issue #663).
+   ⛔ **THE DEFAULT IS THE WORKING'S, NOT THE JOB'S.** `default_kits.extract` is `none`; every
+   `deposits` row publishes its own `default_kit_id` instead (`felling` on wood, `quarrying` on
+   stone, whatever rung it stands on). The deposit is passed to the kit row as its SOURCE, so
+   `KitRoster.default_kit_for` — the one precedence the hunt sheet's per-herd default already rides
+   (`labor-ui.md` → "THE SHEET OPENS ON THE KIT **THIS QUARRY** WANTS") — answers both the opening
+   selection and the `(default)` mark off it; `JOB_EXTRACT` is in its `SOURCE_DEFAULT_KIT_JOBS`.
+   ⛔ **THE COMPOSED KIT IS DROPPED ON A SOURCE CHANGE**, in the branch that calls
+   `begin_deposit_source`, for `reset_hunt_kit`'s reason: every render writes the resolved id back,
+   so a `felling` left standing reads as the player's own choice on the next rock and outranks its
+   `quarrying`. ⛔ **THE CREW IS HANDED ON**: omitting it is what made the forage sheet's shortfall
+   line mute for the whole life of that line.
 5. ⛔ **NO SPECIES CHIPS** — a deposit takes one material by construction.
 6. **the improvement POINTER LINE**, in the retired-`_emit_improvement` pattern and through the SAME
    `HudWidgets.build_improvement_control` the forage sheet's offered rung uses: `⛏ Quarry this rock
@@ -1261,14 +1267,18 @@ worker count (issue #663). `HudBandLaborState.default_kit_id` answers `NO_KIT_ID
 explicitly rather than by fall-through, on `builders`' own reasoning: falling through would mark the
 HUNT kit as this job's default and `Main._kit_token` would then omit the token for a selection the
 player made. **With `""` as the default every named selection is sent** — pinning the kit the sim would
-have resolved anyway is harmless, `assign_labor` having no override to clear — and no entry wears the
-`(default)` mark, because `SubsistenceSection` publishes no `defaultExtractKitId` to mark it from.
+have derived anyway is harmless.
 
-⛔ **THE COMPLETE-OUTFIT SHORTFALL COUNTS BOTH TOOLS ON EITHER BRANCH.** The Cutting kit carries an
-axe AND wedges, and `KitRoster.shortfall_line` — like the sim's own `kitWorkersHolding` it reads on a
-committed row — takes the `min` over every item the kit uses. So a wood crew fully armed with axes and
-holding no wedges reads as short, though the wedges add nothing on felling or coppice. The wire states
-no per-item branch, so the client cannot narrow it.
+⛔ **AND THAT `""` IS LOAD-BEARING NOW, NOT MERELY SAFE.** An `extract` line with NO `kit` token means
+*the working's own derived kit* to the sim (it stores `felling` / `quarrying` itself), so a job default
+of `none` here would make `_kit_token` omit the token for a player's deliberate bare-handed pick — and
+the sim would put the axe back in their hands. `kit none` is therefore the one selection an omitted
+token gets wrong, which is why `command_guard`'s third `extract` drive sends it.
+
+**ONE ITEM PER KIT, so the complete-outfit shortfall is exact on both branches.** `KitRoster.shortfall_line`
+— like the sim's own `kitWorkersHolding` it reads on a committed row — takes the `min` over every item
+the kit uses, and each take kit carries exactly one: a wood crew is short of AXES and of nothing else,
+a rock crew of WEDGES.
 
 **`command_guard` is what keeps the two enumerations in step, and it now drives both.** `quarrywork`
 joined `ASSIGN_LABOR_ROLES` (the sweep asserts every role in that list builds a line AND that an

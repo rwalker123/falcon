@@ -3461,8 +3461,10 @@ value is that three surfaces cannot answer it differently: `resolve_selection` (
 on) and `build_kit_row`'s `(default)` mark both call it. A picker
 that opened on the trap and printed `(default)` on the spear would contradict itself on every
 small-game herd, which is why the mark is asserted BESIDE the selection rather than trusted to follow
-it. Only a HUNT row has a source that publishes one; the forage web's patches carry no such field, so
-passing them through the same call is what keeps both webs on one seam.
+it. **Two sources publish one — a HERD and a deposit WORKING** (`felling` on wood, `quarrying` on
+stone, issue #663) — and `KitRoster.SOURCE_DEFAULT_KIT_JOBS` names the jobs whose source is read; the
+forage web's patches carry no such field, so passing them through the same call is what keeps every
+web on one seam.
 
 **THE HONESTY TEST THIS DEFAULT ONCE HAD TO KEEP IN STEP WITH IS RETIRED.** The two per-herd estimate
 tables were quoted at ONE kit and a sheet composing another had to refuse them; the forecast QUERY
