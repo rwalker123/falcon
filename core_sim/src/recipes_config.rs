@@ -229,8 +229,8 @@ pub struct RecipeDef {
     /// `validate_against` rejects a key that is not a rung.
     ///
     /// **Absent is a real statement**, not a missing value: it says this item's payload is not
-    /// tier-bought (the wayfinding gear's vantage, a build tool's `build_work`) or is a bench
-    /// stat nothing yet grades. The output is still stamped with the band it was made at.
+    /// tier-bought (the wayfinding gear's vantage) or is a stat nothing yet grades (the road
+    /// tools' rung-bound `build_work`, a bench tool's craft stats). The output is still stamped with the band it was made at.
     #[serde(default)]
     pub grades: BTreeMap<String, RecipeGrade>,
 }
