@@ -911,9 +911,10 @@ func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -
 	_water_motion_lod_on = radius >= motion_min_radius
 	m.set_shader_parameter("water_motion_enabled", _water_motion_lod_on and _water_motion_toggle_on)
 
-## THE `O` TOGGLE — water motion (chop + coastal swell + waves) on / off, for look-dev: it tells whether a "cloudy"
-## sea is the motion or the static surface. Session-only (not persisted); the static anti-tiling and the
-## temperature grade are untouched. ANDed with the zoom LOD, so it can only turn motion OFF.
+## THE `O` TOGGLE — water motion (the chop and the shore pulse, plus the texture-wave term, which ships at 0) on /
+## off, for look-dev: it tells whether a "cloudy" sea is the motion or the static surface. Session-only (not
+## persisted); the static anti-tiling and the temperature grade are untouched. ANDed with the zoom LOD, so it can
+## only turn motion OFF.
 func toggle_water_motion() -> void:
 	set_water_motion_enabled(not _water_motion_toggle_on)
 

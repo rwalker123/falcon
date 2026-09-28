@@ -667,7 +667,7 @@ subject disappeared is worse than one that varies, whereas an offset or a midpoi
 
 **The water surface was classified that way when it landed** (`terrain-blend-shader.md` → Water
 surface): it is the third reader of `TIME`, and every one of its terms is an offset — the waves a UV
-scroll, the chop and the whitecaps positions on their noise fields' time axis — so phase 0 still draws
+scroll, the chop and the shore pulse positions on their noise fields' time axis — so phase 0 still draws
 them. The set stayed bit-identical run to run (308/308 across consecutive runs with state 29 in it).
 States 29 and 30 reach other phases through the `water_time_offset` uniform, not by un-freezing the
 clock.
@@ -823,13 +823,13 @@ the frame with the open water (`terrain-blend-shader.md` → Water surface). Fra
 
 | frame | levers | read for |
 |---|---|---|
-| `OCEAN_off` (+ `_open` / `_seam` / `_coast`) | variation, waves, chop, whitecaps all 0 | the BEFORE: the grid, unmistakable |
-| `OCEAN_static` (+ crops) | waves, chop and whitecaps 0 | the anti-tiling alone; no flat blotches where the patches meet |
-| `OCEAN_waves`, `_t2`, `_motion_diff` | chop and whitecaps 0, two phases | the scrolled-texture term alone (it ships off) — kept because it is the term that measured as invisible |
-| `OCEAN_chop`, `_t2`, `_motion_diff` | waves and whitecaps 0, two phases | the chop alone |
-| `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s; `OCEAN_shipped_open` is the r ≈ 45 crop the whitecaps are judged on |
+| `OCEAN_off` (+ `_open` / `_seam` / `_coast`) | variation, waves and chop all 0 | the BEFORE: the grid, unmistakable |
+| `OCEAN_static` (+ crops) | waves and chop 0 | the anti-tiling alone; no flat blotches where the patches meet |
+| `OCEAN_waves`, `_t2`, `_motion_diff` | chop 0, two phases | the scrolled-texture term alone (it ships off) — kept because it is the term that measured as invisible |
+| `OCEAN_chop`, `_t2`, `_motion_diff` | waves 0, two phases | the chop alone |
+| `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s; `OCEAN_shipped_open` is the r ≈ 45 open-water crop |
 | `OCEAN_seq0..3` | shipped, four phases a second apart | the look-at sequence the chop was tuned on |
-| `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop and caps are ON — the zoom where the retired swell drew a map-wide diagonal, and where the caps must stay sparse, never a carpet or map-scale patches. Below the gate (the r ≈ 22.8 far-zoom grid) the motion is off and the water is static |
+| `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop is ON — the zoom where the retired swell drew a map-wide diagonal, and where the chop must show no map-scale patches. Below the gate (the r ≈ 22.8 far-zoom grid) the motion is off and the water is static |
 | `OCEAN_live` (+ `_open`) | shipped, on a 31×21 grid at r ≈ 35 | the LIVE-like frame, the radius of Ray's 1.5× screenshots: open water, chop only |
 | `OCEAN_live_2x` | shipped, on a 23×16 grid at r ≈ 47 | Ray's 2.0× (radius = cover-fit base × zoom_factor, so 35 px at 1.5× → ~47 at 2.0×). `_snapshot_ocean` floors its scale at 1, so a grid smaller than `GRID_W` keeps the base geography |
 
@@ -871,9 +871,9 @@ claims ride it, and each fails on its own:
   3.59, 4.62, 5.57, 5.82, 6.10, 4.46, 2.59, 5.13** — ratio **2.60**, fail; slowest 2.59, under the floor
   too.
 - **No net direction.** The MOTION field — a phase minus its motion-off twin (`OCEAN_STATIC_SURFACE`:
-  chop, waves AND whitecaps off), so the art cancels and the caps are part of the field — at two phases
+  chop and waves off), so the art cancels and only the motion is left — at two phases
   `OCEAN_DIRECTION_DT` (1 s) apart is cross-correlated at every offset within ±24 px; the best
-  correlation more than 4 px from zero may not beat zero's by more than 0.02. Shipped with the caps:
+  correlation more than 4 px from zero may not beat zero's by more than 0.02. Shipped (chop only, 0.05):
   **0.739 at zero, 0.618 at best elsewhere**. **Sabotaged** with a single travelling sine train at the chop's own size:
   **−0.807 at zero, 0.999 at (10, 12) px**, fail; and with the retired swell: **0.800 vs 0.984**, fail.
 - **No map-scale pattern.** The same motion field block-averaged over 2-hex-radius blocks — a low-pass —
@@ -937,6 +937,14 @@ Three PNG-less claims, each sabotage-verified to fail on its own:
 - **RETIRED — (d), the caps on the graded sea.** Its subject was the open-water caps. It moved to state 31
   (COAST) with the coastal foam and went when that foam was removed: with no foam laid on the water there
   is no colour for the grade to tint.
+- **(d) The grade reaches the waterline.** The waterline cross-fade rebuilds its water side from an
+  estimate of the water base, and before the fix that estimate was ungraded — every cold or warm coast
+  wore a rim where the sea lost its grade over the last ~5 px before land. At the island's coast, the
+  fixture at full cold and then full warm, surf off, S = graded minus its strength-0 twin: water within
+  0.05 r of the shoreline against water 0.3–0.6 r out, ratio ≥ 0.5 with the reference carrying ≥ 3
+  levels (`OCEANTEMP_RIM_*`). Shipped **0.64 / 0.64** (cold / warm); under 1 legitimately, since up to
+  half of the cross-fade at the waterline is the ungraded LAND base. **Sabotaged** by reverting the fix:
+  **0.00 / 0.00**, fail.
 
 **One more state (31, SHORE): the SHORE PULSE** → `SHORE*.png`, at the game's r ≈ 45, grid OFF
 (`terrain-blend-shader.md` → Shore pulse). It replaced the COAST state, whose incoming-swell claims went with the

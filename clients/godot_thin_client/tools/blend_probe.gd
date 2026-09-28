@@ -1266,6 +1266,20 @@ const OCEANTEMP_SAT_TOLERANCE := 0.02
 # edge scores ≤ ~1 (the edge is no steeper than the ramp around it); a per-hex grade is a step, and scores
 # many times that.
 const OCEANTEMP_SPLIT_ROW := 8
+# (d) NO GRADE RIM AT THE COAST, on the island's coast with every tile at FULL cold and then at FULL warm, surf and
+# wisp off (foam_opacity 0) so the ungraded foam cannot stand in for an ungraded rim. S = graded − strength-0 twin
+# (RGB, summed), taken at water pixels OCEANTEMP_RIM_BAND hex radii or less from the shoreline — inside the
+# waterline cross-fade however the reach wobbles — against water pixels OCEANTEMP_RIM_REF_BAND out, on the same
+# hexes. The band's mean S over the reference's must reach OCEANTEMP_RIM_RATIO_MIN. It stays under 1 legitimately:
+# at the waterline the cross-fade is up to half the (ungraded) LAND base. When the wet edge rebuilt the water from
+# the UNGRADED surface, the band's S was ~0. The reference must itself carry at least OCEANTEMP_RIM_MIN_SHIFT levels,
+# or the fixture is not graded at all.
+const OCEANTEMP_RIM_BAND := 0.05
+const OCEANTEMP_RIM_REF_BAND := Vector2(0.3, 0.6)
+const OCEANTEMP_RIM_RATIO_MIN := 0.5
+const OCEANTEMP_RIM_MIN_SHIFT := 3.0
+const OCEANTEMP_RIM_BOX_RADII := 2.0                      # the island's box, beyond its outermost hex centres
+const OCEANTEMP_RIM_FOAM_OFF := {"foam_opacity": 0.0}
 const OCEANTEMP_EDGE_SAMPLES := 9                        # sample lines per edge, spread along it
 const OCEANTEMP_EDGE_SPAN := 0.35                        # of the radius, either side of the edge midpoint
 const OCEANTEMP_EDGE_REACH := 0.6                        # of the radius, how far each line runs either side
@@ -1590,8 +1604,6 @@ func _fail(message: String) -> void:
 	push_error("blend_probe: FAIL — %s" % message)
 
 
-## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
-## status is derived from the run's own tally in exactly one place.
 ## The hang guard from the scene, or `null` if the node has gone. Checked for its method rather than
 ## assumed: calling a missing method on an untyped `Node` is a runtime error, and one raised here would
 ## abort `_ready` exactly the way the guard exists to survive.
@@ -1604,6 +1616,8 @@ func _resolve_watchdog() -> Node:
 	return null
 
 
+## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
+## status is derived from the run's own tally in exactly one place.
 func _finish() -> void:
 	if _watchdog != null:
 		_watchdog.disarm()
@@ -2759,6 +2773,11 @@ func _render_ocean_temperature_state() -> void:
 	var split: Image = await _render_oceantemp_frame({}, "OCEANTEMP_split", false)
 	if split_off != null and split != null:
 		_assert_oceantemp_no_hex_step(split_off, split)
+	# (d) — the island's coast at full cold, then at full warm.
+	for cold: bool in [true, false]:
+		_map.display_snapshot(_snapshot_ocean_uniform_temperature(climate, cold))
+		await _refit(GAME_HEX_RADIUS)
+		await _assert_oceantemp_no_coast_rim("cold" if cold else "warm")
 	_set_water_time_offset(0.0)
 	_map._show_grid_lines = true
 
@@ -2824,6 +2843,102 @@ func _snapshot_ocean_temperature(climate: Dictionary, split: bool, coral: bool) 
 	snap["overlays"]["climate_boreal_max_temp"] = boreal
 	snap["overlays"]["climate_temperate_max_temp"] = temperate
 	return snap
+
+
+func _snapshot_ocean_uniform_temperature(climate: Dictionary, cold: bool) -> Dictionary:
+	## State 29's ocean with EVERY tile at the fixture's coldest (or warmest) temperature — the grade at full
+	## strength all round the island's coast.
+	var snap: Dictionary = _snapshot_ocean_temperature(climate, false, false)
+	var temp: float = float(snap["tiles"][0]["temperature"]) if cold else float(snap["tiles"][snap["tiles"].size() - 1]["temperature"])
+	for tile: Dictionary in snap["tiles"]:
+		tile["temperature"] = temp
+	return snap
+
+
+func _oceantemp_capture(changes: Dictionary) -> Image:
+	## One capture with `changes` over the shipped `water_temperature` block and the surf off (see OCEANTEMP_RIM_*).
+	var block: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("water_temperature", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in changes:
+		block[key] = changes[key]
+	var token: Array = _override_config({"water_temperature": block, "shore": _shore_block(OCEANTEMP_RIM_FOAM_OFF)})
+	_map._fit_map_to_view()
+	await _settle()
+	var image: Image = await _capture()
+	_restore_config(token)
+	_map.queue_redraw()
+	return image
+
+
+func _rgba8_bytes(image: Image) -> PackedByteArray:
+	## The image's raw bytes in RGBA8 (4 per pixel), converting a copy when the capture came back in another format.
+	if image.get_format() == Image.FORMAT_RGBA8:
+		return image.get_data()
+	var img := image.duplicate()
+	img.convert(Image.FORMAT_RGBA8)
+	return img.get_data()
+
+
+func _assert_oceantemp_no_coast_rim(label: String) -> void:
+	## (d): see OCEANTEMP_RIM_*.
+	var graded: Image = await _oceantemp_capture({})
+	var off: Image = await _oceantemp_capture(OCEANTEMP_OFF)
+	if graded == null or off == null:
+		return
+	var radius: float = _map.last_hex_radius
+	var px_scale: float = _image_px_scale(graded)
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for hex: Vector2i in OCEAN_ISLAND_HEXES:
+		var c: Vector2 = _map._hex_center(hex.x, hex.y, radius, _map.last_origin)
+		lo = Vector2(minf(lo.x, c.x), minf(lo.y, c.y))
+		hi = Vector2(maxf(hi.x, c.x), maxf(hi.y, c.y))
+	var pad: float = OCEANTEMP_RIM_BOX_RADII * radius
+	var ga: PackedByteArray = _rgba8_bytes(graded)
+	var ob: PackedByteArray = _rgba8_bytes(off)
+	var w: int = graded.get_width()
+	var band_sum := 0.0
+	var band_n := 0
+	var ref_sum := 0.0
+	var ref_n := 0
+	for y in range(int((lo.y - pad) * px_scale), int((hi.y + pad) * px_scale)):
+		for x in range(int((lo.x - pad) * px_scale), int((hi.x + pad) * px_scale)):
+			var p_map := Vector2(x, y) / px_scale   # map-view (canvas) px
+			var hex: Vector2i = _map._point_to_offset(p_map)
+			if _map._terrain_id_at(hex.x, hex.y) == OCEAN_ISLAND_ID:
+				continue
+			var own_c: Vector2 = _map._hex_center(hex.x, hex.y, radius, _map.last_origin)
+			var dist := INF   # to the nearest shared edge with a LAND neighbour, in hex radii
+			for dir in range(BANK_DIR_OFFSETS.size()):
+				var nb: Vector2i = _bank_neighbor(hex, dir)
+				if _map._terrain_id_at(nb.x, nb.y) != OCEAN_ISLAND_ID:
+					continue
+				var nb_c: Vector2 = _map._hex_center(nb.x, nb.y, radius, _map.last_origin)
+				var dir_v: Vector2 = (nb_c - own_c).normalized()
+				var half: float = 0.5 * own_c.distance_to(nb_c)
+				dist = minf(dist, (half - (p_map - own_c).dot(dir_v)) / radius)
+			if dist == INF:
+				continue
+			var i: int = (y * w + x) * 4
+			var shift: float = (absf(ga[i] - ob[i]) + absf(ga[i + 1] - ob[i + 1]) + absf(ga[i + 2] - ob[i + 2]))
+			if dist <= OCEANTEMP_RIM_BAND:
+				band_sum += shift
+				band_n += 1
+
+			elif dist >= OCEANTEMP_RIM_REF_BAND.x and dist <= OCEANTEMP_RIM_REF_BAND.y:
+				ref_sum += shift
+				ref_n += 1
+	var band: float = band_sum / maxf(band_n, 1)
+	var ref: float = ref_sum / maxf(ref_n, 1)
+	var ratio: float = band / maxf(ref, OCEAN_CORR_EPSILON)
+	print("blend_probe: OCEANTEMP (d) %s coast — grade shift %.1f levels at the waterline (%d px) vs %.1f just off it (%d px): ratio %.2f (min %.2f)"
+		% [label, band, band_n, ref, ref_n, ratio, OCEANTEMP_RIM_RATIO_MIN])
+	if ref_n == 0 or ref < OCEANTEMP_RIM_MIN_SHIFT:
+		_fail("OCEANTEMP: the %s coast is not graded at all — %.1f levels off the waterline (want ≥ %.1f)" % [label, ref, OCEANTEMP_RIM_MIN_SHIFT])
+	elif band_n == 0 or ratio < OCEANTEMP_RIM_RATIO_MIN:
+		_fail("OCEANTEMP: a %s coast carries an UNGRADED RIM — the grade at the waterline is %.2f of the grade just off it (want ≥ %.2f)"
+			% [label, ratio, OCEANTEMP_RIM_RATIO_MIN])
 
 
 func _assert_oceantemp_monotone(off: Image, graded: Image) -> void:

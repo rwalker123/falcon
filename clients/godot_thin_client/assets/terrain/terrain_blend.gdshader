@@ -1774,6 +1774,16 @@ void fragment() {
 					float land_w = own_water ? 0.0 : 1.0;
 					vec3 water_sum = own_water ? own_base : vec3(0.0);
 					float water_w = own_water ? 1.0 : 0.0;
+					// THE WATER ESTIMATE CARRIES THE TEMPERATURE GRADE. `water_base` is rebuilt from the ungraded
+					// water surface, so without this the graded sea reverted to its raw colour within the wet edge
+					// of every coast (a bluer or duller rim). Its temperature and graded-ness are means over the SAME
+					// water hexes with the SAME weights as water_base itself, so the graded estimate is as
+					// continuous across the edge as the ungraded one; the grade's own temp_map semantics are kept
+					// (G = has a reading, B = graded terrain — see the WATER TEMPERATURE GRADE block).
+					vec4 own_wt = own_water ? texture(temp_map, id_uv) : vec4(0.0);
+					float wg_sum = own_wt.g * own_wt.b;
+					float wt_sum = own_wt.r * own_wt.g;
+					float wt_w = own_wt.g;
 					for (int dir = 0; dir < 6; dir++) {
 						ivec2 off = neighbor_offset(row, dir);
 						int ncol = col + off.x;
@@ -1801,6 +1811,12 @@ void fragment() {
 						if (nb_water) {
 							water_sum += nb_base * w;
 							water_w += w;
+							if (water_temp_enabled) {
+								vec4 nt = texture(temp_map, nuv);
+								wg_sum += nt.g * nt.b * w;
+								wt_sum += nt.r * nt.g * w;
+								wt_w += nt.g * w;
+							}
 						} else {
 							land_sum += nb_base * w;
 							land_w += w;
@@ -1808,6 +1824,10 @@ void fragment() {
 					}
 					vec3 land_base = land_sum / max(land_w, SHORE_PROFILE_WEIGHT_MIN);
 					vec3 water_base = water_sum / max(water_w, SHORE_PROFILE_WEIGHT_MIN);
+					float w_graded = wg_sum / max(water_w, SHORE_PROFILE_WEIGHT_MIN);
+					if (water_temp_enabled && w_graded > 0.0 && wt_w > 0.0) {
+						water_base = water_temperature_grade(water_base, wt_sum / wt_w, w_graded);
+					}
 					// THE wet edge: one smoothstep of u, 0.5 exactly AT the waterline, spread over ±wl_reach.
 					vec3 mixed = mix(land_base, water_base, smoothstep(-wl_reach, wl_reach, u));
 					// …held at FULL across that reach, then handing back to the true base over the outer fade.

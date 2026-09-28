@@ -2888,8 +2888,6 @@ func _fail(message: String) -> void:
 	push_error("map_preview: FAIL — %s" % message)
 
 
-## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
-## status is derived from the run's own tally in exactly one place.
 ## The hang guard from the scene, or `null` if the node has gone. Checked for its method rather than
 ## assumed: calling a missing method on an untyped `Node` is a runtime error, and one raised here would
 ## abort `_ready` exactly the way the guard exists to survive.
@@ -2902,6 +2900,8 @@ func _resolve_watchdog() -> Node:
 	return null
 
 
+## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
+## status is derived from the run's own tally in exactly one place.
 func _finish() -> void:
 	if _watchdog != null:
 		_watchdog.disarm()

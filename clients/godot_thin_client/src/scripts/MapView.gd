@@ -2408,7 +2408,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_mark_input_handled()
 			return
 		if KeyboardArbiter.is_bare_key(event, KEY_O):
-			_terrain.toggle_water_motion()   # look-dev aid: ocean chop + whitecaps on/off (session-only)
+			_terrain.toggle_water_motion()   # look-dev aid: water chop + shore pulse on/off (session-only)
 			_mark_input_handled()
 			return
 	if event is InputEventMouseButton:

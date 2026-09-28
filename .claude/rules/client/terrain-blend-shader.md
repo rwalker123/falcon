@@ -1342,7 +1342,10 @@ before the water motion and the shore — the shore foam is unchanged): cold des
 `mix(1, cold_brightness, cold)`; warm pulls toward `warm_tint`'s hue by `warm` and scales by
 `mix(1, warm_brightness, warm)`. **The tint pull keeps luma** (`tint_keep_luma`): multiply by the tint —
 so the texture's detail survives — then rescale back to the original luma; brightness moves only through
-the brightness levers. The whole result is mixed in by `strength × graded-ness`.
+the brightness levers. The whole result is mixed in by `strength × graded-ness`. **The shore's waterline cross-fade grades its water estimate too**, from the same water hexes and weights
+as the estimate itself: it rebuilds the water side from the ungraded surface, and without that every graded
+coast reverted to raw colour within ~0.14·r of the shore (a bluer or duller rim; `blend_probe` state 30 claim
+(d)). The foam and the sand stay ungraded.
 
 **It runs at every zoom.** Climate reads most at far zoom, and nothing in it moves, so it is not under
 the motion LOD gate.
