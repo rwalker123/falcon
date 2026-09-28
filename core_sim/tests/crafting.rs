@@ -824,6 +824,152 @@ fn a_crafted_items_grade_decides_what_it_grants() {
     );
 }
 
+/// **BUILD GEAR IS GRADED, AND THE GRADE KEEPS ITS WEB.** The shipped path end to end: the shipped
+/// book, a crook and a hoe each crafted at the bench off a poor and an excellent bone, and the
+/// `build_work` a builder carrying *only that crafted batch* is actually paid — on its own web and
+/// on the other one.
+///
+/// **Why the other web is asserted too**: a grade replaces the tier's effect entire, so a graded
+/// `build_work` that lost its `branch` would serve every build ([`core_sim::EquipmentEffect`]'s
+/// `serves_build` reads an absent branch as "any"). The poor/excellent spread alone would pass
+/// against exactly that defect.
+#[test]
+fn crafted_build_gear_grades_its_build_work_and_keeps_its_branch() {
+    use core_sim::RungBranch;
+
+    const BONE: &str = "bone";
+    const LENGTH: &str = "length";
+    const DENSITY: &str = "density";
+    /// Bone's bench tool — its quality ceiling is what lets an excellent bone read as excellent.
+    const BONE_AWL: &str = "bone_awl";
+    /// One pass of the crook's and the hoes' own inputs (`recipes.json`: 1 bone + 2 fibre), so the
+    /// bench finishes exactly one item and cannot re-draw.
+    const ONE_PASS_OF_BONE: f32 = 1.0;
+    const ONE_PASS_OF_FIBRE: f32 = 2.0;
+    /// Enough bench turns for [`CREW`] to finish one `work: 5` pass.
+    const TURNS_TO_FINISH: u32 = 4;
+    /// Readings squarely inside the bottom and top `characteristic_bands` rungs.
+    const POOR_READING: f32 = 0.05;
+    const EXCELLENT_READING: f32 = 0.95;
+    const NEUTRAL_READING: f32 = 0.5;
+
+    struct Case {
+        recipe: &'static str,
+        kit: &'static str,
+        reads: &'static str,
+        other: &'static str,
+        web: RungBranch,
+        other_web: RungBranch,
+    }
+    let cases = [
+        Case {
+            recipe: "crook",
+            kit: "hurdling",
+            reads: LENGTH,
+            other: DENSITY,
+            web: RungBranch::Animal,
+            other_web: RungBranch::Plant,
+        },
+        Case {
+            recipe: "hoes",
+            kit: "tillage",
+            reads: DENSITY,
+            other: LENGTH,
+            web: RungBranch::Plant,
+            other_web: RungBranch::Animal,
+        },
+    ];
+
+    let equipment =
+        EquipmentConfig::from_json_str(core_sim::BUILTIN_EQUIPMENT_CONFIG).expect("equipment");
+    for case in &cases {
+        let kit = equipment.kit(case.kit).expect("the builders kit ships");
+        let shipped = equipment
+            .item(case.recipe)
+            .expect("the build tool ships")
+            .default_tier()
+            .effects
+            .iter()
+            .find(|effect| effect.stat == core_sim::EquipmentStat::BuildWork)
+            .map(|effect| effect.tier.value())
+            .expect("the tier declares build_work");
+
+        // **Crafted at the real bench**, into a ledger holding nothing else, so the only build gear
+        // a builder could be paid for is the batch this craft delivered.
+        let crafted = |reading: f32, expected_grade: &str| {
+            let mut bench = Bench::shipped();
+            *bench
+                .app
+                .world
+                .get_mut::<BandEquipment>(bench.band)
+                .expect("the band has a ledger") = BandEquipment::default();
+            bench
+                .stock(
+                    BONE,
+                    ONE_PASS_OF_BONE,
+                    &[(case.reads, reading), (case.other, NEUTRAL_READING)],
+                )
+                .stock(
+                    FIBRE,
+                    ONE_PASS_OF_FIBRE,
+                    &[(FINENESS, NEUTRAL_READING), (STRENGTH, NEUTRAL_READING)],
+                )
+                .give_tool(BONE_AWL)
+                .start(case.recipe, CREW)
+                .turns(TURNS_TO_FINISH);
+            assert_eq!(
+                bench.bench().items_completed,
+                1,
+                "{}: the fixture must finish exactly one item",
+                case.recipe
+            );
+            assert_eq!(
+                bench.bench().last_output_grade.as_deref(),
+                Some(expected_grade),
+                "{}: the reading must land in the grade under test",
+                case.recipe
+            );
+            bench
+                .app
+                .world
+                .get::<BandEquipment>(bench.band)
+                .expect("the band has a ledger")
+                .clone()
+        };
+
+        let poor = crafted(POOR_READING, POOR);
+        let excellent = crafted(EXCELLENT_READING, EXCELLENT);
+        let paid = |ledger: &BandEquipment, web: RungBranch| {
+            equipment.build_work_per_worker(&kit, ledger, web, None)
+        };
+
+        assert!(
+            paid(&poor, case.web) < shipped && paid(&excellent, case.web) > shipped,
+            "{}: a poor one takes less off the job than the shipped {shipped} and an excellent one \
+             more (poor {}, excellent {})",
+            case.recipe,
+            paid(&poor, case.web),
+            paid(&excellent, case.web)
+        );
+        for ledger in [&poor, &excellent] {
+            assert_eq!(
+                paid(ledger, case.other_web),
+                core_sim::NO_BUILD_GEAR,
+                "{}: a graded build tool still serves only its own web",
+                case.recipe
+            );
+            assert_eq!(
+                equipment
+                    .build_work_declared(&kit, ledger)
+                    .map(|(_, branch, _)| branch),
+                Some(case.web),
+                "{}: the graded batch declares its own web",
+                case.recipe
+            );
+        }
+    }
+}
+
 /// **A CRAFT COMES OUT AT THE BEST TIER THE FACTION KNOWS**, which on the shipped roster is the one
 /// that ships known — so the shipped opening makes exactly what it always made.
 #[test]

@@ -229,8 +229,8 @@ pub struct RecipeDef {
     /// `validate_against` rejects a key that is not a rung.
     ///
     /// **Absent is a real statement**, not a missing value: it says this item's payload is not
-    /// tier-bought (the wayfinding gear's vantage, a build tool's `build_work`) or is a bench
-    /// stat nothing yet grades. The output is still stamped with the band it was made at.
+    /// tier-bought (the wayfinding gear's vantage) or is a stat nothing yet grades (the road
+    /// tools' rung-bound `build_work`, a bench tool's craft stats). The output is still stamped with the band it was made at.
     #[serde(default)]
     pub grades: BTreeMap<String, RecipeGrade>,
 }
@@ -1000,6 +1000,11 @@ impl RecipesConfig {
     /// - **The mass bounds are restated verbatim.** A grade's effect is what
     ///   [`crate::equipment_config::LiveItem::effect_entry`] answers with, bounds included, so an
     ///   excellent snare that dropped `max_body_mass` would quietly become a mammoth trap.
+    /// - **The build bounds are restated verbatim too** — [`EquipmentEffect::branch`] and
+    ///   [`EquipmentEffect::rung`], for the same reason one stat over. A graded batch's
+    ///   `build_work` is what [`crate::equipment_config::LiveItem::build_work_entries`] answers with,
+    ///   and an absent branch *serves every web* ([`EquipmentEffect::serves_build`]) — so an
+    ///   excellent crook that dropped `branch: animal` would quietly speed a plant build too.
     /// - **The ANCHOR grade equals the OUTPUT TIER's value** — see [`anchor_band`]. That is what
     ///   makes a bare-handed craft off the best material a band can work by hand reproduce that
     ///   tier's shipped numbers exactly, and it is what stops the two drifting: the tier stays the
@@ -1042,6 +1047,17 @@ impl RecipesConfig {
                             "recipe '{id}' grade '{name}' declares {:?} without '{item}''s own mass \
                              bounds - a grade replaces the effect entire, so a dropped bound would \
                              silently widen what the item reaches",
+                            effect.stat
+                        ),
+                    });
+                }
+                if effect.branch != tier_effect.branch || effect.rung != tier_effect.rung {
+                    return Err(RecipesConfigError::InvalidBook {
+                        reason: format!(
+                            "recipe '{id}' grade '{name}' declares {:?} without '{item}''s own \
+                             `branch`/`rung` - a grade replaces the effect entire, so a dropped or \
+                             changed build bound would hand the tool to the other web's builds (or \
+                             to none)",
                             effect.stat
                         ),
                     });
@@ -1964,6 +1980,31 @@ mod tests {
             matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("does not declare")),
             "got {err}"
         );
+    }
+
+    /// **A graded `build_work` must restate its tier's `branch` verbatim** — the mass-bounds rule one
+    /// bound over. Both breakages: a grade naming the OTHER web (the crook's excellent rung turned
+    /// into a plant tool), and a grade naming NONE, which [`EquipmentEffect::serves_build`] reads
+    /// as serving every web.
+    #[test]
+    fn validate_against_rejects_a_grade_whose_build_branch_differs_from_the_tiers() {
+        let other_web = reconciled(|json| {
+            json["recipes"]["crook"]["grades"]["excellent"]["effects"][0]["branch"] =
+                serde_json::json!("plant");
+        });
+        let dropped = reconciled(|json| {
+            json["recipes"]["hoes"]["grades"]["excellent"]["effects"][0]
+                .as_object_mut()
+                .expect("the hoes' excellent grade is an effect object")
+                .remove("branch")
+                .expect("the shipped grade restates its branch");
+        });
+        for err in [other_web, dropped] {
+            assert!(
+                matches!(&err, RecipesConfigError::InvalidBook { reason } if reason.contains("`branch`/`rung`")),
+                "got {err}"
+            );
+        }
     }
 
     /// **A tool made from the material it bounds is rejected.** The other half of the same rule.
