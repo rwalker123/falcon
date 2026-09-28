@@ -519,7 +519,7 @@ connections this arc owns.
 - **`reach_tiles`** stops being a first-class lever and becomes "the distance at which a logistics
   link holds itself for free."
 - **Checkpoints** — connections are persisted state with their own clocks; they are `SimState`, not
-  derived. Contrast `SupplyNetworkMembership`, which is correctly derived and rebuilt each turn.
+  derived. `SupplyNetworkMembership` is rebuilt each turn but is **not** safely derived: the capture publishes it before any turn runs, so a loaded world must carry it — it rides each band's checkpoint record (`BandRecord::supply`).
 - **The event feed and the Telling** — meeting a people for the first time is a beat.
 
 ## Open items

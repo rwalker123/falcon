@@ -90,8 +90,9 @@ rewind that quietly defaulted would be caught rather than landing on a plausible
 so it is not carried as a resource — no `Entity` crosses a checkpoint. It is carried **per band**
 instead, as `BandRecord::supply` (`BandSupplyMembership`: network id, the band's own pooling links,
 its network's span), and pass 2b of the restore rebuilds the resource against the freshly spawned
-band entities. Each link already names its far end by `BandId`. Why it is carried at all is the next
-section's second failure mode.
+band entities. Each link already names its far end by `BandId`. Why it is carried at all is the
+second failure mode under the heading *"Derived" is only safe if nothing publishes the value…* →
+*A save load reads the world with no turn in between*.
 
 Three things this is worth knowing for:
 
