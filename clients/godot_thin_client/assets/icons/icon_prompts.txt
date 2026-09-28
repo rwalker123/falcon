@@ -1555,6 +1555,7 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 #      pale-on-near-black art would vanish on it. If they move, they move as a new `expeditions/`
 #      map-marker family with the house style's outline clause, and `BandMarkerRenderer` draws a
 #      texture rather than a glyph — a different mechanism from either one `hud/` uses.
+#      Their prompts are in the EXPEDITION MARKERS section at the end of this file.
 #
 #   `FoodIcons.HERD_SPECIES` / `SITE_ICONS` / `CROP_ROLE_ICONS` — these are FALLBACKS behind
 #      `fauna/`, `sites/` and `crops/`, which already ship complete coverage. The emoji is the
@@ -1900,3 +1901,40 @@ wood: Flat vector game icon of a small stack of three cut logs resting one above
 # Squared and stacked is the read, and it is also what keeps this off `great_peak`'s
 # natural-mountain silhouette. Keep the corners hard; a rounded pile is a boulder.
 stone: Flat vector game icon of a small stack of three squared cut stone blocks resting one above two, each block a plain rectangular slab with hard square corners and flat quarried faces, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire stack and one dividing line between the blocks, flat limited color palette in warm mid-grey stone with a paler grey top face so the stacking reads, simple two-tone shading, no speckle, no texture, no cracks, no rubble, no loose chips, no rounded boulder, no mountain, no pick, no tool, no ground line, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+
+# ============================================================================
+# EXPEDITION MARKERS  ->  assets/icons/expeditions/   (no lookup script yet)
+# ============================================================================
+#
+# The map marker a detached party wears while it is out: `MapView.EXPEDITION_GLYPH` (⚑, scout),
+# `EXPEDITION_DENY_GLYPH` (💀) and `EXPEDITION_TRADE_GLYPH` (📦), drawn today as TEXT through
+# `draw_string`, centred on a dark backing disc (`EXPEDITION_DISC_ALPHA` 0.55) inside a
+# faction-tinted ring. The hunt party's 🏹 has no prompt: expedition hunt is being retired.
+#
+# THESE TAKE THE HOUSE STYLE, NOT `hud/`'s. They draw over the MAP, over whatever terrain is under
+# the half-transparent disc, at marker size — the fauna situation. So they keep the thick dark
+# charcoal outline, and the pale fill sits inside it. Front-on, since none of them has a facing.
+#
+# THE SUBJECT IS THE `hud/` MARK'S SUBJECT, redrawn in the map style. One activity, one mark: the
+# party's Scout / Deny / Trade button and its map marker must be recognisably the same thing, so the
+# footprints, the animal skull and the cloth bundle carry over and only the style changes.
+#
+# Pipeline: the fauna pipeline at the top of this file — key at `--size 256 --lo 55 --hi 170`, fix
+# the `.import` sidecar (mipmaps on, `size_limit=64`) and judge at true marker size (24-41px),
+# composited over a dark disc over terrain, never at 1024.
+#
+# WIRING when the art lands: a new all-static `ui/ExpeditionSprites.gd` (the `HudSprites` shape),
+# keyed by the mission id, and the expedition-marker draw puts the texture where it draws the glyph
+# today. The glyph stays as the fallback.
+
+# scout.png — a scouting party out on the map.
+scout: Flat vector game icon of two bare human footprints one ahead of the other as if walking away, seen from directly above, each footprint a simple bold rounded sole shape with a single separated toe pad and no individual toes, no boot tread, no compass, no flag, no arrow, no map, drawn as a bold simplified silhouette with a thick dark charcoal outline around each footprint, flat limited color palette in pale bone-cream with a warm mid tan inner sole, simple two-tone shading that stays clearly lighter than the outline, crisp clean edges, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the footprints on every side, no ground, no shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# deny.png — a denial raid out on the map.
+# The eye sockets are drawn in the background MAGENTA so they key to real holes, as in `hud/deny.png`.
+deny: Flat vector game icon of an animal skull seen straight on from the front in a symmetrical upright pose, one broad rounded cranium above a short blunt muzzle, with two large simple oval eye sockets and a small nasal hole, no horns, no antlers, no teeth, no jawbone detail, no crossbones, no weapon, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire skull, flat limited color palette in pale bone-white with cool mid grey shading, simple two-tone shading that stays clearly lighter than the outline, the eye sockets and nasal hole filled with the SAME flat magenta as the background so they read as holes cut clean through the skull, drawn large enough to stay open at 24 pixels, crisp clean edges, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the skull on every side, no ground, no shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# trade.png — a trade shipment out on the map.
+# A gathered cloth bundle, never a box: a squared crate centred in the frame reads as a tile.
+trade: Flat vector game icon of a bound cloth bundle of trade goods, a plump rounded sack gathered into a knotted neck at the top with two short tie ends flicking outward, clearly wider at the bottom than at the top and taller than it is wide, no box, no crate, no slats, no barrel, no coin, no scale, no animal, no pole, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire bundle, flat limited color palette in warm gold sackcloth with a light cream knotted neck, simple two-tone shading that stays clearly lighter than the outline, crisp clean edges, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the bundle on every side, no ground, no shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
