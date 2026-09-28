@@ -363,7 +363,9 @@ pub use starting_loadout::{
     apply_starting_loadout, clamped_kit_defaults, KitAllocation, LoadoutRejection, LoadoutSupply,
     LoadoutWindow, MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
 };
-pub use supply::{balance_supply_networks, PoolingLink, SupplyNetworkMembership};
+pub use supply::{
+    balance_supply_networks, BandSupplyMembership, PoolingLink, SupplyNetworkMembership,
+};
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,
     SupplyNetworkConfigMetadata,

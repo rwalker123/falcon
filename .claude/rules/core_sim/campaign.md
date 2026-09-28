@@ -550,7 +550,9 @@ resource (`entity → id`, cleared and rebuilt every turn): each connected compo
 gets a stable id (`1, 2, …` in the BTreeMap's sorted-root order), singletons get none. The capture
 reads it into each cohort's snapshot field `supplyNetworkId:uint` (`0` = not in a multi-band
 network, `>= 1` = shared id) so the client can draw supply links between co-networked bands. It is
-derived, not snapshot-persisted — a rehydrated cohort reads `0` until the next turn's balance.
+rebuilt every turn yet **checkpointed per band** (`BandRecord::supply`), because a restored world is
+captured before any turn runs and must publish the links the world it restored did — see
+`checkpoints.md`.
 
 The cohort snapshot also carries two derived per-band food-readout fields the client renders:
 `turnsOfFood:float` — **the honest larder runway: TURNS until the larder is empty, income
