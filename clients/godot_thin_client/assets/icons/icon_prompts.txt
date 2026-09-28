@@ -1705,10 +1705,9 @@ trade: Flat vector interface mark of a bound cloth bundle of trade goods, a plum
 
 # THE BAND VERB ROW — `move` and `split` (issue #529)
 # The five band verbs (`HudComposeVocab.BAND_VERBS`) share ONE row, on the Band panel's action bar
-# and in the Tile Panel's band drawer, beside the `cairn` launcher. Scout, Deny and Trade draw their
-# `hud/` art there; Move (`➜`) and Split (`⌂`) are text glyphs. That is the mixed row the gap list
-# warns about, so these two move TOGETHER — a set moves whole or not at all. When the PNGs land,
-# each verb's `VERB_KEY_MARK` names its file and `ui/HudSprites.gd` gains the row.
+# and in the Tile Panel's band drawer, beside the `cairn` launcher, and all five draw `hud/` art. These
+# two closed a row that had drawn Move (`➜`) and Split (`⌂`) as text beside three drawn marks, so
+# they moved TOGETHER — a set moves whole or not at all. Each verb's `VERB_KEY_MARK` names its file.
 # JUDGE BOTH AT 16px, NOT 13: they draw on the 24px action-bar button and on the collapsed rail,
 # which is the cairn's situation, not the kit picker's.
 # THE ROW'S NEIGHBOURS FIX THE SUBJECTS. `scout` is footprints, so Move must not be feet or a walker.
@@ -1719,14 +1718,25 @@ trade: Flat vector interface mark of a bound cloth bundle of trade goods, a plum
 # sits near the key's hue on the far side, so expect `--hi 200` for both (the warrior lesson above).
 
 # move.png — the `Move` verb: the whole band relocates.
-# STATUS: PROMPT ONLY — no PNG yet; the verb draws `➜`.
+# STATUS: SHIPPED at `assets/icons/hud/move.png` and WIRED on the verb row.
+# ⛔ KEYED `--size 256 --lo 60 --hi 130`, NOT the `--hi 200` the header predicted. Terracotta sits
+# only ~150 RGB-distance from the magenta key, so at `--hi 200` the body keyed at alpha ~150: an
+# arrow at 60% opacity, and nothing but an alpha percentile says so. At 130 the body is 255.
+# Coverage 23.2%.
+# THE CHOSEN RENDER — of two, the one with the LARGER arrowhead. The rejected twin's head came out
+# narrower, so at 16px its tip blurred into the shaft and read as a smear curving right.
 # ONE MASS: a single broad sweeping arrow. It is the one subject that says "go there" with no
 # second piece, and it cannot collide with the footprints two buttons along. The prompt breaks the
 # family's usual "no arrow" clause on purpose, because here the arrow IS the subject.
 move: Flat vector interface mark of a single broad curved arrow sweeping up and to the right in one smooth arc, the shaft a thick tapering band no thinner than one sixth of the icon width ending in a large blunt wedge-shaped arrowhead, no feet, no footprints, no figure, no path, no road, no map, no compass, no pack, no second arrow, no dotted trail, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a warm pale terracotta and a light peach-cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the arrow on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 16 pixels, strategy game interface icon
 
 # split.png — the `Split` verb: part of the band leaves to form a new band.
-# STATUS: PROMPT ONLY — no PNG yet; the verb draws `⌂`.
+# STATUS: SHIPPED at `assets/icons/hud/split.png` and WIRED on the verb row.
+# Keyed `--size 256 --lo 85 --hi 200`; body alpha 255 throughout.
+# THE CHOSEN RENDER — of two near-identical ones, the one with the WIDER gap. The gap is the whole
+# read, and at 16px the narrower one closes toward a one-pixel seam.
+# ⚠ COVERAGE 50.7%, the heaviest mark in the family (warrior 44%). A disc is a solid mass; the
+# bar's 24px button face caps its drawn size, so it does not outgrow its neighbours.
 # The read is ONE THING BECOMING TWO: a round mass cut into two unequal halves pulled apart. The gap
 # is drawn in the background MAGENTA so it keys to a real cut with the panel showing through — the
 # `deny` sockets' trick. Painted dark, it would key as fill and close up at 16px. The halves are

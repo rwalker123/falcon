@@ -1197,7 +1197,7 @@ const VERB_KEY_MARK := "mark"
 ## The verbs in bar order. Each glyph is its face's fallback when the art does not load.
 const BAND_VERBS := [
     {VERB_KEY_ID: VERB_MOVE, VERB_KEY_MISSION: VERB_MISSION_MOVE,
-        VERB_KEY_GLYPH: "➜", VERB_KEY_TOOLTIP: "Move", VERB_KEY_MARK: ""},
+        VERB_KEY_GLYPH: "➜", VERB_KEY_TOOLTIP: "Move", VERB_KEY_MARK: "move"},
     {VERB_KEY_ID: VERB_SCOUT, VERB_KEY_MISSION: COMPOSE_MISSION_SCOUT,
         VERB_KEY_GLYPH: "⚑", VERB_KEY_TOOLTIP: "Scout", VERB_KEY_MARK: "scout"},
     {VERB_KEY_ID: VERB_DENY, VERB_KEY_MISSION: COMPOSE_MISSION_DENY,
@@ -1205,7 +1205,7 @@ const BAND_VERBS := [
     {VERB_KEY_ID: VERB_TRADE, VERB_KEY_MISSION: COMPOSE_MISSION_TRADE,
         VERB_KEY_GLYPH: "📦", VERB_KEY_TOOLTIP: "Trade", VERB_KEY_MARK: "trade"},
     {VERB_KEY_ID: VERB_SPLIT, VERB_KEY_MISSION: COMPOSE_MISSION_SPLIT,
-        VERB_KEY_GLYPH: "⌂", VERB_KEY_TOOLTIP: "Split", VERB_KEY_MARK: ""},
+        VERB_KEY_GLYPH: "⌂", VERB_KEY_TOOLTIP: "Split", VERB_KEY_MARK: "split"},
 ]
 
 ## The descriptor whose MISSION is `mission`, or `{}`.
