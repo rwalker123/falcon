@@ -1318,11 +1318,23 @@ var _only: PackedStringArray = PackedStringArray()
 # How many times `_fail` fired this run — the ONE input to the exit status (see `_finish`).
 var _failures := 0
 
+## The hang guard, a child node in `blend_probe.tscn` (`tools/preview_watchdog.gd`) — the `ui_preview` /
+## `band_panel_preview` treatment. The whole run is one long `await`ing `_ready()` whose last line is
+## `_finish()`, so a runtime error aborts it without ever exiting, and a parse error in this script
+## leaves the root node scriptless: either way the process idles forever with no FAIL and no status.
+## (`blend_probe` did exactly that for 20+ minutes on a parse error, and printed nothing.) The
+## watchdog lives OUTSIDE this script, so it runs even then; `_settle` — which every state reaches —
+## is the sign of life, and `_finish` disarms it.
+const WATCHDOG_NODE := "Watchdog"
+const WATCHDOG_PROGRESS_METHOD := "note_progress"
+var _watchdog: Node = null
+
 
 func _ready() -> void:
 	# ⛔ **THE RUN OWNS THE POINTER** — a pixel harness must open a REAL window, and a
 	# real window receives the human's mouse. See `tools/harness_window.gd`.
 	HarnessWindow.seal_from_real_mouse(get_window())
+	_watchdog = _resolve_watchdog()
 	# FREEZE ANIMATION TIME (the `map_preview` treatment — see that harness's _ready). What it buys:
 	# with the canvas already pinned below, animated content was the ONLY remaining run-to-run
 	# difference here, so this is what makes the set a STRICT BIT-IDENTITY REFERENCE (230/230
@@ -1604,7 +1616,21 @@ func _fail(message: String) -> void:
 
 ## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
 ## status is derived from the run's own tally in exactly one place.
+## The hang guard from the scene, or `null` if the node has gone. Checked for its method rather than
+## assumed: calling a missing method on an untyped `Node` is a runtime error, and one raised here would
+## abort `_ready` exactly the way the guard exists to survive.
+func _resolve_watchdog() -> Node:
+	var node := get_node_or_null(WATCHDOG_NODE)
+	if node != null and node.has_method(WATCHDOG_PROGRESS_METHOD):
+		return node
+	push_warning(("blend_probe: no %s node in the scene — the run has NO hang guard. Restore it from "
+		+ "tools/blend_probe.tscn (see preview_watchdog.gd).") % WATCHDOG_NODE)
+	return null
+
+
 func _finish() -> void:
+	if _watchdog != null:
+		_watchdog.disarm()
 	if _failures > 0:
 		print("blend_probe: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
 	else:
@@ -4091,6 +4117,8 @@ func _snapshot(
 
 
 func _settle() -> void:
+	if _watchdog != null:
+		_watchdog.note_progress()   # a sign of life for the hang guard: every state reaches here
 	await _ensure_canvas()
 	await get_tree().process_frame
 	RenderingServer.force_draw()

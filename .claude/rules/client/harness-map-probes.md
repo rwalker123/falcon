@@ -171,6 +171,11 @@ they encode current behaviour including any bugs in it. That is exactly the righ
 decomposition safety net and the wrong one to mistake for a correctness test; the same caveat
 applies to any fixture added to protect a refactor rather than to pin a decision.
 
+**It carries the HANG GUARD** (`tools/preview_watchdog.gd`, a `Watchdog` node in `map_preview.tscn`;
+`test-harnesses.md` → `tools/preview_watchdog.gd`). `_settle` is its sign of life and `_finish` disarms
+it. A parse error in `map_preview.gd` is killed at 181 s with `FAIL watchdog` and exit 1, instead of
+idling forever.
+
 **It PINS ITS CANVAS AND WAITS FOR THE WM** — the `blend_probe` treatment (`_pin_canvas` /
 `_ensure_canvas` from `_settle` / the `_capture` geometry guard / `CANVAS_PIN_MAX_FRAMES`), because
 `project.godot` opens MAXIMIZED and macOS applies — and RE-applies — that asynchronously, so the
@@ -602,6 +607,15 @@ crops `_peakpeak` (hills↔alpine, big Δelev), `_sameelev` (hills↔plateau, Δ
 symmetric cross-fade), `_canyon` (peak↔non-peak — the control), `_lake` (the shoreline — hard BY
 DESIGN), `_iso` + `_iso_alpine` (the mandatory isolated-hex shred checks; both sit on the LEFT of
 the frame because MapView's minimap CanvasLayer is NOT hidden and a bottom-right crop captures IT).
+
+**It carries the HANG GUARD** (`tools/preview_watchdog.gd`, a `Watchdog` node in `blend_probe.tscn`;
+`test-harnesses.md` → `tools/preview_watchdog.gd`), because it HUNG.
+- **What happened:** a parse error left the root node scriptless, and a run sat for 20+ minutes printing
+  nothing — no frames, no `FAIL`, no status.
+- **How it is wired:** `_settle` is the sign of life, and `_finish` disarms it.
+- **Verified:** the same parse error is now killed at **181 s** with `FAIL watchdog` and exit 1.
+- **Gaps between signs of life:** the longest PNG-less assertion blocks settle between their captures, so
+  no gap comes near the 180 s limit.
 
 **A `--only=` state filter** (`scripts/preview.sh res://tools/blend_probe.tscn -- --only=G`, or
 `--only=1,4,G`; keys are `<number>/<letter>`, no filter = every state) renders one state instead of
