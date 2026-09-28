@@ -691,7 +691,8 @@ client's compose-time "Expected yield" row promises. Shape:
   `hunt_source_yield_preview`, `project_realized_hunt`, `project_arrivals_hunt` and
   `forecast_production_and_take_at`, so all six take/forecast paths resolve the *identical* fight via
   the one `fauna::resolve_hunt_fight` helper. A projection cannot know the tick it is projecting, so
-  it resolves at `fauna::HuntDraw::EXPECTED` — **no draw at all**, rather than the stand-in seed the
+  it reads the fight at its own quantile — **no draw at all** — over every outcome of the retreat
+  (see "THE EXPECTATION IS THE TAKE'S MEAN"), rather than the stand-in seed the
   first cut used (`FORECAST_FIGHT_SEED` survives only as the unread stream seed a quantile-mode fight
   hands to `resolve_fight`). At the shipped `combat_config.hit_chance` of `1.0` the fight makes no
   draw either way, so this is bit-identical to what the seed produced; what it buys is that a sub-1

@@ -650,8 +650,12 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >
 > **A projection averages the kill over the retreat's outcomes; it never hands the fight the
 > retreat's mean.** `fauna::expected_kill_over_retreat` is the seam `HuntProjection::step` and
-> `project_arrivals_hunt` share, because the fight's per-turn clamp to the bodies standing is
-> concave. See `yield-forecast.md` → "THE EXPECTATION IS THE TAKE'S MEAN".
+> `project_arrivals_hunt` share, `fauna::kill_over_retreat` its band-edge form that the raid and
+> denial projections read (`systems::expeditions::RaidRoll::Forecast`), and the seeded row and the
+> crew curve read the same outcomes through `fauna::OutcomeKills` — because the fight's per-turn
+> clamp to the bodies standing is concave. No forecast path hands `HuntDraw::EXPECTED` or a
+> `HuntDraw::Quantile` to the retreat any more; the quantile reaches the **fight** only. See
+> `yield-forecast.md` → "THE EXPECTATION IS THE TAKE'S MEAN".
 >
 > **The take reads the CURRENT biomass, not `biomass_before_regrowth`.** That pre-regrowth basis
 > existed because a constant *catch* evaluated after Logistics regrowth takes more than the stock grew,

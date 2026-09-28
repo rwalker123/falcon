@@ -436,7 +436,7 @@ pub use systems::{
     publish_turn_transfers, settle_bands_extraction, settle_bands_roadwork, settle_scarce_tools,
     simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
     split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound,
-    HuntTripForecast, MigrationKnowledgeEvent, PoolToolPlan, PowerSimParams, SplitBand,
+    HuntTripForecast, MigrationKnowledgeEvent, PoolToolPlan, PowerSimParams, RaidRoll, SplitBand,
     SplitRefusal, SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{

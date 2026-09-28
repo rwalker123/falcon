@@ -6140,7 +6140,7 @@ pub fn project_arrivals_hunt(
 /// **Which point of a take's distribution a forecast reads** — both over the retreat's discrete
 /// outcomes ([`retreat_outcomes`]), so the middle and the edges describe one distribution.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum TakeReading {
+pub enum TakeReading {
     /// The probability-weighted mean, at the fight's expected draw — [`TakeRange::likely`].
     Mean,
     /// The quantile at the normal-CDF probability of `sigmas`, at the fight's own `sigmas` draw —
@@ -7137,6 +7137,58 @@ pub fn expected_kill_over_retreat(
         HuntDraw::EXPECTED,
     );
     retreat_mean(&outcomes, |stayed| kills.projected(stayed, quantum))
+}
+
+/// **[`expected_kill_over_retreat`] at any point of the take's band** — the mean at
+/// [`TakeReading::Mean`], or [`retreat_band_edge`] over the same outcomes at [`TakeReading::Edge`],
+/// each outcome read at the fight's own draw. The one seam a forward projection reads a band edge of
+/// the kill through, so an edge is always a kill some retreat outcome produces.
+#[allow(clippy::too_many_arguments)] // the kill arm's inputs, plus which reading of it
+pub fn kill_over_retreat(
+    engaged: f32,
+    wariness: f32,
+    workers: u32,
+    party: &HuntingParty,
+    quarry: Option<&QuarryFight>,
+    wounds: DamageLedger,
+    quantum: EngagementQuantum,
+    reading: TakeReading,
+) -> f32 {
+    match reading {
+        TakeReading::Mean => {
+            expected_kill_over_retreat(engaged, wariness, workers, party, quarry, wounds, quantum)
+        }
+        TakeReading::Edge { sigmas } => {
+            let outcomes = party.stayer_outcomes(engaged, wariness);
+            let kills = OutcomeKills::resolve(
+                &outcomes,
+                workers,
+                party,
+                quarry,
+                wounds,
+                HuntDraw::Quantile { sigmas },
+            );
+            retreat_band_edge(
+                outcomes.iter().map(|outcome| {
+                    (
+                        outcome.probability,
+                        kills.projected(outcome.stayed, quantum),
+                    )
+                }),
+                sigmas,
+                |kill| *kill,
+            )
+            // `retreat_outcomes` always lists at least one outcome.
+            .unwrap_or(NO_STAYERS)
+        }
+    }
+}
+
+/// **The retreat's mean head count** — `Σ probability × stayed`, the expectation of what
+/// [`animals_that_stay`] draws. What a projection reports as the animals that stood, never what it
+/// hands the fight.
+pub fn expected_stayers(outcomes: &[RetreatOutcome]) -> f32 {
+    retreat_mean(outcomes, |stayed| stayed)
 }
 
 /// No animal stands — the seed of the largest-outcome search in [`OutcomeKills::resolve`].

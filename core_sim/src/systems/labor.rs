@@ -4578,9 +4578,14 @@ pub fn advance_labor_allocation(
     let supply_cfg = configs.supply_network.get();
     let widest_route_reach = crate::routes::max_route_reach_tiles(&ladder);
     // The forward-projection horizon for each source's steady `realized` yield: `realized` is the
-    // average food/turn the source will deliver over the next N turns, simulated forward from its
-    // current (pre-take) state, so the headline "Food /turn" is smooth and the assign-time seed matches
-    // the first resolved value exactly.
+    // average food/turn the source will deliver over the next N turns, simulated forward so the
+    // headline "Food /turn" is smooth where `actual` pulses. **The seed and the resolved row start
+    // one regrowth apart, on purpose** (`fauna::ProjectionStart`): the assign-time seed projects
+    // between turns, from a source the next Logistics has not regrown yet, so it starts
+    // `BeforeRegrowth`; the resolved row projects from the pre-take state inside this turn, which
+    // Logistics has already regrown, so it starts `AfterRegrowth` and its first step is this turn's
+    // take. Starting both at the same point would credit one turn's growth twice over the window.
+    // The two therefore agree on the take they project, not bit for bit on the number.
     let realized_horizon = labor.yield_average_horizon_turns;
     // The horizon for each source's discrete **arrival schedule** — what lands on each of the next N
     // turns, from the same forward simulation `realized` averages, reported per TURN instead of
