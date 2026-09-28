@@ -886,8 +886,8 @@ claims ride it, and each fails on its own:
 - **Open water has NO caps.** At two phases (0 and 1.3 s), the shipped frame against its coastal-off twin
   (`COAST_OFF` over `coastal_swell`): over the deep-ocean box, every pixel past the swell's reach, they
   must be byte-identical. The premise is that the pair DOES differ somewhere, at the island's coast;
-  without it the claim passes on a swell that never drew. Shipped: **0 deep px differ, 87 624 in the whole
-  frame**. **Sabotaged** with the coastal weight forced to 1 everywhere: **1 413 905 deep px**, fail.
+  without it the claim passes on a swell that never drew. Shipped: **0 deep px differ, 646 677 in the whole
+  frame**. **Sabotaged** with the coastal weight forced to 1 everywhere: **1 359 842 deep px**, fail.
   - **What went with the open-water caps.** Their seven claims (coverage band, elongation, neutral core,
     change in place, regional orientation, length variation, fade-in) and the `OCEAN_no_whitecaps` and
     `OCEAN_cap_life0..4` frames are retired from this state. Two of them followed the generator to state
@@ -942,75 +942,88 @@ Three PNG-less claims, each sabotage-verified to fail on its own:
 
 **One more state (31, COAST): the COASTAL SHORE SWELL** → `COAST*.png`, at the game's r ≈ 45, grid OFF
 (`terrain-blend-shader.md` → Coastal shore swell). The fixture:
-- **Land:** from the east edge in by `COAST_LAND_DEPTH[row]` hexes, which gives bays and headlands (and one
-  one-hex inlet), with a `COAST_SHELF_WIDTH`-hex shelf off it and deep ocean beyond.
-- **Plus:** a three-hex island offshore and a three-hex `inland_sea` lake inland, all placed from the EAST
-  edge so the same geography fits the narrower 2.0× grid.
+- **Land:** from the east edge in by `COAST_LAND_DEPTH[row]` hexes, which gives bays and headlands (row 8
+  reaches furthest west) and one one-hex inlet, with a `COAST_SHELF_WIDTH`-hex shelf off it and deep ocean
+  beyond.
+- **Plus:** a three-hex island in the deep ocean, open water on its west side, and a three-hex `inland_sea`
+  lake inland, all placed from the EAST edge so the same geography fits the narrower 2.0× grid.
 - **Temperature:** every tile at the warm end of the sim's own climate anchors, the grade's strongest tint.
 
 | frame | reads for |
 |---|---|
 | `COAST_off` | the same frame with the coastal swell off — the reference for what the swell adds |
-| `COAST`, `_t2`, `COAST_motion_diff` | the swell at two phases: crests parallel to the coast, only in the first water hex, landing on the beach |
-| `COAST_seq0..3` | a 3.5-radius crop of a bay at 0 / 0.9 / 1.8 / 2.7 s, one wave: crests rolling in and the surf pulsing |
+| `COAST`, `_t2`, `COAST_motion_diff` | the rows at two phases: straight, arriving from the open water, across the shelf, landing on the beach |
+| `COAST_seq0..3` | a 3.5-radius crop of a bay at 0 / 0.9 / 1.8 / 2.7 s (half a 5.6 s wave): rows rolling in and the surf pulsing |
+| `COAST_island` | the island: rows on its windward (west) side, calm on its lee (east) side |
+| `COAST_headland` | the headland: the rows stay straight past it, not wrapping round it |
 | `COAST_lake` | the lake: no swell, no surge |
 | `COAST_2x` | the same fixture on a 23×16 grid at r ≈ 47, Ray's 2.0× |
+| `COAST_live` | the same fixture on a 31×21 grid at r ≈ 35, Ray's 1.5× |
 
 **S** below is the shipped frame minus a coastal-off twin (`COAST_OFF`, over `coastal_swell`). The chop and
-the art cancel, so S is the coastal term alone. For (b)–(d) both frames also have `chop_strength` 0, so S is
-the swell with no chop residue. Pixel → field distance goes through `TerrainRenderer.coast_distance_at`,
-which samples the CPU copy of the field exactly as the shader samples the texture. The bands below are all
-inside the swell's 1.73 r reach. Seven claims, each sabotage-verified to fail on its own:
+the art cancel, so S is the coastal term alone. For (b), (c), (d) and the lee claim both frames also have
+`chop_strength` 0, so S is the swell with no chop residue. Pixel → field values go through
+`TerrainRenderer.coast_distance_at` / `coast_direction_at` / `coast_shelf_at`, which sample the CPU copies
+exactly as the shader samples the textures. Eight claims, each sabotage-verified to fail on its own:
 
-- **(a) Present near the coast, absent far out and on the lake.** Mean |S| over water 0.2–1.0 r from land
-  must be at least 1.0 levels. Past `reach` + 0.1 r (1.83 r), and on the lake, S must be EXACTLY 0 — the
-  coastal weight is 0 there, not small.
-  - **Shipped:** **2.98 levels** near; **0 of 285 866 px** moved far; **0 of 3 941** on the lake.
-  - **Sabotaged** by adding `inland_sea` to `coastal_terrains`: **3 151 of 3 941 lake px** moved, fail.
-- **(b) Travels toward the coast.** At points 0.4–1.2 r from land, S's profile along the direction to the
-  coast is compared 0.5 s apart. The summed cross-correlation over shifts ±8 px must peak at a POSITIVE
-  (shoreward) shift. The search stays under half the ~20 px shore wavelength, so it cannot lock onto the
-  neighbouring crest. Shipped **+3 px** over 1 102 points. **Sabotaged** with `speed` −0.18: **−3 px**, fail.
-- **(c) Crests run parallel to the coast.** S's gradient (a ±2 px stencil) against the coast field's, as
-  a doubled-angle mean weighted by the gradient's strength, over 0.3–1.2 r. It must be at least 0.5.
-  - **Shipped:** **0.87**.
-  - **Sabotaged** with the phase keyed on a fixed map axis (`p.y`) instead of the coast distance:
-    **0.12**, fail.
-  - **The fixed axis is `y` on purpose:** the fixture's mainland coast runs north–south, so a fixed `x`
-    phase would largely agree with the coast normal and pass.
+- **(a) Shelf-bounded.** Mean |S| over shelf pixels with a shelf zone of at least 0.9 must reach 1.0
+  levels. In OPEN deep water — past `reach` + 0.1 r (1.83 r) of land and with a shelf zone of exactly 0
+  under the pixel — and on the lake, S must be EXACTLY 0.
+  - **Which open-water pixels count:** those with a shelf zone of exactly 0 one field texel around them,
+    not only at them. The GPU's bilinear filter weights at 8-bit sub-texel precision, so right at the
+    zone's last texel it read a hair above the CPU copy's exact 0 (4 px, when the facing edge widened).
+  - **Shipped:** **4.01 levels** on the shelf; **0 of 261 521 px** moved in open water; **0 of 3 941** on
+    the lake.
+  - **Sabotaged** with the coastal weight ignoring the zone and the band (eligibility alone):
+    **226 361 of 261 521** open px moved, fail.
+  - **Sabotaged** by adding `inland_sea` to `swell_terrains`: **2 598 of 3 941 lake px** moved, fail.
+- **(b) Travels along the regional direction.** At shelf points, S's profile along the ROW direction is
+  compared 0.5 s apart. The summed cross-correlation over shifts ±8 px must peak at a POSITIVE shift. A row
+  moves ~4 px in that time, and the search stays well under half the ~45 px wavelength so it cannot lock
+  onto the neighbouring row. Shipped **+3 px** over 1 643 points. **Sabotaged** with `speed` −0.18:
+  **−3 px**, fail.
+- **(c) Straight rows**, over shelf water past the surf (0.6 r of land), from S's gradient (a ±2 px
+  stencil) as doubled-angle means weighted by its strength:
+  - **Round the headland** — where the coast normal is at least 30° off the row direction — the crests
+    must line up with the ROW direction (≥ 0.7). Shipped **0.89** with the rows, **−0.27** with the coast.
+  - **Uniform orientation:** in 3 r windows the mean resultant length of the doubled angles, averaged over
+    windows with at least 40 samples, must reach 0.75. Shipped **0.85** over 20 windows (0.92 with the thin
+    crest: a broad soft band has weaker gradients, so its angles are noisier).
+  - **Sabotaged** with the old CONTOUR phase (the crest a contour of the distance to land): **−0.29** with
+    the rows and **0.77** with the coast, and uniformity **0.55**, both fail.
 - **(d) No hex structure.** Straddle-ratio lines (the OCEANTEMP idea) across the edges between two
   same-terrain water hexes 0.3–1.5 r from land: the 2-px |Δ| of S straddling the edge over the largest 2-px
-  |Δ| elsewhere on the line. It must be at most 1.5. Shipped **0.26** over 231 lines.
-  - **Sabotaged** by reading the field at the fragment's HEX CENTRE (per-hex distance): **1.83**, fail.
-    The narrow band leaves a hex-centre read less to step over than the old 4 r swell did (3.39 then).
-  - **The same sabotage also fails (a)** (4 far px moved) and (c) (0.34).
-- **(e) No foam chips.** The coast's only foam is the shoreline surf. Past `COAST_SURF_BAND` (0.6 r) of land
-  — the surf's seaward reach with a full surge on a cliff coast is ~0.55 r — S may not reach
-  `COAST_CHIP_DL` (40 levels) in a blob of `COAST_CHIP_MIN_PX` (4) or more, pooled over three phases.
-  - **Shipped:** **0 blobs**; the peak S past the band is **20.0 levels**, printed beside the claim so the
-    margin is on the record. The retired chips were ~115 levels over the water.
-  - **Sabotaged** by restoring a chip (a grey disc on a 0.8 r grid, 0.6–1.2 r from land): **225 blobs
-    (10 373 px)**, fail.
-  - **Also failed** by the fixed-axis phase of (c) (7 blobs, peak 46 levels), since its crests stop
-    shoaling off the coast.
-  - **It replaced (e)'s foam claims**, which went with the foam: break-zone placement, along-crest
-    orientation, the neutral rendered core and the fade-in (`terrain-blend-shader.md` → "WHY THERE IS NO
-    FOAM ON THE WATER").
+  |Δ| elsewhere on the line. It must be at most 1.5. Shipped **0.38** over 231 lines.
+  - **Sabotaged** by reading the field at the fragment's HEX CENTRE: it PASSES (d). The rows'
+    phase reads the fragment's own position, so a per-hex field steps only the weight and the shoaling,
+    and those vary slowly. The sabotage still fails (a): 1 open-water px moved.
+- **(e) No foam chips.** Past `COAST_SURF_BAND` (0.6 r) of land, S may not reach `COAST_CHIP_DL` (60
+  levels) in a blob of `COAST_CHIP_MIN_PX` (4) or more, pooled over three phases.
+  - **Shipped:** **0 blobs**; the peak S past the band is **37.0 levels**, printed beside the claim. The
+    retired chips were ~115 levels over the water.
+  - **Sabotaged** by restoring a chip (a grey disc on a 0.8 r grid, 0.6–1.2 r from land): **219 blobs
+    (9 663 px)**, fail.
+- **LEE CALM (the island).** Water 0.2–1.0 r from land within 3 r of the island's centre, split by
+  dot(row direction, toward land): windward at or above 0.6, lee at or below −0.3. Mean |S| (chop off,
+  pooled over three phases) must reach 1.0 levels on the windward side, and stay at or under 0.2 × that on
+  the lee side.
+  - **Shipped:** windward **7.89 levels** (5 346 px), lee **0.00** (8 370 px).
+  - **Sabotaged** with the facing factor forced to 1: lee **6.66** against windward 7.89, fail.
 - **(f) The shore pulse moves the surf and never the sand.** The shipped frame against its surge-0 twin,
   at the three phases. Pixels must change on WATER hexes, and none may change on a LAND hex.
   - **Which land pixels count:** only those that are land for 2 px in every direction. A pixel on the
     hex line is rasterised by the shader's own point-in-hex pick, which need not be this probe's; the
     first cut counted 110 such boundary pixels.
-  - **Shipped:** **60 665 water px, 0 land px**.
-  - **Reported, not asserted:** the brightest 5% of the surged water renders saturation **0.130**, RGB
-    about **(126, 143, 145)**. That is the shoreline's own muted grey-blue `foam_color` at the surf's
+  - **Shipped:** **48 330 water px, 0 land px**. A lee shore does not pulse.
+  - **Reported, not asserted:** the brightest 5% of the surged water renders saturation **0.141**, RGB
+    about **(124, 141, 144)**. That is the shoreline's own muted grey-blue `foam_color` at the surf's
     `foam_opacity`, an earlier decision this state does not own.
-  - **Sabotaged** by surging the surf's inland wash too: **25 471 land px**, fail.
+  - **Sabotaged** by surging the surf's inland wash too: **21 845 land px**, fail.
 - **(g) `O` off gives byte-identical phases.** With the toggle off, two phases 2 s apart differ by **0 px**.
-  **Sabotaged** by leaving the shore surge ungated by the motion switch: **33 565 px**, fail.
+  **Sabotaged** by leaving the shore surge ungated by the motion switch: **17 410 px**, fail.
 
-**The field's build time is printed with the state** (`COAST field built in … ms`): ~4 ms for the 24×16
-fixture. The Huge map (128×80) measured ~120 ms in a standalone run, not in this harness.
+**The field's build time is printed with the state** (`COAST field built in … ms`): ~7 ms for the 24×16
+fixture. The Huge map (128×80) measured ~135–148 ms in a standalone headless run, not in this harness.
 
 ## Worked-source mark states (issue #412)
 

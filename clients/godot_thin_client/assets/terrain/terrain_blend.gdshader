@@ -235,21 +235,24 @@ uniform float water_wave_scale;         // wave UV scale, relative to the base U
 uniform float water_chop_strength;      // peak luma offset of a bright (+) / dark (−) patch, 0..1 luma units
 uniform float water_chop_scale;         // feature size of the coarse octave, in HEX RADII (zoom-invariant)
 uniform float water_chop_rate;          // how fast the field evolves: noise cells of its TIME axis per second
-// THE COASTAL SHORE SWELL (config "coastal_swell"; see apply_water_motion and swell_phase). Open ocean reads through
-// the chop and its colour alone; in the water hex beside a coast, crests run PARALLEL to the shore and roll IN,
-// and each one landing surges the shoreline surf. It all runs off a distance-to-coast field built once per world.
-uniform sampler2D coast_map : filter_linear, repeat_disable;   // R = distance to land (hex radii), G = eligibility
+// THE COASTAL SHORE SWELL (config "coastal_swell"; see apply_water_motion and swell_rows). Open ocean reads through
+// the chop and its colour alone; across the continental shelf STRAIGHT ROWS of swell run in from open water and land
+// on the facing shore, surging its surf, while lee shores stay calm. It runs off fields built once per world.
+uniform sampler2D coast_map : filter_linear, repeat_disable;   // R = distance to land (hex radii), G = eligibility, BA = row direction
+uniform sampler2D coast_shelf_map : filter_linear, repeat_disable;   // R = the shelf zone 0..1
 uniform vec2 coast_origin;              // the field's corner, in hex radii from hex (0, 0)'s centre
 uniform vec2 coast_size;                // the field's extent, in hex radii
 uniform float coast_wrap_width;         // the map's wrap period in hex radii; 0 = the map does not wrap
 uniform bool coastal_enabled;           // false = no field yet, or strength 0: the open-ocean term everywhere
-uniform float swell_strength;           // a crest's luma offset in deep coastal water (luma units)
-uniform float swell_wavelength;         // crest spacing in deep coastal water, hex radii
-uniform float swell_speed;              // crest speed in deep coastal water, hex radii per second
-uniform float swell_reach;              // how far from land the swell runs, hex radii
-uniform float swell_shoal_length;       // the wavelength at the shore, as a fraction of swell_wavelength
-uniform float swell_shoal_gain;         // the amplitude at the shore, × the deep-water amplitude
-uniform float swell_surge;              // the shoreline surf reaches this much further (× its reach) as a crest lands
+uniform float swell_strength;           // a crest's luma offset at full amplitude (luma units)
+uniform float swell_wavelength;         // row spacing, hex radii
+uniform float swell_speed;              // row speed, hex radii per second
+uniform float swell_reach;              // the no-shelf band from land, hex radii (and the shoaling's reach)
+uniform float swell_shoal_gain;         // the amplitude at the shore, × the amplitude swell_reach out
+uniform float swell_surge;              // the shoreline surf reaches this much further (× its reach) as a row lands
+uniform float swell_region_cell;        // hex radii: each cell of this grid runs one straight row set
+uniform float swell_facing_lo;          // dot(row direction, toward land): calm at or below this ...
+uniform float swell_facing_hi;          // ... and full swell at or above this
 // The motion gate for the waves, chop and coastal swell (and the shore surge it drives): TerrainRenderer ANDs the
 // zoom LOD (radius ≥ motion_min_radius) with the session-only `O` toggle. The static anti-tiling and the
 // temperature grade always run.
@@ -684,51 +687,49 @@ const float CHOP_PAIR_TIME_SHIFT = 0.5;
 const vec3 CHOP_PAIR_OFFSET = vec3(173.0, 293.0, 0.0);
 const float CHOP_PAIR_NORM = 0.70710678;
 const float VNOISE_MEAN = 0.5;                               // vnoise3's mid-value: subtracting it centres it
-// THE SWELL (see swell_phase / coastal_swell_luma). Crests are contours of the distance to land, so they run
-// parallel to the shore; the phase grows with that distance and with time, so they travel TOWARD it.
-// SHOALING: the wavelength shrinks linearly from swell_wavelength at `swell_reach` to swell_shoal_length of it at
-// the shore, and the phase is its exact integral (∫ dd / λ(d)), so crests bunch up as they come in rather than
-// being stretched or doubled by a phase that divides by the local wavelength.
-const float SWELL_SHOAL_MIN = 0.05;                            // floor on swell_shoal_length (the log below)
-const float SWELL_SHOAL_NONE = 0.999;                          // at or above this, no shoaling: a straight d / λ
-// Crests are not perfect contour lines: a low-frequency world noise adds up to ± half SWELL_WARP_AMOUNT of a
-// wavelength to the phase, so a crest bends along the coast.
-const float SWELL_WARP_CELL = 3.5;                             // hex radii
-const float SWELL_WARP_AMOUNT = 0.6;                           // wavelengths, peak to peak
-const vec2 SWELL_WARP_OFFSET = vec2(271.0, 613.0);
-// SETS: the amplitude swells and eases every SWELL_SET_WAVES crests (the envelope rides the phase, so a set
-// travels in with its waves), and a world noise at about a crest's own length breaks each crest into SECTIONS
-// that rise and die along it — sets of waves arriving in pieces, not a metronome, and not a ring of contour lines
-// (which is what an unbroken crest around an island reads as).
+// THE SWELL (see swell_rows / coastal_swell_luma). Swell arrives as STRAIGHT ROWS from open water, never as
+// contours of the coastline (those wrapped round every headland in a "C" and ringed an island from all sides).
+// The row direction is REGIONAL: CoastField's direction field (coast_map BA) points from open water toward land,
+// smoothed over several hexes. A phase `dot(p, dir(p))` would bend wherever that field turns, so instead the map is
+// cut into square cells of swell_region_cell hex radii; each cell runs ONE set of plane waves along the direction
+// sampled at its centre, and a fragment sums the four nearest cells' wave SIGNALS (never their phases) with smooth
+// partition-of-unity weights. Within a cell's reach a row is a straight line; where two cells' directions differ
+// the rows cross-fade over a cell rather than bend. Neighbouring cells share the phase origin (the map's), so where
+// their directions agree their rows agree exactly and the blend cannot double a row. A cell whose sampled
+// direction is shorter than SWELL_DIR_MIN (no field says anything there) draws nothing.
+const float SWELL_DIR_MIN = 0.05;
+// No wavelength shoaling: a wavelength that changed with distance to land would bend the plane-wave phase. Only
+// the AMPLITUDE shoals, toward swell_shoal_gain at the shore.
+// SETS: the amplitude swells and eases every SWELL_SET_WAVES rows (the envelope rides the phase, so a set travels
+// in with its waves).
 const float SWELL_SET_WAVES = 5.0;
 const float SWELL_SET_DEPTH = 0.65;                            // how far a lull drops, × the peak amplitude
-// Each crest is CUT into sections, not merely dimmed: the along-shore noise is smoothstepped between
-// SWELL_SECTION_LO and _HI, so below the low edge a crest is simply absent and it reads as broken arcs — round a
-// small island a merely-modulated crest still closed into a ring.
-const float SWELL_ALONG_CELL = 1.0;                            // hex radii
-const float SWELL_SECTION_LO = 0.5;
+// SECTIONS: each row is CUT into long pieces with soft ends, so the rows read as swells with gaps, not ruled
+// lines. The cut is a value noise in the cell's own frame — SWELL_SECTION_LENGTH hex radii (several hexes) per cell
+// ALONG the row, one cell per wave ACROSS it (its coordinate is the phase) — so each row carries its own pieces in
+// with it, and the pieces are segments of the straight row: nothing bends them. Smoothstepped over the wide
+// SWELL_SECTION_LO.._HI ramp, so a piece fades out over a long way (soft ends) and varies mildly along its length.
+const float SWELL_SECTION_LENGTH = 6.0;                        // hex radii
+const float SWELL_SECTION_LO = 0.3;
 const float SWELL_SECTION_HI = 0.7;
-const vec2 SWELL_ALONG_OFFSET = vec2(59.0, 887.0);
-// THE PROFILE of a crest, over one wave (`fract(phase)`, the crest at 0): a STEEP shoreward face rising over the
-// last SWELL_FRONT_FACE of the wave, and a long gentle seaward back falling over the first SWELL_BACK_FACE — the
-// shape of a wave that is running at the shore, not a symmetric ripple. The offset is
-// `amplitude · (crest − SWELL_TROUGH_LEVEL)`, so the long trough reads slightly darker; hue preserved.
-const float SWELL_FRONT_FACE = 0.12;
-const float SWELL_BACK_FACE = 0.45;
+const vec2 SWELL_SECTION_OFFSET = vec2(59.0, 887.0);
+// THE PROFILE of a crest, over one wave (`fract(phase)`, the crest at 0): a BROAD, soft swell band, close to a
+// raised cosine but leaning shoreward — it rises over the last SWELL_FRONT_FACE of the wave and falls over the first
+// SWELL_BACK_FACE, so its bright half is ~45% of the wavelength. A thin bright line (0.12 / 0.45) read as rain.
+// The offset is `amplitude · (crest − SWELL_TROUGH_LEVEL)`, so the trough reads only slightly darker; hue preserved.
+const float SWELL_FRONT_FACE = 0.3;
+const float SWELL_BACK_FACE = 0.6;
 const float SWELL_TROUGH_LEVEL = 0.12;
-// THE COASTAL WEIGHT ramps from 1 (at the coast) to 0 between SWELL_RAMP_START and 1 × swell_reach, and the open
-// chop keeps SWELL_CHOP_UNDER of its strength underneath the swell.
+// WHERE: the rows run on the shelf (coast_shelf_map, already faded in from the shelf's seaward edge), and where
+// land meets open water with no shelf, in a band that is full out to SWELL_RAMP_START × swell_reach and 0 from
+// swell_reach out. The open chop keeps SWELL_CHOP_UNDER of its strength underneath the swell.
 const float SWELL_RAMP_START = 0.5;
 const float SWELL_CHOP_UNDER = 0.8;
-// CONVERGING CRESTS: in a pocket of water hemmed in by land (a one-hex inlet, a strait) the distance field peaks
-// between the shores, and its contours — the crests — close into small rings round the peak, which read as a
-// lens floating mid-hex. Crests there CONVERGE: the field's Laplacian is about −1/ρ, ρ the distance to the
-// contours' centre of curvature, so it is ~0 off a straight coast, mildly negative in a broad bay and strongly
-// negative in a pocket. The swell fades out as the convergence (−Laplacian) rises from SWELL_CONVERGE_LO to _HI
-// per hex radius. The Laplacian is a five-tap stencil over COAST_LAPLACIAN_STEP hex radii.
-const float SWELL_CONVERGE_LO = 0.8;
-const float SWELL_CONVERGE_HI = 1.8;
-const float COAST_LAPLACIAN_STEP = 0.25;
+// SHELTER: the swell is multiplied by smoothstep(swell_facing_lo, swell_facing_hi, dot(row direction,
+// toward land)), so a shore the rows run INTO takes them and a lee shore is calm. "Toward land" is minus the
+// distance field's central difference over SWELL_SHELTER_STEP hex radii, NOT normalised: it is ~unit on an open
+// slope and shrinks smoothly across a ridge between two shores, so the facing never flips on a line in open water.
+const float SWELL_SHELTER_STEP = 0.5;
 // hash13's input scale (Hoskins' "hash without sine": no sin(), so no precision loss as TIME grows).
 const vec3 HASH3_SCALE = vec3(0.1031, 0.1030, 0.0973);
 const float HASH3_ADD = 33.33;
@@ -900,41 +901,35 @@ float open_chop(vec2 map_px, float t) {
 	return 2.0 * dot(vec2(coarse, fine), CHOP_OCTAVE_WEIGHTS);
 }
 
-// THE COAST FIELD at `p` (hex radii from hex (0, 0)'s centre): R = distance to land in hex radii, G = how coastal
-// (eligible for the swell) this water is, 0..1. Wrapped horizontally on a wrapping map.
-vec2 coast_sample(vec2 p) {
+// A point `p` (hex radii from hex (0, 0)'s centre) wrapped horizontally into the field on a wrapping map.
+vec2 coast_wrap(vec2 p) {
 	if (coast_wrap_width > 0.0) {
 		p.x = p.x - coast_wrap_width * floor(p.x / coast_wrap_width);
 	}
-	return texture(coast_map, (p - coast_origin) / coast_size).rg;
+	return p;
 }
 
-// How strongly the crests CONVERGE at `p` (hex radii): minus the coast field's Laplacian, per hex radius — ~0 off a
-// straight coast, large where the crests close round a pocket (see SWELL_CONVERGE_*).
-float coast_convergence(vec2 p) {
-	vec2 e = vec2(COAST_LAPLACIAN_STEP, 0.0);
-	float sum = coast_sample(p + e.xy).r + coast_sample(p - e.xy).r + coast_sample(p + e.yx).r
-		+ coast_sample(p - e.yx).r;
-	return -(sum - 4.0 * coast_sample(p).r) / (COAST_LAPLACIAN_STEP * COAST_LAPLACIAN_STEP);
+// THE COAST FIELD at `p`: R = distance to land in hex radii, G = how coastal (eligible for the swell) this water
+// is, 0..1, BA = the regional row direction (unit where a field says anything, else shorter).
+vec4 coast_sample(vec2 p) {
+	return texture(coast_map, (coast_wrap(p) - coast_origin) / coast_size);
 }
 
-// THE SWELL'S PHASE at distance `d` from land, point `p` (hex radii) and time `t`: crests sit at whole numbers, and
-// the phase grows with `d` and with `t`, so a crest travels toward the coast. The distance term is the exact
-// integral of 1 / λ(d) under the shoaling (see SWELL_SHOAL_*); the warp bends each crest along the shore.
-float swell_phase(float d, vec2 p, float t) {
-	float wl = max(swell_wavelength, BLEND_SOFT_MIN);
-	float reach = max(swell_reach, BLEND_SOFT_MIN);
-	float shoal = clamp(swell_shoal_length, SWELL_SHOAL_MIN, 1.0);
-	float dist_phase;
-	if (shoal >= SWELL_SHOAL_NONE) {
-		dist_phase = d / wl;
-	} else {
-		float u = min(d, reach);
-		dist_phase = reach / (wl * (1.0 - shoal)) * log((shoal + (1.0 - shoal) * u / reach) / shoal)
-			+ max(d - reach, 0.0) / wl;
-	}
-	float warp = SWELL_WARP_AMOUNT * (vnoise(p / SWELL_WARP_CELL + SWELL_WARP_OFFSET) - VNOISE_MEAN);
-	return dist_phase + t * swell_speed / wl + warp;
+// THE SHELF ZONE at `p`, 0..1: where the rows run, faded in from the shelf's seaward edge.
+float coast_shelf(vec2 p) {
+	return texture(coast_shelf_map, (coast_wrap(p) - coast_origin) / coast_size).r;
+}
+
+// Toward land at `p`, unnormalised (see SWELL_SHELTER_STEP): minus the distance field's central difference.
+vec2 coast_toward_land(vec2 p) {
+	vec2 e = vec2(SWELL_SHELTER_STEP, 0.0);
+	return -vec2(coast_sample(p + e.xy).r - coast_sample(p - e.xy).r,
+		coast_sample(p + e.yx).r - coast_sample(p - e.yx).r) / (2.0 * SWELL_SHELTER_STEP);
+}
+
+// SHELTER at `p`, 0..1 (see SWELL_SHELTER_STEP): 1 where the rows run into the shore, 0 on a lee shore.
+float swell_facing(vec2 p) {
+	return smoothstep(swell_facing_lo, swell_facing_hi, dot(coast_sample(p).ba, coast_toward_land(p)));
 }
 
 // A crest's height 0..1 at `phase` (see SWELL_FRONT_FACE / SWELL_BACK_FACE): 1 on each whole number.
@@ -943,36 +938,69 @@ float swell_crest(float phase) {
 	return max(1.0 - smoothstep(0.0, SWELL_BACK_FACE, y), smoothstep(1.0 - SWELL_FRONT_FACE, 1.0, y));
 }
 
-// THE SWELL's luma offset at distance `d`, point `p`, phase `phase`: amplitude shoaled toward the shore, eased in
-// sets, cut into sections along the coast, and faded out where the crests converge (see SWELL_CONVERGE_*).
-float coastal_swell_luma(float d, vec2 p, float phase) {
-	float shoaled = mix(swell_shoal_gain, 1.0, smoothstep(0.0, max(swell_reach, BLEND_SOFT_MIN), d));
-	float sets = mix(1.0 - SWELL_SET_DEPTH, 1.0, 0.5 + 0.5 * cos(TAU * phase / SWELL_SET_WAVES));
-	float along = smoothstep(SWELL_SECTION_LO, SWELL_SECTION_HI, vnoise(p / SWELL_ALONG_CELL + SWELL_ALONG_OFFSET));
-	float open_water = 1.0 - smoothstep(SWELL_CONVERGE_LO, SWELL_CONVERGE_HI, coast_convergence(p));
-	return swell_strength * shoaled * sets * along * open_water * (swell_crest(phase) - SWELL_TROUGH_LEVEL);
+// THE ROWS at `p` (hex radii) and time `t` (see the SWELL block): the four nearest region cells' plane waves, cut
+// into sections, blended by smooth partition-of-unity weights. x = Σ w · sets · section · (crest − SWELL_TROUGH_LEVEL),
+// the luma signal; y = Σ w · section · crest, how hard a row is landing here (the shore pulse). Each cell's phase is
+// (t · speed − p · dir) / λ: whole numbers are crests, and a crest moves along `dir`, toward land.
+vec2 swell_rows(vec2 p, float t) {
+	float cell = max(swell_region_cell, BLEND_SOFT_MIN);
+	float wl = max(swell_wavelength, BLEND_SOFT_MIN);
+	vec2 q = p / cell - 0.5;
+	vec2 base = floor(q);
+	vec2 f = q - base;
+	vec2 s = f * f * (3.0 - 2.0 * f);
+	vec2 acc = vec2(0.0);
+	for (int j = 0; j <= 1; j++) {
+		for (int i = 0; i <= 1; i++) {
+			vec2 ci = base + vec2(float(i), float(j));
+			vec2 dir = coast_sample((ci + 0.5) * cell).ba;
+			float len = length(dir);
+			if (len < SWELL_DIR_MIN) {
+				continue;
+			}
+			dir /= len;
+			float w = (i == 0 ? 1.0 - s.x : s.x) * (j == 0 ? 1.0 - s.y : s.y);
+			float phase = (t * swell_speed - dot(p, dir)) / wl;
+			float sets = mix(1.0 - SWELL_SET_DEPTH, 1.0, 0.5 + 0.5 * cos(TAU * phase / SWELL_SET_WAVES));
+			float along = dot(p, vec2(-dir.y, dir.x)) / SWELL_SECTION_LENGTH;
+			float section = smoothstep(SWELL_SECTION_LO, SWELL_SECTION_HI,
+				vnoise(vec2(along, phase) + SWELL_SECTION_OFFSET));
+			float crest = swell_crest(phase) * section;
+			acc += w * vec2(sets * (crest - SWELL_TROUGH_LEVEL * section), crest);
+		}
+	}
+	return acc;
 }
 
-// How much of the coastal term a water point at distance `d` with eligibility `elig` takes: 1 at the coast, 0 from
-// swell_reach out, and 0 on water the swell does not run on (a lake).
-float coastal_weight(float d, float elig) {
+// THE SWELL's luma offset at distance `d` from land, from the rows' signal: amplitude shoaled toward the shore.
+// (Shelter and the coastal weight are the caller's.)
+float coastal_swell_luma(float d, float rows) {
+	float shoaled = mix(swell_shoal_gain, 1.0, smoothstep(0.0, max(swell_reach, BLEND_SOFT_MIN), d));
+	return swell_strength * shoaled * rows;
+}
+
+// How much of the coastal term a water point takes (see the WHERE note): the shelf zone, or the no-shelf band
+// within swell_reach of land, whichever is more — times the eligibility, so a lake takes none.
+float coastal_weight(float d, float elig, float shelf) {
 	float reach = max(swell_reach, BLEND_SOFT_MIN);
-	return clamp(elig, 0.0, 1.0) * (1.0 - smoothstep(reach * SWELL_RAMP_START, reach, d));
+	float band = 1.0 - smoothstep(reach * SWELL_RAMP_START, reach, d);
+	return clamp(elig, 0.0, 1.0) * max(clamp(shelf, 0.0, 1.0), band);
 }
 
 // THE SHORE SURGE at `map_px`: the factor the shoreline surf's SEAWARD reach is multiplied by — 1, plus
-// swell_surge × how hard a crest is landing on this stretch of coast right now. Exactly 1 with no coastal swell,
-// with motion gated off (LOD or `O`), and on water the swell does not run on, so every other coast is bit-exact.
+// swell_surge × how hard a row is landing on this stretch of shore right now (the same rows, the same shelter).
+// Exactly 1 with no coastal swell, with motion gated off (LOD or `O`), and on water the swell does not run on, so
+// every other coast is bit-exact.
 float shore_surge(vec2 map_px) {
 	if (!coastal_enabled || !water_motion_enabled || swell_surge <= 0.0) {
 		return 1.0;
 	}
 	vec2 p = map_px / hex_radius;
-	vec2 field = coast_sample(p);
+	vec4 field = coast_sample(p);
 	if (field.g <= 0.0) {
 		return 1.0;
 	}
-	float landing = swell_crest(swell_phase(0.0, p, TIME + water_time_offset));
+	float landing = swell_rows(p, TIME + water_time_offset).y * swell_facing(p);
 	return 1.0 + swell_surge * clamp(field.g, 0.0, 1.0) * landing;
 }
 
@@ -989,13 +1017,14 @@ vec3 apply_water_motion(vec3 c, vec2 map_px, vec2 field_px) {
 		return open;
 	}
 	vec2 p = map_px / hex_radius;
-	vec2 field = coast_sample(field_px / hex_radius);
-	float cw = coastal_weight(field.r, field.g);
+	vec2 fp = field_px / hex_radius;
+	vec4 field = coast_sample(fp);
+	float cw = coastal_weight(field.r, field.g, coast_shelf(fp));
 	if (cw <= 0.0) {
 		return open;
 	}
-	float phase = swell_phase(field.r, p, t);
-	vec3 coastal = c + vec3(chop * SWELL_CHOP_UNDER + coastal_swell_luma(field.r, p, phase));
+	float swell = coastal_swell_luma(field.r, swell_rows(p, t).x) * swell_facing(p);
+	vec3 coastal = c + vec3(chop * SWELL_CHOP_UNDER + swell);
 	return mix(open, coastal, cw);
 }
 

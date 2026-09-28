@@ -1227,78 +1227,122 @@ is narrow: below ~1 level/s the sea reads still, and ~5 reads as weather.
 
 ## Coastal shore swell
 
-**What it is.** In the water hex beside a coast, crests run PARALLEL to the shore and roll IN. They shorten
-and steepen as they shoal, and each crest landing surges the shoreline surf a little. The swell is gone by
-the far side of that first hex. Open water keeps the chop alone. Everything here is `apply_water_motion`'s
-coastal term, blended in by the coastal weight, and it runs off one field.
+**What it is.** Straight rows of swell arrive from open water, run in across the continental shelf and land
+on the shore that faces them, surging its surf. A lee shore is calm. Where land meets open water with no
+shelf, the rows run only in the first water hex. Open water keeps the chop alone. Everything here is
+`apply_water_motion`'s coastal term, blended in by the coastal weight, and it runs off fields built once
+per world.
 
-**The distance-to-coast field** (`TerrainRenderer.rebuild_coast_field` → the native `CoastField`,
+> #### ⛔ WHY NOT CONTOURS OF THE COAST — every wave copied the coastline
+>
+> The first two cuts made each crest a contour of the distance to land. Live, Ray saw every wave take the
+> coast's shape: "C"-shaped crests wrapping round each headland, and a four-hex island with waves coming
+> in from all sides. Real swell arrives as straight rows from open water. So the direction is REGIONAL,
+> taken from where the open ocean is, and the rows are plane waves.
+
+**The fields** (`TerrainRenderer.rebuild_coast_field` → the native `CoastField`,
 `native/src/bridge/coast_field.rs`).
-- **The mask:** each hex is land (any non-water blend class, navigable rivers included), coastal water (a
-  `coastal_swell.coastal_terrains` terrain — `deep_ocean`, `continental_shelf`, `coral_shelf`), or other
-  water (a lake: no swell).
-- **The build:** rasterised at `COAST_FIELD_TEXELS_PER_RADIUS` (8) texels per hex radius. An EXACT
-  Euclidean distance transform (Felzenszwalb, two separable 1D passes) gives each texel's distance to the
-  nearest land texel, capped at `COAST_FIELD_CAP_RADII` (8 r). Then it is box-blurred twice over
-  `COAST_FIELD_BLUR_RADII` (0.25 r), so a crest — a contour of this field — rounds a hex corner instead of
-  tracing it.
-- **The texture:** an `RGF` float texture sampled `filter_linear`. R is the distance in hex radii. G is
-  the coastal eligibility 0..1, a WATER-ONLY blur of the per-hex flag, so land does not drag a coast's
-  eligibility down and a lake's 0 does not leak far.
+- **The mask:** each hex is land (any non-water blend class, navigable rivers included), shelf water
+  (`coastal_swell.swell_terrains` — `continental_shelf`, `coral_shelf`), open water
+  (`open_water_terrains` — `deep_ocean`), or other water (a lake: no swell).
+- **The build:** rasterised at `COAST_FIELD_TEXELS_PER_RADIUS` (8) texels per hex radius. Two EXACT
+  Euclidean distance transforms (Felzenszwalb, two separable 1D passes each): to the nearest land texel
+  and to the nearest open-water texel, both capped at `COAST_FIELD_CAP_RADII` (8 r). The land distance is
+  box-blurred twice over `COAST_FIELD_BLUR_RADII` (0.25 r).
+- **`coast_map` (`RGBAF`, `filter_linear`):**
+  - R = the distance to land, hex radii.
+  - G = the coastal eligibility 0..1, a WATER-ONLY blur of the shelf-or-open flag, so land does not drag
+    a coast's eligibility down and a lake's 0 does not leak far.
+  - BA = the regional row DIRECTION (below), unit or zero.
+- **`coast_shelf_map` (`RF`):** the SHELF ZONE 0..1, where the rows run. It is the water-only blur of the
+  shelf flag × `smoothstep(0, shelf_fade, distance to open water)`, so a row appears at the shelf's
+  seaward edge and is at full strength `shelf_fade` (0.87 r, about half a hex) in. On open water the
+  distance to open water is 0, so the zone is exactly 0 there.
 - **Wrap:** on a wrapping map the build wraps columns and the shader wraps x into the map's period.
-- **Why native:** one GDScript chamfer pass over the Huge map (128×80 hexes, ~1.8M texels) measured
-  **191 ms**, so a full build would be over a second of hitch per world. The native build measures
-  **~120 ms** on Huge (release build, 1797×980 texels) and ~5 ms on the harness's 24×16 fixture.
-- **When it rebuilds:** with the other shader maps, and only when the land/water mask actually changed
-  (terrain is static within a world); an unchanged mask re-pushes the uniforms and skips the build.
-- **Probes:** `coast_distance_at(map_px)` samples the CPU copy exactly as the shader samples the texture.
+- **Why native, and its cost:** one GDScript chamfer pass over the Huge map (128×80 hexes, ~1.8M texels)
+  measured **191 ms**. The native build measures **~135–148 ms** on Huge (release, 1797×980 texels, a
+  coastline mask; ~120 ms before the direction field and the shelf zone were added) and ~7 ms on the
+  harness's 24×16 fixture. The direction's heavy blur is a running-sum box blur, so its cost does not
+  grow with the smoothing radius.
+- **When it rebuilds:** with the other shader maps, and only when the mask or a build lever
+  (`direction_smoothing`, `shelf_fade`) changed. Terrain is static within a world, so an unchanged mask
+  re-pushes the uniforms and skips the build.
+- **Probes:** `coast_distance_at`, `coast_direction_at` and `coast_shelf_at` sample the CPU copies
+  exactly as the shader samples the textures.
 
-**The reach is one hex across.** `reach` is **1.73** hex radii, which is √3. The field measures distance from
-the coastline in hex radii, and a pointy-top hex is √3 r from flat side to flat side, so a crest runs only
-in the water hex touching the shore. The coastal weight is full out to half the reach (0.87 r, the apothem)
-and falls to exactly 0 at 1.73 r, the far side of that hex.
+**The regional direction** points from open water toward land. Three sources are each a field of unit
+vectors, box-blurred twice over `direction_smoothing` (5 r). They are blended by how much each says: a
+blurred field of unit vectors is short where its inputs disagree or are absent, and below
+`DIR_FULL_LENGTH` (0.25) the next source fills in, in proportion. They are never switched.
+1. **Away from open water:** the gradient of the distance to open water, over the non-open WATER texels
+   where open water lies within the cap. The gradient must rise at least `DIR_MIN_SLOPE` (0.5 per radius),
+   so a ridge between two open waters says nothing.
+2. **The fallback, the coast-normal:** toward the nearest land, over water with NO open water within the
+   cap (an enclosed shelf, far from any deep water).
+3. **The last fallback, the map's mean** of source 1 (or of source 2 where the map has no open water). This
+   is what an island alone in the ocean takes: the prevailing swell on one side, not rows from every side.
+- **Land texels contribute nothing.** An island's own land texels would add radial vectors round it.
 
-**Crests** (`swell_phase`, `coastal_swell_luma`).
-- **The phase** is `F(d) + t · speed / wavelength + warp`, so crests are contours of the distance and
-  travel TOWARD the coast.
-- **Two or three crests in the band:** `wavelength` is 0.65 r at the reach, shoaling to `shoal_length` 0.6
-  of that (0.39 r) at the shore.
-- **The timing:** a wave arrives every `wavelength / speed` = 0.65 / 0.18 ≈ **3.6 s**. The shore pulse reads
-  the same phase at d = 0, so the surf surges exactly as each crest lands.
-- **Shoaling:** the wavelength shrinks linearly from `wavelength` at `reach` to `shoal_length` × it at the
-  shore, and `F` is the exact integral of `1 / λ(d)`. That makes crests bunch up as they come in, rather
-  than being stretched or doubled by a phase that divides by the local wavelength. The amplitude grows
-  toward `shoal_gain` × at the shore.
-- **Not contour rings:** a low-frequency world-noise warp bends each crest along the coast
-  (`SWELL_WARP_*`). A world noise about a crest's length (`SWELL_ALONG_CELL`, 1 r) CUTS each crest into
-  sections: it is smoothstepped between `SWELL_SECTION_LO` (0.5) and `_HI` (0.7), so below the low edge
-  the crest is absent, not dimmed. An envelope riding the phase eases the amplitude every
-  `SWELL_SET_WAVES` crests, so sets arrive.
-  - The first cut, with a weaker along-shore modulation and a symmetric profile, drew concentric contour
-    rings round an island.
-  - A modulation that only DIMMED a crest (a floor of 0.1) still closed into a ring round a small island,
-    and so did a cut at 0.4–0.65 over a 1.3 r cell: value noise clusters near 0.5, so too few sections
-    fell below the edge. At 0.5–0.7 over 1 r the island's crests read as broken arcs.
-- **Not a lens in a pocket:** in water hemmed in by land (a one-hex inlet, a strait) the field peaks
-  between the shores. Its contours close into a small ring round the peak, which reads as a lens floating
-  mid-hex. So the amplitude fades out where the crests CONVERGE.
-  - **The measure:** minus the field's Laplacian (a five-tap stencil over `COAST_LAPLACIAN_STEP`, 0.25 r).
-    It is ~0 off a straight coast, about 1/ρ in a bay of radius ρ, and large in a pocket.
-  - **The fade:** between `SWELL_CONVERGE_LO` (0.8) and `_HI` (1.8).
-  - **Why not the slope:** a cut on the field's SLOPE was tried first and kept the ring. The slope stays
-    ~1 on a ring round a peak and falls only AT the peak.
-- **The profile:** a steep shoreward face over `SWELL_FRONT_FACE` of a wave and a long seaward back over
-  `SWELL_BACK_FACE`. It is applied as a LUMA offset, `amplitude · (crest − SWELL_TROUGH_LEVEL)`, hue
-  preserved, after the grade like the chop. The trough sits only `SWELL_TROUGH_LEVEL` (0.12) below the
-  mean: the shoaled amplitude peaks at the shore, and at 0.25 the trough read as a dark band hugging a
-  small island.
-- **The blend:** the coastal weight is `eligibility × (1 − smoothstep(0.5 · reach, reach, d))`, EXACTLY
-  0 past `reach`, so open water is bit-identical to the chop-only surface. The chop keeps
-  `SWELL_CHOP_UNDER` (0.8) of its strength under the swell; at 0.5 its absence read as a calm halo.
+**Straight rows** (`swell_rows`).
+- **Not one phase with a varying direction.** A phase like `dot(p, dir(p))` bends wherever the direction
+  field turns.
+- **Cells:** the map is cut into square cells of `region_cell` (8 r). Each cell runs ONE set of plane
+  waves along the direction sampled at its centre.
+- **The phase** of a cell's waves is `(t · speed − p · dir) / wavelength`: whole numbers are crests, and a
+  crest moves along `dir`, toward land.
+- **The blend:** a fragment sums the four nearest cells' wave SIGNALS (never their phases), with
+  smoothstepped bilinear partition-of-unity weights. Within a cell's reach a row is a straight line; where
+  two cells' directions differ, the rows cross-fade over a cell rather than bend.
+- **No per-cell phase offset.** The cells share the map's phase origin, so neighbouring cells whose
+  directions agree draw exactly the same rows, and the blend cannot double a row.
+- **A cell with no direction** (sampled shorter than `SWELL_DIR_MIN`) draws nothing.
+- **No wavelength shoaling.** A wavelength that changed with the distance to land would bend the
+  plane-wave phase, so it was dropped. Only the AMPLITUDE shoals: it rises toward `shoal_gain` (1.25 ×) as
+  the distance to land falls from `reach` to 0. At 1.6 the rows brightened into hard streaks at the shore.
+- **Timing:** a row lands every `wavelength / speed` = 1.0 / 0.18 ≈ **5.6 s**.
+- **Sections:** each row is CUT into long pieces with soft ends, so the rows read as swells with gaps, not
+  ruled lines. The cut is a value noise in the cell's own frame — `SWELL_SECTION_LENGTH` (6 r, several
+  hexes) per cell ALONG the row, one cell per wave ACROSS it (its coordinate is the phase) — so each row
+  carries its own pieces in with it. It is smoothstepped over the wide `SWELL_SECTION_LO` (0.3) to `_HI`
+  (0.7) ramp, so a piece fades out over a long way and varies mildly along its length.
+- **Sets:** an envelope riding each cell's phase eases the amplitude every `SWELL_SET_WAVES` rows.
+- **The profile:** a BROAD, soft swell band, close to a raised cosine but leaning shoreward: it rises over
+  the last `SWELL_FRONT_FACE` (0.3) of a wave and falls over the first `SWELL_BACK_FACE` (0.6), so its
+  bright half is ~45% of the wavelength. It is applied as a LUMA offset,
+  `amplitude · (crest − SWELL_TROUGH_LEVEL)`, hue preserved, after the grade like the chop. The trough sits
+  `SWELL_TROUGH_LEVEL` (0.12) below the mean; at 0.25 it read as a dark band hugging a small island.
+
+> #### ⛔ THE FIRST ROWS READ AS RAIN
+>
+> The first plane-wave cut kept the contour swell's crest: a thin bright line (a 0.12 front and a 0.45
+> back) every 0.65 r, cut into 2–3.5 r dashes, and shoaled to 1.6 × at the shore. On `COAST_2x` the rows
+> read as thin, hard, vertical streaks: rain. The fix was broad, soft bands (the profile above), a longer
+> 1.0 r wavelength, long soft-ended sections (6 r), a gentler shoal (1.25) and a stronger 0.2 strength,
+> so the band reads through its softness. A narrow one-hex shelf still shows one to two rows.
+
+**Where the rows run.**
+- **The coastal weight** is `eligibility × max(shelf zone, band)`. The band is the no-shelf fallback:
+  full out to half of `reach` and exactly 0 from `reach` (1.73 r, √3: one hex across, flat side to flat
+  side) out. So land meeting open water with no shelf still takes rows in its first water hex.
+- **Exactly 0** in open water past the band and on a lake, so open water is bit-identical to the
+  chop-only surface.
+- **The chop** keeps `SWELL_CHOP_UNDER` (0.8) of its strength under the swell; at 0.5 its absence read as
+  a calm halo.
+
+**Shelter.** The swell is multiplied by `smoothstep(facing_lo, facing_hi, dot(row direction, toward
+land))`, −0.2 → 0.5. The low edge sits a little below 0 so a coast running along the rows still carries them
+rather than cutting each row off where the coast turns; a shore facing away (dot ≤ −0.2) is calm.
+- **Toward land** is minus the distance field's central difference over `SWELL_SHELTER_STEP` (0.5 r),
+  NOT normalised. It is ~unit on an open slope and shrinks smoothly across a ridge between two shores, so
+  the facing never flips on a line in open water.
+- A shore the rows run INTO takes them; a lee shore gets ~0.
+- **The convergence fade the contour swell needed is gone.** Plane waves cannot close into a lens round
+  a pocket.
 
 **The shore pulse** (`shore_surge`). The shoreline surf's SEAWARD reach (`foam_band`) is multiplied by
-`1 + surge × eligibility × crest(phase at d = 0)`, so the surf reaches a little further as each crest
-lands. Ray, live: it "looks nice enough by itself".
+`1 + surge × eligibility × landing × facing`, where `landing` is the same rows' crest signal at the
+fragment. So the surf surges exactly where and when a row lands, and not at all on a lee shore. Ray,
+live: the pulse "looks nice enough by itself".
 - **What does not move:** the inland wash and the sand, so the beach never moves.
 - **Exactly 1** with no coastal swell, with motion gated off (LOD or `O`), and on a lake, so every other
   coast is bit-exact.
@@ -1320,28 +1364,36 @@ lands. Ray, live: it "looks nice enough by itself".
 > is what makes it move. `blend_probe` state 31's claim (e) fails if a chip comes back.
 
 **Cost** (per coastal water fragment, shipped).
-- **Within reach:** the field is read once for the weight, plus the phase (one 2D value noise), the
-  sections (one more) and the convergence (four more field fetches).
-- **Everywhere else:** open water past `reach` pays one field fetch and nothing else.
+- **Within the weight:** the field is read once for the weight and once for the shelf zone, plus four
+  cell-direction fetches for the rows (each cell also takes a value noise for its sections and a cosine
+  for its set), and five more fetches for the shelter (the direction and a four-tap difference).
+- **At the shore:** the pulse evaluates the same rows and shelter once more, on the surf band's fragments.
+- **Everywhere else:** open water past the weight pays the two fetches and nothing else.
 
 | Lever (`terrain_config.json` → `coastal_swell`) | Shipped | Meaning |
 |---|---|---|
-| `coastal_terrains` | `deep_ocean`, `continental_shelf`, `coral_shelf` | the water the swell runs on, by name; lakes get none |
-| `strength` | 0.14 | a crest's luma offset at the reach (luma units) |
-| `wavelength` | 0.65 | crest spacing at the reach, hex radii |
-| `speed` | 0.18 | crest speed at the reach, hex radii per second (a wave every ~3.6 s) |
-| `reach` | 1.73 | how far from land the swell runs, hex radii: √3, one hex across |
-| `shoal_length` | 0.6 | the wavelength at the shore, × the one at the reach |
-| `shoal_gain` | 1.6 | the amplitude at the shore, × the one at the reach |
-| `surge` | 0.35 | the shoreline surf's seaward reach grows by this fraction as a crest lands |
+| `swell_terrains` | `continental_shelf`, `coral_shelf` | where the rows run, by name |
+| `open_water_terrains` | `deep_ocean` | where they come FROM, by name; also takes the no-shelf band where it touches land |
+| `strength` | 0.2 | a crest's luma offset at full amplitude (luma units) |
+| `wavelength` | 1.0 | row spacing, hex radii |
+| `speed` | 0.18 | row speed, hex radii per second (a row every ~5.6 s) |
+| `reach` | 1.73 | the no-shelf band from land, hex radii: √3, one hex across; also the shoaling's reach |
+| `shoal_gain` | 1.25 | the amplitude at the shore, × the amplitude `reach` out |
+| `surge` | 0.35 | the shoreline surf's seaward reach grows by this fraction as a row lands |
+| `region_cell` | 8.0 | hex radii: each cell of this grid runs one straight row set |
+| `direction_smoothing` | 5.0 | hex radii: the direction field's blur radius (a build lever) |
+| `shelf_fade` | 0.87 | hex radii in from the shelf's seaward edge to full swell (a build lever) |
+| `facing_lo` / `facing_hi` | −0.2 / 0.5 | dot(row direction, toward land): calm at or below lo, full at or above hi |
 
 Fallbacks are the `COASTAL_SWELL_DEFAULT_*` consts in `ui/TerrainRenderer.gd`, which also clamps each
-lever; the fixed feel is the `SWELL_*` consts in the shader. Chosen by eye on `blend_probe` state
-**31 (COAST)** (`harness-map-probes.md`) at r ≈ 45 and r ≈ 47 (Ray's 2.0×).
+lever; the fixed feel is the `SWELL_*` consts in the shader and the `DIR_*` consts in `coast_field.rs`.
+Chosen by eye on `blend_probe` state **31 (COAST)** (`harness-map-probes.md`) at r ≈ 45, r ≈ 47 (Ray's
+2.0×) and r ≈ 35 (his 1.5×).
 - **Strength:** at 0.05 the swell was barely visible over the warm shelf. It went to 0.08, then to 0.14
-  once the section cut left fewer crests standing, so the sections that remain carry more contrast.
-- **The band:** the swell first ran 4 r out, with a 1.3 r wavelength at 0.3 r/s. Ray: it started too far
-  out, and should exist only in the water hex next to the shore.
+  once the section cut left fewer crests standing, then to 0.2 when the crest went broad and soft.
+- **The band:** the contour swell first ran 4 r out, with a 1.3 r wavelength at 0.3 r/s. Ray: it started
+  too far out, so it was confined to the water hex next to the shore; with the rows it is the no-shelf
+  fallback only.
 
 ## Water temperature grade
 

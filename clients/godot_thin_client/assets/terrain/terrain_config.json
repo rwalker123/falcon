@@ -26,14 +26,19 @@
     "motion_min_radius": 24.0
   },
   "coastal_swell": {
-    "coastal_terrains": ["deep_ocean", "continental_shelf", "coral_shelf"],
-    "strength": 0.14,
-    "wavelength": 0.65,
+    "swell_terrains": ["continental_shelf", "coral_shelf"],
+    "open_water_terrains": ["deep_ocean"],
+    "strength": 0.2,
+    "wavelength": 1.0,
     "speed": 0.18,
     "reach": 1.73,
-    "shoal_length": 0.6,
-    "shoal_gain": 1.6,
-    "surge": 0.35
+    "shoal_gain": 1.25,
+    "surge": 0.35,
+    "region_cell": 8.0,
+    "direction_smoothing": 5.0,
+    "shelf_fade": 0.87,
+    "facing_lo": -0.2,
+    "facing_hi": 0.5
   },
   "water_temperature": {
     "strength": 1.0,
