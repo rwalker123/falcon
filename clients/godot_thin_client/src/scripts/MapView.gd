@@ -1621,6 +1621,10 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 		and _tile_lookups_ready()
 		and tile_updates_variant is Array
 	)
+	# The cells whose TEMPERATURE this frame may have moved — the water temperature grade's texels. Tile
+	# temperature drifts every turn and rides `tiles`, which is NOT a shader-map section, so without this the
+	# grade would render the temperature of whatever frame last rebuilt the splatmaps.
+	var temperature_cells: Array = []
 	if tiles_incremental:
 		# 6.9 ms of full-grid loop to learn about ~600 changed rows out of 4,160. Skipped entirely
 		# when the delta moved no tile at all.
@@ -1628,6 +1632,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 			for entry in (tile_updates_variant as Array):
 				if entry is Dictionary:
 					_ingest_tile(entry)
+					temperature_cells.append(
+						Vector2i(int(entry.get("x", 0)), int(entry.get("y", 0))))
 	else:
 		tile_lookup.clear()
 		tile_habitability.clear()
@@ -1661,7 +1667,12 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# splatmaps to be rebuilt, and before the manifest existed there was no way to tell the two apart.
 	# The road-map is why `routes` is on that list too; see SHADER_INPUT_SECTIONS.
 	if dimensions_changed or SnapshotSections.any_changed(snapshot, SHADER_INPUT_SECTIONS):
-		_terrain.rebuild_shader_maps()
+		_terrain.rebuild_shader_maps()   # rebuilds the temp_map with the rest
+	elif SnapshotSections.changed(snapshot, SECTION_TILES):
+		if tiles_incremental:
+			_terrain.update_temperature_cells(temperature_cells)
+		else:
+			_terrain.rebuild_temperature_map()   # every tile was re-ingested, so every texel may have moved
 	profile.end(PROFILE_SHADER, t_shader)
 	var t_markers: int = profile.begin(PROFILE_MARKERS)
 	_install_province_overlay()
@@ -2395,6 +2406,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if KeyboardArbiter.is_bare_key(event, KEY_T):
 			_terrain.toggle_terrain_textures()
+			_mark_input_handled()
+			return
+		if KeyboardArbiter.is_bare_key(event, KEY_O):
+			_terrain.toggle_water_motion()   # look-dev aid: water chop + shore pulse on/off (session-only)
 			_mark_input_handled()
 			return
 	if event is InputEventMouseButton:

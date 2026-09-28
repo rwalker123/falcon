@@ -262,6 +262,7 @@ shown build can never go stale.
 | `H` | Toggle hex grid lines |
 | `F` | Toggle fog of war (server-owned — see `.claude/rules/client/fog-of-war.md`) |
 | `T` | Toggle terrain textures |
+| `O` | Toggle ocean motion (chop + shore pulse) — a look-dev aid |
 | `I` | Hide/show inspector |
 | `` ` `` | Hide/show the Workbench, the designer surface (**hidden by default**) — see `.claude/rules/client/workbench.md` |
 | `V` | Show/hide the Victory panel (**hidden by default**, persisted) |

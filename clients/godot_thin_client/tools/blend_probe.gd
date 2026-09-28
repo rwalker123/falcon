@@ -1093,6 +1093,201 @@ const ROAD_LABEL_OUTLINE_SIZE := 6
 # Nudge off the hex centre so the caption sits beside the road rather than on top of the pixels it names.
 const ROAD_LABEL_OFFSET := Vector2(-48.0, -74.0)
 
+# State 29 (OCEAN): THE OPEN-OCEAN REPEAT, and the water surface that breaks it (`terrain-blend-shader.md` →
+# Water surface). A 24×16 grid at the game's r ≈ 45 that is almost all deep_ocean — the one terrain with
+# nothing on it to hide the base art's exact-copy repeat every 1/base_scale hex-rows — with a ragged
+# continental_shelf band down the east side and a small prairie island on it, so the deep↔shelf depth field
+# and a real coastline are in the same frame as the open water.
+const OCEAN_DEEP_ID := WATER_DEEP_ID
+const OCEAN_SHELF_ID := WATER_SHELF_ID
+const OCEAN_ISLAND_ID := COAST_SHORE_ID                 # prairie
+const OCEAN_SHELF_BASE_COL := 17                        # the shelf starts here, wobbled per row
+const OCEAN_ISLAND_HEXES := [Vector2i(20, 7), Vector2i(21, 7), Vector2i(20, 8), Vector2i(21, 8), Vector2i(20, 9)]
+const OCEAN_OPEN_CROP := Vector2i(7, 8)                 # mid open ocean
+const OCEAN_OPEN_CROP_RADII := 8.0                      # ~2 texture repeats across at base_scale 0.25
+const OCEAN_SEAM_CROP := Vector2i(17, 4)                # the ragged deep↔shelf boundary
+const OCEAN_COAST_CROP := Vector2i(20, 8)               # the island's coast
+const OCEAN_DETAIL_CROP_RADII := 2.4
+# The levers each variant sets inside the `water_surface` block (merged over the shipped block, so the
+# levers it does not name stay shipped). OFF is the plain single sample — the pre-surface render, bit-exact.
+const OCEAN_OFF_SURFACE := {"variation_strength": 0.0, "wave_strength": 0.0, "chop_strength": 0.0}
+const OCEAN_STATIC_SURFACE := {"wave_strength": 0.0, "chop_strength": 0.0}
+# The scrolled-TEXTURE wave term alone — kept as a frame because it is the term that measured as invisible.
+const OCEAN_WAVES_SURFACE := {"chop_strength": 0.0}
+const OCEAN_CHOP_SURFACE := {"wave_strength": 0.0}   # the chop alone
+const OCEAN_SHIPPED_SURFACE := {}
+# The SECOND motion phase, in seconds of shader time (the `water_time_offset` uniform — the harness runs at
+# Engine.time_scale 0, so TIME itself never moves). ONE second: the claim is that a player sees the water move
+# within a moment of looking, so that is the interval the magnitude is measured over.
+const OCEAN_MOTION_DT := 2.0   # one lattice period-ish at the shipped chop_rate 0.4 (2.5 s per cell)
+# The look-at sequence: the shipped surface at this many phases, OCEAN_MOTION_DT apart.
+const OCEAN_SEQUENCE_FRAMES := 4
+const OCEAN_TIME_OFFSET_UNIFORM := "water_time_offset"
+# A grid twice the size in both axes fits at r ≈ 22.5 — under the shipped motion_min_radius (24), still above
+# EDGE_BLEND_MIN_RADIUS (16) so the depth field and shore run: the far zoom where the waves must be OFF.
+const OCEAN_FAR_GRID_SCALE := 2
+const OCEAN_FAR_HEX_RADIUS := 22.5
+# THE REPEAT MEASURE. The base art repeats every `2·r / base_scale` px in both axes. Over the open-ocean box,
+# mean |ΔL| between each pixel and the one ONE PERIOD east of it, over the same at a NON-period offset
+# (OCEAN_REPEAT_CONTROL_FRACTION of a period): an exact copy scores ~0, an unrelated texture ~1.
+const OCEAN_REPEAT_CONTROL_FRACTION := 0.5
+const OCEAN_REPEAT_BOX_COLS := Vector2i(1, 14)          # hex columns of the measured box (deep ocean only)
+const OCEAN_REPEAT_BOX_ROWS := Vector2i(1, 14)
+const OCEAN_REPEAT_SAMPLE_STRIDE := 3                   # px — every pixel is 1.7M get_pixel calls; 1 in 9 is plenty
+const OCEAN_REPEAT_OFF_MAX := 0.35                      # the plain sample MUST read as a repeat (premise)
+const OCEAN_REPEAT_ON_MIN := 0.6                        # the surface must bring it near an unrelated texture
+# MOTION MAGNITUDE: mean |ΔL| (8-bit levels) over the open-ocean box between two phases OCEAN_MOTION_DT apart.
+# A changed-pixel COUNT was the first claim and it passed a sub-perceptual wave: nearly every pixel of a
+# scrolled texture changes by a level or two, so the count was 1.5M of 2.07M on water that looked still
+# (measured 1.18 levels mean over EIGHT seconds). What a player sees is how far the brightness moves, so the
+# claim is on that. The bar guards against the term going INVISIBLE again, not the tuned look: the shipped
+# strength is a live call (chop_strength 0.06 moved ~4 levels/s and read as drifting clouds in play, so it
+# ships at 0.035), and it evolved too FAST (chop_rate 0.8 → 0.4). So the bar is levels per OCEAN_MOTION_DT
+# (2 s, scaled with the slower rate), not per second; 1.5 levels over 2 s is still ~5× the dead wave's
+# ~0.3 levels over the same window.
+const OCEAN_MOTION_MIN_MEAN_DL := 1.5
+# STEADINESS. The 1 s magnitude above is one sample of a rate that can pulse: value noise's smoothstep time axis
+# has zero slope at every lattice time, so a single noise copy stops the whole sea at once every 1/chop_rate s
+# (the claim's sabotage). So the motion is also measured as a SERIES: OCEAN_STEADY_INTERVALS consecutive
+# intervals of OCEAN_STEADY_DT, each read as a rate (mean |ΔL| / dt, levels per second). 12 × 0.5 s = 6 s spans
+# 2.4 lattice periods of the coarse octave at the shipped chop_rate 0.4 (2.5 s each) and 3.3 of the fine one,
+# with four samples per period, so a pause cannot fall between samples. Two bars, each failing on its own:
+# the SLOWEST interval's rate ≥ (OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT) × OCEAN_STEADY_MIN_FRACTION, and max/min ≤
+# OCEAN_STEADY_MAX_RATIO. The fraction is the WHOLE bar (1.0): the 1 s change is at most the sum of its four
+# quarter-second changes (triangle inequality), so a quarter-second rate reads the chop at or above the 1 s
+# chord, and a surface that clears the bar over a second on average must clear it in each quarter too
+# unless it pauses. Measured: shipped slowest 5.01; the single-copy sabotage's slowest 2.59.
+const OCEAN_STEADY_DT := 0.5
+const OCEAN_STEADY_INTERVALS := 12
+const OCEAN_STEADY_MIN_FRACTION := 1.0
+const OCEAN_STEADY_MAX_RATIO := 1.5
+const LUMA_LEVELS := 255.0
+# NO NET DIRECTION. The MOTION field (a phase minus the static frame, so the art cancels) at two phases
+# OCEAN_DIRECTION_DT apart is cross-correlated at every offset within ±OCEAN_DIRECTION_SEARCH_PX; a field that
+# evolves in place correlates best at ZERO offset, a travelling one at its travel distance. The best
+# correlation beyond OCEAN_DIRECTION_ZERO_PX of zero may not beat the zero-offset one by more than the
+# tolerance. The interval is short so the chop is still well correlated with itself.
+const OCEAN_DIRECTION_DT := 1.0
+const OCEAN_DIRECTION_SEARCH_PX := 24
+const OCEAN_DIRECTION_ZERO_PX := 4
+const OCEAN_DIRECTION_TOLERANCE := 0.02
+const OCEAN_FIELD_STRIDE := 2                           # px between samples of the motion field
+const OCEAN_CORR_SAMPLE_STRIDE := 4                     # field samples between correlation terms
+const OCEAN_CORR_EPSILON := 1e-9
+# NO MAP-SCALE PATTERN. The motion field (chop on minus chop off) block-averaged over blocks
+# OCEAN_LOWFREQ_BLOCK_RADII hex radii across — a low-pass that keeps only structure bigger than a couple of
+# hexes. Its std is judged as a FRACTION of the field's per-pixel std: small features average away in a block
+# (a field of independent ~0.5 r patches keeps about feature/block ≈ 0.25 of its std), while bands or blobs
+# the size of the block survive nearly whole. An absolute bar would instead scale with chop_strength.
+const OCEAN_LOWFREQ_BLOCK_RADII := 2.0
+const OCEAN_LOWFREQ_MAX_FRACTION := 0.35
+# The 1.0×-LIKE frame: the same geography on a grid that fits at r ≈ 25.7, just above motion_min_radius (24),
+# so the chop is ON there — the zoom at which the travelling swell drew its map-wide diagonal.
+const OCEAN_ZOOMED_OUT_GRID := Vector2i(42, 28)
+# The LIVE-like frame: a grid that fits at r ≈ 35, the radius of Ray's 1.5× screenshots.
+const OCEAN_LIVE_GRID := Vector2i(31, 21)
+# …and at 2.0× — radius = cover-fit base × zoom_factor (MapView._update_layout_metrics), so 35 px at 1.5× puts
+# 2.0× at ~47 px: a grid that fits at r ≈ 47.
+const OCEAN_LIVE_2X_GRID := Vector2i(23, 16)
+# OPEN WATER HAS NO CAPS: over the deep-ocean box (far from any coast), the shipped frame and its SHORE_PULSE_OFF
+# twin are byte-identical at each of OCEAN_NO_CAPS_PHASES — the premise being that the same pair DOES differ
+# somewhere in the frame (the island's surf), or the claim passes on a pulse that never drew.
+const OCEAN_NO_CAPS_PHASES := [0.0, 1.3]
+
+# State 31 (SHORE): the SHORE PULSE (`terrain-blend-shader.md` → Shore pulse). A JAGGED coastline — land from the
+# east edge in by COAST_LAND_DEPTH[row] hexes (bays, headlands, a one-hex inlet), a shelf COAST_SHELF_WIDTH hexes
+# wide off it, deep ocean beyond, a small island and an inland lake — placed from the EAST edge so the geography holds
+# on the narrower grids.
+const COAST_LAND_DEPTH := [6, 7, 9, 8, 6, 5, 6, 8, 10, 9, 7, 6, 7, 8, 7, 6]
+const COAST_SHELF_WIDTH := 3
+const COAST_LAND_ID := COAST_SHORE_ID                   # prairie
+const COAST_LAKE_ID := LAKE_WATER_ID                    # inland_sea — its shore_profile's surge_scale is 0
+const COAST_ISLAND_FROM_EAST := [Vector2i(14, 5), Vector2i(13, 5), Vector2i(14, 6)]   # (hexes from east, row)
+const COAST_LAKE_FROM_EAST := [Vector2i(3, 9), Vector2i(2, 9), Vector2i(3, 10)]
+const COAST_2X_GRID := Vector2i(23, 16)                 # fits at r ≈ 47, Ray's 2.0× (see OCEAN_LIVE_2X_GRID)
+# The four-phase sequence: a 5-radius crop of a stretch of jagged coast at 0 / 1.1 / 2.3 / 3.4 s (about a quarter
+# of the ~4.5 s crash cycle apart), so staggered crashes show as different stretches peaking in different frames.
+const SHORE_SEQ_PHASES := [0.0, 1.1, 2.3, 3.4]
+const SHORE_SEQ_CROP_FROM_EAST := Vector2i(8, 7)
+const SHORE_SEQ_CROP_RADII := 5.0
+const SHORE_LAKE_CROP_FROM_EAST := Vector2i(3, 9)
+const SHORE_LAKE_CROP_RADII := 2.5
+# The twins the claims subtract, laid over the shipped `shore` block and `water_surface` block respectively.
+const SHORE_PULSE_OFF := {"surge": 0.0}
+const SHORE_NO_CHOP := {"chop_strength": 0.0}           # S is then the pulse alone
+# (a)–(c): shipped vs SHORE_PULSE_OFF at SHORE_PHASES. (a) water pixels on SEA coasts change (at least
+# SHORE_MIN_MOVED_PX of them); (b) not one LAKE pixel changes; (c) not one LAND pixel changes — a land pixel counts
+# only if the land reaches COAST_LAND_INTERIOR_PX past it in every direction (a pixel ON the hex line is rasterised by
+# whichever hex the shader's own point-in-hex picks, which need not be this probe's).
+const SHORE_PHASES := [0.7, 1.9, 3.1]
+const SHORE_MIN_MOVED_PX := 1000
+const COAST_LAND_INTERIOR_PX := 2.0
+# The pulse's surf is REPORTED, not asserted, on its brightest SHORE_SURF_TOP_FRACTION of changed pixels — it is the
+# shoreline's own foam_color, an earlier decision this state does not own.
+const SHORE_SURF_TOP_FRACTION := 0.05
+# (d) NOT IN UNISON: S (chop off) at SHORE_CYCLE_SAMPLES phases evenly across one crash cycle (1 / surge_rate s).
+# The frame is binned into square cells of SHORE_POINT_CELL_RADII hex radii; a cell whose summed |S| peaks at
+# SHORE_POINT_MIN_SUM levels·px or more is a coastal sample point, and its PEAK sample is its crash time. The
+# circular spread of those times (1 − the mean resultant length, 0 = all crash together, → 1 = spread round the
+# cycle) must reach SHORE_SPREAD_MIN.
+const SHORE_CYCLE_SAMPLES := 12
+const SHORE_POINT_CELL_RADII := 1.0
+const SHORE_POINT_MIN_SUM := 200.0
+const SHORE_SPREAD_MIN := 0.5
+# (f) NO SWELL ANYWHERE: with the chop off, two phases OCEAN_MOTION_DT apart may differ ONLY on the coast's own hexes
+# (the surf) — in every water hex with no land neighbour (beyond the foam band, whose reach is well under one hex),
+# 0 px may change. The premise is that the pair differs somewhere (the surf does move).
+# Rec.709 luma weights (Color.get_luminance's), for reading a whole frame off its raw bytes.
+const LUMA_R := 0.2126
+const LUMA_G := 0.7152
+const LUMA_B := 0.0722
+
+# State 30 (OCEANTEMP): the WATER TEMPERATURE GRADE (`terrain-blend-shader.md` → Water temperature grade).
+# State 29's geography at r ≈ 45 on a temperature gradient running polar (top) → tropical (bottom), with the
+# climate anchors the SIM SHIPS read out of its own config rather than restated here, plus a coral_shelf patch
+# in the warm rows (an UNGRADED water terrain: the graded-ness must ramp across its seam, not step).
+const OCEANTEMP_SIM_CONFIG := "res://../../core_sim/src/data/simulation_config.json"
+const OCEANTEMP_CLIMATE_KEY := "climate"
+const OCEANTEMP_CORAL_ID := 3                           # coral_shelf — water, deliberately not graded
+const OCEANTEMP_CORAL_HEXES := [Vector2i(9, 12), Vector2i(10, 12), Vector2i(9, 13), Vector2i(10, 13), Vector2i(11, 13)]
+# How far past each end anchor the gradient runs, as a fraction of that side's span: the top and bottom rows
+# then sit at FULL cold / FULL warm rather than just touching them.
+const OCEANTEMP_OVERSHOOT := 0.25
+const OCEANTEMP_OFF := {"strength": 0.0}
+# (b) MONOTONE: per hex row over the deep-ocean columns, the graded frame minus the ungraded one. The mean luma
+# and saturation shifts must not DROP from one row to the next by more than this (8-bit levels / HSV units),
+# and must be negative at the top and positive at the bottom.
+const OCEANTEMP_BAND_COLS := Vector2i(1, 14)
+const OCEANTEMP_LUMA_TOLERANCE := 0.4 / 255.0
+const OCEANTEMP_SAT_TOLERANCE := 0.02
+# (c) NO HEX STEP, on a SPLIT fixture (rows < OCEANTEMP_SPLIT_ROW polar, the rest tropical) — the largest jump
+# two neighbouring hexes can carry. Along lines crossing each cold|warm edge, on the graded-minus-ungraded luma:
+# the |Δ| of the 2-px pair straddling the edge over the largest 2-px |Δ| elsewhere on the same line. A blended
+# edge scores ≤ ~1 (the edge is no steeper than the ramp around it); a per-hex grade is a step, and scores
+# many times that.
+const OCEANTEMP_SPLIT_ROW := 8
+# (d) NO GRADE RIM AT THE COAST, on the island's coast with every tile at FULL cold and then at FULL warm, surf and
+# wisp off (foam_opacity 0) so the ungraded foam cannot stand in for an ungraded rim. S = graded − strength-0 twin
+# (RGB, summed), taken at water pixels OCEANTEMP_RIM_BAND hex radii or less from the shoreline — inside the
+# waterline cross-fade however the reach wobbles — against water pixels OCEANTEMP_RIM_REF_BAND out, on the same
+# hexes. The band's mean S over the reference's must reach OCEANTEMP_RIM_RATIO_MIN. It stays under 1 legitimately:
+# at the waterline the cross-fade is up to half the (ungraded) LAND base. When the wet edge rebuilt the water from
+# the UNGRADED surface, the band's S was ~0. The reference must itself carry at least OCEANTEMP_RIM_MIN_SHIFT levels,
+# or the fixture is not graded at all.
+const OCEANTEMP_RIM_BAND := 0.05
+const OCEANTEMP_RIM_REF_BAND := Vector2(0.3, 0.6)
+const OCEANTEMP_RIM_RATIO_MIN := 0.5
+const OCEANTEMP_RIM_MIN_SHIFT := 3.0
+const OCEANTEMP_RIM_BOX_RADII := 2.0                      # the island's box, beyond its outermost hex centres
+const OCEANTEMP_RIM_FOAM_OFF := {"foam_opacity": 0.0}
+const OCEANTEMP_EDGE_SAMPLES := 9                        # sample lines per edge, spread along it
+const OCEANTEMP_EDGE_SPAN := 0.35                        # of the radius, either side of the edge midpoint
+const OCEANTEMP_EDGE_REACH := 0.6                        # of the radius, how far each line runs either side
+const OCEANTEMP_EDGE_GUARD_PX := 3.0                     # px around the edge excluded from "elsewhere"
+const OCEANTEMP_EDGE_RATIO_MAX := 1.5
+const OCEANTEMP_EDGE_COLS := Vector2i(2, 13)
+const OCEANTEMP_NEIGHBOUR_TOLERANCE := 0.05              # fractional slack when finding a hex's row+1 neighbours
+
 # The state filter's cmdline flag (after the scene's `--`), e.g. `-- --only=G` / `-- --only=1,4,G`.
 const ONLY_ARG_PREFIX := "--only="
 
@@ -1109,11 +1304,23 @@ var _only: PackedStringArray = PackedStringArray()
 # How many times `_fail` fired this run — the ONE input to the exit status (see `_finish`).
 var _failures := 0
 
+## The hang guard, a child node in `blend_probe.tscn` (`tools/preview_watchdog.gd`) — the `ui_preview` /
+## `band_panel_preview` treatment. The whole run is one long `await`ing `_ready()` whose last line is
+## `_finish()`, so a runtime error aborts it without ever exiting, and a parse error in this script
+## leaves the root node scriptless: either way the process idles forever with no FAIL and no status.
+## (`blend_probe` did exactly that for 20+ minutes on a parse error, and printed nothing.) The
+## watchdog lives OUTSIDE this script, so it runs even then; `_settle` — which every state reaches —
+## is the sign of life, and `_finish` disarms it.
+const WATCHDOG_NODE := "Watchdog"
+const WATCHDOG_PROGRESS_METHOD := "note_progress"
+var _watchdog: Node = null
+
 
 func _ready() -> void:
 	# ⛔ **THE RUN OWNS THE POINTER** — a pixel harness must open a REAL window, and a
 	# real window receives the human's mouse. See `tools/harness_window.gd`.
 	HarnessWindow.seal_from_real_mouse(get_window())
+	_watchdog = _resolve_watchdog()
 	# FREEZE ANIMATION TIME (the `map_preview` treatment — see that harness's _ready). What it buys:
 	# with the canvas already pinned below, animated content was the ONLY remaining run-to-run
 	# difference here, so this is what makes the set a STRICT BIT-IDENTITY REFERENCE (230/230
@@ -1136,6 +1343,11 @@ func _ready() -> void:
 	# only WHICH TEXELS of the water art land where is pinned. This harness itself has no
 	# time-dependent GDScript at all (no Time. reads, no tween, no pulse), and `_settle` waits on
 	# `process_frame`, which still fires at time_scale 0.
+	#
+	# The WATER SURFACE (state 29) later became a third TIME reader, and was classified the same way: its
+	# waves are a UV scroll, and its chop and shore pulse positions on their phase axes — all
+	# offsets, so phase 0 still draws them. States 29/30 render other phases through the `water_time_offset`
+	# uniform, never by un-freezing.
 	#
 	# RE-CHECK RULE for anything animated added later: an AMPLITUDE term (`A * sin(t)`) VANISHES at
 	# phase 0, and a frame that is deterministic because its subject disappeared is worse than one
@@ -1370,6 +1582,18 @@ func _ready() -> void:
 		# --- state 28 (NAVBASE): a navigable river whose valley biome changes along it (see NAVBASE_*) ---
 		await _render_navbase_state()
 
+	if _want("29/OCEAN"):
+		# --- state 29 (OCEAN): the open-ocean repeat grid + the water surface that breaks it (see OCEAN_*) ---
+		await _render_ocean_state()
+
+	if _want("30/OCEANTEMP"):
+		# --- state 30 (OCEANTEMP): the water temperature grade, polar → tropical (see OCEANTEMP_*) ---
+		await _render_ocean_temperature_state()
+
+	if _want("31/SHORE"):
+		# --- state 31 (SHORE): the shore pulse on a jagged coast (see SHORE_*) ---
+		await _render_shore_state()
+
 	_finish()
 
 
@@ -1380,9 +1604,23 @@ func _fail(message: String) -> void:
 	push_error("blend_probe: FAIL — %s" % message)
 
 
+## The hang guard from the scene, or `null` if the node has gone. Checked for its method rather than
+## assumed: calling a missing method on an untyped `Node` is a runtime error, and one raised here would
+## abort `_ready` exactly the way the guard exists to survive.
+func _resolve_watchdog() -> Node:
+	var node := get_node_or_null(WATCHDOG_NODE)
+	if node != null and node.has_method(WATCHDOG_PROGRESS_METHOD):
+		return node
+	push_warning(("blend_probe: no %s node in the scene — the run has NO hang guard. Restore it from "
+		+ "tools/blend_probe.tscn (see preview_watchdog.gd).") % WATCHDOG_NODE)
+	return null
+
+
 ## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
 ## status is derived from the run's own tally in exactly one place.
 func _finish() -> void:
+	if _watchdog != null:
+		_watchdog.disarm()
 	if _failures > 0:
 		print("blend_probe: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
 	else:
@@ -1787,7 +2025,7 @@ func _render_shore_profile_state() -> void:
 	_map.display_snapshot(_snapshot_coast(D_LAND_ID, D_SHELF_ID))
 	await _refit(WATER_HEX_RADIUS)
 	for variant: Dictionary in D_SHELF_VARIANTS:
-		_set_shore_profile(D_SHELF_ID, _shore_profile_of(variant))
+		_set_shore_profile(D_SHELF_ID, _shore_profile_of(variant, D_SHELF_ID))
 		var name: String = String(variant["name"])
 		_map._fit_map_to_view()
 		await _settle()
@@ -1963,7 +2201,7 @@ func _render_lake_variant(variant: Dictionary) -> void:
 	## Override the inland_sea terrain's `shore_profile` in the live config, rebuild the shader's
 	## layer_shore_map (the manager updates the ImageTexture in place, so MapView's binding survives), and
 	## dump one full frame + one native-res close-up of the lake. Same camera/crop in every variant.
-	_set_shore_profile(LAKE_WATER_ID, _shore_profile_of(variant))
+	_set_shore_profile(LAKE_WATER_ID, _shore_profile_of(variant, LAKE_WATER_ID))
 	var name: String = String(variant["name"])
 	_map._fit_map_to_view()   # window sizing can settle late; re-fit so every frame is at the target radius
 	await _settle()
@@ -2096,6 +2334,703 @@ func _bank_neighbor(hex: Vector2i, dir: int) -> Vector2i:
 	var off: Array = BANK_DIR_OFFSETS[dir]
 	var dx: int = int(off[1] if (hex.y % 2) != 0 else off[0])
 	return Vector2i(hex.x + dx, hex.y + int(off[2]))
+
+
+func _render_ocean_state() -> void:
+	## State 29 (OCEAN) at the game's r ≈ 45, grid OFF (a drawn hexagon is itself a lattice over the water):
+	## OCEAN_off (the plain single sample — the repeat grid, i.e. the BEFORE) → OCEAN_static (anti-tiling only)
+	## → OCEAN_waves (chop off) at two phases and their amplified diff, so the wave term is judged apart →
+	## OCEAN_shipped at two phases + their diff (the whole surface MOVES). Then the PNG-less claims: the repeat
+	## measure (the grid is gone, not merely changed) and the motion LOD gate at game vs far zoom.
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_ocean(GRID_W, GRID_H))
+	await _refit(GAME_HEX_RADIUS)
+	var off_ratio: float = await _render_ocean_frame(OCEAN_OFF_SURFACE, "OCEAN_off", 0.0, true, SHORE_PULSE_OFF)
+	var static_ratio: float = await _render_ocean_frame(OCEAN_STATIC_SURFACE, "OCEAN_static", 0.0, true, SHORE_PULSE_OFF)
+	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves", 0.0, false, SHORE_PULSE_OFF)
+	await _render_ocean_frame(OCEAN_WAVES_SURFACE, "OCEAN_waves_t2", OCEAN_MOTION_DT, false, SHORE_PULSE_OFF)
+	_save_diff("OCEAN_waves", "OCEAN_waves_t2", "OCEAN_waves_motion_diff")
+	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop", 0.0, false, SHORE_PULSE_OFF)
+	await _render_ocean_frame(OCEAN_CHOP_SURFACE, "OCEAN_chop_t2", OCEAN_MOTION_DT, false, SHORE_PULSE_OFF)
+	_save_diff("OCEAN_chop", "OCEAN_chop_t2", "OCEAN_chop_motion_diff")
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped", 0.0, true)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_shipped_t2", OCEAN_MOTION_DT, false)
+	_save_diff("OCEAN_shipped", "OCEAN_shipped_t2", "OCEAN_motion_diff")
+	for i in range(OCEAN_SEQUENCE_FRAMES):
+		await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_seq%d" % i, OCEAN_MOTION_DT * i, false)
+	print("blend_probe: OCEAN repeat ratio — off %.3f · static %.3f (period / non-period |ΔL|)"
+		% [off_ratio, static_ratio])
+	# The premise first: without it the ON claim passes on a frame that never repeated at all.
+	if off_ratio > OCEAN_REPEAT_OFF_MAX:
+		_fail("OCEAN: the PLAIN sample does not read as a repeat (ratio %.3f > %.2f) — the measure is not"
+			% [off_ratio, OCEAN_REPEAT_OFF_MAX] + " looking at the tile period, so the ON claim below proves nothing")
+	if static_ratio < OCEAN_REPEAT_ON_MIN:
+		_fail("OCEAN: the water surface leaves the exact-copy repeat standing (ratio %.3f < %.2f)"
+			% [static_ratio, OCEAN_REPEAT_ON_MIN])
+	await _assert_ocean_no_net_direction_or_pattern()
+	await _assert_ocean_no_open_caps()
+	await _assert_ocean_motion_toggle()
+	await _assert_ocean_motion(GRID_W, GRID_H, GAME_HEX_RADIUS, true)
+	await _assert_ocean_motion(
+		GRID_W * OCEAN_FAR_GRID_SCALE, GRID_H * OCEAN_FAR_GRID_SCALE, OCEAN_FAR_HEX_RADIUS, false
+	)
+	# The 1.0×-like frame, two phases a second apart, judged by eye for any map-scale pattern.
+	_map.display_snapshot(_snapshot_ocean(OCEAN_ZOOMED_OUT_GRID.x, OCEAN_ZOOMED_OUT_GRID.y))
+	await _refit(GAME_HEX_RADIUS * GRID_W / OCEAN_ZOOMED_OUT_GRID.x)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_zoomed_out", 0.0, false)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_zoomed_out_t2", OCEAN_MOTION_DT, false)
+	_save_diff("OCEAN_zoomed_out", "OCEAN_zoomed_out_t2", "OCEAN_zoomed_out_motion_diff")
+	# The LIVE-like frame: Ray's screenshots are at 1.5× zoom, r ≈ 35 — where the caps must read as streaks.
+	_map.display_snapshot(_snapshot_ocean(OCEAN_LIVE_GRID.x, OCEAN_LIVE_GRID.y))
+	await _refit(GAME_HEX_RADIUS * GRID_W / OCEAN_LIVE_GRID.x)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_live", 0.0, false)
+	await _settle()
+	await _save_crop("OCEAN_live_open", OCEAN_OPEN_CROP.x, OCEAN_OPEN_CROP.y, OCEAN_OPEN_CROP_RADII)
+	_map.display_snapshot(_snapshot_ocean(OCEAN_LIVE_2X_GRID.x, OCEAN_LIVE_2X_GRID.y))
+	await _refit(GAME_HEX_RADIUS * GRID_W / OCEAN_LIVE_2X_GRID.x)
+	await _render_ocean_frame(OCEAN_SHIPPED_SURFACE, "OCEAN_live_2x", 0.0, false)
+	_set_water_time_offset(0.0)
+	_map._show_grid_lines = true   # back to the harness default, for any state appended after this one
+
+
+func _render_ocean_frame(surface: Dictionary, name: String, time_offset: float, crops: bool,
+		shore: Dictionary = {}) -> float:
+	## One OCEAN frame with `surface` merged over the shipped `water_surface` block (and `shore` over the `shore`
+	## one — SHORE_PULSE_OFF for the frames that show the open surface's own terms), at shader phase
+	## `time_offset`. `crops` adds the native-res open-water / deep↔shelf / coast close-ups. Returns the
+	## frame's repeat ratio, measured before the config is restored.
+	var token: Array = _override_config({"water_surface": _ocean_surface(surface),
+		"shore": _shore_block(shore)})
+	_set_water_time_offset(time_offset)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save(name)
+	await _settle()
+	var ratio: float = _ocean_repeat_ratio(await _capture())
+	if crops:
+		await _settle()
+		await _save_crop("%s_open" % name, OCEAN_OPEN_CROP.x, OCEAN_OPEN_CROP.y, OCEAN_OPEN_CROP_RADII)
+		await _settle()
+		await _save_crop("%s_seam" % name, OCEAN_SEAM_CROP.x, OCEAN_SEAM_CROP.y, OCEAN_DETAIL_CROP_RADII)
+		await _settle()
+		await _save_crop("%s_coast" % name, OCEAN_COAST_CROP.x, OCEAN_COAST_CROP.y, OCEAN_DETAIL_CROP_RADII)
+	_restore_config(token)
+	return ratio
+
+
+func _ocean_surface(changes: Dictionary) -> Dictionary:
+	## The shipped `water_surface` block with `changes` laid over it.
+	var surface: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("water_surface", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in changes:
+		surface[key] = changes[key]
+	return surface
+
+
+func _set_water_time_offset(seconds: float) -> void:
+	## The shader phase of the waves, chop and shore pulse. Set on the material directly: TerrainRenderer never pushes it.
+	_map._terrain._terrain_blend_material.set_shader_parameter(OCEAN_TIME_OFFSET_UNIFORM, seconds)
+	_map.queue_redraw()
+
+
+func _assert_ocean_motion(gw: int, gh: int, target_radius: float, expect_motion: bool) -> void:
+	## Two captures of the SHIPPED surface at two phases. At game zoom the waves must move a real fraction of
+	## the frame; below `motion_min_radius` they must move NOTHING — the static anti-tiling takes no time term,
+	## so any changed pixel there is the LOD gate leaking. The pair is the claim: a gate that never opened
+	## passes the far half, a gate that never closed passes the near half.
+	_map.display_snapshot(_snapshot_ocean(gw, gh))
+	await _refit(target_radius)
+	_set_water_time_offset(0.0)
+	await _settle()
+	var a: Image = await _capture()
+	_set_water_time_offset(OCEAN_MOTION_DT)
+	await _settle()
+	var b: Image = await _capture()
+	if a == null or b == null:
+		return
+	var changed: int = _changed_pixel_count(a, b)
+	var radius: float = _map.last_hex_radius
+	var mean_dl: float = _ocean_mean_luma_delta(a, b)
+	print("blend_probe: OCEAN motion at r %.1f — mean |ΔL| %.2f levels over %.1f s (%d px changed)"
+		% [radius, mean_dl, OCEAN_MOTION_DT, changed])
+	if expect_motion and mean_dl < OCEAN_MOTION_MIN_MEAN_DL:
+		_fail("OCEAN: at r %.1f the water moved only %.2f levels mean in %.1f s (want ≥ %.1f) — not a visible wave"
+			% [radius, mean_dl, OCEAN_MOTION_DT, OCEAN_MOTION_MIN_MEAN_DL])
+	elif not expect_motion and changed != 0:
+		_fail("OCEAN: at far zoom r %.1f the surface moved %d px — the motion LOD gate is leaking"
+			% [radius, changed])
+	if expect_motion:
+		await _assert_ocean_motion_steady()
+
+
+func _assert_ocean_motion_steady() -> void:
+	## THE STEADINESS SERIES (see OCEAN_STEADY_*), on the fixture _assert_ocean_motion just framed: the shipped
+	## surface's motion rate over consecutive short intervals may neither drop to a pause nor pulse.
+	var rates := PackedFloat32Array()
+	_set_water_time_offset(0.0)
+	await _settle()
+	var prev: Image = await _capture()
+	for i in range(1, OCEAN_STEADY_INTERVALS + 1):
+		_set_water_time_offset(OCEAN_STEADY_DT * i)
+		await _settle()
+		var cur: Image = await _capture()
+		if prev == null or cur == null:
+			return
+		rates.append(_ocean_mean_luma_delta(prev, cur) / OCEAN_STEADY_DT)
+		prev = cur
+	var lo: float = rates[0]
+	var hi: float = rates[0]
+	var parts := PackedStringArray()
+	for r in rates:
+		lo = minf(lo, r)
+		hi = maxf(hi, r)
+		parts.append("%.2f" % r)
+	var ratio: float = hi / maxf(lo, OCEAN_CORR_EPSILON)
+	print("blend_probe: OCEAN steadiness — levels/s per %.2f s interval: %s · min %.2f max %.2f ratio %.2f"
+		% [OCEAN_STEADY_DT, ", ".join(parts), lo, hi, ratio])
+	var floor_rate: float = OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT * OCEAN_STEADY_MIN_FRACTION
+	if lo < floor_rate:
+		_fail("OCEAN: the slowest %.2f s interval moved only %.2f levels/s (want ≥ %.2f) — the chop pauses"
+			% [OCEAN_STEADY_DT, lo, floor_rate])
+	if ratio > OCEAN_STEADY_MAX_RATIO:
+		_fail("OCEAN: the chop's motion rate pulses — max/min %.2f over %d intervals (want ≤ %.2f)"
+			% [ratio, OCEAN_STEADY_INTERVALS, OCEAN_STEADY_MAX_RATIO])
+
+
+func _assert_ocean_no_net_direction_or_pattern() -> void:
+	## On state 29's own fixture at r ≈ 45: the MOTION field (shipped minus its chop-off twin) must neither
+	## drift (see OCEAN_DIRECTION_*) nor carry map-scale structure (see OCEAN_LOWFREQ_*).
+	var still: Image = await _ocean_capture(OCEAN_STATIC_SURFACE, 0.0)
+	var a: Image = await _ocean_capture({}, 0.0)
+	var b: Image = await _ocean_capture({}, OCEAN_DIRECTION_DT)
+	if still == null or a == null or b == null:
+		return
+	var box: Rect2i = _ocean_box_px(a)
+	var fa: PackedFloat32Array = _ocean_motion_field(a, still, box)
+	var fb: PackedFloat32Array = _ocean_motion_field(b, still, box)
+	var fw: int = box.size.x / OCEAN_FIELD_STRIDE
+	var fh: int = box.size.y / OCEAN_FIELD_STRIDE
+	var reach: int = OCEAN_DIRECTION_SEARCH_PX / OCEAN_FIELD_STRIDE
+	var zero_r: int = OCEAN_DIRECTION_ZERO_PX / OCEAN_FIELD_STRIDE
+	var r0: float = _field_correlation(fa, fb, fw, fh, 0, 0, reach)
+	var best := -1.0
+	var best_d := Vector2i.ZERO
+	for dy in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			if maxi(absi(dx), absi(dy)) <= zero_r:
+				continue
+			var r: float = _field_correlation(fa, fb, fw, fh, dx, dy, reach)
+			if r > best:
+				best = r
+				best_d = Vector2i(dx, dy) * OCEAN_FIELD_STRIDE
+	print("blend_probe: OCEAN direction — correlation at 0 offset %.3f · best beyond %d px %.3f at %s px over %.2f s"
+		% [r0, OCEAN_DIRECTION_ZERO_PX, best, best_d, OCEAN_DIRECTION_DT])
+	if best > r0 + OCEAN_DIRECTION_TOLERANCE:
+		_fail("OCEAN: the water motion TRAVELS — it correlates best %s px away (%.3f) rather than in place (%.3f)"
+			% [best_d, best, r0])
+	# No map-scale pattern: block means of the motion field over ~2 hex radii.
+	var block: int = maxi(int(OCEAN_LOWFREQ_BLOCK_RADII * _map.last_hex_radius / OCEAN_FIELD_STRIDE), 1)
+	var means := PackedFloat32Array()
+	for by in range(0, fh - block + 1, block):
+		for bx in range(0, fw - block + 1, block):
+			var sum := 0.0
+			for y in range(by, by + block):
+				for x in range(bx, bx + block):
+					sum += fa[y * fw + x]
+			means.append(sum / float(block * block))
+	var lf_std: float = _std(means) * LUMA_LEVELS
+	var px_std: float = _std(fa) * LUMA_LEVELS
+	print("blend_probe: OCEAN low-frequency — motion std %.2f levels per pixel, %.2f over %.0f-radius blocks (%d)"
+		% [px_std, lf_std, OCEAN_LOWFREQ_BLOCK_RADII, means.size()])
+	var lf_fraction: float = lf_std / maxf(px_std, OCEAN_CORR_EPSILON)
+	print("blend_probe: OCEAN low-frequency fraction %.2f (max %.2f)" % [lf_fraction, OCEAN_LOWFREQ_MAX_FRACTION])
+	if lf_fraction > OCEAN_LOWFREQ_MAX_FRACTION:
+		_fail("OCEAN: the water motion carries MAP-SCALE structure — %.2f of its std survives %.0f-radius blocks (max %.2f)"
+			% [lf_fraction, OCEAN_LOWFREQ_BLOCK_RADII, OCEAN_LOWFREQ_MAX_FRACTION])
+
+
+func _assert_ocean_no_open_caps() -> void:
+	## OPEN WATER HAS NO CAPS (see OCEAN_NO_CAPS_PHASES): the open-ocean term is the chop alone, and the shore pulse
+	## moves only the surf — so over the deep box the shipped frame and its pulse-off twin are identical.
+	var deep_changed := 0
+	var frame_changed := 0
+	for phase: float in OCEAN_NO_CAPS_PHASES:
+		var on: Image = await _ocean_capture({}, phase)
+		var token: Array = _override_config({"shore": _shore_block(SHORE_PULSE_OFF)})
+		_set_water_time_offset(phase)
+		await _settle()
+		var off: Image = await _capture()
+		_restore_config(token)
+		_map.queue_redraw()
+		if on == null or off == null:
+			return
+		var box: Rect2i = _ocean_box_px(on)
+		for y in range(on.get_height()):
+			for x in range(on.get_width()):
+				if on.get_pixel(x, y) != off.get_pixel(x, y):
+					frame_changed += 1
+					if box.has_point(Vector2i(x, y)):
+						deep_changed += 1
+	print("blend_probe: OCEAN no open caps — %d deep-ocean px differ from the pulse-off twin (%d in the whole frame)"
+		% [deep_changed, frame_changed])
+	if frame_changed == 0:
+		_fail("OCEAN: the coastal term drew NOTHING, even at the island — the no-open-caps claim has no premise")
+	if deep_changed > 0:
+		_fail("OCEAN: %d open-ocean px move with the shore pulse — open water must read through the chop alone"
+			% deep_changed)
+
+
+func _assert_ocean_motion_toggle() -> void:
+	## THE `O` TOGGLE: with water motion toggled off, two phases of the SHIPPED surface are byte-identical (the
+	## magnitude claim is the premise that, toggled on, they are not). The toggle is restored after.
+	_map._terrain.set_water_motion_enabled(false)
+	var a: Image = await _ocean_capture({}, 0.0)
+	var b: Image = await _ocean_capture({}, OCEAN_MOTION_DT)
+	_map._terrain.set_water_motion_enabled(true)
+	if a == null or b == null:
+		return
+	var changed: int = _changed_pixel_count(a, b)
+	print("blend_probe: OCEAN motion toggled OFF — %d px differ over %.1f s" % [changed, OCEAN_MOTION_DT])
+	if changed != 0:
+		_fail("OCEAN: the `O` toggle leaves the water moving — %d px differ over %.1f s with motion off"
+			% [changed, OCEAN_MOTION_DT])
+
+
+func _ocean_capture(surface: Dictionary, time_offset: float) -> Image:
+	var token: Array = _override_config({"water_surface": _ocean_surface(surface)})
+	_set_water_time_offset(time_offset)
+	await _settle()
+	var image: Image = await _capture()
+	_restore_config(token)
+	return image
+
+
+func _ocean_box_px(image: Image) -> Rect2i:
+	## The deep-ocean box (OCEAN_REPEAT_BOX_*) in image pixels.
+	var px_scale: float = float(image.get_width()) / get_viewport().get_visible_rect().size.x
+	var radius: float = _map.last_hex_radius
+	var p0: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.x, OCEAN_REPEAT_BOX_ROWS.x, radius, _map.last_origin)
+	var p1: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.y, OCEAN_REPEAT_BOX_ROWS.y, radius, _map.last_origin)
+	var x0: int = maxi(int(p0.x * px_scale), 0)
+	var y0: int = maxi(int(p0.y * px_scale), 0)
+	var x1: int = mini(int(p1.x * px_scale), image.get_width())
+	var y1: int = mini(int(p1.y * px_scale), image.get_height())
+	return Rect2i(x0, y0, x1 - x0, y1 - y0)
+
+
+func _ocean_motion_field(frame: Image, still: Image, box: Rect2i) -> PackedFloat32Array:
+	## Luma of `frame` minus `still`, sampled every OCEAN_FIELD_STRIDE px over `box` (row-major).
+	var fw: int = box.size.x / OCEAN_FIELD_STRIDE
+	var fh: int = box.size.y / OCEAN_FIELD_STRIDE
+	var field := PackedFloat32Array()
+	field.resize(fw * fh)
+	for y in range(fh):
+		for x in range(fw):
+			var px: int = box.position.x + x * OCEAN_FIELD_STRIDE
+			var py: int = box.position.y + y * OCEAN_FIELD_STRIDE
+			field[y * fw + x] = frame.get_pixel(px, py).get_luminance() - still.get_pixel(px, py).get_luminance()
+	return field
+
+
+func _field_correlation(fa: PackedFloat32Array, fb: PackedFloat32Array, fw: int, fh: int,
+		dx: int, dy: int, margin: int) -> float:
+	## Pearson correlation of fa(x, y) with fb(x + dx, y + dy), over the interior `margin` samples in from
+	## every edge (so every offset is scored over the same set of fa samples).
+	var sa := 0.0
+	var sb := 0.0
+	var saa := 0.0
+	var sbb := 0.0
+	var sab := 0.0
+	var n := 0
+	for y in range(margin, fh - margin, OCEAN_CORR_SAMPLE_STRIDE):
+		for x in range(margin, fw - margin, OCEAN_CORR_SAMPLE_STRIDE):
+			var va: float = fa[y * fw + x]
+			var vb: float = fb[(y + dy) * fw + x + dx]
+			sa += va
+			sb += vb
+			saa += va * va
+			sbb += vb * vb
+			sab += va * vb
+			n += 1
+	if n == 0:
+		return 0.0
+	var cov: float = sab / n - (sa / n) * (sb / n)
+	var var_a: float = saa / n - (sa / n) * (sa / n)
+	var var_b: float = sbb / n - (sb / n) * (sb / n)
+	return cov / sqrt(maxf(var_a * var_b, OCEAN_CORR_EPSILON * OCEAN_CORR_EPSILON))
+
+
+func _std(values: PackedFloat32Array) -> float:
+	if values.is_empty():
+		return 0.0
+	var mean := 0.0
+	for v in values:
+		mean += v
+	mean /= values.size()
+	var acc := 0.0
+	for v in values:
+		acc += (v - mean) * (v - mean)
+	return sqrt(acc / values.size())
+
+
+func _ocean_mean_luma_delta(a: Image, b: Image) -> float:
+	## Mean |ΔL| in 8-bit levels between two captures, over the deep-ocean box (OCEAN_REPEAT_BOX_*).
+	var px_scale: float = float(a.get_width()) / get_viewport().get_visible_rect().size.x
+	var radius: float = _map.last_hex_radius
+	var p0: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.x, OCEAN_REPEAT_BOX_ROWS.x, radius, _map.last_origin)
+	var p1: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.y, OCEAN_REPEAT_BOX_ROWS.y, radius, _map.last_origin)
+	var total := 0.0
+	var n := 0
+	for y in range(maxi(int(p0.y * px_scale), 0), mini(int(p1.y * px_scale), a.get_height()), OCEAN_REPEAT_SAMPLE_STRIDE):
+		for x in range(maxi(int(p0.x * px_scale), 0), mini(int(p1.x * px_scale), a.get_width()), OCEAN_REPEAT_SAMPLE_STRIDE):
+			total += absf(a.get_pixel(x, y).get_luminance() - b.get_pixel(x, y).get_luminance())
+			n += 1
+	return total / maxf(n, 1) * LUMA_LEVELS
+
+
+func _ocean_repeat_ratio(image: Image) -> float:
+	## THE REPEAT MEASURE (see OCEAN_REPEAT_*): mean |ΔL| to the pixel ONE texture period east, over the same
+	## at a non-period offset, across the deep-ocean box. ~0 = exact copies (the grid); ~1 = no repeat.
+	if image == null:
+		return 0.0
+	var px_scale: float = float(image.get_width()) / get_viewport().get_visible_rect().size.x
+	var radius: float = _map.last_hex_radius
+	var base_scale: float = float(TerrainTextureManager.terrain_config.get(
+		"base_texture_scale", TerrainRenderer.BASE_DEFAULT_TEXTURE_SCALE))
+	var period: int = roundi(2.0 * radius / base_scale * px_scale)
+	var control: int = roundi(period * OCEAN_REPEAT_CONTROL_FRACTION)
+	var p0: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.x, OCEAN_REPEAT_BOX_ROWS.x, radius, _map.last_origin)
+	var p1: Vector2 = _map._hex_center(OCEAN_REPEAT_BOX_COLS.y, OCEAN_REPEAT_BOX_ROWS.y, radius, _map.last_origin)
+	var x0: int = maxi(int(p0.x * px_scale), 0)
+	var y0: int = maxi(int(p0.y * px_scale), 0)
+	var x1: int = mini(int(p1.x * px_scale) - period, image.get_width() - period - 1)
+	var y1: int = mini(int(p1.y * px_scale), image.get_height() - 1)
+	var period_sum := 0.0
+	var control_sum := 0.0
+	for y in range(y0, y1, OCEAN_REPEAT_SAMPLE_STRIDE):
+		for x in range(x0, x1, OCEAN_REPEAT_SAMPLE_STRIDE):
+			var l: float = image.get_pixel(x, y).get_luminance()
+			period_sum += absf(l - image.get_pixel(x + period, y).get_luminance())
+			control_sum += absf(l - image.get_pixel(x + control, y).get_luminance())
+	return period_sum / maxf(control_sum, 1e-6)
+
+
+func _snapshot_ocean(gw: int, gh: int) -> Dictionary:
+	## Open deep_ocean with a ragged continental_shelf band down the east side and a prairie island on it.
+	## Scaled with the grid (`gw` / GRID_W), so the far-zoom grid is the same geography, only more of it.
+	var k: int = maxi(gw / GRID_W, 1)   # a grid SMALLER than GRID_W (the 2.0× frame) keeps the base geography
+	var arr: Array = []
+	arr.resize(gw * gh)
+	for y in range(gh):
+		var shelf_col: int = (OCEAN_SHELF_BASE_COL
+			+ int(COAST_SHORE_WOBBLE[(y / k) % COAST_SHORE_WOBBLE.size()])) * k
+		for x in range(gw):
+			arr[y * gw + x] = OCEAN_SHELF_ID if x >= shelf_col else OCEAN_DEEP_ID
+	for hex: Vector2i in OCEAN_ISLAND_HEXES:
+		for dy in range(k):
+			for dx in range(k):
+				arr[(hex.y * k + dy) * gw + hex.x * k + dx] = OCEAN_ISLAND_ID
+	return _snapshot(arr, gw, gh)
+
+
+func _render_ocean_temperature_state() -> void:
+	## State 30 (OCEANTEMP) at r ≈ 45, grid OFF, waves at phase 0. Frames: OCEANTEMP_off (strength 0) and
+	## OCEANTEMP (shipped), each with open / seam / coast / coral crops, plus the split pair the step claim is
+	## measured on. Claims (a) strength 0 == state 29's shipped frame, (b) monotone cold → warm, (c) no hex step.
+	var climate: Dictionary = _oceantemp_sim_climate()
+	if climate.is_empty():
+		_fail("OCEANTEMP: could not read the sim's climate anchors from %s" % OCEANTEMP_SIM_CONFIG)
+		return
+	_map._show_grid_lines = false
+	_set_water_time_offset(0.0)
+	# (a)'s reference: state 29's own fixture (no temperatures, no anchors) on the shipped levers.
+	_map.display_snapshot(_snapshot_ocean(GRID_W, GRID_H))
+	await _refit(GAME_HEX_RADIUS)
+	await _settle()
+	var reference: Image = await _capture()
+	# (a): the SAME geography (no coral), now carrying temperatures and the published anchors, at strength 0.
+	_map.display_snapshot(_snapshot_ocean_temperature(climate, false, false))
+	await _refit(GAME_HEX_RADIUS)
+	var zero: Image = await _render_oceantemp_frame(OCEANTEMP_OFF, "OCEANTEMP_zero", false)
+	if reference == null or zero == null:
+		return
+	var moved: int = _changed_pixel_count(reference, zero)
+	print("blend_probe: OCEANTEMP strength 0 vs the plain OCEAN frame — %d px differ" % moved)
+	if moved != 0:
+		_fail("OCEANTEMP: at strength 0 the graded fixture differs from state 29's shipped frame by %d px" % moved)
+	_map.display_snapshot(_snapshot_ocean_temperature(climate, false, true))
+	await _refit(GAME_HEX_RADIUS)
+	var off: Image = await _render_oceantemp_frame(OCEANTEMP_OFF, "OCEANTEMP_off")
+	var graded: Image = await _render_oceantemp_frame({}, "OCEANTEMP")
+	if off == null or graded == null:
+		return
+	_assert_oceantemp_monotone(off, graded)
+	# (c) — the split fixture, the largest step two neighbouring hexes can carry.
+	_map.display_snapshot(_snapshot_ocean_temperature(climate, true, false))
+	await _refit(GAME_HEX_RADIUS)
+	var split_off: Image = await _render_oceantemp_frame(OCEANTEMP_OFF, "OCEANTEMP_split_off", false)
+	var split: Image = await _render_oceantemp_frame({}, "OCEANTEMP_split", false)
+	if split_off != null and split != null:
+		_assert_oceantemp_no_hex_step(split_off, split)
+	# (d) — the island's coast at full cold, then at full warm.
+	for cold: bool in [true, false]:
+		_map.display_snapshot(_snapshot_ocean_uniform_temperature(climate, cold))
+		await _refit(GAME_HEX_RADIUS)
+		await _assert_oceantemp_no_coast_rim("cold" if cold else "warm")
+	_set_water_time_offset(0.0)
+	_map._show_grid_lines = true
+
+
+func _render_oceantemp_frame(changes: Dictionary, name: String, crops: bool = true) -> Image:
+	var block: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("water_temperature", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in changes:
+		block[key] = changes[key]
+	var token: Array = _override_config({"water_temperature": block})
+	_map._fit_map_to_view()
+	await _settle()
+	await _save(name)
+	await _settle()
+	var image: Image = await _capture()
+	if crops:
+		await _save_crop("%s_open" % name, OCEAN_OPEN_CROP.x, OCEAN_OPEN_CROP.y, OCEAN_OPEN_CROP_RADII)
+		await _settle()
+		await _save_crop("%s_seam" % name, OCEAN_SEAM_CROP.x, OCEAN_SEAM_CROP.y, OCEAN_DETAIL_CROP_RADII)
+		await _settle()
+		await _save_crop("%s_coast" % name, OCEAN_COAST_CROP.x, OCEAN_COAST_CROP.y, OCEAN_DETAIL_CROP_RADII)
+		await _settle()
+		var coral: Vector2i = OCEANTEMP_CORAL_HEXES[0]
+		await _save_crop("%s_coral" % name, coral.x, coral.y, OCEAN_DETAIL_CROP_RADII)
+	_restore_config(token)
+	return image
+
+
+func _oceantemp_sim_climate() -> Dictionary:
+	## The sim's own `climate` block — polar/boreal/temperate_max_temp — read from its config file so the
+	## fixture cannot drift from what the server publishes.
+	var text := FileAccess.get_file_as_string(ProjectSettings.globalize_path(OCEANTEMP_SIM_CONFIG))
+	var parsed: Variant = JSON.parse_string(text)
+	if not parsed is Dictionary:
+		return {}
+	return (parsed as Dictionary).get(OCEANTEMP_CLIMATE_KEY, {})
+
+
+func _snapshot_ocean_temperature(climate: Dictionary, split: bool, coral: bool) -> Dictionary:
+	## State 29's ocean + a coral patch, a per-tile temperature by row, and the climate anchors on the overlay
+	## keys MapView adopts them from (the same keys the native decoder emits).
+	var polar: float = float(climate["polar_max_temp"])
+	var boreal: float = float(climate["boreal_max_temp"])
+	var temperate: float = float(climate["temperate_max_temp"])
+	var neutral: float = 0.5 * (boreal + temperate)
+	var coldest: float = polar - OCEANTEMP_OVERSHOOT * (neutral - polar)
+	var warmest: float = temperate + OCEANTEMP_OVERSHOOT * (temperate - neutral)
+	var snap: Dictionary = _snapshot_ocean(GRID_W, GRID_H)
+	var terrain: Array = snap["overlays"]["terrain"]
+	if coral:
+		for hex: Vector2i in OCEANTEMP_CORAL_HEXES:
+			terrain[hex.y * GRID_W + hex.x] = OCEANTEMP_CORAL_ID
+	var tiles: Array = []
+	for y in range(GRID_H):
+		var temp: float = lerpf(coldest, warmest, float(y) / float(GRID_H - 1))
+		if split:
+			temp = coldest if y < OCEANTEMP_SPLIT_ROW else warmest
+		for x in range(GRID_W):
+			tiles.append({"entity": y * GRID_W + x, "x": x, "y": y, "temperature": temp})
+	snap["tiles"] = tiles
+	snap["overlays"]["climate_polar_max_temp"] = polar
+	snap["overlays"]["climate_boreal_max_temp"] = boreal
+	snap["overlays"]["climate_temperate_max_temp"] = temperate
+	return snap
+
+
+func _snapshot_ocean_uniform_temperature(climate: Dictionary, cold: bool) -> Dictionary:
+	## State 29's ocean with EVERY tile at the fixture's coldest (or warmest) temperature — the grade at full
+	## strength all round the island's coast.
+	var snap: Dictionary = _snapshot_ocean_temperature(climate, false, false)
+	var temp: float = float(snap["tiles"][0]["temperature"]) if cold else float(snap["tiles"][snap["tiles"].size() - 1]["temperature"])
+	for tile: Dictionary in snap["tiles"]:
+		tile["temperature"] = temp
+	return snap
+
+
+func _oceantemp_capture(changes: Dictionary) -> Image:
+	## One capture with `changes` over the shipped `water_temperature` block and the surf off (see OCEANTEMP_RIM_*).
+	var block: Dictionary = (
+		(TerrainTextureManager.terrain_config.get("water_temperature", {}) as Dictionary).duplicate(true)
+	)
+	for key: String in changes:
+		block[key] = changes[key]
+	var token: Array = _override_config({"water_temperature": block, "shore": _shore_block(OCEANTEMP_RIM_FOAM_OFF)})
+	_map._fit_map_to_view()
+	await _settle()
+	var image: Image = await _capture()
+	_restore_config(token)
+	_map.queue_redraw()
+	return image
+
+
+func _rgba8_bytes(image: Image) -> PackedByteArray:
+	## The image's raw bytes in RGBA8 (4 per pixel), converting a copy when the capture came back in another format.
+	if image.get_format() == Image.FORMAT_RGBA8:
+		return image.get_data()
+	var img := image.duplicate()
+	img.convert(Image.FORMAT_RGBA8)
+	return img.get_data()
+
+
+func _assert_oceantemp_no_coast_rim(label: String) -> void:
+	## (d): see OCEANTEMP_RIM_*.
+	var graded: Image = await _oceantemp_capture({})
+	var off: Image = await _oceantemp_capture(OCEANTEMP_OFF)
+	if graded == null or off == null:
+		return
+	var radius: float = _map.last_hex_radius
+	var px_scale: float = _image_px_scale(graded)
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for hex: Vector2i in OCEAN_ISLAND_HEXES:
+		var c: Vector2 = _map._hex_center(hex.x, hex.y, radius, _map.last_origin)
+		lo = Vector2(minf(lo.x, c.x), minf(lo.y, c.y))
+		hi = Vector2(maxf(hi.x, c.x), maxf(hi.y, c.y))
+	var pad: float = OCEANTEMP_RIM_BOX_RADII * radius
+	var ga: PackedByteArray = _rgba8_bytes(graded)
+	var ob: PackedByteArray = _rgba8_bytes(off)
+	var w: int = graded.get_width()
+	var band_sum := 0.0
+	var band_n := 0
+	var ref_sum := 0.0
+	var ref_n := 0
+	for y in range(int((lo.y - pad) * px_scale), int((hi.y + pad) * px_scale)):
+		for x in range(int((lo.x - pad) * px_scale), int((hi.x + pad) * px_scale)):
+			var p_map := Vector2(x, y) / px_scale   # map-view (canvas) px
+			var hex: Vector2i = _map._point_to_offset(p_map)
+			if _map._terrain_id_at(hex.x, hex.y) == OCEAN_ISLAND_ID:
+				continue
+			var own_c: Vector2 = _map._hex_center(hex.x, hex.y, radius, _map.last_origin)
+			var dist := INF   # to the nearest shared edge with a LAND neighbour, in hex radii
+			for dir in range(BANK_DIR_OFFSETS.size()):
+				var nb: Vector2i = _bank_neighbor(hex, dir)
+				if _map._terrain_id_at(nb.x, nb.y) != OCEAN_ISLAND_ID:
+					continue
+				var nb_c: Vector2 = _map._hex_center(nb.x, nb.y, radius, _map.last_origin)
+				var dir_v: Vector2 = (nb_c - own_c).normalized()
+				var half: float = 0.5 * own_c.distance_to(nb_c)
+				dist = minf(dist, (half - (p_map - own_c).dot(dir_v)) / radius)
+			if dist == INF:
+				continue
+			var i: int = (y * w + x) * 4
+			var shift: float = (absf(ga[i] - ob[i]) + absf(ga[i + 1] - ob[i + 1]) + absf(ga[i + 2] - ob[i + 2]))
+			if dist <= OCEANTEMP_RIM_BAND:
+				band_sum += shift
+				band_n += 1
+
+			elif dist >= OCEANTEMP_RIM_REF_BAND.x and dist <= OCEANTEMP_RIM_REF_BAND.y:
+				ref_sum += shift
+				ref_n += 1
+	var band: float = band_sum / maxf(band_n, 1)
+	var ref: float = ref_sum / maxf(ref_n, 1)
+	var ratio: float = band / maxf(ref, OCEAN_CORR_EPSILON)
+	print("blend_probe: OCEANTEMP (d) %s coast — grade shift %.1f levels at the waterline (%d px) vs %.1f just off it (%d px): ratio %.2f (min %.2f)"
+		% [label, band, band_n, ref, ref_n, ratio, OCEANTEMP_RIM_RATIO_MIN])
+	if ref_n == 0 or ref < OCEANTEMP_RIM_MIN_SHIFT:
+		_fail("OCEANTEMP: the %s coast is not graded at all — %.1f levels off the waterline (want ≥ %.1f)" % [label, ref, OCEANTEMP_RIM_MIN_SHIFT])
+	elif band_n == 0 or ratio < OCEANTEMP_RIM_RATIO_MIN:
+		_fail("OCEANTEMP: a %s coast carries an UNGRADED RIM — the grade at the waterline is %.2f of the grade just off it (want ≥ %.2f)"
+			% [label, ratio, OCEANTEMP_RIM_RATIO_MIN])
+
+
+func _assert_oceantemp_monotone(off: Image, graded: Image) -> void:
+	## (b): per hex row, over the deep-ocean columns, the mean luma and saturation SHIFT (graded − off).
+	var radius: float = _map.last_hex_radius
+	var px_scale: float = float(graded.get_width()) / get_viewport().get_visible_rect().size.x
+	var luma_shift: Array[float] = []
+	var sat_shift: Array[float] = []
+	for row in range(GRID_H):
+		var a: Vector2 = _map._hex_center(OCEANTEMP_BAND_COLS.x, row, radius, _map.last_origin) * px_scale
+		var b: Vector2 = _map._hex_center(OCEANTEMP_BAND_COLS.y, row, radius, _map.last_origin) * px_scale
+		var half: int = int(0.5 * radius * px_scale)
+		var dl := 0.0
+		var ds := 0.0
+		var n := 0
+		for y in range(maxi(int(a.y) - half, 0), mini(int(a.y) + half, graded.get_height()), OCEAN_REPEAT_SAMPLE_STRIDE):
+			for x in range(maxi(int(a.x), 0), mini(int(b.x), graded.get_width()), OCEAN_REPEAT_SAMPLE_STRIDE):
+				var g: Color = graded.get_pixel(x, y)
+				var o: Color = off.get_pixel(x, y)
+				dl += g.get_luminance() - o.get_luminance()
+				ds += g.s - o.s
+				n += 1
+		luma_shift.append(dl / maxf(n, 1))
+		sat_shift.append(ds / maxf(n, 1))
+	var report := PackedStringArray()
+	for row in range(GRID_H):
+		report.append("%+.1f/%+.3f" % [luma_shift[row] * 255.0, sat_shift[row]])
+	print("blend_probe: OCEANTEMP per-row shift (luma levels / sat), polar → tropical: ", " ".join(report))
+	if not (luma_shift[0] < 0.0 and luma_shift[GRID_H - 1] > 0.0):
+		_fail("OCEANTEMP: the polar rows must read DARKER and the tropical rows BRIGHTER (luma shift %+.2f → %+.2f)"
+			% [luma_shift[0] * 255.0, luma_shift[GRID_H - 1] * 255.0])
+	if not (sat_shift[0] < 0.0 and sat_shift[GRID_H - 1] > 0.0):
+		_fail("OCEANTEMP: the polar rows must read GREYER and the tropical rows MORE SATURATED (%+.3f → %+.3f)"
+			% [sat_shift[0], sat_shift[GRID_H - 1]])
+	for row in range(1, GRID_H):
+		if luma_shift[row] < luma_shift[row - 1] - OCEANTEMP_LUMA_TOLERANCE:
+			_fail("OCEANTEMP: luma shift falls from row %d to %d (%+.2f → %+.2f levels) — not monotone cold → warm"
+				% [row - 1, row, luma_shift[row - 1] * 255.0, luma_shift[row] * 255.0])
+		if sat_shift[row] < sat_shift[row - 1] - OCEANTEMP_SAT_TOLERANCE:
+			_fail("OCEANTEMP: saturation shift falls from row %d to %d (%+.3f → %+.3f) — not monotone cold → warm"
+				% [row - 1, row, sat_shift[row - 1], sat_shift[row]])
+
+
+func _assert_oceantemp_no_hex_step(off: Image, graded: Image) -> void:
+	## (c): along lines crossing each cold|warm hex edge, on the graded − off luma, the 2-px |Δ| straddling the
+	## edge over the largest 2-px |Δ| elsewhere on the line (see OCEANTEMP_EDGE_*).
+	var radius: float = _map.last_hex_radius
+	var px_scale: float = float(graded.get_width()) / get_viewport().get_visible_rect().size.x
+	var r_px: float = radius * px_scale
+	var straddle_sum := 0.0
+	var elsewhere_sum := 0.0
+	var lines := 0
+	var row: int = OCEANTEMP_SPLIT_ROW - 1
+	for col in range(OCEANTEMP_EDGE_COLS.x, OCEANTEMP_EDGE_COLS.y + 1):
+		var ca: Vector2 = _map._hex_center(col, row, radius, _map.last_origin) * px_scale
+		for ncol in range(col - 1, col + 2):
+			var cb: Vector2 = _map._hex_center(ncol, row + 1, radius, _map.last_origin) * px_scale
+			if absf(ca.distance_to(cb) - MAP_VIEW.SQRT3 * r_px) > OCEANTEMP_NEIGHBOUR_TOLERANCE * r_px:
+				continue
+			var n: Vector2 = (cb - ca).normalized()
+			var t := Vector2(-n.y, n.x)
+			var mid: Vector2 = 0.5 * (ca + cb)
+			for i in range(OCEANTEMP_EDGE_SAMPLES):
+				var s: float = lerpf(-OCEANTEMP_EDGE_SPAN, OCEANTEMP_EDGE_SPAN,
+					float(i) / float(OCEANTEMP_EDGE_SAMPLES - 1)) * r_px
+				var p0: Vector2 = mid + t * s
+				var straddle: float = absf(_diff_luma(graded, off, p0 + n) - _diff_luma(graded, off, p0 - n))
+				var elsewhere := 0.0
+				var reach: int = int(OCEANTEMP_EDGE_REACH * r_px)
+				for k in range(-reach, reach):
+					if absf(float(k) + 0.5) < OCEANTEMP_EDGE_GUARD_PX:
+						continue
+					var q: Vector2 = p0 + n * (float(k) + 1.0)
+					elsewhere = maxf(elsewhere,
+						absf(_diff_luma(graded, off, q + n) - _diff_luma(graded, off, q - n)))
+				straddle_sum += straddle
+				elsewhere_sum += elsewhere
+				lines += 1
+	if lines == 0:
+		_fail("OCEANTEMP: found no cold|warm hex edge to measure — the step claim proves nothing")
+		return
+	var ratio: float = straddle_sum / maxf(elsewhere_sum, 1e-6)
+	print("blend_probe: OCEANTEMP hex-step ratio %.2f over %d lines (straddle %.2f vs ramp %.2f levels mean)"
+		% [ratio, lines, straddle_sum / lines * 255.0, elsewhere_sum / lines * 255.0])
+	if ratio > OCEANTEMP_EDGE_RATIO_MAX:
+		_fail("OCEANTEMP: the grade STEPS on the hex edge (straddle/ramp %.2f > %.2f)" % [ratio, OCEANTEMP_EDGE_RATIO_MAX])
+
+
+func _diff_luma(a: Image, b: Image, p: Vector2) -> float:
+	var x: int = clampi(int(round(p.x)), 0, a.get_width() - 1)
+	var y: int = clampi(int(round(p.y)), 0, a.get_height() - 1)
+	return a.get_pixel(x, y).get_luminance() - b.get_pixel(x, y).get_luminance()
 
 
 func _render_ecotone_state() -> void:
@@ -2424,12 +3359,16 @@ func _snapshot_navbase() -> Dictionary:
 	snap["tiles"] = tiles
 	return {"snap": snap, "chain": chain}
 
-func _shore_profile_of(variant: Dictionary) -> Dictionary:
-	## The three-scale `shore_profile` block a sweep variant carries. Keys match terrain_config's exactly.
+func _shore_profile_of(variant: Dictionary, terrain_id: int) -> Dictionary:
+	## The `shore_profile` block a sweep variant carries: its three reach scales, plus the terrain's own SHIPPED
+	## `surge_scale` — the sweeps predate the shore pulse and vary the reaches only, so a lake variant must not
+	## start pulsing just because its block was replaced. Keys match terrain_config's exactly.
+	var shipped: Dictionary = _terrain_entry(terrain_id).get("shore_profile", {})
 	return {
 		"sand_scale": float(variant["sand_scale"]),
 		"foam_scale": float(variant["foam_scale"]),
 		"wisp_scale": float(variant["wisp_scale"]),
+		"surge_scale": float(shipped.get("surge_scale", TerrainTextureManager.SHORE_PROFILE_DEFAULT_SURGE_SCALE)),
 	}
 
 
@@ -2984,6 +3923,8 @@ func _snapshot(
 
 
 func _settle() -> void:
+	if _watchdog != null:
+		_watchdog.note_progress()   # a sign of life for the hang guard: every state reaches here
 	await _ensure_canvas()
 	await get_tree().process_frame
 	RenderingServer.force_draw()
@@ -3121,3 +4062,292 @@ func _save_contact_sheet(names: Array[String], labels: Array[String], out_name: 
 	await _save(out_name)
 	layer.queue_free()
 	_map.visible = true
+
+
+func _render_shore_state() -> void:
+	## State 31 (SHORE) at the game's r ≈ 45, grid OFF: a jagged coastline (bays, headlands, an inlet) behind a shelf,
+	## a small island in open water and an inland lake. Frames: SHORE at two phases + their diff, the pulse-off twin,
+	## a four-phase sequence of a stretch of coast (staggered crashes), the lake, and the same fixture at r ≈ 47 and
+	## r ≈ 35. Then the claims (see SHORE_*).
+	_map._show_grid_lines = false
+	_map.display_snapshot(_snapshot_jagged_coast(GRID_W, GRID_H))
+	await _refit(GAME_HEX_RADIUS)
+	await _shore_frame(SHORE_PULSE_OFF, "SHORE_off", 0.0)
+	await _shore_frame({}, "SHORE", 0.0)
+	await _shore_frame({}, "SHORE_t2", OCEAN_MOTION_DT)
+	_save_diff("SHORE", "SHORE_t2", "SHORE_motion_diff")
+	for i in range(SHORE_SEQ_PHASES.size()):
+		_set_water_time_offset(SHORE_SEQ_PHASES[i])
+		await _settle()
+		await _save_crop("SHORE_seq%d" % i, GRID_W - SHORE_SEQ_CROP_FROM_EAST.x, SHORE_SEQ_CROP_FROM_EAST.y,
+			SHORE_SEQ_CROP_RADII)
+	_set_water_time_offset(0.0)
+	await _settle()
+	await _save_crop("SHORE_lake", GRID_W - SHORE_LAKE_CROP_FROM_EAST.x, SHORE_LAKE_CROP_FROM_EAST.y,
+		SHORE_LAKE_CROP_RADII)
+	await _assert_shore_pulse_moves()
+	await _assert_shore_not_in_unison()
+	await _assert_shore_toggle()
+	await _assert_no_swell()
+	# The 2.0× and 1.5× frames, last: they leave the map on a different grid.
+	_map.display_snapshot(_snapshot_jagged_coast(COAST_2X_GRID.x, COAST_2X_GRID.y))
+	await _refit(GAME_HEX_RADIUS * GRID_W / COAST_2X_GRID.x)
+	await _shore_frame({}, "SHORE_2x", 0.0)
+	_map.display_snapshot(_snapshot_jagged_coast(OCEAN_LIVE_GRID.x, OCEAN_LIVE_GRID.y))
+	await _refit(GAME_HEX_RADIUS * GRID_W / OCEAN_LIVE_GRID.x)
+	await _shore_frame({}, "SHORE_live", 0.0)
+	_set_water_time_offset(0.0)
+	_map._show_grid_lines = true
+
+
+func _snapshot_jagged_coast(w: int, h: int) -> Dictionary:
+	## The SHORE fixture on a `w × h` grid: land from the east edge in by COAST_LAND_DEPTH[row] hexes, a shelf
+	## COAST_SHELF_WIDTH hexes wide off it, deep ocean beyond, a small island and an inland lake — all placed from
+	## the EAST edge, so the geography holds on the narrower grids.
+	var arr: Array = []
+	arr.resize(w * h)
+	for y in range(h):
+		var coast_col: int = w - int(COAST_LAND_DEPTH[y % COAST_LAND_DEPTH.size()])
+		for x in range(w):
+			if x >= coast_col:
+				arr[y * w + x] = COAST_LAND_ID
+			elif x >= coast_col - COAST_SHELF_WIDTH:
+				arr[y * w + x] = OCEAN_SHELF_ID
+			else:
+				arr[y * w + x] = OCEAN_DEEP_ID
+	for hex: Vector2i in COAST_ISLAND_FROM_EAST:
+		arr[hex.y * w + (w - hex.x)] = COAST_LAND_ID
+	for hex: Vector2i in COAST_LAKE_FROM_EAST:
+		arr[hex.y * w + (w - hex.x)] = COAST_LAKE_ID
+	return _snapshot(arr, w, h)
+
+
+func _shore_block(changes: Dictionary) -> Dictionary:
+	## The shipped `shore` block with `changes` laid over it.
+	var block: Dictionary = (TerrainTextureManager.terrain_config.get("shore", {}) as Dictionary).duplicate(true)
+	for key: String in changes:
+		block[key] = changes[key]
+	return block
+
+
+func _shore_frame(changes: Dictionary, name: String, time_offset: float) -> void:
+	var token: Array = _override_config({"shore": _shore_block(changes)})
+	_set_water_time_offset(time_offset)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save(name)
+	_restore_config(token)
+	_map.queue_redraw()
+
+
+func _shore_capture(changes: Dictionary, time_offset: float, water: Dictionary = {}) -> Image:
+	## One capture with `changes` laid over the shipped `shore` block (and `water` over `water_surface`), at phase
+	## `time_offset`. The config is restored and a redraw queued after, so the next frame is back on the shipped
+	## levers.
+	var token: Array = _override_config({"shore": _shore_block(changes), "water_surface": _ocean_surface(water)})
+	_set_water_time_offset(time_offset)
+	await _settle()
+	var image: Image = await _capture()
+	_restore_config(token)
+	_map.queue_redraw()
+	return image
+
+
+func _luma_levels(image: Image) -> PackedFloat32Array:
+	## Rec.709 luma of every pixel, in 8-bit levels, row-major — read once off the raw bytes (get_pixel per probe
+	## is what makes a whole-frame claim slow).
+	var img := image
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img = image.duplicate()
+		img.convert(Image.FORMAT_RGBA8)
+	var bytes := img.get_data()
+	var n := img.get_width() * img.get_height()
+	var out := PackedFloat32Array()
+	out.resize(n)
+	for i in range(n):
+		out[i] = LUMA_R * bytes[i * 4] + LUMA_G * bytes[i * 4 + 1] + LUMA_B * bytes[i * 4 + 2]
+	return out
+
+
+func _image_px_scale(image: Image) -> float:
+	return float(image.get_width()) / get_viewport().get_visible_rect().size.x
+
+
+func _pixel_hex(px: Vector2, px_scale: float) -> Vector2i:
+	return _map._point_to_offset(px / px_scale)
+
+
+func _pixel_hex_id(px: Vector2, px_scale: float) -> int:
+	var hex: Vector2i = _pixel_hex(px, px_scale)
+	return _map._terrain_id_at(hex.x, hex.y)
+
+
+func _hex_touches_land(hex: Vector2i) -> bool:
+	## True when any odd-r neighbour of `hex` is land (off-grid neighbours are not).
+	for dir in range(BANK_DIR_OFFSETS.size()):
+		var nb: Vector2i = _bank_neighbor(hex, dir)
+		if nb.x < 0 or nb.y < 0 or nb.x >= _map.grid_width or nb.y >= _map.grid_height:
+			continue
+		if _map._terrain_id_at(nb.x, nb.y) == COAST_LAND_ID:
+			return true
+	return false
+
+
+func _assert_shore_pulse_moves() -> void:
+	## (a) THE PULSE MOVES THE SURF ON SEA COASTS, (b) NEVER ON THE LAKE, (c) NEVER A LAND PIXEL: shipped vs its
+	## pulse-off twin at SHORE_PHASES.
+	var sea_changed := 0
+	var lake_changed := 0
+	var land_changed := 0
+	var surf: Array = []   # [luma, saturation, colour] of every changed sea pixel, for the colour report
+	for phase: float in SHORE_PHASES:
+		var on: Image = await _shore_capture({}, phase)
+		var still: Image = await _shore_capture(SHORE_PULSE_OFF, phase)
+		if on == null or still == null:
+			return
+		var px_scale := _image_px_scale(on)
+		var a := _luma_levels(on)
+		var b := _luma_levels(still)
+		var w := on.get_width()
+		for i in range(a.size()):
+			if a[i] == b[i]:
+				continue
+			var p := Vector2(i % w, i / w)
+			var tid := _pixel_hex_id(p, px_scale)
+			if tid == COAST_LAKE_ID:
+				lake_changed += 1
+				continue
+			if tid != COAST_LAND_ID:
+				sea_changed += 1
+				var c: Color = on.get_pixel(int(p.x), int(p.y))
+				surf.append([a[i], c.s, c])
+				continue
+			var interior := true
+			for o: Vector2 in [Vector2(COAST_LAND_INTERIOR_PX, 0), Vector2(-COAST_LAND_INTERIOR_PX, 0),
+					Vector2(0, COAST_LAND_INTERIOR_PX), Vector2(0, -COAST_LAND_INTERIOR_PX)]:
+				if _pixel_hex_id(p + o, px_scale) != COAST_LAND_ID:
+					interior = false
+			if interior:
+				land_changed += 1
+	surf.sort_custom(func(x: Array, y: Array) -> bool: return x[0] > y[0])
+	var shown: int = maxi(mini(maxi(int(surf.size() * SHORE_SURF_TOP_FRACTION), 1), surf.size()), 1)
+	var surf_sat := 0.0
+	var surf_rgb := Color(0, 0, 0)
+	for k in range(mini(shown, surf.size())):
+		surf_sat += float(surf[k][1])
+		surf_rgb += surf[k][2]
+	surf_rgb = surf_rgb / float(shown)
+	print("blend_probe: SHORE (a) the pulse moved %d sea px (min %d) · (b) %d lake px · (c) %d land px · the brightest %.0f%% of the surged surf renders saturation %.3f, RGB (%d, %d, %d)"
+		% [sea_changed, SHORE_MIN_MOVED_PX, lake_changed, land_changed, SHORE_SURF_TOP_FRACTION * 100.0,
+			surf_sat / float(shown), int(surf_rgb.r * 255.0), int(surf_rgb.g * 255.0), int(surf_rgb.b * 255.0)])
+	if sea_changed < SHORE_MIN_MOVED_PX:
+		_fail("SHORE: the pulse barely moves the sea surf — %d px (want ≥ %d)" % [sea_changed, SHORE_MIN_MOVED_PX])
+	if lake_changed > 0:
+		_fail("SHORE: the LAKE's surf pulses — %d px moved (its surge_scale is 0)" % lake_changed)
+	if land_changed > 0:
+		_fail("SHORE: the pulse moved %d LAND px — the beach must never move" % land_changed)
+
+
+func _assert_shore_not_in_unison() -> void:
+	## (d) NOT IN UNISON: each coastal sample point's crash time, over one cycle, and the circular spread of those
+	## times (see SHORE_CYCLE_SAMPLES).
+	var rate: float = float(_shore_block({}).get("surge_rate", TerrainRenderer.SHORE_DEFAULT_SURGE_RATE))
+	if rate <= 0.0:
+		_fail("SHORE: surge_rate is 0 — the not-in-unison claim has no subject")
+		return
+	var cycle: float = 1.0 / rate
+	var still: Image = await _shore_capture(SHORE_PULSE_OFF, 0.0, SHORE_NO_CHOP)
+	if still == null:
+		return
+	var b := _luma_levels(still)
+	var w := still.get_width()
+	var px_scale := _image_px_scale(still)
+	var cell_px: float = SHORE_POINT_CELL_RADII * _map.last_hex_radius * px_scale
+	var sums := {}   # Vector2i cell → PackedFloat32Array of summed |S| per sample
+	for k in range(SHORE_CYCLE_SAMPLES):
+		var on: Image = await _shore_capture({}, cycle * float(k) / float(SHORE_CYCLE_SAMPLES), SHORE_NO_CHOP)
+		if on == null:
+			return
+		var a := _luma_levels(on)
+		for i in range(a.size()):
+			var d: float = absf(a[i] - b[i])
+			if d == 0.0:
+				continue
+			var cell := Vector2i(int(float(i % w) / cell_px), int(float(i / w) / cell_px))
+			if not sums.has(cell):
+				var arr := PackedFloat32Array()
+				arr.resize(SHORE_CYCLE_SAMPLES)
+				sums[cell] = arr
+			var arr2: PackedFloat32Array = sums[cell]
+			arr2[k] += d
+			sums[cell] = arr2
+	var cx := 0.0
+	var cy := 0.0
+	var points := 0
+	for cell: Vector2i in sums:
+		var arr3: PackedFloat32Array = sums[cell]
+		var best_k := 0
+		for k in range(SHORE_CYCLE_SAMPLES):
+			if arr3[k] > arr3[best_k]:
+				best_k = k
+		if arr3[best_k] < SHORE_POINT_MIN_SUM:
+			continue
+		var ang: float = TAU * float(best_k) / float(SHORE_CYCLE_SAMPLES)
+		cx += cos(ang)
+		cy += sin(ang)
+		points += 1
+	var spread: float = 1.0 - Vector2(cx, cy).length() / maxf(points, 1)
+	print("blend_probe: SHORE (d) crash times over %d coastal points: circular spread %.2f (min %.2f) — 0 would be the whole coast crashing together"
+		% [points, spread, SHORE_SPREAD_MIN])
+	if points == 0:
+		_fail("SHORE: no coastal point crashes at all — the not-in-unison claim has no subject")
+	elif spread < SHORE_SPREAD_MIN:
+		_fail("SHORE: the coast crashes IN UNISON — circular spread %.2f (want ≥ %.2f)" % [spread, SHORE_SPREAD_MIN])
+
+
+func _assert_shore_toggle() -> void:
+	## (e) `O` OFF: two phases of the shipped SHORE frame are byte-identical — the pulse stops with the rest of the
+	## water motion.
+	_map._terrain.set_water_motion_enabled(false)
+	var a: Image = await _shore_capture({}, 0.0)
+	var b: Image = await _shore_capture({}, OCEAN_MOTION_DT)
+	_map._terrain.set_water_motion_enabled(true)
+	if a == null or b == null:
+		return
+	var changed: int = _changed_pixel_count(a, b)
+	print("blend_probe: SHORE (e) motion toggled OFF — %d px differ over %.1f s" % [changed, OCEAN_MOTION_DT])
+	if changed != 0:
+		_fail("SHORE: with `O` off the coast still moves — %d px differ" % changed)
+
+
+func _assert_no_swell() -> void:
+	## (f) NO SWELL ANYWHERE: with the chop off, the only thing that moves is the surf on the coast's own hexes.
+	var a: Image = await _shore_capture({}, 0.0, SHORE_NO_CHOP)
+	var b: Image = await _shore_capture({}, OCEAN_MOTION_DT, SHORE_NO_CHOP)
+	if a == null or b == null:
+		return
+	var la := _luma_levels(a)
+	var lb := _luma_levels(b)
+	var w := a.get_width()
+	var px_scale := _image_px_scale(a)
+	var changed := 0
+	var offshore := 0
+	var touches := {}   # hex → whether it has a land neighbour (memoised: many pixels share a hex)
+	for i in range(la.size()):
+		if la[i] == lb[i]:
+			continue
+		changed += 1
+		var hex: Vector2i = _pixel_hex(Vector2(i % w, i / w), px_scale)
+		var tid: int = _map._terrain_id_at(hex.x, hex.y)
+		if tid == COAST_LAND_ID:
+			continue
+		if not touches.has(hex):
+			touches[hex] = _hex_touches_land(hex)
+		if not bool(touches[hex]):
+			offshore += 1
+	print("blend_probe: SHORE (f) chop off: %d px move over %.1f s, %d of them in water beyond the coast's own hexes"
+		% [changed, OCEAN_MOTION_DT, offshore])
+	if changed == 0:
+		_fail("SHORE: with the chop off nothing moves at all — the no-swell claim has no premise (the surf should)")
+	if offshore > 0:
+		_fail("SHORE: %d px of water beyond the coast's own hexes MOVE with the chop off — a swell is running" % offshore)

@@ -20,6 +20,7 @@ paths:
 |--------|---------|
 | `assets/terrain/TerrainTextureManager.gd` | Autoload singleton for terrain texture loading |
 | `assets/terrain/TerrainDefinitions.gd` | Single source of truth for terrain definitions |
+| `scripts/texture/equalize_detail.py` (repo root) | Evens out a base texture's DETAIL AMPLITUDE (grain strength) while leaving brightness and hue alone — the fix for a tile that is even in tone but rippled in one region and glassy in another. Wrap-aware, so seamlessness survives. See "Base textures must tile seamlessly" |
 | `scripts/texture/make_seamless.py` (repo root) | The base-texture SEAMLESSNESS gate and fix, beside the rest of the Leonardo post-processing toolchain (`scripts/texture/README.md`). `--check` measures every texture `biome_array` loads (terrain_config.json's roster) and exits 1 if any is over `SEAM_RATIO_MAX`; without it, rewrites in place only those over the bar (idempotent). Runs from any working directory. See "Base textures must tile seamlessly" |
 
 ## Base textures must tile seamlessly
@@ -41,7 +42,11 @@ variance-preserving blend so the band keeps the texture's contrast.
 colour gradient (darker edges, lighter middle) still repeats as a visible grid of tiles once the join
 itself is clean — that texture needs regenerating with even lighting, not the script. And cross-fading
 strongly linear structure (dune ripples, crack networks) can leave faint doubled lines inside the band;
-regeneration with a true tiling tool is the better fix there too. First pass: 23 of 38 textures were over
+regeneration with a true tiling tool is the better fix there too. A texture can also be even in brightness
+and still uneven in GRAIN — strongly textured in one region, smooth in another — which repeats the
+same way; `scripts/texture/equalize_detail.py` evens that out (the open-water tiles, see its README
+entry), and the shader's water-surface pass (`terrain-blend-shader.md`) breaks up what is left on
+water. First pass: 23 of 38 textures were over
 the bar (worst `23_seasonal_snowfield` 5.48, `21_periglacial_steppe` 3.18); all measure 0.73–1.12 after.
 
 **A replaced PNG is invisible until the project is re-imported.** `_load_asset_image` asks

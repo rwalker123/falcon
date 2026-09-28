@@ -96,6 +96,56 @@ const EDGE_BLEND_DEFAULT_RUGGED_LAND := true
 const WATER_BLEND_DEFAULT_WIDTH := 0.45          # reach (× radius → px), vs 0.25 on land
 const WATER_BLEND_DEFAULT_SOFT := 0.45           # feather half-width, vs 0.35 on land (capped as land is)
 const WATER_BLEND_DEFAULT_NOISE_AMOUNT := 0.45   # wobble amplitude, vs 0.30 on land
+# --- WATER SURFACE levers (terrain_config's "water_surface" block; the shader's water_surface()) ---
+# One base texture repeats as an EXACT COPY every 1/base_scale hex-rows, and open ocean has nothing to hide the
+# repeat under, so it read as a grid. The shader breaks it with a second rotated/rescaled sample mixed in by
+# broad world-noise patches (static), and adds an in-place chop (animated, LOD-gated, `O` toggles). Open water has no
+# whitecaps, and neither does the coast: the only foam is the shoreline surf.
+# Chosen on blend_probe state 29/OCEAN at the game's r ≈ 45. Everything subtle: the ocean must not compete with
+# units and markers.
+const WATER_SURFACE_DEFAULT_VARIATION_STRENGTH := 1.0   # 0..1, B's peak weight; 0 = one plain sample (bit-exact)
+const WATER_SURFACE_DEFAULT_VARIATION_CELL := 3.0       # patch noise cell, in HEX RADII (× radius → px)
+const WATER_SURFACE_DEFAULT_VARIATION_ROTATION_DEG := 37.0
+const WATER_SURFACE_DEFAULT_VARIATION_SCALE := 0.83     # B's UV scale vs the base UV (off 1, so the periods differ)
+const WATER_SURFACE_DEFAULT_WAVE_STRENGTH := 0.0        # ships OFF: its grain SCROLLS (a direction) and adds map-scale variance
+const WATER_SURFACE_DEFAULT_WAVE_SPEED := 0.012         # wave-texture UV per second
+const WATER_SURFACE_DEFAULT_WAVE_SCALE := 0.6           # wave UV vs base UV (< 1 = broader swells, and no minifying)
+# THE CHOP — small patches that brighten, dim and morph in place: movement with no direction (the travelling
+# swell it replaced read live as the whole sea flowing one way, and drew a map-wide diagonal at 1.0×).
+# 0.06 read live as drifting clouds; 0.035 was too faint once the caps left open water; 0.05 sits between.
+const WATER_SURFACE_DEFAULT_CHOP_STRENGTH := 0.05       # peak luma offset of a bright / dark patch (luma units)
+const WATER_SURFACE_DEFAULT_CHOP_SCALE := 0.5           # coarse feature size, in HEX RADII
+const WATER_SURFACE_DEFAULT_CHOP_RATE := 0.4            # evolution: noise cells of its time axis per second
+const WATER_SURFACE_MAX_CHOP_STRENGTH := 0.2
+const WATER_SURFACE_MIN_CHOP_SCALE := 0.1               # hex radii — finer is per-pixel sparkle, not chop
+const WATER_SURFACE_MAX_CHOP_SCALE := 2.0               # hex radii — broader starts to read as map-scale pattern
+const WATER_SURFACE_MAX_CHOP_RATE := 5.0
+const WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS := 24.0   # px: below this the waves, chop and shore pulse are off
+# Clamp ceilings, so a config typo cannot turn the ocean into strobing noise (the floors are all 0).
+const WATER_SURFACE_MAX_VARIATION_STRENGTH := 1.0
+const WATER_SURFACE_MIN_VARIATION_CELL := 0.25          # hex radii — below this the patches are speckle, not patches
+const WATER_SURFACE_MAX_VARIATION_CELL := 20.0
+const WATER_SURFACE_MIN_SCALE := 0.05                   # a UV scale of 0 would sample one texel across the whole map
+const WATER_SURFACE_MAX_SCALE := 4.0
+const WATER_SURFACE_MAX_WAVE_STRENGTH := 2.0
+const WATER_SURFACE_MAX_WAVE_SPEED := 1.0
+# --- WATER TEMPERATURE GRADE (terrain_config's "water_temperature" block; the shader's water_temperature_grade) ---
+# Open water tinted by its tile's °C so climate reads at a glance: cold seas darker, greyer, slate; warm seas a
+# touch brighter and more turquoise. The ANCHORS are the sim's published climate cut points (TileClimate) —
+# never constants here — and the grade is off until they arrive. Chosen on blend_probe state 30/OCEANTEMP.
+const WATER_TEMPERATURE_DEFAULT_STRENGTH := 1.0          # global multiplier on the whole grade (0 = off, bit-exact)
+const WATER_TEMPERATURE_DEFAULT_GRADED_TERRAINS := ["deep_ocean", "continental_shelf"]  # by NAME
+const WATER_TEMPERATURE_DEFAULT_COLD_TINT := Vector3(0.62, 0.66, 0.70)  # slate — a hue, applied luma-preserving
+const WATER_TEMPERATURE_DEFAULT_COLD_DESATURATE := 0.55   # fraction of the way to grey at full cold
+const WATER_TEMPERATURE_DEFAULT_COLD_BRIGHTNESS := 0.86   # colour scale at full cold (< 1 = darker)
+const WATER_TEMPERATURE_DEFAULT_WARM_TINT := Vector3(0.30, 0.80, 0.78)  # turquoise
+const WATER_TEMPERATURE_DEFAULT_WARM_BRIGHTNESS := 1.15   # colour scale at full warm (> 1 = brighter)
+const WATER_TEMPERATURE_MAX_STRENGTH := 1.0
+const WATER_TEMPERATURE_MAX_BRIGHTNESS := 2.0
+# temp_map texel (RGBAF): R = °C, G = 1 where the hex has a reading the player may know (0 = no data),
+# B = 1 where the hex is a GRADED terrain. A is unused.
+const TEMP_MAP_HAS_DATA := 1.0
+const TEMP_MAP_GRADED := 1.0
 # Shoreline (land↔water coasts): a continuous profile — land → sand → surf → water — built from a SIGNED
 # coast coordinate that straddles the shared edge, so no boundary in that chain is a hard step (see the
 # shader's shoreline block for the three rejected passes this replaced). The three reaches are fractions of
@@ -128,6 +178,18 @@ const SHORE_DEFAULT_WATERLINE_WIDTH := 0.14
 # The surf's PEAK opacity (and, scaled with it, the offshore wisp's) — a translucent highlight instead of the
 # opaque white ring the foam had to be while it was covering the base step above.
 const SHORE_DEFAULT_FOAM_OPACITY := 0.55
+# THE SHORE PULSE (the shader's shore_surge): the surf's seaward reach surges by `surge` at the top of a crash,
+# `surge_rate` crashes a second on any one stretch, on a clock offset along the shore by a world noise whose cell
+# is `surge_variation_cell` hex radii — so neighbouring stretches crash at different moments. Each water terrain
+# scales it by its shore_profile's `surge_scale` (0 on a lake). Chosen by eye on blend_probe state 31 (SHOREPULSE)
+# at r ≈ 35 and r ≈ 47 on a jagged coast.
+const SHORE_DEFAULT_SURGE := 0.4
+const SHORE_DEFAULT_SURGE_RATE := 0.22
+const SHORE_DEFAULT_SURGE_VARIATION_CELL := 4.0
+const SHORE_MAX_SURGE := 1.5                           # a surf reaching 2.5× its reach stops reading as surf
+const SHORE_MAX_SURGE_RATE := 2.0                      # crashes per second; faster reads as flicker
+const SHORE_MIN_SURGE_VARIATION_CELL := 0.5            # hex radii — finer and the crash shimmers along the shore
+const SHORE_MAX_SURGE_VARIATION_CELL := 40.0
 const SHORE_DEFAULT_FOAM_COLOR := Vector3(0.690, 0.761, 0.804)
 const SHORE_DEFAULT_BEACH_COLOR := Vector3(0.847, 0.733, 0.541)
 # Canopy overlay (forest = grass floor + overhanging tree crowns): overhang reach + treeline softness
@@ -312,10 +374,19 @@ var _terrain_id_by_name: Dictionary = {}   # terrain config `name` -> id (feeds 
 # (splatmap) + the exact hex-layout uniforms. Supersedes A's baked-overlay dither when use_edge_blending.
 var _terrain_blend_quad: Node2D = null
 var _terrain_blend_material: ShaderMaterial = null
+# The water-motion gate is two halves: the zoom LOD (set on every uniform push) and the player's `O` toggle.
+var _water_motion_lod_on := false
+var _water_motion_toggle_on := true
 var _terrain_blend_ready: bool = false
 var _terrain_id_map_tex: ImageTexture = null   # RGBA8: R=terrain id, G=blend_class code (0 water/1 flat/2 rugged), B=canopy code (0=none else layer+1), A=peak code (0=none else layer+1)
 var _terrain_vis_map_tex: ImageTexture = null  # R8: 0 unexplored / 0.5 discovered / 1 active
 var _terrain_elev_map_tex: ImageTexture = null # R8: per-hex relative height (0..255 = 0..100), for peak prominence + shadow scaling
+# RGBAF per-hex temperature for the water temperature grade (see TEMP_MAP_*). The Image is KEPT so a delta that
+# moved only tiles can patch its changed texels in place (`update_temperature_cells`) instead of re-walking the
+# grid — tile temperature drifts every turn, and that delta names `tiles`, not a shader-map section.
+var _terrain_temp_map_tex: ImageTexture = null
+var _temp_map_image: Image = null
+var _graded_ids: Dictionary = {}   # terrain id → true, resolved from water_temperature.graded_terrains by NAME
 var _terrain_river_map_tex: ImageTexture = null # RGBA8: the 12-bit river-EDGE mask (R = low 8 bits, G = high 4)
                                                 # + the 12-bit river-INFLOW mask (B = low 8, A = high 4)
 var _terrain_river_channel_map_tex: ImageTexture = null # R8: the 6-bit river-CHANNEL exit mask (1 bit per
@@ -637,6 +708,8 @@ func update_shader_quad(radius: float, origin: Vector2, viewport_size: Vector2) 
 	m.set_shader_parameter("water_blend_band", water_width * radius)
 	m.set_shader_parameter("water_blend_soft", water_soft)
 	m.set_shader_parameter("water_blend_noise_amount", water_noise_amount)
+	_push_water_surface(m, config, radius)
+	_push_water_temperature(m, config)
 	m.set_shader_parameter("noise_cell", feature_noise_cell)   # shore/canopy/peak grain — raw px, decoupled
 	# Base biome texture is sampled in continuous world space (kills the per-hex repeat grid); one tile
 	# spans ~1/base_scale hex-rows. See BASE_DEFAULT_TEXTURE_SCALE / CLAUDE.md → Edge Blending.
@@ -663,6 +736,13 @@ func update_shader_quad(radius: float, origin: Vector2, viewport_size: Vector2) 
 		float(shore.get("foam_opacity", SHORE_DEFAULT_FOAM_OPACITY)), 0.0, 1.0)
 	m.set_shader_parameter("waterline_band", waterline_frac * radius)  # base cross-fade half-reach (px)
 	m.set_shader_parameter("foam_opacity", foam_opacity)               # surf + wisp peak opacity
+	m.set_shader_parameter("shore_surge_amount", clampf(float(shore.get("surge", SHORE_DEFAULT_SURGE)),
+		0.0, SHORE_MAX_SURGE))
+	m.set_shader_parameter("shore_surge_rate", clampf(float(shore.get("surge_rate", SHORE_DEFAULT_SURGE_RATE)),
+		0.0, SHORE_MAX_SURGE_RATE))
+	m.set_shader_parameter("shore_surge_cell", clampf(
+		float(shore.get("surge_variation_cell", SHORE_DEFAULT_SURGE_VARIATION_CELL)),
+		SHORE_MIN_SURGE_VARIATION_CELL, SHORE_MAX_SURGE_VARIATION_CELL))
 	m.set_shader_parameter("sand_band", sand_frac * radius)            # sand INLAND of the waterline (px)
 	m.set_shader_parameter("foam_inland_band", foam_inland_frac * radius)  # surf washing UP the beach (px)
 	m.set_shader_parameter("foam_band", foam_frac * radius)            # surf SEAWARD of the waterline (px)
@@ -792,6 +872,61 @@ func update_shader_quad(radius: float, origin: Vector2, viewport_size: Vector2) 
 	_terrain_blend_quad.visible = true
 	_terrain_blend_quad.set_rect_size(viewport_size)
 	_terrain_blend_quad.queue_redraw()
+
+func _push_water_surface(m: ShaderMaterial, config: Dictionary, radius: float) -> void:
+	## The water-surface levers (see WATER_SURFACE_DEFAULT_*). The patch cell is a hex-radius fraction → px,
+	## like blend_width; the motion LOD mirrors rivers_lod_enabled (radius ≥ its own min radius).
+	var ws: Dictionary = config.get("water_surface", {})
+	var strength: float = clampf(float(ws.get("variation_strength", WATER_SURFACE_DEFAULT_VARIATION_STRENGTH)),
+		0.0, WATER_SURFACE_MAX_VARIATION_STRENGTH)
+	var cell: float = clampf(float(ws.get("variation_cell", WATER_SURFACE_DEFAULT_VARIATION_CELL)),
+		WATER_SURFACE_MIN_VARIATION_CELL, WATER_SURFACE_MAX_VARIATION_CELL)
+	var rotation_deg: float = float(ws.get("variation_rotation_deg", WATER_SURFACE_DEFAULT_VARIATION_ROTATION_DEG))
+	var variation_scale: float = clampf(float(ws.get("variation_scale", WATER_SURFACE_DEFAULT_VARIATION_SCALE)),
+		WATER_SURFACE_MIN_SCALE, WATER_SURFACE_MAX_SCALE)
+	var wave_strength: float = clampf(float(ws.get("wave_strength", WATER_SURFACE_DEFAULT_WAVE_STRENGTH)),
+		0.0, WATER_SURFACE_MAX_WAVE_STRENGTH)
+	var wave_speed: float = clampf(float(ws.get("wave_speed", WATER_SURFACE_DEFAULT_WAVE_SPEED)),
+		0.0, WATER_SURFACE_MAX_WAVE_SPEED)
+	var wave_scale: float = clampf(float(ws.get("wave_scale", WATER_SURFACE_DEFAULT_WAVE_SCALE)),
+		WATER_SURFACE_MIN_SCALE, WATER_SURFACE_MAX_SCALE)
+	var chop_strength: float = clampf(float(ws.get("chop_strength", WATER_SURFACE_DEFAULT_CHOP_STRENGTH)),
+		0.0, WATER_SURFACE_MAX_CHOP_STRENGTH)
+	var chop_scale: float = clampf(float(ws.get("chop_scale", WATER_SURFACE_DEFAULT_CHOP_SCALE)),
+		WATER_SURFACE_MIN_CHOP_SCALE, WATER_SURFACE_MAX_CHOP_SCALE)
+	var chop_rate: float = clampf(float(ws.get("chop_rate", WATER_SURFACE_DEFAULT_CHOP_RATE)),
+		0.0, WATER_SURFACE_MAX_CHOP_RATE)
+	var motion_min_radius: float = maxf(
+		float(ws.get("motion_min_radius", WATER_SURFACE_DEFAULT_MOTION_MIN_RADIUS)), 0.0)
+	m.set_shader_parameter("water_variation_strength", strength)
+	m.set_shader_parameter("water_variation_cell", cell * radius)            # patch noise cell (px)
+	m.set_shader_parameter("water_variation_rotation", deg_to_rad(rotation_deg))
+	m.set_shader_parameter("water_variation_scale", variation_scale)
+	m.set_shader_parameter("water_wave_strength", wave_strength)
+	m.set_shader_parameter("water_wave_speed", wave_speed)
+	m.set_shader_parameter("water_wave_scale", wave_scale)
+	m.set_shader_parameter("water_chop_strength", chop_strength)
+	m.set_shader_parameter("water_chop_scale", chop_scale)               # hex radii (the shader works in them)
+	m.set_shader_parameter("water_chop_rate", chop_rate)                 # time-axis noise cells per second
+	_water_motion_lod_on = radius >= motion_min_radius
+	m.set_shader_parameter("water_motion_enabled", _water_motion_lod_on and _water_motion_toggle_on)
+
+## THE `O` TOGGLE — water motion (the chop and the shore pulse, plus the texture-wave term, which ships at 0) on /
+## off, for look-dev: it tells whether a "cloudy" sea is the motion or the static surface. Session-only (not
+## persisted); the static anti-tiling and the temperature grade are untouched. ANDed with the zoom LOD, so it can
+## only turn motion OFF.
+func toggle_water_motion() -> void:
+	set_water_motion_enabled(not _water_motion_toggle_on)
+
+func set_water_motion_enabled(enabled: bool) -> void:
+	_water_motion_toggle_on = enabled
+	if _terrain_blend_material != null:
+		_terrain_blend_material.set_shader_parameter(
+			"water_motion_enabled", _water_motion_lod_on and _water_motion_toggle_on)
+	_view.queue_redraw()
+
+func is_water_motion_enabled() -> bool:
+	return _water_motion_toggle_on
 
 func hide_shader_quad() -> void:
 	if _terrain_blend_quad != null and _terrain_blend_quad.visible:
@@ -926,6 +1061,102 @@ func rebuild_shader_maps() -> void:
 		_terrain_blend_material.set_shader_parameter("navigable_underlying_map", _terrain_navigable_underlying_map_tex)
 		_terrain_blend_material.set_shader_parameter("road_map", _terrain_road_map_tex)
 	_warn_orphan_navigable_rivers(navigable_hexes)
+	rebuild_temperature_map()
+
+func rebuild_temperature_map() -> void:
+	## (Re)build the whole temp_map (see TEMP_MAP_*) from `MapView.tile_temperature`. Called with every
+	## full shader-map rebuild, and on its own when a frame re-ingested every tile without touching a
+	## shader-map section. A delta that moved a handful of tiles takes `update_temperature_cells` instead.
+	if _view.grid_width <= 0 or _view.grid_height <= 0:
+		return
+	var w := _view.grid_width
+	var h := _view.grid_height
+	_graded_ids = _resolve_graded_ids()
+	_temp_map_image = Image.create_empty(w, h, false, Image.FORMAT_RGBAF)
+	var vis_raster := _view._visibility_array()
+	for y in range(h):
+		for x in range(w):
+			_temp_map_image.set_pixel(x, y, _temperature_texel(x, y, vis_raster))
+	_terrain_temp_map_tex = ImageTexture.create_from_image(_temp_map_image)
+	if _terrain_blend_material != null:
+		_terrain_blend_material.set_shader_parameter("temp_map", _terrain_temp_map_tex)
+
+func update_temperature_cells(cells: Array) -> void:
+	## Patch the temp_map texels of `cells` (Vector2i) in place and re-upload — the per-delta path, since a
+	## temperature drift arrives as a sparse `tile_updates` list that touches no shader-map section.
+	if cells.is_empty():
+		return
+	if _temp_map_image == null or _temp_map_image.get_width() != _view.grid_width \
+			or _temp_map_image.get_height() != _view.grid_height:
+		rebuild_temperature_map()
+		return
+	var vis_raster := _view._visibility_array()
+	for cell in cells:
+		var c: Vector2i = cell
+		if c.x < 0 or c.y < 0 or c.x >= _view.grid_width or c.y >= _view.grid_height:
+			continue
+		_temp_map_image.set_pixel(c.x, c.y, _temperature_texel(c.x, c.y, vis_raster))
+	_terrain_temp_map_tex.update(_temp_map_image)
+
+func _temperature_texel(x: int, y: int, vis_raster: PackedFloat32Array) -> Color:
+	## One hex's temp_map texel. NO DATA where the tile carried no reading, AND — under fog — where the hex is
+	## UNEXPLORED: the sim sends every tile's temperature whatever the viewer has seen, and the shader blends
+	## neighbours in, so an unexplored hex's reading must not reach the edge of a visible one.
+	var tid := _view._terrain_id_at(x, y)
+	var graded: float = TEMP_MAP_GRADED if _graded_ids.has(tid) else 0.0
+	var key := Vector2i(x, y)
+	if not _view.tile_temperature.has(key):
+		return Color(0.0, 0.0, graded, 0.0)
+	if _view._fow_enabled and _view._value_at(vis_raster, x, y) <= FOW_EXPLORED_THRESHOLD:
+		return Color(0.0, 0.0, graded, 0.0)
+	return Color(float(_view.tile_temperature[key]), TEMP_MAP_HAS_DATA, graded, 0.0)
+
+func _resolve_graded_ids() -> Dictionary:
+	var block: Dictionary = TerrainTextureManager.terrain_config.get("water_temperature", {})
+	var names: Array = block.get("graded_terrains", WATER_TEMPERATURE_DEFAULT_GRADED_TERRAINS)
+	var ids: Dictionary = {}
+	for terrain_name in names:
+		var tid := _terrain_id_for_name(String(terrain_name))
+		if tid >= 0:
+			ids[tid] = true
+		else:
+			push_warning("[TerrainRenderer] water_temperature.graded_terrains names unknown terrain '%s'"
+				% terrain_name)
+	return ids
+
+func _push_water_temperature(m: ShaderMaterial, config: Dictionary) -> void:
+	## The grade's levers + the sim's anchors. neutral = mid-temperate (between boreal_max and temperate_max);
+	## full cold at polar_max, full warm at temperate_max. OFF (`water_temp_enabled` false) until the sim has
+	## published its cut points, when strength is 0, or when the anchors are degenerate.
+	var wt: Dictionary = config.get("water_temperature", {})
+	var strength: float = clampf(float(wt.get("strength", WATER_TEMPERATURE_DEFAULT_STRENGTH)),
+		0.0, WATER_TEMPERATURE_MAX_STRENGTH)
+	var enabled := strength > 0.0 and TileClimate.has_bands()
+	var neutral := 0.0
+	var cold_span := 0.0
+	var warm_span := 0.0
+	if enabled:
+		neutral = 0.5 * (TileClimate.boreal_max() + TileClimate.temperate_max())
+		cold_span = neutral - TileClimate.polar_max()
+		warm_span = TileClimate.temperate_max() - neutral
+		enabled = cold_span > 0.0 and warm_span > 0.0
+	m.set_shader_parameter("water_temp_enabled", enabled)
+	m.set_shader_parameter("water_temp_strength", strength)
+	m.set_shader_parameter("water_temp_neutral", neutral)
+	m.set_shader_parameter("water_temp_cold_span", cold_span)
+	m.set_shader_parameter("water_temp_warm_span", warm_span)
+	m.set_shader_parameter("water_temp_cold_tint",
+		_shore_color(wt.get("cold_tint", null), WATER_TEMPERATURE_DEFAULT_COLD_TINT))
+	m.set_shader_parameter("water_temp_cold_desaturate",
+		clampf(float(wt.get("cold_desaturate", WATER_TEMPERATURE_DEFAULT_COLD_DESATURATE)), 0.0, 1.0))
+	m.set_shader_parameter("water_temp_cold_brightness",
+		clampf(float(wt.get("cold_brightness", WATER_TEMPERATURE_DEFAULT_COLD_BRIGHTNESS)),
+			0.0, WATER_TEMPERATURE_MAX_BRIGHTNESS))
+	m.set_shader_parameter("water_temp_warm_tint",
+		_shore_color(wt.get("warm_tint", null), WATER_TEMPERATURE_DEFAULT_WARM_TINT))
+	m.set_shader_parameter("water_temp_warm_brightness",
+		clampf(float(wt.get("warm_brightness", WATER_TEMPERATURE_DEFAULT_WARM_BRIGHTNESS)),
+			0.0, WATER_TEMPERATURE_MAX_BRIGHTNESS))
 
 func _pack_road_texel(
 	road_bytes: PackedByteArray, idx: int, x: int, y: int, w: int, h: int,
