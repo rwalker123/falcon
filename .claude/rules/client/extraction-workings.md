@@ -539,6 +539,14 @@ camp, mounts the hint where it stands and returns the verdict; each caller then 
 thing with it, which is disable its commit. Both the forage builder and the deposit builder go through
 it, so the two sheets cannot measure one limit two ways.
 
+> ⛔ **THE FORAGE SHEET NO LONGER CALLS IT — the gate is the DEPOSIT sheets' alone** (`docs/plan_
+> civilization_steps.md` §One work party). A far forage crew no longer lapses: it posts a work party
+> and walks the take home, so a refusal there would forbid the assignment the caravan exists to make,
+> and the plant sheet mounts a work-party section instead (`labor-ui.md` → "A FAR SOURCE IS AN
+> ORDINARY SHEET"). **Extraction still lapses past range, so on a working the refusal is still the
+> kind answer.** The measurement is shared as `_apron_distance`, which is what the work-party gate
+> reads too — one distance, two consequences.
+
 ⛔ **A DISTANCE THE GRID CANNOT ANSWER IS NOT AN OUT-OF-RANGE ONE.** `hex_distance_wrapped` reports
 `HEX_DISTANCE_UNKNOWN` (`-1`) where it has no grid to wrap against, and the helper tests for it
 explicitly rather than relying on the comparison — a gate that read *unknown* as *too far* would
@@ -556,8 +564,9 @@ turn later now use one word, and the Workbench's `Band work range` dial (`tuning
 third surface that always did. **The forage string moved with it** — that is the point of sharing the
 const rather than half of it.
 
-⛔ **`hunt reach` IS NOT THIS NUMBER AND KEEPS ITS OWN NAME**: it is `band_work_range` PLUS the leash,
-so the two names in this client name two quantities rather than one thing twice.
+⛔ **`hunt reach` IS NOT THIS NUMBER** — it was `band_work_range` PLUS the leash — **and no client
+reader decides anything by it any more**: a caravan's only threshold is `band_work_range`, for every
+job (`labor-ui.md` → "A FAR SOURCE IS AN ORDINARY SHEET").
 
 ⛔ **IT IS A PLAIN REFUSAL, NOT THE HUNT SHEET'S OFFER.** A herd beyond reach offers a detached party
 (*"…Detach a party to follow it."*), because a herd can be followed. The expedition missions are

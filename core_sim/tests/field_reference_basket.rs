@@ -39,8 +39,23 @@ const QUOTE_MULTIPLIER: f32 = 1.0;
 /// **The value is §4.14's to own from here**, and the epsilon below is deliberately unchanged: a
 /// model change moves the number, it does not loosen the band that guards it.
 const FIELD_YIELD_BEFORE: f32 = 12.482;
-/// **What rung 2 pays**, unchanged by this arc — quoted so the ordering claim is checkable.
+/// **What rung 2 paid when this pin was recorded**, at the neutral `tended_regrowth_gain` of
+/// [`TENDED_YIELD_RECORDED_AT_GAIN`] — quoted so the ordering claim is checkable.
+///
+/// Rung 2's bare MSY skim is linear in that gain and in nothing a Field owns, so the expected value
+/// is this figure scaled by the shipped gain over the recorded one (see [`tended_yield_expected`]).
+/// That keeps the check this test exists for — **no Field gain may leak onto the tended rung** — at
+/// its tight band while the tended rung's own regrowth lever (1.5, the kept-herd reading) moves.
 const TENDED_YIELD_BEFORE: f32 = 1.328;
+/// The `cultivation.tended_regrowth_gain` [`TENDED_YIELD_BEFORE`] was measured at.
+const TENDED_YIELD_RECORDED_AT_GAIN: f32 = 1.0;
+
+/// [`TENDED_YIELD_BEFORE`] carried to the shipped `tended_regrowth_gain`.
+fn tended_yield_expected() -> f32 {
+    let labor = LaborConfig::from_json_str(BUILTIN_LABOR_CONFIG).expect("builtin labor config");
+    TENDED_YIELD_BEFORE * labor.forage.cultivation.tended_regrowth_gain
+        / TENDED_YIELD_RECORDED_AT_GAIN
+}
 /// **What the same ground pays left wild**, likewise unchanged.
 const WILD_YIELD_BEFORE: f32 = 0.703;
 
@@ -96,10 +111,11 @@ fn the_re_expressed_field_lands_where_the_managed_rate_did() {
         (wild - WILD_YIELD_BEFORE).abs() <= WILD_YIELD_BEFORE * UNCHANGED_BAND,
         "rung 1 must not move: {wild} against {WILD_YIELD_BEFORE}"
     );
+    let tended_expected = tended_yield_expected();
     assert!(
-        (tended - TENDED_YIELD_BEFORE).abs() <= TENDED_YIELD_BEFORE * UNCHANGED_BAND,
-        "rung 2 must not move: {tended} against {TENDED_YIELD_BEFORE} — a capacity or regrowth gain \
-         that reached the tended rung would show up exactly here"
+        (tended - tended_expected).abs() <= tended_expected * UNCHANGED_BAND,
+        "rung 2 must move only by its own regrowth gain: {tended} against {tended_expected} — a \
+         capacity or regrowth gain that reached the tended rung would show up exactly here"
     );
     assert!(
         (field - FIELD_YIELD_BEFORE).abs() <= FIELD_YIELD_BEFORE * ACCEPTANCE_BAND,

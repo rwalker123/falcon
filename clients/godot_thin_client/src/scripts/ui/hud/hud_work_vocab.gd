@@ -928,6 +928,29 @@ const WORK_INSPECTOR_NOTE_HEIGHT := WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(ZONE
 const WORK_ROW_TWO_LINE_HEIGHT := WORK_ROW_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
     + WORK_INSPECTOR_NOTE_LINE_HEIGHT
 
+## **WHAT ONE LINE OF A ROW'S PARTY BLOCK COSTS** — the accounts line's own terms, restated for the
+## lines that hang under it: the same `ALLOC_SECTION_FONT_SIZE` type whose measured line height
+## `WORK_INSPECTOR_NOTE_LINE_HEIGHT` already states, under the same `TWO_LINE_STEPPER_SEPARATION` gap
+## the column puts between every one of its children. No new number: a second measurement of one type
+## size is a second answer to one question, free to drift by the pixel this zone pays for by clipping.
+const WORK_ROW_PARTY_LINE_HEIGHT := float(TWO_LINE_STEPPER_SEPARATION) \
+    + WORK_INSPECTOR_NOTE_LINE_HEIGHT
+
+## **WHAT A BOARD ROW COSTS WITH `lines` OF PARTY BLOCK UNDER IT** — BOTH what `_build_work_row`
+## draws at and what `_work_board_capacity` reserves, which is the rule every height in this block
+## follows and the only thing that keeps the page from overflowing a zone that `clip_contents`.
+##
+## ⛔ **THE BOARD CHARGES EVERY ROW THE TALLEST ROW ON THE PAGE, deliberately.** The capacity
+## arithmetic is `remaining height / one row`, and the column fill is `rows_per_col` of them — a
+## uniform unit all the way through — so a page holding one taller row and eight ordinary ones is
+## reserved at the taller unit. That is conservative in the one direction that matters (reserved >=
+## drawn, so nothing is silently sliced off the bottom of the zone) and it costs a band with a far
+## posting a row or two of page, never a row it cannot see: the pager still shows every source.
+## Packing rows of mixed heights into a column would be a redesign of `_declare_work_layout`, whose
+## whole balance argument is stated in rows.
+static func work_row_height(party_lines: int) -> float:
+    return WORK_ROW_TWO_LINE_HEIGHT + float(maxi(party_lines, 0)) * WORK_ROW_PARTY_LINE_HEIGHT
+
 ## …and what the `ArrivalStrip` costs when the model's schedule has a gap worth drawing.
 ##
 ## **A TWIN of `ArrivalStrip.STRIP_HEIGHT`, deliberately not a read of it.** A `const` initializer
@@ -1143,6 +1166,81 @@ const WORK_ROW_ACCOUNTS_INDENT := int(WORK_ROW_ICON_WIDTH) + WORK_ROW_SEPARATION
 ## NAME, its only expanding child, was allocated Godot's 1px floor.
 const WORK_ROW_ACCOUNTS_META := &"work_row_accounts"
 
+# ---- THE WORK PARTY'S BLOCK (`docs/plan_civilization_steps.md` §One work party) -------------------
+#
+# **THE ROW THAT STAFFED THE PARTY IS THE ROW THAT REPORTS IT.** A Hunt or Forage row whose source
+# drifts past the band's own apron posts a party instead of lapsing, and its state hangs off this
+# board row — not off the parties zone, not off the band zone — so a work board has ONE place to look
+# for every work item, near or far. The shape was chosen from a rendered prototype.
+#
+# ⛔ **A ROW WITH NO PARTY RENDERS EXACTLY AS IT DID BEFORE ANY OF THIS EXISTED**, and that identity
+# is the point of the shape rather than a side effect: a source the band's own hands reach takes no
+# party at all, and far work FALLS OUT OF the one model instead of sitting beside it.
+#
+# ⛔ **AND THERE IS NO HAUL CONTROL AND NO DESTINATION PICKER.** The prototype rendered one and the
+# design retired it: a party is wired to its home band at creation and goods flow both ways along
+# that one tie every turn, so assigning workers stays the only command. Nothing in this block is
+# pressable.
+
+## Line one of the block: the crew, where it is standing, and how far it walks.
+## `4 hunters · at (31, 12) · 6-tile walk`. The noun comes through the board's existing resolver
+## (`BandPanelController._work_inspector_take_key`) and is lower-cased into the sentence, the
+## compose sheet's own eyebrow treatment — no crew noun is minted here.
+##
+## **THE TILE IS THE PARTY'S OWN, AND IT IS WHAT THE ROW'S HEAD CANNOT SAY.** A forage row's head
+## names its patch's coordinates, but a HUNT row's head names the quarry — and the party stands
+## wherever the herd is *this turn*, which is the whole reason it needs no follow order. So the
+## coordinates here are the workers' position and never a restatement of the source's name.
+##
+## **THE WALK IS ONE WAY AND MEASURED FROM THE APRON** (`walkTiles`), hyphenated as a noun phrase
+## because it is a property of the posting rather than a trip being taken.
+const WORK_ROW_PARTY_CREW_FORMAT := "%d %s · at (%d, %d) · %d-tile walk"
+
+## …and the hunters ON THE ROAD, appended only when somebody is: out with a pack or walking back.
+## **IT IS THIS TURN'S LIVE COUNT AND IT MOVES** (`0, 1, 1, 0, 2…`) — the caravan sends one hunter
+## home each time the take fills a pack, so the share away falls out of carry, take rate and distance
+## rather than out of a number anybody picked.
+const WORK_ROW_PARTY_ON_ROAD_FORMAT := " · %d on the road"
+
+## **THE WALK OUT, WHILE THE WHOLE PARTY IS STILL ON IT** (`walkOutRemaining`). It happens once: a
+## posting walks out, and from then on the source is worked every turn and only the loads travel.
+##
+## ⛔ **AT `0` THERE IS NO LINE AT ALL**, and `0` is what the field reads for the rest of the
+## posting's life. A countdown rendered as `0` would be a promise about a walk that is over.
+##
+## The `%s` is the SOURCE noun (`WORK_ROW_PARTY_WALK_TARGET_HERD` / `_PATCH`): a party walks to the
+## herd it hunts or the patch it gathers, and the row's own kind says which.
+const WORK_ROW_PARTY_WALKING_OUT_FORMAT := "Walking out — reaches the %s in %d turns"
+
+## …and its SINGULAR, the fork `DetailFormat.build_countdown_value` makes at `BUILD_TURNS_SINGULAR`:
+## the countdown passes through `1` on every posting, and `in 1 turns` is a sentence the player reads
+## once and stops trusting the rest of the block.
+const WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT := "Walking out — reaches the %s in 1 turn"
+
+## The two source nouns the walking-out line names.
+const WORK_ROW_PARTY_WALK_TARGET_HERD := "herd"
+const WORK_ROW_PARTY_WALK_TARGET_PATCH := "patch"
+
+## **WHEN THE SOONEST PACK ON THE ROAD LANDS HOME** (`nextLoadHomeIn`). ⛔ **`0` IS "NOBODY IS
+## CARRYING A LOAD HOME"**, never "lands this turn", so it drops the line exactly as the walk-out's
+## zero does. It moves as packs fill and land, which is the caravan working, not the row flickering.
+const WORK_ROW_PARTY_NEXT_LOAD_FORMAT := "Next load home in %d turns"
+
+## …and its singular, for the walk-out line's reason.
+const WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT := "Next load home in 1 turn"
+
+## The count at which both singular forks are taken. Its own const rather than a bare `1`, and
+## deliberately NOT a read of `DetailFormat.BUILD_TURNS_SINGULAR`: a vocab leaf reaching for a
+## `class_name`d module at class load is the cycle `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` already
+## states the rule for.
+const WORK_ROW_PARTY_TURNS_SINGULAR := 1
+
+## The stable handle on every line of the block, carrying that line's own text — the
+## `WORK_ROW_ACCOUNTS_META` treatment, so a harness reads what was drawn rather than recomposing the
+## string it is about to compare against. One meta for all of them: the lines are one block, they are
+## collected in draw order.
+const WORK_ROW_PARTY_META := &"work_row_party"
+
 ## ⛔ **THE ROW'S GEAR MARK — A MARK OF ITS OWN, NOT A SECOND ⚠.** A row short of GEAR and a row
 ## short of HANDS have opposite remedies (the bench against the stepper — and adding hands to a
 ## kit-short row makes it WORSE, the ledger being cut pro-rata by head count), and a board that flew
@@ -1226,6 +1324,12 @@ const POOL_TOOLS_SHORT_WARN_LINE := "Short of tools."
 ## being lost, so it is said as an opportunity: the tools would stretch each worker further.
 const POOL_TOOLS_SHORT_INFO_LINE := "More tools would speed this up."
 
+## **THE BUILDERS CARD'S TOOL LINE** — the one pool whose tools are claimed by ONE job, the queue's
+## head, so the sentence names that job's place rather than the pool. Still never names or counts a
+## tool (issue #716). Reported from play: the INFO form under the Builders card left the player
+## searching a queue whose rows said nothing about tools.
+const POOL_TOOLS_SHORT_BUILDERS_LINE := "The top job in the queue is short of tools."
+
 ## ⛔ **RETIRED — THE COUNTED TOOL LINE (`4 of 6 hoes · 0 of 2 dressing hammers`)**, with
 ## `POOL_TOE_TERM_FORMAT`, `POOL_TOE_SHORT_UNIT_GAP` and its ceil/floor + `kit_item_count_word` term
 ## assembly (issue #716). It sat under a WORKER stepper, so players read `0 of 1 hoe` as a head count
@@ -1265,9 +1369,18 @@ static func pool_toe_is_short(lines: Array) -> bool:
 ## `work_short` is `upkeep_pool_is_short` for the same card: under the `⚠` the tools are a second
 ## reason (`POOL_TOOLS_SHORT_WARN_LINE`); under the info mark they are the only one
 ## (`POOL_TOOLS_SHORT_INFO_LINE`). A pool whose tools are all filled says nothing.
-static func pool_tools_short_line(lines: Array, work_short: bool) -> String:
+##
+## **THE BUILDERS POOL SAYS WHICH JOB.** `kind` is the card's pool token; on `builders` the line is
+## `POOL_TOOLS_SHORT_BUILDERS_LINE` whatever the work reading, because the builders' tool claim is the
+## queue HEAD entry's alone (`docs/plan_pool_toe.md` §2.4 — entries behind the head claim nothing), so
+## *the builders are short of tools* and *the top job is short of tools* are one fact, and only the
+## second tells the player where to look. The head queue row states the same fact on its hover and as
+## its amber `◆` second line (`BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT`).
+static func pool_tools_short_line(lines: Array, work_short: bool, kind: String = "") -> String:
     if not pool_toe_is_short(lines):
         return ""
+    if kind == HudConst.LABOR_KIND_BUILDERS:
+        return POOL_TOOLS_SHORT_BUILDERS_LINE
     return POOL_TOOLS_SHORT_WARN_LINE if work_short else POOL_TOOLS_SHORT_INFO_LINE
 
 const WORK_ROW_MARKS_WIDTH := 20.0
@@ -2302,10 +2415,11 @@ const ROADWORK_ROSTER_ROWS_MAX := 3
 ## queue's withdrawal and the parties zone's recall — a destructive single-item control reads as one.
 const ROADWORK_ROSTER_ABANDON_GLYPH := "✕"
 
-## **AND ITS COLUMN IS THE QUEUE WITHDRAWAL'S**, for the identical measured reason: `HudWidgets.compact`
+## **AND ITS COLUMN IS THE ONE-GLYPH BUTTON COLUMN** (the queue withdrawal's, until that took words),
+## for the identical measured reason: `HudWidgets.compact`
 ## squeezes the type size and the VERTICAL padding only, so the ghost button keeps the side margins
 ## `HudStyle` authored and a 22px reservation is 10px under what the glyph draws.
-const ROADWORK_ROSTER_ABANDON_WIDTH := BUILD_QUEUE_UNQUEUE_WIDTH
+const ROADWORK_ROSTER_ABANDON_WIDTH := BUILD_QUEUE_GLYPH_BUTTON_WIDTH
 
 ## The block's stable handle, valued the number of road rows it drew — so a harness can say *this
 ## band's roster has N rows* rather than *a roster exists somewhere in the zone*.
@@ -2624,8 +2738,13 @@ const BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT := 1.0
 ## ceiling is a fact about the BOX rather than about the list: a queue of four and a queue of forty
 ## afford the same rows. It stays in the signature because every caller has it and because a term that
 ## depends on the list is exactly what has to be re-argued if a future block puts a row back.
+##
+## ⛔ **`head_tools_height` IS HELD BACK HERE TOO** — the head row's tool-short second line, `0.0`
+## when the head is not short. It is charged before the division, so a tool-short head costs the
+## queue a row sooner rather than taking its 16px off the bottom of the board.
 static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, _entries: int,
-        roster_height: float = 0.0, workings_height: float = 0.0) -> int:
+        roster_height: float = 0.0, workings_height: float = 0.0,
+        head_tools_height: float = 0.0) -> int:
     # The board row this leaves room for is a SOURCE row, so it is the two-line height; the rows this
     # divides for are QUEUE rows, which are one line each.
     # A roster's HEIGHT and its GAP are one term or neither — see BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT,
@@ -2639,7 +2758,7 @@ static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, _entr
     # disclosure button and is measured separately for it.
     var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
         + BUILD_QUEUE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
-        + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT + roster_height + workings_height \
+        + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT + roster_height + workings_height + head_tools_height \
         + float(ZONE_BLOCK_SEPARATION) * gaps
     var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
     return clampi(afforded, BUILD_QUEUE_ROWS_MIN, BUILD_QUEUE_ROWS_MAX)
@@ -2766,19 +2885,31 @@ static func build_queue_subject(kind: String, x: int, y: int, herd_label: String
 ## truncated list with nothing under it reads as the whole list** is still the rule; what changed is
 ## that the thing standing under it moved onto the head, so there is one control instead of two.
 
-## The withdrawal. Same `✕` and same steady DANGER ink the parties zone's recall control wears — a
-## destructive control reads as one — and, like that one, it asks nothing first: `unqueue` withdraws a
-## DECLARATION, the banked meter survives it, and re-declaring is one tick of the compose control.
-const BUILD_QUEUE_UNQUEUE_GLYPH := "✕"
+## **THE WITHDRAWAL IS A LABELLED BUTTON, NOT A GLYPH.** It was a bare `✕`, and reported from play
+## it read as *close this strip* or as *cancel and lose the progress* — neither of which it does:
+## `unqueue` withdraws a DECLARATION, the banked meter survives it, and re-declaring is one press of the
+## source row's `⌃`. The word says what it does; the tooltip says what is kept. It keeps the parties
+## zone's steady DANGER ink and asks nothing first — see `_build_queue_unqueue_button`.
+##
+## ⛔ **IT RIDES THE DETAIL LINE, NOT THE CROP LINE, AND THE WORDS ARE WHY.** `Remove from queue`
+## draws 150px. Beside the crop picker at the tall LEFT dock (the shipped default) there are 134 —
+## 344px of strip content less key 30, picker 168 and three separations — so it shares the strip's
+## FIRST line with the ellipsising detail label instead, and a crop strip pays one more control line
+## for its picker (`build_queue_settings_height`'s `has_crop`). Ray chose the words over the queue row
+## that costs on the 1920 BOTTOM dock.
+const BUILD_QUEUE_UNQUEUE_LABEL := "Remove from queue"
 
-## **32 BECAUSE `HudWidgets.compact` LEAVES THE GHOST BUTTON ITS HORIZONTAL PADDING.** The trim
-## squeezes the type size and the VERTICAL padding — that is what keeps the control inside a 28px row
-## — and the button's own left/right margins survive it, so a 22px reservation was 10px under what the
-## `✕` actually draws and the row's expanding face paid the difference. It is the withdrawal's column
-## rather than the glyph's: what has to fit is the styled BUTTON.
-const BUILD_QUEUE_UNQUEUE_WIDTH := 32.0
+const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Take this job out of the build queue. The work already done on it is kept, and the source keeps its crew — queue it again to carry on."
 
-const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already banked is kept, and the source keeps its crew."
+## **ONE GLYPH IN A COMPACT GHOST BUTTON — 32 BECAUSE `HudWidgets.compact` LEAVES THE BUTTON ITS
+## HORIZONTAL PADDING.** The trim squeezes the type size and the VERTICAL padding — that is what keeps
+## the control inside a 28px row — and the button's own left/right margins survive it, so a 22px
+## reservation was 10px under what a glyph actually draws. It was `BUILD_QUEUE_UNQUEUE_WIDTH`, the
+## withdrawal `✕`'s column; the withdrawal carries WORDS now and takes its natural width, and what is
+## left of the number is the two columns still defined from it — the reorder pair's and the road
+## roster's own `✕`. **Retiring it into either of them would move the other**, which is why it is a
+## name of its own.
+const BUILD_QUEUE_GLYPH_BUTTON_WIDTH := 32.0
 
 # ---- UP/DOWN REORDER — the arrows take the `✕`'s column (`docs/plan_standing_upkeep.md` §4.7b ③) --
 #
@@ -2796,8 +2927,10 @@ const BUILD_QUEUE_UNQUEUE_TOOLTIP := "Withdraw this build. The work already bank
 # **AND THE ARROWS KEEP THE FULL ROW HEIGHT** — a stacked pair inside 28px would be two 13px targets,
 # which is the placement this one was measured against and beat.
 
-## The reorder column IS the withdrawal's old one, stated as arithmetic rather than as a second 32.
-const BUILD_QUEUE_REORDER_WIDTH := BUILD_QUEUE_UNQUEUE_WIDTH
+## The reorder column IS the withdrawal's old one — the one-glyph button column, stated as a name
+## rather than as a second 32. **The withdrawal no longer defines it**: it took words and its natural
+## width (`BUILD_QUEUE_UNQUEUE_LABEL`), and the arrows' column must not move with it.
+const BUILD_QUEUE_REORDER_WIDTH := BUILD_QUEUE_GLYPH_BUTTON_WIDTH
 
 ## The gap between the pair, so two adjacent buttons read as two targets rather than as one wide one.
 const BUILD_QUEUE_REORDER_SEPARATION := 2
@@ -2865,10 +2998,18 @@ const BUILD_QUEUE_CROP_WIDTH := 168.0
 ## SUM rather than a literal: a second line costs another control and no more chrome.
 const BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT := WORK_COMPACT_PICKER_LINE_HEIGHT
 
-## **THE STRIP'S OWN CHROME, CHARGED EXACTLY ONCE** — `HudStyle.ROLE_CARD_PADDING` above and below
-## (6 + 6), from the single `work_inspector_stylebox` the strip wears however many lines open inside
-## it. Reserving it per LINE is what made a wrapped strip cost 68 where it draws 56.
-const BUILD_QUEUE_SETTINGS_CHROME := 12.0
+## **THE STRIP'S OWN VERTICAL PADDING — 5, one under the role card's `HudStyle.ROLE_CARD_PADDING`.**
+## The strip wears `work_inspector_stylebox` with its top and bottom content margins trimmed to this
+## (`BandPanelController._build_queue_settings_strip`); the sides keep the card's 6. Those 2px are what
+## the 1920 BOTTOM dock's worst case was short by at `BandCityPanel.PANEL_HEIGHT_WIDE` 418 — fund-mode
+## pools with the head's crop strip open needed 360 in a 358px box — and they come out of the strip's
+## air, never out of the control line or the detail line inside it.
+const BUILD_QUEUE_SETTINGS_PADDING_V := 5
+
+## **THE STRIP'S OWN CHROME, CHARGED EXACTLY ONCE** — `BUILD_QUEUE_SETTINGS_PADDING_V` above and below,
+## from the single stylebox the strip wears however many lines open inside it. Reserving it per LINE is
+## what made a wrapped strip cost 68 where it drew 56.
+const BUILD_QUEUE_SETTINGS_CHROME := 2.0 * float(BUILD_QUEUE_SETTINGS_PADDING_V)
 
 ## The open strip's height at ONE LINE of controls, and the number BOTH the strip draws at and
 ## `build_queue_block_height` reserves. The zone `clip_contents`, so a strip that drew taller than it
@@ -2891,21 +3032,20 @@ const BUILD_QUEUE_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_CHROME \
 ## 1920 bottom dock, the queue claimed 3 rows instead of 1 and `Zone_work` drew **414 into its 396px
 ## box** the moment a strip opened.
 ##
-## **STATED AS THE STRIP'S OWN WORST CASE rather than as a cushion**: ONE control line plus the
-## strip's chrome, which is what an entry carrying a crop draws. **LEGS ARE DELIBERATELY NOT
-## COUNTED** — a multi-leg climb is the rarer entry, and reserving for it would shrink the block on
-## every dock for a state most bands never reach, which is the same trade the retired constant's own
-## comment made.
+## **STATED AS THE STRIP'S OWN WORST CASE rather than as a cushion**: the chrome, the detail line
+## (which carries the withdrawal) and the crop picker's line — what a plant entry draws. **LEGS ARE
+## DELIBERATELY NOT COUNTED** — a multi-leg climb is the rarer entry, and reserving for it would shrink
+## the block on every dock for a state most bands never reach, which is the same trade the retired
+## constant's own comment made.
 ##
-## ⛔ **IT WAS THE WRAPPED CONTROL PAIR AND IS ONE LINE SHORTER.** The second line was the KIT
-## picker's, which `docs/plan_pool_toe.md` §3 retired — a build's tools are the rung's — so a strip
-## can no longer draw two control rows and a headroom term that still paid for one would hold a board
-## row back for a line nothing draws. `build_queue_settings_height`'s own retirement note carries the
-## measurement.
-##
+## ⛔ **IT IS 54: chrome 10 + the DETAIL line 22 + the crop line 22.** The detail line every open strip
+## leads with carries `BUILD_QUEUE_UNQUEUE_LABEL` at the control height, and a crop strip adds its
+## picker's line beneath it. On the 1920 BOTTOM dock (a 358px box) that leaves the queue ONE entry row
+## (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS`), the trade Ray took for the withdrawal's words.
 ## ⛔ **IT IS DECLARED HERE, NOT BESIDE `BUILD_QUEUE_ROOM_GAP_COUNT` WHERE IT IS READ**, because a
 ## GDScript `const` may not read one declared below it and its term is on the lines above.
-const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT
+const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT \
+    + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
 
 ## **THE SETTINGS KEY'S DECLARED COLUMN.** It was shared by `CROP` and a `KIT` key beside it so the
 ## two pickers could not land on two different left edges when the strip wrapped; the kit went with
@@ -3084,9 +3224,9 @@ const BUILD_QUEUE_CROP_TOOLTIP := "Which crop this job commits the patch to. Lea
 ## this job's tools and crop"*: the TOOLS half named the per-entry kit picker, which
 ## `docs/plan_pool_toe.md` §3 retired — a build's tools follow from its rung — and the CROP half is
 ## the plant web's alone, a `Tame` committing no species, so on a hunt row the sentence promised two
-## controls that are not in the strip. **The `✕` is what every entry's strip carries**, so the hint
-## names the settings and the one control it can promise on every row.
-const BUILD_QUEUE_ROW_OPEN_HINT := "Click for this job's settings, and to withdraw it."
+## controls that are not in the strip. **The detail line and the withdrawal are what every entry's
+## strip carries**, so the hint names those and nothing a row might not have.
+const BUILD_QUEUE_ROW_OPEN_HINT := "Click for this job's details, and to remove it from the queue."
 
 ## `Wild Emmer 56%` — the entry's face, the crop basket's own pairing of a plant with its share.
 const BUILD_QUEUE_CROP_ENTRY_FORMAT := "%s %d%%"
@@ -3251,13 +3391,20 @@ const BUILD_QUEUE_HEAD_HEIGHT := 22.0
 ##
 ## ⛔ **AND THE HEAD TERM IS `BUILD_QUEUE_HEAD_HEIGHT`, NOT `ZONE_HEAD_HEIGHT`** — that head carries
 ## the disclosure BUTTON now, and an `HBoxContainer` grows to its tallest child.
+##
+## ⛔ **`head_tools_height` IS THE HEAD ROW'S SECOND LINE** — `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT`
+## while the drawn head is short of the builders' tools and its strip is closed, `0.0` otherwise
+## (`BandPanelController._queue_head_tools_height`). The row grows only in that state, so the term is
+## an argument rather than a constant, and the same value goes to `build_queue_rows_max` and
+## `_work_board_capacity`.
 static func build_queue_block_height(entries: int, rows_max: int,
-        settings_open: bool = false, settings_legs: int = 0) -> float:
+        settings_open: bool = false, settings_legs: int = 0, settings_crop: bool = false,
+        head_tools_height: float = 0.0) -> float:
     if entries <= 0:
         return 0.0
     var rows := mini(entries, rows_max)
-    return BUILD_QUEUE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT \
-        + build_queue_settings_height(settings_open, settings_legs)
+    return BUILD_QUEUE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT + head_tools_height \
+        + build_queue_settings_height(settings_open, settings_legs, settings_crop)
 
 # ---- THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c) ---------------------------
 #
@@ -3495,12 +3642,21 @@ const MICROSECONDS_PER_SECOND := 1_000_000.0
 ## (`WORK_ROW_HEIGHT` is 28). So the caller states whether a strip is OPEN, which is the one fact the
 ## content cannot carry, and `_build_build_queue_block` is where both the reservation and the render
 ## read it from one `_queue_settings_state` answer.
-static func build_queue_settings_height(is_open: bool, legs: int) -> float:
+##
+## ⛔ **THE UNCONDITIONAL CONTROL LINE IS THE DETAIL LINE NOW, AND `has_crop` BUYS A SECOND.** Every
+## open strip LEADS with the job's detail line — so a Tame opens to what the job costs and why it is
+## stuck rather than to a bare control — and the withdrawal (`BUILD_QUEUE_UNQUEUE_LABEL`, too long to
+## sit beside the crop picker at the narrow shell) is right-aligned ON it, at the control height. A
+## plant entry's crop picker is a line of its own beneath, which is what `has_crop` prices; the caller
+## reads it off the same `_queue_settings_content` answer the builder draws.
+static func build_queue_settings_height(is_open: bool, legs: int, has_crop: bool = false) -> float:
     if not is_open:
         return 0.0
     var height := BUILD_QUEUE_SETTINGS_HEIGHT
     if legs > 0:
         height += float(legs + 1) * BUILD_QUEUE_LEG_HEIGHT
+    if has_crop:
+        height += BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
     return height
 
 # ---- THE ENTRY'S LEGS, inside its row's expansion (`docs/plan_standing_upkeep.md` §2.8) ----------
@@ -3513,6 +3669,72 @@ const BUILD_QUEUE_LEG_FONT_SIZE := 11
 
 ## The strip's key for the leg list, in the CROP key's own register.
 const BUILD_QUEUE_LEGS_KEY := "CLIMB"
+
+# ---- THE ENTRY'S DETAIL LINE, first in its row's expansion ------------------------------------
+#
+# Reported from play: a Tame or Corral row opened to a bare withdrawal control and nothing else, and
+# nothing in the queue said which job the builders' tool shortfall was on. Every open strip now leads
+# with ONE line stating what the row already knows about the job — composed only from fields the
+# queue model already carries, never re-derived — with the withdrawal right-aligned on it. The head's
+# tool shortfall is on the ROW itself, as a second line (`BUILD_QUEUE_ROW_TOOLS_*`).
+
+## The line's clauses, in reading order: the CAUSES first (they are why a player opened the row, and
+## the elide takes the tail), then the price. Joined with the client's standing ` · `.
+const BUILD_QUEUE_DETAIL_SEPARATOR := " · "
+
+## **THE HEAD ROW'S SECOND LINE** — `◆ builders short of tools`, in `KIT_SHORT_SEVERITY` amber. The
+## builders pool's TOE is the queue head's own claim (`docs/plan_pool_toe.md` §2.4), so when it is
+## short the head row says so and no other row can. It is the work rows' own `◆` (`KIT_SHORT_MARK`)
+## and the board's two-line-row idiom: the first line had no width for the mark (the face's unclipped
+## guarantee and the date's worst case measured 3px and 0px of slack), so the row grows a line ONLY
+## while the head is tool-short AND its settings strip is CLOSED. With the strip open the row is one
+## line and the strip's detail line leads with the same words instead — one statement in either state.
+const BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT := "builders short of tools"
+const BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT := "%s %s"
+
+## The line's handle, carrying the drawn text — a harness finds the mark by meta, never by glyph.
+const BUILD_QUEUE_ROW_TOOLS_LINE_META := "build_queue_row_tools_line"
+
+## **ITS HEIGHT IS THE BOARD ROW'S SECOND LINE, TERM FOR TERM** — `WORK_ROW_TWO_LINE_HEIGHT` less the
+## one-line row: the stepper gap and a note line at `ALLOC_SECTION_FONT_SIZE`, the part the line is
+## drawn with. Charged by `build_queue_block_height` / `build_queue_rows_max` /
+## `_work_board_capacity` through their `head_tools_height`.
+const BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT - WORK_ROW_HEIGHT
+
+## …and the same fact on the head ROW's hover, as a sentence, beside the job's price and cause.
+const BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP := "The builders are short of tools for this job — more tools would speed it up."
+
+## The detail label's stable handle, carrying the line's FULL text — a harness asks what the line
+## says without reading an ellipsised face.
+const BUILD_QUEUE_DETAIL_META := "build_queue_detail"
+
+## The detail line's type: the LEG lines' own size, so the strip's readouts share one register.
+const BUILD_QUEUE_DETAIL_FONT_SIZE := BUILD_QUEUE_LEG_FONT_SIZE
+
+
+## **THE ROW'S HEAD-TOOLS STATE AS META** — `true` on the one row that states the builders' tool
+## shortfall. Every row carries it, so a harness asks *which row says so* by handle beside the drawn
+## line's own `BUILD_QUEUE_ROW_TOOLS_LINE_META`.
+const BUILD_QUEUE_ROW_TOOLS_SHORT_META := "build_queue_row_tools_short"
+
+## **THE DETAIL LINE — the job's causes, then its price, or `""` when the row knows neither.**
+## `blocked_lines` is the model's `build_blocked_lines`, the source card's own producer; `price` the
+## `DetailFormat.build_price_clause` the row's hover already quotes. Pure joining — nothing here
+## computes a number. **`tools_short` LEADS with `◆ builders short of tools`** on the tool-short
+## head's OPEN strip: the head row drops its own second line while its strip is open, so this is the
+## only statement of the fact in that state — one sentence visible in either state, never both.
+static func build_queue_detail_line(tools_short: bool, blocked_lines: Array,
+        price: String) -> String:
+    var parts: Array[String] = []
+    if tools_short:
+        parts.append(BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [KIT_SHORT_MARK,
+            BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT])
+    for line in blocked_lines:
+        if String(line) != "":
+            parts.append(String(line))
+    if price != "":
+        parts.append(price)
+    return BUILD_QUEUE_DETAIL_SEPARATOR.join(parts)
 
 ## **THE LEG IN FLIGHT WEARS THE QUEUE HEAD'S OWN MARKER**, and every other leg reserves its slot —
 ## the block's standing rule one level in. The first published leg IS the one in flight (the wire

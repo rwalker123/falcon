@@ -415,6 +415,7 @@ fn spawn_the_holding_band(
         LaborAllocation {
             assignments: vec![
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -431,6 +432,7 @@ fn spawn_the_holding_band(
                 // unstaffed arm — a role row still stands at zero, which is how a player says
                 // *stop building* without withdrawing what they declared.
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Builders,
                     workers: builders,
                     kit: None,

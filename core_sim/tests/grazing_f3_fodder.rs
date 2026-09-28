@@ -54,8 +54,12 @@ const RESTOCK: f32 = 1_000_000.0;
 const FODDER_RATE: f32 = 0.10;
 /// The pen's wild breeding rate (→ pen `r = min(cap, wild × pen_gain)`).
 const WILD_R: f32 = 0.35;
-/// Rabbit-class body mass, matching `FODDER_RATE`/`WILD_R` (the pen quantises to whole animals).
-const PEN_BODY_MASS: f32 = 2.0;
+/// The pen species' body mass. The pen quantises to whole animals, so a herd settled at B carries a
+/// residual one-body oscillation of `body / B` in its tail band. A rabbit-class body of 2 on the
+/// K/2 ≈ 100 this loop settles at is a ~2% step at the shipped `pen_gain` (pen `r = 0.35 × 1.5 =
+/// 0.525`), over `SMALL_BAND`; a quarter of a rabbit keeps one body at ~0.5% of B — fixture
+/// granularity, so the convergence the tests assert is measured above the quantisation floor.
+const PEN_BODY_MASS: f32 = 0.5;
 /// The **sustained hay inflow** — the per-turn output of the keeper's (notional) hay Fields. Constant,
 /// which is the whole point: it is a *flow*, so `K_pen` off it is a fixed ceiling the loop settles on.
 const HAY_FLOW: f32 = 20.0;
@@ -97,6 +101,8 @@ fn base_world() -> App {
     app.world.insert_resource(ForageRegistry::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
     app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
@@ -233,6 +239,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
                         floor: policy,

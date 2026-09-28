@@ -4597,9 +4597,11 @@ pub fn drop_holding_and_cancel_ring(
     };
     let entry = crate::components::BuildSource::of(target)
         .and_then(|source| allocation.build_queue_entry(&source).cloned());
-    if !allocation.drop_source_row(target) {
+    let Some(row) = allocation.drop_source_row(target) else {
         return false;
-    }
+    };
+    // **The holding's work party comes home with it** — see `drop_source_row`.
+    crate::systems::bring_the_dropped_party_home(world, band, &row);
     cancel_dropped_rings(&mut world.resource_mut::<HerdRegistry>(), entry.as_slice());
     true
 }
@@ -5776,45 +5778,11 @@ pub fn project_realized_hunt(
         // `LaborConfig::validate` pins `horizon > 0`; belt-and-braces against /0.
         return YieldAccounts::ZERO;
     }
-    // The projection runs on a private copy — the caller's live herd is never touched. Ecology and
-    // capacity cannot change under the projected take (the quarry is never tamed/penned mid-run), so
-    // resolve them once, exactly as `hunt_trip_forecast` does.
-    let mut quarry = herd.clone();
-    let ecology = herd_ecology(&quarry, fauna);
-    let capacity = herd_capacity(&quarry, fauna);
-    // The species' yield vector — resolved once; the quarry is never re-speciated mid-projection.
-    let hunt_yield = herd_hunt_yield(&quarry, fauna);
-    // **ONE TAKE PATH AT EVERY RUNG** — the pen's separate arm is retired with the exemption it
-    // served (`docs/plan_standing_upkeep.md` §4.9 item 12b): a fenced herd is engaged, retreats and
-    // fights exactly as a wild one does, on the rung-scaled terms [`herd_engage_rate`] and
-    // [`herd_wariness`] resolve. So the loop below runs one sequence, not a fork.
-    // **`workers` IS THE TAKE CREW** (`docs/plan_standing_upkeep.md` §2.2) — the same term
-    // `systems::hunt_take` is paid at, so the projection and the take stay one model. A build on
-    // this herd is its own allocation with its own hands and scales nothing here.
-    let collection = herd_collection(&quarry, fauna, workers, per_worker_biomass_capacity);
-    // **The party's REACH, in animals** — how many it can bring into contact each projected turn
-    // (`docs/plan_hunt_through_combat.md` §2). Constant for the run: the crew does not change size
-    // mid-projection and the quarry is never re-speciated. What the herd can *spare* is not constant,
-    // so the escapement clamp and the retreat that follows it live inside the loop below.
-    //
-    // **A PEN HAS ONE TOO, and it is the keepers' handling rate** — [`herd_engage_rate`] folds
-    // `husbandry.pen_engage_gain` in, and hands the wild rate straight back on an un-penned herd, so
-    // this one term serves every rung. It read `FaunaConfig::engage_rate_for` (the *wild* rate at
-    // every rung) while the pen was exempt from the bound altogether; the exemption is retired and
-    // an infinite bound was never *"a fenced animal is not stalked"*, it was no bound.
-    //
-    // **And so does the retreat** — [`herd_wariness`], the same stepped shape, so a fenced herd
-    // breaks off `husbandry.pen_wariness ×` as often rather than not at all.
-    let reach = animals_engaged(workers, herd_engage_rate(&quarry, fauna));
-    let wariness = herd_wariness(&quarry, fauna);
-    // **The FIGHT is resolved INSIDE the loop, and it is the wounds that force that** (§4.2). It used
-    // to be hoisted out as a constant, which was right for a stateless resolver and is now wrong: a
-    // sub-threshold party brings down nothing for several turns and then a whole animal, and a
-    // projection that froze the first turn's answer would quote **zero forever** for exactly the
-    // parties the accumulator exists to serve. The quarry's body is constant; only its wounds move.
-    // **`None` AT A PEN** ([`herd_fight_stage`]) — the projection runs the same kill arm the turn
-    // does, so a pen projects a slaughter exactly as it resolves one.
-    let mut quarry_fight = herd_fight_stage(&quarry, fauna);
+    // **ONE PROJECTED TURN AT A TIME, through [`HuntProjection::step`]** — the same step a work
+    // party's caravan forecast drives with a crew that changes turn to turn
+    // (`crate::work_party::forecast_caravan`). Here the crew is constant, so the loop is exactly the
+    // one this function always ran.
+    let mut projection = HuntProjection::new(herd, fauna);
     let mut total = YieldAccounts::ZERO;
     // The number of turns actually simulated. A self-terminating policy (Eradicate strips the herd in
     // ~1 turn, Deplete drives it extinct) breaks early, and the average divides by THIS — not the full
@@ -5822,99 +5790,179 @@ pub fn project_realized_hunt(
     // by dead turns after the herd is gone. Sustain never terminates, so it runs the full horizon.
     let mut turns = 0u32;
     for _ in 0..horizon {
-        // Logistics: regrow first (sets `quarry.biomass_before_regrowth`, then grows `quarry.biomass`).
-        regrow_biomass(&mut quarry, fauna);
-        if quarry.biomass <= ecology.extinction_floor * capacity {
-            break; // `advance_herds` would despawn it here — the herd is gone.
-        }
-        // Population: the SMOOTH per-turn take (unquantised), capped by the crew's throughput, by
-        // what the party can reach, and by the standing stock. **Every rung pays the stock standing
-        // above its stance's floor, at the CURRENT biomass** — what `hunt_take` reads. The pen's
-        // separate managed arm is retired: a rung may change production, no rung changes the draw.
-        // Unquantised, but **not** unbounded: see the doc above for why the engagement cap belongs
-        // here and the rounding does not.
-        // **THE SAME BOUND THE TAKE USES** ([`hunt_take_room`]) — `regrow_biomass` above has just
-        // stamped this turn's growth, so the backstop's term is a measurement here exactly as it is
-        // in the live arm. A forecast on the pure escapement room would quote `0` for every turn a
-        // herd spends below its own climbing floor while the sim pays the growth share.
-        // **The meat side of the standing split** — the same `× (1 − f)` the live take's ceiling
-        // carries ([`resolve_hunt_engagement`]), so a committed herd's headline food/turn is not a
-        // promise of meat it will never hand over.
-        let rate = hunt_take_room(floor, quarry.biomass, capacity, quarry.growth_this_turn())
-            * quarry.meat_take_fraction();
-        // Dropping the *quantiser* here is sound because rounding is a timing effect; dropping the
-        // fight would not be, for exactly the reason the engagement bound belongs here — a
-        // bare-handed party brings down **nothing** from a mammoth herd however much room stands
-        // above the floor, and a `realized` that ignored that would quote a steady food rate the
-        // party can never collect.
-        // **Engagement, then the retreat's EXPECTATION, then the fight** — the take's three stages
-        // in the take's order, at **every rung**. The reach is clamped by what the herd can spare
-        // *before* the retreat ([`animals_affordable`]), because the retreat keeps a fraction of
-        // whatever it is handed: clamping afterwards would retreat a bigger party than the take does
-        // and over-quote every turn the escapement room binds. A projection cannot *draw* the
-        // retreat the take will draw (see [`HuntDraw`]), so it reads the same binomial's mean.
-        //
-        // **Un-floored**, because this projection is the smooth one — the whole-animal quantum is
-        // the arrivals schedule's business ([`project_arrivals_hunt`]), and the herd's own biomass is
-        // the accumulator either way.
-        let engagement_biomass = {
-            let engaged = party.stayers(
-                reach.min(animals_affordable(rate, quarry.body_mass)),
-                wariness,
-                HuntDraw::EXPECTED,
-            );
-            let fight = resolve_hunt_kill(
-                engaged,
-                workers as f32,
-                party,
-                quarry_fight.as_ref(),
-                quarry.wounds,
-                HuntDraw::EXPECTED,
-            );
-            quarry_fight = quarry_fight.map(|held| held.with_wounds(fight.wounds));
-            fight.brought_down * quarry.body_mass
+        let Some(turn) = projection.step(
+            fauna,
+            per_worker_biomass_capacity,
+            party,
+            output_multiplier,
+            workers,
+            floor,
+        ) else {
+            break; // the herd is gone or the source is spent — stop before diluting the average.
         };
-        // **AND THE OTHER HALF OF THE SPLIT** — the milk, eggs and down the same herd pays for
-        // standing there, at this turn's head count. It rides the projection rather than being
-        // added to the average afterwards because the head count moves as the herd grows, and a
-        // flat term struck once would quote a shrinking herd's dairy at its opening size.
-        let standing_provisions = herd_standing_provisions(&quarry, fauna) * output_multiplier;
-        // **The SOURCE-side offer is what decides whether the run is over** — the stock standing
-        // above the floor. A zero take is no longer proof the source is spent: since damage carries
-        // between turns a party can grind for several turns and *then* land a body (§4.2), and
-        // breaking on the first of those would report **zero forever** for exactly the parties the
-        // accumulator exists to serve. So the wait turns stay in, counted in the denominator like the
-        // `0.0` slots the arrivals schedule already publishes, and only a spent source breaks.
-        let offered = rate.min(quarry.biomass).max(0.0);
-        // **A COMMITTED HERD IS NOT A SPENT ONE.** The break asks *"is there anything left here"*,
-        // and since the standing split a herd can offer no meat at all and still pay milk every
-        // turn — so both halves have to be nothing before the run is over. Without the second
-        // clause a fully-committed dairy herd broke on its first projected turn and published a
-        // steady food/turn of zero while its larder filled (`docs/plan_pen_standing_yield.md` §1).
-        // At `f = 0` the standing term is a structural zero, so this reads exactly as it did.
-        if offered <= REALIZED_PROJECTION_TAKE_EPSILON
-            && standing_provisions <= crate::fauna_config::NO_STANDING_YIELD
-        {
-            break; // the source is spent — stop before diluting the average with dead turns.
-        }
-        let take = offered.min(collection).min(engagement_biomass).max(0.0);
-        quarry.biomass -= take;
-        // **Both products are projected from the same simulated take**, so the steady trade headline
-        // can never drift from the steady food one (`docs/plan_hunt_yield_model.md` §9).
-        total = total
-            .plus(hunt_yield.apply(take, output_multiplier))
-            .plus(YieldAccounts {
-                provisions: standing_provisions,
-                // **Neither half of an animal's yield pays fodder** — the second account is the plant
-                // web's, exactly as [`crate::fauna_config::HuntYield::apply`] states for the meat side.
-                fodder: 0.0,
-            });
+        total = total.plus(turn.yields);
         turns += 1;
     }
     if turns > 0 {
         total.scale(1.0 / turns as f32)
     } else {
         YieldAccounts::ZERO
+    }
+}
+
+/// **ONE PROJECTED TURN OF A HUNT'S TAKE** — what [`HuntProjection::step`] hands back: the biomass
+/// the crew took off the herd and what it is worth.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedHuntTurn {
+    /// Biomass drawn off the herd this turn — the carry unit a work party's pack is measured in.
+    pub biomass: f32,
+    /// The take's yield vector, the standing half (milk, eggs) included.
+    pub yields: YieldAccounts,
+}
+
+/// **A HUNT, PROJECTED FORWARD ONE TURN AT A TIME, AT WHATEVER CREW IS STANDING THERE.**
+///
+/// It is [`project_realized_hunt`]'s loop body lifted out whole, and that function is now a loop
+/// over it — so the smooth headline and a work party's caravan forecast run **one** projection, not
+/// two. The crew is an argument **per step** rather than once per run because a caravan's crew moves
+/// every turn: hunters leave with a pack and rejoin after the round trip, and the take a far posting
+/// makes is the take of whoever is present.
+///
+/// Every term that depends on the crew — the carry bound, the reach, the fight's `workers` — is
+/// struck inside [`Self::step`]; every term that does not — the ecology, the capacity, the species'
+/// yield, the wariness — is resolved once here, exactly as the loop always resolved it. Both crew
+/// terms read only the crew and the herd's rung, and a projection never re-rungs a herd, so a
+/// constant crew steps bit-for-bit what the hoisted loop computed.
+pub struct HuntProjection {
+    quarry: Herd,
+    ecology: EcologyConfig,
+    capacity: f32,
+    hunt_yield: HuntYield,
+    wariness: f32,
+    /// The fight's carried wounds — see the loop doc on [`project_realized_hunt`].
+    quarry_fight: Option<QuarryFight>,
+}
+
+impl HuntProjection {
+    /// Start a projection on a **private copy** of `herd` — the caller's live herd is never touched.
+    pub fn new(herd: &Herd, fauna: &FaunaConfig) -> Self {
+        let quarry = herd.clone();
+        // Ecology and capacity cannot change under the projected take (the quarry is never
+        // tamed/penned mid-run), so resolve them once, exactly as `hunt_trip_forecast` does.
+        let ecology = herd_ecology(&quarry, fauna);
+        let capacity = herd_capacity(&quarry, fauna);
+        // The species' yield vector — resolved once; the quarry is never re-speciated.
+        let hunt_yield = herd_hunt_yield(&quarry, fauna);
+        // **And so does the retreat** — [`herd_wariness`], the same stepped shape, so a fenced herd
+        // breaks off `husbandry.pen_wariness ×` as often rather than not at all.
+        let wariness = herd_wariness(&quarry, fauna);
+        // **The FIGHT is resolved INSIDE the step, and it is the wounds that force that** (§4.2): a
+        // sub-threshold party brings down nothing for several turns and then a whole animal, and a
+        // projection that froze the first turn's answer would quote **zero forever** for exactly the
+        // parties the accumulator exists to serve. **`None` AT A PEN** ([`herd_fight_stage`]).
+        let quarry_fight = herd_fight_stage(&quarry, fauna);
+        Self {
+            quarry,
+            ecology,
+            capacity,
+            hunt_yield,
+            wariness,
+            quarry_fight,
+        }
+    }
+
+    /// **Step one turn — Logistics regrowth, then the Population take by `workers`.** `None` is the
+    /// loop's own `break`: the herd has gone extinct, or the source is spent (nothing standing above
+    /// the floor and no standing yield either). A `Some` with a zero take is an honest wait turn.
+    #[allow(clippy::too_many_arguments)] // the take's full context, per turn
+    pub fn step(
+        &mut self,
+        fauna: &FaunaConfig,
+        per_worker_biomass_capacity: f32,
+        party: &HuntingParty,
+        output_multiplier: f32,
+        workers: u32,
+        floor: f32,
+    ) -> Option<ProjectedHuntTurn> {
+        let quarry = &mut self.quarry;
+        // **`workers` IS THE TAKE CREW** (`docs/plan_standing_upkeep.md` §2.2) — the same term
+        // `systems::hunt_take` is paid at, so the projection and the take stay one model.
+        let collection = herd_collection(quarry, fauna, workers, per_worker_biomass_capacity);
+        // **The party's REACH, in animals** — how many it can bring into contact this turn
+        // (`docs/plan_hunt_through_combat.md` §2). **A PEN HAS ONE TOO**: [`herd_engage_rate`]
+        // folds `husbandry.pen_engage_gain` in and hands the wild rate back on an un-penned herd.
+        let reach = animals_engaged(workers, herd_engage_rate(quarry, fauna));
+        // Logistics: regrow first (sets `quarry.biomass_before_regrowth`, then grows
+        // `quarry.biomass`).
+        regrow_biomass(quarry, fauna);
+        if quarry.biomass <= self.ecology.extinction_floor * self.capacity {
+            return None; // `advance_herds` would despawn it here — the herd is gone.
+        }
+        // Population: the SMOOTH per-turn take (unquantised), capped by the crew's throughput, by
+        // what the party can reach, and by the standing stock — **the same bound the take uses**
+        // ([`hunt_take_room`]), on the meat side of the standing split. See
+        // [`project_realized_hunt`] for why the engagement cap belongs here and the rounding does
+        // not.
+        let rate = hunt_take_room(
+            floor,
+            quarry.biomass,
+            self.capacity,
+            quarry.growth_this_turn(),
+        ) * quarry.meat_take_fraction();
+        // **Engagement, then the retreat's EXPECTATION, then the fight** — the take's three stages
+        // in the take's order, at **every rung**. The reach is clamped by what the herd can spare
+        // *before* the retreat ([`animals_affordable`]), because the retreat keeps a fraction of
+        // whatever it is handed. Un-floored: this projection is the smooth one.
+        let engagement_biomass = {
+            let engaged = party.stayers(
+                reach.min(animals_affordable(rate, quarry.body_mass)),
+                self.wariness,
+                HuntDraw::EXPECTED,
+            );
+            let fight = resolve_hunt_kill(
+                engaged,
+                workers as f32,
+                party,
+                self.quarry_fight.as_ref(),
+                quarry.wounds,
+                HuntDraw::EXPECTED,
+            );
+            self.quarry_fight = self
+                .quarry_fight
+                .take()
+                .map(|held| held.with_wounds(fight.wounds));
+            fight.brought_down * quarry.body_mass
+        };
+        // **AND THE OTHER HALF OF THE SPLIT** — the milk, eggs and down the same herd pays for
+        // standing there, at this turn's head count.
+        let standing_provisions = herd_standing_provisions(quarry, fauna) * output_multiplier;
+        // **The SOURCE-side offer is what decides whether the run is over** — the stock standing
+        // above the floor. A zero take is not proof the source is spent (damage carries between
+        // turns), so only a spent source breaks; and **a committed herd is not a spent one**, so
+        // both halves have to be nothing before the run is over.
+        let offered = rate.min(quarry.biomass).max(0.0);
+        if offered <= REALIZED_PROJECTION_TAKE_EPSILON
+            && standing_provisions <= crate::fauna_config::NO_STANDING_YIELD
+        {
+            return None; // the source is spent — stop before diluting the average with dead turns.
+        }
+        let take = offered.min(collection).min(engagement_biomass).max(0.0);
+        quarry.biomass -= take;
+        // **Both products are projected from the same simulated take**, so the steady trade
+        // headline can never drift from the steady food one (`docs/plan_hunt_yield_model.md` §9).
+        let yields = self
+            .hunt_yield
+            .apply(take, output_multiplier)
+            .plus(YieldAccounts {
+                provisions: standing_provisions,
+                // **Neither half of an animal's yield pays fodder** — the second account is the plant
+                // web's, exactly as [`crate::fauna_config::HuntYield::apply`] states for the meat side.
+                fodder: 0.0,
+            });
+        Some(ProjectedHuntTurn {
+            biomass: take,
+            yields,
+        })
     }
 }
 
@@ -6672,7 +6720,7 @@ pub fn herd_past_recovery(biomass: f32, carrying_capacity: f32, ecology: &Ecolog
 ///
 /// `workers × engage_rate`, **unrounded** — a reach is a *rate*, and rounding it is what made extra
 /// hunters worthless. `floor(w × rate).max(1)` answered **one animal for every crew from 1 to 6** on
-/// the shipped Wild Boar (`engage_rate 0.33`), so four hunters took exactly what one took
+/// the Wild Boar (then shipped at `engage_rate 0.33`), so four hunters took exactly what one took
 /// (`0.18 food/turn` either way, reported from play). The reach is now strictly increasing in the
 /// crew, which is the property the whole engagement stage exists to have.
 ///
@@ -8044,6 +8092,34 @@ fn animals_the_pack_seats(collection: f32, body_mass: f32) -> f32 {
     (ratio * (1.0 - ANIMAL_COUNT_EPSILON))
         .ceil()
         .max(ONE_WHOLE_ANIMAL)
+}
+
+/// ⛔ **WHAT ONE PORTER WALKS HOME** — one hunter's carry, seated in **whole animals**, or a pack's
+/// worth of a carcass too big for one pack.
+///
+/// A work party's caravan dispatches a hunter each time its load holds one of these
+/// (`crate::work_party`). It is the carrying-home reading of the pack, which is **not** the
+/// kill-stop reading [`animals_the_pack_seats`] answers:
+///
+/// - **That one rounds UP**, because it answers *how many animals does a pack stop a party killing*
+///   — the animal the load cannot seat whole is still killed whole, and a resident band that walks
+///   away from the carcass wastes the rest.
+/// - **This one rounds DOWN** ([`whole_animals`]), because it answers *what does one porter
+///   actually shoulder*. Nobody walks away from a party's load: what one porter cannot seat whole
+///   stays in the load for the next one, so there is no remainder to round up into.
+///
+/// **A quarry heavier than one pack goes as a pack's worth** (`carry`), and the rest of it stays in
+/// the load — the mammoth case. An unbounded carry (a pen that is a larder) seats the whole load,
+/// which the caller reads as *one porter takes everything there is*.
+pub fn one_pack_biomass(carry: f32, body_mass: f32) -> f32 {
+    if !carry.is_finite() {
+        return carry;
+    }
+    let carry = carry.max(0.0);
+    if !body_mass.is_finite() || body_mass <= 0.0 || body_mass >= carry {
+        return carry;
+    }
+    whole_animals(carry, body_mass) * body_mass
 }
 
 pub fn quantise_animal_take(
@@ -10468,7 +10544,7 @@ mod tests {
 
     /// The core anti-flicker property: a managed herd whose head count breathes ±1 across an
     /// `animals_per_herder` boundary reports a STABLE `herders_needed` once bumped up — it does not
-    /// drop back on a one-animal dip. A Wild Aurochs (`animals_per_herder = 12`) near 12 head.
+    /// drop back on a one-animal dip. A herd at `animals_per_herder = 12` (the aurochs' retired value) near 12 head.
     #[test]
     fn herder_requirement_is_stable_across_a_one_animal_oscillation() {
         const APH: f32 = 12.0;
@@ -11213,8 +11289,9 @@ mod tests {
 
     /// A Wild Boar's shipped body mass, in the whole numbers the case is stated in.
     const BOAR_BODY: f32 = 12.0;
-    /// A Wild Boar's shipped `engage_rate` — one hunter gets near a third of a boar per turn.
-    const BOAR_ENGAGE_RATE: f32 = 0.33;
+    /// A Wild Boar's shipped `engage_rate` — one hunter gets near one boar per turn, its size peers'
+    /// rate (Red Deer, Wild Reindeer).
+    const BOAR_ENGAGE_RATE: f32 = 1.0;
     /// A room of 27 whole boar (`27 × 12`), so the peak drop is the 28 that room's last partial body
     /// covers — `floor(324 / 12) + 1`.
     const BOAR_ROOM: f32 = 27.0 * BOAR_BODY;
@@ -11223,10 +11300,10 @@ mod tests {
     const NOTHING_STANDS: f32 = 0.0;
 
     /// **THE WILD BOAR CASE — the crew is sized on what the party puts DOWN, not on what it gets
-    /// near.** One hunter reaches `0.33` boar a turn and keeps three in four of them, so they land
-    /// `0.33 × 0.75 = 0.2475` boar. Clearing a 28-animal peak drop therefore takes
-    /// `ceil(28 / 0.2475) = 114` hunters, and the retreat-blind reading (`ceil(28 / 0.33) = 85`) is
-    /// short by a third.
+    /// near.** One hunter reaches `1.0` boar a turn and keeps three in four of them, so they land
+    /// `1.0 × 0.75 = 0.75` boar. Clearing a 28-animal peak drop therefore takes
+    /// `ceil(28 / 0.75) = 38` hunters, and the retreat-blind reading (`ceil(28 / 1.0) = 28`) is
+    /// short by a quarter.
     ///
     /// This is the contradiction the change exists to remove: the compose sheet's *clear it now*
     /// target already divided the room by the retreat-aware rate while the stepper cap beside it
@@ -11236,8 +11313,8 @@ mod tests {
     #[test]
     fn a_wary_boar_herd_needs_the_hands_the_retreat_costs() {
         const PEAK_DROP: f32 = 28.0;
-        const RETREAT_AWARE_CREW: u32 = 114;
-        const RAW_REACH_CREW: u32 = 85;
+        const RETREAT_AWARE_CREW: u32 = 38;
+        const RAW_REACH_CREW: u32 = 28;
 
         assert_eq!(
             peak_animal_drop(BOAR_ROOM, BOAR_BODY),
@@ -11247,7 +11324,7 @@ mod tests {
         let crew = hunt_engage_workers(BOAR_ROOM, BOAR_BODY, BOAR_ENGAGE_RATE, BOAR_STAY);
         assert_eq!(
             crew, RETREAT_AWARE_CREW,
-            "28 boar at 0.2475 down per hunter is {RETREAT_AWARE_CREW} hands, not {crew}"
+            "28 boar at 0.75 down per hunter is {RETREAT_AWARE_CREW} hands, not {crew}"
         );
         assert_eq!(
             hunt_engage_workers(BOAR_ROOM, BOAR_BODY, BOAR_ENGAGE_RATE, NOTHING_BREAKS_OFF,),
@@ -11266,6 +11343,143 @@ mod tests {
             brought_down(RETREAT_AWARE_CREW) >= PEAK_DROP,
             "…and {RETREAT_AWARE_CREW} clears it"
         );
+    }
+
+    /// **THE BOAR REACH TRIAL MOVED THE HUNT AND LEFT THE PEN WHERE IT WAS.** The trial raised the
+    /// boar's `engage_rate` from `0.33` to `1.0` — its danger lives in `ferocity` / `attack` / the
+    /// injury hazard, and counting it a second time in the reach term had left it in the small-game
+    /// band — and lowered its `pen_engage_gain` from `20.0` to `6.6` in the same edit, because a
+    /// pen's handling rate is `engage_rate × pen_engage_gain` and pens are engagement-bound. The pair
+    /// is only a hunting change if that product did not move; this pins that it did not, read through
+    /// [`herd_engage_rate`] on a real penned boar rather than re-multiplied here.
+    ///
+    /// Paired with the wild half, because a pen reading `6.6` also passes on a roster where the trial
+    /// never landed: the wild boar must reach at the trial's rate.
+    #[test]
+    fn the_boar_reach_trial_leaves_the_pens_handling_rate_unchanged() {
+        const BOAR: &str = "Wild Boar";
+        /// The boar's wild reach before the trial.
+        const PRE_TRIAL_ENGAGE_RATE: f32 = 0.33;
+        /// The boar's pen handling gain before the trial.
+        const PRE_TRIAL_PEN_ENGAGE_GAIN: f32 = 20.0;
+        /// What one keeper handled in a boar pen before the trial, in animals per turn.
+        const PRE_TRIAL_PEN_HANDLING: f32 = PRE_TRIAL_ENGAGE_RATE * PRE_TRIAL_PEN_ENGAGE_GAIN;
+        /// The boar's wild reach the trial set — its size peers' rate.
+        const TRIAL_ENGAGE_RATE: f32 = 1.0;
+        /// Float slack for a product of two config reals; far below any step a retune would make.
+        const SAME_RATE: f32 = 1e-4;
+
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let def = fauna
+            .species_by_display(BOAR)
+            .expect("the fixture names a shipped species");
+        let anchor = UVec2::new(1, 1);
+        let capacity = def.biomass[1];
+        let herd_at_capacity = || {
+            let mut herd = Herd::new(
+                "boar_trial".to_string(),
+                BOAR.to_string(),
+                def.size_class,
+                vec![anchor],
+                capacity,
+                capacity,
+                def.fodder_per_biomass,
+                def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
+                def.body_mass,
+            );
+            herd.husbandry_ceiling = def.husbandry_ceiling;
+            herd
+        };
+
+        let wild = herd_at_capacity();
+        assert!(
+            (herd_engage_rate(&wild, &fauna) - TRIAL_ENGAGE_RATE).abs() < SAME_RATE,
+            "liveness: the wild boar must reach at the trial's rate {TRIAL_ENGAGE_RATE}, got {}",
+            herd_engage_rate(&wild, &fauna)
+        );
+
+        let mut penned = herd_at_capacity();
+        assert!(
+            penned.tame_outright(FactionId(1), &ladder),
+            "the boar must be tameable for its pen to exist"
+        );
+        assert!(
+            penned.corral_at(anchor, &ladder),
+            "the boar must be pennable — its husbandry_ceiling is the pen"
+        );
+        assert!(
+            (herd_engage_rate(&penned, &fauna) - PRE_TRIAL_PEN_HANDLING).abs() < SAME_RATE,
+            "a boar pen handles {PRE_TRIAL_PEN_HANDLING} animals per keeper, as it did before the \
+             trial; got {}",
+            herd_engage_rate(&penned, &fauna)
+        );
+    }
+
+    /// **THE STAPLES' REACH RETUNE MOVED THE HUNT AND LEFT THE SHEEP AND GOAT PENS WHERE THEY
+    /// WERE.** Wild sheep and crag goats were given the reach of the regional staples they were
+    /// (`engage_rate` `1.5 → 2.5` and `1.5 → 2.25`), and each `pen_engage_gain` was lowered in the
+    /// same edit (`8.5 → 5.1`, `7.9 → 5.266667`) so the pen's handling rate — `engage_rate ×
+    /// pen_engage_gain` — did not move. The boar pin's twin: read through [`herd_engage_rate`] on a
+    /// real penned herd, paired with the wild reach so a roster where the retune never landed fails.
+    #[test]
+    fn the_staples_reach_retune_leaves_the_sheep_and_goat_pens_unchanged() {
+        /// `(display, engage_rate before, pen_engage_gain before, engage_rate after)`.
+        const RETUNED: [(&str, f32, f32, f32); 2] = [
+            ("Wild Sheep", 1.5, 8.5, 2.5),
+            ("Crag Goats", 1.5, 7.9, 2.25),
+        ];
+        /// Float slack for a product of two config reals; far below any step a retune would make.
+        const SAME_RATE: f32 = 1e-4;
+
+        let fauna = FaunaConfig::builtin();
+        let ladder = LadderConfig::builtin();
+        let anchor = UVec2::new(1, 1);
+        for (species, engage_before, pen_gain_before, engage_after) in RETUNED {
+            let def = fauna
+                .species_by_display(species)
+                .expect("the fixture names a shipped species");
+            let capacity = def.biomass[1];
+            let herd_at_capacity = || {
+                let mut herd = Herd::new(
+                    "staples_trial".to_string(),
+                    species.to_string(),
+                    def.size_class,
+                    vec![anchor],
+                    capacity,
+                    capacity,
+                    def.fodder_per_biomass,
+                    def.regrowth_rate.unwrap_or(fauna.ecology.regrowth_rate),
+                    def.body_mass,
+                );
+                herd.husbandry_ceiling = def.husbandry_ceiling;
+                herd
+            };
+
+            let wild = herd_at_capacity();
+            assert!(
+                (herd_engage_rate(&wild, &fauna) - engage_after).abs() < SAME_RATE,
+                "liveness: wild {species} must reach at the retuned rate {engage_after}, got {}",
+                herd_engage_rate(&wild, &fauna)
+            );
+
+            let mut penned = herd_at_capacity();
+            assert!(
+                penned.tame_outright(FactionId(1), &ladder),
+                "{species} must be tameable for its pen to exist"
+            );
+            assert!(
+                penned.corral_at(anchor, &ladder),
+                "{species} must be pennable — its husbandry_ceiling is the pen"
+            );
+            let handling_before = engage_before * pen_gain_before;
+            assert!(
+                (herd_engage_rate(&penned, &fauna) - handling_before).abs() < SAME_RATE,
+                "a {species} pen handles {handling_before} animals per keeper, as it did before the \
+                 retune; got {}",
+                herd_engage_rate(&penned, &fauna)
+            );
+        }
     }
 
     /// **A quarry that never stands owes NO crew, and `0` is the answer rather than a fudge.** At a
@@ -11962,8 +12176,10 @@ mod tests {
         /// Enough hunters that the *herd*, not the party's reach, bounds the take.
         const HUNTERS: u32 = 20;
         /// The wild ceiling the fixture starts from, and the stock it stands at — half of it, so the
-        /// herd is exactly on its floor **before** the Tame raises `K` out from under it.
-        const WILD_CEILING: f32 = 1_000.0;
+        /// herd is exactly on its floor **before** the Tame raises `K` out from under it. Sized so the
+        /// growth share survives the retreat as at least one whole body: at `pastoral_gain` 1.25 a
+        /// `1_000` ceiling's share is under two boar, and three in four of one-and-a-bit floors to none.
+        const WILD_CEILING: f32 = 2_000.0;
         const ON_THE_WILD_FLOOR: f32 = WILD_CEILING * HALF_THE_STOCK;
         /// Horizons for the row's two projections; the assertion is on `actual`, so these only have
         /// to be live.

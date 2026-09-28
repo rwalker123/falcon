@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 127
+const EXPECTED_CHECKPOINTS := 125
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
@@ -828,36 +828,9 @@ func run(harness) -> void:
 			== String(SourceForecast.DENIAL_VERDICTS[
 				SourceForecast.DENIAL_OUTCOME_HORIZON]["line"]) % DENIAL_TARGET_QUARRY)
 
-	# State 1k — the hunt launch policy picker: an idle band (short allocation panel) showing the
-	# "Send expedition" outfit block — the party stepper, the scout + hunt send buttons, and the hunt
-	# POLICY radio (DEPLETE selected) with its EXPEDITION hint. The expedition hints must never promise
-	# HUSBANDRY — the Hunting arm accrues none — so Deplete's line frames the rung by the PRESSURE it
-	# applies (relaunching trip after trip)
-	# rather than by a craft the party cannot teach. The outfit block sits below the left dock's fold,
-	# so scroll to see the hint.
-	var launch_band := BandFx.band_fixture()
-	launch_band["idle_workers"] = 12
-	launch_band["labor_assignments"] = []
-	var left_scroll: ScrollContainer = h._hud.left_stack.get_parent() as ScrollContainer
-	h._hud._bandpanel._send_hunt_floor = ForageFx.DEEP_DRAW_FLOOR
-	h._hud.show_unit_selection(launch_band)
-	await h._settle()
-	left_scroll.scroll_vertical = int(left_scroll.get_v_scroll_bar().max_value)
-	await h._settle()
-	await h._save("expedition_launch_policy")
-	left_scroll.scroll_vertical = 0
-
-	# State 1k-sustain — the SUSTAIN launch hint, which had to be rewritten when Sustain became the
-	# maximum-sustainable-yield FLOW (it used to promise "one conservative harvest", a model that no
-	# longer exists). It also must NOT mention domestication: only a RESIDENT band's Sustain hunt
-	# builds husbandry — an expedition accrues none.
-	h._hud._bandpanel._send_hunt_floor = SourceForecast.FLOOR_FOOD_PEAK
-	h._hud.show_unit_selection(launch_band)
-	await h._settle()
-	left_scroll.scroll_vertical = int(left_scroll.get_v_scroll_bar().max_value)
-	await h._settle()
-	await h._save("expedition_launch_policy_sustain")
-	left_scroll.scroll_vertical = 0
+	# ⛔ States 1k / 1k-sustain (`expedition_launch_policy` / `_sustain`) are RETIRED with the hunt
+	# launch they depicted: the Parties footer offers no Hunt verb any more, a herd past the apron being
+	# an ordinary hunt whose crew posts a work party (`docs/plan_civilization_steps.md` §One work party).
 
 	# State 1a — a well-fed but demoralized band: healthy food (∞) yet morale 0.22
 	# (< critical), so the drawer's Morale line reads a red 22%. Discontent drags

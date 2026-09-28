@@ -172,8 +172,14 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 220 frames / 1533 `PASS` / 566 `assert OK`, exit 0 — RE-MEASURED, and this line is
-the harness's ONLY tally.**
+**A clean run is 228 frames / 1612 `PASS` / 583 `assert OK`, exit 0 — RE-MEASURED, and this line is
+the harness's ONLY tally.** Measured windowed on the merge of the work-party branch with `main`
+(main's Trade tab and queue-head states on top of the work party's), not summed from either side.
+
+**THE EAT-FIRST RULE'S RETIREMENT MOVED IT 193 / 1456 / 557 → 193 / 1453 / 557** on the work-party
+branch before that merge: five claims out (the ate line, the deficit line, its supplied-postings
+absence, its DANGER ink, the crew line's ink), two in (no row carries a retired line; every party line
+is quiet ink).
 
 **PR #738's REVIEW FIXES MOVED IT 216 / 1526 / 566 → 220 / 1533 / 566**: the returned-shipment pair
 (`trade_tab_shipment_cancelled`, `trade_tab_shipment_returned`), the anchor-gone close
@@ -196,6 +202,17 @@ pixel harnesses take the seal. **Three of this harness's mechanisms belong to it
 pushes its press and release with no awaited frame between them, `_drive_drag`'s hold re-warps the
 physical pointer every frame, and every simulated event goes through the one `_push_input` wrapper
 the guard discriminates on.
+
+**THE CARAVAN PASS AND THE HUNT VERB'S RETIREMENT took out one frame and five `assert OK` and
+added two `: PASS`** — five hunt-compose frames out and four denial-hosted layout frames in, the hunt
+sheet's chart guards out (the `assert OK`s), and the work-party block re-staged for the caravan plus
+the footer claim in. The two sections at the foot of this file have what each claim can tell apart.
+
+**THE WORK PARTY's BLOCK ADDED two frames, six `assert OK` and fourteen `: PASS`** — two frames
+(`band_panel_work_party` and its narrow twin), whose bounds trios account for all **six**
+`assert OK`s, and **fourteen** `: PASS` — thirteen on the block itself plus
+`_assert_work_party_rows_fit_the_zone`, which reports as a claim rather than as an `assert OK`.
+The section at the foot of this file has the fixture and what each claim can tell apart.
 
 **THE PR #680 REVIEW FIXES MOVED IT 1328 → 1334 `PASS`**, frames and `assert OK` unchanged: **+3**
 for `_assert_closed_settings_costs_the_board_nothing` (a closed build-queue block reserves nothing,
@@ -2787,7 +2804,10 @@ sentence on the very next line. **It staged no bill at all until PR #743's revie
 state the issue is about was never rendered and an `ⓘ` that flew only on a bill-less pool passed. The Husbandry card
 is the paired WARN form. **`band_panel_pool_kit_short_builders`** re-pushes the band with a short
 builders TOE line and asserts the Builders card flies the `ⓘ` — it is passed no `cover`, so it can
-never be work-short.
+never be work-short — with `POOL_TOOLS_SHORT_BUILDERS_LINE` (*The top job in the queue is short of
+tools.*) as its tool line: `_want_pool_tool_line` forks on the ROLE, and
+`_assert_pool_tools_line_forks_on_work` drives the builders fork both ways round (work short and
+not) beside a FILLED row that states nothing.
 
 ⛔ **THE FILLED CARD AND THE NOT-APPLICABLE CARD RENDER IDENTICALLY**, so what separates them is
 asserted against the FIXTURE rather than against the card
@@ -2843,6 +2863,172 @@ for.** A run started immediately after a `--import` failed three claims with
 enough to starve the frame loop blows the budget and FAILS LOUDLY rather than hanging. The immediate
 re-run was green. **Judge it by a second run before treating it as a regression**; nothing in the
 pool-TOE arc is anywhere near that gesture.
+
+## The work party's block — one contrast frame, one narrow one (`docs/plan_civilization_steps.md`)
+
+The behaviour is `band-city-panel.md` → "The work row reports its own WORK PARTY"; what belongs here
+is the shape of the fixture and what each claim can tell apart. The party is a **caravan** now
+(`.claude/rules/core_sim/work-party.md`), and the fixture is staged for it: one row per state the
+block can be in.
+
+**IT RUNS LAST, after `_render_empty_work_zone_states`**, so no earlier frame moves — and it hands
+the world and the reference band back on the way out.
+
+⛔ **THE LOCAL ROW IS THE FIXTURE'S SUBJECT, not its scenery.** *A row with no party renders exactly
+as it did before any of this existed* is a claim about the DIFFERENCE between two rows, so the local
+forage row and the three postings are ONE board: an identity asserted on a band with no party
+anywhere on it passes on a client that never implemented the block at all. **Its party keys are ABSENT
+rather than zeroed** — absent and `party_workers == 0` are one reading, and a fixture spelling the
+zeros out would be asserting the decoder's shape rather than the row's.
+
+⛔ **AND `realized_yield` IS THE PARTY'S `net_rate_home` ON EVERY POSTED ROW** — one forecast
+publishes both, so a fixture giving them two numbers describes a row no server can send.
+
+| posting | `walkTiles` | `walkOutRemaining` | `huntersOnTheRoad` | `nextLoadHomeIn` | the block |
+|---|---|---|---|---|---|
+| local forage | — | — | — | — | **no block** |
+| walking out (deer) | 6 | 2 | 0 | 0 | crew line, `Walking out — reaches the herd in 2 turns` |
+| running (deer) | 8 | 0 | 1 | 3 | crew `· 1 on the road`, `Next load home in 3 turns` |
+| running, inedible (wolf) | 5 | 0 | 1 | 1 | crew `· 1 on the road`, `Next load home in 1 turn` |
+
+⛔ **THE WOLF POSTING WAS THE UNSUPPLIED ONE, AND IS RE-STAGED AS AN ORDINARY FAR POSTING.** Under
+the retired eat-first rule it carried `party_deficit` 1.2 and drew a DANGER `Needs … from home` line,
+and the deer posting a `Party ate 2.00`; both fields are gone from the wire
+(`.claude/rules/core_sim/work-party.md` → "RETIRED: an eat-first rule"), and a pelt take walks home
+like any other.
+
+**Each of the three live fields drives exactly one line and is set independently of the other two**
+(`_work_party_row` takes them as three arguments), so every absence claim below is a claim about one
+field rather than a coincidence of the fixture. The postings also differ in every number, so a block
+that read the wrong row's party lands on a figure a claim names.
+
+| claim | what only IT can say |
+|---|---|
+| a LOCAL row grows no block at all | the identity |
+| the walking-out posting draws TWO lines | the liveness the identity and the absences below need |
+| its crew line, by EQUALITY, with no road clause | the noun is the board's own resolver's, the tile the party's, the walk one-way `-tile walk` |
+| its walk-out line names the HERD and the plural | `walkOutRemaining` is what it reads |
+| …and it carries NO next-load line | nobody has reached the herd; a `0` drops it |
+| the rate line contains `net_rate_home` | a far row states what ARRIVES, never `0.0 · in transit` |
+| the running crew line carries `· 1 on the road` | the live road count |
+| `Next load home in 3 turns`, and the block is those TWO lines | `nextLoadHomeIn` is what it reads, and nothing follows it |
+| the running posting has NO walk-out line | the claim that keeps an arrived posting from re-promising its arrival |
+| `in 1 turn`, not `in 1 turns` | every pack passes through one on its way home |
+| the INEDIBLE posting draws the same two lines a running posting does | a pelt take is an ordinary posting |
+| NO row's drawn block carries `Party ate` or `food a turn from home` (`RETIRED_PARTY_ROW_NEEDLES`) | the eat-first rule's lines did not survive it; the size claims above are its liveness |
+| every party line on the three postings is `INK_DIM` | no line on the block is a warning any more — a render-site decision no model claim can see |
+| (PNG-less) a forage party walking out names the PATCH, singular | the plant web's noun and the walk-out singular, through the one producer |
+
+**`band_panel_work_party_narrow` is not a second picture of the same thing.** The work zone
+`clip_contents` and the board is paged in uniform rows, so a block drawing taller than the capacity
+arithmetic reserved is sliced off the bottom; `_assert_work_party_rows_fit_the_zone` measures the
+DRAWN rows against the zone with a liveness guard ahead of it. Measured: **4 rows, 304 of 759 px**.
+
+> ⛔ **THE PIPELINE MODEL'S FIXTURE IS RETIRED WITH ITS FIELDS.** It staged `porters`,
+> `travelTiles` / `transitTurns` and `partyTransitRemaining` — a near posting part-way through a walk
+> the sim counted down, a settled one whose line was open, and a `First load arrives next turn`
+> singular — and every one of those fields is gone from the wire. Its sabotage history (a client
+> reading `transitTurns` in place of the countdown) has no field left to reach for.
+
+**Sabotage-verified** by drawing the next-load line on `nextLoadHomeIn == 0` (`elif > 0` → `else`):
+**EXIT=1, exactly 3 of this block's claims fail** — the walking-out posting's two-line count
+(`Next load home in 0 turns` appears), its no-next-load absence, and the PNG-less forage walk
+out — while every presence claim stays green. Restored: green.
+
+**And by re-adding a `Needs 1.20 food a turn from home` line to every posted row's block: EXIT=1,
+exactly 5 failures** — the no-ate/deficit claim (it names the line on all three postings), the three
+postings' line counts, and the PNG-less forage walk's count; the local row's identity stays green, and
+nothing else in the run moves. Restored: green.
+
+## The DOCK's compose-surface claims ride the DENIAL form now (the Hunt verb is retired)
+
+The Parties footer's Hunt verb is gone (`band-city-panel.md` → "THE PARTIES FOOTER HAS NO HUNT
+VERB"), and with it `band_panel_compose_hunt` / `_short` / `_eradicate` / `_no_prey` / `_empty` and
+the hunt-sheet-only guards (`_assert_hunt_sheet_chart`, `_assert_chart_reads_the_settled_party`, the
+dock's trip-bound clause). **The LAYOUT claims those frames carried were never about the hunt** — they
+are about the dock's compose surface — so they moved onto the denial form, which is the dock sheet with
+a quarry to lay out:
+
+- `band_panel_compose_tall` — the tall side dock HOLDS its sheet (`_assert_compose_in_zone`).
+- `band_panel_compose_short` — the height-capped top dock FLOATS it, the float fits the viewport and
+  clears the card, leaves the map clickable (9/9 presses), and an unknown zone box does not float.
+- the mark latched in the short dock is DROPPED on the move back to the tall one.
+- `band_panel_compose_no_prey` — the form with no quarry.
+- `band_panel_compose_empty` — the empty form opened through the REAL **Deny** footer button, the
+  phantom-measurement pair (1498px unsorted, 291px laid out).
+
+**The float's Send is found by `SEND_DENIAL_CONFIRM_META`** now (`SEND_HUNT_CONFIRM_META` is deleted).
+**The Deny button arms the party seed** where the Hunt button armed none, so the block spends it
+(`consume_party_autofill`) before the denial states that stage their own `DENIAL_PARTY` — without that
+the first denial frame opened on the quarry's requirement and failed its verdict and take claims.
+
+**`_assert_footer_offers_no_hunt`** reads the launchers' own `MISSION_LAUNCH_META` values and requires
+exactly `deny · scout · split · trade` — the four that stay, paired with the absence, since a footer
+that lost every button would satisfy the absence alone. Sabotage-verified by re-adding a `hunt`
+launcher: exactly that claim fails, naming `["deny", "hunt", "scout", "split", "trade"]`.
+
+**The quarry-eligibility guards inverted with the rule.** `_assert_quarry_eligibility` used to require
+the near herd REFUSED (inside `hunt_reach`); every herd at a known distance is a quarry now, so it
+requires the near herd TAKEN and a herd at an UNKNOWN distance refused with targeting still armed.
+`_assert_denial_quarry_eligibility` lost its hunt half and asserts the glow at `QUARRY_NO_REACH_BOUND`.
+
+`_assert_dock_chart_carries_the_kit` survives PNG-less — it is arithmetic on `floor_chart_model`,
+which the herd sheet still draws — and is called from the same block.
+
+## The queue HEAD's tool shortfall, the strip's DETAIL line, and the labelled withdrawal
+
+`band-city-panel.md` → "THE HEAD CARRIES THE BUILDERS' TOOL SHORTFALL", "⑤ THE STRIP OPENS ON THE JOB'S
+DETAIL LINE" and "THE WORK ZONE'S WORST CASE AT 418". One state, `_render_queue_head_tools_short_state`,
+appended at the very END of `_render_queue_control_states` (it pushes its own bands and restores the
+three-entry fixture, so no frame above it moves). Seven frames; the run measures **`1599 / 227`**
+(`PASS` / frames) on the merged tree, exit 0.
+
+| frame | what it stages |
+|---|---|
+| `band_panel_queue_head_tools_short` | builders TOE short, nothing open: the head row's amber `◆ builders short of tools` second line |
+| `band_panel_queue_head_tools_short_open` | the head's strip OPEN: the row is one line, the detail line leads with `◆ builders short of tools` beside `Remove from queue`, crop picker below |
+| `band_panel_queue_tame_detail` | a NON-head (Tame) strip open — its price by EQUALITY, the head wearing its line again, `Remove from queue` pressed with REAL input |
+| `band_panel_queue_head_tools_short_expanded` | the same band in the expanded queue mode, nothing open |
+| `band_panel_queue_head_tools_worst_case` | 1920 BOTTOM: fund-mode pools + tool-short head + its crop strip open — **358 of 358, asserted** |
+| `band_panel_queue_head_tools_worst_case_tight` | the same at 1152×720, the narrow shell — **328 of 337, asserted** |
+| `band_panel_queue_head_tools_worst_case_closed` | 1920 BOTTOM, the strip CLOSED — the `◆` line drawn, 334 of 358 |
+
+- **THE PLACEMENT IS ASSERTED** (`_assert_queue_head_tools_mark`, on every strip-closed state and with
+  a non-head strip open): ONE `◆` line, on the head row and inside it, below the face; amber
+  (`KIT_SHORT_SEVERITY`) and a text-presentation glyph (`EMOJI_PLANE_FLOOR`); the row draws the 44px it
+  reserved; and line one is untouched — the face unclipped (123 of 126), the date at 168, the `▸` in
+  the marker column.
+- **THE PAIR: LINE OR CLAUSE, NEVER BOTH.** With the head's strip open no `◆` line is drawn, the head
+  draws and reserves 28px, and the detail line LEADS with the clause in amber
+  (`_queue_tools_clause`). The worst-case frame asserts the same exclusion at the 1920 BOTTOM dock.
+- **THE PAIRED NEGATIVES**: every non-head row's hover checked both ways; the Tame's detail line is
+  its price by EQUALITY, so it carries no clause; the builders' TOE FILLED draws no `◆` line, the head
+  stays one line, the Builders card has no tool line, and the head's OPEN strip does not state it; a
+  PENDING entry is refused by `_queue_entry_tools_short` both stamped at rank 0 and at its real
+  `NOT_IN_ANY_BUILD_QUEUE`, and `_queue_head_tools_height` charges nothing for a queue it leads.
+- **THE TAME'S PRICE IS THE FIXTURE'S, BY EQUALITY.** The three-entry fixture's herd carries no
+  `tame_work_cost` / `tame_upkeep_demand`, which the wire publishes unconditionally, so this state
+  stages them (`_queue_priced_herds`).
+- **THE WITHDRAWAL IS DRIVEN WITH `_drive_click`**, and asserted at its full natural width (150),
+  inside the strip, on the detail line's own row and right of the label.
+- **THE WORST CASE CARRIES A LIVENESS CONJUNCT** — fund-mode row, the head flagged tool-short, strip
+  open, crop picker drawn — because the keeping-pool patch has no basket of its own; the state lends it
+  the queue fixture's, or the strip is 32 and the fit is a fit of a smaller zone.
+- **`_assert_queue_settings_strip`** asserts every strip-open state LEADS with its detail line and
+  reserves within `BUILD_QUEUE_ROOM_SETTINGS_HEIGHT` (54); `_assert_closed_settings_costs_the_board_nothing`
+  adds the crop line and the head's second line to its equality.
+- **Harness finders are off the glyph**: every withdrawal message names `BUILD_QUEUE_UNQUEUE_LABEL`,
+  and the withdrawal's right-edge claim reads the button's own width. Every finder is by
+  `BUILD_QUEUE_UNQUEUE_META`.
+
+**Sabotage-verified.** Letting `_head_row_wears_tools_line` ignore the open strip fails the pair (`◆`
+line drawn with the strip open, head 44px against 28), the worst-case exclusion, and both fits — the
+1920 BOTTOM dock `needs 374px … short by 16`, 1152×720 `needs 344px … short by 7`. Dropping the rank
+test from `_queue_entry_tools_short` fails the head-only set in both modes (ranks `[0, 1, 2]`) and the
+two non-head hovers.
+
+`WIDE_DOCK_QUEUE_ROWS` is **1**, re-measured off a failing run: the strip's reservation went 34 → 54
+with `Remove from queue` beside the detail line, and the 358px box keeps the queue at its floor row.
 
 ## The Trade tab's states live in `tools/band_panel_trade_tab.gd` (issue #731)
 

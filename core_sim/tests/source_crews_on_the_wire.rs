@@ -117,6 +117,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
         LaborAllocation {
             assignments: vec![
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: source,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -130,6 +131,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                 },
                 // The keeping — a row of its own, on the band rather than the tile.
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Agriculture,
                     workers: KEEP_CREW,
                     kit: None,
@@ -138,6 +140,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                 },
                 // …and so is the building, since §2.5.
                 LaborAssignment {
+                    party: None,
                     target: LaborTarget::Builders,
                     workers: BUILD_CREW,
                     kit: None,

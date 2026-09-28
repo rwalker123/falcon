@@ -259,6 +259,7 @@ fn spawn_hunting_band(
             ),
             LaborAllocation {
                 assignments: vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -514,6 +515,7 @@ fn a_gather_crew_wears_only_the_baskets_and_a_kitless_one_wears_nothing() {
                 BandEquipment::start_stocked(&EquipmentConfig::builtin()),
                 LaborAllocation {
                     assignments: vec![LaborAssignment {
+                        party: None,
                         target: LaborTarget::Forage {
                             tile: tile_pos,
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -1429,6 +1431,7 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
             LaborAllocation {
                 assignments: vec![
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Hunt {
                             fauna_id: id.clone(),
                             floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -1440,6 +1443,7 @@ fn every_labor_row_publishes_the_kit_it_is_priced_at() {
                         upkeep_kit: None,
                     },
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Scout,
                         workers: CREW,
                         kit: None,
@@ -1833,6 +1837,7 @@ fn spawn_gathering_band(app: &mut App, baskets_owned: u32) -> (bevy::prelude::En
             wear,
             LaborAllocation {
                 assignments: vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Forage {
                         tile: tile_pos,
                         floor: DEFAULT_ESCAPEMENT_FLOOR,
@@ -2343,6 +2348,7 @@ fn spawn_band_hunting(
     let assignments = rows
         .iter()
         .map(|(herd, kit_id)| LaborAssignment {
+            party: None,
             target: LaborTarget::Hunt {
                 fauna_id: (*herd).to_string(),
                 floor: DEFAULT_ESCAPEMENT_FLOOR,

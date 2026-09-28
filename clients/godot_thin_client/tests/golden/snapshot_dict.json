@@ -4688,6 +4688,7 @@
           "floor": 110.599998,
           "fodder_yield": 46.790001,
           "hunt_useful_workers": 43,
+          "hunters_on_the_road": 119,
           "improvement": "populations[0].labor_assignments[0].improvement",
           "kind": "populations[0].labor_assignments[0].kind",
           "kit_id": "populations[0].labor_assignments[0].kit_id",
@@ -4735,7 +4736,12 @@
               "material_id": "populations[0].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 11.27,
+          "next_load_home_in": 21,
           "overdraws": true,
+          "party_workers": 71,
+          "party_x": 26,
+          "party_y": 15,
           "priority": "normal",
           "realized_yield": 50.82,
           "species": "populations[0].labor_assignments[0].species",
@@ -4746,6 +4752,8 @@
           ],
           "target_x": 117,
           "target_y": 128,
+          "walk_out_remaining": 28,
+          "walk_tiles": 90,
           "wasted_yield": 8.95,
           "workers": 6,
           "workers_needed": 56
@@ -4759,6 +4767,7 @@
           "floor": 48.369999,
           "fodder_yield": 0.25,
           "hunt_useful_workers": 144,
+          "hunters_on_the_road": 12,
           "improvement": "populations[0].labor_assignments[1].improvement",
           "kind": "populations[0].labor_assignments[1].kind",
           "kit_id": "populations[0].labor_assignments[1].kit_id",
@@ -4806,7 +4815,12 @@
               "material_id": "populations[0].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 14.17,
+          "next_load_home_in": 78,
           "overdraws": false,
+          "party_workers": 148,
+          "party_x": 173,
+          "party_y": 184,
           "priority": "high",
           "realized_yield": 67.830002,
           "species": "populations[0].labor_assignments[1].species",
@@ -4817,6 +4831,8 @@
           ],
           "target_x": 44,
           "target_y": 33,
+          "walk_out_remaining": 89,
+          "walk_tiles": 27,
           "wasted_yield": 32.889999,
           "workers": 1,
           "workers_needed": 77
@@ -4830,6 +4846,7 @@
           "floor": 97.739998,
           "fodder_yield": 99.410004,
           "hunt_useful_workers": 121,
+          "hunters_on_the_road": 121,
           "improvement": "populations[0].labor_assignments[2].improvement",
           "kind": "populations[0].labor_assignments[2].kind",
           "kit_id": "populations[0].labor_assignments[2].kit_id",
@@ -4877,7 +4894,12 @@
               "material_id": "populations[0].labor_assignments[2].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 20.030001,
+          "next_load_home_in": 123,
           "overdraws": false,
+          "party_workers": 1,
+          "party_x": 60,
+          "party_y": 49,
           "priority": "low",
           "realized_yield": 40.889999,
           "species": "populations[0].labor_assignments[2].species",
@@ -4888,6 +4910,8 @@
           ],
           "target_x": 167,
           "target_y": 178,
+          "walk_out_remaining": 158,
+          "walk_tiles": 72,
           "wasted_yield": 56.630001,
           "workers": 96,
           "workers_needed": 166
@@ -5746,6 +5770,7 @@
           "floor": 71.43,
           "fodder_yield": 0.66,
           "hunt_useful_workers": 30,
+          "hunters_on_the_road": 118,
           "improvement": "populations[1].labor_assignments[0].improvement",
           "kind": "populations[1].labor_assignments[0].kind",
           "kit_id": "populations[1].labor_assignments[0].kit_id",
@@ -5793,7 +5818,12 @@
               "material_id": "populations[1].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 99.919998,
+          "next_load_home_in": 188,
           "overdraws": true,
+          "party_workers": 198,
+          "party_x": 79,
+          "party_y": 90,
           "priority": "normal",
           "realized_yield": 31.379999,
           "species": "populations[1].labor_assignments[0].species",
@@ -5804,6 +5834,8 @@
           ],
           "target_x": 62,
           "target_y": 51,
+          "walk_out_remaining": 171,
+          "walk_tiles": 105,
           "wasted_yield": 77.68,
           "workers": 195,
           "workers_needed": 163
@@ -5817,6 +5849,7 @@
           "floor": 95.239998,
           "fodder_yield": 2.93,
           "hunt_useful_workers": 41,
+          "hunters_on_the_road": 1,
           "improvement": "populations[1].labor_assignments[1].improvement",
           "kind": "populations[1].labor_assignments[1].kind",
           "kit_id": "populations[1].labor_assignments[1].kit_id",
@@ -5864,7 +5897,12 @@
               "material_id": "populations[1].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 72.489998,
+          "next_load_home_in": 163,
           "overdraws": false,
+          "party_workers": 17,
+          "party_x": 116,
+          "party_y": 105,
           "priority": "high",
           "realized_yield": 16.93,
           "species": "populations[1].labor_assignments[1].species",
@@ -5875,6 +5913,8 @@
           ],
           "target_x": 135,
           "target_y": 146,
+          "walk_out_remaining": 190,
+          "walk_tiles": 32,
           "wasted_yield": 58.150002,
           "workers": 120,
           "workers_needed": 78
@@ -5888,6 +5928,7 @@
           "floor": 20.67,
           "fodder_yield": 59.09,
           "hunt_useful_workers": 184,
+          "hunters_on_the_road": 68,
           "improvement": "populations[1].labor_assignments[2].improvement",
           "kind": "populations[1].labor_assignments[2].kind",
           "kit_id": "populations[1].labor_assignments[2].kit_id",
@@ -5935,7 +5976,12 @@
               "material_id": "populations[1].labor_assignments[2].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 56.73,
+          "next_load_home_in": 78,
           "overdraws": false,
+          "party_workers": 84,
+          "party_x": 5,
+          "party_y": 16,
           "priority": "low",
           "realized_yield": 33.75,
           "species": "populations[1].labor_assignments[2].species",
@@ -5946,6 +5992,8 @@
           ],
           "target_x": 148,
           "target_y": 137,
+          "walk_out_remaining": 33,
+          "walk_tiles": 147,
           "wasted_yield": 31.450001,
           "workers": 17,
           "workers_needed": 5
@@ -6743,6 +6791,7 @@
           "floor": 7.88,
           "fodder_yield": 102.470001,
           "hunt_useful_workers": 17,
+          "hunters_on_the_road": 153,
           "improvement": "populations[2].labor_assignments[0].improvement",
           "kind": "populations[2].labor_assignments[0].kind",
           "kit_id": "populations[2].labor_assignments[0].kit_id",
@@ -6790,7 +6839,12 @@
               "material_id": "populations[2].labor_assignments[0].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 19.51,
+          "next_load_home_in": 67,
           "overdraws": true,
+          "party_workers": 33,
+          "party_x": 4,
+          "party_y": 193,
           "priority": "normal",
           "realized_yield": 82.589996,
           "species": "populations[2].labor_assignments[0].species",
@@ -6801,6 +6855,8 @@
           ],
           "target_x": 175,
           "target_y": 186,
+          "walk_out_remaining": 94,
+          "walk_tiles": 160,
           "wasted_yield": 11.31,
           "workers": 112,
           "workers_needed": 30
@@ -6814,6 +6870,7 @@
           "floor": 26.209999,
           "fodder_yield": 20.6,
           "hunt_useful_workers": 102,
+          "hunters_on_the_road": 22,
           "improvement": "populations[2].labor_assignments[1].improvement",
           "kind": "populations[2].labor_assignments[1].kind",
           "kit_id": "populations[2].labor_assignments[1].kit_id",
@@ -6861,7 +6918,12 @@
               "material_id": "populations[2].labor_assignments[1].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 24.16,
+          "next_load_home_in": 148,
           "overdraws": false,
+          "party_workers": 94,
+          "party_x": 199,
+          "party_y": 10,
           "priority": "high",
           "realized_yield": 107.459999,
           "species": "populations[2].labor_assignments[1].species",
@@ -6872,6 +6934,8 @@
           ],
           "target_x": 198,
           "target_y": 187,
+          "walk_out_remaining": 115,
+          "walk_tiles": 121,
           "wasted_yield": 3.02,
           "workers": 187,
           "workers_needed": 131
@@ -6885,6 +6949,7 @@
           "floor": 94.800003,
           "fodder_yield": 96.949997,
           "hunt_useful_workers": 51,
+          "hunters_on_the_road": 23,
           "improvement": "populations[2].labor_assignments[2].improvement",
           "kind": "populations[2].labor_assignments[2].kind",
           "kit_id": "populations[2].labor_assignments[2].kit_id",
@@ -6932,7 +6997,12 @@
               "material_id": "populations[2].labor_assignments[2].material_yield[2].material_id"
             }
           ],
+          "net_rate_home": 3.01,
+          "next_load_home_in": 109,
           "overdraws": false,
+          "party_workers": 151,
+          "party_x": 34,
+          "party_y": 23,
           "priority": "low",
           "realized_yield": 75.220001,
           "species": "populations[2].labor_assignments[2].species",
@@ -6943,6 +7013,8 @@
           ],
           "target_x": 69,
           "target_y": 80,
+          "walk_out_remaining": 172,
+          "walk_tiles": 10,
           "wasted_yield": 63.009998,
           "workers": 198,
           "workers_needed": 40

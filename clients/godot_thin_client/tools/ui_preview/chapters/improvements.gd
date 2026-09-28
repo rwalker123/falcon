@@ -2582,7 +2582,7 @@ const BOTH_METERS_FIELD_TURNS := 30
 ## spends — so whichever state follows a TALLER sheet captures its card before the shrink lands and
 ## renders it clamped to the viewport with the internal scroll on. Measured four ways: with the block
 ## disabled the frame returns to its recorded hash; moving the block to the END of the chapter moves
-## `food_forage_out_of_range` instead (the next sheet along, same mechanism); closing the sheet does
+## `food_forage_out_of_range` (now `food_forage_far_party`) instead (the next sheet along, same mechanism); closing the sheet does
 ## not help (a hidden card is not re-fitted); and neither does restoring the card's rect by hand. It
 ## is a pre-existing fit-timing fragility this block is the first state to stand in front of, and the
 ## frame it moves still renders every claim that state asserts.

@@ -965,15 +965,6 @@ const HUNT_GATE_META := "hunt_gate"
 # fight is winnable' to a harness asking whether it is blocked"* — a good rule, and it retires with
 # the only node that ever wore it. `HUNT_GATE_META` is untouched.
 
-## The "send a hunting expedition" CONFIRM button, as `Button` meta — set by BOTH hosts that build
-## one (the herd drawer's compose control and the Band panel's parties compose sheet). Same reason as
-## the rung meta above, only more so: this button's face is the raid VERDICT
-## (`SourceForecast.style_send_hunt_button` writes "Send Expedition" / "Send Anyway (≈54
-## turns)" / "Send (brings nothing home)" / "Herd too lean to raid"), so text is the one thing a
-## harness cannot match on. `tools/command_guard.gd` presses it through this meta — it is the ONLY
-## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
-const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
-
 ## --- THE CARGO ROW'S HANDLES (issue #620) --------------------------------------------------------
 ## A shipment cargo row, as `HBoxContainer` meta, carrying the row's own KEY
 ## (`BandPanelController.TRADE_FOOD_ROW_KEY` / `TRADE_FODDER_ROW_KEY` / a batch key). **The row used to
@@ -1027,6 +1018,12 @@ const MISSION_LAUNCH_META := "mission_launch"
 ## `Hunt Here` / the raid verdict on the animal one), so a harness that found it BY text could only
 ## ever confirm the string it already assumed. Identity is the only stable handle.
 const COMPOSE_COMMIT_META := "compose_commit"
+
+## The compose sheet's WORK PARTY section, as meta on its host (`DrawerComposeController.
+## _mount_work_party_section`), and each of its lines carrying that line's own text — the
+## `WORK_ROW_PARTY_META` treatment, so a harness reads what was drawn rather than recomposing it.
+const WORK_PARTY_SECTION_META := "work_party_section"
+const WORK_PARTY_LINE_META := "work_party_line"
 
 ## The improvement CONTROL's node, as `Control` meta — the stable handle on the second axis, for the
 ## same reason `POLICY_RUNG_META` is the stable handle on a rung. Its value is the IMPROVEMENT key
@@ -1550,80 +1547,6 @@ static func build_floor_chart(model: Dictionary, on_change: Callable) -> VBoxCon
 # tags are untouched: a fight the party cannot make at all still says so. What was removed is the
 # CLEARED-gate half. `SourceForecast.hunt_crew_split_model` went with the mount, and
 # `labor-ui.md` → "RETIRED — the hunt crew-split sentence" records what the removal costs.
-
-## **THE EXPEDITION'S READOUT — the same box, the same three registers, a different question.** The
-## branch used to answer with one wrapped bbcode sentence carrying every fact at once (the animals,
-## the turns, the split, the food and the waste), beside a local sheet that laid the same kinds of
-## fact out in a bounded well. Two sheets on one panel, reading nothing alike.
-##
-## What must NOT carry over is the local readout's PER-TURN framing: the header
-## (`EXPEDITION_TRIP_ROW_HEADER`), the absent `now → after` on every row, and a verdict about the
-## trip's length rather than about which of the crew and the floor binds — all three because a raid
-## is one bounded errand, not a rate a resident crew settles into.
-##
-## Only a DELIVERING trip reaches here (`SourceForecast.hunt_trip_delivers`); the refused states keep
-## their sentence, an empty box being worse than the line it replaced.
-##
-## **IT LIVES IN THE SHARED WIDGET LAYER BECAUSE TWO CONTROLLERS RENDER IT.** It was private to
-## `DrawerComposeController` while the Band panel's dock sheet answered the same question with a
-## one-line bbcode sentence — and the two drifted, as a copied control always does: on a Wild Fowl
-## flock the drawer laid out a full box and the dock rendered NOTHING. Both sheets call this now, so
-## the raid has one readout. Everything it needs (`trip`, the quarry's name, the composed floor)
-## arrives as a PARAMETER — no controller state, which is what let it move at all.
-static func mount_trip_readout(parent: VBoxContainer, trip: Dictionary, quarry: String,
-        floor_value: float) -> void:
-    var column := build_readout_box(parent)
-    # The waste rides the yields row's own `waste` slot, exactly as the local hunt's does — a kill the
-    # party could not haul is the animal web's concern on both branches, and it is amber either way.
-    var waste_pct := float(trip.get("waste_pct", 0.0))
-    column.add_child(build_yields_row(
-        _trip_yield_rows(trip, quarry),
-        HudStyle.INK,
-        "",
-        HudStyle.HEALTHY,
-        SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
-            if waste_pct > 0.0 else "",
-        SourceForecast.EXPEDITION_TRIP_ROW_HEADER))
-    column.add_child(build_verdict_line(SourceForecast.hunt_trip_verdict(trip)))
-    # THE ASIDE IS THE FLOOR HINT AND NOTHING ELSE. The local readout's other line — the live teaching
-    # rate — has no counterpart here: an expedition accrues no husbandry (the gap
-    # `FLOOR_LEARNING_HINT_EXPEDITION` already names in the learning zone), so a teaching line would
-    # quote a multiplier this party never earns. A zone with nothing to say renders no aside at all,
-    # rather than a dashed rule over empty space.
-    # The COMPOSED floor, not the estimate row's nearest sample: the hint explains the preset the
-    # player is holding, and the sampling is a fact about the forecast table rather than about them.
-    var hint := HudFormat.floor_hint(floor_value, SourceForecast.LABOR_KIND_HUNT, true)
-    if hint != "":
-        column.add_child(build_readout_aside(
-            [readout_aside_line(hint)]))
-## The trip's payload as yields rows: the ANIMALS the party brings back, then whatever accounts those
-## bodies pay.
-##
-## **THE ANIMAL COUNT LEADS, IN THE LOCAL HUNT ROW'S OWN IDIOM** — its `YIELD_ROW_NUMBER` /
-## `YIELD_ROW_UNIT` overrides, the quarry as the unit and `YIELD_ACCOUNT_NONE` as the account,
-## because a body is not an account. It borrows the `≈` FACE vocabulary and deliberately not the
-## `/turn` UNIT one: this is a whole-trip count, and the header above already says so.
-##
-## The food row goes through `SourceForecast.yield_rows`, so the render-only-where-the-vector-pays
-## rule keeps one definition. `YIELD_ACCOUNT_NONE` as the zero account means NO row is synthesised
-## when it is empty; that state cannot arrive here anyway (it is `empty`, and the caller took the
-## sentence branch), so a fabricated zero would be a reading of nothing. (A trade row rode beside the
-## food one until arc #527 retired that account; the MATERIAL rows are what replaced it, and on an
-## inedible quarry they are the only rows under the animal count.)
-##
-## No `after` on any row: a trip has no holding state to arrow toward.
-static func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictionary]:
-    var animals := int(trip.get("animals", 0))
-    var rows: Array[Dictionary] = [{
-        SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
-        SourceForecast.YIELD_ROW_VALUE: float(animals),
-        YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % animals,
-        YIELD_ROW_UNIT: quarry,
-    }]
-    rows.append_array(SourceForecast.yield_rows(
-        float(trip.get("food", 0.0)), 0.0, SourceForecast.YIELD_ACCOUNT_NONE, {},
-        trip.get(SourceForecast.TRIP_DELIVERED_MATERIAL_KEY, [])))
-    return rows
 
 ## **THE TWO CREW TARGETS** (`docs/plan_harvest_floor.md` §7.6) — the distinction the rate model never
 ## had. A floor and a crew are independent statements, so there are two different worker numbers and

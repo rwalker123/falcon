@@ -704,6 +704,62 @@ pub enum QueryPayload {
     /// where there is no world yet, and answered from the live config before the world gate — the
     /// same shape [`Self::ListSaves`] takes and for the same reason.
     FactionCapacity(FactionCapacityQuery),
+    /// *"What does this crew bring home per turn off this source, and how far do they walk?"* — the
+    /// work row's compose sheet, on both webs. See [`WorkPartyForecastQuery`].
+    WorkPartyForecast(WorkPartyForecastQuery),
+}
+
+/// **WHICH SOURCE A WORK-PARTY QUESTION IS ABOUT** — a herd or a patch, the two webs a party works.
+#[derive(Debug, Clone, PartialEq)]
+pub enum WorkPartySource {
+    Hunt {
+        herd_id: String,
+    },
+    Forage {
+        x: u32,
+        y: u32,
+        /// `flora_config.json` species keys the crew carries home. **Empty takes the whole
+        /// basket**, exactly as an assignment's own take selection does.
+        take_species: Vec<String>,
+    },
+}
+
+/// *"What does THIS crew, off THIS band, carrying THIS kit, bring home per turn off THIS source at
+/// THIS floor — and how far do they walk?"*
+///
+/// Answered by stepping the **same** caravan function the turn publishes a row's `netRateHome`
+/// through (`core_sim::work_party::forecast_caravan`), at the same pricing, so the sheet and the
+/// assigned row it becomes quote one number.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkPartyForecastQuery {
+    pub faction_id: u32,
+    /// The asking band's durable `BandId` — its position, its live gear and any party it already
+    /// has on this source price the answer.
+    pub band_id: u64,
+    pub source: WorkPartySource,
+    /// An `equipment.json` roster id, **required** — the rule every forecast query follows.
+    pub kit_id: String,
+    pub workers: u32,
+    pub floor: f32,
+}
+
+/// **The answer to [`WorkPartyForecastQuery`].**
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WorkPartyForecastReply {
+    /// `false` inside the band's work range: no party, no walk, and `rate_home` is the ordinary
+    /// local row's steady rate. Every walk field reads `0` with it.
+    pub posts_a_party: bool,
+    /// **Food per turn arriving at the home band** — what the assigned row will publish as
+    /// `netRateHome`.
+    pub rate_home: f32,
+    /// The one-way walk in tiles, from the apron and shortened by any road.
+    pub walk_tiles: u32,
+    /// The same walk in turns.
+    pub walk_turns: u32,
+    /// The expected hunters on the road at any one time, averaged over the horizon.
+    pub hunters_on_the_road: f32,
+    /// The 1-based turn the first load lands, or `0` for none within the horizon.
+    pub first_load_turn: u32,
 }
 
 /// The grid the player is **configuring**, not the one the server is running: the ceiling is a
@@ -819,6 +875,8 @@ pub enum QueryReply {
     SaveOp(SaveOpReply),
     /// The answer to a seat claim — a command too, riding here for the same reason.
     SeatClaim(SeatClaimReply),
+    /// The work row's caravan forecast.
+    WorkPartyForecast(WorkPartyForecastReply),
 }
 
 /// **Whether this connection now drives that faction.**
@@ -970,6 +1028,8 @@ pub mod query_error {
     pub const NO_ACTIVE_WORLD: &str = "no_active_world";
     /// No live herd carries the queried id.
     pub const UNKNOWN_HERD: &str = "unknown_herd";
+    /// A work-party question named a tile carrying no forage patch.
+    pub const UNKNOWN_PATCH: &str = "unknown_patch";
     /// No band of the queried faction carries the queried `BandId`.
     pub const UNKNOWN_BAND: &str = "unknown_band";
     /// The queried `kit_id` names no `equipment.json` roster entry.
@@ -2104,6 +2164,11 @@ impl CommandEnvelope {
                         QueryPayload::ListSaves => {
                             pb::query_command::Query::ListSaves(pb::ListSavesQuery {})
                         }
+                        QueryPayload::WorkPartyForecast(ask) => {
+                            pb::query_command::Query::WorkPartyForecast(work_party_query_to_proto(
+                                ask,
+                            ))
+                        }
                         QueryPayload::FactionCapacity(ask) => {
                             pb::query_command::Query::FactionCapacity(pb::FactionCapacityQuery {
                                 width: ask.width,
@@ -2600,6 +2665,9 @@ impl CommandEnvelope {
                             max_workers: ask.max_workers,
                         })
                     }
+                    pb::query_command::Query::WorkPartyForecast(ask) => {
+                        QueryPayload::WorkPartyForecast(work_party_query_from_proto(ask)?)
+                    }
                 };
                 CommandPayload::Query {
                     request_id: cmd.request_id,
@@ -2755,6 +2823,16 @@ impl QueryReplyEnvelope {
                     slots: slots.iter().map(save_slot_info_to_proto).collect(),
                 })
             }
+            QueryReply::WorkPartyForecast(answer) => {
+                pb::query_reply_envelope::Reply::WorkPartyForecast(pb::WorkPartyForecastReply {
+                    posts_a_party: answer.posts_a_party,
+                    rate_home: answer.rate_home,
+                    walk_tiles: answer.walk_tiles,
+                    walk_turns: answer.walk_turns,
+                    hunters_on_the_road: answer.hunters_on_the_road,
+                    first_load_turn: answer.first_load_turn,
+                })
+            }
             QueryReply::SaveOp(reply) => {
                 pb::query_reply_envelope::Reply::SaveOp(save_op_reply_to_proto(reply))
             }
@@ -2823,6 +2901,16 @@ impl QueryReplyEnvelope {
                         .collect(),
                     armed_crew: answer.armed_crew,
                     weapon_item_id: answer.weapon_item_id,
+                })
+            }
+            pb::query_reply_envelope::Reply::WorkPartyForecast(answer) => {
+                QueryReply::WorkPartyForecast(WorkPartyForecastReply {
+                    posts_a_party: answer.posts_a_party,
+                    rate_home: answer.rate_home,
+                    walk_tiles: answer.walk_tiles,
+                    walk_turns: answer.walk_turns,
+                    hunters_on_the_road: answer.hunters_on_the_road,
+                    first_load_turn: answer.first_load_turn,
                 })
             }
             pb::query_reply_envelope::Reply::ListSaves(reply) => QueryReply::ListSaves(
@@ -3044,6 +3132,56 @@ fn reload_config_kind_from_proto(value: i32) -> Result<ReloadConfigKind, Command
     }
 }
 
+/// [`WorkPartyForecastQuery`] onto the wire.
+fn work_party_query_to_proto(ask: &WorkPartyForecastQuery) -> pb::WorkPartyForecastQuery {
+    pb::WorkPartyForecastQuery {
+        faction_id: ask.faction_id,
+        band_id: ask.band_id,
+        kit_id: ask.kit_id.clone(),
+        workers: ask.workers,
+        floor: ask.floor,
+        source: Some(match &ask.source {
+            WorkPartySource::Hunt { herd_id } => {
+                pb::work_party_forecast_query::Source::Hunt(pb::WorkPartyHuntSource {
+                    herd_id: herd_id.clone(),
+                })
+            }
+            WorkPartySource::Forage { x, y, take_species } => {
+                pb::work_party_forecast_query::Source::Forage(pb::WorkPartyForageSource {
+                    x: *x,
+                    y: *y,
+                    take_species: take_species.clone(),
+                })
+            }
+        }),
+    }
+}
+
+/// [`WorkPartyForecastQuery`] off the wire. A question naming no source is refused as a missing
+/// payload rather than read as some default source.
+fn work_party_query_from_proto(
+    ask: pb::WorkPartyForecastQuery,
+) -> Result<WorkPartyForecastQuery, CommandDecodeError> {
+    let source = match ask.source.ok_or(CommandDecodeError::MissingPayload)? {
+        pb::work_party_forecast_query::Source::Hunt(hunt) => WorkPartySource::Hunt {
+            herd_id: hunt.herd_id,
+        },
+        pb::work_party_forecast_query::Source::Forage(forage) => WorkPartySource::Forage {
+            x: forage.x,
+            y: forage.y,
+            take_species: forage.take_species,
+        },
+    };
+    Ok(WorkPartyForecastQuery {
+        faction_id: ask.faction_id,
+        band_id: ask.band_id,
+        source,
+        kit_id: ask.kit_id,
+        workers: ask.workers,
+        floor: ask.floor,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3072,6 +3210,56 @@ mod tests {
     /// **The crew-take curve survives the wire, question and answer both.**
     ///
     /// Every field is given a DISTINCT value — `low < likely < high`, ascending crews, a floor that
+    /// **The work party's question and answer survive the envelope on both webs** — every field a
+    /// distinct, non-round value so a transposition between two of them cannot pass.
+    #[test]
+    fn the_work_party_forecast_round_trips_through_the_wire() {
+        for source in [
+            WorkPartySource::Hunt {
+                herd_id: "aurochs_north".to_string(),
+            },
+            WorkPartySource::Forage {
+                x: 17,
+                y: 23,
+                take_species: vec!["wild_emmer".to_string(), "hazel".to_string()],
+            },
+        ] {
+            let payload = CommandPayload::Query {
+                request_id: 77,
+                query: QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+                    faction_id: 3,
+                    band_id: 9_001,
+                    source,
+                    kit_id: "big_game".to_string(),
+                    workers: 6,
+                    floor: 0.375,
+                }),
+            };
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            assert_eq!(
+                CommandEnvelope::decode(&bytes).expect("decode").payload,
+                payload
+            );
+        }
+        let reply = QueryReplyEnvelope {
+            request_id: 77,
+            reply: QueryReply::WorkPartyForecast(WorkPartyForecastReply {
+                posts_a_party: true,
+                rate_home: 3.25,
+                walk_tiles: 6,
+                walk_turns: 7,
+                hunters_on_the_road: 1.5,
+                first_load_turn: 11,
+            }),
+        };
+        let bytes = reply.encode_to_vec().expect("encode");
+        assert_eq!(QueryReplyEnvelope::decode(&bytes).expect("decode"), reply);
+    }
+
     /// is not a round number — because the failure this guards is a transposition, and two fields
     /// that happen to carry the same number cannot detect being swapped. The proto and the Rust
     /// mirror are hand-written on both sides of a generated struct; nothing but this notices when

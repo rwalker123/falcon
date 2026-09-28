@@ -47,7 +47,7 @@ use godot::prelude::*;
 use sim_runtime::{
     CommandEncodeError, CommandEnvelope, CommandPayload, DenialRaidForecastQuery,
     FactionCapacityQuery, HuntCrewTakeQuery, HuntTripForecastQuery, QueryPayload, QueryReply,
-    QueryReplyEnvelope, MAX_PROTO_FRAME,
+    QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartySource, MAX_PROTO_FRAME,
 };
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -94,6 +94,16 @@ pub(crate) const QUERY_KIND_DENIAL_RAID: &str = "denial_raid_forecast";
 /// `combat_config.expedition_danger_multiplier`, so the two replies may never borrow each other's
 /// rows.
 pub(crate) const QUERY_KIND_HUNT_CREW_TAKE: &str = "hunt_crew_take";
+/// **The work party's question** — *"what does this crew bring HOME per turn off this source, and how
+/// far does it walk?"* — asked by the ordinary hunt and forage compose sheets past the band's apron
+/// (`core_sim::forecast_query::answer_work_party_forecast`). One kind for both webs; the ask's
+/// `source_kind` says which, and the answer comes back under this same kind.
+pub(crate) const QUERY_KIND_WORK_PARTY: &str = "work_party_forecast";
+/// The two values of a work-party ask's `source_kind`, spelled as `ForecastQuery.gd` spells them. An
+/// ask naming neither is REFUSED rather than defaulted to one web: a forecast for the wrong source is
+/// worse than no forecast.
+pub(crate) const WORK_PARTY_SOURCE_HUNT: &str = "hunt";
+pub(crate) const WORK_PARTY_SOURCE_FORAGE: &str = "forage";
 /// **The save channel's four asks and its two answer kinds**, spelled as `SaveSlots.gd` spells them.
 ///
 /// `list_saves` is a genuine `QueryPayload`; the other three are `CommandPayload`s that *answer on
@@ -236,6 +246,27 @@ pub(crate) fn dispatch(
             floor: dict_f32(ask, "floor"),
             max_workers: dict_u32(ask, "max_workers"),
         }),
+        QUERY_KIND_WORK_PARTY => {
+            let source = match dict_string(ask, "source_kind").as_str() {
+                WORK_PARTY_SOURCE_HUNT => WorkPartySource::Hunt {
+                    herd_id: dict_string(ask, "herd_id"),
+                },
+                WORK_PARTY_SOURCE_FORAGE => WorkPartySource::Forage {
+                    x: dict_u32(ask, "x"),
+                    y: dict_u32(ask, "y"),
+                    take_species: dict_string_array(ask, "take_species"),
+                },
+                other => return Err(format!("unknown work-party source kind {other:?}")),
+            };
+            QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+                faction_id: dict_u32(ask, "faction_id"),
+                band_id: dict_u64(ask, "band_id"),
+                source,
+                kit_id: dict_string(ask, "kit_id"),
+                workers: dict_u32(ask, "workers"),
+                floor: dict_f32(ask, "floor"),
+            })
+        }
         // Listing reads save HEADERS off disk and is answered before the world gate, but it still
         // queues behind the sim's current turn, so it takes the save channel's patience rather than
         // the forecast one's.
@@ -293,7 +324,8 @@ fn names_a_faction(query: &QueryPayload) -> bool {
         // state: a named band's live equipment wear, its idle workers, its take curve.
         QueryPayload::HuntTripForecast(_)
         | QueryPayload::DenialRaidForecast(_)
-        | QueryPayload::HuntCrewTake(_) => true,
+        | QueryPayload::HuntCrewTake(_)
+        | QueryPayload::WorkPartyForecast(_) => true,
         // The save headers on disk and the roster ceiling for a grid size. Neither reads a faction's
         // state, and both are asked before a world — and therefore before a seat — exists.
         QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) => false,
@@ -502,6 +534,20 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
             // what each item is FOR, so the sheet cannot name the missing gear on its own.
             let _ = dict.insert("armed_crew", i64::from(reply.armed_crew));
             let _ = dict.insert("weapon_item_id", reply.weapon_item_id.as_str());
+        }
+        Ok(QueryReply::WorkPartyForecast(reply)) => {
+            let _ = dict.insert("ok", true);
+            let _ = dict.insert("kind", QUERY_KIND_WORK_PARTY);
+            // `false` inside the apron: no party, every walk field `0`, and `rate_home` is the
+            // ordinary local row's steady rate.
+            let _ = dict.insert("posts_a_party", reply.posts_a_party);
+            let _ = dict.insert("rate_home", f64::from(reply.rate_home));
+            let _ = dict.insert("walk_tiles", i64::from(reply.walk_tiles));
+            let _ = dict.insert("walk_turns", i64::from(reply.walk_turns));
+            // A MEAN over the horizon, so fractional — the sheet rounds it for the sentence.
+            let _ = dict.insert("hunters_on_the_road", f64::from(reply.hunters_on_the_road));
+            // 1-based; `0` = no load lands within the forecast's horizon.
+            let _ = dict.insert("first_load_turn", i64::from(reply.first_load_turn));
         }
         Ok(QueryReply::ListSaves(slots)) => {
             let _ = dict.insert("ok", true);
@@ -715,6 +761,20 @@ fn dict_f32_array(dict: &VarDictionary, key: &str) -> Vec<f32> {
         .collect()
 }
 
+fn dict_string_array(dict: &VarDictionary, key: &str) -> Vec<String> {
+    let Some(value) = dict.get(key) else {
+        return Vec::new();
+    };
+    let Ok(array) = value.try_to::<VarArray>() else {
+        return Vec::new();
+    };
+    array
+        .iter_shared()
+        .filter_map(|entry| entry.try_to::<GString>().ok())
+        .map(|entry| entry.to_string())
+        .collect()
+}
+
 fn query_sender() -> Sender<QueryRequest> {
     QUERY_SENDER
         .get_or_init(|| {
@@ -775,6 +835,16 @@ mod tests {
                 kit_id: String::new(),
                 floor: 0.0,
                 max_workers: 0,
+            }),
+            QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+                faction_id: 0,
+                band_id: 1,
+                source: WorkPartySource::Hunt {
+                    herd_id: String::new(),
+                },
+                kit_id: String::new(),
+                workers: 0,
+                floor: 0.0,
             }),
         ] {
             assert!(names_a_faction(&query));

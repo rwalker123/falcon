@@ -413,6 +413,18 @@ fn create_populations<'a>(
                                 // COMPLETE kit, over the `workers` already on the row. Appended
                                 // last.
                                 kitWorkersHolding: assignment.kit_workers_holding,
+                                // **THE WORK PARTY** — where this row's workers are standing when
+                                // it is not where the band is, who is on the road, how far the
+                                // walk is, and the rate arriving home. `partyWorkers == 0` is the
+                                // ordinary local row. Appended last.
+                                partyX: assignment.party_x,
+                                partyY: assignment.party_y,
+                                partyWorkers: assignment.party_workers,
+                                huntersOnTheRoad: assignment.hunters_on_the_road,
+                                walkTiles: assignment.walk_tiles,
+                                walkOutRemaining: assignment.walk_out_remaining,
+                                nextLoadHomeIn: assignment.next_load_home_in,
+                                netRateHome: assignment.net_rate_home,
                             },
                         )
                     })
@@ -1250,6 +1262,14 @@ fn decode_labor_assignment(
         hunt_useful_workers: assignment.huntUsefulWorkers(),
         priority: to_state_source_priority(assignment.priority())?,
         kit_workers_holding: assignment.kitWorkersHolding(),
+        party_x: assignment.partyX(),
+        party_y: assignment.partyY(),
+        party_workers: assignment.partyWorkers(),
+        hunters_on_the_road: assignment.huntersOnTheRoad(),
+        walk_tiles: assignment.walkTiles(),
+        walk_out_remaining: assignment.walkOutRemaining(),
+        next_load_home_in: assignment.nextLoadHomeIn(),
+        net_rate_home: assignment.netRateHome(),
     })
 }
 
