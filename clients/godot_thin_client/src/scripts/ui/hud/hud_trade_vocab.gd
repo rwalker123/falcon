@@ -55,6 +55,10 @@ const CAUSE_PARTY_PROVISIONS := 6
 ## destination that died. Route/In; names the destination as counterparty and the same `party_id` as
 ## the `shipment_out` it undoes (`TradeLedger.net_shipment_crossings`).
 const CAUSE_SHIPMENT_RETURNED := 7
+## ANOTHER PEOPLE's party joining this band with what it carried (issue #512 — a defection). Route/In;
+## names the band the party was sent out from as counterparty. Not trade, and not the band's own
+## party — the food and fodder popovers state it on its own row (`DisclosureController`).
+const CAUSE_PARTY_DEFECTED := 8
 
 ## **WHAT COUNTS AS TRADE.** The Local arm is `pooled`; the Route arm is a shipment either way. A
 ## band's own party coming home, a party's launch larder and a split's dowry are NEVER on the tab —

@@ -645,23 +645,6 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         let _ = dict.insert("knowledge_fragments", &array);
     }
 
-    if let Some(migration) = cohort.migration() {
-        let mut migration_dict = VarDictionary::new();
-        let _ = migration_dict.insert("destination", migration.destination() as i64);
-        let _ = migration_dict.insert("eta", migration.eta() as i64);
-        if let Some(fragments) = migration.fragments() {
-            let mut fragment_array = VarArray::new();
-            for fragment in fragments {
-                let dict = fragment_to_dict(fragment);
-                fragment_array.push(&dict.to_variant());
-            }
-            let _ = migration_dict.insert("fragments", &fragment_array);
-        } else {
-            let _ = migration_dict.insert("fragments", &VarArray::new());
-        }
-        let _ = dict.insert("migration", &migration_dict);
-    }
-
     // Early-Game Labor (slice 3b): the band's source-centric labor allocation. Each entry is a
     // staffed Forage tile / Hunt herd / Scout / Warrior demand. `harvestTask`/`scoutTask` are now
     // always null server-side and no longer decoded.
@@ -1635,7 +1618,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //   link       0 local, 1 route
     //   cause      0 pooled, 1 dowry_out, 2 dowry_in, 3 shipment_out, 4 shipment_in, 5 party_home,
     //              6 party_provisions, 7 shipment_returned (undelivered cargo coming home, naming
-    //              the destination its shipment_out named)
+    //              the destination its shipment_out named), 8 party_defected (another people's
+    //              party joined this band with what it carried, naming the band it came from)
     // ⛔ A POOLED ROW NEVER NAMES A COUNTERPARTY (`counterparty_band_id == 0`) — the invariant, not a
     // gap. `party_id` is the carrying party's `band_id` (0 = none), the key one shipment groups by.
     // Always inserted (empty array when absent) so the band dict has a stable shape.

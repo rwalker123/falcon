@@ -256,7 +256,6 @@ fn world_with_a_queue_knowing(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             // **A durable id, because a checkpoint keys bands by it** — a band without one is not
@@ -938,7 +937,6 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             core_sim::BandId(FIXTURE_BAND),
@@ -1882,7 +1880,6 @@ fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FactionId(0),
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 

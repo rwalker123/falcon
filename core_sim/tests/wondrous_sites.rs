@@ -96,7 +96,6 @@ fn spawn_cohort(app: &mut App, faction: FactionId, size: u32) {
         generation: 0 as GenerationId,
         faction,
         knowledge: Vec::new(),
-        migration: None,
     });
 }
 

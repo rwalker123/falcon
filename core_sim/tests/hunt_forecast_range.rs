@@ -207,7 +207,6 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
@@ -897,7 +896,6 @@ fn a_gather_reports_a_point_and_pays_it() {
             generation: 0 as GenerationId,
             faction: FactionId(0),
             knowledge: Vec::new(),
-            migration: None,
         };
         app.world
             .spawn((

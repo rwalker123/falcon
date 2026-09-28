@@ -673,6 +673,8 @@ offers are **396** on a wide horizontal dock and **941** on a tall side one. It 
 first, which was wrong in both directions — below the 461 the block needs, so a box between the two
 would have taken the full branch and clipped, and clearing the wide dock's own 396 by 4px, which is
 not a threshold but a coincidence.
+**It is 550 now**: the Open Borders row (issue #512) joined the band zone ABOVE the tier's cut, and the
+full block re-measured at **531px** with it in (`band_panel_faction`), past the old 480.
 
 **The shell threshold follows by derivation**: it is a sum over the LIVE zone list, so the page's flip
 moved from 1569 to the 1190 a band's three cost. The harness's equality claim now pins the SEPARATOR

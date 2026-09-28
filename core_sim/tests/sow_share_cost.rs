@@ -214,7 +214,6 @@ fn spawn_the_farming_band(app: &mut App, tile: bevy::prelude::Entity, source: UV
             generation: 0 as GenerationId,
             faction: FactionId(0),
             knowledge: Vec::new(),
-            migration: None,
         },
         StartingUnit {
             kind: "BandForager".to_string(),

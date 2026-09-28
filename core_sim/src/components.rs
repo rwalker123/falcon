@@ -822,6 +822,11 @@ pub enum TransferCause {
     /// counterparty (the destination it was bound for) and the same party, so a reader can net the
     /// two. Never [`Self::PartyHome`], which is the band's own pack and not a shipment at all.
     ShipmentReturned,
+    /// **Another people's detached party joined this band, bringing what it carried** — its pack
+    /// and any shipment aboard (`systems::advance_party_defection`). Never [`Self::PartyHome`],
+    /// which means *our own* party came home: these are strangers who arrived. The counterparty is
+    /// the band the party was sent out from, with its people, so the row says where they came from.
+    PartyDefected,
 }
 
 impl TransferCause {
@@ -836,7 +841,8 @@ impl TransferCause {
             | TransferCause::ShipmentIn
             | TransferCause::PartyHome
             | TransferCause::PartyProvisions
-            | TransferCause::ShipmentReturned => TransferLink::Route,
+            | TransferCause::ShipmentReturned
+            | TransferCause::PartyDefected => TransferLink::Route,
         }
     }
 
@@ -852,6 +858,7 @@ impl TransferCause {
             TransferCause::PartyHome => 5,
             TransferCause::PartyProvisions => 6,
             TransferCause::ShipmentReturned => 7,
+            TransferCause::PartyDefected => 8,
         }
     }
 }
@@ -1194,15 +1201,12 @@ pub struct PopulationCohort {
     /// `0` = none. Recomputed each turn by `advance_population_migration`; on the client wire as
     /// `PopulationCohortState.last_immigrated`.
     pub last_immigrated: u32,
-    /// Turns this band has been simulated. Gates knowledge-migration (`simulate_population`) so a
-    /// freshly-spawned band must settle for `migration_min_settled_turns` before its population can
-    /// emigrate to a neighbor. Incremented each turn by `simulate_population`; on the client wire as
-    /// `PopulationCohortState.age_turns`.
+    /// Turns this band has been simulated. Incremented each turn by `simulate_population`; on the
+    /// client wire as `PopulationCohortState.age_turns`.
     pub age_turns: u32,
     pub generation: GenerationId,
     pub faction: FactionId,
     pub knowledge: Vec<KnowledgeFragment>,
-    pub migration: Option<PendingMigration>,
 }
 
 /// The dominant negative driver of a cohort's morale on a given turn, surfaced so the client can
@@ -1724,6 +1728,17 @@ impl ExpeditionMission {
         }
     }
 
+    /// **What kind of party this is, as the player calls it** — *"scouting"* in *"Your scouting
+    /// party has left your control."* A denial raid is a *raiding* party: it is not out to hunt.
+    pub fn party_noun(&self) -> &'static str {
+        match self {
+            ExpeditionMission::Scout => "scouting",
+            ExpeditionMission::Hunt { .. } => "hunting",
+            ExpeditionMission::Deny { .. } => "raiding",
+            ExpeditionMission::Trade { .. } => "trading",
+        }
+    }
+
     /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
     /// `Hunt { fauna_id, target_species, floor }` from `target_herd` + `target_species` + `floor`;
     /// `"deny"` reconstructs `Deny { fauna_id, target_species }` from the two strings alone — it
@@ -2035,6 +2050,19 @@ pub struct Expedition {
     /// party turns for home still carrying the cargo, and [`crate::systems::fold_party_into_band`]
     /// settles it into the home band beside the party's own pack.
     pub cargo: LocalStore,
+    /// **How far this party has drifted toward joining another people** (`docs/plan_band_fission.md`
+    /// §"Scouts: a party goes whole"). `0` for a party with no reason to leave.
+    ///
+    /// Each turn its home band is below the wellbeing push threshold **and** it saw, on its own
+    /// sweep this turn, a foreign band that passes the pull test and belongs to an open people,
+    /// `advance_party_defection` adds `migration_move_fraction(home morale)`; any other turn resets
+    /// it to `0`. At `expedition_config.json` → `defection.party_pull_threshold` the whole party
+    /// joins that band.
+    ///
+    /// **Checkpointed with the rest of the party** (it rides `ExpeditionRecord` whole), because it
+    /// is accrued across turns: a rollback that zeroed it would silently delay a defection the
+    /// discarded future had already made inevitable.
+    pub defection_pull: Scalar,
 }
 
 /// Permanent settlement seeded by a founding action.
@@ -6557,14 +6585,6 @@ pub fn fragments_from_contract(fragments: &[ContractKnowledgeFragment]) -> Vec<K
         .iter()
         .map(KnowledgeFragment::from_contract)
         .collect()
-}
-
-/// Pending migration payload queued on a population cohort.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PendingMigration {
-    pub destination: FactionId,
-    pub eta: u16,
-    pub fragments: Vec<KnowledgeFragment>,
 }
 
 impl Default for Tile {

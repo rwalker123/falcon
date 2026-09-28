@@ -702,6 +702,45 @@ func _event_dock_handover_lost_fixture() -> Array:
 			"label": HANDOVER_LOST_SIM_LABEL, "detail": HANDOVER_LOST_DETAIL, "seq": 912},
 	]
 
+## ---- A PARTY DEFECTS, AND PEOPLE CROSS TO ANOTHER PEOPLE (issue #512) ------------------------
+## The sim's own shapes (`core_sim` `systems::expeditions` / `systems::population::
+## push_migration_events`), staged as the TWO SEATS that see them — the feed is per-faction on the
+## wire, so a frame carrying both halves of one defection is a frame no server sends.
+const DEFECTION_KIND := "party_defected"
+
+## THE LOSING SEAT: a party gone, and people leaving one of its bands for another people. The
+## defection line names NO place — no `band=`, no coordinate — so it renders no jump and an empty
+## detail phrase: the party is out of contact and the notice says only that it is gone.
+const DEFECTION_LOST_LABEL := "Your scouting party has left your control."
+const DEFECTION_LOST_DETAIL := "side=lost expedition=4294967311"
+const MIGRATED_OUT_SIM_LABEL := "3 left Band 4 to join People 1"
+const MIGRATED_OUT_LABEL := "3 left Thornhollow to join People 1"
+const MIGRATED_OUT_DETAIL := "band=4 count=3 direction=out to=1"
+
+## THE GAINING SEAT: the same party arriving, and another people's leavers joining a band.
+const DEFECTION_GAINED_SIM_LABEL := "A party of 3 joined Band 4"
+const DEFECTION_GAINED_LABEL := "A party of 3 joined Thornhollow"
+const DEFECTION_GAINED_DETAIL := "band=4 count=3 from=1 side=gained"
+const MIGRATED_IN_SIM_LABEL := "2 from People 1 joined Band 4"
+const MIGRATED_IN_LABEL := "2 from People 1 joined Thornhollow"
+const MIGRATED_IN_DETAIL := "band=4 count=2 direction=in from=1"
+
+func _event_dock_defection_lost_fixture() -> Array:
+	return [
+		{"tick": 93, "kind": DEFECTION_KIND, "faction": 0,
+			"label": DEFECTION_LOST_LABEL, "detail": DEFECTION_LOST_DETAIL, "seq": 921},
+		{"tick": 93, "kind": "migrated", "faction": 0,
+			"label": MIGRATED_OUT_SIM_LABEL, "detail": MIGRATED_OUT_DETAIL, "seq": 922},
+	]
+
+func _event_dock_defection_gained_fixture() -> Array:
+	return [
+		{"tick": 93, "kind": DEFECTION_KIND, "faction": 0,
+			"label": DEFECTION_GAINED_SIM_LABEL, "detail": DEFECTION_GAINED_DETAIL, "seq": 931},
+		{"tick": 93, "kind": "migrated", "faction": 0,
+			"label": MIGRATED_IN_SIM_LABEL, "detail": MIGRATED_IN_DETAIL, "seq": 932},
+	]
+
 ## Assert the event bar clears one HUD region — **and that the claim is not vacuous**.
 ##
 ## The HUD's regions occupy different vertical bands, so most bar/region pairs share no `y` at all
@@ -2573,6 +2612,51 @@ func run(harness) -> void:
 			% _preview_event_rung(event_dock, HANDOVER_LOST_SIM_LABEL),
 		_preview_event_rung(event_dock, HANDOVER_LOST_SIM_LABEL) == HudEventVocab.RUNG_ALERT
 			and _preview_event_label_count(event_dock, HANDOVER_LOST_SIM_LABEL, true) == 1)
+
+	# ---- A PARTY DEFECTS (issue #512) — the losing seat, then the gaining one ------------------
+	# Rendered at the DEFAULT floor, where the player lives: the defection line is ALERT and must be
+	# there; the cross-people `migrated` line is NOTABLE and must be there too.
+	event_dock.set_detail_level(HudEventVocab.DEFAULT_DETAIL_LEVEL)
+	event_dock.set_band_labels(HANDOVER_BAND_LABELS)
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_defection_lost_fixture())
+	await h._settle()
+	await h._save("event_dock_party_defected_lost")
+	h._assert_hud("a party defecting is an ALERT on the side that lost it (got %s)"
+			% _preview_event_rung(event_dock, DEFECTION_LOST_LABEL),
+		_preview_event_rung(event_dock, DEFECTION_LOST_LABEL) == HudEventVocab.RUNG_ALERT)
+	h._assert_hud("…and visible at the default floor",
+		_preview_visible_label_count(event_dock, DEFECTION_LOST_LABEL) == 1)
+	# **THE LOST LINE NAMES NO PLACE.** No `band=`, no coordinate, so nothing to jump to and nothing
+	# in the detail column — `side` and `expedition` are both machine tokens.
+	var lost_phrase := EventDockPanel.detail_phrase(DEFECTION_LOST_DETAIL)
+	h._assert_hud("the lost defection line's detail column is EMPTY (\"%s\")" % lost_phrase,
+		lost_phrase == "")
+	h._assert_hud("…and it offers no jump anywhere (link bands %s)"
+			% str(_preview_dock_link_bands(event_dock)),
+		_preview_dock_link_bands(event_dock).is_empty())
+	# The cross-people leavers: the band is the roster's own name; the people is the sim's `People 1`,
+	# the handover rows' own spelling — the client has no people-name join to make.
+	h._assert_hud("a cross-people leave reads with the roster's band name (\"%s\")" % MIGRATED_OUT_LABEL,
+		_preview_event_label_count(event_dock, MIGRATED_OUT_LABEL, true) == 1)
+	var out_phrase := EventDockPanel.detail_phrase(MIGRATED_OUT_DETAIL)
+	h._assert_hud("…and its `to=` faction id never reaches the bar (\"%s\")" % out_phrase,
+		not out_phrase.contains("To") and not out_phrase.contains("1"))
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_defection_gained_fixture())
+	await h._settle()
+	await h._save("event_dock_party_defected_gained")
+	h._assert_hud("the GAINING side is ALERT too — one rung per kind (got %s)"
+			% _preview_event_rung(event_dock, DEFECTION_GAINED_SIM_LABEL),
+		_preview_event_rung(event_dock, DEFECTION_GAINED_SIM_LABEL) == HudEventVocab.RUNG_ALERT)
+	h._assert_hud("…and says the roster's own name for the band the party joined",
+		_preview_event_label_count(event_dock, DEFECTION_GAINED_LABEL, true) == 1)
+	h._assert_hud("the gained line's detail column is EMPTY — no raw `from=` id (\"%s\")"
+			% EventDockPanel.detail_phrase(DEFECTION_GAINED_DETAIL),
+		EventDockPanel.detail_phrase(DEFECTION_GAINED_DETAIL) == "")
+	h._assert_hud("a cross-people arrival reads with the roster's band name (\"%s\")" % MIGRATED_IN_LABEL,
+		_preview_event_label_count(event_dock, MIGRATED_IN_LABEL, true) == 1)
+	event_dock.set_band_labels({})
 
 	event_dock.queue_free()
 	await h.get_tree().process_frame

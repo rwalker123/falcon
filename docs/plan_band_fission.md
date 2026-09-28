@@ -318,6 +318,93 @@ kind bound to `EXPEDITION_CONFIG_PATH`. Each dial is one manifest row:
 The ranges are wider than the values are likely to want, deliberately: a dial you cannot push past
 where it plays well cannot show you *why* it plays well.
 
+---
+
+## Defection — people leave to join another people (#512)
+
+A split is the player choosing to divide a band. Defection is the band's people choosing to leave
+**you**. Scouts, part of a band and — rarely — a whole band are all the same question: *what makes
+one of your people join somebody else's?* So there is **one rule**, and scouts are a case of it.
+
+### One rule: the unhappy trickle, with the same-people filter lifted
+
+The rule is the wellbeing trickle that already moves people between a faction's own bands —
+`advance_population_migration` (`core_sim/src/systems/labor.rs`, `plan_civ_wellbeing.md` Layer
+3b). It stops refusing destinations of another people. Nothing else about its shape changes.
+
+- **Push — who wants to leave.** Only an **unhappy** band: morale below
+  `wellbeing_config.json` → `migration.morale_threshold` (0.25). It sheds
+  `total × migration_move_fraction(morale)` a turn — at most `max_rate` (15%), at rock-bottom
+  morale — mostly working-age, some families (`dependent_weight`). A well-fed band never loses
+  anyone.
+- **Pull — what "better off" means.** The destination band's morale is at least
+  `attractive_morale` (0.5) **and** clearly above the source's (`min_morale_gap`). Morale is the
+  one number that already sums what a person would weigh — food, shelter, crowding.
+- **Perception — only a band you have actually seen.** The destination is within `base_reach` (4
+  tiles) of the source **and** a live tie joins those *two bands* (`ConnectionLedger::tie_is_live`).
+  Contact is band-to-band, never people-to-people: one scout meeting one rival camp does not make
+  every band of both peoples eligible.
+- **Your own people come first.** If a band of the source's own people qualifies, the leavers go
+  there. They join strangers only when no band of their own people will have them.
+- **The receiving people must agree.** Each people has one faction-wide setting, **Open Borders**
+  (default open). Closed, its bands are never a destination for another people's leavers. Leavers
+  with nowhere open to go **stay**, and the trickle's existing *trapped* rule makes their grievance
+  grow faster — which is the cost of a closed border to the people shut out.
+- **Knowledge travels with people.** A cross-people move hands the destination people the same
+  share of the source band's knowledge as the share of its people who left
+  (`scale_migration_fragments`, scaled by `moved / total`). The brain drain is proportional, not
+  all-or-nothing.
+
+**The same code runs both ways.** "Their people join you" is this rule with source and destination
+swapped; there is no second path.
+
+### A whole band goes over only in the extreme
+
+A band shrinks under the trickle; it does not change sides in a turn. The one exception: when a
+cross-people move leaves the source band with fewer working-age people than the fission parent
+floor (`expedition_config.json` → `settle.parent_min_workers`), **the remnant goes over with
+them** — the band changes people as a band, and both peoples are told
+(`push_band_changed_hands_events`). A band too small to staff itself does not linger as a husk.
+
+### Scouts: a party goes whole
+
+A detached party (any `Expedition`) is a few people far from home, so a fraction of it is not a
+thing. The party carries its **home band's** morale — they are that band's people.
+
+- Each turn the home band is below the push threshold **and** the party can see (within
+  `base_reach` of its own tile, observed on its own sweep this turn) a foreign band that passes the
+  pull test and belongs to an **open** people, the party accrues `migration_move_fraction(home
+  morale)` of *pull*. A turn without such a band resets it to zero.
+- At `expedition_config.json` → `defection.party_pull_threshold` the **whole party** joins that
+  band — its people and everything it carries.
+- **You are told one generic line and nothing else**: *"Your scouting party has left your
+  control."* No reason, no place. Out of communication range you have no way to know why they did
+  not come back; the notice says only that they are gone. The receiving people is told a party
+  joined one of its bands.
+
+### The player cannot refuse
+
+A defection is a consequence you absorb, not a prompt. The lever you hold is the one that causes
+it — keep your people fed and content — and, for arrivals, your own Open Borders setting.
+
+### What this replaced
+
+The previous mechanism flipped a **happy**, settled, knowledgeable band whole to the first people
+its own people had met anywhere (`simulate_population`'s `PendingMigration`). Once #644 put rivals on
+the map it fired on turn 5 of an ordinary start and swapped the two founding camps. It is deleted
+with its three dials (`turn_pipeline_config.json` → `migration_morale_threshold`,
+`migration_min_settled_turns`, `migration_eta_ticks`).
+
+### Defection levers
+
+| Lever | Opening | What it means | Too low | Too high |
+|---|---|---|---|---|
+| `expedition_config.json` → `defection.party_pull_threshold` | **0.3** | Pull a party must accrue before it goes. At rock-bottom home morale (rate 0.15) that is 2 turns in sight; at morale 0.2 (rate 0.03), 10. | A party defects the turn it glimpses a camp, before any sense of *deciding*. | Parties never sit near a camp long enough, so scouts never defect. |
+
+Every other number is the wellbeing trickle's own (`migration.*`), deliberately: one rule has one set
+of dials. The party lever ships as an `expedition` row in the Workbench tuning manifest, beside the
+`settle` rows.
+
 ## Sequencing
 
 1. **Design doc (this document).** ✅ #509.
@@ -330,8 +417,8 @@ where it plays well cannot show you *why* it plays well.
    **with** the gates they govern, because a gate that cannot be moved during a playtest cannot be
    judged during one.
 4. **Naming** — #271, generalized so it serves a split band and not only the player's first one.
-5. **Blocked on #513, then:** the emergent half — #284 (drift → independent polity, on the Q1
-   trigger), #512 (scouts defecting to a better-off faction), #458 (cross-faction proximity trade).
+5. **The emergent half, now that #513 put rivals on the map:** #512 (§Defection above), #284
+   (drift → independent polity, on the Q1 trigger), #458 (cross-faction proximity trade).
 
 ## Cross-cutting touchpoints
 

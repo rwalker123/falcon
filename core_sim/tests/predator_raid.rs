@@ -191,7 +191,6 @@ fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> En
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             LaborAllocation {
                 assignments,

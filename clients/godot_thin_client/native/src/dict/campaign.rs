@@ -145,6 +145,23 @@ pub(crate) fn voice_medium_to_array(
     array
 }
 
+/// The viewer's own FACTION POLICIES (docs/plan_band_fission.md §Defection) — one row, the viewer's
+/// faction. `open_borders`: whether another people's unhappy leavers, and defecting parties, may join
+/// this faction's bands. Every faction starts open; `set_open_borders <faction> <open|closed>` flips
+/// it.
+pub(crate) fn faction_policies_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::FactionPolicyState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let _ = dict.insert("open_borders", state.openBorders());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
 /// The Telling (docs/plan_the_telling.md): one register's rendering of a player-visible line.
 /// `register` is a FREE-FORM string by design — a new voice register needs no schema change — so
 /// the decoder never enumerates them and the client builds its toggle from what is present.

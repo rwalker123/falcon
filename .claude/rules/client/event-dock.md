@@ -67,6 +67,23 @@ answer rather than a gap: there is no client-side name for a band this people no
 (`People 1` is its own fallback), so there is nothing to join them to, and minting a client-side
 naming rule for a people is a decision this table is not the place to take.
 
+**`party_defected` is ALERT on both sides — `band_changed_hands` one scale down** (issue #512,
+`docs/plan_band_fission.md` §Defection). A whole party walks off to another people on the sim's own
+turn: irreversible, not player-initiated, and reported nowhere else. It is one event as two rows
+(`side=lost` / `side=gained`), and **the gained side is Alert too because a rung is per KIND**: the
+only per-row override is `DETAIL_STATUS_STYLE`, which matches a `key=value` fragment on ANY kind, so
+a `side=gained` entry there would demote `band_changed_hands`' gained half with it. **The lost row
+names no place by design** — its detail is `side=lost expedition=<bits>` alone, both keys hidden, so
+it renders an empty detail phrase and no `Work tab` link: the party is out of contact and the notice
+says only that it is gone. The gained row (`A party of N joined Band Y`, `band= count= from=
+side=gained`) takes the ordinary `band=` join.
+
+**A cross-people `migrated` line takes the handover's treatment exactly.** The source side reads
+`N left Band X to join People F` with `to=<faction>`, the destination side `N from People F joined
+Band Y` with `from=<faction>`; `DETAIL_KEY_HIDDEN` drops `to` / `from` for every kind, and the people
+stays the sim's own `People F` — the same no-client-naming-rule decision stated above for
+`band_changed_hands`.
+
 **`trade_delivered` is NOTABLE, and it is the one expedition event that happens where OTHER PEOPLE
 live** (arc #527). That novelty is what earns it a kind of its own sim-side; it is not what decides
 its rung, because the ladder asks how LOUDLY, not how new. A shipment landing sits exactly beside

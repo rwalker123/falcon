@@ -589,10 +589,6 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.pending_reveal_y = vec![0u32; ROWS];
         cohort.knowledge_fragments = rows();
         // The cohort's optional tables, on the even rows only — see [`seeded_on`].
-        cohort.migration = seeded_on(row).then(|| PendingMigrationState {
-            fragments: rows(),
-            ..Default::default()
-        });
         cohort.harvest_task = seeded_on(row).then(HarvestTaskState::default);
         cohort.scout_task = seeded_on(row).then(ScoutTaskState::default);
         cohort.accessible_stockpile = seeded_on(row).then(|| AccessibleStockpileState {
@@ -956,6 +952,7 @@ fn seed_snapshot() -> WorldSnapshot {
         stance.axes = rows();
     }
     s.voice_medium = rows();
+    s.faction_policies = rows();
     s.opening_loadout.pickable_materials = rows();
     s.opening_loadout.material_defaults = rows();
     s.opening_loadout.craftable_recipe_ids = rows();

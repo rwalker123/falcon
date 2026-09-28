@@ -231,7 +231,6 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entit
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),

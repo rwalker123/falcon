@@ -54,6 +54,12 @@ pub enum CommandPayload {
         faction: u32,
         policy: SecurityPolicyKind,
     },
+    /// **Open Borders** (`docs/plan_band_fission.md` §Defection) — whether another people's leavers
+    /// may join `faction`'s bands. Open is every faction's default.
+    SetOpenBorders {
+        faction: u32,
+        open: bool,
+    },
     AdjustCounterIntelBudget {
         faction: u32,
         reserve: Option<f32>,
@@ -1562,6 +1568,12 @@ impl CommandEnvelope {
                     },
                 )
             }
+            CommandPayload::SetOpenBorders { faction, open } => {
+                pb::command_envelope::Command::SetOpenBorders(pb::SetOpenBordersCommand {
+                    faction: *faction,
+                    open: *open,
+                })
+            }
             CommandPayload::AdjustCounterIntelBudget {
                 faction,
                 reserve,
@@ -2273,6 +2285,10 @@ impl CommandEnvelope {
                     policy,
                 }
             }
+            pb::command_envelope::Command::SetOpenBorders(cmd) => CommandPayload::SetOpenBorders {
+                faction: cmd.faction,
+                open: cmd.open,
+            },
             pb::command_envelope::Command::AdjustCounterIntelBudget(cmd) => {
                 CommandPayload::AdjustCounterIntelBudget {
                     faction: cmd.faction,

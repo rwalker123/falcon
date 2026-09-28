@@ -81,7 +81,6 @@ fn cohort(tile: Entity, working: f32, stores: LocalStore, faction: FactionId) ->
         generation: 0 as GenerationId,
         faction,
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 

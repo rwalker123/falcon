@@ -192,6 +192,20 @@ const RUNG_BY_KIND := {
 	# `side=lost|gained` names which. It takes the Alert rung on BOTH sides: a band arriving is as
 	# irreversible as a band leaving, and the gaining player has no other surface that reports it.
 	"band_changed_hands": RUNG_ALERT,
+	# **A WHOLE PARTY WALKING OFF TO ANOTHER PEOPLE** (issue #512, `docs/plan_band_fission.md`
+	# §Defection) — `band_changed_hands`' twin one scale down, and Alert on the same argument: it is
+	# irreversible, not player-initiated, and the dock is the only surface that reports it. Also one
+	# event as two rows, `side=lost|gained`.
+	#
+	# **BOTH SIDES ARE ALERT, and the gained side would have been Notable if it could be.** The only
+	# per-row override this vocabulary has is `DETAIL_STATUS_STYLE`, which matches a `key=value`
+	# fragment on ANY kind — so a `side=gained` row there would demote `band_changed_hands`' gained
+	# half too. One rung per kind, and the louder one is right for the side that lost people.
+	#
+	# The lost row names NO place by design (*"Your scouting party has left your control."*, detail
+	# `side=lost expedition=<bits>`): no `band=` and no coordinate, so it renders no jump and an empty
+	# detail phrase — the party is out of contact and the notice says only that it is gone.
+	"party_defected": RUNG_ALERT,
 	# **A MATERIAL THE STANDING BILLS EAT FASTER THAN IT ARRIVES** (`docs/plan_standing_upkeep.md`
 	# §4.9 item 12). Alert, and it NAMES THE BAND — this line is what replaced the faction `Gear`
 	# row's `⚠ 1 band` → *which band* drill-down, and a faction-level warning that says something is

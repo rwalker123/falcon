@@ -284,7 +284,6 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FactionId(0),
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 
@@ -352,6 +351,7 @@ fn spawn_party(
                 cargo: core_sim::LocalStore::new(),
                 // Derived per-turn telemetry; a raid never reaches `AwaitingOrders`, so it stays
                 // empty for the party's whole life.
+                defection_pull: core_sim::Scalar::zero(),
             },
         ))
         .id()

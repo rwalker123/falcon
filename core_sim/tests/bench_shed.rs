@@ -83,7 +83,6 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 generation: 0 as GenerationId,
                 faction: FACTION,
                 knowledge: Vec::new(),
-                migration: None,
             },
             StartingUnit {
                 kind: "BandForager".to_string(),

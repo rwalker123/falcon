@@ -246,7 +246,6 @@ fn spawn_hunters(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
@@ -710,7 +709,6 @@ fn spawn_resident_crew(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             LaborAllocation {
@@ -1507,7 +1505,6 @@ fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FactionId(0),
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 
@@ -1667,6 +1664,7 @@ fn spawn_raid_party(
                 pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
                 cargo: core_sim::LocalStore::new(),
+                defection_pull: core_sim::Scalar::zero(),
             },
         ))
         .id()

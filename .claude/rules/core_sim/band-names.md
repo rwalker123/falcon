@@ -47,7 +47,7 @@ game, and a cache would be extra checkpoint state earning nothing.
 `hydrology.rs` and `flora_config.rs`; a mixer is a contract about bits, and three worlds that must
 reproduce from a seed cannot each own a copy that could drift by one shift.
 
-## Four founding sites: mint at two, INHERIT at two
+## Four founding sites: mint at two, INHERIT at two — and a re-mint on a clash
 
 | Site | What it does |
 |---|---|
@@ -55,6 +55,7 @@ reproduce from a seed cannot each own a copy that could drift by one shift.
 | `systems/fission.rs` — a splinter | **Mints a fresh name.** A splinter walks out with the parent's food, kit and culture, but the parent is still standing and two living bands may not answer to one name. It is a new band. |
 | `bin/server.rs` — a scout party | **Inherits the home band's `BandName`.** |
 | `bin/server.rs` — a hunt / trade / raid party | **Inherits the home band's `BandName`.** |
+| `systems/labor.rs` — a band that goes over to another people | **Keeps its name, re-mints only on a clash.** A remnant flip (`factions.md` → "A band that changes people takes what is its own") keeps the name it had unless a band of the new people already answers to it; then it mints on the **new** people's permutation, drawing until a slot is free, and its parties out carry the new name |
 
 > **A detached party must NOT mint.** A party is the home band's people walking somewhere, not a
 > second identity. Minting there would consume a name slot the faction never founded a band for, and

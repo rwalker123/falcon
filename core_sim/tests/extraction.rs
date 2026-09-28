@@ -157,7 +157,6 @@ fn spawn_band_of(
                 generation: 0 as GenerationId,
                 faction: FACTION,
                 knowledge: Vec::new(),
-                migration: None,
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {

@@ -229,7 +229,6 @@ fn spawn_band(app: &mut App, tile: UVec2, assignments: Vec<LaborAssignment>) -> 
                 generation: 0 as GenerationId,
                 faction: FACTION,
                 knowledge: Vec::new(),
-                migration: None,
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),

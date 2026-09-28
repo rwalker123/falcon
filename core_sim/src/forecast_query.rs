@@ -1280,7 +1280,6 @@ mod tests {
                     generation: 0,
                     faction,
                     knowledge: Vec::new(),
-                    migration: None,
                 },
                 BandEquipment::start_stocked(&EquipmentConfig::builtin()),
             ))

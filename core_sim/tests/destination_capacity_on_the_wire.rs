@@ -295,7 +295,6 @@ fn spawn_the_farming_band(
             generation: 0 as GenerationId,
             faction: FactionId(0),
             knowledge: Vec::new(),
-            migration: None,
         },
         StartingUnit {
             kind: "BandForager".to_string(),
@@ -685,7 +684,6 @@ fn spawn_the_herding_band(
             generation: 0 as GenerationId,
             faction: FactionId(0),
             knowledge: Vec::new(),
-            migration: None,
         },
         StartingUnit {
             kind: "BandHunter".to_string(),

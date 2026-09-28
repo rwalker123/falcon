@@ -163,7 +163,6 @@ fn spawn_band(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             allocation,
         ))

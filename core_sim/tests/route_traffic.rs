@@ -138,7 +138,6 @@ fn spawn_band(app: &mut App, (x, y): (u32, u32), food: i64) -> Entity {
                 generation: 0 as GenerationId,
                 faction: TEST_FACTION,
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             BandId(NEXT_TEST_BAND_ID.fetch_add(1, Ordering::Relaxed)),

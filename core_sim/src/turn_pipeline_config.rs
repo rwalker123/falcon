@@ -81,9 +81,6 @@ pub struct PopulationPhaseConfig {
     culture_bias_scale: f32,
     attrition_morale_scale: f32,
     growth_clamp: f32,
-    migration_morale_threshold: f32,
-    migration_eta_ticks: u16,
-    migration_min_settled_turns: u16,
 }
 
 impl PopulationPhaseConfig {
@@ -114,18 +111,6 @@ impl PopulationPhaseConfig {
     pub fn growth_clamp(&self) -> Scalar {
         scalar_from_f32(self.growth_clamp.abs())
     }
-
-    pub fn migration_morale_threshold(&self) -> Scalar {
-        scalar_from_f32(self.migration_morale_threshold)
-    }
-
-    pub fn migration_eta_ticks(&self) -> u16 {
-        self.migration_eta_ticks
-    }
-
-    pub fn migration_min_settled_turns(&self) -> u16 {
-        self.migration_min_settled_turns
-    }
 }
 
 impl Default for PopulationPhaseConfig {
@@ -138,9 +123,6 @@ impl Default for PopulationPhaseConfig {
             culture_bias_scale: 0.5,
             attrition_morale_scale: 0.5,
             growth_clamp: 0.06,
-            migration_morale_threshold: 0.78,
-            migration_eta_ticks: 2,
-            migration_min_settled_turns: 5,
         }
     }
 }

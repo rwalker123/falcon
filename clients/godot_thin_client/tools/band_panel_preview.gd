@@ -2397,6 +2397,10 @@ func _ready() -> void:
 	# also why it is put back at the end of this block.
 	_hud.update_intensification([_faction_knowledge_fixture()])
 	_hud.update_discoveries([_faction_discoveries_fixture()])
+	# **OPEN BORDERS (issue #512) — the page's one control, staged OPEN (the sim's default).** Pushed
+	# before the page is reached so every faction frame carries the row it now always has, and the
+	# band zone's extent below is measured with it in.
+	_hud.update_faction_policies([_faction_policy_fixture(true)])
 	_push_bands(_faction_roster())
 	_hud.cycle_panel_band(BandCityPanel.CYCLE_PREV)
 	_panel.set_dock(SIDE_LEFT)
@@ -2423,6 +2427,9 @@ func _ready() -> void:
 	# (`BandCityPanel._reparent_zones` DETACHES the rest), so a zone read from another tab has never
 	# been laid out and every one of its rows measures zero.
 	_assert_faction_band_zone_blocks()
+	# THE OPEN BORDERS TOGGLE: open as staged, a press sends `closed`, and the sim's answer re-renders
+	# it — photographed closed, then put back open for every frame below.
+	await _assert_faction_open_borders()
 
 	# The WORK tab — the workforce bar and the per-band roster. A separate frame because the narrow
 	# shell renders exactly ONE zone, so the state above cannot show it at all.
@@ -11326,6 +11333,60 @@ func _assert_faction_band_zone_tier() -> void:
 		not _has_label_containing(zone, HudWorkVocab.FACTION_HEADER_DISCOVERIES.to_upper()))
 	_assert_band_panel("faction band tier: …and KEEPS Settling",
 		_has_label_containing(zone, HudWorkVocab.FACTION_HEADER_SETTLING.to_upper()))
+	# …and the Open Borders toggle, which sits ABOVE the tier's cut: it is the one thing on the page
+	# the player can DO, and that is what the capped tier exists to keep.
+	_assert_band_panel("faction band tier: …and KEEPS the Open Borders toggle",
+		_find_meta_control(zone, FactionRollup.OPEN_BORDERS_TOGGLE_META) != null)
+
+## THE FACTION PAGE'S OPEN BORDERS TOGGLE (issue #512). Four claims, each a thing a PNG cannot carry:
+##   • the toggle is up and CHECKED, because the snapshot said open;
+##   • pressing it sends `{faction: 0, open: false}` — and `Main.format_open_borders` turns that into
+##     the exact line the server parses;
+##   • the page does NOT hold the state: the sim's `closed` answer, pushed through the real ingest,
+##     re-renders the row UNCHECKED with the closed consequence beside it (`band_panel_faction_borders_closed`);
+##   • and the ingest alone re-renders — no `populations` push — since a command's recapture may carry
+##     no roster change.
+func _assert_faction_open_borders() -> void:
+	var zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var toggle := _find_meta_control(zone, FactionRollup.OPEN_BORDERS_TOGGLE_META) if zone != null else null
+	if not (toggle is CheckBox):
+		_assert_band_panel("faction open borders: the toggle is on the band zone", false)
+		return
+	_assert_band_panel("faction open borders: an OPEN policy renders the toggle checked",
+		(toggle as CheckBox).button_pressed)
+	_assert_band_panel("faction open borders: …with the open consequence beside it",
+		_has_label_containing(zone, HudWorkVocab.FACTION_OPEN_BORDERS_OPEN_VALUE))
+	var sent: Array[Dictionary] = []
+	var sink := func(payload: Dictionary) -> void: sent.append(payload)
+	_hud.open_borders_requested.connect(sink)
+	(toggle as CheckBox).button_pressed = false
+	_hud.open_borders_requested.disconnect(sink)
+	_assert_band_panel("faction open borders: unchecking sends {faction %d, open false} (got %s)" % [
+			HudConst.PLAYER_FACTION_ID, str(sent)],
+		sent.size() == 1 and int(sent[0].get("faction", -1)) == HudConst.PLAYER_FACTION_ID
+		and sent[0].has("open") and not bool(sent[0]["open"]))
+	if sent.size() == 1:
+		var line := String(MAIN_SCRIPT.format_open_borders(sent[0]).get("line", ""))
+		_assert_band_panel("faction open borders: the line sent is 'set_open_borders %d closed' (got '%s')" % [
+				HudConst.PLAYER_FACTION_ID, line],
+			line == "set_open_borders %d %s" % [HudConst.PLAYER_FACTION_ID,
+				HudWorkVocab.OPEN_BORDERS_TOKEN_CLOSED])
+	# The sim's answer — through the real ingest and nothing else.
+	_hud.update_faction_policies([_faction_policy_fixture(false)])
+	await _settle()
+	await _save("band_panel_faction_borders_closed")
+	zone = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	toggle = _find_meta_control(zone, FactionRollup.OPEN_BORDERS_TOGGLE_META) if zone != null else null
+	_assert_band_panel("faction open borders: a CLOSED policy re-renders the toggle unchecked",
+		toggle is CheckBox and not (toggle as CheckBox).button_pressed)
+	_assert_band_panel("faction open borders: …with the closed consequence beside it",
+		zone != null and _has_label_containing(zone, HudWorkVocab.FACTION_OPEN_BORDERS_CLOSED_VALUE))
+	_hud.update_faction_policies([_faction_policy_fixture(true)])
+	await _settle()
+
+## The player faction's `faction_policies` row, the shape the native decoder hands GDScript.
+func _faction_policy_fixture(open: bool) -> Dictionary:
+	return {"faction": HudConst.PLAYER_FACTION_ID, "open_borders": open}
 
 ## THE THREE-ZONE BODY ITSELF: the panel really is hosting three columns, in the declared order, and
 ## the PARTIES column takes the flank width the layout gave it.

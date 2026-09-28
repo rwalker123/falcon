@@ -153,7 +153,6 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: f32) -> bevy::prelude::Ent
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

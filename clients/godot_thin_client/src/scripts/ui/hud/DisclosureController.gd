@@ -258,15 +258,16 @@ func _link_transfer_lines(band: Dictionary) -> Array[String]:
 ##
 ## **THE POPOVER STILL ACCOUNTS FOR THE WHOLE LARDER CHANGE.** The crossings summed per link equal the
 ## arm by construction (`LaborAllocation::book_crossing`), and the Route arm is exactly shipments
-## (out, in and returned) + party home + party rations — so this row plus `_party_transfer_rows`' two is the retired
-## whole-arm row, split three ways. `⇄ Local exchange` keeps the whole Local arm (pooling and a
+## (out, in and returned) + party home + party rations + a defected party's pack — so this row plus
+## `_party_transfer_rows`' three is the retired whole-arm row, split four ways. `⇄ Local exchange` keeps the whole Local arm (pooling and a
 ## split's dowry), unchanged.
 func _shipment_net(band: Dictionary, commodity: String) -> float:
     return TradeLedger.cause_net(band, commodity, HudTradeVocab.SHIPMENT_CAUSES)
 
 ## **WHAT THE BAND'S OWN PARTIES MOVED THIS TURN** — `[label, signed net]` pairs for `▲ Brought home`
 ## (a hunt's drop-off, a party folding home) and `▼ Party rations` (the larder a party took when it
-## launched). Neither is trade and neither is in the hunting income (the sim books a homecoming as
+## launched), plus `▲ Joined from another people` (a defecting party's pack, issue #512). None is
+## trade. The first two are not in the hunting income either (the sim books a homecoming as
 ## "neither income nor consumption"), so they are stated beside Hunted / Gathered, where the player
 ## looks for the band's own gathering. The caller omits each under its account's floor.
 func _party_transfer_rows(band: Dictionary, commodity: String) -> Array:
@@ -275,6 +276,10 @@ func _party_transfer_rows(band: Dictionary, commodity: String) -> Array:
             TradeLedger.cause_net(band, commodity, [HudTradeVocab.CAUSE_PARTY_HOME])],
         [DetailFormat.TRANSFER_LABEL_PARTY_RATIONS,
             TradeLedger.cause_net(band, commodity, [HudTradeVocab.CAUSE_PARTY_PROVISIONS])],
+        # **ANOTHER PEOPLE'S PARTY JOINING, with its pack** (issue #512). Route/In like `party_home`,
+        # so leaving it out would break the popover's accounting of the whole Route arm.
+        [DetailFormat.TRANSFER_LABEL_PARTY_DEFECTED,
+            TradeLedger.cause_net(band, commodity, [HudTradeVocab.CAUSE_PARTY_DEFECTED])],
     ]
 
 ## The FODDER larder's two flows, the rows under the `Fodder:` summary: what the band's fodder Fields

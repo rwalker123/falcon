@@ -67,6 +67,9 @@ pub struct ExpeditionConfig {
     /// Band-fission floors — the two worker counts a `split_band` must clear, one on each half
     /// (`docs/plan_band_fission.md` §Q2).
     pub settle: SettleConfig,
+    /// Party defection — when a detached party leaves its people for a better-off one
+    /// (`docs/plan_band_fission.md` §Defection).
+    pub defection: DefectionConfig,
 }
 
 /// Hunting-expedition levers (`docs/plan_exploration_and_sites.md` §2b). A hunt party follows a
@@ -220,6 +223,24 @@ pub struct SettleConfig {
     pub parent_min_workers: u32,
 }
 
+/// Party-defection levers (`docs/plan_band_fission.md` §"Scouts: a party goes whole").
+///
+/// A detached party is a few people far from home, so a fraction of it is not a thing: it goes
+/// whole or not at all. Each turn its home band is below the wellbeing push threshold and it has a
+/// qualifying foreign band in sight, it accrues `migration_move_fraction(home morale)` of **pull**
+/// (`advance_party_defection`); a turn without one resets it. Every other number is the wellbeing
+/// trickle's own (`wellbeing_config.json` → `migration.*`) — one rule has one set of dials.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DefectionConfig {
+    /// The pull a party must accrue before it joins the band it has been watching. At rock-bottom
+    /// home morale (rate `max_rate` 0.15) the shipped `0.3` is two turns in sight; at morale 0.2
+    /// (rate 0.03) it is ten.
+    ///
+    /// **`0` is legal** and means "a party defects the first turn it qualifies" — the same turn it
+    /// accrues any pull at all, since accrual needs a positive move fraction.
+    pub party_pull_threshold: f32,
+}
+
 /// The smallest meaningful value for a **counted** lever (turns or tiles). At `0` the behaviour the
 /// lever gates does not run *at all* rather than running weakly: a `0` forecast horizon simulates
 /// **zero** turns (so every trip reports "won't fill" and the client disables every send button), a
@@ -353,6 +374,13 @@ impl ExpeditionConfig {
             "settle.min_founding_workers",
             self.settle.min_founding_workers,
             MIN_COUNTED_LEVER,
+        )?;
+
+        // `0` is a real setting (defect on the first qualifying turn), but a negative or NaN
+        // threshold would compare as "already reached" or "never reached" for reasons no one set.
+        require_non_negative_finite(
+            "defection.party_pull_threshold",
+            self.defection.party_pull_threshold,
         )?;
 
         Ok(())
@@ -551,6 +579,24 @@ mod tests {
         assert!(config.replenish.reach_tiles >= 1);
         // A floor of `0` would refuse nothing, so the gate must ship above it.
         assert!(config.settle.min_founding_workers >= 1);
+        assert!(config.defection.party_pull_threshold >= 0.0);
+    }
+
+    /// A negative or NaN pull threshold is refused — `0` is a real setting, below it is not.
+    #[test]
+    fn a_negative_or_nan_party_pull_threshold_is_refused() {
+        let mut config = valid_config();
+        config.defection.party_pull_threshold = -0.1;
+        assert_rejects(config, "defection.party_pull_threshold");
+        let mut config = valid_config();
+        config.defection.party_pull_threshold = f32::NAN;
+        assert_rejects(config, "defection.party_pull_threshold");
+        let mut config = valid_config();
+        config.defection.party_pull_threshold = 0.0;
+        assert!(
+            config.validate().is_ok(),
+            "a zero threshold is a legal setting"
+        );
     }
 
     /// **The regression this validator exists for.** A `0` forecast horizon used to be accepted

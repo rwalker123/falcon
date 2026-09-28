@@ -12726,7 +12726,6 @@ mod tests {
                 generation: 0,
                 faction,
                 knowledge: Vec::new(),
-                migration: None,
             },
         ));
     }

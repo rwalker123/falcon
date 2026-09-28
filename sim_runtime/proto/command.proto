@@ -67,6 +67,15 @@ message UpdateCounterIntelPolicyCommand {
   SecurityPolicyKind policy = 2;
 }
 
+// OPEN BORDERS (docs/plan_band_fission.md §Defection) - a people's one faction-wide say over whether
+// another people's leavers may join its bands. Open (the default for every faction), they may: the
+// unhappy trickle's cross-people move and a defecting party both need an open destination. Closed,
+// none of this faction's bands is ever another people's destination. A faction's own bands never ask.
+message SetOpenBordersCommand {
+  uint32 faction = 1;
+  bool open = 2;
+}
+
 message AdjustCounterIntelBudgetCommand {
   uint32 faction = 1;
   optional float reserve = 2;
@@ -1555,5 +1564,7 @@ message CommandEnvelope {
     // It is not a field on `abandon` for the reason its message states: a deposit verb names a tile
     // AND a material, and `abandon` already puts down every holding on its tile.
     AbandonWorkingCommand abandon_working = 75;
+    // 75 is held by `abandon_working`, so Open Borders takes 76 (append-only; never renumber).
+    SetOpenBordersCommand set_open_borders = 76;
   }
 }

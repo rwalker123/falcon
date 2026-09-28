@@ -33,8 +33,9 @@ const MUST_BE_CONCURRENT: [(&str, &str); 6] = [
     ("advance_forage_regrowth", "advance_herds"),
     ("advance_graze_regrowth", "advance_predation"),
     ("balance_supply_networks", "advance_herd_grazing"),
-    // Population: pure telemetry vs. the movement/labor run.
-    ("publish_trade_telemetry", "advance_labor_allocation"),
+    // Population: pure telemetry vs. the tail of the movement/labor run. It is ordered after its
+    // one writer, `advance_population_migration`, and nothing that follows it.
+    ("publish_trade_telemetry", "sedentarization_tick"),
     // GreatDiscovery: capability effects vs. the reporting tail.
     ("apply_capability_effects", "export_great_discovery_metrics"),
     // Visibility: the sweep tracker vs. the ledger clear.
@@ -66,8 +67,11 @@ const MUST_BE_ORDERED: [(&str, &str); 3] = [
 /// as independent while their auto-inserted `apply_deferred` sync point depends entirely on the
 /// edge between them. Bevy will happily run them in either order and nothing will complain.
 ///
-/// Today both entries sit inside the fully-serial `Population` chain, so their sync points are
-/// pinned by edges that exist for other reasons. A third system taking `Commands` is not
+/// Today all three entries sit inside the fully-serial `Population` chain, so their sync points are
+/// pinned by edges that exist for other reasons. `advance_party_defection` despawns a party that
+/// joined another people; the only systems after it in the turn are `sedentarization_tick`
+/// (`With<ResidentBand>`, so never a party) and the later stages, which the chain's sync point
+/// already orders after the despawn. A third system taking `Commands` is not
 /// necessarily wrong — it just cannot be checked by the machinery, so it has to be checked by a
 /// person: does it spawn or despawn anything another system reads in the same turn, and is the
 /// edge that orders them declared? Answer that, then add it here.
@@ -79,7 +83,11 @@ const MUST_BE_ORDERED: [(&str, &str); 3] = [
 /// `Startup` is deliberately out of scope, both here and for the ambiguity gate: it is `.chain()`-ed
 /// wholesale, which is why `spawn_initial_world`, `reconcile_food_modules` and
 /// `place_wondrous_sites` take `Commands` without appearing below.
-const COMMANDS_SYSTEMS: [&str; 2] = ["advance_band_movement", "advance_expeditions"];
+const COMMANDS_SYSTEMS: [&str; 3] = [
+    "advance_band_movement",
+    "advance_expeditions",
+    "advance_party_defection",
+];
 
 /// Reachability over the schedule's dependency graph, flattened the way bevy flattens it.
 ///

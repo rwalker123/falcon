@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     cmp::{max, min, Ordering},
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
 };
 
 use bevy::{ecs::system::SystemParam, math::UVec2, prelude::*};
@@ -26,9 +26,9 @@ use crate::{
         DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
         ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment,
         LaborTarget, LocalStore, MoraleCause, MoraleContributions, MountainMetadata,
-        PendingMigration, PopulationCohort, PowerNode, ResidentBand, ShedCrew, ShedFacts,
-        SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile,
-        TransferCause, TransferCounterparty, TransferCrossing, TransferDirection, YieldRange,
+        PopulationCohort, PowerNode, ResidentBand, ShedCrew, ShedFacts, SourcePriority,
+        SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TransferCause,
+        TransferCounterparty, TransferCrossing, TransferDirection, YieldRange,
         DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, STRIP_IT_BARE,
     },
     connections::ConnectionLedger,
@@ -67,7 +67,7 @@ use crate::{
     labor_config::{LaborConfig, LaborConfigHandle},
     mapgen::MountainType,
     mapgen::{build_bands, validate_bands, TerrainBand, WorldGenSeed},
-    orders::{FactionId, FactionRegistry},
+    orders::FactionId,
     power::{
         PowerGridNodeTelemetry, PowerGridState, PowerIncident, PowerIncidentSeverity, PowerNodeId,
         PowerTopology,
@@ -76,10 +76,10 @@ use crate::{
     resources::{
         BandIdAllocator, BandNameAllocator, ClimateConfig, CommandEventEntry, CommandEventKind,
         CommandEventLog, CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry,
-        DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FoodSiteEntry,
-        FoodSiteRegistry, FoodSiteWaterBiasReport, MoistureRaster, SentimentAxisBias,
-        SimulationConfig, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
-        TradeTelemetry,
+        DiplomacyLeverage, DiscoveryProgressLedger, FactionBorderPolicies, FactionInventory,
+        FoodSiteEntry, FoodSiteRegistry, FoodSiteWaterBiasReport, MoistureRaster,
+        SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
+        TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
     snapshot_overlays_config::SnapshotOverlaysConfigHandle,
@@ -91,7 +91,10 @@ use crate::{
     turn_pipeline_config::TurnPipelineConfigHandle,
     wellbeing_config::{ProductivityConfig, WellbeingConfig, WellbeingConfigHandle},
 };
-use sim_runtime::{merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem};
+use sim_runtime::{
+    merge_fragment_payload, scale_migration_fragments, CorruptionSubsystem,
+    KnownTechFragment as ContractKnowledgeFragment,
+};
 
 const BUCKET_COLS: u32 = 6;
 const BUCKET_ROWS: u32 = 6;

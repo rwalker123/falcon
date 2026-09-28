@@ -568,7 +568,11 @@ table PopulationCohortState {
   generation:ushort;
   faction:uint;
   knowledgeFragments:[KnownTechFragment];
-  migration:PendingMigration;
+  // RETIRED (#512): the whole-band knowledge migration's pending payload. That mechanism was deleted
+  // — defection is now the wellbeing trickle with the same-people filter lifted
+  // (docs/plan_band_fission.md §Defection) — so nothing is pending and the slot stopped being
+  // written. Deprecated, never freed (append-only discipline).
+  migration:PendingMigration (deprecated);
   harvestTask:HarvestTask;
   scoutTask:ScoutTask;
   accessibleStockpile:AccessibleStockpile;
@@ -6224,6 +6228,15 @@ table VoiceMediumState {
   mediumIndex:uint = 0;
 }
 
+// A people's faction-wide POLICY SETTINGS - one row per faction, and a frame carries the VIEWER'S
+// OWN row only (per-seat, like stanceAxes / voiceMedium). Today it holds Open Borders
+// (docs/plan_band_fission.md §Defection): whether another people's unhappy leavers, and defecting
+// parties, may join this faction's bands. Every faction starts open; `set_open_borders` flips it.
+table FactionPolicyState {
+  faction:uint;
+  openBorders:bool = true;
+}
+
 table CampaignSection {
   campaignProfiles:[CampaignProfile];
   commandEvents:[CommandEventState];
@@ -6239,6 +6252,10 @@ table CampaignSection {
   // What the turn-one loadout picker needs to draw itself. Absent means "unchanged" on a delta, as
   // for every other whole-diffed table on this section.
   openingLoadout:OpeningLoadoutState;
+  // --- THE VIEWER'S OWN FACTION POLICIES (appended last) -----------------------------------------
+  // One row, the viewer's faction (another people's borders are theirs to know). Absent means
+  // "unchanged" on a delta, as for every other whole-diffed table on this section.
+  factionPolicies:[FactionPolicyState];
 }
 
 // --- The opening loadout: what the turn-one picker draws ---------------------------------------
@@ -6783,6 +6800,8 @@ table TransferCrossingState {
   //   7 = shipment_returned a shipment's UNDELIVERED cargo    route  in      the destination
   //                         coming home (turned back, or cancelled in camp) - it answers the
   //                         launch's shipment_out: same counterparty, same partyId
+  //   8 = party_defected    ANOTHER people's party joined     route  in      the band it was sent
+  //                         this band with its pack/cargo                    out from
   // 1, 2, 5 and 6 are not trade: the band's own split and the band's own people. 5 is the party's
   // own PACK only; a trade party's cargo coming home is 7, never 5.
   // *** A POOLED ROW NEVER NAMES A COUNTERPARTY *** - an invariant, not an omission: pooling pays a

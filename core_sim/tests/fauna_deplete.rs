@@ -190,7 +190,6 @@ fn spawn_hunter(
                 generation: 0 as GenerationId,
                 faction,
                 knowledge: Vec::new(),
-                migration: None,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

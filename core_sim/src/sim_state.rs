@@ -75,8 +75,8 @@ use crate::{
     knowledge_ledger::{KnowledgeLedger, KnowledgeLedgerCheckpoint},
     resources::{
         BandIdAllocator, BandNameAllocator, CapabilityFlags, CommandEventLog, CorruptionLedgers,
-        CorruptionTelemetry, DiscoveryProgressLedger, FactionInventory, PendingCrisisSeeds,
-        PendingCrisisSpawns, SentimentAxisBias, SimulationTick, TradeTelemetry,
+        CorruptionTelemetry, DiscoveryProgressLedger, FactionBorderPolicies, FactionInventory,
+        PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationTick, TradeTelemetry,
     },
     routes::RoadRegistry,
     sedentarization::SedentarizationScore,
@@ -198,6 +198,9 @@ pub struct SimState {
     pub espionage_roster: EspionageRoster,
     pub faction_inventory: FactionInventory,
     pub security_policies: FactionSecurityPolicies,
+    /// Each people's Open Borders setting. Mutated only by `set_open_borders`, which is still state
+    /// a rollback has to put back — the same reason `security_policies` rides here.
+    pub border_policies: FactionBorderPolicies,
     /// **THE LIVE WORKINGS ON THE TWO DEPOSIT BRANCHES.**
     ///
     /// ⛔ **THE STOCK IS THE ONLY THING HERE THAT IS NOT DERIVABLE, and it is why this is state at
@@ -411,6 +414,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         espionage_roster: world.resource::<EspionageRoster>().clone(),
         faction_inventory: world.resource::<FactionInventory>().clone(),
         security_policies: world.resource::<FactionSecurityPolicies>().clone(),
+        border_policies: world.resource::<FactionBorderPolicies>().clone(),
         deposits: world.resource::<DepositRegistry>().clone(),
         forage: world.resource::<ForageRegistry>().clone(),
         graze: world.resource::<GrazeRegistry>().clone(),
@@ -598,6 +602,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.espionage_roster.clone());
     world.insert_resource(state.faction_inventory.clone());
     world.insert_resource(state.security_policies.clone());
+    world.insert_resource(state.border_policies.clone());
     world.insert_resource(state.deposits.clone());
     world.insert_resource(state.forage.clone());
     world.insert_resource(state.graze.clone());

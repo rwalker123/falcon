@@ -95,7 +95,6 @@ fn cohort(working: f32, stores: LocalStore) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FACTION,
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 

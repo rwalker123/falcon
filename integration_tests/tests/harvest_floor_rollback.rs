@@ -127,7 +127,6 @@ fn spawn_band_with_floors(app: &mut bevy::prelude::App, floor: f32) -> Entity {
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             LaborAllocation {
@@ -274,7 +273,6 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             Expedition {
                 home_band: home,
@@ -289,6 +287,7 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
                 pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
                 cargo: core_sim::LocalStore::new(),
+                defection_pull: core_sim::Scalar::zero(),
             },
         ))
         .id();

@@ -199,6 +199,10 @@ const TRANSFER_LABEL_ROUTE := "%s Trade route" % TRANSFER_GLYPH
 # Direction is the sign's job here as on every other row, so each is one phrase.
 const TRANSFER_LABEL_BROUGHT_HOME := "Brought home"
 const TRANSFER_LABEL_PARTY_RATIONS := "Party rations"
+## What ANOTHER people's party brought when it joined this band (cause `party_defected`, issue #512).
+## Beside the band's own party rows because it books on the same Route arm and for the same reason —
+## a party carried it — but it is neither this band's haul nor trade.
+const TRANSFER_LABEL_PARTY_DEFECTED := "Joined from another people"
 
 # ---- THE FODDER LEDGER'S TWO FLOWS, the labels of the `Fodder:` row's own breakdown. The larder has
 # exactly two: what the band's fodder Fields GREW this turn (`fodder_income`) and what its pens ATE

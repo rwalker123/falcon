@@ -898,8 +898,6 @@ pub struct PopulationCohortState {
     pub faction: u32,
     pub knowledge_fragments: Vec<KnownTechFragment>,
     #[serde(default)]
-    pub migration: Option<PendingMigrationState>,
-    #[serde(default)]
     pub harvest_task: Option<HarvestTaskState>,
     #[serde(default)]
     pub scout_task: Option<ScoutTaskState>,
@@ -1681,7 +1679,9 @@ pub struct TransferCrossingState {
     pub link: u8,
     /// `0` pooled, `1` dowry_out, `2` dowry_in, `3` shipment_out, `4` shipment_in, `5` party_home,
     /// `6` party_provisions, `7` shipment_returned (a shipment's undelivered cargo coming home,
-    /// naming the destination its `shipment_out` named). ⛔ A pooled row never names a counterparty.
+    /// naming the destination its `shipment_out` named), `8` party_defected (another people's party
+    /// joined this band with what it carried, naming the band it was sent out from). ⛔ A pooled row
+    /// never names a counterparty.
     pub cause: u8,
     /// The other band's `band_id`, `0` = none.
     pub counterparty_band_id: u64,
@@ -2110,14 +2110,6 @@ pub struct SettlementStageViewState {
     pub label: String,
     #[serde(default)]
     pub icon: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct PendingMigrationState {
-    pub destination: u32,
-    pub eta: u16,
-    #[serde(default)]
-    pub fragments: Vec<KnownTechFragment>,
 }
 
 fn default_harvest_task_kind() -> String {

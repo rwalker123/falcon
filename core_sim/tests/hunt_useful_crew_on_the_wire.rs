@@ -158,7 +158,6 @@ fn world_hunting_at(
             generation: 0 as GenerationId,
             faction: FACTION,
             knowledge: Vec::new(),
-            migration: None,
         },
         LaborAllocation {
             assignments: vec![LaborAssignment {

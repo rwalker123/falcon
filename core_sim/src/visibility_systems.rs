@@ -1290,7 +1290,6 @@ mod tests {
                     generation: 0,
                     faction: FactionId(0),
                     knowledge: Vec::new(),
-                    migration: None,
                 },
                 StartingUnit::new("BandScout".to_string(), vec![]),
                 allocation,
@@ -1391,7 +1390,6 @@ mod tests {
                 generation: 0,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
             StartingUnit::new("BandCrafter".to_string(), vec![]),
@@ -1894,7 +1892,6 @@ mod hex_sight_range_tests {
             generation: 0,
             faction,
             knowledge: Vec::new(),
-            migration: None,
         }
     }
 

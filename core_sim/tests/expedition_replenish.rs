@@ -123,6 +123,9 @@ fn spawn_world() -> App {
     app.world.insert_resource(VisibilityLedger::default());
     app.world
         .insert_resource(core_sim::ContactsThisTurn::default());
+    // What each party saw this turn — `advance_expeditions` rebuilds it every run.
+    app.world
+        .insert_resource(core_sim::PartySightings::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);
@@ -257,7 +260,6 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FactionId(0),
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 
@@ -336,6 +338,7 @@ fn spawn_scout_party(
                 pending_contacts: Default::default(),
                 kit,
                 cargo: LocalStore::new(),
+                defection_pull: core_sim::Scalar::zero(),
             },
         ))
         .id()

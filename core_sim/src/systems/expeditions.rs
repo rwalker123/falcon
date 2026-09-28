@@ -151,6 +151,259 @@ pub fn advance_band_movement(
     }
 }
 
+/// **Which bands each detached party saw on its own sweep THIS turn** — derived, cleared and rebuilt
+/// every turn, never checkpointed.
+///
+/// Written by [`advance_expeditions`] from inside the observe loop it already runs (so "what the
+/// party can see" has one answer), and drained by [`advance_party_defection`] later in the same
+/// Population chain. It exists beside `Expedition::pending_contacts` rather than reading it because
+/// that buffer is a *report* — it holds whatever the party saw since it last came within comm range
+/// and is emptied by the flush — so it can neither say "seen this turn" nor survive a flush on the
+/// turn a party walks home past a camp.
+///
+/// Keyed by the party entity and holding [`BandId`]s in `BTreeSet`s, so a reader walks it in one
+/// order.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct PartySightings(BTreeMap<Entity, BTreeSet<BandId>>);
+
+impl PartySightings {
+    /// Record that `party` saw `subject` this turn.
+    pub fn record(&mut self, party: Entity, subject: BandId) {
+        self.0.entry(party).or_default().insert(subject);
+    }
+
+    /// The bands `party` saw this turn — empty when it saw none.
+    pub fn seen_by(&self, party: Entity) -> impl Iterator<Item = BandId> + '_ {
+        self.0.get(&party).into_iter().flatten().copied()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// The config handles [`advance_party_defection`] reads, bundled (the [`ExpeditionConfigs`] idiom).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PartyDefectionConfigs<'w> {
+    /// The pull test's dials — one rule, one set of dials (`migration.*`).
+    pub wellbeing: Res<'w, WellbeingConfigHandle>,
+    /// `defection.party_pull_threshold`.
+    pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
+    pub sim: Res<'w, SimulationConfig>,
+}
+
+/// A detached party that has decided to go, and the band it goes to.
+struct PartyDefection {
+    party: Entity,
+    destination: Entity,
+    destination_band: BandId,
+    destination_people: FactionId,
+}
+
+/// **A detached party goes whole — `docs/plan_band_fission.md` §"Scouts: a party goes whole".**
+///
+/// A party is a few of its home band's people far from home, so it carries **the home band's
+/// morale**. Each turn the home band is below `migration.morale_threshold` **and** the party saw, on
+/// its own sweep this turn ([`PartySightings`]), a band of another people within
+/// `migration.base_reach` of its own tile that passes the trickle's pull test against the home
+/// band's morale and belongs to a people with Open Borders ([`FactionBorderPolicies`]), it accrues
+/// `migration_move_fraction(home morale)` of [`Expedition::defection_pull`]; any other turn resets
+/// it to zero. At `expedition_config.json` → `defection.party_pull_threshold` the **whole party**
+/// joins the best such band (highest morale; ties to the lowest `BandId`, the order it is walked in),
+/// through the same [`fold_party_into_band`] a homecoming uses — people, pack and any cargo — and the
+/// party despawns exactly as a fold-back despawns it.
+///
+/// **Its kit does not transfer**, exactly as it does not on a homecoming: `fold_party_into_band`
+/// moves people and stores, and the party's own [`BandEquipment`] wear ledger goes with the entity.
+///
+/// **The losing people is told one generic line and nothing else** — no reason, no place, no
+/// destination. The receiving people is told a party joined one of its bands.
+///
+/// Parties are walked in entity order and every decision is taken before any is applied, so the
+/// result does not depend on query order.
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
+pub fn advance_party_defection(
+    mut commands: Commands,
+    configs: PartyDefectionConfigs,
+    tile_registry: Res<TileRegistry>,
+    tick: Res<SimulationTick>,
+    borders: Res<FactionBorderPolicies>,
+    mut sightings: ResMut<PartySightings>,
+    mut event_log: ResMut<CommandEventLog>,
+    tiles: Query<&Tile>,
+    mut parties: Query<(
+        Entity,
+        &mut PopulationCohort,
+        &mut Expedition,
+        Option<&BandId>,
+    )>,
+    // The homecoming's own band query: a party joins a resident band exactly as it would fold home.
+    mut bands: Query<ExpeditionHomeBands, Without<Expedition>>,
+) {
+    // Drained whatever happens below: it is this turn's sightings and nothing else.
+    let seen = std::mem::take(&mut *sightings);
+    if parties.is_empty() {
+        return;
+    }
+    let wellbeing = configs.wellbeing.get();
+    let mig_cfg = &wellbeing.migration;
+    let pull_threshold = scalar_from_f32(configs.expedition.get().defection.party_pull_threshold);
+    let attractive_morale = scalar_from_f32(mig_cfg.attractive_morale);
+    let min_gap = scalar_from_f32(mig_cfg.min_morale_gap);
+    // The trickle's reach, measured the trickle's way, from the party's own tile.
+    let reach_sq = (mig_cfg.base_reach * mig_cfg.base_reach) as i32;
+    let width = tile_registry.width;
+    let wrap = configs.sim.map_topology.wrap_horizontal;
+
+    // Every resident band a party could join, by its durable id: where it stands, whose it is, how
+    // well off it is. A band with no id cannot have been sighted, so it is not a candidate.
+    struct Candidate {
+        entity: Entity,
+        faction: FactionId,
+        pos: UVec2,
+        morale: Scalar,
+    }
+    let candidates: BTreeMap<BandId, Candidate> = bands
+        .iter()
+        .filter_map(|(entity, cohort, band_id, resident, _)| {
+            resident?;
+            let pos = tiles.get(cohort.current_tile).ok()?.position;
+            Some((
+                *band_id?,
+                Candidate {
+                    entity,
+                    faction: cohort.faction,
+                    pos,
+                    morale: cohort.morale,
+                },
+            ))
+        })
+        .collect();
+
+    let mut order: Vec<Entity> = parties.iter().map(|(entity, ..)| entity).collect();
+    order.sort_by_key(|entity| entity.to_bits());
+    let mut defections: Vec<PartyDefection> = Vec::new();
+    for party in order {
+        let Ok((_, cohort, mut expedition, _)) = parties.get_mut(party) else {
+            continue;
+        };
+        // The home band's morale is the party's: they are that band's people. An orphaned party has
+        // no home to be unhappy about, and a home at or above the push threshold pushes nobody.
+        let home_morale = bands
+            .get(expedition.home_band)
+            .ok()
+            .map(|(_, home, _, _, _)| home.morale);
+        let rate = home_morale
+            .map(|morale| migration_move_fraction(morale, mig_cfg))
+            .unwrap_or(scalar_zero());
+        let party_pos = tiles
+            .get(cohort.current_tile)
+            .ok()
+            .map(|tile| tile.position);
+        let best = match (home_morale, party_pos) {
+            (Some(home_morale), Some(party_pos)) if rate > scalar_zero() => {
+                let mut best: Option<(BandId, &Candidate)> = None;
+                for band_id in seen.seen_by(party) {
+                    let Some(candidate) = candidates.get(&band_id) else {
+                        continue;
+                    };
+                    // Another people's band, better off by the trickle's own test, within reach of
+                    // where the party stands, and whose people will have them.
+                    if candidate.faction == cohort.faction
+                        || candidate.morale < attractive_morale
+                        || candidate.morale <= home_morale + min_gap
+                        || crate::grid_utils::wrapped_distance_sq(
+                            party_pos,
+                            candidate.pos,
+                            width,
+                            wrap,
+                        ) > reach_sq
+                        || !borders.is_open(candidate.faction)
+                    {
+                        continue;
+                    }
+                    if best.is_none_or(|(_, current)| candidate.morale > current.morale) {
+                        best = Some((band_id, candidate));
+                    }
+                }
+                best
+            }
+            _ => None,
+        };
+        let Some((destination_band, destination)) = best else {
+            expedition.defection_pull = scalar_zero();
+            continue;
+        };
+        expedition.defection_pull += rate;
+        if expedition.defection_pull >= pull_threshold {
+            defections.push(PartyDefection {
+                party,
+                destination: destination.entity,
+                destination_band,
+                destination_people: destination.faction,
+            });
+        }
+    }
+
+    for defection in defections {
+        let Ok((_, mut party_cohort, mut expedition, party_band)) =
+            parties.get_mut(defection.party)
+        else {
+            continue;
+        };
+        let lost_people = party_cohort.faction;
+        let noun = expedition.mission.party_noun();
+        // Where they came from, named on the receiver's crossings — the band that sent them out.
+        let origin = bands
+            .get(expedition.home_band)
+            .ok()
+            .and_then(|(_, _, band_id, _, _)| band_id.copied())
+            .map(|band| TransferCounterparty {
+                band,
+                faction: lost_people,
+            });
+        let Ok((_, mut destination, _, _, allocation)) = bands.get_mut(defection.destination)
+        else {
+            continue;
+        };
+        let head_count = available_workers(party_cohort.working);
+        let fold = fold_party_into_band(&mut party_cohort, &mut expedition.cargo, &mut destination);
+        // Food crossing into the receiver's larder through neither income nor consumption — booked
+        // so the ledger identity still closes, under a cause that does not claim they are its own.
+        if let Some(mut allocation) = allocation {
+            fold.book_defected(&mut allocation, party_band.copied(), origin);
+        }
+        event_log.push(CommandEventEntry::new(
+            tick.0,
+            CommandEventKind::PartyDefected,
+            lost_people,
+            format!("Your {noun} party has left your control."),
+            Some(format!(
+                "side=lost expedition={}",
+                defection.party.to_bits()
+            )),
+        ));
+        event_log.push(CommandEventEntry::new(
+            tick.0,
+            CommandEventKind::PartyDefected,
+            defection.destination_people,
+            format!(
+                "A party of {head_count} joined {}",
+                crate::systems::population::band_label(defection.destination_band)
+            ),
+            Some(format!(
+                "band={} count={} from={} side=gained",
+                defection.destination_band.0, head_count, lost_people.0
+            )),
+        ));
+        commands.entity(defection.party).despawn();
+    }
+}
+
 /// Per-turn logic for detached expeditions (traveling parties). Runs right after
 /// `advance_band_movement` (so it reads the party's fresh position) and before the Visibility
 /// stage's `discover_sites`. For each expedition:
@@ -191,6 +444,9 @@ pub fn advance_expeditions(
     // **Where a party's findings about PEOPLE land**, comm-gated exactly like the map reveals
     // beside them. Consumed later the same turn by `connections::advance_connections`.
     mut contacts: ResMut<crate::connections::ContactsThisTurn>,
+    // **What each party saw THIS turn**, for `advance_party_defection` — rebuilt here every turn,
+    // so it is cleared before either early return below.
+    mut sightings: ResMut<PartySightings>,
     mut event_log: ResMut<CommandEventLog>,
     mut herds: ResMut<HerdRegistry>,
     // **The stands a ranging party gathers off** — the plant half of how a provisioned party feeds
@@ -205,6 +461,7 @@ pub fn advance_expeditions(
     mut expeditions: Query<ExpeditionParty>,
     mut bands: Query<ExpeditionHomeBands, Without<Expedition>>,
 ) {
+    sightings.clear();
     // The common turn has zero expeditions — bail before building the O(w×h) terrain grid so a
     // normal game pays nothing for this system.
     if expeditions.is_empty() {
@@ -503,6 +760,7 @@ pub fn advance_expeditions(
                         expedition
                             .pending_contacts
                             .insert(*subject, (pos, current_turn));
+                        sightings.record(entity, *subject);
                     }
                 }
             }
@@ -1727,6 +1985,45 @@ impl FoldBack {
             consignee,
             party,
         );
+    }
+}
+
+impl FoldBack {
+    /// **Book a defection on the RECEIVING band** — everything [`fold_party_into_band`] handed over,
+    /// pack and cargo alike, under [`TransferCause::PartyDefected`], naming `origin` (the band the
+    /// party was sent out from) and the party. One cause for both stores, because to the receiver
+    /// neither is a shipment it was owed nor its own people's haul: it is what strangers arrived
+    /// carrying.
+    pub fn book_defected(
+        &self,
+        allocation: &mut LaborAllocation,
+        party: Option<BandId>,
+        origin: Option<TransferCounterparty>,
+    ) {
+        for (commodity, amount) in [
+            (FOOD, self.pack_food + self.cargo_food),
+            (FODDER, self.cargo_fodder),
+        ] {
+            allocation.book_crossing(
+                TransferCrossing::goods(
+                    commodity,
+                    TransferDirection::In,
+                    TransferCause::PartyDefected,
+                    amount.to_f32(),
+                )
+                .with_counterparty(origin)
+                .with_party(party),
+            );
+        }
+        for draws in [&self.pack_materials, &self.cargo_materials] {
+            allocation.book_material_draws(
+                draws,
+                TransferDirection::In,
+                TransferCause::PartyDefected,
+                origin,
+                party,
+            );
+        }
     }
 }
 

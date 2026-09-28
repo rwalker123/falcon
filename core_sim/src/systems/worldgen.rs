@@ -3453,7 +3453,6 @@ fn spawn_population_entity(
         generation,
         faction,
         knowledge: knowledge.to_vec(),
-        migration: None,
     });
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.

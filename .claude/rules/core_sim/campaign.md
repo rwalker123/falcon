@@ -1015,14 +1015,18 @@ Extension seams are present and empty — future factors/consequences slot in wi
   morale ≥ 0.25, 7.5% at 0.125, up to `max_rate` (0.15) at rock-bottom (gentle at onset, ramping to
   the cap). The total is split across brackets ∝ `bracket_size × weight` (working = 1.0, dependents
   = `dependent_weight` 0.4), so leavers are mostly workers while the headline fraction stays exact.
-  They seek the **highest-morale eligible same-faction band within reach** (`base_reach` 4 hexes ×
+  They seek the **highest-morale eligible band within reach**, their own people's first (`base_reach` 4 hexes ×
   a movement-tech factor). *No concrete movement/transport tech signal exists yet, so the factor is
   stubbed at 1.0 with a `TODO(phase2)` hook.* Eligible = `morale ≥ attractive_morale` (0.5) AND
   `morale > source + min_morale_gap` (0.05). Found → **relocate** (source shrinks, destination
   grows; `last_emigrated`/`last_immigrated` recorded); none reachable → **stay** (grievance accrues
-  faster via the trapped bonus). **Morale never causes faction population loss** — population is
-  conserved within the faction; loss stays with starvation/cold only. Destinations are chosen from
-  one pre-migration snapshot and all moves are computed before any is applied, so relocation is
+  faster via the trapped bonus). **Another people's band is a destination only when none of the
+  source's own qualifies**, and only when it is tied to the source band by a live contact and its
+  people keep Open Borders — that is **defection**, and its rules (the knowledge share, the remnant
+  that goes over, the party that goes whole) are `factions.md` → "Defection is the unhappy trickle
+  with the same-people filter lifted". Population is conserved across the move; a people loses
+  population to morale only by losing it to another people. Destinations are chosen from one
+  pre-migration snapshot and all moves are computed before any is applied, so relocation is
   order-independent.
 - **Snapshot.** `PopulationCohortState` gains `outputMultiplier`, `discontentFraction`, `grievance`,
   `lastEmigrated`/`lastImmigrated`, and the four itemized contributions

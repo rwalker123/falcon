@@ -253,7 +253,6 @@ fn spawn_keeper(app: &mut App, assignments: Vec<LaborAssignment>, tile: UVec2) -
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),

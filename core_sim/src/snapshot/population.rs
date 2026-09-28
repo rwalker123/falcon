@@ -6,14 +6,6 @@ use crate::components::LocalStore;
 
 use super::*;
 
-pub(crate) fn pending_migration_to_state(migration: &PendingMigration) -> PendingMigrationState {
-    PendingMigrationState {
-        destination: migration.destination.0,
-        eta: migration.eta,
-        fragments: fragments_to_contract(&migration.fragments),
-    }
-}
-
 /// Serialize one labor assignment for the client readout. The `yields` carry this turn's
 /// actual/sustainable food income for the source (per-source breakdown; defaulted to `0` when the
 /// telemetry row is absent, e.g. an assignment no `advance_labor_allocation` has resolved yet).
@@ -1141,7 +1133,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             })
         })
         .collect();
-    let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
     let demand = food_demand(
         cohort.children,
@@ -1552,7 +1543,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         generation: cohort.generation,
         faction: cohort.faction.0,
         knowledge_fragments: fragments_to_contract(&cohort.knowledge),
-        migration,
         // Retired single-task fields (kept in the schema for append-only compatibility; the
         // labor allocation replaces them). Always empty now.
         harvest_task: None,
@@ -2309,7 +2299,6 @@ mod tests {
             generation: 0,
             faction: crate::FactionId(0),
             knowledge: Vec::new(),
-            migration: None,
         }
     }
 
@@ -2453,6 +2442,7 @@ mod tests {
             kit: crate::equipment_config::EquipmentConfig::builtin()
                 .default_kit(crate::equipment_config::KitJob::Hunt),
             cargo: LocalStore::new(),
+            defection_pull: Scalar::zero(),
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));
         let historical = TEST_LARDER / demand_of(&cohort);

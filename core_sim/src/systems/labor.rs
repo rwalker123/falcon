@@ -10755,21 +10755,169 @@ fn announce_plant_rung_built(
     ));
 }
 
-/// Layer 3b (wellbeing) — tech-gated migration: relocate-or-stay, population conserved within the
-/// faction (`docs/plan_civ_wellbeing.md`). Runs in the Population stage **after** demographics so
+/// **Where a cross-people move's knowledge lands**, bundled into one `SystemParam` (the
+/// [`LaborConfigs`] idiom): the destination people's discovery progress, and the per-turn diffusion
+/// telemetry + event the knowledge panel's "via migration" rows are published from.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct MigrationKnowledgeSinks<'w> {
+    pub discovery: ResMut<'w, DiscoveryProgressLedger>,
+    pub telemetry: ResMut<'w, TradeTelemetry>,
+    pub trade_events: EventWriter<'w, TradeDiffusionEvent>,
+}
+
+/// **Everything that belongs to a band and must go with it when it changes people** — the state a
+/// remnant flip (`advance_population_migration`) re-points at the band's new people, bundled so the
+/// system stays inside Bevy's argument budget. See [`follow_the_band_to_its_new_people`].
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct BandFlipFollowers<'w, 's> {
+    /// The roads the band keeps. A keeper's `faction` is what lights a road's fog, so it names the
+    /// band's people, and a band that changes people takes its roads with it.
+    pub roads: ResMut<'w, crate::routes::RoadRegistry>,
+    /// Every band's and party's name — read for the collision test, written on a re-mint.
+    pub names: Query<'w, 's, &'static mut crate::components::BandName>,
+    /// The per-faction name counters and the pool, for a re-mint on the new people's permutation.
+    pub name_allocator: ResMut<'w, BandNameAllocator>,
+    pub name_catalog: Res<'w, crate::band_names::BandNameCatalogHandle>,
+    /// Parties already out from a band. `Without<ResidentBand>` keeps this disjoint from the
+    /// trickle's own band query.
+    pub parties: Query<
+        'w,
+        's,
+        (Entity, &'static mut PopulationCohort, &'static Expedition),
+        Without<ResidentBand>,
+    >,
+}
+
+/// One band that changed people this turn.
+struct BandFlip {
+    entity: Entity,
+    band: BandId,
+    to: FactionId,
+}
+
+/// **A band that goes over takes what is its own with it** (`factions.md` → "A band that changes
+/// people takes what is its own"). Run once, after the apply pass, over the bands that flipped this
+/// turn in `BandId` order:
+///
+/// - **its roads** — every `RoadKeeper` naming the band now names its new people, so the roads it
+///   keeps light *their* fog;
+/// - **its name** — kept, unless a band of the new people already answers to it, in which case it is
+///   re-minted on the new people's own permutation (`band-names.md`'s mint path), drawing slots until
+///   one is free; a party homed on the band carries the new name too, since a party inherits its home
+///   band's;
+/// - **its parties already out** — their people's families went over, so each party's
+///   `cohort.faction` follows. The losing people is told nothing beyond the band's own
+///   `band_changed_hands` line.
+///
+/// Everything else keyed to the band — its entity, `BandId`, stores, kit, bench, labor rows, build
+/// queue, loadout window — is already keyed to the band itself rather than to a people.
+fn follow_the_band_to_its_new_people(
+    followers: &mut BandFlipFollowers,
+    cohorts: &Query<(Entity, &mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
+    mut flips: Vec<BandFlip>,
+    map_seed: u64,
+) {
+    flips.sort_by_key(|flip| flip.band);
+    for flip in flips {
+        for road in followers.roads.iter_mut() {
+            if let Some(keeper) = road.keeper.as_mut() {
+                if keeper.band == flip.band {
+                    keeper.faction = flip.to;
+                }
+            }
+        }
+
+        // The names the new people's OTHER bands already answer to — read after every flip so far,
+        // so two bands going over together cannot land on one name.
+        let taken: BTreeSet<String> = cohorts
+            .iter()
+            .filter(|(entity, cohort, _)| *entity != flip.entity && cohort.faction == flip.to)
+            .filter_map(|(entity, ..)| followers.names.get(entity).ok().map(|n| n.0.clone()))
+            .collect();
+        let renamed = match followers.names.get(flip.entity) {
+            Ok(name) if taken.contains(&name.0) => {
+                // Slots are injective per faction, so this ends within `taken.len() + 1` draws.
+                let catalog = followers.name_catalog.get();
+                loop {
+                    let candidate =
+                        followers
+                            .name_allocator
+                            .mint(flip.to, map_seed, catalog.as_ref());
+                    if !taken.contains(&candidate.0) {
+                        break Some(candidate);
+                    }
+                }
+            }
+            _ => None,
+        };
+        if let Some(name) = &renamed {
+            if let Ok(mut current) = followers.names.get_mut(flip.entity) {
+                *current = name.clone();
+            }
+        }
+
+        let homed: Vec<Entity> = followers
+            .parties
+            .iter()
+            .filter(|(_, _, expedition)| expedition.home_band == flip.entity)
+            .map(|(party, ..)| party)
+            .collect();
+        for party in homed {
+            if let Ok((_, mut cohort, _)) = followers.parties.get_mut(party) {
+                cohort.faction = flip.to;
+            }
+            if let (Some(name), Ok(mut current)) = (&renamed, followers.names.get_mut(party)) {
+                *current = name.clone();
+            }
+        }
+    }
+}
+
+/// **Who may a band's leavers join** — the three facts the destination search reads beyond the
+/// bands themselves, bundled so the system stays well inside Bevy's argument budget.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct MigrationGates<'w> {
+    /// Perception: a live band-to-band tie (`ConnectionLedger::tie_is_live`) is what "a band you
+    /// have actually seen" means for a destination of another people.
+    pub connections: Res<'w, ConnectionLedger>,
+    /// Consent: a closed people's bands are never another people's destination.
+    pub borders: Res<'w, FactionBorderPolicies>,
+    /// `settle.parent_min_workers` — the floor below which a remnant goes over with its leavers.
+    pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
+}
+
+/// Layer 3b (wellbeing) — the unhappy trickle: relocate-or-stay (`docs/plan_civ_wellbeing.md`), and
+/// **defection**, which is the same rule with the same-people filter lifted
+/// (`docs/plan_band_fission.md` §Defection). Runs in the Population stage **after** demographics so
 /// morale is current. **Decoupled from `discontent_fraction`** (productivity-only): migration has its
 /// own morale-scaled onset at `migration.morale_threshold` (0.25). Each band below the threshold
 /// sheds `total × migration_move_fraction(morale)` people, composed mostly of working-age (the total
 /// is split across brackets ∝ `bracket_size × weight`, working = 1.0, dependents =
-/// `migration.dependent_weight`), who seek the highest-morale eligible same-faction band within
-/// reach; found → they **relocate** (source shrinks, destination grows), none reachable → they
-/// **stay** (grievance accrues faster via the trapped bonus). Morale NEVER causes faction population
-/// loss.
+/// `migration.dependent_weight`), who seek the highest-morale eligible band within reach.
+///
+/// **Your own people come first.** A band of the source's own people that passes the pull test
+/// (morale ≥ `attractive_morale` and > source + `min_morale_gap`, within `base_reach`) takes them.
+/// Only when none does do they look to **another people**, whose band must additionally be tied to
+/// the source band by a live tie (`ConnectionLedger::tie_is_live` — contact is band-to-band) and
+/// belong to a people with **Open Borders** ([`FactionBorderPolicies`]). A band with no durable
+/// [`BandId`] cannot be tie-checked, so it is never a cross-people source or destination. None
+/// reachable → they **stay** (grievance accrues faster via the trapped bonus) — a closed border is
+/// exactly one way to be trapped.
+///
+/// **A cross-people move carries knowledge** — the destination people is credited
+/// `scale_migration_fragments(source knowledge)` scaled by the share of the source band that left
+/// (`moved / total`), and the destination band's own knowledge merges the same payload — and **when
+/// it leaves the source below `settle.parent_min_workers` working-age, the remnant goes over too**:
+/// the band changes people as a band and both peoples are told
+/// (`population::push_band_changed_hands_events`). A move between a people's own bands does neither.
 ///
 /// Destinations are chosen from a single **pre-migration snapshot** of this turn's post-demographics
 /// morale/brackets, and every move is computed before any is applied — so relocation is
 /// order-independent (a band that receives immigrants this turn isn't re-evaluated as a fuller
-/// source, and a source's outflow is unaffected by another source feeding it).
+/// source, and a source's outflow is unaffected by another source feeding it). The remnant test
+/// reads the source's post-move brackets inside the same apply pass, and a band's faction changes
+/// only there, after every destination has been chosen.
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_population_migration(
     sim_config: Res<SimulationConfig>,
     wellbeing_config: Res<WellbeingConfigHandle>,
@@ -10777,17 +10925,26 @@ pub fn advance_population_migration(
     tiles: Query<&Tile>,
     tick: Res<SimulationTick>,
     mut event_log: ResMut<CommandEventLog>,
+    gates: MigrationGates,
+    mut sinks: MigrationKnowledgeSinks,
+    mut followers: BandFlipFollowers,
     // `With<ResidentBand>`: migration relocates people between real bands only — an expedition is
-    // never a migration source or destination. `Option<&BandId>` for the same reason
-    // `simulate_population` takes one: a band with no durable id has nothing to name a feed event
-    // after (worldgen always gives one).
+    // never a migration source or destination (a detached party defects whole, through
+    // `advance_party_defection`). `Option<&BandId>` for the same reason `simulate_population` takes
+    // one: a band with no durable id has nothing to name a feed event after (worldgen always gives
+    // one) and no tie to be checked.
     mut cohorts: Query<(Entity, &mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
 ) {
+    // `TradeTelemetry` is a PER-TURN accumulator and this system is its only writer (the
+    // cross-people knowledge credit below), so it is cleared here — ahead of every write, and ahead
+    // of `publish_trade_telemetry`, which is ordered after this system.
+    sinks.telemetry.reset_turn();
     let wellbeing = wellbeing_config.get();
     let disc_cfg = &wellbeing.discontent;
     let mig_cfg = &wellbeing.migration;
     let width = tile_registry.width;
     let wrap = sim_config.map_topology.wrap_horizontal;
+    let parent_min_workers = gates.expedition.get().settle.parent_min_workers;
 
     // Movement-tech reach factor. No concrete movement/transport tech signal exists in the sim yet
     // (capability flags cover construction/industry/power/naval/air/espionage/megaprojects, none of
@@ -10807,9 +10964,11 @@ pub fn advance_population_migration(
     // headline fraction is exact while working-age dominates the composition.
     struct Band {
         entity: Entity,
+        band_id: Option<BandId>,
         faction: FactionId,
         pos: Option<UVec2>,
         morale: Scalar,
+        total: Scalar,
         wants_to_move: bool,
         move_working: Scalar,
         move_children: Scalar,
@@ -10817,7 +10976,7 @@ pub fn advance_population_migration(
     }
     let mut bands: Vec<Band> = cohorts
         .iter()
-        .map(|(entity, cohort, _)| {
+        .map(|(entity, cohort, band_id)| {
             let move_fraction = migration_move_fraction(cohort.morale, mig_cfg);
             // Weighted bracket masses; the total is apportioned in proportion to these.
             let w_working = cohort.working;
@@ -10825,7 +10984,7 @@ pub fn advance_population_migration(
             let w_elders = cohort.elders * dependent_weight;
             let denom = w_working + w_children + w_elders;
             // Clamp the headline leaving amount to the weighted denominator so no bracket can be
-            // over-drafted (`move_x ≤ w_x ≤ bracket_x`), preserving faction population conservation.
+            // over-drafted (`move_x ≤ w_x ≤ bracket_x`), preserving population conservation.
             // A no-op under shipped tuning (`total × max_rate ≤ denom` always), but a safety net for
             // extreme-but-valid config (e.g. a very low `dependent_weight` on a dependent-heavy band).
             let total_leaving = (cohort.total() * move_fraction).min(denom);
@@ -10840,9 +10999,11 @@ pub fn advance_population_migration(
             };
             Band {
                 entity,
+                band_id: band_id.copied(),
                 faction: cohort.faction,
                 pos: tiles.get(cohort.home).ok().map(|tile| tile.position),
                 morale: cohort.morale,
+                total: cohort.total(),
                 wants_to_move: total_leaving > scalar_zero(),
                 move_working,
                 move_children,
@@ -10856,7 +11017,8 @@ pub fn advance_population_migration(
     bands.sort_by_key(|b| b.entity.to_bits());
 
     // For each band that wants to move (morale below the migration threshold), find the
-    // highest-morale eligible same-faction band within reach.
+    // highest-morale eligible band within reach — its own people's first, another people's only
+    // when none of its own will have it.
     let mut destination_of: Vec<Option<usize>> = vec![None; bands.len()];
     for i in 0..bands.len() {
         if !bands[i].wants_to_move {
@@ -10865,33 +11027,52 @@ pub fn advance_population_migration(
         let Some(src_pos) = bands[i].pos else {
             continue;
         };
-        let mut best: Option<(usize, Scalar)> = None;
+        let mut best_own: Option<(usize, Scalar)> = None;
+        let mut best_foreign: Option<(usize, Scalar)> = None;
         for (j, dest) in bands.iter().enumerate() {
-            if j == i || dest.faction != bands[i].faction {
+            if j == i {
                 continue;
             }
             let Some(dest_pos) = dest.pos else {
                 continue;
             };
-            // Eligible = meaningfully happier than a bare threshold AND than the source.
+            // Pull: meaningfully happier than a bare threshold AND than the source.
             if dest.morale < attractive_morale || dest.morale <= bands[i].morale + min_gap {
                 continue;
             }
             if crate::grid_utils::wrapped_distance_sq(src_pos, dest_pos, width, wrap) > reach_sq {
                 continue;
             }
+            let best = if dest.faction == bands[i].faction {
+                &mut best_own
+            } else {
+                // Perception: a live tie between THESE two bands; consent: the receiving people's
+                // borders are open. A band with no durable id can be neither tie-checked nor named.
+                let (Some(src_id), Some(dest_id)) = (bands[i].band_id, dest.band_id) else {
+                    continue;
+                };
+                if !gates.connections.tie_is_live(src_id, dest_id)
+                    || !gates.borders.is_open(dest.faction)
+                {
+                    continue;
+                }
+                &mut best_foreign
+            };
             if best.is_none_or(|(_, m)| dest.morale > m) {
-                best = Some((j, dest.morale));
+                *best = Some((j, dest.morale));
             }
         }
-        destination_of[i] = best.map(|(j, _)| j);
+        destination_of[i] = best_own.or(best_foreign).map(|(j, _)| j);
     }
 
     // Accumulate per-band bracket deltas + head-count tallies from all moves (computed against the
     // snapshot), then apply in one mutating pass so relocation is order-independent.
     let mut deltas: HashMap<Entity, (Scalar, Scalar, Scalar)> = HashMap::new();
-    let mut emigrated: HashMap<Entity, u32> = HashMap::new();
-    let mut immigrated: HashMap<Entity, u32> = HashMap::new();
+    let mut tallies: HashMap<Entity, MigrationTally> = HashMap::new();
+    // The knowledge each destination band merges this turn, and the per-people credits, both in the
+    // entity-sorted source order the loop below walks.
+    let mut knowledge_in: HashMap<Entity, Vec<ContractKnowledgeFragment>> = HashMap::new();
+    let mut credits: Vec<(FactionId, FactionId, ContractKnowledgeFragment)> = Vec::new();
     for (i, dest) in destination_of.iter().enumerate() {
         let Some(j) = *dest else { continue };
         let src_entity = bands[i].entity;
@@ -10913,8 +11094,69 @@ pub fn advance_population_migration(
         dst.0 += mw;
         dst.1 += mc;
         dst.2 += me;
-        *emigrated.entry(src_entity).or_default() += moved_head;
-        *immigrated.entry(dest_entity).or_default() += moved_head;
+        let (from_people, to_people) = (bands[i].faction, bands[j].faction);
+        let cross_people = from_people != to_people;
+        let src_tally = tallies.entry(src_entity).or_default();
+        src_tally.emigrated += moved_head;
+        let dst_tally = tallies.entry(dest_entity).or_default();
+        if !cross_people {
+            dst_tally.immigrated_own += moved_head;
+            continue;
+        }
+        *dst_tally.immigrated_foreign.entry(from_people).or_default() += moved_head;
+        tallies.entry(src_entity).or_default().joined_people = Some(to_people);
+        // **Knowledge travels with people, in proportion.** The source band's knowledge is scaled
+        // by the migration fidelity levers, then by the share of the band that left — so a brain
+        // drain is proportional, never all-or-nothing.
+        let Ok((_, source_cohort, _)) = cohorts.get(src_entity) else {
+            continue;
+        };
+        let share = (mw + mc + me) / bands[i].total;
+        let scaled = scale_migration_fragments(
+            &fragments_to_contract(&source_cohort.knowledge),
+            sim_config.migration_fragment_scaling.raw(),
+            sim_config.migration_fidelity_floor.raw(),
+        );
+        for mut fragment in scaled {
+            fragment.progress = (Scalar::from_raw(fragment.progress) * share).raw();
+            if fragment.progress <= 0 {
+                continue;
+            }
+            knowledge_in
+                .entry(dest_entity)
+                .or_default()
+                .push(fragment.clone());
+            credits.push((from_people, to_people, fragment));
+        }
+    }
+
+    // The destination peoples' discovery credit, telemetry and diffusion events — in the order the
+    // sources were walked, which is the entity-sorted snapshot order.
+    for (from, to, fragment) in &credits {
+        let delta = Scalar::from_raw(fragment.progress);
+        sinks
+            .discovery
+            .add_progress(*to, fragment.discovery_id, delta);
+        sinks.telemetry.tech_diffusion_applied =
+            sinks.telemetry.tech_diffusion_applied.saturating_add(1);
+        sinks.telemetry.migration_transfers = sinks.telemetry.migration_transfers.saturating_add(1);
+        sinks.telemetry.push_record(TradeDiffusionRecord {
+            tick: tick.0,
+            from: *from,
+            to: *to,
+            discovery_id: fragment.discovery_id,
+            delta,
+            via_migration: true,
+            herd_density: 0.0,
+        });
+        sinks.trade_events.send(TradeDiffusionEvent {
+            tick: tick.0,
+            from: *from,
+            to: *to,
+            discovery_id: fragment.discovery_id,
+            delta,
+            via_migration: true,
+        });
     }
 
     // Apply relocation + refresh the derived per-turn emigrant/immigrant readouts + accrue/decay
@@ -10929,9 +11171,11 @@ pub fn advance_population_migration(
         .enumerate()
         .map(|(i, b)| (b.entity, i))
         .collect();
+    let mut flips: Vec<BandFlip> = Vec::new();
     for (entity, mut cohort, band_id) in cohorts.iter_mut() {
-        cohort.last_emigrated = emigrated.get(&entity).copied().unwrap_or(0);
-        cohort.last_immigrated = immigrated.get(&entity).copied().unwrap_or(0);
+        let tally = tallies.remove(&entity).unwrap_or_default();
+        cohort.last_emigrated = tally.emigrated;
+        cohort.last_immigrated = tally.immigrated_total();
         if let Some(band_id) = band_id {
             // Whole people already, so this is reported the turn it happens — no accumulator.
             crate::systems::population::push_migration_events(
@@ -10939,8 +11183,7 @@ pub fn advance_population_migration(
                 tick.0,
                 cohort.faction,
                 *band_id,
-                cohort.last_emigrated,
-                cohort.last_immigrated,
+                &tally,
             );
         }
         if let Some((dw, dc, de)) = deltas.get(&entity) {
@@ -10948,6 +11191,32 @@ pub fn advance_population_migration(
             cohort.children = (cohort.children + *dc).max(scalar_zero());
             cohort.elders = (cohort.elders + *de).max(scalar_zero());
             cohort.sync_size();
+        }
+        if let Some(payload) = knowledge_in.get(&entity) {
+            let mut knowledge = fragments_to_contract(&cohort.knowledge);
+            merge_fragment_payload(&mut knowledge, payload, Scalar::one().raw());
+            cohort.knowledge = fragments_from_contract(&knowledge);
+        }
+        // **A band too small to staff itself does not linger as a husk.** Only a cross-people move
+        // can trigger this, and it reads the source's POST-move brackets: the remnant goes over to
+        // the people its leavers joined, as a band — its stores, its entity, its id.
+        if let (Some(joined), Some(band_id)) = (tally.joined_people, band_id) {
+            if available_workers(cohort.working) < parent_min_workers {
+                let left = cohort.faction;
+                cohort.faction = joined;
+                crate::systems::population::push_band_changed_hands_events(
+                    &mut event_log,
+                    tick.0,
+                    *band_id,
+                    left,
+                    joined,
+                );
+                flips.push(BandFlip {
+                    entity,
+                    band: *band_id,
+                    to: joined,
+                });
+            }
         }
         if cohort.discontent_fraction <= scalar_zero() {
             cohort.grievance = (cohort.grievance - grievance_decay).max(scalar_zero());
@@ -10966,6 +11235,30 @@ pub fn advance_population_migration(
             let gain = grievance_gain * cohort.discontent_fraction * mult;
             cohort.grievance += gain;
         }
+    }
+    // After every band's faction is final, so the name test sees this turn's whole roster.
+    follow_the_band_to_its_new_people(&mut followers, &cohorts, flips, sim_config.map_seed);
+}
+
+/// **One band's migration this turn, in whole people** — what `push_migration_events` narrates and
+/// what `last_emigrated` / `last_immigrated` publish.
+///
+/// A source has exactly one destination, so its leavers either stayed among their own people
+/// (`joined_people == None`) or joined one other people. A destination can receive from several
+/// sources at once, so arrivals split into its own people's and each other people's, keyed in a
+/// `BTreeMap` so the feed lines come out in one order.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct MigrationTally {
+    pub emigrated: u32,
+    /// The people this band's leavers joined, when that was not its own.
+    pub joined_people: Option<FactionId>,
+    pub immigrated_own: u32,
+    pub immigrated_foreign: BTreeMap<FactionId, u32>,
+}
+
+impl MigrationTally {
+    pub fn immigrated_total(&self) -> u32 {
+        self.immigrated_own + self.immigrated_foreign.values().sum::<u32>()
     }
 }
 
@@ -12102,7 +12395,6 @@ mod labor_yield_tests {
                     generation: 0,
                     faction: FactionId(0),
                     knowledge: Vec::new(),
-                    migration: None,
                 },
                 LaborAllocation {
                     assignments,

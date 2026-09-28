@@ -26,5 +26,9 @@
   "settle": {
     "min_founding_workers": 4,
     "parent_min_workers": 6
+  },
+  "defection": {
+    "_comment_party_pull_threshold": "THE PULL A DETACHED PARTY MUST ACCRUE BEFORE IT JOINS ANOTHER PEOPLE (docs/plan_band_fission.md Defection). Each turn its HOME band is below wellbeing_config migration.morale_threshold AND the party saw, on its own sweep this turn, a foreign band within migration.base_reach that passes the pull test and whose people keep Open Borders, it accrues migration_move_fraction(home morale); a turn without one resets it to 0. At rock-bottom home morale (rate 0.15) 0.3 is 2 turns in sight; at morale 0.2 (rate 0.03) it is 10. Too low: a party defects the turn it glimpses a camp. Too high: parties never sit near a camp long enough and scouts never defect. 0 is legal (defect on the first qualifying turn). PLAYTEST DIAL.",
+    "party_pull_threshold": 0.3
   }
 }

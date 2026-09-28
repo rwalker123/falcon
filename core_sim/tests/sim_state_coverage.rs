@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 43] = [
+const SIM_STATE_RESOURCES: [&str; 44] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
@@ -69,6 +69,8 @@ const SIM_STATE_RESOURCES: [&str; 43] = [
     "DiscoveryProgressLedger",
     "EspionageMissionState",
     "EspionageRoster",
+    // Mutated only by `set_open_borders`, which is still state a rollback has to put back.
+    "FactionBorderPolicies",
     "FactionInventory",
     // Mutated only by command handlers, which is still state a rollback has to put back.
     "FactionSecurityPolicies",
@@ -137,12 +139,16 @@ const SIM_STATE_RESOURCES: [&str; 43] = [
 /// The second half is the load-bearing one, and it is why `HerdTelemetry`, `PowerGridState` and
 /// `SimulationMetrics` are not here despite each having a system that rebuilds it: `capture_snapshot`
 /// publishes all three within the same turn. See the comment on them in `SIM_STATE_RESOURCES`.
-const DERIVED_RESOURCES: [(&str, &str); 5] = [
+const DERIVED_RESOURCES: [(&str, &str); 6] = [
     // Filled by `calculate_visibility` (and the expedition comm flush) and drained + cleared by
     // `advance_connections` in the SAME stage, so it is empty at the end of every turn.
     ("ContactsThisTurn", "connections::advance_connections"),
     ("CultureEffectsCache", "reconcile_culture_layers"),
     ("HerdDensityMap", "advance_herds"),
+    // Filled by `advance_expeditions` from its own sight sweep and DRAINED by
+    // `advance_party_defection` later in the same Population chain, so it is empty at the end of
+    // every turn — `ContactsThisTurn`'s shape.
+    ("PartySightings", "advance_party_defection"),
     // Written by `balance_supply_networks` and DRAINED by `advance_routes` in the SAME stage, so it
     // is empty at the end of every turn — `ContactsThisTurn`'s shape exactly, one arc over.
     ("RouteTrafficLog", "routes::advance_routes"),

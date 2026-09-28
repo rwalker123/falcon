@@ -137,7 +137,6 @@ fn hunt_assignment_takes_biomass_and_yields() {
                 generation: 0 as GenerationId,
                 faction,
                 knowledge: Vec::new(),
-                migration: None,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

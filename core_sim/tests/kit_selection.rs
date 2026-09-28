@@ -234,7 +234,6 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FactionId(0),
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 
@@ -315,6 +314,7 @@ fn spawn_party(
                 pending_contacts: Default::default(),
                 kit,
                 cargo: LocalStore::new(),
+                defection_pull: core_sim::Scalar::zero(),
             },
         ))
         .id()

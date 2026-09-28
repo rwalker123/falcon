@@ -38,6 +38,12 @@ extends RefCounted
 ## per-worker controls": role steppers, labor assignment and the compose sheets stay on the per-band
 ## pages, and the cycler is the way to reach a band from here. Nothing on this page emits a signal, so
 ## none is declared — which is also why the module can be `static` at all.
+##
+## **ONE EXCEPTION: THE OPEN BORDERS TOGGLE** (issue #512). It is a FACTION-WIDE policy, so no band
+## page can host it, and this page is the one surface scoped to the whole people. It stays inside the
+## static rule: the toggle's press goes out through a Callable the controller threads in (the
+## controller owns the signal), and its state is read off the snapshot every render — nothing here
+## holds it.
 
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
@@ -107,8 +113,14 @@ const KNOWLEDGE_METER_CELLS := FactionReadouts.KNOWLEDGE_METER_CELLS
 ## **IT TAKES NO `knowledge` ROW.** It was threaded in for ONE reader — the dormant `Fodder:` row's
 ## hover, which stated how far along Foddering is — and that row carries no hover now
 ## (`DetailFormat.fodder_dormant_row`), so nothing on this page reads a knowledge track.
+##
+## **OPEN BORDERS SITS ABOVE THE `full` CUT**, so the height-capped tier keeps it: it is the one thing
+## on this page the player can DO, which is exactly what that tier exists to keep. `policy` is the
+## player faction's `faction_policies` row (`FactionReadouts.faction_policy`); `on_open_borders` takes
+## the requested state as a `bool`.
 static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureController,
-        sedentarization: Dictionary, sites: Array, full: bool) -> VBoxContainer:
+        sedentarization: Dictionary, sites: Array, policy: Dictionary,
+        on_open_borders: Callable, full: bool) -> VBoxContainer:
     var col := HudWidgets.make_zone_column()
     var bands := labor.player_bands()
     col.add_child(_build_vitals_label(bands, disclosures))
@@ -118,6 +130,9 @@ static func build_band_zone(labor: HudBandLaborState, disclosures: DisclosureCon
     var settling := _build_settling_block(sedentarization)
     if settling != null:
         col.add_child(settling)
+    var borders := _build_open_borders_row(policy, on_open_borders)
+    if borders != null:
+        col.add_child(borders)
     if not full:
         return col
     var discoveries := _build_discoveries_block(sites)
@@ -761,6 +776,52 @@ static func _build_settling_block(sedentarization: Dictionary) -> VBoxContainer:
             int(round(score)), HudWorkVocab.FACTION_SETTLING_SCALE],
         HudStyle.INK_DIM))
     return block
+
+## The Open Borders checkbox and, right-aligned beside it, what the current setting DOES. `null` when
+## the snapshot carried no policy row — a toggle guessing the sim's default would be a second answer to
+## a question the wire owns.
+##
+## **THE STATE IS THE SNAPSHOT'S, EVERY RENDER.** A press flips the box locally (that is the widget)
+## and emits; the server's recapture after the command re-renders this row from the wire, so a refused
+## command puts the box back rather than leaving it disagreeing with the sim.
+static func _build_open_borders_row(policy: Dictionary, on_open_borders: Callable) -> HBoxContainer:
+    if policy.is_empty():
+        return null
+    var open := bool(policy.get("open_borders", true))
+    var row := HBoxContainer.new()
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_constant_override("separation", STAT_ROW_SEPARATION)
+    row.set_meta(OPEN_BORDERS_ROW_META, true)
+    var box := CheckBox.new()
+    box.text = HudWorkVocab.FACTION_OPEN_BORDERS_LABEL
+    box.focus_mode = Control.FOCUS_NONE
+    box.button_pressed = open
+    box.tooltip_text = HudWorkVocab.FACTION_OPEN_BORDERS_HINT
+    box.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
+    HudStyle.apply_checkbox(box)
+    box.set_meta(OPEN_BORDERS_TOGGLE_META, true)
+    if on_open_borders.is_valid():
+        box.toggled.connect(func(pressed: bool) -> void: on_open_borders.call(pressed))
+    row.add_child(box)
+    var spacer := Control.new()
+    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    row.add_child(spacer)
+    var value := Label.new()
+    value.text = HudWorkVocab.FACTION_OPEN_BORDERS_OPEN_VALUE if open \
+        else HudWorkVocab.FACTION_OPEN_BORDERS_CLOSED_VALUE
+    value.add_theme_font_size_override("font_size", STAT_ROW_FONT_SIZE)
+    # Dim in BOTH states: neither is a fault — it is a choice with a cost either way, and an amber
+    # `closed` would read as something to fix.
+    value.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    HudWidgets.set_label_tooltip(value, HudWorkVocab.FACTION_OPEN_BORDERS_HINT)
+    row.add_child(value)
+    return row
+
+## The Open Borders row and its checkbox as `Control` metas, so the harness finds the control by what
+## the builder DECIDED rather than by re-spelling its label.
+const OPEN_BORDERS_ROW_META := "open_borders_row"
+const OPEN_BORDERS_TOGGLE_META := "open_borders_toggle"
 
 ## THE WONDROUS SITES THE FACTION HAS FOUND — one row per site KIND with how many of it, under a head
 ## carrying the INSTANCE total.

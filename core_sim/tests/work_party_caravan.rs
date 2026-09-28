@@ -128,7 +128,6 @@ fn world_hunting_at(distance: u32) -> (App, Entity) {
                 generation: 0 as GenerationId,
                 faction: FACTION,
                 knowledge: Vec::new(),
-                migration: None,
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {

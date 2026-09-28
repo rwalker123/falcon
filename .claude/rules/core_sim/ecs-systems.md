@@ -230,25 +230,26 @@ still shipped whole and masked by the raster client-side.
 > **What survived, and why it is not dead code:** `TradeTelemetry` / `TradeDiffusionRecord` /
 > `TradeDiffusionEvent`, and `publish_trade_telemetry`. Misleadingly named, but live — the migration
 > path below writes them with `via_migration: true`, and it is the one knowledge-diffusion path that
-> was never dormant. `simulate_population` also owns the per-turn `TradeTelemetry::reset_turn()` it
-> inherited from the deleted diffusion system. **The leak-timer MODEL survived too**, as
+> was never dormant. `advance_population_migration` owns the per-turn `TradeTelemetry::reset_turn()`
+> as the resource's only writer, and `publish_trade_telemetry` is ordered after it. **The leak-timer MODEL survived too**, as
 > `sim_runtime::TradeLeakCurve` — a timer that fires more slowly the more closed you are, with a
 > partial `KnowledgeFragment` at a fidelity. Currently unmounted; it is the shape §Q5 of the design
 > intends for a connection's knowledge rider.
 
-**Migration is the live path.** `PendingMigration` payloads carry scaled knowledge fragments; on arrival they merge
-into the destination ledger and the whole band emigrates (`cohort.faction = destination`) — the
-high-morale "brain-drain" / Cultural Osmosis vector. `simulate_population` gates it on **both** high
-morale (`migration_morale_threshold`) **and** a settled duration: a band must have been simulated at
-least `migration_min_settled_turns` turns (`PopulationCohort.age_turns`, incremented each turn by
-`simulate_population`) before its population can emigrate. This stops a freshly-spawned, well-fed
-starting band from defecting on turn one (the `well_fed_morale_bonus` alone would otherwise clear the
-morale threshold immediately).
+**Migration is the live path, and it rides people.** Knowledge crosses between peoples only when
+people do: a cross-people move under the wellbeing trickle (`advance_population_migration`,
+`factions.md` → "Defection is the unhappy trickle with the same-people filter lifted") credits the
+destination people's `DiscoveryProgressLedger` with `scale_migration_fragments(source knowledge)`,
+each fragment further scaled by the share of the source band that left (`moved / total`), and merges
+the same payload into the destination band's own `knowledge`. The brain drain is proportional, never
+all-or-nothing. Each credited fragment writes a `TradeDiffusionRecord` / `TradeDiffusionEvent` with
+`via_migration: true` — the knowledge panel's "migration" rows.
 
 ### ⛔ THE HANDOVER IS TOLD TO BOTH PEOPLES — one `band_changed_hands` row per side
 
 `CommandEventKind::BandChangedHands`, pushed by `systems::population::push_band_changed_hands_events`
-on the turn the migration's eta reaches zero: *"Band 3 left us for People 1"* filed under the losing
+on the turn a cross-people move leaves its source below `settle.parent_min_workers` and the remnant
+goes over (`advance_population_migration`): *"Band 3 left us for People 1"* filed under the losing
 faction, *"Band 3 joined us from People 0"* under the gaining one, both carrying
 `band=/from=/to=/side=lost|gained`.
 
@@ -257,13 +258,6 @@ faction, *"Band 3 joined us from People 0"* under the gaining one, both carrying
 reaches exactly one of the two players the handover happened to. Which side a row describes rides the
 **detail** (`side=`), on `CommandEventKind::Road`'s reading: the player is looking at one band
 changing hands, not at two unrelated events.
-
-**It shipped silent, and the silence is why the handover was reported as a bug.** The branch sent
-`TradeDiffusionEvent` and `MigrationKnowledgeEvent` — registered at `lib.rs` and read by **no
-`EventReader` anywhere in the crate**; they are diffusion/telemetry plumbing — and pushed nothing to
-`CommandEventLog` at all, so `cohort.faction = migration.destination` changed a 29-person band's
-allegiance with no line on any surface. The two dead events are deliberately left as they are: this
-arc adds a reader for neither.
 
 **The rung is ALERT** (`.claude/rules/client/event-dock.md`'s three-rung ladder). Notable is for what
 happens to a band as a matter of course — a death, a person migrating, a party arriving — and this is
@@ -282,7 +276,7 @@ name substitutes it the same way it substitutes a band's.
 same turn's log under each `ViewerFaction` in turn, with a negative-control arm: a turn in which
 nobody changes hands publishes no row to either people.
 
-**Config**: `migration_fragment_scaling`, `migration_fidelity_floor`; migration gating (`migration_morale_threshold`, `migration_eta_ticks`, `migration_min_settled_turns`) lives in the `population` block of `turn_pipeline_config.json`.
+**Config**: `migration_fragment_scaling`, `migration_fidelity_floor` (`simulation_config.json`); who moves, and where, is the wellbeing trickle's `migration.*` block in `wellbeing_config.json` (`campaign.md`), and the remnant floor is `expedition_config.json` → `settle.parent_min_workers`.
 
 ---
 

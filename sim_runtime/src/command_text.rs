@@ -52,6 +52,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "counterintel_policy <faction_id> <lenient|standard|hardened|crisis>",
     },
     CommandVerbHelp {
+        verb: "set_open_borders",
+        aliases: &[],
+        summary: "Open or close a faction's borders: while open, another people's unhappy leavers (and defecting parties) may join its bands; while closed, none may. Every faction starts open. Its own bands never ask.",
+        usage: "set_open_borders <faction_id> <open|closed>",
+    },
+    CommandVerbHelp {
         verb: "counterintel_budget",
         aliases: &[],
         summary: "Adjust or set the counter-intel reserve for a faction.",
@@ -509,6 +515,25 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let faction = parse_u32(faction_str, "counterintel policy faction")?;
             let policy = parse_security_policy(policy_str)?;
             Ok(CommandPayload::UpdateCounterIntelPolicy { faction, policy })
+        }
+        "set_open_borders" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction"))?;
+            let state = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("open|closed"))?;
+            let faction = parse_u32(faction_str, "open borders faction")?;
+            let open = match state.to_ascii_lowercase().as_str() {
+                "open" => true,
+                "closed" | "close" => false,
+                other => parse_bool(other, "open borders state")?,
+            };
+            // Closed grammar: a trailing token is a misunderstanding of the verb, not a value.
+            if let Some(extra) = parts.next() {
+                return Err(CommandParseError::UnexpectedArgument(extra.to_string()));
+            }
+            Ok(CommandPayload::SetOpenBorders { faction, open })
         }
         "counterintel_budget" => {
             let faction_str = parts
@@ -3441,6 +3466,32 @@ mod tests {
                 policy: SecurityPolicyKind::Hardened,
             }
         );
+    }
+
+    #[test]
+    fn parse_set_open_borders_command() {
+        assert_eq!(
+            parse_command_line("set_open_borders 1 closed").unwrap(),
+            CommandPayload::SetOpenBorders {
+                faction: 1,
+                open: false,
+            }
+        );
+        assert_eq!(
+            parse_command_line("set_open_borders 0 open").unwrap(),
+            CommandPayload::SetOpenBorders {
+                faction: 0,
+                open: true,
+            }
+        );
+        assert!(matches!(
+            parse_command_line("set_open_borders 0"),
+            Err(CommandParseError::MissingArgument(_))
+        ));
+        assert!(matches!(
+            parse_command_line("set_open_borders 0 open now"),
+            Err(CommandParseError::UnexpectedArgument(_))
+        ));
     }
 
     #[test]

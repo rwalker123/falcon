@@ -1520,11 +1520,12 @@ So both popovers read the per-cause `transfer_crossings` list (`TradeLedger.caus
 | `⇄ Trade route` | `shipment_in` + `shipment_returned` − `shipment_out` | the transfer rows, as before — a shipment cancelled in camp nets to nothing here |
 | `Brought home` | `party_home` (▲) — the party's own pack, never a trade party's cargo (that is `shipment_returned`) | beside Hunted / Gathered (Grown, on the fodder account) |
 | `Party rations` | `party_provisions` (▼) | beside them too |
+| `Joined from another people` | `party_defected` (▲) — another people's defecting party folding its pack into this band (issue #512) | beside them too |
 
 `⇄ Local exchange` still reads the whole Local arm off the four link terms — pooling AND a split's
 dowry — unchanged. **The popover still accounts for the whole larder change**: the crossings summed
 per `(link, direction)` equal the arms by construction (`LaborAllocation::book_crossing`,
-`.claude/rules/core_sim/campaign.md` → "The cause key and the crossings list"), so the three route
+`.claude/rules/core_sim/campaign.md` → "The cause key and the crossings list"), so the four route
 rows sum to the retired whole-arm row. `tools/ui_preview/chapters/supply_network.gd`'s
 `supply_food_party_rows` asserts all three rows and that sum. Each is omitted under the account's
 floor like every other row; the labels are `DetailFormat.TRANSFER_LABEL_BROUGHT_HOME` /

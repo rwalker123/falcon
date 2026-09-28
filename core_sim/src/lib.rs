@@ -126,9 +126,9 @@ pub use components::{
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
     Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-    MaterialBatch, MaterialDraw, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
-    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
+    MaterialBatch, MaterialDraw, MoraleCause, PopulationCohort, PowerNode, ResidentBand,
+    Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority, SourceShedFacts,
+    SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
     TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
     YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR,
     STRIP_IT_BARE,
@@ -195,9 +195,9 @@ pub use espionage::{
     QueueMissionParams, SecurityPolicy,
 };
 pub use expedition_config::{
-    load_expedition_config_from_env, shipment_carry_cap, trade_per_worker_carry, ExpeditionConfig,
-    ExpeditionConfigHandle, ExpeditionConfigMetadata, SettleConfig, TradeExpeditionConfig,
-    BUILTIN_EXPEDITION_CONFIG,
+    load_expedition_config_from_env, shipment_carry_cap, trade_per_worker_carry, DefectionConfig,
+    ExpeditionConfig, ExpeditionConfigHandle, ExpeditionConfigMetadata, SettleConfig,
+    TradeExpeditionConfig, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
@@ -410,11 +410,11 @@ pub use resources::{
     apply_port_base, apply_port_base_override, carry_runtime_owned_fields,
     load_simulation_config_for_new_world, port_base_override, BandIdAllocator, BandNameAllocator,
     CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
-    CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
-    FoodSiteEntry, FoodSiteRegistry, FoodSiteWaterBiasReport, HydrologyOverrides, MapTopology,
-    MoistureRaster, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
-    TradeTelemetry, WorldEpoch,
+    CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionBorderPolicies,
+    FactionInventory, FoodSiteEntry, FoodSiteRegistry, FoodSiteWaterBiasReport, HydrologyOverrides,
+    MapTopology, MoistureRaster, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry,
+    TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use seats::{
@@ -428,15 +428,15 @@ pub use snapshot::{
 pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_crafting, advance_expeditions, advance_labor_allocation,
-    advance_predator_raids, advance_tick, bench_material_rate, bench_tiers, bill_and_stock_roads,
-    bring_the_dropped_party_home, denial_forecast, expedition_returned_event,
-    expedition_take_provisions, fold_party_into_band, hunt_per_worker_provisions,
-    hunt_report_event, hunt_take, hunt_trip_forecast, output_multiplier, party_owes_a_report,
-    publish_turn_transfers, settle_bands_extraction, settle_bands_roadwork, settle_scarce_tools,
-    simulate_population, simulate_power, source_has_a_meter_at_risk, split_band_from_parent,
-    split_refusals, BenchTiers, DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound,
-    HuntTripForecast, MigrationKnowledgeEvent, PoolToolPlan, PowerSimParams, SplitBand,
-    SplitRefusal, SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
+    advance_party_defection, advance_population_migration, advance_predator_raids, advance_tick,
+    bench_material_rate, bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home,
+    denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
+    hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
+    output_multiplier, party_owes_a_report, publish_turn_transfers, settle_bands_extraction,
+    settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
+    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
+    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, PartySightings, PoolToolPlan,
+    PowerSimParams, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
@@ -714,6 +714,7 @@ pub fn build_headless_app() -> App {
         faction_registry.factions(),
         espionage::SecurityPolicy::Standard,
     );
+    let border_policies = resources::FactionBorderPolicies::new(faction_registry.factions());
 
     // Read before `config` is moved into the world: the log's turn window is a config lever, and
     // `CommandEventLog::default()` only knows the builtin default.
@@ -861,6 +862,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(espionage::EspionageMissionState::default())
         .insert_resource(counter_intel_budgets)
         .insert_resource(security_policies)
+        .insert_resource(border_policies)
         .insert_resource(influencer_config_handle)
         .insert_resource(influencer_roster)
         .insert_resource(InfluencerImpacts::default())
@@ -868,6 +870,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(culture_effects)
         .insert_resource(DiscoveryProgressLedger::default())
         .insert_resource(TradeTelemetry::default())
+        .insert_resource(systems::PartySightings::default())
         .insert_resource(GreatDiscoveryRegistry::default())
         .insert_resource(GreatDiscoveryReadiness::default())
         .insert_resource(ObservationLedger::default())
@@ -881,7 +884,6 @@ pub fn build_headless_app() -> App {
         .add_event::<CultureTensionEvent>()
         .add_event::<CultureSchismEvent>()
         .add_event::<systems::TradeDiffusionEvent>()
-        .add_event::<systems::MigrationKnowledgeEvent>()
         .add_event::<EspionageProbeEvent>()
         .add_event::<CounterIntelSweepEvent>()
         .add_event::<GreatDiscoveryCandidateEvent>()
@@ -1129,12 +1131,18 @@ pub fn build_headless_app() -> App {
                     // morale/discontent are current and productivity has already been applied at each
                     // yield site; it then relocates discontented people (population conserved).
                     systems::advance_population_migration,
+                    // A detached party defects whole (`docs/plan_band_fission.md` §Defection): it
+                    // reads its home band's morale, which demographics made current, and the
+                    // sightings `advance_expeditions` recorded this turn; it runs after the trickle
+                    // so a band that changed people this turn is judged as the people it now is.
+                    systems::advance_party_defection,
                     sedentarization::sedentarization_tick,
                 )
                     .chain(),
-                // Pure telemetry: writes `TradeTelemetry`, which only `simulate_population`
-                // touches. It rides alongside the whole movement/labor run instead of tailing it.
-                systems::publish_trade_telemetry.after(systems::simulate_population),
+                // Pure telemetry: reads `TradeTelemetry`, which only `advance_population_migration`
+                // writes (the cross-people knowledge credit). Ordered after that writer and nothing
+                // else, so it stays free of the labor run the migration follows.
+                systems::publish_trade_telemetry.after(systems::advance_population_migration),
                 // **RETIRED: `settle_route_keeping`, the third keeping pool as a SYSTEM OF ITS
                 // OWN.** It ran `.after(advance_labor_allocation)` because the `roadwork` head count
                 // it divides has to be the one the shedding order left — and that put the payment a

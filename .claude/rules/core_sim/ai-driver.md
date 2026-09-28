@@ -926,14 +926,16 @@ then excluded on arrival, and a non-site patch counted as "something better in v
 `land_short` from the other direction. The alarm above is the same
 correction: it once compared a *stock* to a *rate* (`195.0 < 4.09`) and so could never fire.
 
-⛔ **Contact hands a band over.** The sim's knowledge migration (`advance_population_migration`,
-`core_sim/src/systems/population.rs`) rewrites the faction of a band that is settled
-`migration_min_settled_turns`, above `migration_morale_threshold` morale, carries knowledge, and is
-in **contact** with another people — in either direction. On the bench's seed 11 the rival's band
-joined the utility seat at tick 6 and the seat's own band left at tick 18, which is why its row at
-turn 30 reads `population_working 0` with `hunger_deaths_total 0`. *Better ground* excludes ground a
-visible foreign band stands on; it cannot see a rival the fog hides, and it does not model sight
-range, so the exposure remains.
+⛔ **Misery, not contact, hands people over.** The sim's defection is the wellbeing trickle with the
+same-people filter lifted (`advance_population_migration`, `.claude/rules/core_sim/factions.md` →
+"Defection is the unhappy trickle with the same-people filter lifted"): a band below
+`migration.morale_threshold` sheds people toward a happier band within `migration.base_reach`, a
+foreign one only when no band of its own people qualifies, it is tied to that band by a live contact
+and its people keep Open Borders — and a whole band goes over only when a cross-people move leaves it
+below `settle.parent_min_workers`. A well-fed band never loses anyone, so an AI seat that keeps its
+bands fed keeps them; one that lets morale collapse beside a thriving rival camp bleeds people to it.
+A detached party goes whole under the same test (`advance_party_defection`). *Better ground*
+excludes ground a visible foreign band stands on, which also keeps an AI band out of a rival's reach.
 
 ### The land reading (`ground.rs`)
 
