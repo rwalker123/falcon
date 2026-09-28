@@ -21,12 +21,12 @@ signal answer_fork_requested(payload: Dictionary)
 ## Emitted after the player picks a destination tile for the selected band's move.
 ## Payload keys: { faction, band, x, y }. Main formats the `move_band …` command.
 signal move_band_requested(payload: Dictionary)
-## Scouting expedition (docs/plan_exploration_and_sites.md §2). Sent after the player outfits a
-## party on a resident band (a party-size stepper) and clicks a target tile. Payload keys:
+## Scouting expedition (docs/plan_exploration_and_sites.md §2). Sent from the Scout verb's sheet, which
+## opens on the tile the player picked FIRST (issue #529) — party size and kit, then Send. Payload keys:
 ## { faction, band, party_workers, x, y }. Main formats the `send_expedition …` command.
 signal send_expedition_requested(payload: Dictionary)
-## Hunting expedition (docs/plan_exploration_and_sites.md §2b). Sent after the player outfits a party
-## on a resident band and clicks a target herd. Payload keys: { faction, band, party_workers,
+## Hunting expedition (docs/plan_exploration_and_sites.md §2b). Sent from the herd drawer's beyond-reach
+## branch, the one surface that still launches one. Payload keys: { faction, band, party_workers,
 ## fauna_id, fauna_label }. `fauna_id` is the DATABASE KEY the command line addresses the herd with;
 ## `fauna_label` is its player-facing species name (via `SourceForecast.herd_display_name`), which is what the
 ## command-feed note must read — a feed line naming `game_deer_07` is a key leaking into the game UI.
@@ -472,8 +472,9 @@ var _bandpanel: BandPanelController = null
 # The selection drawer's RENDER DISPATCH (HUD decomposition Phase 2c-3): the one-drawer land/occupant
 # dispatch, the land-drawer terrain-line producer, the `%AllocationPanel` occupant/expedition/band-move
 # branches, and the height-capping fit path. HudLayer keeps the reflectively-reached `_render_selection_panel`
-# and the two-host `_refresh_disclosure_hosts` calling in, and `_targeting` (its Move button connects to
-# `begin_move_band`). Constructed AFTER `_bandpanel` — it dispatches into it and `_drawercompose`.
+# and the two-host `_refresh_disclosure_hosts` calling in, and `_targeting` (the expedition panel's Move
+# connects to `begin_move_band`; a band's verbs go through `_bandpanel.dispatch_verb`). Constructed AFTER
+# `_bandpanel` — it dispatches into it and `_drawercompose`.
 var _drawer: SubjectDrawerController = null
 # The BAND/EXPEDITION ATTENTION PRODUCERS + orb jump-routing (HUD decomposition). Owns the OTHER half
 # of the turn-orb attention model from `TurnOrbController`: it PRODUCES the band/expedition rows
@@ -577,8 +578,8 @@ const COMPOSE_LAYER_INDEX := WORK_INSPECTOR_LAYER_INDEX + 1
 const COMPOSE_LAYER_NAME := &"ComposeLayer"
 var _compose_layer: CanvasLayer = null
 
-## The host a compose surface parents itself into — the sheet (`DrawerComposeController`) and the
-## Band panel's float (`BandPanelController`), which are the same sheet reached from two places.
+## The host a compose surface parents itself into — the drawer's compose sheet
+## (`DrawerComposeController`).
 ##
 ## **NOT `self`, WHICH IS WHAT IT USED TO BE.** Everything else a `RefCounted` controller parents onto
 ## this node (the fork panel, the targeting banner, the disclosure popover, the confirm dialog) is
@@ -586,9 +587,9 @@ var _compose_layer: CanvasLayer = null
 ## surface you are typing into cannot be under an overlay that swallows the pointer.
 ##
 ## A sibling `CanvasLayer` carries an identity transform (no `offset` / `scale` / `transform` is set
-## on it), so the two surfaces' viewport arithmetic — `ComposeSheet._sync_to_viewport` and
-## `BandComposeFloat._room`, both of which read `get_viewport().get_visible_rect()` and write a
-## parent-local `position` — resolves to exactly the global coordinates it did as a child of the HUD.
+## on it), so the sheet's viewport arithmetic — `ComposeSheet._sync_to_viewport`, which reads
+## `get_viewport().get_visible_rect()` and writes a parent-local `position` — resolves to exactly the
+## global coordinates it did as a child of the HUD.
 func compose_host() -> Node:
     return _compose_layer
 
@@ -718,6 +719,10 @@ func _ready() -> void:
     _targeting.move_band_requested.connect(func(payload: Dictionary) -> void: move_band_requested.emit(payload))
     _targeting.send_expedition_requested.connect(
         func(payload: Dictionary) -> void: send_expedition_requested.emit(payload))
+    # **A CANCELLED VERB PICK TAKES ITS VERB WITH IT** (issue #529) — Esc / the banner's Cancel /
+    # right-click end the verb the pick was the first step of. `_bandpanel` is constructed below, so
+    # the relay binds it lazily, the `rerender` nudge's own pattern.
+    _targeting.verb_pick_cancelled.connect(func() -> void: _bandpanel.close_verb_form())
     # The detail-row disclosure cluster (the Food/Morale carets + the breakdown popover they open).
     # It owns that cluster's ONLY `add_child`, so it is handed the HUD CanvasLayer as the host it
     # parents the popover into (the `TurnOrbController` pattern), plus `_refresh_disclosure_hosts` —
@@ -770,8 +775,6 @@ func _ready() -> void:
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
     _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)
-    _bandpanel.send_hunt_expedition_requested.connect(
-        func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _bandpanel.send_denial_raid_requested.connect(
         func(payload: Dictionary) -> void: send_denial_raid_requested.emit(payload))
     _bandpanel.send_trade_expedition_requested.connect(
@@ -884,12 +887,15 @@ func _ready() -> void:
     # dispatches into both) and handed the SAME selection/labor models, the sibling controllers, the
     # HUD CanvasLayer as the host its fit awaits a frame through (a RefCounted has no `get_tree()`), the
     # drawer scene nodes it writes (kept `@onready` here — a `%Name` node loses `unique_name_in_owner`
-    # if reparented), and the targeting controller whose `begin_move_band` its Move button connects to.
+    # if reparented), and the targeting controller whose `begin_move_band` its expedition Move connects to.
     _drawer = SubjectDrawerController.new(
         _selection, _band_labor, _selectioncard, _drawercompose, _bandpanel, _banddetail, self,
         tile_detail, occupant_detail, allocation_panel, herd_assign_controls, forage_assign_controls,
         road_ladder_controls, forestry_assign_controls, extraction_assign_controls,
         subject_body, subject_scroll, left_dock_scroll, _targeting, _topbar)
+    # The pending band verb's sheet lives in THIS drawer, so the panel controller — which owns the
+    # sheet's builders and re-renders on every edit to it — is handed the drawer's redraw.
+    _bandpanel.set_drawer_rerender(func() -> void: _drawer.render_subject_drawer())
     _load_ui_balance_config()
     _connect_zoom_rail()
     # AFTER `_connect_zoom_rail()`: that call applies the nav backing's stylebox, hence its padding,
@@ -1983,8 +1989,10 @@ func reset_world_state() -> void:
     # picker would never open itself.
     _loadout.reset_world_state()
 func show_tile_selection(tile_info: Dictionary) -> void:
-    # A selection change invalidates the subject being composed (§15).
+    # A selection change invalidates the subject being composed (§15) — and a pending band verb's
+    # sheet, unless the new tile is its target.
     close_compose_sheet()
+    _bandpanel.note_selection_tile(tile_info)
     _selection.select_tile(tile_info.duplicate(true) if tile_info is Dictionary else {})
     _render_selection_panel(_selection.tile_info(), {}, {})
     _targeting.try_dispatch(_selection.tile_info())
@@ -2003,6 +2011,7 @@ func show_unit_selection(unit_data: Dictionary) -> void:
         tile_info = (tile_variant as Dictionary).duplicate(true)
     else:
         tile_info = _selection.tile_info()
+    _bandpanel.note_selection_tile(tile_info)
     _selection.set_tile_info(tile_info)
     _selection.select_unit(unit_data.duplicate(true))
     # **THE ONE `from_selection` CALLER.** This is the player picking an occupant — a map-marker click,
@@ -2023,6 +2032,7 @@ func show_herd_selection(herd_data: Dictionary) -> void:
         # herd verbs. A herd picked from the inspector (no tile_info, unrelated tile
         # selected) falls through to herd-only so Harvest can't mis-target.
         tile_info = _selection.tile_info()
+    _bandpanel.note_selection_tile(tile_info)
     _selection.set_tile_info(tile_info)
     _selection.select_herd(herd_data.duplicate(true))
     _render_selection_panel(tile_info, {}, _selection.herd())
@@ -2222,6 +2232,9 @@ func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
     _selection.select_land()
+    # The occupant cleared; the TILE may still be selected, and a verb whose target it is keeps its
+    # sheet. No tile at all closes the card, which is closing the selection.
+    _bandpanel.note_selection_tile(_selection.tile_info())
     # Keep pending move-band so the user can still choose a destination after deselecting.
     if _selection.tile_info().is_empty():
         _hide_selection_card()

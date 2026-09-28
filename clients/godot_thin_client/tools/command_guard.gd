@@ -253,7 +253,6 @@ func _ready() -> void:
 	await _drive_send_expedition()
 	await _drive_recall_expedition()
 	await _drive_split_band()
-	await _drive_send_hunt_expedition_from_band_panel()
 	await _drive_send_hunt_expedition_from_herd_drawer()
 	await _drive_send_denial_raid()
 	await _drive_assign_labor_kits()
@@ -274,9 +273,12 @@ func _ready() -> void:
 # ---- Drivers ------------------------------------------------------------------------------------
 #
 # Each drives the path a player's click actually takes, as far up as the harness can reach without a
-# real mouse. Where a payload is built inside an inline `pressed` lambda (both hunting-expedition
-# sites) the REAL button is pressed, found by its `HudWidgets.SEND_HUNT_CONFIRM_META` — its face is
-# the raid verdict, so text is the one thing that cannot identify it.
+# real mouse. Where a payload is built inside an inline `pressed` lambda (the herd drawer's hunting
+# expedition, and every band verb's sheet) the REAL button is pressed, found by its send meta — a
+# launch button's face is its verdict, so text is the one thing that cannot identify it.
+#
+# **THE BAND VERBS ARE DRIVEN TARGET-FIRST** (issue #529): the verb, then the map click that picks its
+# target, and the sheet is pressed where it then renders — the target's drawer, `_hud.allocation_panel`.
 
 ## ⛔ **`set_starting_loadout` NAMES A BAND NOW, WHICH IS WHY IT IS HERE AT ALL.** It used to address a
 ## faction and default to its band; every band has an outfitting window of its own since the per-band
@@ -369,8 +371,8 @@ func _drive_move_band() -> void:
 	_hud._targeting.try_dispatch({"x": TARGET_X, "y": TARGET_Y})
 	await _settle()
 
-## `send_expedition` — outfit a party off the selected band with a KIT, then click the destination
-## tile.
+## `send_expedition` — the Scout verb: its target tile picked on the map, then a party outfitted with
+## a KIT on the sheet that opens in that tile's drawer, and its send pressed.
 ##
 ## **A NON-DEFAULT KIT, so the line carries the `kit <id>` tail rather than omitting it.**
 ## `Main._kit_token` omits the token when the selection equals the job default — which is the shipped
@@ -378,10 +380,23 @@ func _drive_move_band() -> void:
 ## nothing about the kit at all. The hunt and denial drives take the same precaution for the same
 ## reason, and `_record` fails loudly if a drive ever composes the default by accident.
 func _drive_send_expedition() -> void:
-	_hud._targeting.begin_send_expedition(_hud._band_labor.panel_band(), PARTY_WORKERS,
-		BandFx.KIT_ID_NONE, BandFx.KIT_DEFAULT_EXPEDITION)
-	_hud._targeting.try_dispatch({"x": TARGET_X, "y": TARGET_Y})
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud._bandpanel.dispatch_verb(HudComposeVocab.COMPOSE_MISSION_SCOUT, band)
+	_pick_tile({"x": TARGET_X, "y": TARGET_Y})
+	_hud._bandpanel._role_kit_ids[_hud._bandpanel._role_kit_key(band, KitRoster.JOB_EXPEDITION)] = \
+		BandFx.KIT_ID_NONE
+	_hud._bandpanel._send_expedition_count = PARTY_WORKERS
+	_hud._bandpanel.rerender()
 	await _settle()
+	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_EXPEDITION_CONFIRM_META,
+		"scout verb sheet")
+	await _settle()
+
+## A map click on `tile_info`: the map's `tile_selected` → `show_tile_selection` + `notify_hex_selected`,
+## which is what resolves an armed verb pick.
+func _pick_tile(tile_info: Dictionary) -> void:
+	_hud.show_tile_selection(tile_info)
+	_hud.notify_hex_selected(tile_info)
 
 ## `recall_expedition` — the parties zone's row `✕` (its confirm dialog wraps this same call).
 func _drive_recall_expedition() -> void:
@@ -395,48 +410,30 @@ func _drive_split_band() -> void:
 	_hud._bandpanel._on_split_band_pressed(_band_fixture(), SPLIT_WORKERS)
 	await _settle()
 
-## `send_hunt_expedition`, site 1 of 2 — the Band panel's parties compose sheet.
-func _drive_send_hunt_expedition_from_band_panel() -> void:
-	_hud._selection.clear()
-	_panel.set_active_tab(&"parties")
-	_hud._bandpanel._party_compose_open = true
-	_hud._bandpanel._party_compose_mission = "hunt"
-	_hud._compose.set_party_quarry(FAR_HERD_ID)
-	# **A NON-DEFAULT KIT, so the line carries the tail rather than omitting it.** `Main._kit_token`
-	# omits `kit <id>` when the selection equals the job default — which is the shipped case and is
-	# byte-identical to the pre-roster line — so composing the default here would test nothing new.
-	_hud._compose.set_party_kit_id(BandFx.KIT_ID_NONE)
-	_hud._bandpanel.rerender()
-	await _settle()
-	_press_send_hunt_confirm(_panel, "band panel parties compose")
-	await _settle()
-	_hud._bandpanel._party_compose_open = false
-	_hud._bandpanel._party_compose_mission = ""
-	_hud._compose.clear_party_quarry()
-
-## `send_denial_raid` (`docs/plan_denial_raid.md`) — the parties compose sheet's THIRD mission. Its
+## `send_denial_raid` (`docs/plan_denial_raid.md`) — the Deny verb's sheet, opened on the herd its pick
+## landed on. Its
 ## own driver and its own confirm meta, because it is its own command: the grammar is CLOSED at four
 ## tokens (`send_denial_raid <faction> <band> <party> <fauna_id>`) and a fifth is a hard parse error,
 ## so a payload that picked up a floor or a fill target would be REJECTED by the real parser this
 ## gate runs — which is exactly the assertion worth having, and one no client-side test can make.
 func _drive_send_denial_raid() -> void:
 	_hud._selection.clear()
-	_panel.set_active_tab(&"parties")
-	_hud._bandpanel._party_compose_open = true
-	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_DENY
-	_hud._compose.set_party_quarry(FAR_HERD_ID)
+	var herd := _far_herd_fixture()
+	_hud._bandpanel.dispatch_verb(HudComposeVocab.COMPOSE_MISSION_DENY, _hud._band_labor.panel_band())
+	var tile := {"x": FAR_HERD_X, "y": FAR_HERD_Y, "herds": [herd]}
+	_pick_tile(tile)
+	var picked: Dictionary = herd.duplicate(true)
+	picked["tile_info"] = tile
+	_hud.show_herd_selection(picked)
 	# The one order the closed four-token grammar still admits, and the reason this drive matters
 	# most: a `kit <id>` pair the parser refuses would be a hard parse error here.
 	_hud._compose.set_party_kit_id(BandFx.KIT_ID_NONE)
 	_hud._bandpanel.rerender()
 	await _settle()
-	_press_meta_button(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META, "band panel denial compose")
+	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_DENIAL_CONFIRM_META, "deny verb sheet")
 	await _settle()
-	_hud._bandpanel._party_compose_open = false
-	_hud._bandpanel._party_compose_mission = ""
-	_hud._compose.clear_party_quarry()
 
-## `send_hunt_expedition`, site 2 of 2 — the herd drawer's assign control, which flips to the
+## `send_hunt_expedition` — the herd drawer's assign control, which flips to the
 ## expedition branch because the quarry lies beyond the band's `hunt_reach`.
 func _drive_send_hunt_expedition_from_herd_drawer() -> void:
 	var herd := _far_herd_fixture()
@@ -632,11 +629,10 @@ func _drive_send_trade_expedition() -> void:
 	# to these entries, so the drive starts from the band the wire describes rather than from the
 	# previous drive's optimism.
 	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
-	_panel.set_active_tab(&"parties")
-	_hud._bandpanel._party_compose_open = true
-	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_TRADE
-	_hud._bandpanel._trade_destination_band = DESTINATION_ID
-	_hud._bandpanel.rerender()
+	# The Trade verb, then a click on where the tie last saw the destination — the only position the
+	# client holds for a band it is tied to but does not command.
+	_hud._bandpanel.dispatch_verb(HudComposeVocab.COMPOSE_MISSION_TRADE, _hud._band_labor.panel_band())
+	_pick_tile({"x": DESTINATION_LAST_SEEN_X, "y": DESTINATION_LAST_SEEN_Y})
 	await _settle()
 	await _load_whole_pile(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL)
 	# **THE HAY ROW IS DRIVEN BESIDE THE FOOD ONE, and that is the point of driving it at all**
@@ -650,7 +646,7 @@ func _drive_send_trade_expedition() -> void:
 	# formatter off an exact holding, and one already floored by the sheet.
 	await _load_pile_with_max(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL)
 	await _load_whole_pile(TRADE_HIDE_MATERIAL)
-	_press_meta_button(_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "band panel trade compose")
+	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "trade verb sheet")
 	await _settle()
 
 ## Press one cargo row's `+` until the pile is loaded whole — the button DISABLES at the ceiling, which
@@ -658,7 +654,7 @@ func _drive_send_trade_expedition() -> void:
 func _load_whole_pile(needle: String) -> void:
 	var presses := 0
 	while presses < CARGO_LOAD_MAX_PRESSES:
-		var plus := _cargo_control(_panel, needle, HudWidgets.CARGO_CONTROL_PLUS)
+		var plus := _cargo_control(_hud.allocation_panel, needle, HudWidgets.CARGO_CONTROL_PLUS)
 		if plus == null:
 			_fail("no cargo row for `%s` on the shipment sheet" % needle)
 			return
@@ -676,7 +672,7 @@ func _load_whole_pile(needle: String) -> void:
 ## ceiling. A `Max` that answered a press with nothing would otherwise leave this drive emitting a
 ## manifest line for a row at zero, which `format_send_trade_expedition` drops silently.
 func _load_pile_with_max(needle: String) -> void:
-	var button := _cargo_control(_panel, needle, HudWidgets.CARGO_CONTROL_MAX)
+	var button := _cargo_control(_hud.allocation_panel, needle, HudWidgets.CARGO_CONTROL_MAX)
 	if button == null:
 		_fail("no cargo row for `%s` on the shipment sheet, or its row offers no `Max`" % needle)
 		return
@@ -686,7 +682,7 @@ func _load_pile_with_max(needle: String) -> void:
 		return
 	button.pressed.emit()
 	await _settle()
-	var settled := _cargo_control(_panel, needle, HudWidgets.CARGO_CONTROL_MAX)
+	var settled := _cargo_control(_hud.allocation_panel, needle, HudWidgets.CARGO_CONTROL_MAX)
 	if settled == null or not settled.disabled:
 		_fail("`Max` on the cargo row for `%s` did not take the row to its ceiling — the button must come back disabled"
 			% needle)
@@ -1148,16 +1144,16 @@ const EXPECTED_KINDS := {
 	# Fission's own verb. It names a BAND rather than a party, so the handle assertion is what proves
 	# the client does not send entity bits down the split either.
 	"split_band": 1,
-	# TWO — the Band panel's parties compose and the herd drawer's, which build their payloads
-	# independently and so can drift apart.
 	# TWO each — the tile form and the herd form, which are two grammars of one verb and the pair a
 	# builder can get backwards (`docs/plan_standing_upkeep.md` §4.7a ②, §4.7b ③).
 	"build_kit": 2,
 	"build_order": 2,
-	"send_hunt_expedition": 2,
-	# ONE — the parties compose sheet is the denial raid's only launch site.
+	# ONE — the herd drawer's beyond-reach branch is its only launch site since the Band panel's hunt
+	# party sheet retired with the band verbs (issue #529).
+	"send_hunt_expedition": 1,
+	# ONE — the Deny verb's sheet, opened on the herd its pick landed on, is the raid's only launch site.
 	"send_denial_raid": 1,
-	# ONE — the shipment's only launch site is that same sheet, and one line carries both piles.
+	# ONE — the Trade verb's sheet is the shipment's only launch site, and one line carries every pile.
 	"send_trade_expedition": 1,
 	# ONE EACH — the route branch's two tile verbs, whose whole difference from `cultivate`/`sow` is
 	# the BAND token in the middle. See `_drive_road_verbs`.
@@ -1326,8 +1322,8 @@ func _near_herd_fixture() -> Dictionary:
 		"biomass": 90.0, "carrying_capacity": 100.0, "provisions_per_biomass": 0.0125,
 	}
 
-## A herd BEYOND `hunt_reach` — so both hunting-expedition compose surfaces take their expedition
-## branch and offer an enabled Send.
+## A herd BEYOND `hunt_reach` — so the herd drawer's compose takes its expedition branch and offers
+## an enabled Send, and the Deny verb's pick has a quarry to land on.
 func _far_herd_fixture() -> Dictionary:
 	var herd := {
 		"id": FAR_HERD_ID, "species": "Wild Boar",

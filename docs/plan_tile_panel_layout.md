@@ -407,6 +407,8 @@ the drawer holds only a pointer line. But **repositioning a band is a map action
 player is already on the map with the hex open — making them cross to another panel to give
 that order is the wrong shape.
 
+> *Superseded by issue #529 — see `.claude/rules/client/selection-card.md` → "THE BAND DRAWER'S VERB ROW".*
+
 Add a **Move** button to that drawer branch. `BandCityPanel` and `_build_allocation_sections`
 are **not touched** — its own Orders section keeps its Move.
 

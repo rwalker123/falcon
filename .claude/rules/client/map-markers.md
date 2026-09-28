@@ -322,8 +322,8 @@ flag-disc ring.
 
 `BandMarkerRenderer._draw_expedition_body`: ⚑ scout · 🏹 hunt · 💀 denial · **📦 trade** (arc #527).
 One mission, one glyph, on all three surfaces it appears on — the map marker, the parties-strip row
-(`HudFormat.PANEL_EXPEDITION_*_GLYPH`) and the footer button that launches it
-(`HudComposeVocab.COMPOSE_MISSION_LABEL_*`) — so a party's mark means the same thing at every scale.
+(`HudFormat.PANEL_EXPEDITION_*_GLYPH`) and the band verb that launches it
+(`HudComposeVocab.BAND_VERBS`) — so a party's mark means the same thing at every scale.
 
 **The phase decorations stay gated on `is_hunt`, and the shipment is the second mission to want
 that.** The green pip means *"carrying a haul HOME"*; a denial party's haul is a rounding error it

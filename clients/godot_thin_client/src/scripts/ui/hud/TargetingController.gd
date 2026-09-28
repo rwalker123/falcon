@@ -1,10 +1,15 @@
 class_name TargetingController
 extends RefCounted
 
-## The COMMAND-TARGETING cluster (HUD decomposition, docs/plan_hud_decomposition.md): the three
-## remaining targeting flows — move-band (pick a destination TILE), send-expedition (outfit a party,
-## then pick a target TILE) and pick-quarry (the parties compose sheet's HERD picker) — plus the
-## floating top-centre targeting banner that guides each. Lifted verbatim out of `Hud.gd`.
+## The COMMAND-TARGETING cluster (HUD decomposition, docs/plan_hud_decomposition.md): the band verbs'
+## map picks — move-band (pick a destination TILE), the verb TILE pick Scout and Trade take, and
+## pick-quarry (Deny's HERD pick) — plus the floating top-centre targeting banner that guides each.
+##
+## **THE TARGET COMES FIRST (issue #529).** A verb that composes a sheet arms its pick BEFORE any sheet
+## exists; the click resolves the target, writes it onto the pending verb (`ComposeState.set_verb_target`)
+## and the sheet then renders in THAT target's drawer. So no pick here dispatches a command except
+## Move's, and the scouting send is a direct call (`send_expedition_to`) from a sheet whose tile is
+## already chosen.
 ##
 ## Built on the LegendController / TurnOrbController / SelectionCardController / DrawerComposeController /
 ## BandPanelController idiom: `HudLayer` holds one as `_targeting`, hands it the shared `RefCounted`
@@ -15,7 +20,7 @@ extends RefCounted
 ##
 ## IT EMITS ITS OWN SIGNALS; `HudLayer` RELAYS each onto the same-named `HudLayer` signal (the
 ## TurnOrbController pattern — the controller never emits a `HudLayer` signal directly):
-## `targeting_changed` · `move_band_requested` · `send_expedition_requested`.
+## `targeting_changed` · `move_band_requested` · `send_expedition_requested` · `verb_pick_cancelled`.
 ##
 ## Collaborators + injections:
 ##   • `_band_labor` — `record_pending_move` (the optimistic move overlay) and the grid pair
@@ -45,8 +50,12 @@ extends RefCounted
 signal targeting_changed(info: Dictionary)
 # A move-band destination was picked — relayed to HudLayer.move_band_requested.
 signal move_band_requested(payload: Dictionary)
-# A send-expedition target was picked — relayed to HudLayer.send_expedition_requested.
+# A scouting party was sent to a tile — relayed to HudLayer.send_expedition_requested.
 signal send_expedition_requested(payload: Dictionary)
+# The PLAYER backed out of an armed verb pick (banner Cancel / Esc / right-click). HudLayer routes it
+# to `BandPanelController.close_verb_form`, so a cancelled pick leaves no half-composed verb behind.
+# NOT emitted by `disarm_verb_picks` — that is the verb's owner tearing its own pick down.
+signal verb_pick_cancelled
 
 # --- The quarry rule's own vocabulary -------------------------------------------------------------
 ## The `min_distance` for a mission with NO beyond-reach rule. `-1` rather than `0`, because the test
@@ -58,15 +67,38 @@ const QUARRY_NO_REACH_BOUND := -1
 ## Where `begin_pick_quarry` files the mission on the pending dict, read back by `_pick_quarry_mission`.
 const PICK_QUARRY_MISSION_KEY := "mission"
 
+
 ## **THE TARGETING MODE'S OWN TOKEN, AND THE PLAYER READS IT UPPERCASED.** `_targeting_banner_bbcode`
 ## prints the `command` it is handed as the banner's lead word, so this string is not plumbing — it is
 ## the banner (`PREY  Band 1 — click on a herd to hunt`). It is a CLIENT token: no command by this
-## name is ever sent, the pick emits `send_expedition_requested`, and MapView keys its halo off
+## name is ever sent, the pick adopts a quarry and nothing more, and MapView keys its halo off
 ## `need` rather than off this.
 ##
 ## ⛔ **`prey`, NOT `quarry` (issue #650)** — the sim's `quarry` verb opens a stone working, so the
 ## old spelling put the same banner word on hunting a herd and on digging a pit.
 const PICK_PREY_COMMAND := "prey"
+
+# --- The verb picks' banners (issue #529) ---------------------------------------------------------
+## Each banner's lead word is the verb, and every banner names the band by its NAME
+## (`HudFormat.band_name`) — never `Band <id>`, which is a handle, not something a player calls a band.
+const DENY_PICK_COMMAND := "deny"
+const VERB_PICK_COMMAND_SCOUT := "scout"
+const VERB_PICK_COMMAND_TRADE := "trade"
+const MOVE_COMMAND := "move"
+## The instruction after the band's name, keyed by the banner's command.
+const BANNER_INSTRUCTIONS := {
+	MOVE_COMMAND: "click a destination tile",
+	VERB_PICK_COMMAND_SCOUT: "click a tile to scout toward",
+	VERB_PICK_COMMAND_TRADE: "click a band to trade with",
+	DENY_PICK_COMMAND: "click a herd to deny",
+	PICK_PREY_COMMAND: "click on a herd to hunt",
+}
+## A verb pick's pending-dict keys.
+const VERB_PICK_BAND_KEY := "band"
+const VERB_PICK_MISSION_KEY := "mission"
+## The note title a quarry pick's refusal posts under, per mission — the hunt title predates the verbs
+## and keeps its word; a denial raid is named by its verb.
+const HUNT_PICK_NOTE_TITLE := "Hunt expedition"
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -84,9 +116,9 @@ var _rerender_band_panel_fn: Callable
 # --- Owned state (moved off HudLayer) ---
 # Move-band targeting: the pending band-relocation tile pick. {} when inactive. Holds the band dict.
 var _pending_move_band: Dictionary = {}
-# Send-expedition targeting: the pending expedition-launch tile pick. {} when inactive. Holds the
-# resident band being outfitted plus the chosen party size.
-var _pending_send_expedition: Dictionary = {}
+# The verb TILE pick (Scout / Trade): {band, mission} while armed, {} when inactive. It dispatches
+# nothing — the click resolves the verb's target onto `_compose` and the sheet opens there.
+var _pending_verb_pick: Dictionary = {}
 # Quarry-pick targeting: the pending HERD pick for the party compose sheet. {} when inactive. Carries
 # only the band — party size and the escapement floor are chosen in the sheet AFTER the quarry.
 var _pending_pick_quarry: Dictionary = {}
@@ -199,26 +231,26 @@ func _current_targeting_info() -> Dictionary:
 		var oy := int(pos[1]) if pos.size() == 2 else int(_pending_move_band.get("current_y", -1))
 		return {
 			"active": true,
-			"command": "move",
+			"command": MOVE_COMMAND,
 			"need": "tile",
 			"origin_x": ox,
 			"origin_y": oy,
-			"context_label": String(_pending_move_band.get("id", "Band")),
+			"context_label": HudFormat.band_name(_pending_move_band),
 		}
-	if not _pending_send_expedition.is_empty():
-		var band: Dictionary = _pending_send_expedition.get("band", {})
+	if not _pending_verb_pick.is_empty():
+		var band: Dictionary = _pending_verb_pick.get(VERB_PICK_BAND_KEY, {})
 		var pos: Array = Array(band.get("pos", []))
 		var ox := int(pos[0]) if pos.size() == 2 else int(band.get("current_x", -1))
 		var oy := int(pos[1]) if pos.size() == 2 else int(band.get("current_y", -1))
+		var trade := String(_pending_verb_pick.get(VERB_PICK_MISSION_KEY, "")) \
+			== HudComposeVocab.COMPOSE_MISSION_TRADE
 		return {
 			"active": true,
-			"command": "expedition",
+			"command": VERB_PICK_COMMAND_TRADE if trade else VERB_PICK_COMMAND_SCOUT,
 			"need": "tile",
 			"origin_x": ox,
 			"origin_y": oy,
-			"context_label": "%s · %d" % [
-				String(band.get("id", "Band")), int(_pending_send_expedition.get("party_workers", 0)),
-			],
+			"context_label": HudFormat.band_name(band),
 		}
 	if not _pending_pick_quarry.is_empty():
 		var band: Dictionary = _pending_pick_quarry.get("band", {})
@@ -234,14 +266,15 @@ func _current_targeting_info() -> Dictionary:
 		# and a denial raid `QUARRY_NO_REACH_BOUND`, which glows every herd the band can see. Every
 		# other targeting mode omits the key and MapView defaults it to 0, which admits everything
 		# and so changes nothing for move/scout-tile targeting.
+		var deny := _pick_quarry_mission() == HudComposeVocab.COMPOSE_MISSION_DENY
 		return {
 			"active": true,
-			"command": PICK_PREY_COMMAND,
+			"command": DENY_PICK_COMMAND if deny else PICK_PREY_COMMAND,
 			"need": "herd",
 			"origin_x": ox,
 			"origin_y": oy,
 			"min_distance": quarry_min_distance(band, _pick_quarry_mission()),
-			"context_label": String(band.get("id", "Band")),
+			"context_label": HudFormat.band_name(band),
 		}
 	return {}
 
@@ -257,31 +290,40 @@ func _targeting_banner_bbcode(info: Dictionary) -> String:
 	var instruction := ""
 	if need == "band":
 		instruction = "click a band to send it here"
-	elif cmd == "MOVE":
-		instruction = "click a destination tile"
-	elif cmd == "EXPEDITION":
-		instruction = "click a target tile to scout"
-	elif cmd == PICK_PREY_COMMAND.to_upper():
-		instruction = "click on a herd to hunt"
 	else:
-		instruction = "click a tile to survey"
+		instruction = String(BANNER_INSTRUCTIONS.get(String(info.get("command", "")),
+			"click a tile to survey"))
 	return "[color=#%s]%s[/color]  [color=#%s]%s[/color]%s   [color=#%s]— %s[/color]" % [
 		HudStyle.SIGNAL_HEX, cmd, HudStyle.INK_HEX, ctx, loc, HudStyle.INK_DIM_HEX, instruction,
 	]
 
-## Cancel the active targeting (banner Cancel / Esc / right-click all route here).
+## Cancel the active targeting (banner Cancel / Esc / right-click all route here). **An armed VERB pick
+## takes its verb with it** (`verb_pick_cancelled`): a pick is the first step of a verb, so backing out
+## of it is backing out of the verb, and a verb left pending with no pick would open its sheet on the
+## next unrelated click.
 func cancel_active_targeting() -> void:
+	var had_verb := not _pending_verb_pick.is_empty() or not _pending_pick_quarry.is_empty()
 	_cancel_pending_move_band()
-	_cancel_pending_send_expedition()
+	disarm_verb_picks()
+	if had_verb:
+		verb_pick_cancelled.emit()
+
+## Take down any armed verb pick WITHOUT announcing a cancel — the verb's owner closing its own verb
+## (a sheet's ✕, a send, a new verb pressed over the old one).
+func disarm_verb_picks() -> void:
+	_cancel_pending_verb_pick()
 	cancel_pick_quarry()
 
 # ---- Move-band -----------------------------------------------------------------------------------
 
-## Move-band: enter tile-targeting; the destination click emits move_band_requested.
-func begin_move_band() -> void:
+## Move-band: enter tile-targeting; the destination click emits move_band_requested. `band` is the
+## verb's own band where a surface names one (the Band panel's bar, the drawer's verb row); empty
+## falls back to `_resolve_assign_band` — the selected player band, else the panel band.
+func begin_move_band(band: Dictionary = {}) -> void:
 	# Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
 	_drawercompose.close_compose_sheet()
-	var band := _resolve_assign_band()
+	if band.is_empty():
+		band = _resolve_assign_band()
 	if band.is_empty():
 		return
 	_pending_move_band = band.duplicate(true)
@@ -324,66 +366,90 @@ func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
 	_band_labor.record_pending_move(entity, x, y)
 	_after_pending_change_fn.call()
 
-# ---- Send-expedition -----------------------------------------------------------------------------
+# ---- The verb TILE pick (Scout / Trade) ----------------------------------------------------------
 
-## Send-expedition: outfit `band` with `party_workers` and the kit they carry, then enter
-## tile-targeting; the next tile click emits send_expedition_requested. Mirrors the move-band pending
-## flow.
-##
-## **THE KIT IS OUTFITTING, SO IT IS SETTLED AT THE SHEET AND CARRIED THROUGH THE TARGETING** — the
-## compose sheet is closed by the time the destination is clicked, so a pick left behind on it would
-## be gone by the time the payload is built. `default_kit_id` travels beside it because
-## `Main._kit_token` omits the tail when the two agree, which is what lets a composition that never
-## touched the picker emit the byte-identical line it emitted before the picker existed.
-func begin_send_expedition(band: Dictionary, party_workers: int,
-		kit_id: String = KitRoster.NO_KIT_ID,
-		default_kit_id: String = KitRoster.NO_KIT_ID) -> void:
+## Arm the tile pick for `mission` on `band` — Scout (any tile) or Trade (a tile holding a band this
+## one is tied to). The click writes the target onto the pending verb and opens its sheet there.
+func begin_verb_pick(band: Dictionary, mission: String) -> void:
 	# Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
 	_drawercompose.close_compose_sheet()
-	if band.is_empty() or party_workers <= 0:
+	if band.is_empty():
 		return
-	_pending_send_expedition = {
-		"band": band.duplicate(true),
-		"party_workers": party_workers,
-		"kit_id": kit_id,
-		"default_kit_id": default_kit_id,
-	}
+	_pending_verb_pick = {VERB_PICK_BAND_KEY: band.duplicate(true), VERB_PICK_MISSION_KEY: mission}
 	_refresh_targeting()
 
-func _cancel_pending_send_expedition() -> void:
-	if _pending_send_expedition.is_empty():
+func _cancel_pending_verb_pick() -> void:
+	if _pending_verb_pick.is_empty():
 		return
-	_pending_send_expedition = {}
+	_pending_verb_pick = {}
 	_refresh_targeting()
 
-func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
-	if _pending_send_expedition.is_empty() or tile_info.is_empty():
+func _try_verb_pick(tile_info: Dictionary) -> void:
+	if _pending_verb_pick.is_empty() or tile_info.is_empty():
 		return
 	var x := int(tile_info.get("x", -1))
 	var y := int(tile_info.get("y", -1))
 	if x < 0 or y < 0:
 		return
-	var band: Dictionary = _pending_send_expedition.get("band", {})
+	var band: Dictionary = _pending_verb_pick.get(VERB_PICK_BAND_KEY, {})
+	var destination := HudConst.NO_BAND_ID
+	if String(_pending_verb_pick.get(VERB_PICK_MISSION_KEY, "")) == HudComposeVocab.COMPOSE_MISSION_TRADE:
+		destination = trade_destination_at(band, x, y)
+		if destination == HudConst.NO_BAND_ID:
+			# The quarry pick's rule for a miss: say so and stay armed.
+			_note_sink.call(HudComposeVocab.TRADE_PICK_MISS_TITLE, HudComposeVocab.TRADE_PICK_MISS_TEXT)
+			return
+	_pending_verb_pick = {}
+	_refresh_targeting()
+	_compose.set_verb_target(Vector2i(x, y), "", destination)
+	# The selection already landed on this tile (the click that resolved the pick selected it first);
+	# the re-render is what mounts the sheet in its drawer.
+	_rerender_band_panel_fn.call()
+
+## The durable `band_id` of a band `band` holds a LIVE tie with, standing on (x, y) — or
+## `HudConst.NO_BAND_ID`. The candidates are exactly the shipment sheet's: `connections_for_band`,
+## live ties only. A tied band still in the roster is found where it stands; one that is not is found
+## where the tie last saw it, which is the only position the client has for it.
+func trade_destination_at(band: Dictionary, x: int, y: int) -> int:
+	for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):
+		var tie: Dictionary = tie_variant as Dictionary
+		if not HudBandLaborState.tie_is_live(tie):
+			continue
+		var subject := int(tie.get("subject_band_id", HudConst.NO_BAND_ID))
+		var tile := Vector2i(int(tie.get("last_seen_x", -1)), int(tie.get("last_seen_y", -1)))
+		var standing := _band_labor.player_band_by_band_id(subject)
+		if not standing.is_empty():
+			tile = SourceForecast.band_tile(standing)
+		if tile == Vector2i(x, y):
+			return subject
+	return HudConst.NO_BAND_ID
+
+## Send a scouting party of `party_workers` from `band` to `tile` — the Scout sheet's send. The tile
+## was picked BEFORE the sheet opened, so this emits straight away; there is no second map pick.
+##
+## **THE KIT RIDES THE PAYLOAD** with the job default beside it, because `Main._kit_token` omits the
+## tail when the two agree — which is what lets a composition that never touched the picker emit the
+## byte-identical line it emitted before the picker existed.
+func send_expedition_to(band: Dictionary, party_workers: int, tile: Vector2i,
+		kit_id: String = KitRoster.NO_KIT_ID,
+		default_kit_id: String = KitRoster.NO_KIT_ID) -> void:
+	if band.is_empty() or party_workers <= 0 or tile.x < 0 or tile.y < 0:
+		return
 	send_expedition_requested.emit({
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
 		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
-		"party_workers": int(_pending_send_expedition.get("party_workers", 0)),
-		"x": x,
-		"y": y,
-		# The kit the party walks out with, and the job default `Main._kit_token` omits the tail for —
-		# the `send_hunt_expedition` payload's own pairing.
-		"kit_id": String(_pending_send_expedition.get("kit_id", KitRoster.NO_KIT_ID)),
-		"default_kit_id": String(_pending_send_expedition.get("default_kit_id",
-			KitRoster.NO_KIT_ID)),
+		"party_workers": party_workers,
+		"x": tile.x,
+		"y": tile.y,
+		"kit_id": kit_id,
+		"default_kit_id": default_kit_id,
 	})
-	_pending_send_expedition = {}
-	_refresh_targeting()
 
 # ---- Pick-quarry ---------------------------------------------------------------------------------
 
 ## Quarry PICK: enter HERD-targeting so the next map click names the herd the compose sheet is aimed
-## at. It dispatches NOTHING — the sheet stays open behind the targeting and fills its Prey row in,
-## then asks for the floor and the party size against that herd.
+## at. It dispatches NOTHING — the click writes the herd onto the pending Deny (`ComposeState`) and the
+## sheet opens in that herd's drawer, asking for the party size against it.
 ##
 ## **THE MISSION RIDES WITH THE PICK** because eligibility is a function of it (`is_expedition_quarry`):
 ## a hunt's quarry must lie beyond the band's reach and a denial raid's need not. It is carried in the
@@ -392,7 +458,7 @@ func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
 func begin_pick_quarry(band: Dictionary,
 		mission: String = HudComposeVocab.COMPOSE_MISSION_HUNT) -> void:
 	# Targeting asks the player to click the map — the tile panel's FLOATING sheet over it is a trap
-	# (§15). The DOCKED party sheet is not floating and deliberately stays open.
+	# (§15).
 	_drawercompose.close_compose_sheet()
 	if band.is_empty():
 		return
@@ -421,7 +487,7 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
 	var herd := _huntable_herd_on_tile(tile_info)
 	var fauna_id := String(herd.get("id", "")).strip_edges()
 	if fauna_id == "":
-		_note_sink.call("Hunt expedition", "No huntable herd there — click on a herd.")
+		_note_sink.call(_pick_note_title(), "No huntable herd there — click on a herd.")
 		return
 	# A herd INSIDE the band's hunt reach is a local HUNT, not a hunting party's job. Refuse it here
 	# and stay in targeting, exactly like the miss above — and say why, since the reach split is
@@ -432,11 +498,11 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
 	var mission := _pick_quarry_mission()
 	if not is_expedition_quarry(band, herd, mission):
 		var band_tile := SourceForecast.band_tile(band)
-		_note_sink.call("Hunt expedition", HudComposeVocab.PREY_WITHIN_REACH_FORMAT % [
+		_note_sink.call(_pick_note_title(), HudComposeVocab.PREY_WITHIN_REACH_FORMAT % [
 			SourceForecast.herd_display_name(herd),
 			_hex_distance_wrapped(band_tile.x, band_tile.y,
 				int(herd.get("x", -1)), int(herd.get("y", -1))),
-			String(band.get("id", "this band")),
+			HudFormat.band_name(band),
 			int(band.get("hunt_reach", 0)),
 		])
 		return
@@ -444,7 +510,18 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
 	# entirely on the sheet's Send button, which has every input.
 	_pending_pick_quarry = {}
 	_refresh_targeting()
+	# **THE CLICK IS THE DENY VERB'S TARGET** (issue #529): the herd's hex anchors the sheet, which opens
+	# in that hex's drawer. Written before the adoption, whose re-render is what mounts the sheet.
+	if mission == HudComposeVocab.COMPOSE_MISSION_DENY:
+		_compose.set_verb_target(Vector2i(int(herd.get("x", -1)), int(herd.get("y", -1))), fauna_id)
 	choose_quarry(band, herd, mission)
+
+## The event-dock title a quarry pick's refusal posts under — the verb's own name on a denial raid.
+func _pick_note_title() -> String:
+	if _pick_quarry_mission() == HudComposeVocab.COMPOSE_MISSION_DENY:
+		return String(HudComposeVocab.verb_for_mission(HudComposeVocab.COMPOSE_MISSION_DENY)[
+			HudComposeVocab.VERB_KEY_TOOLTIP])
+	return HUNT_PICK_NOTE_TITLE
 
 ## **THE ONE ADOPTION OF A QUARRY**, shared by the map pick above and the sheet's own chooser (a hex
 ## can hold more than one herd, and the map click names only the hex — see
@@ -459,6 +536,10 @@ func choose_quarry(band: Dictionary, herd: Dictionary,
 	if fauna_id == "" or not is_expedition_quarry(band, herd, mission):
 		return false
 	_compose.set_party_quarry(fauna_id)
+	# A pending Deny follows the herd its sheet is now composed against — the `⋯` chooser re-aims it
+	# at another herd on the same hex without moving the sheet's anchor.
+	if _compose.verb_mission() == mission and mission == HudComposeVocab.COMPOSE_MISSION_DENY:
+		_compose.set_verb_herd(fauna_id)
 	# Fill the party to this herd's max-useful cap at the default floor, same one-shot a preset
 	# click sets. Party size is meaningless until the quarry is known (the useful count is a property
 	# of the HERD), so picking one is the first moment we CAN default it — "give me everyone this raid
@@ -548,11 +629,11 @@ func _huntable_herd_on_tile(tile_info: Dictionary) -> Dictionary:
 
 # ---- Dispatch ------------------------------------------------------------------------------------
 
-## Try to resolve every armed flow against a clicked tile, in the SAME order as before (move-band,
-## send-expedition, quarry-pick). HudLayer's `show_tile_selection` / `notify_hex_selected` call this.
+## Try to resolve every armed flow against a clicked tile: move-band, the verb tile pick, the quarry
+## pick. HudLayer's `show_tile_selection` / `notify_hex_selected` call this.
 func try_dispatch(tile_info: Dictionary) -> void:
 	_try_dispatch_pending_move_band(tile_info)
-	_try_dispatch_pending_send_expedition(tile_info)
+	_try_verb_pick(tile_info)
 	_try_pick_quarry(tile_info)
 
 ## Wrap-aware odd-r hex distance between two offset tiles, supplying the snapshot's grid geometry to

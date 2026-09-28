@@ -1214,7 +1214,7 @@ range verdict, the three ABSENT hunt readouts and the surviving `Carried:` row, 
 claims about the verdict's structure (a `repelled` outcome carrying a full turn band still quotes no
 number; an unbounded `past_recovery` still names its outcome; and the two degenerate band forms). Each
 is sabotage-verified against a different mutation. The launch half and the vocabulary live in
-`band-city-panel.md` → "DENIAL is a third MISSION on the parties footer".
+`band-city-panel.md` → "DENIAL is a third MISSION".
 
 ## The Food line's TRANSFERS are breakdown rows, and the headline adds the POOLED net
 
@@ -1318,7 +1318,7 @@ the parties strip's seven-line worst case, which is a HUNT party's.
 - **`Bound for` renders a NAME and never `expeditionDestinationBand`** — the id is the key
   `send_trade_expedition` addresses and must never reach a label. The name comes from
   `HudFormat.expedition_destination_label`, which is **the one resolution the parties-strip row and
-  the destination picker also use**, so a band cannot be called three things on three surfaces:
+  the Trade sheet's `To` row also use**, so a band cannot be called three things on three surfaces:
   - **the sim's published `expeditionDestinationName` when it is non-empty** — it is resolved at
     LAUNCH and carried on the mission, because the destination is precisely the thing a party
     outlives (a band walks away, leaves the viewer's sight, or is gone while the shipment is still

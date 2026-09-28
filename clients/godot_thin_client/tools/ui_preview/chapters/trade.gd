@@ -6,9 +6,9 @@ extends RefCounted
 ## lists it. **The order is load-bearing** — states render into one long-lived `HudLayer`, so a
 ## chapter moved is a set of frames changed. See `.claude/rules/client/test-harnesses.md`.
 ##
-## **THE TWO HALVES ANSWER DIFFERENT QUESTIONS, so both are here.** The PICKER is the only surface in
+## **THE TWO HALVES ANSWER DIFFERENT QUESTIONS, so both are here.** The SHEET is the only surface in
 ## the client that reads the `connections` section at all, and its whole point is what it refuses:
-## a parked tie is listed and greyed, a remembered position is worded as remembered, and the mass
+## a parked tie cannot be picked, a remembered position is worded as remembered, and the mass
 ## meter moves before the server ever sees a manifest. The PARTY is the readout on the other side of
 ## the send, whose rows are its own — no quarry, no floor, no delivery ETA.
 ##
@@ -41,8 +41,6 @@ const BAND_PANEL_RESERVER := &"band_panel"
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
 
-## Which popup entry the last driven press landed on, written by `_press_popup_entry`'s witness.
-var _popup_entry_pressed := POPUP_NO_ENTRY_PRESSED
 
 ## The SENDING band and the two bands it holds ties with — their own entities, so the states below
 ## cannot be confused with the reference band the rest of the run uses. `BandFx.with_band_id` derives
@@ -78,28 +76,9 @@ const TRADE_PARTY_WORKERS := 4
 ## remains the authority — so the state exists to show the player never has to meet it.
 const OVER_CAP_PARTY_WORKERS := 1
 
-## **THE LIVE TIE IS THE FIRST ENTRY THE PICKER LISTS, AND THAT IS THE INTERESTING SEAT.** The
-## `connections` fixture puts the live tie ahead of the parked one, so the entry a player must reach
-## is index 0 — the seat an `OptionButton` selects on its own as the first item is added, and
-## therefore the one seat a pick can be swallowed on. A probe aimed anywhere else tests a picker in a
-## state the reported defect cannot occur in.
-const LIVE_TIE_ENTRY := 0
-
-## Where in an entry's own row the press is aimed: the middle of it, on both axes. The popup's rows
-## are drawn rather than published as nodes, so the row is derived from the popup's height and its
-## item count — and aiming at the CENTRE is what keeps the derivation honest against a theme that
-## pads a row, since a press that lands on the wrong row is caught by the assertion beside it.
-const POPUP_ROW_CENTRE := 0.5
-
-## The popup reported no entry under the press at all — a failure, never a skip.
-const POPUP_NO_ENTRY_PRESSED := -1
-
-## **AN UNCHOSEN PICKER HOLDS NO SELECTION.** `OptionButton.selected` when nothing has been picked,
-## and the reading that must agree with the `Choose…` face beside it.
-const PICKER_NOTHING_CHOSEN := -1
 
 ## A full tie and a PARKED one. Zero is not "no tie" — it is the tie at rest, "we know such a people
-## exist and have no current dealings" — and the picker must list it, disabled, rather than hide it.
+## exist and have no current dealings" — and the Trade pick must refuse it.
 const TIE_STRENGTH_LIVE := 0.75
 const TIE_STRENGTH_PARKED := 0.0
 
@@ -226,62 +205,62 @@ func run(harness) -> void:
 	h._hud.update_connections(_connections())
 	h._hud.show_unit_selection(_shipper_band())
 	await h._settle()
-	# **STATE — THE FOOTER ITSELF, before anything is composed.** It exists to show the FIFTH button
-	# beside the other four and, just as importantly, to show that its glyph DRAWS: a mark missing
-	# from this client's fallback font renders as an invisible gap rather than as a tofu box, which no
-	# assertion catches and only a rendered frame does.
-	await h._save("trade_footer")
-
-	# **STATE — THE SHIPMENT FORM, OPENED FROM THE PARTIES FOOTER.** Driven through the real mission
-	# button rather than by setting the mission: the button is what arms the composing act, and a
-	# harness that set the flag would render a sheet no player can reach.
-	var trade_btn := _mission_button(HudComposeVocab.COMPOSE_MISSION_TRADE)
-	h._assert_hud("the parties footer offers the shipment mission", trade_btn != null)
+	# **STATE — THE SHIPPER SELECTED, its verb row in the drawer** (issue #529). The Trade verb sits
+	# on the tile panel's band drawer beside the other four, and this frame is also where its mark has
+	# to DRAW: a mark missing from this client's fallback font renders as an invisible gap rather than
+	# as a tofu box, which no assertion catches and only a rendered frame does.
+	await h._save("trade_verb_row")
+	var trade_btn := _verb_button(HudComposeVocab.VERB_TRADE)
+	h._assert_hud("the band drawer's verb row offers Trade", trade_btn != null)
 	if trade_btn != null:
 		trade_btn.emit_signal("pressed")
 	await h._settle()
-	await h._save("trade_picker_empty")
-	# The picker lists BOTH ties, and the parked one carries its reason IN ITS OWN LABEL. Asserted on
-	# the fresh sheet, before a destination is chosen, because that is the state a player meets first.
-	var picker := _destination_picker()
-	h._assert_hud("the destination picker exists", picker != null)
-	if picker != null:
-		h._assert_hud("…listing both the live tie and the parked one",
-			picker.item_count == _connections().size())
-		h._assert_hud("…with the PARKED tie shown, disabled, carrying its reason",
-			picker.is_item_disabled(1) and picker.get_item_text(1).contains(
-				HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON))
-		# **THE PICKER'S OWN SELECTION MUST SAY WHAT ITS FACE SAYS**, and this is the reading the
-		# reported defect fails: `OptionButton.add_item` seats `current` on the first selectable entry
-		# it is handed, so a picker showing `Choose…` was quietly holding entry 0 — and Godot then
-		# refuses to report a pick of the entry it believes is already current, which is exactly the
-		# entry the player has to click. Asserted beside the face, because either alone looks right.
-		h._assert_hud("…and the picker holds NO selection while its face says %s"
-				% HudComposeVocab.COMPOSE_DESTINATION_CHOOSE,
-			picker.selected == PICKER_NOTHING_CHOSEN
-				and picker.text == HudComposeVocab.COMPOSE_DESTINATION_CHOOSE)
-	# **AN UNCHOSEN DESTINATION CANNOT SEND**, and the button says so rather than vanishing.
-	var blocked := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
-	h._assert_hud("…and the send is present and disabled until a destination is named",
-		blocked is Button and (blocked as Button).disabled)
-
-	# **STATE — A DESTINATION CHOSEN.** Picked with REAL POINTER INPUT — a press on the picker's face
-	# and a press on the popup entry, both through `Viewport.push_input`. See
-	# `_pick_destination_through_the_popup` for why an `emit_signal("item_selected", …)` cannot say
-	# anything about this control.
-	if picker != null:
-		await _pick_destination_through_the_popup(picker, LIVE_TIE_ENTRY)
+	# **STATE — THE DESTINATION PICK, ARMED.** Pressing the verb opens no sheet: the target comes
+	# first, on the map, and the banner says so in the band's own name.
+	await h._save("trade_pick_armed")
+	h._assert_hud("pressing Trade arms the destination pick", h._hud.is_targeting_active())
+	h._assert_hud("…and opens no sheet before a destination is picked", _verb_form() == null)
+	# **A PARKED TIE IS NOT A DESTINATION**, and the pick is where that is enforced now: the band it
+	# names is still known, but a click on where it was last seen resolves nothing and the pick stays
+	# armed — the same rule the prey pick applies to a hex with no herd on it.
+	h._hud.show_tile_selection(_tile_info(PARKED_LAST_SEEN))
+	h._hud.notify_hex_selected(_tile_info(PARKED_LAST_SEEN))
+	await h._settle()
+	h._assert_hud("a click on a PARKED tie's last-seen tile is refused — the pick stays armed",
+		h._hud.is_targeting_active() and _verb_form() == null)
+	# **STATE — THE LIVE TIE PICKED, THE SHEET IN THE DESTINATION'S DRAWER.** The click selects the
+	# neighbour's hex and then the neighbour itself, exactly the map's `tile_selected` →
+	# `unit_selected` pair.
+	h._hud.show_tile_selection(_tile_info(NEIGHBOUR_LAST_SEEN))
+	h._hud.notify_hex_selected(_tile_info(NEIGHBOUR_LAST_SEEN))
+	# The map stamps the band's OWN tile onto the payload (`MapView._handle_entity_selection`); the
+	# shared band fixture carries the reference band's, so it is restated here.
+	var picked_neighbour := _neighbour_band()
+	picked_neighbour["tile_info"] = _tile_info(NEIGHBOUR_LAST_SEEN)
+	h._hud.show_unit_selection(picked_neighbour)
 	await h._settle()
 	await h._save("trade_picker_destination")
-	# The sheet rebuilt around the choice, so the picker is a NEW control — and it must come back
-	# holding the chosen entry under the chosen band's name, the same face/selection pairing asked of
-	# the empty one above.
-	var chosen := _destination_picker()
-	h._assert_hud("the rebuilt picker wears the chosen band's name over the chosen entry",
-		chosen != null and chosen.selected == LIVE_TIE_ENTRY
-			and chosen.text == NEIGHBOUR_DISPLAY_NAME)
+	h._assert_hud("…a click on the live tie's band resolves the pick and opens the shipment sheet",
+		not h._hud.is_targeting_active() and _verb_form() != null)
+	h._assert_hud("…in the DESTINATION's drawer, as the Trade verb's sheet",
+		_verb_form() != null and String(_verb_form().get_meta(HudWidgets.VERB_FORM_META, ""))
+			== HudComposeVocab.COMPOSE_MISSION_TRADE)
+	# **THE DESTINATION IS STATED, NEVER OFFERED** — read-only text naming the band by NAME, with no
+	# chooser left on the sheet that could aim it somewhere else.
+	var to_row := Q.find_meta_node(h._hud.allocation_panel, HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("the destination row is read-only and names the band",
+		to_row != null and _collect_text(to_row).contains(NEIGHBOUR_DISPLAY_NAME))
+	h._assert_hud("…and the sheet holds no destination picker",
+		_find_option_button(_parties_zone()) == null)
+	# **THE BAND PANEL STAYS ON THE SENDER.** Selecting a player band normally makes it the panel's
+	# subject; while a verb is pending for the shipper that would put the wrong band's page behind the
+	# sheet it is composing.
+	h._assert_hud("the Band panel's subject stays on the SENDER while the shipment is composed",
+		int(h._hud._band_labor.panel_band().get("entity", -1)) == SHIPPER_ENTITY)
+	h._assert_hud("…and the destination's drawer drops the \"labor is in the panel\" pointer",
+		not h._hud.occupant_detail.visible)
 	var sheet_text := _sheet_text()
-	# THE KEYSTONE, RENDERED: the position under the picker is where they WERE, and it says so.
+	# THE KEYSTONE, RENDERED: the position under the destination is where they WERE, and it says so.
 	h._assert_hud("the destination's position is worded as REMEMBERED, not live",
 		sheet_text.contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
 			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, NEIGHBOUR_LAST_SEEN_TURN]))
@@ -367,7 +346,7 @@ func run(harness) -> void:
 	# food between neighbouring larders every turn, so any co-networked band carries these two terms.
 	# They are itemized in the BREAKDOWN. The `/turn` headline carries the POOLED one and not the
 	# shipment — see `DetailFormat.band_headline_food_rate`.
-	h._hud._bandpanel._close_party_compose()
+	h._hud._bandpanel.close_verb_form()
 	panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	var transferring := _shipper_band()
 	# **A TURN'S OWN FRAME, so every one of these figures carries the same two magnitudes** — which is
@@ -857,107 +836,36 @@ const NEIGHBOUR_DISPLAY_NAME := "Brackwater"
 ## end of the shipment fails rather than looking plausible.
 const SHIPPER_DISPLAY_NAME := "Ashfell"
 
-## The parties zone's live column — where every control this chapter drives is mounted.
+## The selection drawer's allocation host — where the pending verb's sheet is mounted, and so where
+## every control this chapter drives lives.
 func _parties_zone() -> Node:
-	return h._hud._bandpanel._parties_zone_col
+	return h._hud.allocation_panel
 
-## The footer's mission button for one verb, found by the meta every launch button carries: their
-## faces are vocabulary this chapter would otherwise be asserting its own copy of.
-func _mission_button(mission: String) -> Button:
-	var found := _find_mission_button(_parties_zone(), mission)
-	return found
+## The mounted Trade sheet, or `null` when the drawer is showing none.
+func _verb_form() -> Control:
+	return Q.find_meta_node(h._hud.allocation_panel, HudWidgets.VERB_FORM_META) as Control
 
-func _find_mission_button(root: Node, mission: String) -> Button:
+## The drawer verb-row button for one verb, found by the meta every verb button carries: their faces
+## are art or a glyph, which this chapter would otherwise be asserting its own copy of.
+func _verb_button(verb_id: StringName) -> Button:
+	return _find_verb_button(h._hud.allocation_panel, verb_id)
+
+func _find_verb_button(root: Node, verb_id: StringName) -> Button:
 	if root == null:
 		return null
-	if root is Button and String((root as Button).get_meta(
-			HudWidgets.MISSION_LAUNCH_META, "")) == mission:
+	if root is Button and StringName((root as Button).get_meta(
+			HudWidgets.VERB_BUTTON_META, &"")) == verb_id:
 		return root as Button
 	for child in root.get_children():
-		var found := _find_mission_button(child, mission)
+		var found := _find_verb_button(child, verb_id)
 		if found != null:
 			return found
 	return null
 
-## **THE PICK IS DRIVEN AS A POINTER GESTURE, BECAUSE THAT IS THE PART THAT BROKE.** A player's pick
-## is a press on the picker's face — which opens the popup, `OptionButton` running at
-## `ACTION_MODE_BUTTON_PRESS` — and then a press on an entry INSIDE that popup, which is the only
-## thing that reaches `OptionButton`'s own selection path and therefore the only thing that decides
-## whether `item_selected` fires at all.
-##
-## **A `picker.emit_signal("item_selected", i)` cannot fail**: it calls the connected lambda by hand,
-## so it passes on a picker whose popup never opens, whose entries cannot be reached, and — the
-## reported defect — whose selection the engine silently declines to change, `add_item` having already
-## seated `current` on the entry the player is about to click. This state was rewritten from that
-## faked signal to these two presses because the faked one was green throughout.
-##
-## Both presses are delivered in WINDOW coordinates through `InputProbe`: the popup is an embedded
-## subwindow, and `Viewport.push_input` un-stretches an event into canvas space before forwarding it
-## to one, so a raw canvas point misses it. Every step fails loudly through `_assert_hud` — a probe
-## that quietly found nothing would leave every state after it rendering the unchosen sheet.
-func _pick_destination_through_the_popup(picker: OptionButton, entry: int) -> void:
-	var viewport: Viewport = h.get_viewport()
-	var face := InputProbe.canvas_to_window(viewport, h.get_window(),
-		picker.get_global_rect().get_center())
-	InputProbe.hover(viewport, face)
-	InputProbe.press_left(viewport, face)
-	await h.get_tree().process_frame
-	InputProbe.release_left(viewport, face)
-	await h.get_tree().process_frame
-	var popup := picker.get_popup()
-	h._assert_hud("a press on the destination picker's face opens its popup", popup.visible)
-	if not popup.visible:
-		return
-	await _press_popup_entry(popup, entry)
-	# The point pressed is DERIVED from the popup's own rect (an item's rect is not published), so the
-	# claim is checked rather than trusted: the popup itself says which entry the press hit, and a
-	# theme or a third tie that moved the rows fails here instead of quietly picking the parked band.
-	# **Read off the MEMBER, never off a return value.** A press that lands commits the pick, which
-	# rerenders the sheet and FREES this popup — so the helper runs on a node that may die under it, and
-	# an aborted GDScript call answers with its return type's DEFAULT. `0` is a legal entry index, so a
-	# returned answer would have reported "landed on entry 0" for a helper that never finished. The
-	# member's own sentinel is what fails instead.
-	h._assert_hud("…and the press lands on the live tie's own entry (%d, wanted %d)"
-			% [_popup_entry_pressed, entry],
-		_popup_entry_pressed == entry)
+## A map click's `tile_info` for `tile` — all the verb pick reads off one.
+func _tile_info(tile: Vector2i) -> Dictionary:
+	return {"x": tile.x, "y": tile.y, "visibility_state": "active"}
 
-## Press one entry of the OPEN popup, leaving `_popup_entry_pressed` holding the entry the popup says
-## the press hit (`POPUP_NO_ENTRY_PRESSED` when it hit none). The signal is only LISTENED to; the press
-## itself is a real pointer gesture, which is the whole point of this state.
-##
-## **The witness writes to a MEMBER, not to a local.** A GDScript lambda captures a local by VALUE, so
-## a `var landed` assigned inside the callback keeps the closure's own copy and the caller reads the
-## initial value forever — which reports every press as having landed on nothing, whatever really
-## happened. It cost a run to find; the member is captured through `self` and does propagate.
-##
-## **THE POPUP IS FREED UNDER THIS FUNCTION, AND THAT IS THE CONTROL BEHAVING CORRECTLY.** A pick runs
-## the entry's `on_pick`, which rerenders the sheet, which `queue_free`s the row the picker and its
-## popup hang off — so by the frame after the release the popup is gone. The deferred free is what
-## makes it safe (nothing is freed while Godot is still inside `activate_item`), and the teardown here
-## is guarded rather than assumed: an unguarded `disconnect` raises, which ABORTS this call, and an
-## aborted call answers with its return type's default rather than failing.
-func _press_popup_entry(popup: PopupMenu, entry: int) -> void:
-	var viewport: Viewport = h.get_viewport()
-	_popup_entry_pressed = POPUP_NO_ENTRY_PRESSED
-	var witness := func(index: int) -> void:
-		_popup_entry_pressed = index
-	popup.index_pressed.connect(witness)
-	var row_height := float(popup.size.y) / float(maxi(popup.item_count, 1))
-	var point := InputProbe.canvas_to_window(viewport, h.get_window(), Vector2(
-		float(popup.position.x) + float(popup.size.x) * POPUP_ROW_CENTRE,
-		float(popup.position.y) + row_height * (float(entry) + POPUP_ROW_CENTRE)))
-	InputProbe.hover(viewport, point)
-	await h.get_tree().process_frame
-	InputProbe.press_left(viewport, point)
-	await h.get_tree().process_frame
-	InputProbe.release_left(viewport, point)
-	await h.get_tree().process_frame
-	if is_instance_valid(popup):
-		popup.index_pressed.disconnect(witness)
-
-## The destination picker — the sheet's one `OptionButton`, which is also the only one in this zone.
-func _destination_picker() -> OptionButton:
-	return _find_option_button(_parties_zone())
 
 func _find_option_button(root: Node) -> OptionButton:
 	if root == null:

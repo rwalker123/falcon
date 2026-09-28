@@ -511,7 +511,7 @@ static func alloc_hint_markup(bbcode: String, ink: Color) -> RichTextLabel:
     label.text = bbcode
     return label
 
-## An inline text link (the inspector's three actions / the parties footer reasons).
+## An inline text link (the parties inspector's actions).
 static func build_inline_link(text: String, ink: Color, on_press: Callable) -> Button:
     var link := Button.new()
     link.text = text
@@ -721,6 +721,26 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
 ## child, so a third widget on the row (the quarry chooser) comes out of the value's share rather than
 ## out of the key's, and a row with two children and a row with three still start their value at the
 ## same x.
+## **A FIELD THE SHEET STATES RATHER THAN ASKS** — the field-stack's key label (`build_field_key`, so
+## it lines up with the rows that ARE controls) and the value as plain INK text, optionally led by
+## `icon` at `icon_px`. It carries `READ_ONLY_FIELD_META` = the key. The value expands and clips, so a
+## long band or species name cannot push the row wider than the sheet.
+static func build_read_only_field(key: String, text: String, icon: Texture2D = null,
+        icon_px: float = 0.0) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    row.set_meta(READ_ONLY_FIELD_META, key)
+    row.add_child(build_field_key(key))
+    if icon != null:
+        row.add_child(build_marker_icon(icon, "", icon_px, 0))
+    var value := Label.new()
+    value.text = text
+    value.clip_text = true
+    value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    value.add_theme_color_override("font_color", HudStyle.INK)
+    row.add_child(value)
+    return row
+
 static func build_field_key(text: String) -> Label:
     var key := Label.new()
     key.text = text
@@ -1013,14 +1033,23 @@ const SEND_DENIAL_CONFIRM_META := "send_denial_confirm"
 ## reachable only through the inline `pressed` lambda, and therefore only through this handle.
 const SEND_EXPEDITION_CONFIRM_META := "send_expedition_confirm"
 
-## A parties-footer MISSION LAUNCH button (`⚑ Scout` / `🏹 Hunt` / `💀 Deny`), as `Button` meta, carrying
-## the MISSION key it opens the compose sheet on. It is the entry point to a composing act — the press
-## a player makes and the only path that opens a sheet with nothing filled in — so a harness that
-## cannot reach it can only ever stage the compose sheet by writing `_party_compose_open` directly,
-## which is how the EMPTY form in a tall dock went uncovered through two reports of the same defect.
-## Keyed on the mission rather than a bare `true` because all three buttons are built by one builder
-## and their faces (which carry the mission glyph) are exactly what a harness must not match on.
-const MISSION_LAUNCH_META := "mission_launch"
+## A band VERB button on the tile panel's band drawer (issue #529), as `Button` meta carrying the
+## verb's registry id (`HudComposeVocab.VERB_*`). The drawer's row is built from the same list as the
+## Band panel's action bar, so a harness asserting "the same five ids, in order" reads it by this
+## handle — the faces are art or a glyph, and neither is text a harness may match on.
+const VERB_BUTTON_META := "band_verb"
+
+## The pending verb's sheet as mounted in its target's drawer — its node name and its `Control` meta,
+## whose value is the verb's MISSION (`BandPanelController.build_verb_form`). How the drawer finds the
+## sheet it is replacing, and how a harness finds which verb's sheet a drawer is showing.
+const VERB_FORM_NAME := "BandVerbForm"
+const VERB_FORM_META := "band_verb_form"
+
+## A READ-ONLY field row on a verb's sheet (`build_read_only_field`), as meta carrying the field's
+## key. The target a verb was aimed at — Deny's prey, Trade's destination — is chosen on the map before
+## the sheet opens, so the sheet STATES it; this is the handle a harness proves "stated, not offered"
+## by, since the row holds a `Label` where a chooser would hold a `Button`.
+const READ_ONLY_FIELD_META := "read_only_field"
 
 ## A compose sheet's COMMIT button, as `Button` meta — set by both sheets' builders. Its face is the
 ## thing under test whenever the crew noun moves (`Forage` / `Tend` / `Unassign` on the plant web,

@@ -605,3 +605,78 @@ func set_composing(compose_kind: String, compose_subject: String) -> void:
 func clear_composing() -> void:
 	_kind = KIND_NONE
 	_subject = ""
+
+# ---- The PENDING BAND VERB (issue #529) ----------------------------------------------------------
+#
+# **ONE VERB IN FLIGHT, SHARED BY THE TWO SURFACES THAT OFFER IT.** A verb is pressed on the Band
+# panel's action bar OR on the tile panel's band drawer, its target is picked on the map, and its
+# sheet renders in the TARGET's drawer — so neither controller owns it, and it lives here beside the
+# party sheet's quarry and kit. `BandPanelController` opens and closes it; `TargetingController` writes
+# the target the map pick resolves; `SubjectDrawerController` reads it to decide whether the selection
+# it is drawing is the one the sheet belongs to.
+#
+# Two phases, told apart by `verb_has_target()`: ARMED (the map pick is up, nothing chosen yet) and
+# OPEN (the target is chosen and the sheet shows in that target's drawer). Split skips the first — it
+# has no target to pick, so it opens on the band's own hex.
+
+## No verb pending.
+const VERB_NONE := ""
+## No tile yet — the armed phase's target.
+const VERB_NO_TARGET := Vector2i(-1, -1)
+
+var _verb_mission: String = VERB_NONE
+var _verb_band_entity: int = NO_BAND_ENTITY
+var _verb_band_id: int = HudConst.NO_BAND_ID
+var _verb_target: Vector2i = VERB_NO_TARGET
+## The herd a Deny targets, `""` for every other verb.
+var _verb_herd_id: String = ""
+## The band a Trade ships to (its durable `band_id`), `HudConst.NO_BAND_ID` for every other verb.
+var _verb_destination: int = HudConst.NO_BAND_ID
+
+func verb_mission() -> String:
+	return _verb_mission
+
+func verb_band_entity() -> int:
+	return _verb_band_entity
+
+func verb_band_id() -> int:
+	return _verb_band_id
+
+func verb_target() -> Vector2i:
+	return _verb_target
+
+func verb_herd_id() -> String:
+	return _verb_herd_id
+
+func verb_destination() -> int:
+	return _verb_destination
+
+func has_verb() -> bool:
+	return _verb_mission != VERB_NONE
+
+func verb_has_target() -> bool:
+	return has_verb() and _verb_target != VERB_NO_TARGET
+
+## A verb was pressed for the band `band_entity` / `band_id`: ARMED, with no target yet.
+func open_verb(mission: String, band_entity: int, band_id: int) -> void:
+	_verb_mission = mission
+	_verb_band_entity = band_entity
+	_verb_band_id = band_id
+	_verb_target = VERB_NO_TARGET
+	_verb_herd_id = ""
+	_verb_destination = HudConst.NO_BAND_ID
+
+## The target the map pick resolved (or, for Split, the band's own hex). `herd_id` / `destination`
+## are the verb-specific halves; each verb sets the one it has.
+func set_verb_target(tile: Vector2i, herd_id: String = "",
+		destination: int = HudConst.NO_BAND_ID) -> void:
+	_verb_target = tile
+	_verb_herd_id = herd_id
+	_verb_destination = destination
+
+## Re-aim a Deny at another herd on the SAME hex — the sheet's `⋯` chooser.
+func set_verb_herd(herd_id: String) -> void:
+	_verb_herd_id = herd_id
+
+func clear_verb() -> void:
+	open_verb(VERB_NONE, NO_BAND_ENTITY, HudConst.NO_BAND_ID)

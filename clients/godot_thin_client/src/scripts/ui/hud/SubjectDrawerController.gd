@@ -16,9 +16,12 @@ extends RefCounted
 ## disclosure fan-out (`_refresh_disclosure_hosts`) on the HUD node calling IN, and connects the two fit
 ## signals + `_refit_left_dock` to this controller's `fit_subject_drawer`.
 ##
-## THE MOVE VERB IS A TYPED COLLABORATOR, not a Callable — the drawer's Move button `.connect()`s
-## straight to `TargetingController.begin_move_band`, which owns the `_pending_move_band` state and the
-## banner (the targeting machinery, with three other modes). The is-this-mine test needs no
+## THE BAND VERBS ARE THE BAND PANEL'S (issue #529). A selected player band's drawer offers the verb
+## row built from `HudComposeVocab.BAND_VERBS` — the list the Band panel's action bar registers — with
+## the panel controller's own `verb_enabled` predicate and `dispatch_verb`, so the two surfaces cannot
+## offer different verbs or gate one differently. A pending verb's SHEET is mounted here too, in the
+## drawer of the target it was aimed at (`_mount_verb_form`). A selected EXPEDITION keeps its own Move,
+## which is the typed `TargetingController.begin_move_band`. The is-this-mine test needs no
 ## collaborator at all: `HudConst.is_player_unit` is a `class_name` static, called directly.
 ##
 ## THE FIT PATH IS THE HIGH-RISK PIECE. `fit_subject_drawer` does `await _host.get_tree().process_frame`
@@ -57,7 +60,7 @@ var _banddetail: BandDetailLines = null
 var _host: Node = null
 
 # --- The command-targeting cluster (see the class header) ---
-# The drawer's Move button `.connect()`s straight to `_targeting.begin_move_band`.
+# The expedition panel's Move button `.connect()`s straight to `_targeting.begin_move_band`.
 var _targeting: TargetingController = null
 
 # --- Scene nodes (handed in by HudLayer; they keep their `@onready` there — a `%Name` node loses
@@ -135,10 +138,15 @@ func _init(selection: HudSelectionState, band_labor: HudBandLaborState,
 ## caret flipping its hosts, the per-snapshot `reapply_selection`, a pending-edit restate — takes the
 ## default, because the faction page must survive all three.
 func render_subject_drawer(from_selection: bool = false) -> void:
+    # The pending verb's sheet comes off its host FIRST, synchronously — every branch below clears or
+    # hides `%AllocationPanel`, and the sheet may hold a focused cargo field (see
+    # `BandPanelController.detach_verb_form`).
+    _bandpanel.detach_verb_form()
     if _selection.subject() == HudSelectionState.SUBJECT_LAND:
         _render_land_drawer()
     else:
         _render_occupant_drawer(from_selection)
+    _mount_verb_form()
     # An OPEN compose sheet re-renders IN PLACE against the fresh subject. This is the SNAPSHOT path
     # (`reapply_selection` → here, every turn), and it must NOT close the sheet — closing would make
     # it unusable under autoplay (§15). A SELECTION change has already closed the sheet by the time it
@@ -827,17 +835,32 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
         # The panel is deliberately decoupled from the selection already ("selecting a herd or an empty
         # tile leaves `panel_band` intact — the panel persists across selection changes"); this branch
         # was the one exception, and the faction page is where that exception starts doing damage.
-        if from_selection or not _bandpanel.is_faction_page():
+        #
+        # **…AND A PENDING VERB HOLDS IT** (issue #529): while a verb is pending for the panel's band, a
+        # player band selected on its target — a Trade destination, a Scout target another band stands
+        # on — must not replace the band the verb is FOR (`BandPanelController.holds_panel_subject`).
+        if (from_selection or not _bandpanel.is_faction_page()) and not _bandpanel.holds_panel_subject():
             _bandpanel.render_band(_selection.unit())
+        if _herd_assign_controls != null:
+            _herd_assign_controls.visible = false
+        # **THE TARGET OF ANOTHER BAND'S VERB SHOWS THAT VERB'S SHEET, AND ONLY THAT.** The pointer
+        # line ("labor allocation is in the Band panel") would point at a panel that is showing the
+        # SENDER, and this band's own verb row beside another band's sheet would offer two subjects'
+        # orders in one drawer. `_mount_verb_form` mounts the sheet after this branch.
+        var sender := _bandpanel.verb_band()
+        if _verb_form_matches() and not sender.is_empty() \
+                and int(sender.get("entity", -1)) != int(_selection.unit().get("entity", -1)):
+            _occupant_detail.visible = false
+            _clear_allocation_panel()
+            return
         # The drawer is now VISIBLE furniture rather than a hidden card, so an empty one reads as a
         # rendering fault. Point at where the band's detail actually went instead of leaving a gap.
         _occupant_detail.visible = true
         _occupant_detail.text = DetailFormat.detail_bbcode([HudSelectionVocab.BAND_PANEL_POINTER_TEXT])
-        # The one order that stays HERE (§18): repositioning is a map action. Player resident bands
-        # only — this branch is already player-band-gated, and a foreign band's orders aren't ours.
-        _build_band_move_actions()
-        if _herd_assign_controls != null:
-            _herd_assign_controls.visible = false
+        # The band's orders that stay HERE (§18): the verb row, the Band panel's own list. Player
+        # resident bands only — this branch is already player-band-gated, and a foreign band's orders
+        # aren't ours.
+        _build_band_verb_actions()
         return
     # Herd / expedition / non-player band (or no-panel fallback) → the Occupants card drawer,
     # unchanged. Expedition → Recall/Move panel; player band (fallback) → allocation panel; herd →
@@ -889,7 +912,7 @@ func _render_occupant_drawer(from_selection: bool = false) -> void:
 ##
 ## It writes the drawer's `%AllocationPanel` node — HudLayer's, passed in — so it stays with the
 ## drawer render dispatch; the controller never needs a second host. Its two siblings on the same host
-## (`_build_band_move_actions` / `_build_expedition_panel`) are branches of `_render_occupant_drawer`
+## (`_build_band_verb_actions` / `_build_expedition_panel`) are branches of `_render_occupant_drawer`
 ## and live here for the same reason.
 func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> void:
     var container: VBoxContainer = target if target != null else _allocation_panel
@@ -903,47 +926,79 @@ func _build_allocation_panel(band: Dictionary, target: VBoxContainer = null) -> 
     container.add_child(_bandpanel.build_band_zone(band, false))
     container.add_child(_bandpanel.build_work_zone(band))
     container.add_child(_bandpanel.build_parties_zone(band))
-    # The docked path offers Move from `_build_band_move_actions`; this host must offer it too, or a
-    # selected player band has no way to be moved at all here (see `_make_band_move_actions`).
-    container.add_child(_make_band_move_actions())
+    # The docked path offers the verbs from `_build_band_verb_actions`; this host must offer them too,
+    # or a selected player band has no way to be ordered at all here (see `_make_band_verb_row`).
+    container.add_child(_make_band_verb_row(band))
 
-## The selected PLAYER band's one drawer action (§18): Move. Shares the allocation-panel host with
-## `_build_expedition_panel` and `_build_allocation_panel` — all three branches are mutually
-## exclusive on the selected occupant, so the fallback path's own Orders Move is never doubled.
-##
-## Wired straight to `_targeting.begin_move_band`, which resolves through `_resolve_assign_band()` and so
-## already targets the band selected in THIS list — the whole point on a hex carrying several.
-## `Clear all` is deliberately NOT here: it returns every worker to idle, a heavier action that
-## belongs beside the labor allocation it clears.
-func _build_band_move_actions() -> void:
+## The selected PLAYER band's drawer actions (§18): the verb row. Shares the allocation-panel host
+## with `_build_expedition_panel` and `_build_allocation_panel` — all three branches are mutually
+## exclusive on the selected occupant, so the fallback path's own row is never doubled.
+func _build_band_verb_actions() -> void:
     if _allocation_panel == null:
         return
-    for child in _allocation_panel.get_children():
-        child.queue_free()
+    _clear_allocation_panel()
     _allocation_panel.visible = true
-    _allocation_panel.add_child(_make_band_move_actions())
+    _allocation_panel.add_child(_make_band_verb_row(_selection.unit()))
 
-## The Move row itself, so the two hosts that offer it build the SAME control rather than two that
-## can drift. **Both hosts must offer it**: the docked path adds it beside the panel pointer, and the
-## NO-PANEL fallback appends it under the band content — the fallback used to inherit a Move from the
-## allocation stack's Orders block, and when the Band panel rework deleted that block the fallback
-## silently offered no way to move a band at all. `ui_preview`'s "exactly ONE Move button" assertion
-## is what catches either half of that going wrong (none offered, or one offered twice).
-func _make_band_move_actions() -> HBoxContainer:
-    var actions := HBoxContainer.new()
-    actions.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    var move_btn := Button.new()
-    move_btn.text = HudSelectionVocab.MOVE_BAND_BUTTON_TEXT
-    HudStyle.apply_button(move_btn, "ghost")
-    # **THE TILE CARD'S ONE LABEL SIZE.** `Move` is a tile-card button like the five `Assign … ▸`
-    # faces and `Road ▸`, and Ray asked for the reduction on all of them; the const lives with the
-    # compose vocabulary because that is where the family's first caller is.
-    move_btn.add_theme_font_size_override("font_size",
-        HudComposeVocab.TILE_ACTION_LABEL_FONT_SIZE)
-    move_btn.tooltip_text = HudSelectionVocab.MOVE_BAND_BUTTON_TOOLTIP
-    move_btn.pressed.connect(_targeting.begin_move_band)
-    actions.add_child(move_btn)
-    return actions
+## **THE VERB ROW — built from the SAME list the Band panel's action bar registers**
+## (`HudComposeVocab.BAND_VERBS`), in the same order, with the same face (`BandCityPanel.make_icon_button`),
+## the same `enabled` predicate and the same dispatch (`BandPanelController.verb_enabled` /
+## `dispatch_verb`). **Both hosts build it through here**: the docked path beside the panel pointer and
+## the NO-PANEL fallback under the band content, which used to inherit its only order from a block the
+## Band panel rework deleted and silently offered none. `ui_preview`'s tile-panel chapter asserts the
+## row carries the five ids in order, which is what catches either host losing it.
+##
+## The row acts on THIS row's band — the one the player picked in the list, which on a hex carrying
+## several is the whole point — re-read live from the roster so a press never dispatches a stale dict.
+func _make_band_verb_row(band: Dictionary) -> HBoxContainer:
+    var live := _band_labor.player_band_by_entity(int(band.get("entity", -1)))
+    if live.is_empty():
+        live = band
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", BandCityPanel.ACTION_BAR_SEPARATION)
+    for verb in HudComposeVocab.BAND_VERBS:
+        var mission := String(verb[HudComposeVocab.VERB_KEY_MISSION])
+        var button := BandCityPanel.make_icon_button(String(verb[HudComposeVocab.VERB_KEY_GLYPH]),
+            String(verb[HudComposeVocab.VERB_KEY_TOOLTIP]),
+            HudSprites.for_mark(String(verb[HudComposeVocab.VERB_KEY_MARK])))
+        button.set_meta(HudWidgets.VERB_BUTTON_META, StringName(verb[HudComposeVocab.VERB_KEY_ID]))
+        button.disabled = not _bandpanel.verb_enabled(mission, live)
+        button.pressed.connect(func() -> void: _bandpanel.dispatch_verb(mission, live))
+        row.add_child(button)
+    return row
+
+## Empty the allocation host. The pending verb's sheet is detached before this runs
+## (`render_subject_drawer`), so what is freed here never holds a focused field.
+func _clear_allocation_panel() -> void:
+    if _allocation_panel == null:
+        return
+    HudWidgets.clear_children(_allocation_panel)
+
+## **IS THE SELECTION THE PENDING VERB'S TARGET?** A verb's sheet is anchored to the hex its target was
+## picked on (Split: the band's own hex), so any subject on that hex — the land, the herd, the band —
+## shows it. The drop rule is the other half: a selection that LEAVES the hex ends the verb
+## (`BandPanelController.note_selection_tile`).
+func _verb_form_matches() -> bool:
+    if not _bandpanel.verb_is_open():
+        return false
+    var tile_info := _selection.tile_info()
+    return Vector2i(int(tile_info.get("x", -1)), int(tile_info.get("y", -1))) == _bandpanel.verb_target()
+
+## Mount the pending verb's sheet under whatever this subject's branch drew, when the selection is the
+## verb's target. Always LAST, so the sheet sits at the bottom of the card with the other verbs.
+func _mount_verb_form() -> void:
+    if _allocation_panel == null or not _verb_form_matches():
+        return
+    var form := _bandpanel.build_verb_form()
+    if form == null:
+        return
+    # A branch that HID the host (the land, a herd, a foreign band) left the previous subject's
+    # content parented under it — a player band's verb row, say — and showing the host again would
+    # show that too. The sheet is the host's whole content there.
+    if not _allocation_panel.visible:
+        _clear_allocation_panel()
+    _allocation_panel.visible = true
+    _allocation_panel.add_child(form)
 
 ## The dedicated panel for a selected in-flight expedition (no labor in v1): an awaiting-orders
 ## callout (echoing the pulsing map ring) plus Move (retarget via move_band on the expedition
@@ -951,8 +1006,7 @@ func _make_band_move_actions() -> HBoxContainer:
 func _build_expedition_panel(expedition: Dictionary) -> void:
     if _allocation_panel == null:
         return
-    for child in _allocation_panel.get_children():
-        child.queue_free()
+    _clear_allocation_panel()
     var is_player := not expedition.is_empty() and HudConst.is_player_unit(expedition)
     _allocation_panel.visible = is_player
     if not is_player:

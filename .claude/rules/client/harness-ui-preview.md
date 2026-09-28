@@ -61,12 +61,13 @@ the real handler — no terrain rows AND a non-empty roster, the two conditions 
 hid every child of the drawer. Four assertions, two of them preconditions, asked of
 `%OccupantDetail` itself because a PNG cannot tell a blank drawer from one that rendered fine.
 Sabotage-verified against the unconditional roster skip) / `tile_panel_band` (the Band/City pointer
-line, not a blank gap, **plus the drawer's `Move`** — and its behavioural ASSERTION: the hex carries
-three player bands, the SECOND is selected through the real list path, and pressing the REAL button
-must put the HUD into move-band targeting for **that** band (302), not the faction default
-`_player_band` (301). Proven to fail with `_on_move_band_pressed` resolving to `_player_band`;
-`tile_panel_crowded` additionally asserts the no-panel fallback shows exactly ONE Move, proven to
-fail with a second one added) (`tile_panel_feed_shown` — `R` on, both growing left-dock cards
+line, not a blank gap, **plus the drawer's VERB ROW** (issue #529) — the five ids of
+`HudComposeVocab.BAND_VERBS` in order (`EXPECTED_VERB_IDS`, read off `HudWidgets.VERB_BUTTON_META`) —
+and its behavioural ASSERTION: the hex carries three player bands, the SECOND is selected through the
+real list path, and pressing the REAL Move must put the HUD into move-band targeting for **that**
+band (302), not the faction default `_player_band` (301); `tile_panel_crowded` additionally asserts
+the no-panel fallback shows exactly ONE verb row, the same five in the same order)
+(`tile_panel_feed_shown` — `R` on, both growing left-dock cards
 fitting — is RETIRED with the command feed; there is one growing card in that column now, and
 `predator_feed` went with it, its alert styling having moved into `HudEventVocab` and onto the
 `event_dock_*` frames below). **The temperature-mortality states** close the chapter (issue #614, `EXPECTED_CHECKPOINTS` 74 -> 104). **The model is seeded in the PROLOGUE**, beside `TileClimate.set_cut_points`, so it is live for every frame in the walk: a fixture sitting outside the survivable range must not be the one place the HUD still hides that, which is the whole of #614. Three existing frame families gained the warning and were judged on their merits rather than suppressed — `low_morale` (-2 °C, a band being punished BY the cold, where the ⚠ is the missing half of the drawer's `harsh climate` line), `climate_polar` (-6 °C, still lethal at 1.05 %/turn; **`climate_boreal` at 2 °C LOST its pill when the cold onset moved to 0 °C, and that is the point rather than a regression** — the survival line now lands exactly on the Polar/Boreal climate line, so do not re-cool that fixture to bring the pill back), and the no-pasture glacier (-14 °C, kept because the temperature is what MAKES it a glacier; softening it to a survivable reading would have been a worse lie than the one being fixed). The chapter renders **`tile_panel_lethal_cold`** (`Fair` beside `⚠ Polar · -10.0 °C` in DANGER — it was the defect's own 3.7 °C hex until the onset moved, and **a lethal TEMPERATE tile is no longer a state the game can reach**, so the state demonstrates lethal POLAR ground now), **`tile_panel_lethal_heat`** (the OTHER tail — at 50 °C, hotter than worldgen can produce, because the heat onset is 40 °C and calibrated to the range issue #622 opens up), **`tile_panel_lethal_near_line`**, **`tile_panel_survivable`** (the ABSENCE) and **`tile_panel_lethal_bandless`**. Twenty-four assertions, made on the chip SLOT LIST and the chips' faces, INK and hover rather than on the pixels, because no PNG can prove a missing warning is missing for the right reason (a tooltip does not render into a static capture at all); a frame-less sixth state at −80 °C proves the model's cap is what the rate comes out of (the cold cap only begins to bind at −57.14 °C and clips by hundredths of a percent there, so a fixture at the edge of the future range could not tell a capped rate from an uncapped one). **`tile_panel_lethal_near_line`'s temperature is DERIVED from the published onset** rather than typed: at a literal `5.98` it was stranded 6 ° inside the survivable band by the retune, which would have turned it silently into a second survivable-tile frame. **A seventh, frame-less block asserts the THREE-WAY BRANCH itself** — a hair either side of each onset, a reading between them, and the two tails priced at equal distances to prove their slopes differ — because a chip exercises ONE arm per frame and a single-tail bug would leave every frame above looking correct.
@@ -1154,11 +1155,23 @@ vacuity guard rides between the two switches — the crew dialed to 0 on a band 
 the source, asserting the sheet really does say `Unassign` and really does drop the control, without
 which "not `Unassign`" passes on a sheet that can no longer say it.
 
-**The `Band:` picker is driven with REAL POINTER INPUT** (`_pick_actor_band`: the face, then the popup
-row, through `InputProbe`), the three gotchas `chapters/trade.gd`'s destination pick records —
-`canvas_to_window` for the embedded subwindow, the popup's own `index_pressed` as the witness for a
-derived point, and an `is_instance_valid` guard on the teardown, the pick having freed the popup by
-rebuilding the sheet.
+**The `Band:` picker is driven with REAL POINTER INPUT** (`_pick_actor_band` in `chapters/hunt.gd`:
+the face, then the popup row, through `InputProbe`). `picker.emit_signal("item_selected", 0)` would
+call the connected lambda by hand and leave every step between a click and `on_pick` untested — the
+popup opening, the entry being reachable, and the engine deciding whether a pick is a CHANGE at all.
+An `OptionButton` runs at `ACTION_MODE_BUTTON_PRESS`, so the popup is up before the release exists and
+the two halves are driven apart. **Three things about driving a popup that are not obvious:**
+- **The popup is an EMBEDDED subwindow, and `push_input` un-stretches an event into canvas space
+  before forwarding to one** — so the press goes through `InputProbe.canvas_to_window`. A raw canvas
+  point misses it entirely.
+- **Hover feedback is not available**: `PopupMenu.get_focused_item()` answers `-1` for every pushed
+  motion, so a hover-search cannot find a row. The entry's point is derived from the popup's own rect
+  and item count, and `index_pressed` is LISTENED to so the derivation is CHECKED rather than trusted.
+- **The popup is FREED under the probe** — the pick rebuilds the sheet the picker hangs off — so the
+  teardown is `is_instance_valid`-guarded and the answer is read off a MEMBER. An unguarded
+  `disconnect` raises, which aborts the call, and an aborted GDScript call answers with its return
+  type's default: `0` is a legal entry index, so a "landed on entry 0" claim passes for a helper that
+  never finished.
 
 Sabotage-verified on two DISJOINT mutations: restoring the bare `set_*_band` write fails **eight** —
 the re-seed claims on both webs, reading `got Unassign` and a missing improvement control, i.e. the
@@ -1203,57 +1216,43 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 **Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
 `selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly
-the case the release note at the end of this paragraph exists for. **Sixteen frames and eighty-three `PASS`**
+the case the release note at the end of this paragraph exists for. **Sixteen frames and eighty-four `PASS`**
 (`EXPECTED_CHECKPOINTS := 99`) — nine for the shipment itself, then seven for the typed cargo row
 (issue #620): `trade_cargo_typed`, `_typed_invalid`, `_typed_held`, `_typed_cap`, `_max`,
 `_typed_then_stepped`, `_step_clamped`. Plus
 one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
 beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
-injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
-the panel's own controls, and releases the panel and hands the reference band back before it ends —
-so a chapter appended after it starts where every other one does.
+injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole shipment through the
+controls a player uses — the Trade verb on the shipper's band drawer, the destination pick on the map,
+the sheet in the destination's drawer — and releases the panel and hands the reference band back
+before it ends, so a chapter appended after it starts where every other one does.
 
-**Every control is driven, not set.** The footer's mission button is pressed (by
-`HudWidgets.MISSION_LAUNCH_META`, never by face), the destination is chosen with REAL POINTER INPUT
-(below), the party is raised through its stepper's `+` reading `PARTY_STEPPER_COUNT_META`
-back on each press, and each cargo row is loaded through the row's OWN handles — repeated presses of
-its `+` (`_load`), an amount TYPED into its field and committed with Enter (`_type_cargo`), or its
-`Max` (`_press_cargo_max`), all three since issue #620 — which is what exercises the clamp to the
-row's ceiling and the per-commit rebuild rather than the members behind them.
+**Every control is driven, not set.** The drawer's Trade verb is pressed (by
+`HudWidgets.VERB_BUTTON_META`, never by face), the destination is picked the way the map picks it
+(`show_tile_selection` → `notify_hex_selected` → `show_unit_selection`, the neighbour's own tile
+stamped on the payload as `MapView._handle_entity_selection` does), the party is raised through its
+stepper's `+` reading `PARTY_STEPPER_COUNT_META` back on each press, and each cargo row is loaded
+through the row's OWN handles — repeated presses of its `+` (`_load`), an amount TYPED into its field
+and committed with Enter (`_type_cargo`), or its `Max` (`_press_cargo_max`), all three since issue #620
+— which is what exercises the clamp to the row's ceiling and the per-commit rebuild rather than the
+members behind them.
 
-**THE DESTINATION PICK IS TWO REAL PRESSES, AND IT USED TO BE A FAKED SIGNAL THAT COULD NOT FAIL.**
-`picker.emit_signal("item_selected", 0)` calls the connected lambda by hand, so every step between a
-click and `on_pick` — the popup opening, the entry being reachable, and the engine deciding whether a
-pick is a CHANGE at all — went untested, and the chapter stayed green through a picker that was dead
-in play (`labor-ui.md` → "A PICKER STATES ITS OWN SELECTION"). It now presses the picker's face
-(`InputProbe.press_left` / `release_left`: an `OptionButton` runs at `ACTION_MODE_BUTTON_PRESS`, so the
-popup is up before the release exists and the two halves must be driven apart) and then presses the
-entry, both through `Viewport.push_input`. Four claims ride it, and the sabotage that reverts the fix
-fails three of them plus the whole downstream chain — **twelve in all, and NOT the fourth**: the press
-really does land on entry 0 either way, and what the bug swallows is the pick, which is exactly the
-decomposition those two claims are separated to show.
+**THE DESTINATION IS A MAP PICK** — `trade_verb_row` (the verb row, and where the 📦 mark must DRAW),
+`trade_pick_armed` (the banner, no sheet yet), a click on the PARKED tie's last-seen tile refused with
+the pick still armed, then `trade_picker_destination`: the sheet in the destination's drawer with `To`
+stated read-only, the Band panel's subject still the SENDER and no panel pointer in that drawer. The
+pick is driven the way the map drives it, so every step between the click and the sheet — the pick
+resolving a live tie, the selection landing on the destination, the sheet mounting in its drawer — is
+exercised rather than set.
 
-**Three things about driving a popup that are not obvious, all measured here:**
-- **The popup is an EMBEDDED subwindow, and `push_input` un-stretches an event into canvas space
-  before forwarding to one** — so the press goes through `InputProbe.canvas_to_window` like every other
-  probe. A raw canvas point misses it entirely.
-- **Hover feedback is not available**: `PopupMenu.get_focused_item()` answers `-1` for every pushed
-  motion (the accessor works — `set_focused_item` round-trips), so the `_find_open_map_point` style of
-  hover-search cannot find a row here. The entry's point is derived from the popup's own rect and item
-  count, and `index_pressed` is LISTENED to so the derivation is CHECKED rather than trusted.
-- **The popup is FREED under the probe** — the pick runs `on_pick` → `rerender()` → `queue_free` on the
-  row the picker hangs off — so its teardown is `is_instance_valid`-guarded and the answer is read off a
-  MEMBER. An unguarded `disconnect` raises, which aborts the call, and an aborted GDScript call answers
-  with its return type's default: `0` is a legal entry index, so the "landed on entry 0" claim passed
-  for a helper that never finished. That is `_instantiate_chapters`' own lesson met a second time.
-- **A lambda captures a local by VALUE**, so a witness assigning to a `var` outside it reports nothing
-  ever happened. It cost a run.
+**A lambda captures a local by VALUE**, so a witness assigning to a `var` outside it reports nothing
+ever happened; the chapter's witnesses are containers.
 
 **The claims that only a driven run can make:**
 
 | claim | why nothing else says it |
 |---|---|
-| the picker lists BOTH ties, the parked one disabled with its reason in its own label | a picker that filtered parked ties renders a shorter list that looks perfectly correct |
+| a click on the PARKED tie's last-seen tile resolves nothing and the pick stays armed | a pick that accepted any tied band would open a sheet whose send the server refuses |
 | the destination's position is worded as REMEMBERED, and the walk wears `≈` | the arc's keystone; a live-position render is indistinguishable in a screenshot |
 | a material row names the pile's RATING | the fixture holds TWO `hide` piles at different ratings, which is the only shape that can fail |
 | mass and cap composed from the FIXTURE's side | the harness and the sheet arrive at one number from opposite ends |
@@ -1265,11 +1264,10 @@ decomposition those two claims are separated to show.
 | the destination `BandId` never appears on screen | the id is distinctive (`BandFx.FIXTURE_BAND_ID_OFFSET + entity`), so a leak has something to find |
 | the `Bound for` row names the band anyway | the fixture publishes `expeditionDestinationName` as `""` — the LIVE shape, bands having no names — so the row can only read `Band 2` by joining the roster on the id beside it |
 
-**`trade_footer` exists for the GLYPH, and that is not decoration.** A mark missing from this
+**`trade_verb_row` carries the GLYPH check, and that is not decoration.** A mark missing from this
 client's fallback font renders as an INVISIBLE GAP — no tofu box, nothing an assertion can see — and
 that is exactly what 🤝 did on the Food breakdown's transfer rows before it was replaced. The frame
-is the only thing that catches it, and it caught the fifth footer button being clipped off the edge
-of a 354px column in the same pass.
+is the only thing that catches it.
 
 **The party fixture carries BOTH carry-weight levers** (`expedition_trade_material_carry_weight`
 and `expedition_trade_fodder_carry_weight`), which the native decoder echoes onto every cohort.

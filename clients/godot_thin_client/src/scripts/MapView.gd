@@ -688,12 +688,12 @@ const EXPEDITION_HUNT_MISSION := "hunt"
 const EXPEDITION_HUNT_GLYPH := "🏹"              # bow motif = a hunting party following game
 # DENIAL raid (docs/plan_denial_raid.md) — a third mission, and a third marker: it engages like a hunt
 # party but brings nothing home, so wearing the bow would read as a hunt on the map. 💀 is the mark it
-# wears everywhere else (the footer button, the parties row), so the three surfaces agree.
+# wears everywhere else (the Deny verb, the parties row), so the three surfaces agree.
 const EXPEDITION_DENY_MISSION := "deny"
 const EXPEDITION_DENY_GLYPH := "💀"
 # TRADE shipment (arc #527) — a fourth mission and a fourth marker. It carries goods to another band
 # and comes home empty, so neither the bow nor the skull says what it is: 📦 is the mark it wears on
-# its footer button and its parties row too, so the three surfaces agree. Its phase decorations stay
+# its Trade verb and its parties row too, so the three surfaces agree. Its phase decorations stay
 # OFF (`is_hunt` gates those) — the green pip is a HAUL cue, and a shipment's haul is going the other
 # way.
 const EXPEDITION_TRADE_MISSION := "trade"

@@ -1862,9 +1862,9 @@ func _ready() -> void:
 	_set_forage_patches(_many_source_patch_fixtures())
 	_push_bands([_band_fixture()])
 
-	# The parties COMPOSE sheet, QUARRY-FIRST. With a quarry picked the whole hunt form resolves: the
-	# policy rungs carry their ascending per-policy metric, the party stepper caps at the raid's
-	# max-useful plateau, the trip forecast reads, and the Send button takes its verdict.
+	# ---- THE BAND VERBS (issue #529) ------------------------------------------------------------
+	# The Scout / Deny / Trade / Split buttons left the Parties zone's footer for the panel's ACTION
+	# BAR, where Move joins them; a verb's sheet opens in its TARGET's drawer, picked on the map first.
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
 	_set_world_herds(_quarry_herd_fixtures())
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
@@ -1872,151 +1872,30 @@ func _ready() -> void:
 	_assert_denial_quarry_eligibility()
 	_assert_denial_turn_clause_shapes()
 	_panel.set_active_tab(&"parties")
-	_hud._bandpanel._party_compose_open = true
-	_hud._bandpanel._party_compose_mission = "hunt"
-	_hud._compose.set_party_quarry(QUARRY_FAR_HERD_ID)
-	# Picking a quarry fills the party to its max-useful cap (the one-shot `TargetingController._try_pick_quarry` sets);
-	# seed it here too so the frame shows the shipped default (the party at the cap, not a stray 1).
-	# **THE COUNT IS PUT BACK ON ITS FLOOR FIRST, and that is what makes the ordering claim below
-	# testable rather than lucky.** Autofill only moves the party if the party is not already at the
-	# cap, so a state-order change that left a big count behind would silently turn
-	# `_assert_chart_reads_the_settled_party` into a tautology. It costs the frame nothing: the very
-	# next line arms the fill, so what renders is the cap either way.
-	_hud._bandpanel._send_expedition_count = COMPOSE_HUNT_SEED_PARTY
-	_hud._compose.arm_party_autofill()
-	_hud._bandpanel.rerender()
 	await _settle()
-	await _save("band_panel_compose_hunt")
-	_report_compose_widths("band_panel_compose_hunt")
-	_assert_hunt_sheet_chart(true, "band_panel_compose_hunt")
-	_assert_chart_reads_the_settled_party("band_panel_compose_hunt", COMPOSE_HUNT_SEED_PARTY)
-	# The tall side dock is where the sheet must NOT leave the zone — the other half of the fork the
-	# height-capped state below asserts. See `_assert_compose_in_zone`.
-	_assert_compose_in_zone("band_panel_compose_hunt")
-	_assert_dock_chart_carries_the_kit()
+	_assert_band_verbs_registered()
+	_assert_parties_zone_has_no_footer()
+	await _assert_band_verbs_dispatch()
 
-	# **THE SAME SHEET IN THE HEIGHT-CAPPED TOP DOCK** — the tier gate on the chart, and the only
-	# state that renders it. The parties zone CLIPS there, and the chart is ~150px of a ~300px box, so
-	# the SHORT tier keeps the presets alone exactly as the band zone's outlook chart is kept out. The
-	# frame is judged on the ABSENCE plus the fit: a gate that never fired and a chart clipped off the
-	# bottom of the zone are the same picture.
-	#
-	# **PINNED TO THE SHORT-TIER PROBE CANVAS since §4.7 raised the strip** — a one-column horizontal
-	# dock is COMPACT at the new budget, and the tier gate's NEGATIVE half has nowhere else to be made.
-	await _pin_canvas(Vector2i(PREVIEW_SIZE.x, SHORT_TIER_PROBE_HEIGHT))
-	_panel.set_dock(SIDE_TOP)
-	await _settle()
-	await _save("band_panel_compose_hunt_short")
-	# **THE FIT IS ASSERTED HERE NOW, AND IT IS ASSERTED IN THREE PLACES AT ONCE.** An open parties
-	# compose sheet does not fit a height-capped horizontal dock at all — measured at 641px of a 265px
-	# box WITHOUT the chart (prey row, presets, floor hint, party stepper, kit row, forecast and
-	# send, none of which this tier drops), which is why this state used to REPORT its extent instead
-	# of asserting it. The sheet renders in `BandComposeFloat` there now, so the claim can be made —
-	# but only as a set: `_assert_zone_content_fits` alone passes TRIVIALLY once the sheet leaves the
-	# zone, and a float is only a fix if the overflow landed somewhere that is itself measured.
-	_report_zone_content_extent("band_panel_compose_hunt_short")
-	_report_compose_widths("band_panel_compose_hunt_short")
-	_assert_hunt_sheet_chart(false, "band_panel_compose_hunt_short")
-	_assert_zone_content_fits()
-	_assert_compose_float("band_panel_compose_hunt_short")
-	await _assert_float_leaves_the_map_clickable("band_panel_compose_hunt_short")
-	# **AN UNKNOWN ZONE BOX MUST NOT FLOAT.** Taken HERE, with the mark latched at the short dock's
-	# genuine 641px, because that is the only configuration in which the two possible answers differ.
-	_assert_unknown_zone_box_does_not_float("band_panel_compose_hunt_short")
-	# **AND A MARK LATCHED IN THE SHORT DOCK MUST NOT SURVIVE THE MOVE TO THE TALL ONE.** Staged here,
-	# judged after the real `set_dock` → render below.
-	var staged_mark := _stage_impossible_compose_mark()
-	_release_canvas_pin()
-	_panel.set_dock(SIDE_LEFT)
-	await _settle()
-	_assert_mark_dropped_on_dock_change("band_panel_compose_hunt", staged_mark)
-	_assert_zones_within_bounds()
-	_assert_work_zone_readable()
-	_assert_zone_content_fits()
-	# **THE DOCK IS THE SECOND LAUNCH SITE, AND IT MUST OFFER THE SAME ORDERS** (§5.2). A lever on the
-	# herd drawer's sheet and absent here is the same defect as a lever that does nothing. The FLOOR is
-	# now the whole of what a raid is ordered with (the fill target is retired, issue #491), and what
-	# this sheet must still state is the trip's BOUND: it rides its own quiet line here (this zone's
-	# forecast is the one-LINE form, already dense with five facts) where the drawer folds the identical
-	# clause into its readout verdict — one table, so the two surfaces cannot describe one stop
-	# differently.
-	_assert_band_panel("the dock's hunt sheet names which stop ends the trip",
-		_has_label_containing(_panel, SourceForecast.TRIP_BOUND_CLAUSES[
-			SourceForecast.TRIP_BOUND_PACK_FULL]))
-	# **ONE QUARRY ON THE HEX GETS NO CHOOSER, and this frame is the whole guarantee that the common
-	# case did not grow chrome for the rare one.** The boar stands alone on (75, 18); the paired
-	# positive is `band_panel_compose_deny_two_prey`, without which a chooser rendered on every
-	# sheet would satisfy every claim there.
-	_assert_band_panel("a lone herd on the hex gets NO chooser on the Prey row",
-		_find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) == null)
-
-	# The same sheet on ERADICATE — the frame the EXPEDITION rung's hint is judged on (issue #337). The
-	# launch picker is the ONE surface that renders `SEND_HUNT_POLICY_HINTS` verbatim, and Eradicate's
-	# line must describe the whole-stock haul, the food the SPECIES pays, and the permanent end state,
-	# never "delivers no food".
-	_hud._bandpanel._send_hunt_floor = SourceForecast.FLOOR_MIN
-	_hud._bandpanel.rerender()
-	await _settle()
-	await _save("band_panel_compose_hunt_eradicate")
-	_assert_zones_within_bounds()
-	_assert_work_zone_readable()
-	_assert_zone_content_fits()
-	_hud._bandpanel._send_hunt_floor = SourceForecast.DEFAULT_HARVEST_FLOOR
-
-	# The same sheet with NO prey yet: the "Choose…" row, the hint, a disabled Send — and nothing
-	# below it, since policy/party/forecast are all unanswerable without a herd.
-	_hud._compose.clear_party_quarry()
-	_hud._bandpanel.rerender()
-	await _settle()
-	await _save("band_panel_compose_hunt_no_prey")
-	_assert_zones_within_bounds()
-	_assert_work_zone_readable()
-	_assert_zone_content_fits()
-
-	# **THE EMPTY FORM OPENED THE WAY A PLAYER OPENS IT, IN THE TALL DOCK — the state that was missing
-	# when this defect was reported the second time.** Every compose fixture above stages its sheet by
-	# writing `_party_compose_open` and picking a quarry first, so the harness never once rendered the
-	# SMALLEST the sheet ever is: the form the player sees the instant they press `🏹 Hunt`, on a band
-	# with no parties out. That is the exact picture that came back from play, floating out of a dock
-	# with hundreds of px to spare. The whole composing act is restarted here — closed, then reopened
-	# through the REAL footer button — because the phantom this exists to catch is taken on the render
-	# that the press arms, and a sheet already open has already been measured.
-	_hud._bandpanel._close_party_compose()
-	_push_bands([_band_fixture()])
-	_panel.set_active_tab(&"parties")
-	await _settle()
-	await _assert_empty_compose_opens_in_the_zone("band_panel_compose_hunt_empty")
-	# Asked at the STATE rather than inside the block above, so it is still asked when that block
-	# refuses its own precondition — a trigger stuck ON floats the sheet, which takes the phantom
-	# reading out of the parties column and would otherwise let this claim go unasked.
-	await _settle()
-	_assert_zone_holds_its_compose_sheet("band_panel_compose_hunt_empty")
-	await _save("band_panel_compose_hunt_empty")
-	_assert_zones_within_bounds()
-	_assert_work_zone_readable()
-	_assert_zone_content_fits()
-	# Restore the roster the states below read: `update_band_alerts` keeps a losing-population diff
-	# against the last roster pushed, and the parties rows are what the scout/deny frames render above
-	# their sheets.
-	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
-	_hud._bandpanel.rerender()
-	await _settle()
-
-	# Same sheet under Scout: scouting title, NO prey row, NO policy picker, "Send scouting party…".
-	_hud._bandpanel._party_compose_mission = "scout"
-	_hud._bandpanel.rerender()
-	await _settle()
+	# **THE SCOUT SHEET, OPENED THE WAY A PLAYER OPENS IT** — the verb, then the target tile, and the
+	# sheet in that tile's drawer: scouting title, the party stepper and the kit, NO prey row and NO
+	# policy picker, and a plain send (the tile is already chosen).
+	await _open_scout_sheet()
 	await _save("band_panel_compose_scout")
+	_assert_verb_sheet_mounted("band_panel_compose_scout", HudComposeVocab.COMPOSE_MISSION_SCOUT)
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 
-	# **THE DENIAL FORM — the third verb** (`docs/plan_denial_raid.md` §3). Quarry → party → the
-	# COLLAPSE VERDICT → the take → send. What is ABSENT is the specification: no floor picker, no
-	# floor hint, no fill target, no crew preset — a herd and a party size, and nothing else the
-	# `send_denial_raid` grammar (closed at four tokens) could even carry.
-	_hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_DENY
-	_hud._compose.set_party_quarry(QUARRY_FAR_HERD_ID)
+	# **THE DENIAL FORM — the Deny verb** (`docs/plan_denial_raid.md` §3). The verb, then the herd on
+	# the map, and the sheet in that herd's drawer: the prey STATED, then party → the COLLAPSE VERDICT
+	# → the take → send. What is ABSENT is the specification: no floor picker, no floor hint, no fill
+	# target, no crew preset — a herd and a party size, and nothing else the `send_denial_raid` grammar
+	# (closed at four tokens) could even carry.
+	_hud._bandpanel.close_verb_form()
+	await _open_deny_sheet(_quarry_herd_fixtures()[0])
+	_assert_verb_sheet_mounted("band_panel_compose_deny", HudComposeVocab.COMPOSE_MISSION_DENY)
+	_assert_prey_is_stated(QUARRY_FAR_HERD_ID)
 	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
 	_hud._bandpanel.rerender()
 	await _settle()
@@ -2062,7 +1941,7 @@ func _ready() -> void:
 	# itself. The popup is an embedded subwindow, so it lands in the capture; the structural claims
 	# (which entries, which one is marked, which one is tagged the default, and `none` LAST) ride the
 	# assertion, since a screenshot cannot say which item carries the radio dot.
-	var kit_picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
+	var kit_picker := _find_meta_control(_sheet_root(), KitRoster.KIT_PICKER_META) as OptionButton
 	if kit_picker != null:
 		# Placed by hand under the button. `show_popup()` would do it, but it also grabs input and can
 		# move focus mid-run; the popup is an EMBEDDED subwindow, so positioning it and calling
@@ -2129,9 +2008,8 @@ func _ready() -> void:
 	# control from the identical builder. The pair reads differently on purpose — a warren pays meat,
 	# a wolf pays pelts alone — so the chooser is judged on two rows that could not be confused.
 	_set_world_herds(_shared_tile_quarry_fixtures())
-	_hud._compose.set_party_quarry(SHARED_TILE_FOOD_HERD_ID)
-	_hud._bandpanel.rerender()
-	await _settle()
+	_hud._bandpanel.close_verb_form()
+	await _open_deny_sheet(_shared_tile_quarry_fixtures()[0])
 	await _save("band_panel_compose_deny_two_prey")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
@@ -2144,7 +2022,8 @@ func _ready() -> void:
 	# (a HUNT of it still is not — `_assert_denial_quarry_eligibility` pins both halves). The walk out
 	# is ZERO here, which is the frame's other claim: the verdict must still name its span and must not
 	# append "(0 of them travel)".
-	_hud._compose.set_party_quarry(QUARRY_HOME_HERD_ID)
+	_hud._bandpanel.close_verb_form()
+	await _open_deny_sheet(_quarry_herd_by_id(QUARRY_HOME_HERD_ID))
 	# **RE-PINNED, because adopting a quarry now SEEDS the party.** The chooser assertion above drives
 	# the real `choose_quarry`, which arms the autofill the denial sheet consumes — so the sheet came
 	# out of that block on the shared hex's requirement rather than on `DENIAL_PARTY`, and this frame's
@@ -2168,10 +2047,8 @@ func _ready() -> void:
 	_push_bands([_scout_expedition_fixture(), _deep_party_band_fixture(), _hunt_expedition_fixture()])
 	var deep_herds := _quarry_herd_fixtures(_denial_needs_deep_party_rows())
 	_set_world_herds(deep_herds)
-	_hud._compose.clear_party_quarry()
-	_hud._targeting.choose_quarry(_deep_party_band_fixture(), deep_herds[0],
-		HudComposeVocab.COMPOSE_MISSION_DENY)
-	await _settle()
+	_hud._bandpanel.close_verb_form()
+	await _open_deny_sheet(deep_herds[0])
 	await _save("band_panel_compose_deny_deep_party")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
@@ -2233,16 +2110,15 @@ func _ready() -> void:
 	_set_world_herds(_quarry_herd_fixtures())
 	await _settle()
 
-	_hud._bandpanel._send_expedition_count = 1
-	_hud._bandpanel._party_compose_open = false
-	_hud._bandpanel._party_compose_mission = ""
-	_hud._compose.clear_party_quarry()
+	_hud._bandpanel.close_verb_form()
+	_hud.show_tile_selection({})
 
-	# Zero idle workers: BOTH mission buttons (Scout / Hunt) stay VISIBLE and DISABLED, with the
-	# shared reason line beneath them.
+	# Zero idle workers: the three EXPEDITION verbs on the bar stay VISIBLE and DISABLED (a party is
+	# staffed out of idle hands), while Move and Split — which want a band and its workers — stay live.
 	_push_bands([_no_idle_band_fixture()])
 	await _settle()
 	await _save("band_panel_no_idle")
+	_assert_verbs_gate_on_idle()
 
 	_assert_scroll_only_where_sanctioned()
 	_assert_zones_within_bounds()
@@ -4564,8 +4440,7 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 	# The panel's own geometry, exactly as `_sync_work_inspector_dialog` hands it over — a worst case
 	# mounted against a zero anchor would be centred in the raw viewport and could not fail the
 	# does-not-cover-the-board claim the real card is judged by.
-	dialog.mount(strip, reserved, _panel.card_rect(),
-		BandComposeFloat.map_facing_side(_panel.get_dock()))
+	dialog.mount(strip, reserved, _panel.card_rect(), _panel.map_facing_edge())
 	# TWO settles: `refit` waits a frame for the layout pass before it measures, so a reading taken on
 	# the first is the previous content's.
 	await _settle()
@@ -8030,6 +7905,9 @@ func _assert_action_registry() -> void:
 	# exactly how they failed the day the second launcher landed.
 	_panel.unregister_action(BandCityPanel.ACTION_CRAFTING)
 	_panel.unregister_action(BandCityPanel.ACTION_KNOWLEDGE)
+	# …and the five BAND VERBS the controller registers ahead of them (issue #529), for the same reason.
+	for verb in HudComposeVocab.BAND_VERBS:
+		_panel.unregister_action(StringName((verb as Dictionary)[HudComposeVocab.VERB_KEY_ID]))
 	await _settle()
 	var horizontal_strip_bare := _panel.current_reservation_size()
 	# VACUITY for it: BOTH launchers really did leave the row, so "unchanged" is not "nothing happened".
@@ -8074,6 +7952,9 @@ func _assert_action_registry() -> void:
 	_panel.register_action(BandCityPanel.ACTION_KNOWLEDGE, BandCityPanel.KNOWLEDGE_GLYPH,
 		BandCityPanel.KNOWLEDGE_TOOLTIP, Callable(),
 		HudSprites.for_mark(HudKnowledgeVocab.LAUNCH_MARK))
+	# The verbs go back through the controller's OWN registration, which is what puts them ahead of
+	# the ⚒ / ▲ again with their predicates and art.
+	_hud._bandpanel._register_band_verbs()
 	await _settle()
 	_assert_action_mount_pairing("re-docking TOP -> LEFT", BandCityPanel.ACTION_MOUNT_BAR)
 
@@ -8624,43 +8505,190 @@ func _assert_recall_press(label: String, exp: Dictionary, want_verb: String, wan
 	_dismiss_dialogs()
 	row.queue_free()
 
-## Open the parties compose sheet on the SPLIT mission at `workers`, driving the real `⌂ Split`
-## footer button rather than writing the controller's state — a sheet reached by assignment would
-## pass against a mission button that no longer opens it, or one gated on the wrong worker pool.
+## Open the SPLIT verb's sheet at `workers`, driving the panel's REAL action-bar press
+## (`action_invoked`) rather than writing the controller's state — a sheet reached by assignment would
+## pass against a verb that no longer opens it, or one gated on the wrong worker pool.
 ##
-## **THE PREVIOUS SHEET IS CLOSED FIRST, and that is not tidiness.** An open sheet renders IN PLACE
-## OF the footer's four buttons, so a second call would find nothing to press — every caller after
-## the first opens over a sheet the one before it left up.
+## **THE BAND IS SELECTED ON ITS OWN HEX FIRST.** Split takes no target: it opens on the band's own hex
+## as a band selection, which in the live client is the map's own `alert_focus_requested` →
+## `unit_selected` hop. This harness has no map, so the selection that hop lands on is made here, and
+## the verb then finds its band already selected — the same drawer the live path ends in.
 ##
 ## Only the STEPPER is written, which is the state the states below deliberately vary; the OPENING
 ## is the path under test.
 func _open_split_sheet(workers: int) -> void:
-	_hud._bandpanel._close_party_compose()
-	_hud._bandpanel.rerender()
-	var launch := _find_meta_control_valued(_panel, HudWidgets.MISSION_LAUNCH_META,
-		HudComposeVocab.COMPOSE_MISSION_SPLIT) as Button
-	if launch == null or launch.disabled:
-		_fail("split sheet — no live %s launch button, so the sheet was never opened"
-			% HudComposeVocab.COMPOSE_MISSION_LABEL_SPLIT)
+	_hud._bandpanel.close_verb_form()
+	var band: Dictionary = _hud._band_labor.panel_band().duplicate(true)
+	band["tile_info"] = {"x": MAP_PATH_TILE.x, "y": MAP_PATH_TILE.y, "visibility_state": "active"}
+	_hud.show_unit_selection(band)
+	if not _hud._bandpanel.verb_enabled(HudComposeVocab.COMPOSE_MISSION_SPLIT, band):
+		_fail("split sheet — the Split verb is not live for this band, so the sheet was never opened")
 		return
-	launch.emit_signal("pressed")
+	_panel.action_invoked.emit(HudComposeVocab.VERB_SPLIT)
 	_hud._bandpanel._split_workers = workers
 	_hud._bandpanel.rerender()
 
 func _close_split_sheet() -> void:
-	_hud._bandpanel._close_party_compose()
+	_hud._bandpanel.close_verb_form()
 
-## The split sheet's Send, found by its face. `null` when the sheet is not open at all, which every
-## caller treats as a failure rather than as "not blocked".
-## **FOUND BY NODE IDENTITY, NOT BY WALKING THE PANEL** — the compose sheet FLOATS off the zone when
-## the zone cannot hold it (`BandComposeFloat`), and a panel-rooted walk would then find nothing and
-## report a missing control on a sheet that rendered perfectly. The controller's own
-## `_party_compose_sheet` is the sheet either way.
+## The split sheet's Send, found by its face under the drawer the sheet is mounted in. `null` when the
+## sheet is not open at all, which every caller treats as a failure rather than as "not blocked".
 func _split_send_button() -> Button:
-	var sheet: Control = _hud._bandpanel._party_compose_sheet
-	if sheet == null:
-		return null
-	return _button_with_exact_text(sheet, HudComposeVocab.SPLIT_BAND_BUTTON)
+	return _button_with_exact_text(_sheet_root(), HudComposeVocab.SPLIT_BAND_BUTTON)
+
+## **WHERE A PENDING VERB'S SHEET IS MOUNTED** (issue #529): the selection drawer's allocation host —
+## the target's drawer, never the Band panel. Every assertion about a sheet's content reads here.
+func _sheet_root() -> Node:
+	return _hud.allocation_panel
+
+## The mounted verb sheet (its `HudWidgets.VERB_FORM_META` wrapper), or `null`.
+func _verb_sheet() -> Control:
+	return _find_meta_control(_sheet_root(), HudWidgets.VERB_FORM_META)
+
+## Open the SCOUT verb's sheet the way a player does: the verb from the panel's action bar, then a
+## click on the target tile — which selects that tile and resolves the pick.
+func _open_scout_sheet() -> void:
+	_hud._bandpanel.close_verb_form()
+	_panel.action_invoked.emit(HudComposeVocab.VERB_SCOUT)
+	var target := {"x": SCOUT_TARGET_TILE.x, "y": SCOUT_TARGET_TILE.y, "visibility_state": "active"}
+	_hud.show_tile_selection(target)
+	_hud.notify_hex_selected(target)
+	await _settle()
+
+## Where the scout sheet's pick lands — an open tile away from the band and its herds.
+const SCOUT_TARGET_TILE := Vector2i(66, 14)
+
+## Open the DENY verb's sheet on `herd` the way a player does: the verb from the action bar, then a
+## click on the herd's hex (the map's `tile_selected`), then the herd itself (`herd_selected`).
+func _open_deny_sheet(herd: Dictionary) -> void:
+	_panel.action_invoked.emit(HudComposeVocab.VERB_DENY)
+	var tile := _quarry_tile_info(herd)
+	_hud.show_tile_selection(tile)
+	_hud.notify_hex_selected(tile)
+	var picked: Dictionary = herd.duplicate(true)
+	picked["tile_info"] = tile
+	_hud.show_herd_selection(picked)
+	await _settle()
+
+## The world herd with `id` out of the standing quarry fixtures, or `{}`.
+func _quarry_herd_by_id(id: String) -> Dictionary:
+	for herd in _quarry_herd_fixtures():
+		if String((herd as Dictionary).get("id", "")) == id:
+			return herd
+	return {}
+
+## THE SHEET IS IN THE TARGET'S DRAWER, AS THE VERB THAT OPENED IT, AND NOWHERE ON THE PANEL.
+func _assert_verb_sheet_mounted(state_name: String, mission: String) -> void:
+	var sheet := _verb_sheet()
+	_assert_band_panel("%s: the %s sheet is mounted in the target's drawer" % [state_name, mission],
+		sheet != null and String(sheet.get_meta(HudWidgets.VERB_FORM_META, "")) == mission)
+	_assert_band_panel("%s: …and the Band panel carries no sheet at all" % state_name,
+		_find_meta_control(_panel, HudWidgets.VERB_FORM_META) == null)
+	# The band is PRE-CHOSEN — stated in the sheet's header, never offered as a picker.
+	var band_name := HudFormat.band_name(_hud._band_labor.panel_band())
+	_assert_band_panel("%s: …under a header naming the band it is for (%s)" % [state_name, band_name],
+		sheet != null and _has_label_containing(sheet, (HudComposeVocab.VERB_FORM_HEADER_FORMAT % [
+			String(HudComposeVocab.verb_for_mission(mission)[HudComposeVocab.VERB_KEY_TOOLTIP]),
+			band_name]).to_upper()))
+
+## THE PREY IS STATED, NEVER OFFERED — a read-only row naming the herd the map pick landed on, and
+## nothing on the sheet that re-arms a pick.
+func _assert_prey_is_stated(herd_id: String) -> void:
+	var row := _find_meta_control(_sheet_root(), HudWidgets.READ_ONLY_FIELD_META)
+	var herd := _quarry_herd_by_id(herd_id)
+	_assert_band_panel("the Deny sheet states its prey read-only (%s)" % herd_id,
+		row != null and String(row.get_meta(HudWidgets.READ_ONLY_FIELD_META, ""))
+			== HudComposeVocab.COMPOSE_FIELD_PREY
+			and _has_label_containing(row, SourceForecast.herd_display_name(herd)))
+	_assert_band_panel("…and the prey row holds no button to re-pick it",
+		row != null and _first_button(row) == null)
+
+func _first_button(node: Node) -> Button:
+	if node is Button:
+		return node as Button
+	for child in node.get_children():
+		var found := _first_button(child)
+		if found != null:
+			return found
+	return null
+
+## **THE BAND VERBS LEAD THE ACTION BAR, IN ORDER, AHEAD OF THE PANEL'S OWN ⚒ AND ▲.** Spelled out
+## rather than read off `HudComposeVocab.BAND_VERBS`, whose order is the claim.
+const EXPECTED_ACTION_IDS: Array[StringName] = [
+	HudComposeVocab.VERB_MOVE, HudComposeVocab.VERB_SCOUT, HudComposeVocab.VERB_DENY,
+	HudComposeVocab.VERB_TRADE, HudComposeVocab.VERB_SPLIT,
+	BandCityPanel.ACTION_CRAFTING, BandCityPanel.ACTION_KNOWLEDGE,
+]
+
+func _assert_band_verbs_registered() -> void:
+	var ids: Array[StringName] = []
+	for spec in _panel._actions:
+		ids.append(StringName((spec as Dictionary)[BandCityPanel.ACTION_SPEC_ID]))
+	_assert_band_panel("the action bar carries the five band verbs, then ⚒ and ▲ (%s)" % str(ids),
+		ids == EXPECTED_ACTION_IDS)
+
+## **THE PARTIES ZONE CARRIES NO COMMANDS.** Its list stays; the Scout/Deny/Trade/Split footer is gone,
+## so nothing under the zone is a verb button or a send.
+func _assert_parties_zone_has_no_footer() -> void:
+	var zone: Node = _panel._zones.get(BandCityPanel.ZONE_PARTIES)
+	_assert_band_panel("the Parties zone is on screen to be judged", zone != null)
+	if zone == null:
+		return
+	_assert_band_panel("…and carries no command footer — no verb and no send under it",
+		_find_meta_control(zone, HudWidgets.VERB_BUTTON_META) == null
+			and _find_meta_control(zone, HudWidgets.SEND_EXPEDITION_CONFIRM_META) == null
+			and _find_meta_control(zone, HudWidgets.SEND_DENIAL_CONFIRM_META) == null)
+	_assert_band_panel("…while its list of parties stays",
+		_find_named(zone, HudWorkVocab.PARTIES_LIST_NAME) != null)
+
+## **EVERY VERB'S PRESS REACHES THE ONE DISPATCH.** Each is pressed through the panel's REAL
+## `action_invoked` edge and judged by what the dispatch does with it — the pick it arms, or (Split)
+## the sheet it opens on the band's own hex — then backed out through the real cancel, which must take
+## the pending verb with it.
+func _assert_band_verbs_dispatch() -> void:
+	var band_entity := int(_hud._band_labor.panel_band().get("entity", -1))
+	_panel.action_invoked.emit(HudComposeVocab.VERB_MOVE)
+	_assert_band_panel("Move on the bar arms the move pick for the panel's band",
+		int(_hud._targeting._pending_move_band.get("entity", -1)) == band_entity)
+	_hud.cancel_active_targeting()
+	for pair in [[HudComposeVocab.VERB_SCOUT, HudComposeVocab.COMPOSE_MISSION_SCOUT],
+			[HudComposeVocab.VERB_DENY, HudComposeVocab.COMPOSE_MISSION_DENY],
+			[HudComposeVocab.VERB_TRADE, HudComposeVocab.COMPOSE_MISSION_TRADE]]:
+		_panel.action_invoked.emit(pair[0])
+		_assert_band_panel("%s on the bar opens the %s verb for the panel's band and arms its pick"
+				% [String(pair[0]), String(pair[1])],
+			_hud._compose.verb_mission() == String(pair[1])
+				and _hud._compose.verb_band_entity() == band_entity
+				and _hud.is_targeting_active())
+		# The banner names the band by NAME, never `Band <id>`.
+		_assert_band_panel("…under a banner naming the band (%s)" % HudFormat.band_name(
+				_hud._band_labor.panel_band()),
+			_hud._targeting._targeting_banner_label.text.contains(
+				HudFormat.band_name(_hud._band_labor.panel_band())))
+		_hud.cancel_active_targeting()
+		_assert_band_panel("…and cancelling the pick takes the verb with it",
+			not _hud._compose.has_verb() and not _hud.is_targeting_active())
+	_panel.action_invoked.emit(HudComposeVocab.VERB_SPLIT)
+	_assert_band_panel("Split on the bar opens on the band's own hex, with no pick",
+		_hud._compose.verb_mission() == HudComposeVocab.COMPOSE_MISSION_SPLIT
+			and _hud._compose.verb_target() == SourceForecast.band_tile(_hud._band_labor.panel_band())
+			and not _hud.is_targeting_active())
+	_hud._bandpanel.close_verb_form()
+	await _settle()
+
+## Zero idle hands: the expedition verbs grey on the bar, Move and Split stay live — the gates the
+## parties footer used to carry, now on the bar the verbs moved to.
+func _assert_verbs_gate_on_idle() -> void:
+	var gates := {
+		HudComposeVocab.VERB_MOVE: true, HudComposeVocab.VERB_SCOUT: false,
+		HudComposeVocab.VERB_DENY: false, HudComposeVocab.VERB_TRADE: false,
+		HudComposeVocab.VERB_SPLIT: true,
+	}
+	for id in gates:
+		var button: Button = _panel._action_buttons.get(id)
+		_assert_band_panel("no idle workers: %s is %s on the bar" % [String(id),
+				"live" if gates[id] else "disabled"],
+			button != null and button.disabled == not bool(gates[id]))
 
 ## The first Button under `node` whose face is EXACTLY `text`. Exact rather than `contains`, the way
 ## `_has_text_containing` is deliberately loose: the split Send is being told apart from the other
@@ -10002,159 +10030,8 @@ func _collect_zone_overflow(node: Node, bounds: Rect2, failures: Array[String]) 
 # is asked for the exact party and answers it, so there is no rung, no rounding and no note. They are
 # deleted rather than repointed: an assertion that a value equals itself is not a test.
 
-## **WHERE THE COMPOSE SHEET CURRENTLY LIVES.** The sheet the parties zone cannot hold is rendered in
-## `BandComposeFloat` instead (a card on the HUD `CanvasLayer`, beside the panel), so every assertion
-## and measurement about that sheet has to follow it there. Pointed at `_panel` they would all go
-## VACUOUS the moment the float works — which is exactly the failure `_assert_compose_float` below
-## exists to make impossible for the fit claim, and this helper makes impossible for the rest.
-func _compose_surface() -> Node:
-	var float_card := _hud._bandpanel.compose_float()
-	if float_card != null and _hud._bandpanel.compose_is_floating():
-		return float_card
-	return _panel
-
-## **THE FIT CLAIM DOES NOT DISAPPEAR WITH THE SHEET.** `_assert_zone_content_fits` passes TRIVIALLY
-## once the compose sheet leaves the zone — an empty box fits anything — so a float that moved the
-## overflow somewhere unmeasured would look exactly like a fix. This is the other half: the sheet is
-## really gone from the zone, the zone really fits what is left, and the float itself fits the VIEWPORT
-## and clears the panel card it came from.
-##
-## Both rect claims are made in the `event_dock` inset idiom, negative control included: a
-## non-overlap test on two rects that never share a band is not a claim, so the vacuity guard fires on
-## the axis the two are NOT stacked along, and a live control first shows the very same `intersects`
-## test firing on these very rects when one is moved onto the other.
-func _assert_compose_float(state_name: String) -> void:
-	var floater: BandComposeFloat = _hud._bandpanel.compose_float()
-	if floater == null or not _hud._bandpanel.compose_is_floating():
-		_fail("%s — the compose sheet did NOT float, so nothing below is a claim" % state_name)
-		return
-	# (1) IT REALLY LEFT THE ZONE. Asked of the Send button's own meta, which every branch of this
-	# sheet renders and nothing else in the panel carries.
-	_assert_band_panel("%s — the composed sheet is GONE from the parties zone" % state_name,
-		_find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) == null)
-	_assert_band_panel("%s — …and it is in the float, whole (its Send is there)" % state_name,
-		_find_meta_control(floater, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
-	# (2) THE ZONE FITS WHAT IS LEFT — the same CONTAINMENT walk `_assert_zone_content_fits` makes, which
-	# stops at a sanctioned scroll (a scrolled stack is reached, not clipped), restated here with the
-	# stack's measured height beside it so a zone that merely stopped overflowing by luck is visible.
-	for host_variant in _find_zone_hosts(_panel):
-		var host: Control = host_variant
-		var extent := _zone_content_extent(host, host)
-		if extent <= 0.0:
-			continue
-		var shortfalls: Array[String] = []
-		_collect_zone_content_shortfall(host, host, shortfalls)
-		_assert_band_panel("%s — zone %s holds its remaining content (%s; its stack measures %.0fpx of a %.0fpx box)" % [
-			state_name, host.name,
-			"nothing clipped" if shortfalls.is_empty() else ", ".join(shortfalls), extent, host.size.y],
-			shortfalls.is_empty())
-	# (3) THE FLOAT FITS THE VIEWPORT. This is where the overflow went, so this is where it is measured.
-	var view := get_viewport().get_visible_rect()
-	var card := _panel.card_rect()
-	var box := floater.get_global_rect()
-	var over := _rect_overflow(box, view)
-	_assert_band_panel("%s — the float fits the viewport (float %s in %s, worst overflow %.0fpx)" % [
-		state_name, box, view, maxf(over.x, over.y)], over.x <= ZONE_BOUNDS_TOLERANCE and over.y <= ZONE_BOUNDS_TOLERANCE)
-	# …and it is holding its content rather than growing out of itself, the `AutoSizingPanel` lie
-	# `panel-framework.md` records: a card fitted too short still DRAWS at its content's size.
-	_assert_band_panel("%s — the float's card fits the float (%.0fpx of %.0fpx)" % [
-		state_name, floater.card().get_combined_minimum_size().y, box.size.y],
-		floater.card().get_combined_minimum_size().y <= box.size.y + ZONE_BOUNDS_TOLERANCE
-			or floater.card().get_combined_minimum_size().y > view.size.y)
-	# (4) IT NEVER OVERLAPS THE CARD IT CAME FROM — with the vacuity guard on the axis the two are not
-	# stacked along, and a live negative control on the same two rects.
-	var stacked_vertically: bool = box.position.y >= card.end.y or card.position.y >= box.end.y
-	var shares_other_axis: bool = box.position.x < card.end.x and card.position.x < box.end.x \
-		if stacked_vertically else box.position.y < card.end.y and card.position.y < box.end.y
-	if not shares_other_axis:
-		_fail(("%s — VACUOUS: the float and the panel card share no band on "
-			+ "either axis, so 'they do not overlap' claims nothing") % state_name)
-		return
-	var moved_onto_card := Rect2(card.position, box.size)
-	_assert_band_panel("%s — negative control: the SAME test fires with the float moved onto the card" % state_name,
-		moved_onto_card.intersects(card))
-	_assert_band_panel("%s — the float clears the panel card (float %s vs card %s)" % [
-		state_name, box, card], not box.intersects(card))
-
-## **THE PAIRED NEGATIVE, and without it the fork is only ever asserted in one direction.** A trigger
-## stuck ON is as wrong as one stuck off and every claim in `_assert_compose_float` would still pass
-## under it — the sheet would be whole, in a float, clear of the card, in a dock that has ample room
-## for it in the zone. This is the state that says the zone keeps the sheet it CAN hold.
-func _assert_compose_in_zone(state_name: String) -> void:
-	_assert_band_panel("%s — the zone HOLDS the sheet it has room for (no float)" % state_name,
-		not _hud._bandpanel.compose_is_floating()
-			and _find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
-
-## **OPEN THE EMPTY HUNT FORM THROUGH THE FOOTER BUTTON, AND JUDGE THE MEASUREMENT ITSELF** — the
-## regression guard for the second report of the floating empty sheet. It is deliberately NOT a
-## picture: a sheet floating on a phantom measurement and one floating on a real one render
-## identically, and a sheet sitting in the zone on a mark that HAPPENS to be under the box is
-## indistinguishable from one sitting there because the mark is honest.
-##
-## The mechanism, measured: between the render and the deferred container sort, the parties column has
-## already been given its host's width by its anchors while nothing under it has been fitted, so
-## `get_combined_minimum_size()` sums a column of autowrap `Label`s all shaping at wrap width 0 —
-## **1278px where the laid-out answer is 207**. Recording that latches the float for the rest of the
-## composing act, since the mark is a high-water mark. So the claim is made in that window and in the
-## one after it, as a PAIR: unmeasurable before the layout pass, measurable after, and the mark that
-## survives is the laid-out number. Either half alone passes on a guard wired to one answer.
-func _assert_empty_compose_opens_in_the_zone(state_name: String) -> void:
-	var launch := _find_meta_control_valued(_panel, HudWidgets.MISSION_LAUNCH_META,
-		HudComposeVocab.COMPOSE_MISSION_HUNT) as Button
-	if launch == null or launch.disabled:
-		_fail("%s — no live 🏹 Hunt launch button, so nothing below is driven" % state_name)
-		return
-	# The REAL press. Everything until the next `await` runs inside the pre-layout window the phantom
-	# lives in — the sheet is built and parented, and no container has sorted.
-	launch.emit_signal("pressed")
-	var col: VBoxContainer = _hud._bandpanel._parties_zone_col
-	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
-	var phantom: float = col.get_combined_minimum_size().y
-	# **THE VACUITY GUARD.** If the unsorted reading would not have floated the sheet anyway, refusing
-	# to record it proves nothing about this defect.
-	if phantom <= box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK:
-		_fail(("%s — VACUOUS: the pre-layout column reads %.0fpx against a "
-			+ "%.0fpx box, so recording it would not have floated the sheet either way") % [
-			state_name, phantom, box.y])
-		return
-	_assert_band_panel(("%s — a sheet the layout has not fitted is NOT measurable (column %.0fpx wide "
-		+ "reports %.0fpx of requirement, which WOULD float it out of its %.0fpx box)") % [
-		state_name, col.size.x, phantom, box.y], not _hud._bandpanel._party_compose_measurable())
-	await _settle()
-	# …and the paired positive, without which a guard stuck at "never measurable" passes above.
-	var settled: float = _hud._bandpanel._parties_zone_col.get_combined_minimum_size().y
-	_assert_band_panel("%s — …and IS measurable once it has been (%.0fpx now)" % [state_name, settled],
-		_hud._bandpanel._party_compose_measurable())
-	_assert_band_panel(("%s — the mark that survived is the LAID-OUT number, not the phantom "
-		+ "(%.0fpx recorded, %.0fpx laid out, %.0fpx unsorted)") % [
-		state_name, _hud._bandpanel._party_compose_needed, settled, phantom],
-		is_equal_approx(_hud._bandpanel._party_compose_needed, settled))
-
-## **A ZONE THAT CAN HOLD THE SHEET NEVER FLOATS IT, stated against the measured numbers rather than
-## the dock edge.** `_assert_compose_in_zone` says a particular tall dock kept its sheet; this says the
-## RULE — whatever the mark and whatever the box, the sheet is in the zone exactly when the zone has
-## room for it. The precondition is the room, so a state where it does not fit refuses to claim
-## anything here rather than passing as "correctly floated".
-##
-## The sheet is located by NODE IDENTITY (the controller's own `_party_compose_sheet`, walked up to
-## whichever surface owns it), never by a face: the empty form's Send is disabled and carries no
-## confirm meta, being a reason rather than a confirm.
-func _assert_zone_holds_its_compose_sheet(state_name: String) -> void:
-	var needed: float = _hud._bandpanel._party_compose_needed
-	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
-	if box == Vector2.ZERO or needed > box.y + HudComposeVocab.COMPOSE_FLOAT_SLACK:
-		_fail(("%s — VACUOUS: the zone (%.0fpx) cannot hold this sheet "
-			+ "(%.0fpx), so 'a zone with room keeps its sheet' is not what is being tested") % [
-			state_name, box.y, needed])
-		return
-	var sheet: Control = _hud._bandpanel._party_compose_sheet
-	_assert_band_panel(("%s — the zone has room (%.0fpx of a %.0fpx box, %.0fpx spare) and so it KEEPS "
-		+ "its sheet") % [state_name, needed, box.y, box.y - needed],
-		sheet != null and is_instance_valid(sheet) and _is_descendant_of(sheet, _panel)
-			and not _hud._bandpanel.compose_is_floating())
-
 ## Find a Control carrying `meta` with a specific VALUE — the identity handle on one of a family of
-## controls built by a shared builder (the three parties-footer mission launchers).
+## controls built by a shared builder (the work inspector's priority rungs).
 func _find_meta_control_valued(node: Node, meta: String, value: Variant) -> Control:
 	if node is Control and (node as Control).has_meta(meta) and (node as Control).get_meta(meta) == value:
 		return node as Control
@@ -10163,202 +10040,6 @@ func _find_meta_control_valued(node: Node, meta: String, value: Variant) -> Cont
 		if found != null:
 			return found
 	return null
-
-func _is_descendant_of(node: Node, root: Node) -> bool:
-	var walk: Node = node
-	while walk != null:
-		if walk == root:
-			return true
-		walk = walk.get_parent()
-	return false
-
-## **AN UNKNOWN ZONE BOX MUST NOT FLOAT — and no picture can carry this.** Reported from play: the
-## sheet floated in a TALL left dock, where the zone offers ~1055px and the empty form wanted a couple
-## of hundred. `BandCityPanel.zone_size(ZONE_PARTIES)` answers `Vector2.ZERO` whenever the panel is
-## collapsed, hidden, or simply has not laid out yet, and the predicate used to fall back to
-## `ZONE_FALLBACK_SIZE` (340×360) — so "I do not know yet" decided as "this overflows", and the
-## high-water mark latched it ON for the rest of the composing act.
-##
-## Driven through the REAL predicate with the mark left exactly where the short dock measured it, and
-## the box made unknown the way the live client makes it unknown (a collapsed panel). The precondition
-## is the whole point: with the mark below the fallback's 360 the two answers coincide and the claim
-## would be vacuous.
-func _assert_unknown_zone_box_does_not_float(state_name: String) -> void:
-	var needed: float = _hud._bandpanel._party_compose_needed
-	if needed <= HudWorkVocab.ZONE_FALLBACK_SIZE.y:
-		_fail(("%s — VACUOUS: the latched requirement is %.0fpx, under the "
-			+ "%.0fpx fallback box, so an unknown box answers 'no float' either way") % [
-			state_name, needed, HudWorkVocab.ZONE_FALLBACK_SIZE.y])
-		return
-	var was_collapsed: bool = _panel.is_collapsed()
-	_panel.set_collapsed(true)
-	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
-	_assert_band_panel("%s — precondition: a collapsed panel answers no parties-zone box" % state_name,
-		box == Vector2.ZERO)
-	_assert_band_panel(("%s — an UNKNOWN zone box does not float (mark %.0fpx, which WOULD float "
-		+ "against the %.0fpx fallback)") % [state_name, needed, HudWorkVocab.ZONE_FALLBACK_SIZE.y],
-		not _hud._bandpanel._party_compose_floats())
-	_panel.set_collapsed(was_collapsed)
-
-## Stage a latched requirement no zone box in this client can hold, while the panel is still in the
-## SHORT dock. **The mark is the INPUT to the rule under test, not the rule** — the rule is "a change of
-## zone box drops the mark", and no fixture here produces a mark that naturally overflows the TALL dock
-## (that dock holds this sheet comfortably, which is exactly what `_assert_compose_in_zone` asserts one
-## state earlier), so a staged one is the only way the two answers can differ at all.
-func _stage_impossible_compose_mark() -> float:
-	var staged: float = get_viewport().get_visible_rect().size.y * IMPOSSIBLE_MARK_VIEWPORTS
-	_hud._bandpanel._party_compose_needed = staged
-	return staged
-
-## **A MARK LATCHED IN ONE BOX MUST NOT SURVIVE A MOVE TO ANOTHER.** The requirement is a high-water
-## mark that never falls during a composing act — which is right, since a mark tracking every shrink
-## would hop the sheet back into the zone as a field cleared — so a mark CARRIED ACROSS a dock change
-## keeps a sheet floating in a column that was never measured. Read right after a real `set_dock` +
-## render, so what it judges is the shipped path's outcome.
-func _assert_mark_dropped_on_dock_change(state_name: String, staged: float) -> void:
-	var box: Vector2 = _hud._bandpanel._parties_zone_box_known()
-	_assert_band_panel("%s — precondition: the new dock states a box (%s)" % [state_name, box],
-		box != Vector2.ZERO)
-	_assert_band_panel(("%s — precondition: the staged mark (%.0fpx) WOULD float in this %.0fpx "
-		+ "box, so dropping it is what decides the fork") % [state_name, staged, box.y], staged > box.y)
-	_assert_band_panel("%s — the mark from the SHORT dock did not survive the move (now %.0fpx)" % [
-		state_name, _hud._bandpanel._party_compose_needed],
-		_hud._bandpanel._party_compose_needed < staged)
-	_assert_band_panel("%s — …so the tall dock keeps its sheet in the zone" % state_name,
-		not _hud._bandpanel.compose_is_floating()
-			and _find_meta_control(_panel, HudWidgets.SEND_HUNT_CONFIRM_META) != null)
-
-## **THE MAP STILL TAKES THE PRESSES BESIDE THE FLOAT.** `BandComposeFloat` is deliberately the card
-## and NOTHING more — no full-screen catcher — because the dock's sheet stays open through a map pick
-## and a catcher would eat the very click the quarry picker needs. That is a behavioural claim and a
-## PNG is pixel-identical either way, so it is driven through the real dispatch with `Viewport.push_input`,
-## exactly as `_assert_open_strip_reaches_the_map` drives the open strip. Reading the float's
-## `mouse_filter` back would only say what the node was configured as, not what the Viewport does with it.
-func _assert_float_leaves_the_map_clickable(state_name: String) -> void:
-	var floater: BandComposeFloat = _hud._bandpanel.compose_float()
-	if floater == null or not _hud._bandpanel.compose_is_floating():
-		_fail("%s — no float, so the click-through probe proves nothing" % state_name)
-		return
-	var box := floater.get_global_rect()
-	var failures: Array[String] = []
-	# PRECONDITION: the probe fires at all. The bare canvas beside the float — a full float width
-	# outboard of it, on the float's own rows — is map in the live client and decoration here.
-	var open_ground := Rect2(Vector2(box.end.x + FLOAT_PROBE_GAP, box.position.y),
-		Vector2(get_viewport().get_visible_rect().size.x - box.end.x - FLOAT_PROBE_GAP, box.size.y))
-	var reached := 0
-	for point in _rect_probe_points(open_ground):
-		if await _press_reaches_map(_canvas_to_window(point)):
-			reached += 1
-	if reached == 0:
-		failures.append("no press in the %s band beside the float reached _unhandled_input, so this probe proves nothing" % str(open_ground))
-	# THE CLAIM: the float eats its OWN rect and only its own.
-	for point in _rect_ring_probe_points(box):
-		if await _press_reaches_map(_canvas_to_window(point)):
-			failures.append("a press at %s on the float itself fell through to the map's input path" % point)
-			break
-	# …and one canvas pixel outboard of its leading edge is already map again.
-	for row in [box.position.y + PROBE_RECT_INSET, box.get_center().y, box.end.y - PROBE_RECT_INSET]:
-		var just_outside := Vector2(box.end.x + FLOAT_EDGE_PROBE_OFFSET, row)
-		if not await _press_reaches_map(_canvas_to_window(just_outside)):
-			failures.append("a press at %s, just outboard of the float, never reached the map's input path" % just_outside)
-			break
-	if failures.is_empty():
-		print("band_panel_preview: assert OK — %s the float eats its own rect and nothing else (%d/%d open-ground presses reached the map)" % [
-			state_name, reached, _rect_probe_points(open_ground).size()])
-		return
-	for failure in failures:
-		_fail("%s — %s" % [state_name, failure])
-
-## How far outboard of the float the open-ground probe band starts, and where the "one pixel out is
-## already map" samples sit. Both in canvas px; the second is deliberately just past the float's edge,
-## since the claim is about the float's own rect and not about some comfortable distance from it.
-const FLOAT_PROBE_GAP := 8.0
-const FLOAT_EDGE_PROBE_OFFSET := 3.0
-
-## How many viewport heights `_stage_impossible_compose_mark` asks for. Any multiple above 1 is past
-## every box a dock can offer (a zone box is a fraction of the window); 4 leaves the claim legible in
-## the printed numbers rather than sitting a pixel over the line.
-const IMPOSSIBLE_MARK_VIEWPORTS := 4.0
-
-## The party `band_panel_compose_hunt` is seeded to before it arms autofill — the stepper's own floor,
-## i.e. the smallest party the form can express, so the fill has somewhere to move FROM whatever the
-## states above left behind. `HudConst.WORKER_STEP` rather than a literal 1: it is the step the sheet's
-## own `clampi` floors on, so the seed cannot drift out from under that clamp.
-const COMPOSE_HUNT_SEED_PARTY := HudConst.WORKER_STEP
-
-## GUARD: **THE PARTY CAP IS RESOLVED BEFORE THE FLOOR CHART IS COMPOSED** (`labor-ui.md` → "THE CAP IS
-## RESOLVED BEFORE THE CHART ON BOTH SHEETS"). The chart's projection, its two crew targets and its
-## verdict are all read against a CREW, so a sheet that composes the model ahead of its own
-## `clampi`/autofill states a verdict for a party the stepper beneath then refuses to show.
-##
-## **IT CANNOT BE A PICTURE, and that is why it is here.** The disagreement lasts exactly one frame —
-## the render on which autofill arms — and the next rerender resolves it, so a capture taken after the
-## settle shows a chart and a stepper that have already been reconciled. What can see it is the two
-## RENDERED numbers compared against each other: `HarvestFloorChart.crew()` (read off the live model,
-## so a chart refreshed in place cannot answer staler than it draws) against the stepper row's
-## `PARTY_STEPPER_COUNT_META` (the count the row was BUILT with, hence exactly the digit on screen).
-## Neither side is a controller field, so the claim survives a sheet that clamps its member correctly
-## and still hands the old number to the chart.
-##
-## The VACUITY guard rides first: autofill must really have moved the party off `seeded`, or the two
-## numbers agree for free and the ordering is untested.
-func _assert_chart_reads_the_settled_party(state_name: String, seeded: int) -> void:
-	var surface := _compose_surface()
-	var chart := _find_meta_control(surface, HudWidgets.FLOOR_CHART_META)
-	var stepper := _find_meta_control(surface, HudWidgets.PARTY_STEPPER_COUNT_META)
-	if chart == null or stepper == null:
-		_fail("%s renders no %s — the cap-before-chart claim cannot be made" % [
-			state_name, "floor chart" if chart == null else "party stepper"])
-		return
-	var settled := int(stepper.get_meta(HudWidgets.PARTY_STEPPER_COUNT_META))
-	var drawn_for := (chart as HarvestFloorChart).crew()
-	_assert_band_panel("%s — autofill moved the party off its seed (%d → %d), so the order is testable"
-			% [state_name, seeded, settled], settled != seeded)
-	_assert_band_panel("%s — the chart is drawn for the party the stepper shows (chart %d, stepper %d)"
-			% [state_name, drawn_for, settled], drawn_for == settled)
-
-## GUARD: the dock hunt sheet's floor CHART is gated on the zone having room — present at TALL, absent
-## at SHORT, where the parties zone is height-capped and clips. **Both halves are asserted**: a gate
-## that never fires and a gate stuck on are both green to the bounds assertion, since a clipped chart
-## still sits inside the zone rect.
-func _assert_hunt_sheet_chart(want: bool, state_name: String) -> void:
-	var chart := _find_meta_control(_compose_surface(), HudWidgets.FLOOR_CHART_META)
-	var tier := _band_zone_tier_name()
-	if want and chart == null:
-		_fail("%s (%s tier) renders NO floor chart — the tier gate is stuck off" % [
-			state_name, tier])
-		return
-	if not want and chart != null:
-		_fail("%s (%s tier) renders a floor chart — the tier gate is stuck on" % [
-			state_name, tier])
-		return
-	print("band_panel_preview: assert OK — %s (%s tier) %s the floor chart" % [
-		state_name, tier, "carries" if want else "keeps out"])
-
-## MEASUREMENT: the compose sheet's floor PICKER and its CHART against the column they render in.
-## Both are widgets the herd drawer sized in a ~400px sheet and the dock hosts in a ~354px zone, and
-## both fail SILENTLY when they do not fit — the picker WRAPS onto a second row (the reason the zone
-## once clamped itself to 2 columns) and the chart raises the zone's minimum width past its host,
-## where it is clipped. A green bounds assertion says neither happened; only the numbers say by how
-## much, which is what decides whether a shortened face was enough.
-func _report_compose_widths(state_name: String) -> void:
-	var surface := _compose_surface()
-	var picker := _find_meta_control(surface, HudWidgets.POLICY_RUNG_META)
-	# The rung's own meta rides the BUTTON; the grid that lays the three of them out is its
-	# grandparent (button → cell `MarginContainer` → grid), and the GRID is what can wrap.
-	var grid: Control = picker.get_parent().get_parent() as Control if picker != null else null
-	if grid != null:
-		print("band_panel_preview: %s — floor picker grid needs %.0fpx of a %.0fpx column (%d columns, %d rungs)" % [
-			state_name, grid.get_combined_minimum_size().x, grid.size.x,
-			(grid as GridContainer).columns if grid is GridContainer else -1,
-			grid.get_child_count()])
-	var chart := _find_meta_control(surface, HudWidgets.FLOOR_CHART_META)
-	if chart == null:
-		print("band_panel_preview: %s — no floor chart in this zone" % state_name)
-		return
-	print("band_panel_preview: %s — floor chart needs %.0f x %.0fpx, drawn at %.0f x %.0fpx" % [
-		state_name, chart.get_combined_minimum_size().x, chart.get_combined_minimum_size().y,
-		chart.size.x, chart.size.y])
 
 ## The panel's fixed-size zone hosts (BandCityPanel names them `Zone_<key>` / `NarrowZoneHost`).
 func _find_zone_hosts(node: Node) -> Array:
@@ -15148,7 +14829,7 @@ func _text_lines(node: Node) -> Array[String]:
 ## sheet exactly as it was — silently, which on the mismatch frame reads as the honesty rule failing
 ## rather than as the harness never having picked anything.
 func _pick_kit(kit_id: String) -> void:
-	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
+	var picker := _find_meta_control(_sheet_root(), KitRoster.KIT_PICKER_META) as OptionButton
 	if picker == null:
 		_assert_band_panel("picking a kit needs the picker to exist", false)
 		return
@@ -15203,84 +14884,6 @@ func _pick_kit(kit_id: String) -> void:
 ## A locally-built roster rather than `BandFx.kit_roster_fixture()`, which ships no `dispersion` at all
 ## — asserting through that one would be comparing a kit against itself.
 ##
-## **THE PAIR IS THE CLAIM, and the second half is the sim boundary.** The drawdown answers (the
-## projection the curve draws, and the *clear* crew the verdict names) MUST move: a party keeping one
-## animal in four needs four times the hands to pull a herd to a floor. The HOLD crew must NOT — on a
-## whole-animal source it is `take_workers`, the client mirror of `fauna::hunt_take_workers`, and
-## `max_useful_workers` floors the stepper cap on it, so a retreat reaching it would put the sheet at
-## odds with the sim's own `workersNeeded`.
-func _assert_dock_chart_carries_the_kit() -> void:
-	const DOCK_KIT_CARRY := 40.0
-	const DOCK_KIT_ENGAGE := 4.0
-	# `1 - wariness` at 0.75 — three animals in four bolt before contact, so a device that is not
-	# there to be seen is worth four times a spear party on this quarry.
-	const DOCK_KIT_STAY := 0.25
-	const DOCK_KIT_PARTY := 3
-	var roster := [
-		{
-			KitRoster.KIT_ID_KEY: "spear_line", KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_HUNT],
-			KitRoster.KIT_HUNT_CARRY_KEY: DOCK_KIT_CARRY,
-			KitRoster.KIT_FORAGE_CARRY_KEY: DOCK_KIT_CARRY,
-			KitRoster.KIT_DISPERSION_KEY: KitRoster.DISPERSION_NEUTRAL,
-		},
-		{
-			KitRoster.KIT_ID_KEY: "passive_device", KitRoster.KIT_JOBS_KEY: [KitRoster.JOB_HUNT],
-			KitRoster.KIT_HUNT_CARRY_KEY: DOCK_KIT_CARRY,
-			KitRoster.KIT_FORAGE_CARRY_KEY: DOCK_KIT_CARRY,
-			KitRoster.KIT_DISPERSION_KEY: 0.0,
-		},
-	]
-	var quarry := {
-		SourceForecast.FORECAST_BIOMASS_KEY: 300.0,
-		SourceForecast.FORECAST_CAPACITY_KEY: 400.0,
-		SourceForecast.FORECAST_BODY_MASS_KEY: 2.0,
-		SourceForecast.FORECAST_FOOD_PER_ANIMAL_KEY: 0.2,
-		SourceForecast.FORECAST_PROVISIONS_PER_BIOMASS_KEY: 0.1,
-		SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY: DOCK_KIT_CARRY,
-		SourceForecast.FORECAST_PER_WORKER_KEY: DOCK_KIT_CARRY * 0.1,
-		SourceForecast.FORECAST_ENGAGE_RATE_KEY: DOCK_KIT_ENGAGE,
-		KitRoster.SOURCE_STAY_FRACTION: DOCK_KIT_STAY,
-		SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY: PackedFloat32Array([
-			0.0, 6.0, 9.0, 8.0, 4.0, 0.0]),
-	}
-	var speared := _dock_chart_at_kit(quarry, roster, "spear_line", DOCK_KIT_PARTY)
-	var trapped := _dock_chart_at_kit(quarry, roster, "passive_device", DOCK_KIT_PARTY)
-	# The precondition both claims stand on: a chart answering `known == false` would make every
-	# comparison below a comparison of two absent numbers.
-	_assert_band_panel("precondition: the dock's raid chart is known under both kits",
-		bool(speared.get("known", false)) and bool(trapped.get("known", false)))
-	# **THE CURVE ITSELF** — what the player sees. `settled_fraction` is where the walk ends, i.e. the
-	# stock this party leaves standing, and it is the number the whole chart is drawn around.
-	_assert_band_panel("the passive device draws the herd further down than the spear line (%s against %s)"
-			% [str(trapped.get("settled_fraction")), str(speared.get("settled_fraction"))],
-		float(trapped.get("settled_fraction", 1.0))
-			< float(speared.get("settled_fraction", 1.0)) - STOCK_FRACTION_MARGIN)
-	# **AND THE REMEDY THE VERDICT NAMES MOVES WITH IT.** `crew_to_clear` floors on `crew_that_reaches`,
-	# so this covers both drawdown answers at once — a spear party needs strictly more hands to pull the
-	# same herd to the same floor.
-	_assert_band_panel("…and the spear line needs more hands to clear the same room (%d against %d)"
-			% [int(speared.get("crew_to_clear", 0)), int(trapped.get("crew_to_clear", 0))],
-		int(speared.get("crew_to_clear", 0)) > int(trapped.get("crew_to_clear", 0)))
-	# **AND THE HOLD CREW MOVES WITH IT TOO.** `crew_to_hold` is `fauna::hunt_take_workers`, and it
-	# divides by what STAYS like every other crew answer on this sheet: a spear party keeping one
-	# animal in four needs four times the hands to take the same regrowth every turn. It read the RAW
-	# reach for a while, on the grounds that the stepper cap floors on it and the sim's own
-	# `workersNeeded` must agree — and the consequence was a cap sized BELOW the *clear it now* pill
-	# beside it, naming a crew the panel then refused to let the player assign.
-	_assert_band_panel("…and so does the HOLD crew (%d against %d)"
-			% [int(speared.get("crew_to_hold", -1)), int(trapped.get("crew_to_hold", -2))],
-		int(speared.get("crew_to_hold", -1)) > int(trapped.get("crew_to_hold", -2)))
-
-## The dock's own chart composition, at one kit — `KitRoster.priced_source` then `floor_chart_model`,
-## the two calls `_fill_hunt_compose_sheet` makes in that order.
-func _dock_chart_at_kit(quarry: Dictionary, roster: Array, kit_id: String,
-		party: int) -> Dictionary:
-	return SourceForecast.floor_chart_model(
-		KitRoster.priced_source(quarry, HudComposeVocab.BARE_FORECAST_PREFIX, roster,
-			KitRoster.JOB_HUNT, "spear_line", kit_id, {}),
-		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.floor_for_preset(SourceForecast.FLOOR_PRESET_PEAK), party, HudComposeVocab.COMPOSE_FIELD_PARTY.to_lower(), false)
-
 func _assert_kit_reprices_the_source() -> void:
 	const PUBLISHED_CARRY := RETREAT_REFERENCE_CARRY
 	const BARE_CARRY := 12.0
@@ -15529,7 +15132,7 @@ func _assert_kit_picker_face(picker: OptionButton, job: String, kit_name: String
 		String(HudComposeVocab.KIT_JOB_GLYPHS[job]), kit_name])
 
 func _assert_kit_picker_closed() -> void:
-	var picker := _find_meta_control(_panel, KitRoster.KIT_PICKER_META) as OptionButton
+	var picker := _find_meta_control(_sheet_root(), KitRoster.KIT_PICKER_META) as OptionButton
 	_assert_band_panel("the denial sheet carries a Kit picker", picker != null)
 	if picker == null:
 		return
@@ -15546,7 +15149,7 @@ func _assert_kit_picker_closed() -> void:
 	# **The ABSENCE is the claim, and it is not vacuous**: `compose_rungs`'s
 	# `_assert_the_kit_line_is_a_shortfall_warning` renders the same control for a band that IS short
 	# and gets a sentence, so a line that never mounts fails there rather than passing here.
-	var rendered := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
+	var rendered := _find_meta_control(_sheet_root(), KitRoster.KIT_HINT_META) as Label
 	_assert_band_panel("…and a fully covered crew is given NO kit line to read (%s)"
 			% ("none" if rendered == null else "\"%s\"" % rendered.text),
 		rendered == null)
@@ -15599,11 +15202,11 @@ func _assert_forecastless_sheet_suppresses_estimates() -> void:
 	# line is a shortfall WARNING now and this sheet composes `none`, a kit that carries nothing and
 	# so can never leave anyone short. The `Kit` key beside the picker is unconditional, sits in the
 	# same row, and gives the identical slice — so the claim below is unchanged in what it walks.
-	var hint := _find_meta_control(_panel, KitRoster.KIT_HINT_META) as Label
+	var hint := _find_meta_control(_sheet_root(), KitRoster.KIT_HINT_META) as Label
 	_assert_band_panel("a kit that carries nothing states no shortfall line (%s)"
 			% ("none" if hint == null else "\"%s\"" % hint.text),
 		hint == null)
-	var lines := _text_lines(_panel)
+	var lines := _text_lines(_sheet_root())
 	var at := lines.find(HudComposeVocab.COMPOSE_FIELD_KIT)
 	_assert_band_panel("…and the kit row IS on the sheet the assertion walks", at >= 0)
 	if at < 0:
@@ -15626,7 +15229,7 @@ func _assert_forecastless_sheet_suppresses_estimates() -> void:
 		tail == want)
 	# The send stays LIVE: the raid is perfectly launchable, we simply cannot quote its length. A
 	# disabled button here would read as the kit being illegal, which it is not.
-	var confirm := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	var confirm := _find_meta_control(_sheet_root(), HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
 	_assert_band_panel("…while the Send stays live — the raid launches, only its length is unquotable",
 		confirm != null and not confirm.disabled)
 
@@ -15685,7 +15288,7 @@ func _assert_denial_viable() -> void:
 		DENIAL_HIGH_ROW[DENIAL_PARTY - 1] + DENIAL_OUTBOUND_TRAVEL_TURNS]
 	want += SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % DENIAL_OUTBOUND_TRAVEL_TURNS
 	_assert_band_panel("the denial form leads with the EXPECTATION and states the spread — \"%s\"" % want,
-		_rich_text_containing(_panel, want) == want)
+		_rich_text_containing(_sheet_root(), want) == want)
 	# **THE WASTE IS STATED, IN EVERY PRODUCT IT IS WASTED IN, AND IS NOT DRESSED AS A WARNING.** On a
 	# hunt an unhauled kill wears `HUNT_FORECAST_WARN_GLYPH`; on a raid it IS the mission, so the line
 	# is quiet and factual. The whole line is asserted BY EQUALITY rather than by `contains`, because
@@ -15701,7 +15304,7 @@ func _assert_denial_viable() -> void:
 	var want_take := SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry]
 	want_take += SourceForecast.DENIAL_TAKE_FOOD_FORMAT % SourceForecast.format_magnitude(hauled_food)
 	want_take += SourceForecast.DENIAL_TAKE_LEFT_FORMAT % SourceForecast.format_magnitude(left)
-	var take_line := _rich_text_containing(_panel,
+	var take_line := _rich_text_containing(_sheet_root(),
 		SourceForecast.DENIAL_TAKE_KILLS_FORMAT % [killed, quarry])
 	_assert_band_panel("…and states the take PLAINLY, with its waste — wanted \"%s\", got \"%s\""
 			% [want_take, take_line],
@@ -15712,16 +15315,16 @@ func _assert_denial_viable() -> void:
 	# is given**, so the vocabulary const as written matches nothing and that clause would be vacuous
 	# — which is exactly how it first shipped, passing with a Policy row put back on the form.
 	_assert_band_panel("…and offers NO floor picker and no Policy row",
-		_find_meta_control(_panel, HudWidgets.POLICY_RUNG_META) == null
-			and not _has_label_containing(_panel, HudComposeVocab.COMPOSE_FIELD_POLICY.to_upper()))
+		_find_meta_control(_sheet_root(), HudWidgets.POLICY_RUNG_META) == null
+			and not _has_label_containing(_sheet_root(), HudComposeVocab.COMPOSE_FIELD_POLICY.to_upper()))
 	# **THE BAND IS AN ESTIMATE, NOT A PROMISE, AND THE PANEL SAYS SO** — `turns_to_collapse` is an
 	# integral over many stochastic retreat draws, so a lucky run really can finish sooner than the
 	# reported low. The caveat rides under every verdict that quotes a number (and, per the repelled
 	# frame, under none that does not).
 	_assert_band_panel("…and words the band as an estimate rather than a promise",
-		_has_label_containing(_panel, SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+		_has_label_containing(_sheet_root(), SourceForecast.DENIAL_ESTIMATE_CAVEAT))
 	# The Send is the plain primary one and is ENABLED — this raid works.
-	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	var send := _find_meta_control(_sheet_root(), HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
 	_assert_band_panel("…and its Send is the plain primary one, enabled",
 		send != null and not send.disabled
 			and send.text == String(SourceForecast.DENIAL_VERDICTS[
@@ -15744,11 +15347,11 @@ func _assert_denial_in_reach_verdict() -> void:
 	# EQUALITY, so the absence rides in the same claim: a line that also appended a travel clause is a
 	# different string and fails here rather than passing a `contains`.
 	_assert_band_panel("a quarry inside hunt reach is raidable, and reads sensibly at zero travel — \"%s\"" % want,
-		_rich_text_containing(_panel, want) == want)
+		_rich_text_containing(_sheet_root(), want) == want)
 	# …stated again on its own, because the equality above would also be satisfied by a form that lost
 	# the verdict entirely, and this is the clause the zero-travel case exists to keep out.
 	_assert_band_panel("…and appends no travel split, there being no travel to split off",
-		_rich_text_containing(_panel, SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT
+		_rich_text_containing(_sheet_root(), SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT
 			% QUARRY_HOME_OUTBOUND_TRAVEL_TURNS) == "")
 
 ## The REPELLED form. **The verdict is about the PARTY, and the herd-side sentence must be absent** —
@@ -15766,16 +15369,16 @@ func _assert_denial_repelled() -> void:
 	# outcome ALONE. A `contains` would pass on a line that also quoted a number.
 	_assert_band_panel("a repelled raid is refused in the PARTY's name, with no turn count — \"%s\""
 			% party_line,
-		_rich_text_containing(_panel, party_line) == party_line
-			and _rich_text_containing(_panel, horizon_line) == "")
+		_rich_text_containing(_sheet_root(), party_line) == party_line
+			and _rich_text_containing(_sheet_root(), horizon_line) == "")
 	# **AND NO CAVEAT, because there is no number to caveat.** `DENIAL_ESTIMATE_CAVEAT` qualifies a
 	# turn band; printed under a verdict that quotes none it reads as an estimate the player cannot
 	# see. Asserted as a PAIR with the viable frame, which requires it.
 	_assert_band_panel("…and prints no estimate caveat, having quoted no estimate",
-		not _has_label_containing(_panel, SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+		not _has_label_containing(_sheet_root(), SourceForecast.DENIAL_ESTIMATE_CAVEAT))
 	# It STILL LAUNCHES: a raid that cannot get there keeps working the herd until it is recalled, so
 	# the launch verdict warns and the player is trusted — exactly as a slow hunting raid is.
-	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	var send := _find_meta_control(_sheet_root(), HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
 	_assert_band_panel("…and the Send warns rather than blocking",
 		send != null and not send.disabled
 			and send.text == String(SourceForecast.DENIAL_VERDICTS[
@@ -15785,7 +15388,7 @@ func _assert_denial_repelled() -> void:
 	# (`DENIAL_PARTY_NEEDED_NONE`) and there is nothing honest to name — the counted twin rides
 	# `band_panel_compose_deny_short_party`, and the pair is what makes either mean anything.
 	_assert_band_panel("…and the reason beside it sends the player to the PARTY",
-		_has_label_containing(_panel, String(SourceForecast.DENIAL_VERDICTS[
+		_has_label_containing(_sheet_root(), String(SourceForecast.DENIAL_VERDICTS[
 			SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry))
 
 ## **THE REPORTED VERDICT — a bounded expectation over an unbounded bad run.** Two claims in one
@@ -15805,12 +15408,12 @@ func _assert_denial_open_high_verdict() -> void:
 		DENIAL_OPEN_HIGH_LOW + DENIAL_OUTBOUND_TRAVEL_TURNS)
 	want += SourceForecast.DENIAL_TRAVEL_SPLIT_FORMAT % DENIAL_OUTBOUND_TRAVEL_TURNS
 	_assert_band_panel("an unbounded bad run still leads with the expectation — \"%s\"" % want,
-		_rich_text_containing(_panel, want) == want)
+		_rich_text_containing(_sheet_root(), want) == want)
 	# **AND THE CAVEAT STILL RIDES UNDER IT**, this verdict quoting numbers. The caveat is gated on
 	# `denial_turns_phrase`, which the rewrite re-pointed at the lead figure — a gate that answered
 	# `""` here would silently drop the caveat from exactly the shape that most needs qualifying.
 	_assert_band_panel("…and the estimate caveat rides under it, a number having been quoted",
-		_has_label_containing(_panel, SourceForecast.DENIAL_ESTIMATE_CAVEAT))
+		_has_label_containing(_sheet_root(), SourceForecast.DENIAL_ESTIMATE_CAVEAT))
 
 ## **THE FIVE CLAUSE SHAPES, DRIVEN DIRECTLY.** Only two of them are reachable from a rendered frame
 ## (the ordinary range and the open high), and the other three are exactly the ends where a lone
@@ -15892,18 +15495,18 @@ func _assert_denial_counted_refusal() -> void:
 	var want := String(SourceForecast.DENIAL_VERDICTS[
 		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason_counted"]) % [quarry, DENIAL_DEEP_PARTY_NEEDED]
 	_assert_band_panel("a repelled raid's reason NAMES the party it takes — \"%s\"" % want,
-		_has_label_containing(_panel, want))
+		_has_label_containing(_sheet_root(), want))
 	# …and the numberless sentence is GONE rather than printed beside it: with a figure in hand it is
 	# the sentence this replaces, and a sheet carrying both states the remedy twice.
 	var bare := String(SourceForecast.DENIAL_VERDICTS[
 		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason"]) % quarry
 	_assert_band_panel("…and not the numberless sentence beside it",
-		not _has_label_containing(_panel, bare))
+		not _has_label_containing(_sheet_root(), bare))
 	# **AND THE SEND IS STILL LIVE — the companion half of the disable rule.** This party is under-sized
 	# BY CHOICE (the band can field 12 and the player dialled 4), which is the warn-and-trust case:
 	# a raid that cannot break the herd keeps working it until recalled. Without this claim the
 	# short-handed assertion below would pass on a sheet that disabled the Send for every repelled row.
-	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	var send := _find_meta_control(_sheet_root(), HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
 	_assert_band_panel("…and a party the PLAYER under-sized still launches",
 		send != null and not send.disabled
 			and send.text == String(SourceForecast.DENIAL_VERDICTS[
@@ -15920,20 +15523,20 @@ func _assert_denial_short_handed() -> void:
 	_assert_band_panel("the band can field %d of the %d hunters this herd needs — the precondition"
 			% [idle, DENIAL_DEEP_PARTY_NEEDED],
 		idle < DENIAL_DEEP_PARTY_NEEDED)
-	var send := _find_meta_control(_panel, HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	var send := _find_meta_control(_sheet_root(), HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
 	_assert_band_panel("…so the Send is DISABLED and says which shortfall it is",
 		send != null and send.disabled
 			and send.text == SourceForecast.DENIAL_SHORT_HANDED_BUTTON)
 	var want := SourceForecast.DENIAL_SHORT_HANDED_REASON_FORMAT % [
 		quarry, DENIAL_DEEP_PARTY_NEEDED, idle]
 	_assert_band_panel("…and the reason beneath it names BOTH numbers — \"%s\"" % want,
-		_has_label_containing(_panel, want))
+		_has_label_containing(_sheet_root(), want))
 	# …and it SUPERSEDES the repelled refusal rather than printing beside it: both name the party the
 	# sim quotes, so a sheet carrying the pair states the requirement twice.
 	var counted := String(SourceForecast.DENIAL_VERDICTS[
 		SourceForecast.DENIAL_OUTCOME_REPELLED]["reason_counted"]) % [quarry, DENIAL_DEEP_PARTY_NEEDED]
 	_assert_band_panel("…and the counted refusal is not printed beside it",
-		not _has_label_containing(_panel, counted))
+		not _has_label_containing(_sheet_root(), counted))
 
 ## **THE CHOOSER APPEARS ONLY WHERE THERE IS A CHOICE, AND CHOOSING RE-TARGETS.** Both halves are
 ## behavioural: a PNG can show that a `⋯` is on the Prey row, but not what its menu holds, not which
@@ -15944,7 +15547,7 @@ func _assert_denial_short_handed() -> void:
 ## chooser) — the pair is what makes either mean something, since a control rendered unconditionally
 ## satisfies every assertion here on its own.
 func _assert_quarry_chooser() -> void:
-	var menu := _find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) as MenuButton
+	var menu := _find_meta_control(_sheet_root(), HudWidgets.QUARRY_CHOICES_META) as MenuButton
 	_assert_band_panel("two herds on one hex put a chooser on the Prey row", menu != null)
 	if menu == null:
 		return
@@ -15973,7 +15576,7 @@ func _assert_quarry_chooser() -> void:
 		_hud._compose.party_quarry_id() == SHARED_TILE_PELT_HERD_ID)
 	# …and the sheet REBUILT against the new quarry: the chooser is a fresh node now, and it must mark
 	# the wolf. Reading the model back alone would pass on a switch that never re-rendered.
-	var after := _find_meta_control(_panel, HudWidgets.QUARRY_CHOICES_META) as MenuButton
+	var after := _find_meta_control(_sheet_root(), HudWidgets.QUARRY_CHOICES_META) as MenuButton
 	var after_checked := ""
 	if after != null:
 		var after_popup := after.get_popup()
@@ -16435,10 +16038,6 @@ const KIT_FRAME_SPEARS_CONDITION := 74.5
 ## scope because the retreat's end-to-end helpers below `_assert_kit_reprices_the_source` price against
 ## it too, and a second copy is how a reference and a published rate start disagreeing.
 const RETREAT_REFERENCE_CARRY := 40.0
-
-## Slack on a stock-fraction comparison — the projection walks 60 turns of float arithmetic, so two
-## genuinely different settle points must differ by more than the accumulated noise to count.
-const STOCK_FRACTION_MARGIN := 0.001
 const KIT_FRAME_SLED_DRY := 0.0
 ## The baskets are irrelevant to a hunt sheet and are left healthy, so nothing on these frames can
 ## pass by reading the forage component on the hunt's row — the defect the three-kit split corrected.

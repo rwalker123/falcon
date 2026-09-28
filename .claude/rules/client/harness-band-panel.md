@@ -172,8 +172,12 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 220 frames / 1533 `PASS` / 566 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 222 frames / 1601 `PASS` / 565 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
+
+**THE BAND VERBS (issue #529) RE-MEASURED IT AT 222 / 1601 / 565**, on a tree that had also taken main
+since the last figure, so the move is not one change's delta. The verb block it added is "The BAND
+VERBS block" below.
 
 **PR #738's REVIEW FIXES MOVED IT 216 / 1526 / 566 → 220 / 1533 / 566**: the returned-shipment pair
 (`trade_tab_shipment_cancelled`, `trade_tab_shipment_returned`), the anchor-gone close
@@ -489,31 +493,29 @@ both.) (The ACTION REGISTRY's own block is worth sixteen `PASS` and the COLLAPSE
 see "`_assert_action_registry`" and "The collapsed rail's two frames" below.) (**A new frame costs
 TWO `assert OK`s, not one** — `_assert_zones_within_bounds` and `_assert_zone_content_fits`, one of
 each per state; the content-fits line names its state and the zone-rect line does not, which is what
-makes the second easy to miss when counting a log by eye.) (**The split sheet is opened by PRESSING
-the real `⌂ Split` footer button**, found by `HudWidgets.MISSION_LAUNCH_META` — `_open_split_sheet`
-closes any sheet already open first, because an open sheet REPLACES the footer and the second and
-third states would otherwise have nothing to press. Writing `_party_compose_open` directly would pass
-against a mission button that no longer opens anything, which is the regression the frames exist to
-catch.) (The
+makes the second easy to miss when counting a log by eye.) (**The split sheet is opened through the
+real verb**: `_open_split_sheet` closes any open verb, selects the panel band on its own hex, requires
+`verb_enabled(split)` and emits the panel's REAL `action_invoked(VERB_SPLIT)` — writing the pending
+verb directly would pass against a Split that no longer opens anything, which is the regression the
+frames exist to catch. Every sheet assertion reads `_sheet_root()`, the selection drawer's allocation
+host.) (The
 only `ERROR:` lines in a clean log are Godot's own shutdown RID-leak noise, which is why the status
 is the verdict and an `ERROR:` count is not.) (The two tallies are no longer equal, and that is not
 a miscount: `_assert_scroll_only_where_sanctioned` and `_assert_band_columns_ignore_content` each
 emit several `PASS` lines under one `assert OK` heading.) (Count the `PASS` tally as `: PASS`, not a
 bare `PASS`: one `assert OK` line contains the word in its own text — `4 rung marks are hoverable
-(tooltip + PASS)` — so a bare grep answers one too many. The figure recorded before
-`_assert_chart_reads_the_settled_party` added its two was **112**, and a measurement of that same
-build reads **111**, so the previous record was one high by exactly that miscount.) Both of the
-errors this harness used to expect are gone: the 11-frame `Zone_band` 25px overflow (issue #374
+(tooltip + PASS)` — so a bare grep answers one too many. One earlier record read
+**112** where a measurement of the same build reads **111** — one high by exactly that miscount.) Both
+of the errors this harness used to expect are gone: the 11-frame `Zone_band` 25px overflow (issue #374
 re-homed the band zone's optional rows and widened the wide shell's flanks) and, after it,
 `band_panel_parties_inspector_wide`'s `Zone_parties` pair — one VBox needing 310px of a 300px box,
-reported twice, once by `_assert_zones_within_bounds` and once by `_assert_zone_content_fits`. That
-one is closed by tightening `PARTIES_INSPECTOR_LINE_SEPARATION` and merging the strip's two ORDERS
-lines (`band-city-panel.md` → "The parties strip's SEVEN lines"), and
-**`band_panel_worst_case_party` is what keeps it closed**: the fixture that state replaced was not
-the worst case — a hunt party carrying every optional detail line at once needed 328px where that
-one needed 310 — so the state stages one, asserts the strip really renders all SEVEN lines (a
-shorter strip fits, so every assertion goes green on a state that has stopped measuring anything)
-and PRINTS its extent, which reads **294 of the 300px box**.
+reported twice, once by `_assert_zones_within_bounds` and once by `_assert_zone_content_fits`. That one
+is closed by tightening `PARTIES_INSPECTOR_LINE_SEPARATION` and merging the strip's two ORDERS lines
+(`band-city-panel.md` → "The parties strip's SEVEN lines"), and **`band_panel_worst_case_party` is what
+keeps it closed**: the fixture that state replaced was not the worst case — a hunt party carrying every
+optional detail line at once needed 328px where that one needed 310 — so the state stages one, asserts
+the strip really renders all SEVEN lines (a shorter strip fits, so every assertion goes green on a state
+that has stopped measuring anything) and PRINTS its extent, which reads **294 of the 300px box**.
 
 **`band_panel_vitals_worst_case`** is the state that pins it — one band carrying EVERY optional
 vitals row at once in the height-capped TOP dock, which no fixture had ever staged, run through the
@@ -786,47 +788,12 @@ VIEWPORT's edge. Also from that arc: `_right_dock_content_reach()` measures each
 a box ending 1056), so a bare rect reports content that is never painted; and the promise walk
 DERIVES its fork rather than hard-coding it, having been written as `left + right ceiling` and so
 would have walked 2432 once the trailing charge was dropped — 560px clear of the real 1871, passing
-while measuring nothing.  **The COMPOSE-SHEET FLOAT's claims ride `band_panel_compose_hunt_short`,
-and they are a SET because no one of them is a fix on its own.** `_assert_zone_content_fits` passes
-TRIVIALLY once the sheet leaves the zone — an empty box fits anything — so a float that moved the
-641px overflow somewhere unmeasured would look exactly like a repair.
+while measuring nothing.
 
-**`_assert_compose_float`** therefore asserts the sheet is really gone from the parties zone AND
-whole in the float (both by the Send button's own `HudWidgets.SEND_HUNT_CONFIRM_META`, never by a
-face), that the zone holds what is left, that the float fits the VIEWPORT, that its card holds its
-own content (the `AutoSizingPanel` lie `panel-framework.md` records — a card fitted too short still
-DRAWS at its content's size), and that it clears the panel card. The last is the `event_dock` inset
-idiom, negative control included: the vacuity guard fires on the axis the two are NOT stacked along,
-and a live control first shows the very same `intersects` test firing on these very rects with the
-float moved onto the card.
-
-**`_assert_compose_in_zone` on `band_panel_compose_hunt` is the paired negative** — a trigger stuck
-ON satisfies every claim above (a whole sheet, in a float, clear of the card) in a dock with ample
-room, so the tall side dock is where the sheet must NOT float.
-
-**`_assert_float_leaves_the_map_clickable`** carries the overlay half: `BandComposeFloat` is the
-card and nothing more — no full-screen catcher, because the dock's sheet stays open through a map
-pick — and that is driven through `Viewport.push_input` against this harness's own
-`_unhandled_input`, the `_assert_open_strip_reaches_the_map` idiom, with the open band beside the
-float as the precondition, the float's own RING as the claim and three samples 3px outboard of its
-edge as the complement. Reading the node's `mouse_filter` back would only say what it was configured
-as, not what the Viewport does with it.
-
-**`_compose_surface()` is what keeps the rest honest**: `_assert_hunt_sheet_chart` and
-`_report_compose_widths` search the FLOAT when the sheet is floated, since pointed at `_panel` they
-would go vacuous the moment the float works — any new assertion about a floated sheet must go
-through it. Sabotage-verified on two DISJOINT mutations: the trigger forced always-ON fails the
-paired negative first and 23 further deny-state claims that search `_panel` for a sheet that should
-never have left it; forced always-OFF fails exactly three — the zone-content-fits assertion naming
-`needs 641px … the box is only 265px (short by 376)`, and both float assertions refusing to prove
-anything. Exactly ONE frame moved for the whole change (`band_panel_compose_hunt_short`); the other
-71 are byte-identical to the pre-change baseline (222 `assert OK` + 229 `PASS` before the
-CRAFTABLE-KITS arc (issue #493) added sixteen `PASS` claims and no `assert OK` — the kit repricing's
-own six in `_assert_kit_reprices_the_source` (two about the ratio's denominator, two about the
-retreat's own `stay_fraction` field, and the end-to-end take/cap pair), the four in
-`_assert_dock_chart_carries_the_kit` (the chart-known precondition, the two drawdown answers that
-must move under `dispersion`, and the sim-mirror hold crew that must not), and six more across the
-compose sheet's own claims.
+222 `assert OK` + 229 `PASS` before the CRAFTABLE-KITS arc (issue #493) added sixteen `PASS` claims
+and no `assert OK` — the kit repricing's own six in `_assert_kit_reprices_the_source` (two about the
+ratio's denominator, two about the retreat's own `stay_fraction` field, and the end-to-end take/cap
+pair) and ten more across the compose sheets' own claims.
 
 **Both steps moved ZERO of this harness's frames**, measured by stashing each change and
 re-rendering: no rendered fixture publishes `stayFraction` and `BandFx.kit_roster_fixture()` ships
@@ -898,19 +865,17 @@ zone would take every later state down with it instead of naming itself. 181 `as
 `PASS` before the FACTION PAGE (issue #450) added three states and eighteen assertions — the three
 states' bounds/content-fits pairs account for the six new `assert OK`s, `_assert_faction_page`'s
 eleven (its nine plus `_assert_faction_type_scale`'s two) and `_assert_faction_cycler`'s seven for
-the rest. 179 + 111 before `_assert_chart_reads_the_settled_party` added its vacuity guard and its
-crew claim to `band_panel_compose_hunt`; that step moved ZERO frames, the defect it catches being
-byte-invisible. 179 + 114 before the FILL TARGET's retirement, which removed two
+the rest. 179 + 114 before the FILL TARGET's retirement, which removed two
 `_assert_band_panel` calls — the dock sheet's offers-a-fill-target claim and the quarry chooser's
 drops-the-stale-target one — and repointed a third. 174 `assert OK` + 106 `PASS` before
 `band_panel_worst_case_party` — that step gained FIVE `assert OK`s and seven `PASS`es, and only
 three of the five are new assertions: the other two are `band_panel_parties_inspector_wide`'s bounds
 and content-fits pair, which had been reporting `ERROR` and now report `assert OK`, so a reader
 counting only the new state's own would come up two short. 175 `assert OK` + 91 `PASS` before the
-recall-verb pair and the compose float's two latch guards — that step LOST an `assert OK` and gained
+recall-verb pair — that step LOST an `assert OK` and gained
 fifteen `PASS`es, the old `_assert_row_recall_confirms` having printed its own raw `assert OK` line
 where its replacement reports through `_assert_band_panel`, 175 + 77 before the sampled party AXIS's
-three guards, 175 + 69 before the compose sheet's FLOAT, 173 + 67 before the unsampled-party guard,
+three guards, 173 + 67 before the unsampled-party guard,
 168 + 67 before the band zone gained the `Kit` row and the SHORT tier's Morale+Growth merge, 164
 `assert OK` + 57 `PASS` before the KIT PICKER's three states, 164 + 56 before the map path's
 whole-cohort claim, 164 + 53 before its Kit-row claims, 162 + 46 before the collapse verdict's five
@@ -1255,12 +1220,34 @@ fixture's `BAND_ID` and never its deliberately different `BAND_ENTITY`.
   an allocation rather than the selection `Main._kit_token` omits — so `kit_token` answers
   `NotKitBearing` and the kit gate correctly says nothing about it.
 
-## The RECALL VERB pair, and the compose float's two LATCH guards
+## The BAND VERBS block (issue #529)
 
-Four claims added to `band_panel_preview`, none of which a frame can carry: three of them are about a
-tooltip or a dialog, and the fourth is about a number nobody renders. The behaviour they guard is
-specified in `band-city-panel.md` → "THE RECALL VERB FOLLOWS THE SIM" and the two latch bullets under
-"A COMPOSE SHEET THE ZONE CANNOT HOLD LEAVES THE ZONE".
+Rendered on the left dock and judged mostly PNG-less:
+
+- **`_assert_band_verbs_registered`** — the five verb ids lead the action registry in
+  `HudComposeVocab.BAND_VERBS` order, ahead of `⚒` and `▲`.
+- **`_assert_parties_zone_has_no_footer`** — the parties zone carries no verb button
+  (`HudWidgets.VERB_BUTTON_META`) and no send.
+- **`_assert_band_verbs_dispatch`** — every verb pressed through the panel's REAL `action_invoked`
+  reaches `dispatch_verb`, judged by what it does: Move arms the tile pick, Scout and Trade arm the
+  verb pick, Deny arms the quarry pick, Split opens its sheet on the band's own hex; each is backed out
+  through the real cancel, which must take the pending verb with it.
+- **`_assert_verb_sheet_mounted`** (on `band_panel_compose_scout` and `band_panel_compose_deny`) — the
+  sheet is in the target's drawer under the `VERB · from <band>` header, and nowhere on the panel.
+  `_open_scout_sheet` / `_open_deny_sheet` reach it through the real pick (`SCOUT_TARGET_TILE`,
+  `_quarry_herd_by_id`).
+- **`_assert_prey_is_stated`** — Deny's prey is a read-only field (`READ_ONLY_FIELD_META`) naming the
+  picked herd, and nothing on the sheet re-arms a pick.
+- **`_assert_verbs_gate_on_idle`** (on `band_panel_no_idle`) — Scout, Deny and Trade disabled on the
+  bar, Move and Split live.
+
+The action-registry block unregisters the verbs to test an empty bar and re-registers them through
+`_register_band_verbs()`, so the states after it see the shipped registration.
+
+## The RECALL VERB pair
+
+Claims no frame can carry — each is about a tooltip or a dialog. The behaviour they guard is specified
+in `band-city-panel.md` → "THE RECALL VERB FOLLOWS THE SIM".
 
 **`_assert_row_recall_confirms` is a set of THREE presses, and the set is the claim.** A rule that
 showed one verb everywhere satisfies any one of them alone. Each drives the REAL `_build_party_row` and
@@ -1283,73 +1270,6 @@ caller could drift — and each asserts the verb, the tooltip and the ceremony:
 - Sabotage-verified in BOTH directions, each failing a disjoint set: pinning the predicate TRUE fails
   the field party's three and the report-owed party's three; pinning it FALSE fails the camped party's
   three alone.
-
-**`_assert_unknown_zone_box_does_not_float`** rides `band_panel_compose_hunt_short`, where the mark is
-latched at the short dock's genuine 641px — the only configuration in which the two answers differ,
-which is why the block leads with that precondition and refuses to claim anything under it. It makes
-the box unknown the way the live client does (a collapsed panel) and drives the REAL
-`_party_compose_floats`. Sabotage: restoring the `_parties_zone_box()` fallback fails exactly that one
-assertion (`mark 641px, which WOULD float against the 360px fallback`).
-
-**`_assert_mark_dropped_on_dock_change`** reads the outcome of the real `set_dock(SIDE_LEFT)` + render
-that already sat in that block. The mark it judges is STAGED (`_stage_impossible_compose_mark`, four
-viewport heights) because **no fixture here naturally produces a mark that overflows the tall dock** —
-that dock holds this sheet comfortably, which is what `_assert_compose_in_zone` asserts one state
-earlier — so a real mark leaves the two answers identical. The mark is the INPUT to the rule; the rule
-is `_note_parties_zone_box`. Sabotage: dropping the reset fails the two claims and not the
-preconditions (`the mark from the SHORT dock did not survive the move (now 4608px)`).
-
-**Zero frames moved for all four**, in either harness: 72/72 `band_panel_*` and 344/344 `ui_preview`
-byte-identical to the pre-change baseline. (`ui_preview`'s `telling_panel_unread.png` is flaky
-run-to-run on its own, unrelated to this change and to the frame set's bit-identity claim elsewhere in
-this file — it was observed differing between two runs of IDENTICAL code.)
-
-### …AND NEITHER OF THOSE TWO GUARDS COVERED THE LIVE PATH, WHICH IS WHY THE SHEET FLOATED AGAIN
-
-The empty hunt sheet was reported floating out of a tall LEFT dock a second time, with both guards
-above in place and every assertion in this harness green. Two things account for the gap and both are
-about **which question the harness was in a position to ask**:
-
-- **No state staged an EMPTY compose form as a composing act of its own.** Every compose fixture writes
-  `_party_compose_open` directly and picks a quarry first, so the smallest the sheet ever is — the form
-  a player sees the instant they press `🏹 Hunt`, on a band with no parties — was never rendered from
-  that entry point. `band_panel_compose_hunt_no_prey` looks like it covers this and does not: it
-  reaches the empty form by CLEARING a quarry mid-act, so it inherits the full form's mark and never
-  arms a fresh measurement.
-- **Every render in this harness happens from a coroutine resumed at `process_frame`**, i.e. the most
-  favourable point in the frame for the deferred container sort to have been flushed by the time
-  `_measure_party_compose` resumes one frame later. The phantom reading therefore never reached the
-  mark HERE even with the guard fully broken — measured: reverting `_party_compose_measurable` to its
-  column-width-only form leaves `_party_compose_needed` at the correct 207. **No rendered state can see
-  that**, in either direction, which is why the new guard drives the PREDICATE in the window rather
-  than judging a frame.
-
-**`_assert_empty_compose_opens_in_the_zone`** (on `band_panel_compose_hunt_empty`) presses the REAL
-footer launcher — reached by `HudWidgets.MISSION_LAUNCH_META`, valued on the mission, since all three
-buttons come from one builder and their faces carry the mission glyph — and then asks the predicate
-twice: **unmeasurable** in the pre-layout window and **measurable** after `_settle`, with the mark that
-survives asserted to equal the laid-out reading. Its vacuity guard is the whole point: the pre-layout
-column must read HIGH enough to have floated the sheet (it reads **1278px against a 1055px box**, where
-the laid-out answer is **207**), or refusing to record it proves nothing.
-
-**`_assert_zone_holds_its_compose_sheet`** states the invariant directly and against the MEASURED
-NUMBERS rather than the dock edge: a zone with room for the sheet keeps it. Its precondition is that
-room, so a state where the sheet genuinely does not fit refuses to claim anything instead of passing as
-"correctly floated", and it locates the sheet by NODE IDENTITY (the controller's own
-`_party_compose_sheet`, walked up to whichever surface owns it) — the empty form's Send is disabled and
-carries no confirm meta, being a reason rather than a confirm. **It is called at the STATE, not inside
-the block above**, so a trigger stuck ON — which takes the phantom reading out of the parties column
-and trips that block's own precondition — still has this claim asked of it.
-
-Sabotage-verified three ways, each failing a DISJOINT set: reverting the guard to the column-width test
-fails the pre-layout claim alone (and nothing else in the run, which is the demonstration that no other
-assertion here could see it); pinning the predicate FALSE fails the paired positive and the mark claim;
-and forcing `_party_compose_floats` true fails the zone-holds-its-sheet claim, with the pre-layout block
-loudly refusing its own precondition rather than passing.
-
-**One frame added, none moved**: 73 pre-existing `band_panel_*` PNGs byte-identical to the pre-change
-baseline (captured by stashing the change and re-rendering), plus the new
-`band_panel_compose_hunt_empty`.
 
 ## The QUEUE's controls, and the two traps they walked into (`docs/plan_standing_upkeep.md` §4.7b)
 
@@ -2493,15 +2413,14 @@ builder that printed one clause and never reached the others.
 - **The command claim is a PAIR and PNG-less** — a tail is not a picture. The null pick must emit
   ` kit none` and the DEFAULT pick must emit no tail at all: a builder that always appended satisfies
   the first alone, one that never did satisfies the second. It is driven through the REAL path (the
-  sheet's confirm arms the targeting; `try_dispatch` builds the payload) so it covers the whole carry
-  rather than a hand-built dictionary.
+  Scout verb's pick opens the sheet on the target tile; its Send calls `send_expedition_to`) so it
+  covers the whole carry rather than a hand-built dictionary.
 
 **Three harness traps this block walked into, all previously recorded elsewhere in this file and all
 met again here:**
 
 - ⛔ **A LAMBDA CAPTURES A LOCAL BY VALUE.** The command witness assigned to a `String` and reported
-  that nothing was ever emitted. It is an `Array` box now — the same trap `chapters/trade.gd`'s
-  destination pick cost a run over.
+  that nothing was ever emitted. It is an `Array` box, the container every chapter witness uses.
 - ⛔ **INJECTING THE PANEL DOES NOT RENDER THE SELECTION INTO IT.** The dock came up on whatever
   `panel_band()` the walk had left behind — the reference band with 13 of 16 hands assigned — so the
   party stepper capped at 3 and every claim was about the wrong band while looking ordinary. The block

@@ -151,12 +151,9 @@ const SUBJECT_DIVIDER_HEIGHT := 1.0
 # otherwise be a blank gap. Say where it went instead.
 const BAND_PANEL_POINTER_TEXT := "Labor allocation is in the Band / City panel."
 
-# …but REPOSITIONING is a map action, and the player is already on the map with this hex open, so
-# Move stays in the drawer beside the pointer (§18). Same words as the Band/City panel's own Orders
-# Move — one order, one name.
-const MOVE_BAND_BUTTON_TEXT := "Move"
-
-const MOVE_BAND_BUTTON_TOOLTIP := "Relocate the band, then click a destination tile."
+# …but a band's ORDERS are map actions, and the player is already on the map with this hex open, so
+# the band's verb row stays in the drawer beside the pointer (§18). Its verbs are the Band/City panel's
+# own (`HudComposeVocab.BAND_VERBS`) — one order, one name, on both surfaces.
 
 # Per-activity glyph for a player band's roster row. `activity` is the kind with the
 # most workers (Early-Game Labor): idle | forage | hunt | scout | warrior.
