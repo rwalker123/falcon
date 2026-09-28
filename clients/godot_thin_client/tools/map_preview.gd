@@ -1999,6 +1999,7 @@ func _ready() -> void:
 	await _worked_working_states()
 	await _source_list_states()
 	await _faction_palette_state()
+	await _exchange_network_states()
 
 	_finish()
 
@@ -7086,3 +7087,240 @@ func _source_list_states() -> void:
 		build_distance > rot_distance * BUILD_ARC_CONTRAST_MIN)
 
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
+
+
+# ---- THE EXCHANGE NETWORK (issue #624) -----------------------------------------------------------
+## `ui_preview`'s band fixtures, for `transfer_crossing` — the one crossing-row shape both harnesses
+## stage, so a fixture here cannot drift from the decoder's.
+const EXCHANGE_BAND_FX := preload("res://tools/ui_preview/fixtures_band.gd")
+## Three of the player's camps pooling in one network, plus another people's camp a shipment reaches.
+## GIVER pays into the pool, TAKER draws from it, EVEN moves less than the readout can state.
+const EXCHANGE_NETWORK_ID := 11
+const EXCHANGE_GIVER := {"entity": 9501, "band_id": 501, "x": 4, "y": 6, "name": "Ashfell"}
+const EXCHANGE_TAKER := {"entity": 9502, "band_id": 502, "x": 7, "y": 3, "name": "Lowfen"}
+const EXCHANGE_EVEN := {"entity": 9503, "band_id": 503, "x": 8, "y": 8, "name": "Teasel"}
+const EXCHANGE_FOREIGN := {"entity": 9601, "band_id": 601, "x": 13, "y": 5, "name": "Brackwater"}
+const EXCHANGE_FOREIGN_FACTION := 1
+## The kept-road rung one link stands on; the rest are open ground.
+const EXCHANGE_ROAD_RUNG := "route:trail"
+const EXCHANGE_LINK_DISTANCE := 3
+## This turn's pooled food: the giver's out, the taker's in, and an amount under `EVEN_FLOOR`.
+const EXCHANGE_GIVER_POOLED := 3.0
+const EXCHANGE_TAKER_POOLED := 2.2
+const EXCHANGE_EVEN_POOLED := 0.02
+## The one delivered shipment (giver → the foreign camp) and one CANCELLED in camp (giver → taker,
+## the whole cargo returned the same turn), which must net to nothing and draw no arrow.
+const EXCHANGE_SHIPPED_PARTY := 7001
+const EXCHANGE_SHIPPED_AMOUNT := 12.0
+const EXCHANGE_CANCELLED_PARTY := 7002
+const EXCHANGE_CANCELLED_AMOUNT := 4.0
+## How many of the fixture's links touch the selected (giver) camp — the two that draw brighter.
+const EXCHANGE_SELECTED_LINKS := 2
+## How many camps the fixture rings — the giver and the taker; the even camp stays bare.
+const EXCHANGE_RINGED_CAMPS := 2
+## The scratch prefs file the checkbox leg writes through, so a real `set_map_toggle` never lands in
+## the developer's own `user://client_settings.cfg`.
+const EXCHANGE_PREFS_PATH := "user://map_preview_client_settings.cfg"
+## The theme the second exchange frame renders in — the one whose blue `SIGNAL` made the links read
+## as rivers (why `HudStyle.TRADE` exists).
+const EXCHANGE_LOAM_THEME := "loam"
+
+func _exchange_band(spec: Dictionary, faction: int, links: Array, crossings: Array) -> Dictionary:
+	var band := _band_at(int(spec["entity"]), int(spec["x"]), int(spec["y"]), STAGE_CAMP, faction)
+	band["name"] = String(spec["name"])
+	band["band_id"] = int(spec["band_id"])
+	band[HudTradeVocab.NETWORK_ID_KEY] = EXCHANGE_NETWORK_ID \
+		if faction == HudConst.PLAYER_FACTION_ID else HudTradeVocab.NO_NETWORK
+	band[HudTradeVocab.POOLING_LINKS_KEY] = links
+	band[HudTradeVocab.CROSSINGS_KEY] = crossings
+	return band
+
+func _exchange_link(spec: Dictionary, rung_id: String) -> Dictionary:
+	return {
+		HudTradeVocab.LINK_BAND_ID: int(spec["band_id"]),
+		HudTradeVocab.LINK_DISTANCE: EXCHANGE_LINK_DISTANCE,
+		HudTradeVocab.LINK_RUNG_ID: rung_id,
+	}
+
+func _exchange_pooled(direction: int, amount: float) -> Dictionary:
+	return EXCHANGE_BAND_FX.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, direction,
+		HudTradeVocab.CAUSE_POOLED, amount)
+
+func _exchange_shipment(cause: int, direction: int, amount: float, to: Dictionary, party: int) -> Dictionary:
+	return EXCHANGE_BAND_FX.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, direction, cause, amount, [],
+		int(to["band_id"]), String(to["name"]), HudConst.PLAYER_FACTION_ID, party)
+
+func _snapshot_exchange_network() -> Dictionary:
+	var open := HudTradeVocab.OPEN_GROUND_RUNG
+	var giver := _exchange_band(EXCHANGE_GIVER, HudConst.PLAYER_FACTION_ID,
+		[_exchange_link(EXCHANGE_TAKER, open), _exchange_link(EXCHANGE_EVEN, EXCHANGE_ROAD_RUNG)],
+		[
+			_exchange_pooled(HudTradeVocab.DIRECTION_OUT, EXCHANGE_GIVER_POOLED),
+			_exchange_shipment(HudTradeVocab.CAUSE_SHIPMENT_OUT, HudTradeVocab.DIRECTION_OUT,
+				EXCHANGE_SHIPPED_AMOUNT, EXCHANGE_FOREIGN, EXCHANGE_SHIPPED_PARTY),
+			_exchange_shipment(HudTradeVocab.CAUSE_SHIPMENT_OUT, HudTradeVocab.DIRECTION_OUT,
+				EXCHANGE_CANCELLED_AMOUNT, EXCHANGE_TAKER, EXCHANGE_CANCELLED_PARTY),
+			_exchange_shipment(HudTradeVocab.CAUSE_SHIPMENT_RETURNED, HudTradeVocab.DIRECTION_IN,
+				EXCHANGE_CANCELLED_AMOUNT, EXCHANGE_TAKER, EXCHANGE_CANCELLED_PARTY),
+		])
+	# Both ends of every link list it — the dedupe is what makes each pair ONE line.
+	var taker := _exchange_band(EXCHANGE_TAKER, HudConst.PLAYER_FACTION_ID,
+		[_exchange_link(EXCHANGE_GIVER, open), _exchange_link(EXCHANGE_EVEN, open)],
+		[_exchange_pooled(HudTradeVocab.DIRECTION_IN, EXCHANGE_TAKER_POOLED)])
+	var even := _exchange_band(EXCHANGE_EVEN, HudConst.PLAYER_FACTION_ID,
+		[_exchange_link(EXCHANGE_GIVER, EXCHANGE_ROAD_RUNG), _exchange_link(EXCHANGE_TAKER, open)],
+		[_exchange_pooled(HudTradeVocab.DIRECTION_IN, EXCHANGE_EVEN_POOLED)])
+	var foreign := _exchange_band(EXCHANGE_FOREIGN, EXCHANGE_FOREIGN_FACTION, [], [])
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": _terrain_array()},
+		"populations": [giver, taker, even, foreign],
+		"herds": [],
+	}
+
+## `[a, b, rung]` for every link mark, sorted — the comparable form of what the layer chose.
+func _exchange_link_triples(marks: Dictionary) -> Array:
+	var out: Array = []
+	for link in marks[ExchangeNetworkRenderer.MARKS_LINKS]:
+		out.append([int(link[ExchangeNetworkRenderer.MARK_A]), int(link[ExchangeNetworkRenderer.MARK_B]),
+			String(link[ExchangeNetworkRenderer.MARK_RUNG_ID])])
+	out.sort()
+	return out
+
+func _exchange_marks_empty(marks: Dictionary) -> bool:
+	return (marks[ExchangeNetworkRenderer.MARKS_LINKS] as Array).is_empty() \
+		and (marks[ExchangeNetworkRenderer.MARKS_ARROWS] as Array).is_empty() \
+		and (marks[ExchangeNetworkRenderer.MARKS_RINGS] as Array).is_empty()
+
+## **STATE "exchange network"** — the `trade_network` map layer (issue #624): undirected pooling lines
+## weighted by rung, a warm/cool ring on each camp that gave/took food, and a dashed arrow per
+## shipment; then the `MAP LAYERS` popover that switches it, and the map with it switched off.
+##
+## A frame can show lines, rings and an arrow; it cannot show that each pair is drawn ONCE, that the
+## cancelled shipment netted away rather than drawing under the delivered one, or that the balanced
+## camp is unringed ON PURPOSE rather than missed. Those are asserted off `collect_marks`, which names
+## bands rather than pixels.
+func _exchange_network_states() -> void:
+	# At the project's base canvas, so the popover's type and the `☰` glyph are captured at the size a
+	# player sees (`SOURCE_LIST_WINDOW_SIZE` says why the default canvas renders a Control at ~half).
+	await _set_canvas(SOURCE_LIST_WINDOW_SIZE)
+	# STATE THE TOGGLE CONDITION: the autoload loaded the developer's real prefs, and a player who
+	# switched the layer off would otherwise render this whole state blank. Assigned directly, never
+	# through the setter, which would save over the player's own file.
+	ClientSettings.map_toggles = {}
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.display_snapshot(_snapshot_exchange_network())
+	_map.selected_unit_id = int(EXCHANGE_GIVER["entity"])
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(int(EXCHANGE_GIVER["x"]), int(EXCHANGE_GIVER["y"]))
+	_map._fit_map_to_view()
+	await _settle()
+
+	var giver_id := int(EXCHANGE_GIVER["band_id"])
+	var taker_id := int(EXCHANGE_TAKER["band_id"])
+	var even_id := int(EXCHANGE_EVEN["band_id"])
+	var foreign_id := int(EXCHANGE_FOREIGN["band_id"])
+	var marks: Dictionary = _map._exchange_network.collect_marks()
+
+	var expected_links := [
+		[giver_id, taker_id, HudTradeVocab.OPEN_GROUND_RUNG],
+		[giver_id, even_id, EXCHANGE_ROAD_RUNG],
+		[taker_id, even_id, HudTradeVocab.OPEN_GROUND_RUNG],
+	]
+	expected_links.sort()
+	var links := _exchange_link_triples(marks)
+	_assert_map("exchange network — each pooling pair is ONE line, carrying its rung (%s)" % str(links),
+		links == expected_links)
+	var selected_links := 0
+	for link in marks[ExchangeNetworkRenderer.MARKS_LINKS]:
+		if bool(link[ExchangeNetworkRenderer.MARK_SELECTED]):
+			selected_links += 1
+	_assert_map("exchange network — the selected camp's links, and only those, draw brighter (%d)"
+		% selected_links, selected_links == EXCHANGE_SELECTED_LINKS)
+
+	var arrows: Array = marks[ExchangeNetworkRenderer.MARKS_ARROWS]
+	var arrow_ok := arrows.size() == 1 \
+		and int(arrows[0][ExchangeNetworkRenderer.MARK_SENDER]) == giver_id \
+		and int(arrows[0][ExchangeNetworkRenderer.MARK_RECEIVER]) == foreign_id \
+		and int(arrows[0][ExchangeNetworkRenderer.MARK_PARTY_ID]) == EXCHANGE_SHIPPED_PARTY \
+		and bool(arrows[0][ExchangeNetworkRenderer.MARK_SELECTED])
+	_assert_map("exchange network — ONE arrow, giver to the foreign camp; the cancelled shipment netted away (%s)"
+		% str(arrows), arrow_ok)
+
+	var rings: Dictionary = {}
+	for ring in marks[ExchangeNetworkRenderer.MARKS_RINGS]:
+		rings[int(ring[ExchangeNetworkRenderer.MARK_BAND])] = bool(ring[ExchangeNetworkRenderer.MARK_GIVER])
+	_assert_map("exchange network — the giver rings warm, the taker cool, the even camp not at all (%s)"
+		% str(rings),
+		rings.size() == EXCHANGE_RINGED_CAMPS and rings.get(giver_id, false) == true
+			and rings.get(taker_id, true) == false and not rings.has(even_id))
+	await _save("map_exchange_network")
+	# …AND IN LOAM, the theme the layer was reported from: drawn in loam's pale-blue `SIGNAL`, the links
+	# read as RIVERS. The map draws its marks live off `HudStyle`, so re-applying the palette re-tints
+	# this frame's links and rings with no rebuild; the HUD chrome built under the default keeps its
+	# colours, which is fine — the map is what this frame is of. Put back before anything else renders.
+	HudPalette.apply(EXCHANGE_LOAM_THEME)
+	_map.queue_redraw()
+	await _settle()
+	await _save("map_exchange_network_loam")
+	HudPalette.apply(HudPalette.DEFAULT_THEME)
+	_map.queue_redraw()
+	await _settle()
+
+	# THE MAP LAYERS POPOVER — the third button's own card, attached to it like the other two.
+	var picker: OverlayPicker = _map._minimap._minimap_2d.overlay_picker
+	if picker == null:
+		_fail("map layers — the minimap panel built no picker")
+		return
+	_assert_map("map layers — the third button wears '%s' (got '%s')"
+		% [OverlayPicker.LAYERS_GLYPH, picker.layers_button_glyph()],
+		picker.layers_button_glyph() == OverlayPicker.LAYERS_GLYPH)
+	_assert_map("map layers — the bar lays its three buttons out left to right without overlap",
+		picker.channel_button_rect().end.x <= picker.legend_button_rect().position.x
+			and picker.legend_button_rect().end.x <= picker.layers_button_rect().position.x
+			and picker.layers_button_rect().has_area())
+	picker.open_layers()
+	await _settle()
+	_assert_map("map layers — the popover opened (%s)" % str(picker.open_popover_kind()),
+		picker.open_popover_kind() == OverlayPicker.POPOVER_LAYERS)
+	_assert_map("map layers — the popover hangs off ITS button (gap %.0fpx)"
+		% (picker.anchor_rect().position.y - picker.popover_rect().end.y),
+		picker.anchor_rect() == picker.layers_button_rect()
+			and absf(picker.anchor_rect().position.y - picker.popover_rect().end.y)
+				<= OverlayPicker.POPOVER_GAP + PICKER_ATTACH_TOLERANCE)
+	var boxes: Dictionary = picker.layer_checkboxes()
+	_assert_map("map layers — one checkbox per registry row, each stating its setting (%s)" % str(boxes.keys()),
+		boxes.size() == MapToggles.ROWS.size() and boxes.has(MapToggles.TRADE_NETWORK)
+			and (boxes[MapToggles.TRADE_NETWORK] as CheckBox).button_pressed)
+	await _save("map_layers_popover")
+
+	# UNCHECK IT THE WAY A PLAYER DOES — through the box, so the whole path (checkbox → settings →
+	# `changed` → MapView redraw → renderer gate) is under test, into a scratch prefs file.
+	ClientSettings.config_path_override = EXCHANGE_PREFS_PATH
+	(boxes[MapToggles.TRADE_NETWORK] as CheckBox).button_pressed = false
+	await _settle()
+	_assert_map("map layers — unchecking the box turns the layer off in the settings",
+		not ClientSettings.is_map_toggle_on(MapToggles.TRADE_NETWORK))
+	_assert_map("map layers — …and the layer draws nothing",
+		_exchange_marks_empty(_map._exchange_network.collect_marks()))
+	picker.close_popover()
+	await _settle()
+	await _save("map_exchange_network_off")
+
+	# The layers button joins the catcher's swap/close rule — driven as real presses, like the other two.
+	await _click_canvas(picker.channel_button_rect().get_center())
+	await _click_canvas(picker.layers_button_rect().get_center())
+	_assert_map("map layers — pressing the layers button with the menu open SWAPS to it (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_LAYERS)
+	await _click_canvas(picker.layers_button_rect().get_center())
+	_assert_map("map layers — pressing it again closes it (%s)" % str(picker.open_popover_kind()),
+		picker.open_popover_kind() == OverlayPicker.POPOVER_NONE)
+
+	ClientSettings.map_toggles = {}
+	ClientSettings.config_path_override = ""
+	ClientSettings.changed.emit()
+	await _set_canvas(DEFAULT_CANVAS_SIZE)
+	await _settle()

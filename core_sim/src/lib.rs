@@ -365,7 +365,8 @@ pub use starting_loadout::{
     LoadoutWindow, MaterialAllocation, StartingLoadout, OPENING_MATERIAL_READING,
 };
 pub use supply::{
-    balance_supply_networks, free_pooling_reach_tiles, PoolingLink, SupplyNetworkMembership,
+    balance_supply_networks, free_pooling_reach_tiles, BandSupplyMembership, PoolingLink,
+    SupplyNetworkMembership,
 };
 pub use supply_network_config::{
     load_supply_network_config_from_env, SupplyNetworkConfig, SupplyNetworkConfigHandle,

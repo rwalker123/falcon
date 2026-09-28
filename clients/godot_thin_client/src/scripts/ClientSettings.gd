@@ -25,10 +25,17 @@ extends Node
 ## before the main scene is instantiated, so the palette is in place before the first Control exists
 ## and no panel is ever restyled afterwards; a pick therefore reaches the screen only when the Options
 ## row's "Apply now" re-installs the palette and reloads the scene (`GameLaunch.apply_theme_now`).
+##
+## Also holds the MAP-LAYER TOGGLES (`[map_toggles]`, one bool per `MapToggles.ROWS` key) — the
+## minimap's `MAP LAYERS` popover writes them and each layer's renderer reads them. A key the file
+## does not hold falls back to its REGISTRY default, so a new toggle needs no migration here.
 
 ## `HudPalette` is preloaded rather than reached by its global class name because this script is an
 ## autoload with no `class_name` of its own, and the palette has to be installable from `_ready`.
 const HudPalette := preload("res://src/scripts/ui/HudPalette.gd")
+## Preloaded for the same reason as `HudPalette`: the toggle registry the `[map_toggles]` section is
+## keyed by.
+const MapTogglesRegistry := preload("res://src/scripts/ui/overlay/MapToggles.gd")
 
 const CONFIG_PATH := "user://client_settings.cfg"
 const SECTION := "map"
@@ -40,6 +47,9 @@ const ZOOM_KEY := "zoom_speed_multiplier"
 const FOG_OF_WAR_KEY := "fog_of_war_enabled"
 const UI_SCALE_KEY := "ui_scale"
 const THEME_KEY := "theme"
+## The map-layer toggles get their own section: they are a set of independent layers keyed by the
+## registry, not map-navigation multipliers.
+const MAP_TOGGLES_SECTION := "map_toggles"
 
 const PAN_SPEED_MIN := 0.25
 const PAN_SPEED_MAX := 3.0
@@ -77,6 +87,9 @@ var ui_scale: float = UI_SCALE_DEFAULT
 ## pick and the apply that installs it the two differ — which is the whole state the Options caption
 ## reports.
 var theme: String = HudPalette.DEFAULT_THEME
+## The map-layer toggles the player has SET, key -> bool. A key absent here is at its registry
+## default (`is_map_toggle_on`), so this holds only what the file held or the player changed.
+var map_toggles: Dictionary = {}
 
 signal changed
 
@@ -102,6 +115,11 @@ func _load() -> void:
 		float(cfg.get_value(UI_SECTION, UI_SCALE_KEY, UI_SCALE_DEFAULT)),
 		UI_SCALE_MIN, UI_SCALE_MAX)
 	theme = _valid_theme(String(cfg.get_value(UI_SECTION, THEME_KEY, HudPalette.DEFAULT_THEME)))
+	map_toggles = {}
+	for row in MapTogglesRegistry.ROWS:
+		var key := String(row[MapTogglesRegistry.KEY])
+		if cfg.has_section_key(MAP_TOGGLES_SECTION, key):
+			map_toggles[key] = bool(cfg.get_value(MAP_TOGGLES_SECTION, key))
 
 func set_pan_speed_multiplier(v: float) -> void:
 	pan_speed_multiplier = clampf(v, PAN_SPEED_MIN, PAN_SPEED_MAX)
@@ -132,6 +150,19 @@ func set_theme(v: String) -> void:
 	changed.emit()
 
 
+## Is the map layer `key` on? The player's saved choice, else the registry's default.
+func is_map_toggle_on(key: String) -> bool:
+	if map_toggles.has(key):
+		return bool(map_toggles[key])
+	return MapTogglesRegistry.default_for(key)
+
+## Turn the map layer `key` on or off, persist it, and tell every listener (MapView redraws).
+func set_map_toggle(key: String, on: bool) -> void:
+	map_toggles[key] = on
+	_save()
+	changed.emit()
+
+
 ## A theme id the roster still contains, else the default — a hand-edited or downlevel settings file
 ## must not stop the client from starting.
 func _valid_theme(v: String) -> String:
@@ -144,6 +175,7 @@ func restore_defaults() -> void:
 	fog_of_war_enabled = FOG_OF_WAR_DEFAULT
 	ui_scale = UI_SCALE_DEFAULT
 	theme = HudPalette.DEFAULT_THEME
+	map_toggles = {}
 	_save()
 	changed.emit()
 
@@ -155,6 +187,12 @@ func _save() -> void:
 	cfg.set_value(SECTION, FOG_OF_WAR_KEY, fog_of_war_enabled)
 	cfg.set_value(UI_SECTION, UI_SCALE_KEY, ui_scale)
 	cfg.set_value(UI_SECTION, THEME_KEY, theme)
+	# The section is rewritten whole, so a restore-to-defaults (an empty `map_toggles`) clears the
+	# saved choices rather than leaving the last ones in the file.
+	if cfg.has_section(MAP_TOGGLES_SECTION):
+		cfg.erase_section(MAP_TOGGLES_SECTION)
+	for key in map_toggles:
+		cfg.set_value(MAP_TOGGLES_SECTION, String(key), bool(map_toggles[key]))
 	cfg.save(_config_path())
 
 ## The prefs file actually used — the scratch override when a harness set one, else the player's.

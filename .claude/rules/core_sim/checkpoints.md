@@ -86,9 +86,13 @@ are append-only, and nothing in the restore path reads it.
 `integration_tests/tests/harvest_floor_rollback.rs` pins the rewind at floors no stance names, so a
 rewind that quietly defaulted would be caught rather than landing on a plausible value.
 
-The one genuinely non-persisted member of this neighbourhood is `SupplyNetworkMembership`, a
-resource keyed by `Entity` that `balance_supply_networks` rebuilds every turn — no `Entity` crosses a
-checkpoint, so it could not be carried even if it wanted to be.
+`SupplyNetworkMembership` is keyed by `Entity` and rebuilt every turn by `balance_supply_networks`,
+so it is not carried as a resource — no `Entity` crosses a checkpoint. It is carried **per band**
+instead, as `BandRecord::supply` (`BandSupplyMembership`: network id, the band's own pooling links,
+its network's span), and pass 2b of the restore rebuilds the resource against the freshly spawned
+band entities. Each link already names its far end by `BandId`. Why it is carried at all is the
+second failure mode under the heading *"Derived" is only safe if nothing publishes the value…* →
+*A save load reads the world with no turn in between*.
 
 Three things this is worth knowing for:
 
@@ -198,6 +202,16 @@ like `HerdTelemetry`.
 The guard is `save_round_trip.rs`'s `a_loaded_world_publishes_the_frame_the_live_one_did`, which
 compares the two published frames field by field and exempts only `header.frame_seq` (it counts
 publications and resets with the world epoch, so a loaded world's first is `1` by design).
+
+**`SupplyNetworkMembership` is the same failure one arc over.** Nothing a turn steers by lives in it
+— the balancer clears and rebuilds it every turn — but the capture publishes it (`supplyNetworkId`,
+`poolingLinks`, `supplyNetworkSpanTiles`). Filed as derived, a loaded world's first frame drew every
+band as network 0 with no links, and the exchange-network overlay stayed empty until a turn ran. A
+restored frame must publish the links the frame it restored did, so each band's membership rides its
+`BandRecord`. The frame-diff guard above could not see it: its fixture world holds a single band, so
+"no links" round-tripped to "no links". The guard is `tests/supply_membership_restore.rs`, which
+builds a co-located pair that has pooled, asserts the network is live, and compares the checkpoint
+round trip by `BandId` and the save load on the encoded envelope.
 
 ## Capture records component presence, not only values
 

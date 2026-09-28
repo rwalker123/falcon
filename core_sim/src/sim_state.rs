@@ -82,6 +82,7 @@ use crate::{
     sedentarization::SedentarizationScore,
     sites::{DiscoveredSites, SiteTag},
     starting_loadout::StartingLoadout,
+    supply::{BandSupplyMembership, SupplyNetworkMembership},
     telling::BeatLedger,
     victory::VictoryState,
     visibility::{VisibilityLedger, VisibilitySweepTracker},
@@ -149,6 +150,13 @@ pub struct BandRecord {
     /// two-thirds of the way there at tick T, and dropping the remainder would re-time every
     /// demographic event after a restore.
     pub flow_accumulator: DemographicFlowAccumulator,
+    /// **Which supply network this band stood in, its own pooling links and the network's span**, as
+    /// the last turn's `balance_supply_networks` left them. Recomputed every turn, so nothing a turn
+    /// *steers* by — but the capture publishes it, and a restored world is captured before any turn
+    /// runs (a load's first frame, a rollback's recapture). Dropped, that frame would draw every band
+    /// as network 0 with no links. Carried here rather than as a resource because the resource is
+    /// keyed by `Entity`; every link names its far end by [`BandId`] already.
+    pub supply: BandSupplyMembership,
 }
 
 /// A settlement and its town centre.
@@ -297,6 +305,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
         .filter_map(|entity| Some((entity.id(), *entity.get::<BandId>()?)))
         .collect();
 
+    let supply = world.resource::<SupplyNetworkMembership>();
     let mut bands: Vec<BandRecord> = world
         .iter_entities()
         .filter_map(|entity| {
@@ -358,6 +367,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
                     .get::<DemographicFlowAccumulator>()
                     .copied()
                     .unwrap_or_default(),
+                supply: supply.membership_of(entity.id()),
             })
         })
         .collect();
@@ -517,6 +527,16 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
         }
         band_entities.insert(record.id, entity.id());
     }
+
+    // --- pass 2b: supply-network membership --------------------------------------------------
+    // Keyed by `Entity` in the live resource, so it is rebuilt against the entities pass 2 spawned.
+    let mut supply = SupplyNetworkMembership::default();
+    for record in &state.bands {
+        if let Some(&entity) = band_entities.get(&record.id) {
+            supply.restore_band(entity, &record.supply);
+        }
+    }
+    world.insert_resource(supply);
 
     // --- pass 3a: expeditions -----------------------------------------------------------------
     for record in &state.bands {

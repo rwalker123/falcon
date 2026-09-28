@@ -29,8 +29,8 @@ extends RefCounted
 ## **The trade-link seam is gone with the substrate that fed it** (`update_trade_overlay` /
 ## `set_trade_overlay_enabled` / `set_trade_overlay_selection`, and the `trade_links` snapshot
 ## section behind them): the sim no longer publishes a link network at all, so the overlay drew the
-## empty set on every frame. Issue #232 rebuilds a route-network overlay against a network that
-## exists — see `docs/plan_contact_and_logistics.md`.
+## empty set on every frame. The network that DOES exist — each band's pooling links and this turn's
+## shipments — is drawn by `ExchangeNetworkRenderer` (issue #624), not here.
 ##
 ## `_targeting_time` is advanced from MapView's `_process` via `advance_targeting_time`, gated on
 ## `is_targeting_active()` — the same gate the inlined code used, so an idle client still does no

@@ -181,7 +181,8 @@ which is a property of the tier and not of the merge.
   (`_food_flow_present` / `_selected_band_food_turns` / `_disclosure_state`) lives at the top
   of `_unit_summary_lines`, NOT inside `_band_food_line` — the skipped call must not leave the
   previous render's caret or food-runway tint behind;
-  (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
+  (3) `ExchangeNetworkRenderer` draws each player band's pooling links, its giver/taker ring and this
+  turn's shipment arrows (`map-renderers.md` → "The exchange network").
   **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`,
   decoded as `food_income`/`food_consumption`, flowed onto the
   MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,

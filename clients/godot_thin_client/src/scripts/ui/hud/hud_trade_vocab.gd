@@ -14,7 +14,7 @@ extends RefCounted
 const CROSSINGS_KEY := "transfer_crossings"
 const POOLING_LINKS_KEY := "pooling_links"
 const NETWORK_SPAN_KEY := "supply_network_span_tiles"
-## The supply network this band pools in — `0` means none (`MapView.SUPPLY_NETWORK_SOLO`).
+## The supply network this band pools in — `0` means none.
 const NETWORK_ID_KEY := "supply_network_id"
 const NO_NETWORK := 0
 
