@@ -982,6 +982,19 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY):
 			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = \
 				float((a as Dictionary)[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY])
+		# **AND THE WORK PARTY** (`docs/plan_civilization_steps.md` §One work party) — the nine keys
+		# that say where this row's workers are standing when it is not where the band is. Copied
+		# VERBATIM and as a SET: **this map is a hand-listed allowlist**, so a key not copied here
+		# does not exist as far as the work board is concerned, and the set is named once
+		# (`SourceForecast.ASSIGNMENT_PARTY_KEYS`) rather than spelled out nine times.
+		#
+		# **Blind rather than presence-sensitive, and that is safe for exactly one reason**: the
+		# party's own `party_workers == 0` is the sim's *there is no party*, so an absent key and a
+		# published zero are one reading — unlike `kit_workers_holding` above, whose zero is the
+		# sharpest shortfall there is.
+		for party_key in SourceForecast.ASSIGNMENT_PARTY_KEYS:
+			if (a as Dictionary).has(party_key):
+				(merged[key] as Dictionary)[party_key] = (a as Dictionary)[party_key]
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]
@@ -1000,6 +1013,8 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		# which the sim creates at `Normal`, and that is what the normalizer answers for `""`.
 		var settled_priority := HudWorkVocab.work_priority_of(
 			(merged.get(key, {}) as Dictionary).get("priority", ""))
+		# …and the confirmed row's PARTY, read before the rebuild drops it — see the copy below.
+		var settled_party: Dictionary = merged.get(key, {})
 		# **THERE IS NO BUILD CREW LEFT TO PRESERVE HERE** (`docs/plan_standing_upkeep.md` §2.5). This
 		# overlay used to carry the confirmed `improvement_workers` through a pending TAKE edit,
 		# because `assign_labor` states no build crew and blanking it made staffed builders read as
@@ -1043,6 +1058,15 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if settled != null:
 			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY] = \
 				int(settled)
+		# **AND THE PARTY SURVIVES A PENDING CREW EDIT**, for the ceiling's reason and a sharper one
+		# of its own: `LaborAllocation::set_assignment` carries the party across the re-push
+		# precisely so that a `−`/`+` does not restart the transit countdown, so a client that
+		# blanked the block here would flash a far posting back to a local row — every turn the
+		# player adjusted it — and then flash it back on the next snapshot. The figures are LAST
+		# turn's for that one frame, which is what every preserved field on this overlay is.
+		for party_key in SourceForecast.ASSIGNMENT_PARTY_KEYS:
+			if settled_party.has(party_key):
+				(merged[key] as Dictionary)[party_key] = settled_party[party_key]
 	# **A WITHDRAWAL BLANKS THE IMPROVEMENT AND TOUCHES NOTHING ELSE** (`docs/plan_standing_upkeep.md`
 	# §4.7b ④). `unqueue` withdraws a DECLARATION: the crew stays, the floor stays, the banked meter
 	# stays — so the one thing that must stop being true on the frame the `✕` is pressed is that this

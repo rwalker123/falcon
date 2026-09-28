@@ -182,6 +182,7 @@ fn world_with_a_queue_knowing(
     let mut assignments: Vec<LaborAssignment> = sources
         .iter()
         .map(|source| LaborAssignment {
+            party: None,
             target: LaborTarget::Forage {
                 tile: *source,
                 floor: FOOD_PEAK,
@@ -195,6 +196,7 @@ fn world_with_a_queue_knowing(
         })
         .collect();
     assignments.push(LaborAssignment {
+        party: None,
         target: LaborTarget::Builders,
         workers: builders,
         // ⛔ A `builders` ROW carries no kit — the bare isolation rides the queue entry
@@ -205,6 +207,7 @@ fn world_with_a_queue_knowing(
     });
     if keepers > 0 {
         assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Agriculture,
             workers: keepers,
             kit: None,
@@ -751,6 +754,7 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
             .get_mut::<LaborAllocation>(band)
             .expect("the band keeps its allocation");
         allocation.assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Husbandry,
             workers: keepers,
             kit: None,
@@ -872,6 +876,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
         .expect("the herd's tile resolves");
     let mut assignments = vec![
         LaborAssignment {
+            party: None,
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor,
@@ -882,6 +887,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
             upkeep_kit: None,
         },
         LaborAssignment {
+            party: None,
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
@@ -891,6 +897,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
     ];
     if keepers > 0 {
         assignments.push(LaborAssignment {
+            party: None,
             target: LaborTarget::Husbandry,
             workers: keepers,
             kit: None,
@@ -1340,7 +1347,8 @@ fn abandon_drops_the_row_and_its_entry_and_leaves_the_meter_to_rot() {
                 floor: FOOD_PEAK,
                 species: None,
                 take_species: TakeSelection::EVERYTHING,
-            }),
+            })
+            .is_some(),
         "the band held the source"
     );
 
@@ -1724,6 +1732,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
 
     let assignments = vec![
         LaborAssignment {
+            party: None,
             target: LaborTarget::Hunt {
                 fauna_id: RING_HERD.to_string(),
                 floor: FOOD_PEAK,
@@ -1734,6 +1743,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             upkeep_kit: None,
         },
         LaborAssignment {
+            party: None,
             target: LaborTarget::Forage {
                 tile: source,
                 floor: FOOD_PEAK,
@@ -1746,6 +1756,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             upkeep_kit: None,
         },
         LaborAssignment {
+            party: None,
             target: LaborTarget::Builders,
             workers: builders,
             kit: None,
@@ -1753,6 +1764,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             upkeep_kit: None,
         },
         LaborAssignment {
+            party: None,
             target: LaborTarget::Agriculture,
             workers: keeping_for(ONE_SOURCE),
             kit: None,
@@ -1760,6 +1772,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             upkeep_kit: None,
         },
         LaborAssignment {
+            party: None,
             target: LaborTarget::Husbandry,
             workers: RING_KEEPERS,
             kit: None,
@@ -2087,6 +2100,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         );
 
     let gather = |source: UVec2| LaborAssignment {
+        party: None,
         target: LaborTarget::Forage {
             tile: source,
             floor: FOOD_PEAK,
@@ -2107,6 +2121,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
     let finisher = vec![
         gather(sources[0]),
         LaborAssignment {
+            party: None,
             target: LaborTarget::Builders,
             workers: a_pool_that_finishes_a_cultivate_in_one_turn(),
             kit: None,
@@ -2114,6 +2129,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             upkeep_kit: None,
         },
         LaborAssignment {
+            party: None,
             target: LaborTarget::Agriculture,
             workers: keeping_for(ONE_SOURCE),
             kit: None,
@@ -2125,6 +2141,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         gather(sources[0]),
         gather(sources[1]),
         LaborAssignment {
+            party: None,
             target: LaborTarget::Builders,
             workers: BUILDERS,
             kit: None,
@@ -2132,6 +2149,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             upkeep_kit: None,
         },
         LaborAssignment {
+            party: None,
             target: LaborTarget::Agriculture,
             workers: keeping_for(2),
             kit: None,
@@ -2289,23 +2307,19 @@ fn a_second_ring_is_accepted(app: &mut App, id: &str) -> bool {
         .begin_pen_extension(radius_max)
 }
 
-/// **Walk the band clean off the map's other side**, so its Hunt row is past the leash and lapses —
-/// the third exit, and the one no command issues.
-fn walk_the_band_out_of_reach(app: &mut App, band: Entity, from: UVec2) {
-    let (width, height) = {
-        let registry = app.world.resource::<TileRegistry>();
-        (registry.width, registry.height)
-    };
-    let far = UVec2::new((from.x + width / 2) % width, (from.y + height / 2) % height);
-    let tile = app
-        .world
-        .resource::<TileRegistry>()
-        .index(far.x, far.y)
-        .expect("the far tile resolves");
+/// **The band loses every working hand**, so the shed empties every row it staffed and the keeper
+/// row goes with its queue entry — the third exit, and the one no command issues.
+///
+/// ⛔ **NEITHER DISTANCE NOR AN EMPTY LARDER ENDS A ROW ANY MORE.** A Hunt row past the leash posts a
+/// [`core_sim::WorkParty`] and keeps working (`docs/plan_civilization_steps.md` §One work party), and
+/// a party is fed by its band's ordinary consumption, so there is no supply gate to fail either. The
+/// exit that survives without a command is the band's own people running out — the shedding order
+/// emptying the row — so that is what this stages.
+fn the_band_loses_its_hands(app: &mut App, band: Entity) {
     app.world
         .get_mut::<PopulationCohort>(band)
         .expect("the band keeps its cohort")
-        .current_tile = tile;
+        .working = scalar_zero();
 }
 
 /// **A RING THAT LEAVES THE BUILD QUEUE CAN BE STARTED AGAIN.**
@@ -2358,14 +2372,15 @@ fn an_abandoned_pen_frees_its_ring_to_be_started_again() {
     );
 }
 
-/// The **LAPSE** exit — nobody issued a command at all, the keepers simply walked out of reach and
-/// the turn's prune took the entry. It is the easiest of the three to miss and it strands the ring
-/// identically ([`an_unqueued_ring_frees_the_pen_to_be_extended_again`] has the mechanism).
+/// The **LAPSE** exit — nobody issued a command at all: the band lost the hands that kept the pen,
+/// the shed emptied the row, and the turn's prune took the entry with it. It is the easiest of the
+/// three to miss and it strands the ring identically
+/// ([`an_unqueued_ring_frees_the_pen_to_be_extended_again`] has the mechanism).
 #[test]
 fn a_lapsed_keeper_row_frees_its_ring_to_be_started_again() {
-    let (mut app, band, herd_id, source) = world_with_a_ring_at_the_head(BUILDERS);
+    let (mut app, band, herd_id, _) = world_with_a_ring_at_the_head(BUILDERS);
     resolve_a_pen_turn(&mut app);
-    walk_the_band_out_of_reach(&mut app, band, source);
+    the_band_loses_its_hands(&mut app, band);
     resolve_a_pen_turn(&mut app);
     assert!(
         queued_sources(&app, band).is_empty(),

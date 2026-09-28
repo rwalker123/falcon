@@ -14,7 +14,7 @@ pub use commands::{
     query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, FactionCapacityQuery,
     FactionCapacityReply, HuntCrewTakeQuery, HuntCrewTakeReply, HuntCrewTakeRow,
     HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow, QueryPayload, QueryReply,
-    QueryReplyEnvelope,
+    QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
 };
 pub use commands::{
     CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,

@@ -4409,7 +4409,10 @@ pub fn project_realized_forage(
     if horizon == 0 {
         return 0.0; // `LaborConfig::validate` pins `horizon > 0`; belt-and-braces against /0.
     }
-    let mut sim = patch.clone();
+    // **ONE PROJECTED TURN AT A TIME, through [`ForageProjection::step`]** — the step a work
+    // party's caravan forecast drives with a crew that moves turn to turn
+    // (`crate::work_party::forecast_caravan`). Here the crew is constant.
+    let mut projection = ForageProjection::new(patch);
     let mut total = 0.0_f32;
     // Turns actually simulated — the average divides by this, not the full `horizon`, so a
     // self-terminating gather (an Eradicate strip) reads the rate it delivers while the stand lasts
@@ -4417,36 +4420,93 @@ pub fn project_realized_forage(
     // practice it rarely trips the break — but the rule is uniform with `project_realized_hunt`.
     let mut turns = 0u32;
     for _ in 0..horizon {
-        // Logistics: the patch regrows first, exactly as `advance_forage_regrowth` runs before the
-        // Population stage's gather.
-        regrow_patch(&mut sim, forage);
-        // Population: **every** plant rung is the drawn-down policy gather through the shared
-        // `forage_take` path — a Field included, since this arc retired its managed branch.
-        let take = {
-            forage_take(
-                &mut sim,
-                tile_composition,
-                workers,
-                floor,
-                take_species,
-                forage,
-                flora,
-                output_multiplier,
-                per_worker_biomass_capacity,
-                seasonal,
-            )
-            .to_f32()
-        };
-        if take <= REALIZED_PROJECTION_PROVISIONS_EPSILON {
+        let Some(turn) = projection.step(
+            tile_composition,
+            forage,
+            flora,
+            per_worker_biomass_capacity,
+            seasonal,
+            output_multiplier,
+            workers,
+            floor,
+            take_species,
+        ) else {
             break; // the stand is spent — stop before diluting the average with empty turns.
-        }
-        total += take;
+        };
+        total += turn.provisions;
         turns += 1;
     }
     if turns > 0 {
         total / turns as f32
     } else {
         0.0
+    }
+}
+
+/// **ONE PROJECTED TURN OF A GATHER** — what [`ForageProjection::step`] hands back.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedForageTurn {
+    /// Biomass the crew took off the stand this turn — the carry unit a work party's pack is
+    /// measured in.
+    pub biomass: f32,
+    /// What that take is worth in food, through the one `forage_take` path.
+    pub provisions: f32,
+}
+
+/// **A GATHER, PROJECTED FORWARD ONE TURN AT A TIME, AT WHATEVER CREW IS STANDING THERE** — the
+/// plant twin of `fauna::HuntProjection`, and [`project_realized_forage`]'s loop body lifted out
+/// whole so the smooth headline and a work party's caravan forecast run one projection.
+pub struct ForageProjection {
+    sim: ForagePatch,
+}
+
+impl ForageProjection {
+    /// Start a projection on a **private copy** of `patch`.
+    pub fn new(patch: &ForagePatch) -> Self {
+        Self { sim: patch.clone() }
+    }
+
+    /// **Step one turn — the patch regrows, then `workers` gather through `forage_take`.** `None`
+    /// is the loop's own `break`: the stand is spent.
+    #[allow(clippy::too_many_arguments)] // the gather's full context, per turn
+    pub fn step(
+        &mut self,
+        tile_composition: &[FloraShare],
+        forage: &ForageLaborConfig,
+        flora: &FloraConfig,
+        per_worker_biomass_capacity: f32,
+        seasonal: f32,
+        output_multiplier: f32,
+        workers: u32,
+        floor: f32,
+        take_species: &TakeSelection,
+    ) -> Option<ProjectedForageTurn> {
+        // Logistics: the patch regrows first, exactly as `advance_forage_regrowth` runs before the
+        // Population stage's gather.
+        regrow_patch(&mut self.sim, forage);
+        let biomass_before = self.sim.biomass;
+        // Population: **every** plant rung is the drawn-down policy gather through the shared
+        // `forage_take` path — a Field included, since this arc retired its managed branch.
+        let provisions = forage_take(
+            &mut self.sim,
+            tile_composition,
+            workers,
+            floor,
+            take_species,
+            forage,
+            flora,
+            output_multiplier,
+            per_worker_biomass_capacity,
+            seasonal,
+        )
+        .to_f32();
+        if provisions <= REALIZED_PROJECTION_PROVISIONS_EPSILON {
+            return None;
+        }
+        Some(ProjectedForageTurn {
+            biomass: (biomass_before - self.sim.biomass).max(0.0),
+            provisions,
+        })
     }
 }
 

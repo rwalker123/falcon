@@ -153,6 +153,8 @@ fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
@@ -486,6 +488,7 @@ fn spawn_forager_of(
             LaborAllocation {
                 assignments: vec![
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Forage {
                             tile: patch,
                             floor: policy,
@@ -498,6 +501,7 @@ fn spawn_forager_of(
                         upkeep_kit: None,
                     },
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Agriculture,
                         workers: keepers,
                         kit: None,
@@ -507,6 +511,7 @@ fn spawn_forager_of(
                     // **A pool of the same size staffs the build** — what this fixture meant when
                     // one crew did every job (`docs/plan_standing_upkeep.md` §2.5).
                     LaborAssignment {
+                        party: None,
                         target: LaborTarget::Builders,
                         workers: foragers,
                         kit: None,
@@ -1194,13 +1199,17 @@ const TILLAGE_ITEM: &str = "hoes";
 /// same workers, same policy — the only difference is which rung the patch stands on. Runs the labor
 /// arm alone (no Logistics pass), so neither regrowth nor the feral decay can move one rung.
 ///
-/// **Retargeted twice.** It once pinned `field / tended == 2.0`; slice 7 replaced that with each rung
-/// against its own model (rung 2 a curve, rung 3 a managed rate). **Flora Roster S2 then retired the
-/// tended regrowth boost** (`tended_regrowth_gain` → neutral `1.0`), so a *bare* tended patch — no crop
-/// committed here — now regrows exactly as fast as wild: the wild↔tended step is `≤`, not `<`.
-/// Tending's payoff over wild moved to **concentration + conversion** (a committed crop), pinned by
-/// `flora_commitment.rs` / `flora_roster.rs`; this bare-rung test keeps the strict `tended < Field`
-/// step (which the neutral gain only widens) and each rung against its own model.
+/// **Retargeted three times.** It once pinned `field / tended == 2.0`; slice 7 replaced that with
+/// each rung against its own model (rung 2 a curve, rung 3 a managed rate). **Flora Roster S2 then
+/// retired the tended regrowth boost** (`tended_regrowth_gain` → neutral `1.0`), and it has since
+/// returned at `1.5`. Tending's main payoff over wild is still **concentration + conversion** (a
+/// committed crop), pinned by `flora_commitment.rs` / `flora_roster.rs`.
+///
+/// **Every rung is measured on PRODUCTION, because the one forager caps all three takes at the same
+/// carry.** The wild↔tended step used to be asserted on the take, as `tended == gain × wild`; that
+/// only held because the gain was `1.0` and both sides were the same carry-capped load. The gain is
+/// a production claim, so it is asserted where production is read (`rung_payoff`), exactly as the
+/// Field's two gains already were.
 #[test]
 fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     /// One turn's Sustain harvest from the same primed patch, standing on the given rung, plus the
@@ -1248,17 +1257,12 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     let _ = capacity;
 
     // **Each rung against its own model — stated as what its config lever MEANS.**
-    //
-    // Rungs 1–2 are both *gathered*, off the same MSY curve at the same biomass, so the only thing
-    // between them is the tended curve's `r` multiplier: the bare rung-2 payoff **is** the gain, exactly
-    // and scale-freely. Since S2 that gain is neutral (`1.0`), so a bare tended patch reads exactly wild
-    // here — tending's payoff over wild is carried by a committed crop (conversion), not this curve.
     assert!(wild > 0.0, "baseline wild skim must be positive");
+    // **One forager carries one load off wild and tended ground alike** — the take is carry-capped,
+    // so what tending bought has to be read on the production side below.
     assert!(
-        (tended - gain * wild).abs() < 1e-3,
-        "a bare tended patch skims exactly `tended_regrowth_gain ×` the same patch wild — neutral at \
-         S2's gain of {gain}: {tended} vs {}",
-        gain * wild
+        (tended - wild).abs() < 1e-3,
+        "one forager carries the same load off a wild and a tended patch: {tended} vs {wild}"
     );
     // **RUNG 3 IS THE SAME SKIM, ON RICHER AND FASTER LAND.** The managed rate is retired — a rung
     // may change production, no rung changes the draw — so a Field is drawn down like everything else
@@ -1280,8 +1284,18 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
         patch.biomass = biomass;
         core_sim::rung_payoff(&patch, &[], &labor.forage, &flora, 1.0, rung)
     };
+    let produced_wild = ladder_climbs(RungKey::PlantWild);
     let produced_tended = ladder_climbs(RungKey::PlantTended);
     let produced_field = ladder_climbs(RungKey::PlantField);
+    // Rungs 1–2 are both *gathered*, off the same MSY curve at the same biomass, so the only thing
+    // between them is the tended curve's `r` multiplier: a bare rung-2 patch produces **exactly** the
+    // gain times wild, scale-freely.
+    assert!(
+        (produced_tended - gain * produced_wild).abs() < 1e-3,
+        "a bare tended patch produces exactly `tended_regrowth_gain ×` the same patch wild (gain \
+         {gain}): {produced_tended} vs {}",
+        gain * produced_wild
+    );
     assert!(
         produced_field > produced_tended,
         "a Field must out-PRODUCE the tended patch beneath it: {produced_field} vs \
@@ -1298,10 +1312,8 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     );
 
     // **And the ladder climbs — on PRODUCTION, which is what a rung buys.** This is the claim; the
-    // pins above are how it is bought. Since S2 the bare wild↔tended step is `≤` (a neutral tended
-    // patch with no crop equals wild); the strict climb to the Field survives and the neutral gain
-    // only widens it.
-    let produced_wild = ladder_climbs(RungKey::PlantWild);
+    // pins above are how it is bought. The wild↔tended step stays `≤` so a neutral gain of `1.0`
+    // (which `validate()` accepts) is still a climb.
     assert!(
         produced_wild <= produced_tended && produced_tended < produced_field,
         "the plant ladder must be monotone in production: wild {produced_wild} → tended \

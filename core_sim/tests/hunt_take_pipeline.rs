@@ -32,9 +32,14 @@ fn equipped_haul_rate() -> f32 {
     )
 }
 
-/// The shipped quarry the **engagement** binds on, and the one the defect was reported from:
-/// `engage_rate 0.33`, `wariness 0.25`, `body_mass 12`, `defense 2`, `durability 20`.
+/// The shipped quarry the defect was reported from: `engage_rate 1.0` (it was `0.33` when the
+/// reach was floored), `wariness 0.25`, `body_mass 12`, `defense 2`, `durability 20`.
 const BOAR: &str = "Wild Boar";
+
+/// The shipped quarry a lone hunter reaches **less than one of** a turn, with the fight left
+/// slack: `engage_rate 0.5`, `wariness 0.55`, so `0.225` stand per hunter-turn against a spear's
+/// `(20 − 2) / 35 ≈ 0.51` bodies of fight — the part body is the engagement's, not the fight's.
+const PART_BODY_QUARRY: &str = "Wild Horses";
 
 /// Standing stock far above anything a party can take, so the escapement room never binds and the
 /// take is decided by the reach and the fight.
@@ -95,7 +100,7 @@ fn sustained_take(species: &str, workers: u32) -> (f32, u32) {
 
 /// **THE ACCEPTANCE TEST: TWO HUNTERS TAKE MORE THAN ONE, THREE MORE THAN TWO, AND SO ON.**
 ///
-/// The reach was `floor(workers × engage_rate).max(1)`, which on the shipped Wild Boar's `0.33`
+/// The reach was `floor(workers × engage_rate).max(1)`, which on the Wild Boar's then-shipped `0.33`
 /// answered **one animal for every crew from 1 to 6**. Reported from play: four hunters brought home
 /// exactly what one did, `0.18 food/turn` either way. There is no flat region anywhere in the run
 /// now, and it is asserted on the **take** rather than on the reach — a cap that rises while the
@@ -124,7 +129,7 @@ fn every_extra_hunter_brings_home_strictly_more() {
 
 /// **A LONE HUNTER EVENTUALLY KILLS — at exactly the rate its reach implies.**
 ///
-/// One hunter reaches `0.33` of a boar a turn and keeps `1 − wariness` of that, so a `floor()` at
+/// One hunter reaches `0.5` of a wild horse a turn and keeps `1 − wariness` of that, so a `floor()` at
 /// either the retreat or the fight would leave it **zero, for ever** — strictly worse than the
 /// retired `max(1)` and the one regression the un-floored reach could have shipped. What carries the
 /// part body between turns is the fight's own accumulator (`combat::DamageLedger` on `Herd::wounds`),
@@ -133,18 +138,18 @@ fn every_extra_hunter_brings_home_strictly_more() {
 #[test]
 fn a_lone_hunter_kills_at_its_reach_rate_over_many_turns() {
     let fauna = FaunaConfig::builtin();
-    let rate = fauna.engage_rate_for(BOAR);
-    let stay = core_sim::stay_fraction(fauna.wariness_for(BOAR), NEUTRAL_DISPERSION);
+    let rate = fauna.engage_rate_for(PART_BODY_QUARRY);
+    let stay = core_sim::stay_fraction(fauna.wariness_for(PART_BODY_QUARRY), NEUTRAL_DISPERSION);
     assert!(
         rate < 1.0,
         "the fixture must have a sub-body reach ({rate}) or this test is not about the part body"
     );
 
-    let (_, killed) = sustained_take(BOAR, 1);
+    let (_, killed) = sustained_take(PART_BODY_QUARRY, 1);
     let expected = SUSTAINED_TURNS as f32 * rate * stay;
     assert!(
         (killed as f32 - expected).abs() <= ONE_WHOLE_ANIMAL,
-        "a lone hunter must take `turns × engage_rate × stay_fraction` boar within one animal — \
+        "a lone hunter must take `turns × engage_rate × stay_fraction` horses within one animal — \
          killed {killed} over {SUSTAINED_TURNS} turns against {expected}"
     );
 }

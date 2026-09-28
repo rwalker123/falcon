@@ -412,10 +412,10 @@ more)` is what a rule may *send* — rule 1's single-source candidate, the row-t
 *feed while moving* and *spare hands into hunts* all assign a herd at most its units.
 
 **A herd is forecast by the sim's crew take, never by its row's rate.** The herd row's
-`per_worker_yield` is the kit's **carry** (the big-game sled, `40 biomass × 0.02` = 0.8 on every
-herd in view), not a kill rate: ranked on it, seed 54 put hunters on a boar, read a full carry a
+`per_worker_yield` is the kit's **carry** (the big-game sled, `40 biomass × 0.02` = 0.8, at the
+then-shipped meat rate, on every herd in view), not a kill rate: ranked on it, seed 54 put hunters on a boar, read a full carry a
 hunter, and the sim paid 0.24 once in four turns — one boar at a time, about what bone spears do
-(`engage 0.33, retreat 0.25`). The sim already answers the real question:
+(`engage 0.33` as the boar then shipped, `retreat 0.25`). The sim already answers the real question:
 `QueryPayload::HuntCrewTake` is, per crew size `1..=max_workers`, the low / likely / high
 **animals** a *resident* band brings down per turn at the base tuning, with the band's live wear
 and kit coverage priced in and `armed_crew` saying why the curve stops (`answer_hunt_crew_take`,

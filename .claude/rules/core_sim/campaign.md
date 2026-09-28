@@ -792,11 +792,11 @@ transferSent` ledger identity.
 > | `DowryOut` / `DowryIn` | local | the other half of the split | `systems::fission` (`fission.md`) |
 > | `ShipmentOut` | route | the destination | the trade launch — **the cargo only** (`expeditions.md`) |
 > | `ShipmentIn` | route | the sender (the party's home band) | a shipment landing |
-> | `PartyHome` | route | none — names the party | a party's **own pack**: a hunt's drop-off, the `Returning` fold-back, a cancel in camp |
+> | `PartyHome` | route | none — names the party (a work party has no `BandId`, so it names none) | a party's **own pack**: a hunt's drop-off, the `Returning` fold-back, a cancel in camp, and a **work party's caravan** settled home when its posting ends (`systems::labor::stand_down_party`, `work-party.md`) |
 > | `PartyProvisions` | route | none — names the party | a party's launch larder (a scout's, a shipment party's) |
 > | `ShipmentReturned` | route | the destination — names the party | a trade party's **undelivered cargo**: the `Returning` fold-back, a cancel in camp |
 >
-> **Eight writer sites, eight causes.** The cancel-in-camp fold-back (`cancel_party_standing_in_camp`
+> **Nine writer sites, eight causes.** The work party's settle step is the ninth, booking `PartyHome`. The cancel-in-camp fold-back (`cancel_party_standing_in_camp`
 > in `bin/server.rs`) is the eighth site and books the same causes as the `Returning` arm, through the
 > same `FoldBack::book_home`: the pack as `PartyHome`, the cargo as `ShipmentReturned`. A returned
 > shipment names the counterparty and party its launch's `ShipmentOut` named, both read off

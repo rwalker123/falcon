@@ -100,7 +100,9 @@ pub struct HuntExpeditionConfig {
     /// length, where that length is `per_worker_carry / (per_worker_biomass_capacity ×
     /// provisions_per_biomass)` = `4.0 / (40 × 0.02)` = 5 turns — the turns any floor needs to fill
     /// a pack at *full* hunter throughput. Beyond 4× that, the herd's sustainable yield (not the
-    /// hunters) is the binding constraint by a wide margin, and the trip is a trap.
+    /// hunters) is the binding constraint by a wide margin, and the trip is a trap. **That 4× was
+    /// calibrated at the meat rate of `0.02`**; at `0.06` the throughput trip is `4.0 / (40 × 0.06)`
+    /// ≈ 1.7 turns, so the shipped `20` now sits at ~12× it.
     pub viability_warn_turns: u32,
     /// How far forward the launch forecast (`hunt_trip_forecast`) simulates the trip before giving
     /// up and reporting "won't fill". Default **60**. Two reasons for a bound:

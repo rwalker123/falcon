@@ -162,6 +162,7 @@ fn world_hunting_at(
         },
         LaborAllocation {
             assignments: vec![LaborAssignment {
+                party: None,
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
                     floor,

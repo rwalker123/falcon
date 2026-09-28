@@ -88,6 +88,8 @@ fn base_world() -> App {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LaborConfigHandle::default());
     app.world
+        .insert_resource(core_sim::SupplyNetworkConfigHandle::default());
+    app.world
         .insert_resource(core_sim::FloraConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     // **The road ledger `advance_labor_allocation` counts spare road keepers against.** Empty
@@ -261,6 +263,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
+                    party: None,
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
                         floor: 0.5,
@@ -333,6 +336,14 @@ fn tail_spread(series: &[f32]) -> f32 {
 /// `the_pen_slaughters_whole_animals_every_turn` measures across the roster.
 const PEN_BODY_MASS: f32 = 2.0;
 
+/// The body mass the **convergence** sweep seats its pen with — finer than `PEN_BODY_MASS` so one
+/// whole animal is a small step against the settled herd. The pen slaughters whole bodies, so a herd
+/// settled at B carries a residual one-body oscillation of `body / B` in its tail band; at the shipped
+/// `pen_gain` (pen `r = 0.35 × 1.5 = 0.525`) a rabbit-class body of 2 on B ≈ 100 is a ~2% step, over
+/// the `SMALL_BAND` the test holds convergence to. This is fixture granularity, not a change to what
+/// is asserted: at a quarter of a rabbit one body is ~0.5% of B, well under the band.
+const CONVERGENCE_BODY_MASS: f32 = 0.5;
+
 /// Run a penned herd (radius `r`, start biomass `start`) to convergence and return its settled biomass.
 fn run_pen_to_settle(radius: u32, start: f32, cap: f32, fodder: f32, wild_r: f32) -> f32 {
     let mut app = base_world();
@@ -349,7 +360,7 @@ fn run_pen_to_settle(radius: u32, start: f32, cap: f32, fodder: f32, wild_r: f32
         wild_r,
         cap,
         start,
-        PEN_BODY_MASS,
+        CONVERGENCE_BODY_MASS,
     );
     let keeper = spawn_keeper(&mut app, &id, tile);
 
@@ -599,6 +610,7 @@ fn begin_extension(
         {
             Some(row) => row.workers = KEEPER_WORKERS,
             None => allocation.assignments.push(LaborAssignment {
+                party: None,
                 target: LaborTarget::Builders,
                 workers: KEEPER_WORKERS,
                 kit: None,

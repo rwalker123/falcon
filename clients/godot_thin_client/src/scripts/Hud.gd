@@ -25,13 +25,10 @@ signal move_band_requested(payload: Dictionary)
 ## party on a resident band (a party-size stepper) and clicks a target tile. Payload keys:
 ## { faction, band, party_workers, x, y }. Main formats the `send_expedition …` command.
 signal send_expedition_requested(payload: Dictionary)
-## Hunting expedition (docs/plan_exploration_and_sites.md §2b). Sent after the player outfits a party
-## on a resident band and clicks a target herd. Payload keys: { faction, band, party_workers,
-## fauna_id, fauna_label }. `fauna_id` is the DATABASE KEY the command line addresses the herd with;
-## `fauna_label` is its player-facing species name (via `SourceForecast.herd_display_name`), which is what the
-## command-feed note must read — a feed line naming `game_deer_07` is a key leaking into the game UI.
-## Main formats the `send_hunt_expedition …` command.
-signal send_hunt_expedition_requested(payload: Dictionary)
+## ⛔ RETIRED — **`send_hunt_expedition_requested`** (`docs/plan_civilization_steps.md` §One work
+## party). A herd past the band's apron is an ordinary hunt whose crew posts a caravan; the client
+## composes and sends no hunting expedition any more. The sim's verb survives until #704 and is
+## unreachable from here.
 ## DENIAL raid (`docs/plan_denial_raid.md`) — the third mission, launched from the parties zone's own
 ## compose sheet. Payload keys: { faction, band_id, party_workers, fauna_id, fauna_label } and
 ## **nothing else**: the command grammar `send_denial_raid <faction> <band> <party> <fauna_id>` is
@@ -681,8 +678,6 @@ func _ready() -> void:
         forestry_assign_controls, extraction_assign_controls,
         tile_panel,
         _resolve_assign_band, _herd_label_for_id, _emit_assign_labor)
-    _drawercompose.send_hunt_expedition_requested.connect(
-        func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     # **THE ROAD LADDER'S DECLARATION GOES STRAIGHT OUT — no optimistic overlay write.**
     # `_on_work_row_improvement_requested` records a pending LABOR ROW before it relays, which is
     # right for a `⌃` on the work board; a road has no work row, so there is nothing to record and
@@ -770,8 +765,6 @@ func _ready() -> void:
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
     _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)
-    _bandpanel.send_hunt_expedition_requested.connect(
-        func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _bandpanel.send_denial_raid_requested.connect(
         func(payload: Dictionary) -> void: send_denial_raid_requested.emit(payload))
     _bandpanel.send_trade_expedition_requested.connect(

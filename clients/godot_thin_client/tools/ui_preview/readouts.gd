@@ -447,3 +447,21 @@ static func detail_row_value(lines: Array[String], key: String) -> String:
 	if index < 0:
 		return DETAIL_ROW_ABSENT
 	return lines[index].substr(key.length() + DetailFormat.DETAIL_KV_SEPARATOR.length())
+
+## **THE WORK PARTY SECTION'S LINES, AS DRAWN** — every label under the sheet carrying
+## `HudWidgets.WORK_PARTY_LINE_META`, in draw order, each read off its own meta rather than its face,
+## so a claim compares what was rendered against the shipped formats and never against a string it
+## assembled from the same subtree. `[]` when the sheet mounted no section, which is a READING: the
+## absence claims on a sheet inside the apron are made against it.
+static func work_party_lines(root: Node) -> Array:
+	var lines: Array = []
+	_collect_work_party_lines(root, lines)
+	return lines
+
+static func _collect_work_party_lines(node: Node, lines: Array) -> void:
+	if node == null:
+		return
+	if node is Control and (node as Control).has_meta(HudWidgets.WORK_PARTY_LINE_META):
+		lines.append(String((node as Control).get_meta(HudWidgets.WORK_PARTY_LINE_META)))
+	for child in node.get_children():
+		_collect_work_party_lines(child, lines)

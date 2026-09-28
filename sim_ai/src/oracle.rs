@@ -1,8 +1,8 @@
 //! **The crew-take oracle** — the seam through which a herd is forecast by the sim's own answer
 //! rather than by the wire's per-hunter rate.
 //!
-//! The herd row's `per_worker_yield` is a **carry** (the kit's sled, `40 biomass × 0.02`), not a
-//! kill rate: every herd in view reads `0.8` a hunter, and five bone spears against a boar bring
+//! The herd row's `per_worker_yield` is a **carry** (the kit's sled, `40 biomass × 0.06`), not a
+//! kill rate: every herd in view reads `2.4` a hunter, and five bone spears against a boar bring
 //! home one animal every few turns. The sim already answers the real question —
 //! `QueryPayload::HuntCrewTake` returns, per crew size, the low / likely / high animals a
 //! *resident* band would bring down this turn at the base tuning, with the band's live kit wear

@@ -2771,8 +2771,10 @@ pub fn capture_snapshot(
         // Global labor config today (identical for every band); the work-range ring is surfaced
         // per-band so the client reads it off the selected band (future-proof if bands diverge).
         let band_work_range = labor_config.band_work_range;
-        // Effective hunt reach (= `band_work_range + hunt_leash_tiles`, the leash a Hunt lapses past),
-        // echoed per-band so the client offers a local hunt vs a hunting expedition by herd distance.
+        // Effective hunt reach (= `band_work_range + hunt_leash_tiles`) — the distance past which a
+        // hunt stops being local and posts a WORK PARTY instead (it is no longer a leash a row
+        // lapses past; see `.claude/rules/core_sim/work-party.md`). Echoed per-band so the client
+        // can tell a local hunt from a far posting by herd distance.
         let hunt_reach = labor_config.hunt_reach();
         // Expedition levers echoed per-cohort — same idiom as `band_work_range`: global config today,
         // surfaced per-band so the client reads them off the selected band. Populated for EVERY cohort

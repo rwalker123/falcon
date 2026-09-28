@@ -154,6 +154,7 @@ fn seat(app: &mut App, id: &str, species: &str, pos: UVec2) {
 fn resident_band(app: &mut App, tile: Entity, working: u32, warriors: u32) -> Entity {
     let assignments = if warriors > 0 {
         vec![LaborAssignment {
+            party: None,
             target: LaborTarget::Warrior,
             workers: warriors,
             kit: None,
