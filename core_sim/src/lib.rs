@@ -221,9 +221,10 @@ pub use fauna::{
     EcologyPhase, EngagementQuantum, EngagementStop, FightCasualties, Herd, HerdDensityMap,
     HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake,
     HuntDraw, HuntEngagement, HuntFight, HuntTakeBound, HuntingParty, PartyResolution, PreyDatum,
-    QuarryFight, RoamState, SourceYieldForecast, TakeRange, FODDERING_DISCOVERY_ID, FULLY_HERDED,
-    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_STANDING_COMMITMENT,
-    NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
+    ProjectionStart, QuarryFight, RoamState, SourceYieldForecast, TakeRange,
+    FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
+    NO_DEATHS_TO_REPORT, NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD,
+    PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,

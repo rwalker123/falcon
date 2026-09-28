@@ -648,6 +648,11 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > expedition keeps its own use of the field** — `expedition_take_biomass` banks the *party's*
 > processing throughput to meter when the next whole animal is ready, a different quantity.
 >
+> **A projection averages the kill over the retreat's outcomes; it never hands the fight the
+> retreat's mean.** `fauna::expected_kill_over_retreat` is the seam `HuntProjection::step` and
+> `project_arrivals_hunt` share, because the fight's per-turn clamp to the bodies standing is
+> concave. See `yield-forecast.md` → "THE EXPECTATION IS THE TAKE'S MEAN".
+>
 > **The take reads the CURRENT biomass, not `biomass_before_regrowth`.** That pre-regrowth basis
 > existed because a constant *catch* evaluated after Logistics regrowth takes more than the stock grew,
 > leaking a below-`K/2` herd down. Constant escapement has no such leak — `B − floor·K` is the stock

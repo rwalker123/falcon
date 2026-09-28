@@ -37,8 +37,8 @@ use core_sim::{
     CreaturesConfig, CultivationCeiling, DemographicsConfig, EquipmentConfig, FactionId,
     FaunaConfig, FloraConfig, FloraShare, ForagePatch, GrazePatch, GrazeRegistry, Herd, HuntDraw,
     HuntTakeBound, HuntingParty, HusbandryCeiling, KitChoice, KitCoverage, LaborConfig,
-    LadderConfig, PartyResolution, PreyDatum, Quarry, RungKey, SpeciesDef, TakeSelection,
-    DEFAULT_ESCAPEMENT_FLOOR, NO_BUILD_GEAR,
+    LadderConfig, PartyResolution, PreyDatum, ProjectionStart, Quarry, RungKey, SpeciesDef,
+    TakeSelection, DEFAULT_ESCAPEMENT_FLOOR, NO_BUILD_GEAR,
 };
 use sim_runtime::TerrainType;
 
@@ -348,6 +348,7 @@ fn settle_forage(
             DEFAULT_ESCAPEMENT_FLOOR,
             &TakeSelection::EVERYTHING,
             horizon,
+            ProjectionStart::BeforeRegrowth,
         ) * horizon as f32
     };
     let total = project(WARMUP_TURNS + MEASURED_TURNS) - project(WARMUP_TURNS);
