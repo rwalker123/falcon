@@ -496,6 +496,18 @@ rather than being two shapes. Pinned by
 > on a slaughter). Pinned against the live seeded take over 4,000 turns by
 > `core_sim/tests/hunt_realized_matches_take.rs`, at three standard errors of the live mean.
 >
+> **AND THE PROJECTED HERD LOSES WHAT THE LIVE HERD LOSES.** `HuntProjection::step` hands its landed
+> bodies to the live take's own quantiser (`quantise_animal_take`, `EngagementStop::WhenPackFull`),
+> removes every animal **killed** from the projected herd, and pays what `fauna::CarcassKept` says the
+> crew keeps — the carried share for a resident band, the whole carcass for a work party. That enum
+> is the live hunt arm's own reading of the take (`systems::labor` asks it too), so the two cannot
+> disagree about what a take pays. The step used to remove only the carried share, so a carry-bound
+> hunt on a heavy body kept a projected herd fatter by every wasted carcass and re-cleared a body
+> sooner: fourteen speared hunters on Thunder Mammoths projected `6.85` food a turn against `4.94`
+> paid. Pinned by `hunt_realized_matches_take::a_carry_bound_heavy_hunt_projects_what_the_take_pays`,
+> where the take draws nothing and the tolerance is 1%. `project_arrivals_hunt`, the seeded row's
+> outcomes and the raid and denial projections already ran the quantiser and removed the kill.
+>
 > **ONE FIGHT PER CALL, NOT ONE PER OUTCOME.** A hunt's damage to its quarry does not depend on how
 > many animals stand — it fields **one** quarry contingent, so `combat::resolve_fight` hands it every
 > attacker at any count, and the one-sided arm never reads the count — which enters only through the
@@ -1164,7 +1176,14 @@ rather than asserting it.
   `fauna::hunt_take_bound`, so the binding stage comes off the **live** path: the harness drives
   `systems::hunt_take` forward over the same horizon on a private clone — Logistics regrowth then the
   Population take, the shipped order — and tallies `HuntOutcome::bound`. The sim resolves the take and
-  reports its own bound; the harness only counts them. The plant web prints `n/a` there (it has no
+  reports its own bound; the harness only counts them. **The drive DRAWS**, at the live take's own
+  per-event seed over 200 independent runs, and its killed/carried/wasted columns are per-run means
+  held to three standard errors inside 5% of themselves — driving it at `HuntDraw::EXPECTED` played a
+  turn the take never plays (the fight at the retreat's mean head count). Its stage-terms diagnosis
+  reads each turn's `stayed` and `brought_down` as expectations over the retreat's outcomes
+  (`fauna::expected_stayers`, `fauna::OutcomeKills`). `food_rate_survey` settles its food and stock
+  columns on the shipped projection's own step (`fauna::HuntProjection`) and draws only its
+  binding-stage column. The plant web prints `n/a` there (it has no
   engagement, retreat or fight) and answers with **carry utilisation** instead, which is
   `biomass brought home per worker ÷ that worker's carry` and reads `100%` exactly when the basket is
   what binds.

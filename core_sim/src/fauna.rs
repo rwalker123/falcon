@@ -5807,6 +5807,8 @@ pub fn project_realized_hunt(
             output_multiplier,
             workers,
             floor,
+            // The resident band's headline — it keeps what its packs carry.
+            CarcassKept::Carried,
         ) else {
             break; // the herd is gone or the source is spent — stop before diluting the average.
         };
@@ -5821,13 +5823,48 @@ pub fn project_realized_hunt(
 }
 
 /// **ONE PROJECTED TURN OF A HUNT'S TAKE** — what [`HuntProjection::step`] hands back: the biomass
-/// the crew took off the herd and what it is worth.
+/// the crew keeps and what it is worth.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedHuntTurn {
-    /// Biomass drawn off the herd this turn — the carry unit a work party's pack is measured in.
+    /// Biomass the crew keeps this turn ([`CarcassKept`]) — the carry unit a work party's pack is
+    /// measured in. **Not** what the herd lost: that is every animal killed, carried or not.
     pub biomass: f32,
-    /// The take's yield vector, the standing half (milk, eggs) included.
+    /// The take's yield vector — the kept biomass valued, the standing half (milk, eggs) included.
     pub yields: YieldAccounts,
+}
+
+/// **WHAT OF A TAKE THE CREW KEEPS** — the one reading the live hunt arm and every projection of it
+/// share, so the two cannot disagree about what a take pays.
+///
+/// The herd loses every animal **killed** either way ([`AnimalTake::killed_biomass`]); what differs
+/// is what the crew brings home. A resident band walks away from what its packs cannot seat, so it
+/// keeps the **carried** share and the rest is waste. A work party's load is still standing at the
+/// source, so what one porter cannot shoulder waits for the next and it keeps the **whole carcass**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarcassKept {
+    /// A resident band — [`AnimalTake::carried`].
+    Carried,
+    /// A work party — [`AnimalTake::killed_biomass`].
+    Whole,
+}
+
+impl CarcassKept {
+    /// The reading for a row whose party (if it has one) is standing at the source.
+    pub fn for_posting(party_keeps_the_carcass: bool) -> Self {
+        if party_keeps_the_carcass {
+            Self::Whole
+        } else {
+            Self::Carried
+        }
+    }
+
+    /// The biomass of `take` this crew keeps.
+    pub fn of(self, take: &AnimalTake) -> f32 {
+        match self {
+            Self::Carried => take.carried,
+            Self::Whole => take.killed_biomass(),
+        }
+    }
 }
 
 /// **A HUNT, PROJECTED FORWARD ONE TURN AT A TIME, AT WHATEVER CREW IS STANDING THERE.**
@@ -5902,6 +5939,12 @@ impl HuntProjection {
         }
     }
 
+    /// The projected herd as the last step left it — its stock, its wounds, its growth. A reader
+    /// measuring a settled source over many steps reads the stock off this.
+    pub fn herd(&self) -> &Herd {
+        &self.quarry
+    }
+
     /// [`Self::new`], started at `start` in the turn — see [`ProjectionStart`].
     pub fn starting(herd: &Herd, fauna: &FaunaConfig, start: ProjectionStart) -> Self {
         Self {
@@ -5922,6 +5965,8 @@ impl HuntProjection {
         output_multiplier: f32,
         workers: u32,
         floor: f32,
+        // **What the crew keeps of the take** — see [`CarcassKept`].
+        kept: CarcassKept,
     ) -> Option<ProjectedHuntTurn> {
         let quarry = &mut self.quarry;
         // **`workers` IS THE TAKE CREW** (`docs/plan_standing_upkeep.md` §2.2) — the same term
@@ -5958,7 +6003,7 @@ impl HuntProjection {
         // ([`expected_kill_over_retreat`]) — never on the retreat's mean, which over-reads the take
         // (see [`retreat_outcomes`]) — and the expected bodies are banked into whole ones through
         // the kill arm's own carry.
-        let engagement_biomass = {
+        let brought_down = {
             let expected = expected_kill_over_retreat(
                 reach.min(animals_affordable(rate, quarry.body_mass)),
                 self.wariness,
@@ -5968,7 +6013,7 @@ impl HuntProjection {
                 quarry.wounds,
                 EngagementQuantum::WholeAnimals,
             );
-            self.kill.land(expected) * quarry.body_mass
+            self.kill.land(expected)
         };
         // **AND THE OTHER HALF OF THE SPLIT** — the milk, eggs and down the same herd pays for
         // standing there, at this turn's head count.
@@ -5983,13 +6028,26 @@ impl HuntProjection {
         {
             return None; // the source is spent — stop before diluting the average with dead turns.
         }
-        let take = offered.min(collection).min(engagement_biomass).max(0.0);
-        quarry.biomass -= take;
+        // **The live take's own quantiser** ([`quantise_animal_take`], the call `systems::hunt_take`
+        // makes): the bodies the fight brought down, bounded by what the packs seat. **The herd loses
+        // every animal KILLED and the crew keeps what [`CarcassKept`] says** — the live arm's two
+        // readings of the one take. Removing only the carried share (as this step once did) left
+        // the projected herd fatter than the live one by every wasted carcass, so a carry-bound hunt
+        // on a heavy body re-landed its kills sooner and over-read: Thunder Mammoths at fourteen
+        // hunters projected `7.06` food a turn against `4.93` paid.
+        let take = quantise_animal_take(
+            collection,
+            quarry.body_mass,
+            brought_down,
+            EngagementStop::WhenPackFull,
+        );
+        quarry.biomass -= take.killed_biomass();
+        let kept_biomass = kept.of(&take);
         // **Both products are projected from the same simulated take**, so the steady trade
         // headline can never drift from the steady food one (`docs/plan_hunt_yield_model.md` §9).
         let yields = self
             .hunt_yield
-            .apply(take, output_multiplier)
+            .apply(kept_biomass, output_multiplier)
             .plus(YieldAccounts {
                 provisions: standing_provisions,
                 // **Neither half of an animal's yield pays fodder** — the second account is the plant
@@ -5997,7 +6055,7 @@ impl HuntProjection {
                 fodder: 0.0,
             });
         Some(ProjectedHuntTurn {
-            biomass: take,
+            biomass: kept_biomass,
             yields,
         })
     }

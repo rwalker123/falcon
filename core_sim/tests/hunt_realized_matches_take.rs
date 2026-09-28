@@ -72,7 +72,7 @@ struct Readings {
     arrivals: Vec<f32>,
 }
 
-fn drive(species: &str, capacity: f32) -> Readings {
+fn drive(species: &str, capacity: f32, hunters: u32, carry: f32) -> Readings {
     let fauna = FaunaConfig::builtin();
     let def = fauna
         .species_by_display(species)
@@ -100,10 +100,10 @@ fn drive(species: &str, capacity: f32) -> Readings {
         let realized = project_realized_hunt(
             &herd,
             &fauna,
-            UNBOUNDED_CARRY,
+            carry,
             &party,
             NEUTRAL_OUTPUT,
-            HUNTERS,
+            hunters,
             FLOOR,
             REALIZED_HORIZON,
             ProjectionStart::AfterRegrowth,
@@ -111,21 +111,21 @@ fn drive(species: &str, capacity: f32) -> Readings {
         .provisions;
         let outcome = hunt_take(
             &mut herd,
-            HUNTERS,
+            hunters,
             FLOOR,
-            UNBOUNDED_CARRY,
+            carry,
             &party,
             &fauna,
             f32::INFINITY,
-            HuntDraw::Seeded(retreat_seed(MAP_SEED, tick, HERD_ID, HUNTERS)),
+            HuntDraw::Seeded(retreat_seed(MAP_SEED, tick, HERD_ID, hunters)),
         );
         let arrivals = project_arrivals_hunt(
             &herd,
             &fauna,
-            UNBOUNDED_CARRY,
+            carry,
             &party,
             NEUTRAL_OUTPUT,
-            HUNTERS,
+            hunters,
             FLOOR,
             ARRIVALS_HORIZON,
         );
@@ -157,7 +157,7 @@ fn standard_error(values: &[f32]) -> f32 {
 #[test]
 fn a_steady_hunts_published_rate_is_the_takes_mean() {
     for (species, capacity) in HERDS {
-        let readings = drive(species, capacity);
+        let readings = drive(species, capacity, HUNTERS, UNBOUNDED_CARRY);
         let live = mean(&readings.live);
         let tolerance = STANDARD_ERRORS * standard_error(&readings.live);
         assert!(
@@ -179,5 +179,52 @@ fn a_steady_hunts_published_rate_is_the_takes_mean() {
                  {published}, paid {live} (tolerance {tolerance})"
             );
         }
+    }
+}
+
+/// **A carry-bound hunt on a heavy body — the projection removes what the TAKE removes.**
+///
+/// Fourteen speared hunters on Thunder Mammoths: their packs seat `14 × 40 = 560` biomass against an
+/// `800`-unit body, so every kill leaves `240` on the ground. The live take removes the whole carcass
+/// from the herd and brings home the carried share. The projection used to remove only the carried
+/// share, so its herd stood `240` fatter after every kill, re-cleared a body sooner, and quoted
+/// `6.85` food a turn against `4.94` paid on this herd (`7.06` / `4.93` on the survey's).
+///
+/// **The take is deterministic here**, which is what lets the tolerance be tight: fourteen hunters
+/// reach `0.7` of a mammoth, under one whole body, so the retreat keeps that part body at its
+/// expectation and draws nothing, and `hit_chance 1.0` draws nothing in the fight. What remains
+/// between the two readings is the projection window's own edge — a kill that lands just past the
+/// horizon — averaged over thousands of windows.
+#[test]
+fn a_carry_bound_heavy_hunt_projects_what_the_take_pays() {
+    /// Hunters whose reach is under one mammoth, so the take draws nothing.
+    const MAMMOTH_HUNTERS: u32 = 14;
+    /// One speared hunter's haul — the equipped sled tier.
+    const SLED_CARRY: f32 = 40.0;
+    /// The roster's full Thunder Mammoth group — a herd whose regrowth, not the party, bounds the take.
+    const MAMMOTH_CAPACITY: f32 = 12_000.0;
+    /// Relative agreement between the projection and the take's mean.
+    const TIGHT_SHARE: f32 = 0.01;
+
+    let readings = drive(
+        "Thunder Mammoths",
+        MAMMOTH_CAPACITY,
+        MAMMOTH_HUNTERS,
+        SLED_CARRY,
+    );
+    let live = mean(&readings.live);
+    assert!(
+        live > 0.0,
+        "liveness: the hunt must be paying something ({live})"
+    );
+    for (name, published) in [
+        ("realized", mean(&readings.realized)),
+        ("arrivals", mean(&readings.arrivals)),
+    ] {
+        assert!(
+            (published - live).abs() <= TIGHT_SHARE * live,
+            "the published {name} rate must be what the take pays — published {published}, paid \
+             {live}"
+        );
     }
 }

@@ -11,8 +11,10 @@
 //! averaged over [`MEASURED_TURNS`] more, so neither the whole-animal quantum nor the wound ledger's
 //! carry shows as a lump.
 //!
-//! - **The animal web** is driven through `hunt_take` itself, Logistics regrowth first, the shipped
-//!   order — the function the turn pays through.
+//! - **The animal web** is settled on the shipped projection's own step (`HuntProjection`, which
+//!   `project_realized_hunt` loops), Logistics regrowth first, the shipped order — the take's
+//!   expectation, each turn's kill averaged over the retreat's outcomes. Its binding-stage column is
+//!   read off `hunt_take` itself, drawn at the live take's own seed. See `settle_hunt`.
 //! - **The plant web** is driven through `project_realized_forage`, whose loop body is the one
 //!   `forage_take` the turn pays through; a gather is continuous, so the projection *is* the take.
 //!
@@ -33,12 +35,12 @@ use core_sim::{
     herd_destination_capacity, herd_ecology, herd_space_capacity, herd_standing_provisions,
     herd_upkeep_demand, hunt_take, patch_carrying_capacity, patch_composition, patch_ecology,
     patch_provisions_per_biomass_taking, patch_upkeep_demand, project_realized_forage,
-    regrow_biomass, selected_biomass_share, sustainable_yield, BandEquipment, CombatConfig,
-    CreaturesConfig, CultivationCeiling, DemographicsConfig, EquipmentConfig, FactionId,
-    FaunaConfig, FloraConfig, FloraShare, ForagePatch, GrazePatch, GrazeRegistry, Herd, HuntDraw,
-    HuntTakeBound, HuntingParty, HusbandryCeiling, KitChoice, KitCoverage, LaborConfig,
-    LadderConfig, PartyResolution, PreyDatum, ProjectionStart, Quarry, RungKey, SpeciesDef,
-    TakeSelection, DEFAULT_ESCAPEMENT_FLOOR, NO_BUILD_GEAR,
+    regrow_biomass, retreat_seed, selected_biomass_share, sustainable_yield, BandEquipment,
+    CarcassKept, CombatConfig, CreaturesConfig, CultivationCeiling, DemographicsConfig,
+    EquipmentConfig, FactionId, FaunaConfig, FloraConfig, FloraShare, ForagePatch, GrazePatch,
+    GrazeRegistry, Herd, HuntDraw, HuntProjection, HuntTakeBound, HuntingParty, HusbandryCeiling,
+    KitChoice, KitCoverage, LaborConfig, LadderConfig, PartyResolution, PreyDatum, ProjectionStart,
+    Quarry, RungKey, SpeciesDef, TakeSelection, DEFAULT_ESCAPEMENT_FLOOR, NO_BUILD_GEAR,
 };
 use sim_runtime::TerrainType;
 
@@ -534,7 +536,20 @@ struct SettledHunt {
     stock_over_k: f32,
 }
 
-/// Drive `hunt_take` for `WARMUP + MEASURED` turns under `fauna` and average the measured window.
+/// The map seed the live take's retreat is drawn from when the survey reads which stage binds.
+const SURVEY_MAP_SEED: u64 = 7;
+
+/// **Settle a hunt over `WARMUP + MEASURED` turns under `fauna` and average the measured window.**
+///
+/// **The food and the stock are the take's EXPECTATION, off the shipped projection**
+/// ([`HuntProjection`], the step `project_realized_hunt` loops): each turn's kill is averaged over
+/// the retreat's outcomes and banked into whole bodies on the quarry's wounds. Driving
+/// `hunt_take` at `HuntDraw::EXPECTED` instead handed the fight the retreat's MEAN head count, and
+/// the fight's per-turn clamp to the bodies standing is concave, so every row the fight and the
+/// retreat both bind over-read.
+///
+/// **Which stage binds is a live-take reading**, so it is tallied off `hunt_take` itself, drawn at
+/// the live take's own per-event seed over the same window.
 fn settle_hunt(
     herd: &Herd,
     party: &HuntingParty,
@@ -542,18 +557,38 @@ fn settle_hunt(
     carry: f32,
     fauna: &FaunaConfig,
 ) -> SettledHunt {
+    let capacity = herd.carrying_capacity;
+    let mut projection = HuntProjection::new(herd, fauna);
+    let mut food = 0.0_f32;
+    let mut stock = 0.0_f32;
+    for turn in 0..WARMUP_TURNS + MEASURED_TURNS {
+        let Some(projected) = projection.step(
+            fauna,
+            carry,
+            party,
+            UNIT_OUTPUT_MULTIPLIER,
+            workers,
+            DEFAULT_ESCAPEMENT_FLOOR,
+            // A resident band keeps what its packs carry, exactly as `hunt_take` pays it.
+            CarcassKept::Carried,
+        ) else {
+            break;
+        };
+        if turn >= WARMUP_TURNS {
+            food += projected.yields.provisions;
+            stock += projection.herd().biomass;
+        }
+    }
+
     let mut quarry = herd.clone();
     let ecology = herd_ecology(&quarry, fauna);
-    let capacity = quarry.carrying_capacity;
-    let provisions_per_biomass = fauna.hunt_yield_for(&quarry.species).provisions_per_biomass;
-    let mut carried = 0.0_f32;
-    let mut stock = 0.0_f32;
     let mut tally: Vec<(HuntTakeBound, u32)> = Vec::new();
     for turn in 0..WARMUP_TURNS + MEASURED_TURNS {
         regrow_biomass(&mut quarry, fauna);
         if quarry.biomass <= ecology.extinction_floor * capacity {
             break;
         }
+        let seed = retreat_seed(SURVEY_MAP_SEED, u64::from(turn), &quarry.id, workers);
         let outcome = hunt_take(
             &mut quarry,
             workers,
@@ -562,11 +597,9 @@ fn settle_hunt(
             party,
             fauna,
             NO_CARRY_LIMIT,
-            HuntDraw::EXPECTED,
+            HuntDraw::Seeded(seed),
         );
         if turn >= WARMUP_TURNS {
-            carried += outcome.take.carried;
-            stock += quarry.biomass;
             match tally.iter_mut().find(|(bound, _)| *bound == outcome.bound) {
                 Some((_, count)) => *count += 1,
                 None => tally.push((outcome.bound, 1)),
@@ -575,9 +608,7 @@ fn settle_hunt(
     }
     tally.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
     SettledHunt {
-        food_per_worker: carried * provisions_per_biomass * UNIT_OUTPUT_MULTIPLIER
-            / MEASURED_TURNS as f32
-            / workers as f32,
+        food_per_worker: food / MEASURED_TURNS as f32 / workers as f32,
         modal_bound: tally.first().map(|(bound, _)| *bound),
         stock_over_k: stock / MEASURED_TURNS as f32 / capacity,
     }

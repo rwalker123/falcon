@@ -7067,12 +7067,8 @@ pub fn advance_labor_allocation(
                         // what its packs cannot seat; a party's load is still standing at the
                         // source, so what one porter cannot shoulder waits for the next one. Its
                         // take is therefore every animal brought down, not the part carried.
-                        let party_keeps_the_carcass = postings.contains_key(&idx);
-                        let loaded = if party_keeps_the_carcass {
-                            take.killed_biomass()
-                        } else {
-                            take.carried
-                        };
+                        let loaded =
+                            fauna::CarcassKept::for_posting(postings.contains_key(&idx)).of(&take);
                         let paid = pen_yield.apply(loaded, mult_f);
                         // **THE MILK, THE EGGS AND THE DOWN** — what the herd pays for standing
                         // there, at the species' own per-head rates

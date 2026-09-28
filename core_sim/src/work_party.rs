@@ -585,6 +585,8 @@ pub fn forecast_hunt_caravan(
                 output_multiplier,
                 present,
                 floor,
+                // A party's load waits at the source for the next porter — it keeps every carcass.
+                crate::fauna::CarcassKept::Whole,
             )
             .map(|turn| SourceTake {
                 food: turn.yields.provisions,
