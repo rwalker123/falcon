@@ -38,7 +38,8 @@ picker, split by KIND so that adding a channel is a data edit and never a code o
 |---|---|---|
 | `ui/overlay/OverlayChannels.gd` | all-`const` + `static`, **a registry** | The CLIENT-side channel descriptors, and the merge that folds them into the wire's `overlays.channels` roster. Three rows today: the empty key (`PLACEMENT_FIRST`), `terrain_tags` (`PLACEMENT_LAST`, gated on `MapView.has_terrain_tag_data`) and `ready_for_improvement` (`PLACEMENT_LAST`, gated on `MapView.has_ready_for_improvement_data`) — **and that placement is load-bearing precisely because the channel is built LAZILY**: the key is absent from `overlay_channel_order` for most of a frame's life, so the wire pass cannot place it and this row is what puts it in the list at all |
 | `ui/overlay/OverlayLegend.gd` | all-`static`, stateless | Renders one channel's title / description / readout into a container. Two `legend_kind`s — `KIND_RAMP` (the channel's own legend rows) and `KIND_FACTS` (the lines a descriptor's provider answers) — and **no channel is named in the file** |
-| `ui/overlay/OverlayPicker.gd` | the widget | The TWO buttons docked on `MinimapPanel`'s top border and the popover each opens; pushes the selection through `MapView.set_overlay_channel` and knows no channel by name |
+| `ui/overlay/OverlayPicker.gd` | the widget | The THREE buttons docked on `MinimapPanel`'s top border (`◐` channel menu, legend, `☰` map layers) and the popover each opens; pushes the selection through `MapView.set_overlay_channel` and the layer switches through `ClientSettings.set_map_toggle`, and knows no channel or toggle by name |
+| `ui/overlay/MapToggles.gd` | all-`const` + `static`, **a registry** | The MAP-LAYER TOGGLES — one row `{key, label, tooltip, default}` per independently switchable layer drawn over the map. One row today: `trade_network` (`ExchangeNetworkRenderer`, default on) |
 | `ui/overlay/ReadyForImprovement.gd` | all-`static`, stateless | ONE channel's DERIVATION — the `ready_for_improvement` raster, its per-web counts and the tiles it lit (`MODEL_READY`), asked of `RungGates` (below). The registry names it; nothing else does |
 
 **A WIRE CHANNEL NEEDS NO REGISTRY ROW.** The sim publishes a label, a description and a
@@ -111,7 +112,7 @@ relocation rather than a loss.
 
 The full-screen dismiss catcher sits on a layer ABOVE the bar, so with either popover open the OTHER
 button never receives its click: pressing it read as *dismiss* rather than *switch*, and the player
-had to click twice to reach the other card. `_on_catcher_input` resolves the two buttons itself now,
+had to click twice to reach the other card. `_on_catcher_input` resolves the picker's buttons itself now,
 in the same terms their own `pressed` handlers use — the open one's button toggles it shut, the
 other's swaps to it, everything else dismisses.
 
@@ -120,6 +121,33 @@ ordinary map. `map_preview`'s `_assert_picker_buttons_swap` drives every leg as 
 `Viewport.push_input`, because driving a button's own `pressed` signal routes around the very thing
 under test. It shares `ui_preview`'s `InputProbe` for the canvas→window conversion — an unconverted
 press misses the bar entirely, which is what it did on the first attempt.
+
+### The third button: MAP LAYERS — a toggle is a registry row (issue #624)
+
+`☰` opens its own popover, attached to itself, titled `MAP LAYERS`: one checkbox per
+`MapToggles.ROWS` row, under the same one-rule-for-the-cluster, one-popover-at-a-time and catcher
+swap/close behaviour as the other two. **A toggle is not a channel.** A channel is a raster that
+replaces the tile fill, exactly one at a time; a toggle is an independent layer of marks drawn over
+whichever channel is painted, and any number can be on at once.
+
+**Adding a toggle is a data edit plus the owning renderer's check.** The popover lists the registry
+and names no row; the renderer asks `ClientSettings.is_map_toggle_on(key)` at draw time.
+
+**Persisted in `ClientSettings`**, section `[map_toggles]`, one bool per key the player has SET.
+`is_map_toggle_on` falls back to the row's `default`, so a new row needs no migration;
+`set_map_toggle` saves and emits `changed`; `restore_defaults` empties the section. `MapView`
+connects `changed` to `queue_redraw` — a toggle is read live, so a flip costs a frame, never a map
+cache invalidation.
+
+**`BAR_WIDTH` is `BUTTON_COUNT × BUTTON_SIZE` plus the gaps, and it is the NOMINAL reservation.** A
+button's stylebox padding makes it wider than `BUTTON_SIZE`, so `MinimapPanel` sets the bar to
+`GROW_DIRECTION_BEGIN`: it grows leftward from the right anchor. It grew rightward before, spilling
+past its anchor toward the panel edge — and with a third button, off the viewport in the floating
+mount.
+
+`map_preview`'s `_exchange_network_states` asserts the glyph, the three-button layout, the popover's
+attachment gap, a checkbox per row stating its setting, the uncheck driven through the box (into a
+scratch prefs file) turning the layer off, and the swap/close leg as real presses.
 
 ### THE BIOME KEY WEARS THE TERRAIN ART, NOT THE PALETTE
 

@@ -180,6 +180,12 @@ Four things the ordering is *meant* to say, and which a re-tune must not quietly
   which is the pressure toward penning.
 - **Dangerous-for-their-size are the worst deals in the game** — boar 4, wolf 1.75. Three hunters for
   a 12-unit animal is a bad trade however it is sliced, and a boar hunt should read as a mistake.
+  *Revised for boar (2026-09-25, a playtest trial on PR #741): boar's `engage_rate` went 0.33 → 1.0,
+  so `engage_rate × body_mass` is 12 and it sits with its size peers (deer, reindeer). Its danger was
+  being counted twice — once here in the reach term and again in `ferocity` / `attack` / the injury
+  hazard, where every other species carries it — and its `wariness` of 0.25 says a boar does not
+  flee. Its `pen_engage_gain` went 20 → 6.6 so a keeper's reach at the pen is unchanged. The wolf,
+  inedible anyway, is now the roster's lowest.*
 
 **Seal at 24 is the row most likely to cause trouble.** Historically right — seals are helpless on a
 haul-out — but it makes a coastal start materially stronger than an inland one. Known, not

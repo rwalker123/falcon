@@ -152,7 +152,8 @@ uniform sampler2D layer_luma_map : filter_nearest;
 //                    per-water one. foam_scale = 0 is not a legal profile.
 //   B = wisp_scale — multiplies the secondary offshore disturbance: its centre distance, its half-width AND
 //                    its strength. 0 = no second disturbance.
-// Terrains with no `shore_profile` block read the neutral (1, 1, 1), which is a bit-exact no-op.
+//   A = surge_scale — multiplies the shore pulse (see shore_surge). 0 = the surf never surges (a lake).
+// Terrains with no `shore_profile` block read the neutral (1, 1, 1, 1), which is a bit-exact no-op.
 // Built by TerrainTextureManager.
 uniform sampler2D layer_shore_map : filter_nearest;
 // PER-TERRAIN BLEND PROFILE, the same 1×N RGBA-float-by-layer-index table — the flat↔flat seam's twin of
@@ -214,6 +215,54 @@ uniform float blend_noise_amount; // amplitude of that boundary wobble (added to
 uniform float water_blend_band;
 uniform float water_blend_soft;
 uniform float water_blend_noise_amount;
+// THE WATER SURFACE (config "water_surface"; see water_surface() and WATER_* below). Every base sample of a
+// WATER layer goes through ONE function, so the depth field, the waterline cross-fade and the own-hex base all
+// see the identical surface and stay continuous. Land samples never touch these.
+// ANTI-TILING (static): a second, rotated + rescaled + offset sample of the same layer, mixed in by broad
+// world-noise patches, so the texture's exact-copy repeat every 1/base_scale hex-rows stops reading as a grid.
+uniform float water_variation_strength; // 0..1: the second sample's peak weight (0 = one plain sample, bit-exact)
+uniform float water_variation_cell;     // patch noise cell, px (variation_cell × radius) — zoom-invariant
+uniform float water_variation_rotation; // radians: the second sample's UV rotation
+uniform float water_variation_scale;    // the second sample's UV scale, relative to the base UV
+// WAVES (animated): two scrolling samples of the same layer add a luma ripple. Gated, with the chop and the
+// shore pulse, by water_motion_enabled (radius ≥ motion_min_radius, AND the player's `O` toggle), so the far
+// zoom — where the unmipmapped base art is minified — never shimmers.
+uniform float water_wave_strength;      // multiplies the waves' luma deviation from the layer mean
+uniform float water_wave_speed;         // wave-texture UV per second (a UV of 1.0 = one wave tile)
+uniform float water_wave_scale;         // wave UV scale, relative to the base UV (< 1 = broader swells)
+// THE CHOP: small patches that brighten, dim and morph IN PLACE — water that moves with no direction. It is
+// applied once per water fragment after the depth field (apply_water_motion), not per layer sample: it is the same
+// field for every water layer, so adding it after the depth-field mean equals adding it inside.
+uniform float water_chop_strength;      // peak luma offset of a bright (+) / dark (−) patch, 0..1 luma units
+uniform float water_chop_scale;         // feature size of the coarse octave, in HEX RADII (zoom-invariant)
+uniform float water_chop_rate;          // how fast the field evolves: noise cells of its TIME axis per second
+// THE SHORE PULSE (config "shore" → surge*; see shore_surge): the only wave modelled AGAINST the shore. The surf's
+// seaward reach surges as each wave lands, on a clock that drifts slowly along the coast so neighbouring stretches
+// crash at different moments. Nothing travels across open water: incoming swell was tried twice and removed.
+uniform float shore_surge_amount;       // the surf's seaward reach grows by this fraction at the top of a crash
+uniform float shore_surge_rate;         // crashes per second on any one stretch of shore
+uniform float shore_surge_cell;         // HEX RADII: the along-shore offset noise's cell (several hexes)
+// The motion gate for the waves, the chop and the shore pulse: TerrainRenderer ANDs the
+// zoom LOD (radius ≥ motion_min_radius) with the session-only `O` toggle. The static anti-tiling and the
+// temperature grade always run.
+uniform bool water_motion_enabled;
+// Added to TIME for the wave, chop and shore-pulse phase. Never pushed by TerrainRenderer (so 0 in the game): it exists so a
+// harness frozen at Engine.time_scale 0 can render the surface at two known phases, deterministically.
+uniform float water_time_offset;
+// THE WATER TEMPERATURE GRADE (config "water_temperature"; see water_temperature_grade()). Graded open water
+// shifts toward slate as it cools and toward turquoise as it warms, so climate reads off the sea at a glance.
+// temp_map: per hex, R = °C, G = has a reading (0 = none, incl. unexplored under fog), B = a graded terrain.
+uniform sampler2D temp_map : filter_nearest;
+uniform bool water_temp_enabled;       // false until the sim publishes its climate cut points, or at strength 0
+uniform float water_temp_strength;     // global multiplier on the whole grade
+uniform float water_temp_neutral;      // °C with no grade: mid-temperate, (boreal_max + temperate_max) / 2
+uniform float water_temp_cold_span;    // °C from neutral down to polar_max, where the cold grade is full
+uniform float water_temp_warm_span;    // °C from neutral up to temperate_max, where the warm grade is full
+uniform vec3 water_temp_cold_tint;
+uniform float water_temp_cold_desaturate;
+uniform float water_temp_cold_brightness;
+uniform vec3 water_temp_warm_tint;
+uniform float water_temp_warm_brightness;
 uniform float noise_cell;     // FEATURE value-noise cell size in px (config feature_noise_cell) — shared by the
                               // shoreline reach/wisp, the canopy treeline and the peak footline. Deliberately
                               // DECOUPLED from blend_noise_cell so retuning the interlock grain can't move any
@@ -579,6 +628,73 @@ const float HEX_CORNER_STEP_DEG = 60.0;
 // dissolves the silhouette (a pure ramp only softens its rim). Capped so a ramp always survives — a plateau
 // spanning the whole reach would put a hard step at the reach's outer edge.
 const float WATER_FIELD_PLATEAU_MAX = 0.5;
+// --- THE WATER SURFACE: fixed feel (the strengths / cells / speeds are config levers — see the uniforms) ---
+// Sample B's UV offset, in texture tiles: moves B's origin off A's, so the two are not aligned even where the
+// rotation leaves a lattice point in place (the rotation is about the UV origin).
+const vec2 WATER_VARIATION_UV_OFFSET = vec2(0.371, 0.613);
+// Decorrelates the A/B patch noise from every other world-noise field in this shader (shore, rivers, blend).
+const vec2 WATER_VARIATION_NOISE_OFFSET = vec2(157.0, 43.0);
+// Half-width of the smoothstep that turns the patch noise into B's weight. Well under 0.5, so the noise's
+// middle band ramps and its extremes saturate: BROAD patches of pure A and pure B, joined by soft mixes.
+const float WATER_VARIATION_EDGE = 0.18;
+// Floor on the variance-preserving renormalisation's denominator sqrt(wA² + wB²) (min 1/√2 at a 50/50 mix);
+// only a guard — the weights always sum to 1, so it is never reached.
+const float WATER_VARIANCE_NORM_MIN = 0.5;
+// The two wave samples scroll in DIFFERENT, non-opposite directions (≈ 107° apart), so their sum drifts and
+// morphs instead of sliding rigidly one way. Unit vectors in wave-UV space.
+const vec2 WATER_WAVE_DIR_A = vec2(0.8, 0.6);
+const vec2 WATER_WAVE_DIR_B = vec2(-0.342, 0.940);
+// The second wave sample is ROTATED (radians) and SCALED against the first, so the two copies of the same art
+// never line up into one doubled pattern.
+const float WATER_WAVE_B_ROTATION = 1.9;
+const float WATER_WAVE_B_SCALE = 1.31;
+// The second wave sample's direction runs at this fraction of the first's speed — two rates, no beat.
+const float WATER_WAVE_B_SPEED = 0.73;
+// THE CHOP — 3D value noise over (x, y, t·rate): time is an EVOLVING DIMENSION, never a translation, so the
+// field changes in place and nothing travels. (The swell it replaced was three travelling sine trains; live,
+// the whole sea read as flowing top-left → bottom-right and its crests drew a map-wide diagonal at 1.0×.)
+// Two octaves, the fine one a fraction of the coarse size, evolving at its own rate so the two never pulse
+// together; both are small (well under a hex) so no map-scale structure can form.
+const float CHOP_FINE_SCALE = 0.47;                          // fine octave's feature size, of the coarse one
+const float CHOP_FINE_RATE = 1.37;                           // fine octave's evolution rate, of the coarse one
+const vec2 CHOP_OCTAVE_WEIGHTS = vec2(0.65, 0.35);           // (coarse, fine); sum to 1
+const vec3 CHOP_OFFSET_COARSE = vec3(211.0, 67.0, 13.0);     // decorrelate the octaves from each other …
+const vec3 CHOP_OFFSET_FINE = vec3(37.0, 409.0, 101.0);      // … and from every other noise field
+// Value noise is built on a square lattice, and at chop size its patches read faintly square and axis-aligned.
+// Each octave is ROTATED (radians) off the screen axes, by different angles, so no lattice lines up with the
+// map, the hex grid or the other octave.
+const float CHOP_COARSE_ROTATION = 0.52;
+const float CHOP_FINE_ROTATION = -0.93;
+// THE INTERLEAVED PAIR — why each octave is TWO noises. vnoise3 interpolates its time axis with a smoothstep,
+// whose slope is ZERO at every lattice time: one copy stops the whole sea at once every 1/rate s (measured on
+// OCEAN_seq, 1 s apart: 5.03 → 3.80 → 2.72 levels/s). A second copy, CHOP_PAIR_TIME_SHIFT lattice steps later
+// on its time axis, is at mid-cell — its fastest — whenever the first is at a lattice time, so the two pauses
+// interleave and the pair moves at a near-constant rate. CHOP_PAIR_OFFSET moves it to unrelated lattice cells
+// (its z is 0, so the half-step shift stays exact), and CHOP_PAIR_NORM (1/√2) keeps the sum of the two
+// independent centred copies at one copy's spread.
+const float CHOP_PAIR_TIME_SHIFT = 0.5;
+const vec3 CHOP_PAIR_OFFSET = vec3(173.0, 293.0, 0.0);
+const float CHOP_PAIR_NORM = 0.70710678;
+const float VNOISE_MEAN = 0.5;                               // vnoise3's mid-value: subtracting it centres it
+// THE SHORE PULSE (see shore_surge). Each wave's landing is a smooth shape over one cycle (`fract(phase)`): a
+// quick run-up over the first SHORE_PULSE_RISE of the cycle, then a slower draw-back over the rest — smoothstep at
+// both ends, so it never snaps. The phase is `t · shore_surge_rate` plus an ALONG-SHORE offset: a low-frequency
+// world noise (cell shore_surge_cell hex radii) spread over SHORE_PULSE_OFFSET_SPAN cycles, so neighbouring
+// stretches crash at different moments and the coast never breathes in unison. It has no direction: nothing
+// travels, each stretch only rises and falls. The offset is sampled in map space, so the pulse is the same value
+// on both sides of a hex edge at a given world point, as every other shore term is.
+const float SHORE_PULSE_RISE = 0.25;
+const float SHORE_PULSE_OFFSET_SPAN = 3.0;                     // cycles across the noise's 0..1 range
+const vec2 SHORE_PULSE_NOISE_OFFSET = vec2(431.0, 97.0);
+// SETS: the crash height swells and eases every SHORE_PULSE_SET_WAVES waves (riding the same phase, so a set
+// arrives at different moments along the shore too): an occasional bigger crash, never a metronome.
+const float SHORE_PULSE_SET_WAVES = 4.0;
+const float SHORE_PULSE_SET_DEPTH = 0.5;                       // how far a lull drops, × the peak
+// hash13's input scale (Hoskins' "hash without sine": no sin(), so no precision loss as TIME grows).
+const vec3 HASH3_SCALE = vec3(0.1031, 0.1030, 0.0973);
+const float HASH3_ADD = 33.33;
+// Divide-by-zero guard for tint_keep_luma's rescale on a black texel.
+const float WATER_TEMP_LUMA_MIN = 1e-4;
 
 // v_world is the quad-LOCAL (viewport/screen-fixed) coordinate — it does NOT track the map on
 // pan/zoom. hex_origin (= MapView last_origin) moves with the pan/zoom, so hex-anchored terms
@@ -620,10 +736,169 @@ float mean_luma(int layer) {
 	return texelFetch(layer_luma_map, ivec2(layer, 0), 0).r;
 }
 
-// Shore profile of a terrain: (sand_scale, foam_scale, wisp_scale), fetched by layer index. Neutral
-// (1, 1, 1) for any terrain without a `shore_profile` block. See layer_shore_map.
-vec3 shore_profile(int layer) {
-	return texelFetch(layer_shore_map, ivec2(layer, 0), 0).rgb;
+vec2 rotate_uv(vec2 uv, float angle) {
+	float c = cos(angle);
+	float s = sin(angle);
+	return vec2(c * uv.x - s * uv.y, s * uv.x + c * uv.y);
+}
+
+// THE WATER SURFACE — the ONE sampler for every base sample of a WATER-class layer (the own-hex base, the depth
+// field's neighbours, the waterline cross-fade's water estimate). Every water layer goes through the identical
+// transform, so the depth-field mean between deep_ocean / shelf / … stays continuous: the result is a pure
+// function of (layer, world point, time), exactly as the plain sample it replaces was of (layer, world point).
+// Why it exists: the base art is sampled in continuous world space with repeat_enable, so ONE 512² texture
+// repeats as an EXACT COPY every 1/base_scale hex-rows; on a large water body nothing interrupts that, and the
+// copies read as a grid. Land hides it under biome seams, canopy and relief; open ocean cannot.
+//   1. ANTI-TILING — sample B at a rotated + rescaled + offset UV, mixed with sample A by broad world-noise
+//      patches (cell in hex radii → zoom-invariant). The mix is VARIANCE-PRESERVING: a plain lerp of two
+//      uncorrelated samples halves the detail's variance at 50/50, which reads as blurry flat blotches exactly
+//      where the patches meet; so the lerp's luma deviation from the layer mean is rescaled by
+//      1 / sqrt(wA² + wB²), applied as a LUMA offset so the hue is untouched.
+//   2. WAVES — two more samples of the same layer at a wave scale, scrolled with time in two non-opposite
+//      directions; their mean luma minus the layer mean, × water_wave_strength, is added to rgb.
+// 2 runs only with water_motion_enabled (the chop is applied per fragment — see
+// apply_water_motion). With strength and waves both 0 this returns the plain sample A, bit-exact.
+vec3 water_surface(int layer, vec2 map_px) {
+	vec2 uv_a = map_px / (2.0 * hex_radius) * base_scale;   // == base_uv at the call site, same expression
+	vec3 col = texture(biome_array, vec3(uv_a, float(layer))).rgb;
+	bool vary = water_variation_strength > 0.0;
+	bool waves = water_motion_enabled && water_wave_strength > 0.0;
+	if (!vary && !waves) {
+		return col;
+	}
+	float mean = mean_luma(layer);
+	if (vary) {
+		float n = vnoise(map_px / max(water_variation_cell, BLEND_SOFT_MIN) + WATER_VARIATION_NOISE_OFFSET);
+		float w_b = smoothstep(0.5 - WATER_VARIATION_EDGE, 0.5 + WATER_VARIATION_EDGE, n)
+			* clamp(water_variation_strength, 0.0, 1.0);
+		if (w_b > 0.0) {
+			float w_a = 1.0 - w_b;
+			vec2 uv_b = rotate_uv(uv_a, water_variation_rotation) * water_variation_scale + WATER_VARIATION_UV_OFFSET;
+			vec3 b = texture(biome_array, vec3(uv_b, float(layer))).rgb;
+			vec3 lin = col * w_a + b * w_b;
+			float norm = 1.0 / max(sqrt(w_a * w_a + w_b * w_b), WATER_VARIANCE_NORM_MIN);
+			float dev = luma(lin) - mean;
+			col = lin + vec3(dev * (norm - 1.0));   // rescale the deviation about the mean, as a luma offset
+		}
+	}
+	float t = TIME + water_time_offset;
+	if (waves) {
+		vec2 uv_w = uv_a * water_wave_scale;
+		vec2 uv_w1 = uv_w + WATER_WAVE_DIR_A * (t * water_wave_speed);
+		vec2 uv_w2 = rotate_uv(uv_w, WATER_WAVE_B_ROTATION) * WATER_WAVE_B_SCALE
+			+ WATER_WAVE_DIR_B * (t * water_wave_speed * WATER_WAVE_B_SPEED);
+		float l1 = luma(texture(biome_array, vec3(uv_w1, float(layer))).rgb);
+		float l2 = luma(texture(biome_array, vec3(uv_w2, float(layer))).rgb);
+		col += vec3((0.5 * (l1 + l2) - mean) * water_wave_strength);
+	}
+	return col;
+}
+
+// Pull `c` toward `tint`'s HUE while keeping its luma: multiply (so the texture's own detail survives), then
+// rescale back to the original luma. WATER_TEMP_LUMA_MIN guards the rescale on a black texel.
+vec3 tint_keep_luma(vec3 c, vec3 tint) {
+	vec3 t = c * tint;
+	return t * (luma(c) / max(luma(t), WATER_TEMP_LUMA_MIN));
+}
+
+// THE WATER TEMPERATURE GRADE of one colour, at the pixel's (neighbour-blended) temperature `temp`, scaled by
+// `amount` (its blended graded-ness). Cold: desaturate toward luma, pull toward the cold tint's hue, darken.
+// Warm: pull toward the warm tint's hue, brighten. Neutral temperature is a no-op. The two tails are exclusive
+// (one of cold / warm is always 0), and the final mix makes the whole thing scale with strength × amount.
+vec3 water_temperature_grade(vec3 c, float temp, float amount) {
+	float cold = clamp((water_temp_neutral - temp) / water_temp_cold_span, 0.0, 1.0);
+	float warm = clamp((temp - water_temp_neutral) / water_temp_warm_span, 0.0, 1.0);
+	vec3 g = c;
+	if (cold > 0.0) {
+		g = mix(g, vec3(luma(g)), water_temp_cold_desaturate * cold);
+		g = mix(g, tint_keep_luma(g, water_temp_cold_tint), cold);
+		g *= mix(1.0, water_temp_cold_brightness, cold);
+	}
+	if (warm > 0.0) {
+		g = mix(g, tint_keep_luma(g, water_temp_warm_tint), warm);
+		g *= mix(1.0, water_temp_warm_brightness, warm);
+	}
+	return mix(c, g, clamp(water_temp_strength * amount, 0.0, 1.0));
+}
+
+float hash13(vec3 p) {
+	p = fract(p * HASH3_SCALE);
+	p += dot(p, p.zyx + HASH3_ADD);
+	return fract((p.x + p.y) * p.z);
+}
+
+// Smooth 3D value noise — vnoise's twin with a third (time) axis.
+float vnoise3(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = mix(hash13(i), hash13(i + vec3(1.0, 0.0, 0.0)), f.x);
+	float b = mix(hash13(i + vec3(0.0, 1.0, 0.0)), hash13(i + vec3(1.0, 1.0, 0.0)), f.x);
+	float c = mix(hash13(i + vec3(0.0, 0.0, 1.0)), hash13(i + vec3(1.0, 0.0, 1.0)), f.x);
+	float d = mix(hash13(i + vec3(0.0, 1.0, 1.0)), hash13(i + vec3(1.0, 1.0, 1.0)), f.x);
+	return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+}
+
+// One chop octave: the interleaved pair (see CHOP_PAIR_*), centred on 0.
+float chop_octave(vec3 q) {
+	float a = vnoise3(q) - VNOISE_MEAN;
+	float b = vnoise3(q + CHOP_PAIR_OFFSET + vec3(0.0, 0.0, CHOP_PAIR_TIME_SHIFT)) - VNOISE_MEAN;
+	return (a + b) * CHOP_PAIR_NORM;
+}
+
+// The chop's COARSE octave at `p` (in chop cells) and time-axis position `z`.
+float chop_coarse(vec2 p, float z) {
+	return chop_octave(vec3(rotate_uv(p, CHOP_COARSE_ROTATION), z) + CHOP_OFFSET_COARSE);
+}
+
+// THE OPEN CHOP (see CHOP_*): signed, about −1..1, evolving in place.
+float open_chop(vec2 map_px, float t) {
+	vec2 p = map_px / (hex_radius * max(water_chop_scale, BLEND_SOFT_MIN));
+	float z = t * water_chop_rate;
+	float coarse = chop_coarse(p, z);
+	float fine = chop_octave(vec3(rotate_uv(p, CHOP_FINE_ROTATION) / CHOP_FINE_SCALE, z * CHOP_FINE_RATE)
+		+ CHOP_OFFSET_FINE);
+	return 2.0 * dot(vec2(coarse, fine), CHOP_OCTAVE_WEIGHTS);
+}
+
+// THE SHORE PULSE at `map_px`: the factor the shoreline surf's SEAWARD reach is multiplied by —
+// 1 + shore_surge_amount × `scale` × pulse (see SHORE_PULSE_*). `scale` is the water's own `surge_scale` from its
+// shore_profile (0 on a lake). Exactly 1 with motion gated off (LOD or `O`), at amount 0, and where the scale is 0,
+// so those coasts are bit-exact.
+float shore_surge(vec2 map_px, float scale) {
+	if (!water_motion_enabled || shore_surge_amount <= 0.0 || scale <= 0.0) {
+		return 1.0;
+	}
+	vec2 p = map_px / hex_radius;
+	float offset = SHORE_PULSE_OFFSET_SPAN
+		* vnoise(p / max(shore_surge_cell, BLEND_SOFT_MIN) + SHORE_PULSE_NOISE_OFFSET);
+	float phase = (TIME + water_time_offset) * shore_surge_rate + offset;
+	float y = fract(phase);
+	float pulse = y < SHORE_PULSE_RISE ? smoothstep(0.0, SHORE_PULSE_RISE, y)
+		: 1.0 - smoothstep(SHORE_PULSE_RISE, 1.0, y);
+	float sets = mix(1.0 - SHORE_PULSE_SET_DEPTH, 1.0, 0.5 + 0.5 * cos(TAU * phase / SHORE_PULSE_SET_WAVES));
+	return 1.0 + shore_surge_amount * scale * pulse * sets;
+}
+
+// THE WATER MOTION applied to a water fragment's colour `c`: the chop alone, a luma offset with the hue preserved.
+// Open and coastal water alike — no swell runs anywhere (the shore pulse moves the surf, in the shore pass).
+vec3 apply_water_motion(vec3 c, vec2 map_px) {
+	return c + vec3(open_chop(map_px, TIME + water_time_offset) * water_chop_strength);
+}
+
+// A BASE sample of any layer: water layers go through the one water sampler above, land keeps the plain
+// world-space sample. `is_water` is the layer's blend_class (id-map G) — never a guess from the id.
+vec3 base_sample(int layer, bool is_water, vec2 base_uv, vec2 map_px) {
+	if (is_water) {
+		return water_surface(layer, map_px);
+	}
+	return texture(biome_array, vec3(base_uv, float(layer))).rgb;
+}
+
+// Shore profile of a terrain: (sand_scale, foam_scale, wisp_scale, surge_scale), fetched by layer index. Neutral
+// (1, 1, 1, 1) for any terrain without a `shore_profile` block. See layer_shore_map.
+vec4 shore_profile(int layer) {
+	return texelFetch(layer_shore_map, ivec2(layer, 0), 0);
 }
 
 // Blend profile of a terrain: (width_scale, noise_scale, noise_cell_scale), fetched by layer index. Neutral
@@ -1048,7 +1323,8 @@ void fragment() {
 		bool own_navigable_base = own_layer == river_navigable_terrain_id;
 		int underlying_layer = int(texture(navigable_underlying_map, id_uv).r * 255.0 + 0.5);
 		int base_layer = own_navigable_base ? underlying_layer : own_layer;
-		vec3 result = texture(biome_array, vec3(base_uv, float(base_layer))).rgb;
+		// Water layers take the ONE water sampler (anti-tiling + waves — see water_surface); land the plain sample.
+		vec3 result = base_sample(base_layer, own_class == CLASS_WATER, base_uv, v_map);
 
 		// ELIGIBILITY: the base rule is SAME-CLASS — a hex blends only with a neighbour of its OWN blend_class
 		// and a different terrain id. flat↔flat (grass↔soil ecotones) and water↔water (deep ocean grading into
@@ -1098,7 +1374,9 @@ void fragment() {
 				float d = dot(v_world - own_c, dir_v) - half_dist + wobble;
 				// 0 at the reach limit → 1 from the plateau line inward to (and across) the shared edge.
 				float w = smoothstep(-reach, -plateau, d);
-				wsum_rgb += texture(biome_array, vec3(base_uv, float(nlayer))).rgb * w;
+				// Out of reach contributes exactly 0 — skip the (now up to four-fetch) surface sample.
+				if (w <= 0.0) { continue; }
+				wsum_rgb += water_surface(nlayer, v_map) * w;   // the SAME surface the own hex drew
 				wsum += w;
 			}
 			result = wsum_rgb / wsum;
@@ -1257,6 +1535,64 @@ void fragment() {
 			}
 		}
 
+		// --- WATER TEMPERATURE GRADE: after the water surface + depth field, BEFORE the water motion (see there)
+		// and the shore (foam untouched) ---
+		// The pixel's temperature AND its graded-ness are neighbour-weighted means over the WATER hexes of
+		// {own + 6 neighbours}, with the depth field's own reach/plateau weight — so a temperature step between
+		// two hexes, and a graded↔ungraded (deep↔coral) seam, both ramp across the edge instead of stepping on
+		// it. Unwobbled on purpose: with no wobble the neighbour's weight is exactly 1 AT the shared edge from
+		// both frames, so the two means meet there for any config (the wobbled depth field only does so while
+		// its wobble stays under its plateau). A neighbour with no reading adds nothing to the temperature,
+		// and — having no reading — no graded-ness either. Runs at every zoom: climate matters most far out.
+		if (water_temp_enabled && own_class == CLASS_WATER) {
+			float t_reach = max(water_blend_band, BLEND_SOFT_MIN);
+			float t_plateau = clamp(water_blend_soft, 0.0, WATER_FIELD_PLATEAU_MAX) * t_reach;
+			vec4 own_t = texture(temp_map, id_uv);
+			float g_sum = own_t.g * own_t.b;   // own weight 1: graded only where it has a reading
+			float g_w = 1.0;
+			float t_sum = own_t.r * own_t.g;
+			float t_w = own_t.g;
+			for (int dir = 0; dir < 6; dir++) {
+				ivec2 off = neighbor_offset(row, dir);
+				int ncol = col + off.x;
+				int nrow = row + off.y;
+				if (nrow < 0 || nrow >= grid_h) { continue; }
+				int ncol_id = ncol;
+				if (wrap_h) {
+					ncol_id = wrap_col(ncol);
+				} else if (ncol < 0 || ncol >= grid_w) {
+					continue;
+				}
+				vec2 nuv = (vec2(float(ncol_id), float(nrow)) + 0.5) / grid_dim;
+				if (int(texture(id_map, nuv).g * 255.0 + 0.5) != CLASS_WATER) { continue; }
+				vec2 nb_c = hex_center(ncol, nrow);
+				vec2 dir_v = normalize(nb_c - own_c);
+				float half_dist = 0.5 * distance(own_c, nb_c);
+				float d = dot(v_world - own_c, dir_v) - half_dist;
+				float w = smoothstep(-t_reach, -t_plateau, d);
+				if (w <= 0.0) { continue; }
+				vec4 nt = texture(temp_map, nuv);
+				g_sum += nt.g * nt.b * w;
+				g_w += w;
+				t_sum += nt.r * nt.g * w;
+				t_w += nt.g * w;
+			}
+			float graded = g_sum / g_w;
+			if (graded > 0.0 && t_w > 0.0) {
+				result = water_temperature_grade(result, t_sum / t_w, graded);
+			}
+		}
+
+		// --- WATER MOTION: the directionless chop, once per water fragment (open and coastal water alike).
+		// AFTER the temperature grade, so the grade never rescales the motion's luma offsets (it once also
+		// recoloured the whitecaps laid on here, which are gone). After the depth field too — it is the same field
+		// for every water layer, so adding it to the mean equals adding it to each sample — and before the shore,
+		// so the surf is untouched. Near a coast the waterline cross-fade blends toward an estimate without it, so
+		// it eases out at the shore.
+		if (water_motion_enabled && water_chop_strength > 0.0 && own_class == CLASS_WATER) {
+			result = apply_water_motion(result, v_map);
+		}
+
 		// A NAVIGABLE river hex, by terrain id. It is a water TERRAIN in the sim, but its blend_class is
 		// deliberately "flat" — it renders as its VALLEY with a channel painted on top (see the navigable pass) —
 		// so the shore pass, which keys purely on blend_class, would otherwise treat every one of its edges
@@ -1288,7 +1624,7 @@ void fragment() {
 			//     field's discipline). See SHORE_PROFILE_REACH_APOTHEMS for why that mean is EXACTLY
 			//     continuous across every hex edge — including the land↔water edge, where it must be.
 			// Own water carries weight 1 by construction; land contributes nothing (it has no profile).
-			vec3 prof_sum = own_water ? shore_profile(own_layer) : vec3(0.0);
+			vec4 prof_sum = own_water ? shore_profile(own_layer) : vec4(0.0);
 			float prof_w = own_water ? 1.0 : 0.0;
 			// THE LAND'S OWN SAND GATE — the land-side twin of the field above, over the LAND hexes of
 			// {own + 6 neighbours} and reading only `sand_scale` (the R channel of the same layer_shore_map:
@@ -1371,10 +1707,11 @@ void fragment() {
 				// (1, 1, 1) for any water terrain without a `shore_profile` — a bit-exact no-op below (the
 				// mean of a set of identical neutral profiles is exactly 1.0 in float, so every ocean renders
 				// as it did before this table existed).
-				vec3 profile = prof_sum / max(prof_w, SHORE_PROFILE_WEIGHT_MIN);
+				vec4 profile = prof_sum / max(prof_w, SHORE_PROFILE_WEIGHT_MIN);
 				float sand_scale = profile.r;  // scales the beach's inland reach (0 = a CLIFF: no beach)
 				float foam_scale = profile.g;  // scales the MAIN WAVE's reaches (both ways) — never its peak
 				float wisp_scale = profile.b;  // scales the offshore wisp's centre, half-width AND strength
+				float surge_scale = profile.a; // scales the shore pulse (0 = a lake's surf never surges)
 				float dist_in = max(-best_d, 0.0);            // 0 at the coast edge, grows away from it
 				// THE SIGNED COAST COORDINATE. dist_in → 0 at the shared edge on BOTH sides, so negating it
 				// on the land side gives one coordinate that runs continuously through the coastline:
@@ -1409,7 +1746,10 @@ void fragment() {
 				float sand_reach_raw = sand_band * sand_wobble;                              // inland, u < 0
 				float sand_reach = max(sand_reach_raw, SHORE_REACH_MIN_PX);
 				float wash_reach = max(foam_inland_band * foam_wobble, SHORE_REACH_MIN_PX);  // surf up the beach, u < 0
-				float foam_reach = max(foam_band * foam_wobble, SHORE_REACH_MIN_PX);         // surf out to sea, u > 0
+				// surf out to sea, u > 0 — surging as each wave lands on this stretch of shore (see shore_surge; exactly
+				// 1 with motion off and where the water's surge_scale is 0, so those coasts are bit-exact). The inland
+				// wash and the sand above do NOT surge: the beach never moves.
+				float foam_reach = max(foam_band * foam_wobble, SHORE_REACH_MIN_PX) * shore_surge(v_map, surge_scale);
 
 				// 0. THE WATERLINE BASE CROSS-FADE — kill the base's OWN step at u = 0, so the surf above it
 				// no longer has to be an opaque cover-up (see the waterline_band uniform). A short WET EDGE:
@@ -1429,11 +1769,21 @@ void fragment() {
 				float wl_reach = max(waterline_band * wobble, SHORE_REACH_MIN_PX);
 				float wl_outer = wl_reach * (1.0 + SHORE_WATERLINE_FADE);
 				if (waterline_band > 0.0 && abs(u) < wl_outer) {
-					vec3 own_base = texture(biome_array, vec3(base_uv, float(base_layer))).rgb;
+					vec3 own_base = base_sample(base_layer, own_water, base_uv, v_map);
 					vec3 land_sum = own_water ? vec3(0.0) : own_base;   // own carries weight 1 by construction
 					float land_w = own_water ? 0.0 : 1.0;
 					vec3 water_sum = own_water ? own_base : vec3(0.0);
 					float water_w = own_water ? 1.0 : 0.0;
+					// THE WATER ESTIMATE CARRIES THE TEMPERATURE GRADE. `water_base` is rebuilt from the ungraded
+					// water surface, so without this the graded sea reverted to its raw colour within the wet edge
+					// of every coast (a bluer or duller rim). Its temperature and graded-ness are means over the SAME
+					// water hexes with the SAME weights as water_base itself, so the graded estimate is as
+					// continuous across the edge as the ungraded one; the grade's own temp_map semantics are kept
+					// (G = has a reading, B = graded terrain — see the WATER TEMPERATURE GRADE block).
+					vec4 own_wt = own_water ? texture(temp_map, id_uv) : vec4(0.0);
+					float wg_sum = own_wt.g * own_wt.b;
+					float wt_sum = own_wt.r * own_wt.g;
+					float wt_w = own_wt.g;
 					for (int dir = 0; dir < 6; dir++) {
 						ivec2 off = neighbor_offset(row, dir);
 						int ncol = col + off.x;
@@ -1456,10 +1806,17 @@ void fragment() {
 						// The SAME unwobbled weight as the profile field — a noise displacement here would
 						// break the exact cross-edge agreement the whole cross-fade rests on.
 						float w = smoothstep(-half_dist * SHORE_PROFILE_REACH_APOTHEMS, 0.0, d);
-						vec3 nb_base = texture(biome_array, vec3(base_uv, float(base_layer_of(nuv, nlayer)))).rgb;
+						// The water estimate must be the water SURFACE the water hex draws, or the wet edge steps.
+						vec3 nb_base = base_sample(base_layer_of(nuv, nlayer), nb_water, base_uv, v_map);
 						if (nb_water) {
 							water_sum += nb_base * w;
 							water_w += w;
+							if (water_temp_enabled) {
+								vec4 nt = texture(temp_map, nuv);
+								wg_sum += nt.g * nt.b * w;
+								wt_sum += nt.r * nt.g * w;
+								wt_w += nt.g * w;
+							}
 						} else {
 							land_sum += nb_base * w;
 							land_w += w;
@@ -1467,6 +1824,10 @@ void fragment() {
 					}
 					vec3 land_base = land_sum / max(land_w, SHORE_PROFILE_WEIGHT_MIN);
 					vec3 water_base = water_sum / max(water_w, SHORE_PROFILE_WEIGHT_MIN);
+					float w_graded = wg_sum / max(water_w, SHORE_PROFILE_WEIGHT_MIN);
+					if (water_temp_enabled && w_graded > 0.0 && wt_w > 0.0) {
+						water_base = water_temperature_grade(water_base, wt_sum / wt_w, w_graded);
+					}
 					// THE wet edge: one smoothstep of u, 0.5 exactly AT the waterline, spread over ±wl_reach.
 					vec3 mixed = mix(land_base, water_base, smoothstep(-wl_reach, wl_reach, u));
 					// …held at FULL across that reach, then handing back to the true base over the outer fade.

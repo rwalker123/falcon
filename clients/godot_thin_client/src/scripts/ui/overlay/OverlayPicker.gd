@@ -1,13 +1,18 @@
 extends HBoxContainer
 class_name OverlayPicker
 
-## THE MAP-OVERLAY PICKER — the two buttons docked on the minimap's top border, and the popover each
+## THE MAP-OVERLAY PICKER — the three buttons docked on the minimap's top border, and the popover each
 ## one opens.
 ##
 ## | button | opens | face |
 ## |---|---|---|
 ## | `◐` | the CHANNEL MENU — the roster, one row each | fixed |
 ## | legend | the LEGEND for whatever channel is on | the channel's `icon`, else its ramp COLOUR — or the neutral glyph, for a channel that has no colour to state |
+## | `☰` | MAP LAYERS — one checkbox per `MapToggles.ROWS` row | fixed |
+##
+## **THE LAYERS POPOVER KNOWS NO TOGGLE BY NAME EITHER.** It lists `MapToggles.ROWS` and writes each
+## box through `ClientSettings.set_map_toggle`; the renderer that owns a layer reads it back. A toggle
+## is not a channel — any number can be on at once, over whichever channel is painted.
 ##
 ## **ONE RULE FOR THE WHOLE CLUSTER: a button opens its own popover, attached to itself.** The first
 ## cut had one button and put the legend inside its menu, then tried making that legend a standing
@@ -41,7 +46,7 @@ class_name OverlayPicker
 ## the reason `POPOVER_CANVAS_LAYER` gives: the catcher lives on a `CanvasLayer` of its own, so it
 ## needs no `top_level` to escape the picker's small rect.
 ##
-## **ONE POPOVER AT A TIME.** Opening either closes the other. Two small cards stacked over a corner
+## **ONE POPOVER AT A TIME.** Opening any one closes whichever other is open. Two small cards stacked over a corner
 ## of the map would fight for the same space and for the same dismiss click.
 ##
 ## **THE PICKER OWNS THE CHANNEL ACROSS A SNAPSHOT AND NOWHERE ELSE, and getting that backwards
@@ -67,8 +72,15 @@ const CHANNEL_GLYPH := "◐"
 const BUTTON_FONT_SIZE := 13
 const CHANNEL_TOOLTIP := "Map overlay"
 const LEGEND_TOOLTIP_FORMAT := "Legend — %s"
+## The map-layers button's face. U+2630 (trigram for heaven), the conventional "list of switches"
+## glyph — checked rendered in `map_layers_popover.png`, per the `WorkbenchPages.PAGES` rule that an
+## uncovered glyph draws as a two-pixel stub with no error.
+const LAYERS_GLYPH := "☰"
+const LAYERS_TOOLTIP := "Map layers"
+## How many buttons the bar holds — the channel menu, the legend, the map layers.
+const BUTTON_COUNT := 3
 ## The whole bar's width, which is what `MinimapPanel` reserves on the border for it.
-const BAR_WIDTH := 2.0 * BUTTON_SIZE + float(BUTTON_GAP)
+const BAR_WIDTH := float(BUTTON_COUNT) * BUTTON_SIZE + float((BUTTON_COUNT - 1) * BUTTON_GAP)
 
 ## The legend button's face when the channel names no `icon`: a filled square, TINTED with that
 ## channel's own map colour. A glyph rather than a `ColorRect` child for two reasons — it makes the
@@ -108,9 +120,12 @@ const POPOVER_MARGIN_SIDES: Array[String] = ["left", "top", "right", "bottom"]
 const POPOVER_SCREEN_INSET := 8.0
 const CHANNELS_TITLE := "MAP OVERLAY"
 const LEGEND_TITLE := "LEGEND"
+const LAYERS_TITLE := "MAP LAYERS"
 const POPOVER_TITLE_FONT_SIZE := 11
 const POPOVER_SECTION_SEPARATION := 8
 const LIST_SEPARATION := 1
+## The metadata key a layers checkbox carries its toggle key under (`layer_checkboxes`).
+const LAYER_ROW_KEY_META := &"map_toggle_key"
 const ROW_FONT_SIZE := 12
 
 ## How tall the legend body may grow before it scrolls. The biome key runs to every biome present on
@@ -128,6 +143,7 @@ const LEGEND_SCROLL_GAP := 6.0
 const POPOVER_NONE := &""
 const POPOVER_CHANNELS := &"channels"
 const POPOVER_LEGEND := &"legend"
+const POPOVER_LAYERS := &"layers"
 
 ## Every button text-colour state the swatch face paints, so it reads as one colour in every state.
 const LEGEND_FACE_COLOR_STATES: Array[StringName] = [
@@ -137,6 +153,7 @@ const LEGEND_FACE_COLOR_STATES: Array[StringName] = [
 var _map_view: Node = null
 var _channel_button: Button = null
 var _legend_button: Button = null
+var _layers_button: Button = null
 
 var _popover_layer: CanvasLayer = null
 var _catcher: Control = null
@@ -147,6 +164,7 @@ var _anchor_button: Button = null
 var _list: VBoxContainer = null
 var _legend_body: VBoxContainer = null
 var _legend_scroll: ScrollContainer = null
+var _layers_list: VBoxContainer = null
 
 ## The channel the PLAYER chose. `MapView.active_overlay_key` is what is painted, and between an
 ## ingest and the re-assert the two differ — which is the whole reason this is held here.
@@ -171,6 +189,11 @@ func _ready() -> void:
 	_legend_button.pressed.connect(toggle_legend)
 	add_child(_legend_button)
 	_paint_legend_face()
+
+	_layers_button = _build_button("MapLayersButton", LAYERS_TOOLTIP)
+	_layers_button.text = LAYERS_GLYPH
+	_layers_button.pressed.connect(toggle_layers)
+	add_child(_layers_button)
 
 func _build_button(node_name: String, tooltip: String) -> Button:
 	var button := Button.new()
@@ -216,7 +239,7 @@ func set_map_view(view: Node) -> void:
 func is_popover_open() -> bool:
 	return _popover != null and is_instance_valid(_popover)
 
-## Which popover is open — `POPOVER_CHANNELS`, `POPOVER_LEGEND`, or `POPOVER_NONE`.
+## Which popover is open — `POPOVER_CHANNELS`, `POPOVER_LEGEND`, `POPOVER_LAYERS`, or `POPOVER_NONE`.
 func open_popover_kind() -> StringName:
 	return _popover_kind if is_popover_open() else POPOVER_NONE
 
@@ -232,11 +255,20 @@ func toggle_legend() -> void:
 	else:
 		open_legend()
 
+func toggle_layers() -> void:
+	if open_popover_kind() == POPOVER_LAYERS:
+		close_popover()
+	else:
+		open_layers()
+
 func open_channels() -> void:
 	_open(POPOVER_CHANNELS, _channel_button)
 
 func open_legend() -> void:
 	_open(POPOVER_LEGEND, _legend_button)
+
+func open_layers() -> void:
+	_open(POPOVER_LAYERS, _layers_button)
 
 func close_popover() -> void:
 	# Freeing the layer frees the catcher and the popover nested under it.
@@ -250,6 +282,7 @@ func close_popover() -> void:
 	_list = null
 	_legend_body = null
 	_legend_scroll = null
+	_layers_list = null
 
 ## The `CanvasLayer` index the open popover is drawing on, for a caller asserting it clears the
 ## docked surfaces. `-1` when nothing is open.
@@ -283,6 +316,27 @@ func channel_button_rect() -> Rect2:
 	if _channel_button == null or not is_instance_valid(_channel_button):
 		return Rect2()
 	return _channel_button.get_global_rect()
+
+## The map-layers button's own rect, the `☰`'s twin of the two above.
+func layers_button_rect() -> Rect2:
+	if _layers_button == null or not is_instance_valid(_layers_button):
+		return Rect2()
+	return _layers_button.get_global_rect()
+
+## The map-layers button's glyph, for a caller asserting the face it wears.
+func layers_button_glyph() -> String:
+	return _layers_button.text if _layers_button != null else ""
+
+## The layers popover's checkboxes keyed by toggle key, for a caller asserting each row states its
+## setting. Empty unless the layers popover is open.
+func layer_checkboxes() -> Dictionary:
+	var out: Dictionary = {}
+	if _layers_list == null or not is_instance_valid(_layers_list):
+		return out
+	for child in _layers_list.get_children():
+		if child is CheckBox:
+			out[String(child.get_meta(LAYER_ROW_KEY_META, ""))] = child
+	return out
 
 ## The colour the legend button's face is currently drawn in, for a caller asserting it tracks the
 ## painted channel.
@@ -347,8 +401,8 @@ func _open(kind: StringName, anchor: Button) -> void:
 ## `STOP` on a layer ABOVE the bar, so with either popover open the OTHER button never receives its
 ## click — pressing it read as "dismiss" instead of "switch", and the player had to click twice to get
 ## to the other card. The two buttons are resolved here instead, in the same terms their own `pressed`
-## handlers use: the open one's button toggles it shut, the other one's swaps to it. Everything else
-## dismisses, which is what the catcher is for.
+## handlers use: the open one's button toggles it shut, another one's swaps to it. Everything else
+## dismisses, which is what the catcher is for. The map-layers button is the third of the set.
 func _on_catcher_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton and event.pressed):
 		return
@@ -358,6 +412,9 @@ func _on_catcher_input(event: InputEvent) -> void:
 		return
 	if _legend_button != null and _legend_button.get_global_rect().has_point(at):
 		toggle_legend()
+		return
+	if _layers_button != null and _layers_button.get_global_rect().has_point(at):
+		toggle_layers()
 		return
 	close_popover()
 
@@ -480,7 +537,7 @@ func _build_popover(kind: StringName) -> PanelContainer:
 	margin.add_child(body)
 
 	var title := Label.new()
-	title.text = CHANNELS_TITLE if kind == POPOVER_CHANNELS else LEGEND_TITLE
+	title.text = _popover_title(kind)
 	title.add_theme_font_size_override("font_size", POPOVER_TITLE_FONT_SIZE)
 	title.add_theme_color_override("font_color", HudStyle.INK_DIM)
 	body.add_child(title)
@@ -490,6 +547,11 @@ func _build_popover(kind: StringName) -> PanelContainer:
 		_list.name = "OverlayChannelList"
 		_list.add_theme_constant_override("separation", LIST_SEPARATION)
 		body.add_child(_list)
+	elif kind == POPOVER_LAYERS:
+		_layers_list = VBoxContainer.new()
+		_layers_list.name = "MapLayersList"
+		_layers_list.add_theme_constant_override("separation", LIST_SEPARATION)
+		body.add_child(_layers_list)
 	else:
 		# The biome key runs to every biome on the map, so the legend body scrolls past a cap rather
 		# than growing a popover taller than the thing it explains.
@@ -515,6 +577,8 @@ func _render_popover() -> void:
 		return
 	if _popover_kind == POPOVER_CHANNELS:
 		_render_list()
+	elif _popover_kind == POPOVER_LAYERS:
+		_render_layers()
 	else:
 		var descriptor := _descriptor_for_selection()
 		OverlayLegend.render(
@@ -556,6 +620,38 @@ func _render_list() -> void:
 		child.queue_free()
 	for descriptor in _roster:
 		_list.add_child(_channel_row(descriptor))
+
+func _popover_title(kind: StringName) -> String:
+	match kind:
+		POPOVER_CHANNELS:
+			return CHANNELS_TITLE
+		POPOVER_LAYERS:
+			return LAYERS_TITLE
+	return LEGEND_TITLE
+
+## One checkbox per `MapToggles.ROWS` row, each stating `ClientSettings`' answer for its key. Same
+## `remove_child`-before-`queue_free` rule as `_render_list`, for the same reason.
+func _render_layers() -> void:
+	for child in _layers_list.get_children():
+		_layers_list.remove_child(child)
+		child.queue_free()
+	for row in MapToggles.ROWS:
+		_layers_list.add_child(_layer_row(row))
+
+func _layer_row(row: Dictionary) -> CheckBox:
+	var key := String(row[MapToggles.KEY])
+	var box := CheckBox.new()
+	box.text = String(row[MapToggles.LABEL])
+	box.tooltip_text = String(row[MapToggles.TOOLTIP])
+	box.focus_mode = Control.FOCUS_NONE
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_font_size_override("font_size", ROW_FONT_SIZE)
+	HudStyle.apply_checkbox(box)
+	box.set_meta(LAYER_ROW_KEY_META, key)
+	# Seeded BEFORE the signal is connected, so stating the saved value is not read as a player's click.
+	box.button_pressed = ClientSettings.is_map_toggle_on(key)
+	box.toggled.connect(func(on: bool) -> void: ClientSettings.set_map_toggle(key, on))
+	return box
 
 func _channel_row(descriptor: Dictionary) -> Button:
 	var key := String(descriptor.get("key", ""))

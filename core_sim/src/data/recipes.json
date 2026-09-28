@@ -1,8 +1,8 @@
 {
   "_comment": "THE RECIPE BOOK (docs/plan_crafting_and_materials.md section 3). ONE STRUCTURE: inputs -> outputs, both lists of THINGS, where a thing is a material or a piece of equipment. An alloy, a sled and a loom are the same record with different rows - bronze is not a special case and neither is a tool. A RECIPE READS ONE CHARACTERISTIC (`reads`), and that is what makes 'there is no best hide' real: the sled reads toughness and the hurdles read suppleness, so a mammoth pelt makes an excellent sled and poor lashings and a hare pelt does the reverse. Spending the wrong hide on the wrong thing is a mistake the player is free to make. PLAYTEST DIALS.",
-  "_comment_work_and_costs": "`work` IS WORKER-TURNS FOR ONE OUTPUT PASS, at progress_per_worker_turn x a rate of 1.0. The bench accrues workers x progress_per_worker_turn x craft_speed, and craft_speed is the bounding tool's equipped value or - with no tool - the MATERIAL's own hand_working.rate, which is 0.5 on all three organics and would be 0 for something that cannot be worked bare-handed at all. THAT ZERO IS THE WHOLE REFUSAL MECHANISM: there is no 'you cannot craft that' branch anywhere in the sim, exactly as max(0, attack - defense) refuses a hunt. THE COSTS ARE SIZED SO MATERIAL, NOT BENCH TIME, IS WHAT BINDS. THE CROOK IS PRICED AS THE `hoes` ARE - bone + fibre at `work: 5` - because it is the same class of tool on the other web; the two build kits must not diverge on price for a reason nobody chose. THE HURDLES RECIPE IS THE ONE OUTPUT THAT IS NOT KIT: it makes a MATERIAL the `animal:pen` rung eats (4 wood + 2 hide -> 1 hurdle, `work: 7`), so its cost is judged against that rung's own pile of 6 rather than against the kit clock - a pen is 24 wood, 12 hide and 42 bench-turns, and the wood is what the spawn's `start_stock` supplies until forest foraging lands. Against the shipped ~17-worker band (equipment.md's kit clock): a gathering half of ~8.5 reaches ~68 biomass a turn, so reeds at 0.02 fibre/biomass pay ~1.4 fibre a turn; a hunting half on Red Deer hauls ~45 biomass, paying ~0.6 hide, ~0.09 bone and ~0.04 fibre. So 6 hide is ~10 turns of banked hide and 5 fibre is ~4 turns of banked fibre, while a 4-hand bench works a `work: 8` sled off in 4 turns bare-handed. BONE IS A BYPRODUCT YOU CANNOT SCALE; WOOD AND STONE ARE LABOUR YOU CAN. That is the sharpest cost asymmetry in the book and it is not a dial anywhere. Bone arrives only as much as the hunting happens to give (0.0012-0.003 per biomass against hide's 0.006-0.022, which is ~0.09 a turn for the WHOLE shipped band) - put more hands on it and you do not get more bone, you get a thinner herd. Stone and wood have PRODUCERS (docs/plan_extraction.md): a crew on `extraction:gathering` picks up about 0.4 stone a worker-turn bare-handed and one on `forestry:deadfall` about 0.3 wood, so four hands deliver in one turn what a season of hunting pays in bone, and the only limit is where the deposits are and who is standing on them. So nothing costs more than 3 bone, while a knapped spear costs 1 stone and 2 wood without apology - and the pacing of a stone kit is a question about REACHING a scatter, not about waiting for one. It is also what makes Bone-working the slow craft and Knapping the one a band can decide to learn, with no per-craft dial saying so. AGAINST THE ~15-20 TURN KIT CLOCK (the whole band on that one job, not the half that banks the material): baskets run dry in ~18.5 turns and cost ~4 turns of fibre plus ~2 of hide to replace, so a band keeps its kit alive on roughly a quarter of its material income and spends the rest on tools and stock. Spears last ~42 turns and cost 1 bone, which is ~11 turns of hunting - comfortable. HOES ARE IN-FAMILY RATHER THAN DERIVED: a bone blade hafted with fibre is the same shape as spears and clubs, and `work: 5` sits between clubs (4) and spears (6) - the first build tool the plant web has ever had, so there is no predecessor number to invert. It ships UNGRADED, deliberately, so plant and animal build gear stay consistent until both gain grades together (issue #561) - and `hoes_flint` beside it is ungraded for the same reason, so the two webs' build gear still moves together. TOOLS ARE THE INVESTMENT: a tanning frame is 4 wood + 5 fibre + 1 bone and it then pays for itself over the 25 items it lasts. THE LOOM WENT FROM 3 BONE + 4 HIDE TO 2 BONE + 5 HIDE, AND THE UNIT COUNT IS HELD AT 7 ON PURPOSE: the point was the BONE, not the price. One scarce unit became one abundant one - against ~0.09 bone and ~0.6 hide a turn for a whole band, that trades about eleven turns of waiting for about two - and dropping the total to 5 instead would have cheapened the tool by 30% for no reason anybody chose. THE SUBSTITUTE ROWS ARE NOT A DISCOUNT, THEY ARE A SECOND ROUTE: `crook_wood`, `traps_wood`, `baskets_withy`, `sled_framed` and `wayfinding_wood` make the SAME item at the SAME tier with the SAME grades as the shipped row beside them - what differs is which pile the band has to be standing on. A band with wood and no bone is no longer stuck, and a band with both chooses; neither row is the upgrade, which is this file's own no-best-material rule applied to the recipe rather than to the material.",
+  "_comment_work_and_costs": "`work` IS WORKER-TURNS FOR ONE OUTPUT PASS, at progress_per_worker_turn x a rate of 1.0. The bench accrues workers x progress_per_worker_turn x craft_speed, and craft_speed is the bounding tool's equipped value or - with no tool - the MATERIAL's own hand_working.rate, which is 0.5 on all three organics and would be 0 for something that cannot be worked bare-handed at all. THAT ZERO IS THE WHOLE REFUSAL MECHANISM: there is no 'you cannot craft that' branch anywhere in the sim, exactly as max(0, attack - defense) refuses a hunt. THE COSTS ARE SIZED SO MATERIAL, NOT BENCH TIME, IS WHAT BINDS. THE CROOK IS PRICED AS THE `hoes` ARE - bone + fibre at `work: 5` - because it is the same class of tool on the other web; the two build kits must not diverge on price for a reason nobody chose. THE HURDLES RECIPE IS THE ONE OUTPUT THAT IS NOT KIT: it makes a MATERIAL the `animal:pen` rung eats (4 wood + 2 hide -> 1 hurdle, `work: 7`), so its cost is judged against that rung's own pile of 6 rather than against the kit clock - a pen is 24 wood, 12 hide and 42 bench-turns, and the wood is what the spawn's `start_stock` supplies until forest foraging lands. Against the shipped ~17-worker band (equipment.md's kit clock): a gathering half of ~8.5 reaches ~68 biomass a turn, so reeds at 0.02 fibre/biomass pay ~1.4 fibre a turn; a hunting half on Red Deer hauls ~45 biomass, paying ~0.6 hide, ~0.09 bone and ~0.04 fibre. So 6 hide is ~10 turns of banked hide and 5 fibre is ~4 turns of banked fibre, while a 4-hand bench works a `work: 8` sled off in 4 turns bare-handed. BONE IS A BYPRODUCT YOU CANNOT SCALE; WOOD AND STONE ARE LABOUR YOU CAN. That is the sharpest cost asymmetry in the book and it is not a dial anywhere. Bone arrives only as much as the hunting happens to give (0.0012-0.003 per biomass against hide's 0.006-0.022, which is ~0.09 a turn for the WHOLE shipped band) - put more hands on it and you do not get more bone, you get a thinner herd. Stone and wood have PRODUCERS (docs/plan_extraction.md): a crew on `extraction:gathering` picks up about 0.4 stone a worker-turn bare-handed and one on `forestry:deadfall` about 0.3 wood, so four hands deliver in one turn what a season of hunting pays in bone, and the only limit is where the deposits are and who is standing on them. So nothing costs more than 3 bone, while a knapped spear costs 1 stone and 2 wood without apology - and the pacing of a stone kit is a question about REACHING a scatter, not about waiting for one. It is also what makes Bone-working the slow craft and Knapping the one a band can decide to learn, with no per-craft dial saying so. AGAINST THE ~15-20 TURN KIT CLOCK (the whole band on that one job, not the half that banks the material): baskets run dry in ~18.5 turns and cost ~4 turns of fibre plus ~2 of hide to replace, so a band keeps its kit alive on roughly a quarter of its material income and spends the rest on tools and stock. Spears last ~42 turns and cost 1 bone, which is ~11 turns of hunting - comfortable. HOES ARE IN-FAMILY RATHER THAN DERIVED: a bone blade hafted with fibre is the same shape as spears and clubs, and `work: 5` sits between clubs (4) and spears (6) - the first build tool the plant web has ever had, so there is no predecessor number to invert. BUILD GEAR IS GRADED ON THE STANDARD SPREAD ON BOTH WEBS: the crook (both rows), the hoes and `hoes_flint` each grade their `build_work` poor x0.75 / fair x0.85 / good x1.00 / excellent x1.15 around the tier they make (0.375/0.425/0.5/0.575 on `plain`, 0.525/0.595/0.7/0.805 on `flint`), and every grade restates its tier's `branch` because a grade replaces the effect entire. TOOLS ARE THE INVESTMENT: a tanning frame is 4 wood + 5 fibre + 1 bone and it then pays for itself over the 25 items it lasts. THE LOOM WENT FROM 3 BONE + 4 HIDE TO 2 BONE + 5 HIDE, AND THE UNIT COUNT IS HELD AT 7 ON PURPOSE: the point was the BONE, not the price. One scarce unit became one abundant one - against ~0.09 bone and ~0.6 hide a turn for a whole band, that trades about eleven turns of waiting for about two - and dropping the total to 5 instead would have cheapened the tool by 30% for no reason anybody chose. THE SUBSTITUTE ROWS ARE NOT A DISCOUNT, THEY ARE A SECOND ROUTE: `crook_wood`, `traps_wood`, `baskets_withy`, `sled_framed` and `wayfinding_wood` make the SAME item at the SAME tier with the SAME grades as the shipped row beside them - what differs is which pile the band has to be standing on. A band with wood and no bone is no longer stuck, and a band with both chooses; neither row is the upgrade, which is this file's own no-best-material rule applied to the recipe rather than to the material.",
   "_comment_knowledge": "KNOWLEDGE GATES A RECIPE ONLY WHEN THE RECIPE SAYS SO. `requires_knowledge` is absent on every ordinary kit recipe - you can make a sled by hand on turn one, and DOING IT is what teaches Tanning. Every TOOL recipe carries one entry per material it is made from, and validate enforces exactly that: a named craft must be the craft of one of this recipe's own INPUT materials. Paired with the rule that a tool is never made from the material it bounds, that makes the deadlock UNREPRESENTABLE rather than merely avoided - metal needing a crucible that needs metalworking cannot be written down here. TOOLS ARE EARNED, NEVER A PREREQUISITE: there is no opening move where everyone builds tools first, and a tool run dry drops the band back to the rate the game already ships at rather than into a spiral. THE LESSON IS THE RECIPE'S OWN `craft`, charged per ITEM COMPLETED on the same quantum as the tool's wear (intensification_ladder.json's `knowledge.craft_lesson_per_item`, in PRACTICE UNITS, against that craft's own `knowledge.lesson_costs` entry - the same currency and the same divisor a rung's lesson goes through, one quantum over), so what is being made decides what is learned.",
-  "_comment_grades": "ONE QUALITY LADDER FOR THE WHOLE GAME - THE GRADES ARE THE BANDS. A grade is named by a `characteristic_bands` rung and a recipe declares NO seams of its own: the output's grade is the band of min(material reading, tool quality ceiling), resolved through the same table that rates the hide it was made from. The same four words rate the hide on the panel's rail and the sled you make out of it, so a reading of .55 is `good` in both places. An earlier cut invented coarse/standard/fine, which was a SECOND VOCABULARY FOR ONE IDEA - the player learned quality twice - and, worse, a second set of cut points free to drift from the bands beside them. CONTINUOUS IN, DISCRETE OUT: the reading never scales a resolved stat, it SELECTS a band, and the band declares ABSOLUTES (EquipmentEffect names the value a stat TAKES and has no representation for a multiplier stacking on something else, which is what keeps 'flat until expiry, then a step down' structural rather than remembered). A BAND A RECIPE DOES NOT DECLARE INHERITS THE ONE BELOW IT, so a recipe wanting three steps writes three - and validate rejects a grade key that is not a band, and a lowest grade that is not the FIRST band, because nothing would then answer for a reading of 0.0. THE ANCHOR IS DERIVED, NOT NAMED: it is the band the bench material's bare-handed hand_working.quality_ceiling falls in (0.60 on every material a bare hand can shape - the three organics, wood and stone - which is `good`), and the grade resolved there must equal THE TIER THIS RECIPE SAYS IT MAKES (RecipeOutput::tier, falling back to the item's default where the item has only one tier) - so a BARE-HANDED CRAFT OFF THE BEST MATERIAL A BAND CAN WORK BY HAND REPRODUCES THAT TIER EXACTLY, and a tool run dry drops the band back to the rate the game already ships at rather than into a spiral. IT IS THE RECIPE'S TIER AND NOT THE ITEM'S DEFAULT, which matters the moment one item has two recipes: spears fans around 20 on the bone row and around 26 on the knapped one, and anchoring both to tiers[0] would demand a flint spear hit exactly as hard as a bone one. The four rungs fan around each anchor at poor x0.75 / fair x0.85 / good x1.00 / excellent x1.15 - the design's own sled example, 30/34/40/46 on a shipped 40, and 20/22/26/30 on the flint spear's 26. NOTE THE DELIBERATE OVERLAP THAT PRODUCES: a POOR flint spear (20) is exactly a GOOD bone one. Craftsmanship and material are different axes and are meant to trade against each other. A GRADE MAY ONLY DECLARE A STAT THE OUTPUT TIER DECLARES - that tier, not any tier of the item, because a grade replaces what THAT tier bought - and must restate that effect's mass bounds verbatim: a grade REPLACES a number rather than adding one, and an excellent snare that dropped `max_body_mass` would quietly become a mammoth trap. A recipe with NO `grades` block says its payload is not tier-bought at all (the hoes' and the crook's `build_work`, the wayfinding gear's vantage, a bench tool's craft stats) - the batch is still STAMPED with the band it was made at, that band simply buys it no stat.",
+  "_comment_grades": "ONE QUALITY LADDER FOR THE WHOLE GAME - THE GRADES ARE THE BANDS. A grade is named by a `characteristic_bands` rung and a recipe declares NO seams of its own: the output's grade is the band of min(material reading, tool quality ceiling), resolved through the same table that rates the hide it was made from. The same four words rate the hide on the panel's rail and the sled you make out of it, so a reading of .55 is `good` in both places. An earlier cut invented coarse/standard/fine, which was a SECOND VOCABULARY FOR ONE IDEA - the player learned quality twice - and, worse, a second set of cut points free to drift from the bands beside them. CONTINUOUS IN, DISCRETE OUT: the reading never scales a resolved stat, it SELECTS a band, and the band declares ABSOLUTES (EquipmentEffect names the value a stat TAKES and has no representation for a multiplier stacking on something else, which is what keeps 'flat until expiry, then a step down' structural rather than remembered). A BAND A RECIPE DOES NOT DECLARE INHERITS THE ONE BELOW IT, so a recipe wanting three steps writes three - and validate rejects a grade key that is not a band, and a lowest grade that is not the FIRST band, because nothing would then answer for a reading of 0.0. THE ANCHOR IS DERIVED, NOT NAMED: it is the band the bench material's bare-handed hand_working.quality_ceiling falls in (0.60 on every material a bare hand can shape - the three organics, wood and stone - which is `good`), and the grade resolved there must equal THE TIER THIS RECIPE SAYS IT MAKES (RecipeOutput::tier, falling back to the item's default where the item has only one tier) - so a BARE-HANDED CRAFT OFF THE BEST MATERIAL A BAND CAN WORK BY HAND REPRODUCES THAT TIER EXACTLY, and a tool run dry drops the band back to the rate the game already ships at rather than into a spiral. IT IS THE RECIPE'S TIER AND NOT THE ITEM'S DEFAULT, which matters the moment one item has two recipes: spears fans around 20 on the bone row and around 26 on the knapped one, and anchoring both to tiers[0] would demand a flint spear hit exactly as hard as a bone one. The four rungs fan around each anchor at poor x0.75 / fair x0.85 / good x1.00 / excellent x1.15 - the design's own sled example, 30/34/40/46 on a shipped 40, and 20/22/26/30 on the flint spear's 26. NOTE THE DELIBERATE OVERLAP THAT PRODUCES: a POOR flint spear (20) is exactly a GOOD bone one. Craftsmanship and material are different axes and are meant to trade against each other. A GRADE MAY ONLY DECLARE A STAT THE OUTPUT TIER DECLARES - that tier, not any tier of the item, because a grade replaces what THAT tier bought - and must restate that effect's bounds verbatim - its mass bounds AND, on `build_work`, its `branch` and `rung`: a grade REPLACES a number rather than adding one, so an excellent snare that dropped `max_body_mass` would quietly become a mammoth trap and an excellent crook that dropped `branch: animal` would quietly speed plant builds too. A recipe with NO `grades` block says its payload is not tier-bought at all (the wayfinding gear's vantage, the road tools' `build_work`, a bench tool's craft stats) - the batch is still STAMPED with the band it was made at, that band simply buys it no stat.",
   "_comment_output_tier": "AN OUTPUT NAMES THE TIER IT MAKES (`tier` on an equipment output row, equipment.json's `_comment_tiers` for what a tier is), AND ON A MULTI-TIER ITEM IT MUST. A tier is what the MATERIAL buys and a recipe is what names the material, so ONE ITEM HAS ONE RECIPE PER TIER: `spears` is bone at `plain` and `spears_flint` is knapped stone at `flint`, different inputs, different stats, both craftable at once. Before this field the tier came from faction KNOWLEDGE alone (ItemDefinition::craftable_tier), which can answer only one tier per item per faction and so could never express two. THE FIELD IS MANDATORY THE MOMENT AN ITEM HAS A CHOICE, and that is the load-bearing half rather than tidiness: craftable_tier answers the LAST satisfiable rung, so a bone recipe naming nothing would have quietly started delivering flint spears the day the flint tier shipped. Making it required makes that unrepresentable rather than merely avoided. IT IS REJECTED ON A MATERIAL OUTPUT, the mirror of `characteristics` being rejected on an equipment one - a material batch carries a characteristic vector and has nowhere to put a tier. A SINGLE-TIER ITEM MAY STILL NAME NONE, which is what leaves the ten unchanged rows unchanged: craftable_tier has exactly one answer there, and it is the tier that ships known. NOTHING HERE IS KNOWLEDGE-GATED - no flint tier declares `requires_knowledge` and no knapped recipe declares `requires_knowledge` - because the stone path is open on turn one and DOING it is what teaches Knapping; a gate would be circular. What paces it is reaching a deposit and spending hands on it.",
   "_comment_craft_is_derived": "`craft` IS THE CRAFT OF THE MATERIAL THE RECIPE READS, and validate rejects any other value. It is written out because that is where a reader needs it, not because it is a second decision - one home per fact, guarded. That is also what keeps the whole model free of a 'primary material' field: the material the recipe READS is the material the bench works, whose tool is consulted, whose bare-handed rate applies and whose craft is practised.",
   "crafting": {
@@ -170,7 +170,45 @@
           "equipment": "crook",
           "amount": 1.0
         }
-      ]
+      ],
+      "grades": {
+        "poor": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.375,
+              "branch": "animal"
+            }
+          ]
+        },
+        "fair": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.425,
+              "branch": "animal"
+            }
+          ]
+        },
+        "good": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.5,
+              "branch": "animal"
+            }
+          ]
+        },
+        "excellent": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.575,
+              "branch": "animal"
+            }
+          ]
+        }
+      }
     },
     "crook_wood": {
       "label": "Wood",
@@ -192,7 +230,45 @@
           "equipment": "crook",
           "amount": 1.0
         }
-      ]
+      ],
+      "grades": {
+        "poor": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.375,
+              "branch": "animal"
+            }
+          ]
+        },
+        "fair": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.425,
+              "branch": "animal"
+            }
+          ]
+        },
+        "good": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.5,
+              "branch": "animal"
+            }
+          ]
+        },
+        "excellent": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.575,
+              "branch": "animal"
+            }
+          ]
+        }
+      }
     },
     "hoes": {
       "label": "Bone",
@@ -215,7 +291,45 @@
           "amount": 1.0,
           "tier": "plain"
         }
-      ]
+      ],
+      "grades": {
+        "poor": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.375,
+              "branch": "plant"
+            }
+          ]
+        },
+        "fair": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.425,
+              "branch": "plant"
+            }
+          ]
+        },
+        "good": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.5,
+              "branch": "plant"
+            }
+          ]
+        },
+        "excellent": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.575,
+              "branch": "plant"
+            }
+          ]
+        }
+      }
     },
     "hoes_flint": {
       "label": "Flint",
@@ -242,7 +356,45 @@
           "amount": 1.0,
           "tier": "flint"
         }
-      ]
+      ],
+      "grades": {
+        "poor": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.525,
+              "branch": "plant"
+            }
+          ]
+        },
+        "fair": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.595,
+              "branch": "plant"
+            }
+          ]
+        },
+        "good": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.7,
+              "branch": "plant"
+            }
+          ]
+        },
+        "excellent": {
+          "effects": [
+            {
+              "stat": "build_work",
+              "equipped": 0.805,
+              "branch": "plant"
+            }
+          ]
+        }
+      }
     },
     "baskets": {
       "label": "Fibre",

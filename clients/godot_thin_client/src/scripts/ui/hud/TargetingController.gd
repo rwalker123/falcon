@@ -57,14 +57,17 @@ signal send_expedition_requested(payload: Dictionary)
 signal verb_pick_cancelled
 
 # --- The quarry rule's own vocabulary -------------------------------------------------------------
-## The `min_distance` for a mission with NO beyond-reach rule. `-1` rather than `0`, because the test
-## every surface applies is "strictly farther than this": at `0` a herd standing ON the band's own tile
-## would fail it, and that herd is a legal denial target. At `-1` every KNOWN distance passes and the
-## unknown one (`-1`) still fails, which is the "an unknown distance is never a quarry" half of the
+## The quarry pick's `min_distance` — and since the hunting party retired, the ONLY one: the one
+## mission left that picks a herd (denial) has no beyond-reach rule. `-1` rather than `0`, because the
+## test every surface applies is "strictly farther than this": at `0` a herd standing ON the band's own
+## tile would fail it, and that herd is a legal denial target. At `-1` every KNOWN distance passes and
+## the unknown one (`-1`) still fails, which is the "an unknown distance is never a quarry" half of the
 ## rule falling out of the same comparison instead of needing a second clause.
+##
+## ⛔ **THE HUNT'S BOUND WAS `hunt_reach`, AND IT IS GONE WITH THE HUNT VERB.** A hunting party existed
+## for game past that reach; every herd is an ordinary hunt now (`docs/plan_civilization_steps.md` §One
+## work party), so nothing here reads `hunt_reach` and the per-mission fork that did is deleted.
 const QUARRY_NO_REACH_BOUND := -1
-## Where `begin_pick_quarry` files the mission on the pending dict, read back by `_pick_quarry_mission`.
-const PICK_QUARRY_MISSION_KEY := "mission"
 
 
 ## **THE TARGETING MODE'S OWN TOKEN, AND THE PLAYER READS IT UPPERCASED.** `_targeting_banner_bbcode`
@@ -122,9 +125,9 @@ const TARGETING_PASSIVE_KEY := "passive"
 ## highlight, captures a click on one. The herd glow needs no list: MapView derives it from `need:
 ## "herd"` and `min_distance`.
 const TARGETING_HIGHLIGHT_TILES_KEY := "highlight_tiles"
-## The note title a quarry pick's refusal posts under, per mission — the hunt title predates the verbs
-## and keeps its word; a denial raid is named by its verb.
-const HUNT_PICK_NOTE_TITLE := "Hunt expedition"
+## Where `set_preselect` files the open sheet's mission (Deny or Trade), which decides what the passive
+## highlight glows and what a click on it resolves.
+const PRESELECT_MISSION_KEY := "mission"
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -143,7 +146,7 @@ var _pending_move_band: Dictionary = {}
 # The verb TILE pick (Scout / Trade): {band, mission, commit, hover} while armed, {} when inactive. The
 # valid click hands its target to `commit`, which sends the order.
 var _pending_verb_pick: Dictionary = {}
-# Quarry-pick targeting: the pending HERD pick (Deny's), {band, mission, commit, hover} while armed, {}
+# Quarry-pick targeting: the pending HERD pick (Deny's), {band, commit, hover} while armed, {}
 # when inactive. The sheet's party and kit ride its `commit`.
 var _pending_pick_quarry: Dictionary = {}
 var _targeting_banner: PanelContainer = null
@@ -317,8 +320,8 @@ func set_preselect(band: Dictionary, mission: String, choose: Callable) -> void:
 	var same := not _preselect.is_empty() \
 		and int((_preselect.get("band", {}) as Dictionary).get("entity", -1)) \
 			== int(band.get("entity", -2)) \
-		and String(_preselect.get(PICK_QUARRY_MISSION_KEY, "")) == mission
-	_preselect = {"band": band.duplicate(true), PICK_QUARRY_MISSION_KEY: mission,
+		and String(_preselect.get(PRESELECT_MISSION_KEY, "")) == mission
+	_preselect = {"band": band.duplicate(true), PRESELECT_MISSION_KEY: mission,
 		PICK_COMMIT_KEY: choose}
 	if not same:
 		_refresh_targeting()
@@ -392,24 +395,21 @@ func _current_targeting_info() -> Dictionary:
 		# none is chosen yet; the sheet asks for it once the quarry is known.
 		# `min_distance`: a valid target must lie STRICTLY farther than this from the origin — the
 		# render-side half of `is_expedition_quarry`, so the halo cannot offer a herd the pick will
-		# refuse. It is THE SAME `quarry_min_distance` the pick itself compares against, so the two
-		# cannot drift — including across missions: a hunt puts the band's `hunt_reach` on the wire
-		# and a denial raid `QUARRY_NO_REACH_BOUND`, which glows every herd the band can see. Every
-		# other targeting mode omits the key and MapView defaults it to 0, which admits everything
-		# and so changes nothing for move/scout-tile targeting.
-		var deny := _pick_quarry_mission() == HudComposeVocab.COMPOSE_MISSION_DENY
+		# refuse. It is THE SAME `QUARRY_NO_REACH_BOUND` the pick itself compares against, which glows
+		# every herd the band can see. Every other targeting mode omits the key and MapView defaults
+		# it to 0, which admits everything and so changes nothing for move/scout-tile targeting.
 		return {
 			"active": true,
-			"command": DENY_PICK_COMMAND if deny else PICK_PREY_COMMAND,
+			"command": DENY_PICK_COMMAND,
 			"need": "herd",
 			"origin_x": ox,
 			"origin_y": oy,
-			"min_distance": quarry_min_distance(band, _pick_quarry_mission()),
+			"min_distance": QUARRY_NO_REACH_BOUND,
 			"context_label": HudFormat.band_name(band),
 		}
 	if not _preselect.is_empty():
 		var band: Dictionary = _preselect.get("band", {})
-		var mission := String(_preselect.get(PICK_QUARRY_MISSION_KEY, ""))
+		var mission := String(_preselect.get(PRESELECT_MISSION_KEY, ""))
 		var passive := {
 			"active": true,
 			TARGETING_PASSIVE_KEY: true,
@@ -424,7 +424,7 @@ func _current_targeting_info() -> Dictionary:
 		else:
 			passive["command"] = DENY_PICK_COMMAND
 			passive["need"] = "herd"
-			passive["min_distance"] = quarry_min_distance(band, mission)
+			passive["min_distance"] = QUARRY_NO_REACH_BOUND
 		return passive
 	return {}
 
@@ -475,7 +475,7 @@ func is_verb_pick_armed(mission: String) -> bool:
 	if not _pending_verb_pick.is_empty():
 		return String(_pending_verb_pick.get(VERB_PICK_MISSION_KEY, "")) == mission
 	if not _pending_pick_quarry.is_empty():
-		return _pick_quarry_mission() == mission
+		return mission == HudComposeVocab.COMPOSE_MISSION_DENY
 	return false
 
 # ---- Move-band -----------------------------------------------------------------------------------
@@ -651,16 +651,15 @@ func send_expedition_to(band: Dictionary, party_workers: int, tile: Vector2i,
 ## Quarry PICK: enter HERD-targeting so the next map click names the herd the armed sheet commits to.
 ## `commit` / `hover` are the sheet's (see `begin_verb_pick`, whose re-capture rule this shares).
 ##
-## **THE MISSION RIDES WITH THE PICK** because eligibility is a function of it (`is_expedition_quarry`):
-## a hunt's quarry must lie beyond the band's reach and a denial raid's need not. It is carried in the
-## pending dict rather than re-asked at the click, so the rule the banner glowed under and the rule the
-## click is judged by are the same one.
-func begin_pick_quarry(band: Dictionary,
-		mission: String = HudComposeVocab.COMPOSE_MISSION_HUNT, commit: Callable = Callable(),
+## **THE QUARRY PICK IS THE DENIAL PICK.** The mission no longer rides with it: it did while
+## eligibility was a function of it — a hunt's quarry had to lie beyond the band's `hunt_reach` — and
+## the hunting party is retired, so the one mission left that picks a herd is denial, whose rule admits
+## every herd the band can see.
+func begin_pick_quarry(band: Dictionary, commit: Callable = Callable(),
 		hover: Callable = Callable()) -> void:
 	if band.is_empty():
 		return
-	if not _pending_pick_quarry.is_empty() and _pick_quarry_mission() == mission:
+	if not _pending_pick_quarry.is_empty():
 		_pending_pick_quarry["band"] = band.duplicate(true)
 		_pending_pick_quarry[PICK_COMMIT_KEY] = commit
 		_pending_pick_quarry[PICK_HOVER_KEY] = hover
@@ -670,15 +669,8 @@ func begin_pick_quarry(band: Dictionary,
 	# (§15).
 	_drawercompose.close_compose_sheet()
 	_cancel_pending_verb_pick()
-	_pending_pick_quarry = {"band": band.duplicate(true), PICK_QUARRY_MISSION_KEY: mission,
-		PICK_COMMIT_KEY: commit, PICK_HOVER_KEY: hover}
+	_pending_pick_quarry = {"band": band.duplicate(true), PICK_COMMIT_KEY: commit, PICK_HOVER_KEY: hover}
 	_refresh_targeting()
-
-## The mission the armed pick is composing for, defaulting to the STRICTER hunt rule so a pending dict
-## assembled without one (a harness, a future caller) can never accidentally relax the reach rule.
-func _pick_quarry_mission() -> String:
-	return String(_pending_pick_quarry.get(PICK_QUARRY_MISSION_KEY,
-		HudComposeVocab.COMPOSE_MISSION_HUNT))
 
 func cancel_pick_quarry() -> void:
 	_close_quarry_chooser()
@@ -688,30 +680,22 @@ func cancel_pick_quarry() -> void:
 	_refresh_targeting()
 
 ## Resolve the clicked hex's herds against the armed pick. No eligible herd → a nudge, and the pick
-## stays armed (a herd INSIDE a hunt's reach is refused with the reach stated, since that split is
-## invisible on the map). One → the commit. Several → the chooser, because the map click names only the
+## stays armed. One → the commit. Several → the chooser, because the map click names only the
 ## HEX; choosing a herd there commits.
 func _try_pick_quarry(tile_info: Dictionary) -> void:
 	if _pending_pick_quarry.is_empty() or tile_info.is_empty():
 		return
 	var band: Dictionary = _pending_pick_quarry.get("band", {})
-	var mission := _pick_quarry_mission()
 	var candidates := eligible_quarries_on_tile(band, int(tile_info.get("x", -1)),
-		int(tile_info.get("y", -1)), mission)
+		int(tile_info.get("y", -1)))
 	if candidates.is_empty():
 		var herd := _huntable_herd_on_tile(tile_info)
 		if String(herd.get("id", "")).strip_edges() == "":
-			_note_sink.call(_pick_note_title(), "No huntable herd there — click on a herd.")
+			_note_sink.call(_pick_note_title(), HudComposeVocab.PREY_PICK_MISS)
 			return
-		if not is_expedition_quarry(band, herd, mission):
-			var band_tile := SourceForecast.band_tile(band)
-			_note_sink.call(_pick_note_title(), HudComposeVocab.PREY_WITHIN_REACH_FORMAT % [
-				SourceForecast.herd_display_name(herd),
-				_hex_distance_wrapped(band_tile.x, band_tile.y,
-					int(herd.get("x", -1)), int(herd.get("y", -1))),
-				HudFormat.band_name(band),
-				int(band.get("hunt_reach", 0)),
-			])
+		# A herd whose tile the client cannot resolve is never a quarry (`is_expedition_quarry`);
+		# stay in targeting exactly like the miss above.
+		if not is_expedition_quarry(band, herd):
 			return
 		candidates = [herd]
 	if candidates.size() == 1:
@@ -719,14 +703,14 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
 		return
 	_open_quarry_chooser(candidates)
 
-## The event-dock title a quarry pick's refusal posts under — the verb's own name on a denial raid.
+## The event-dock title a quarry pick's refusal posts under — the denial verb's own name.
 func _pick_note_title() -> String:
-	return _pick_note_title_for(_pick_quarry_mission())
+	return _pick_note_title_for(HudComposeVocab.COMPOSE_MISSION_DENY)
 
 func _pick_note_title_for(mission: String) -> String:
 	var verb := HudComposeVocab.verb_for_mission(mission)
 	if verb.is_empty():
-		return HUNT_PICK_NOTE_TITLE
+		return HudComposeVocab.PREY_PICK_NOTE_TITLE
 	return String(verb[HudComposeVocab.VERB_KEY_TOOLTIP])
 
 ## **THE ONE ADOPTION OF A QUARRY**, shared by the single-herd click and the chooser: the armed pick's
@@ -737,7 +721,7 @@ func choose_quarry(herd: Dictionary) -> bool:
 		return false
 	var band: Dictionary = _pending_pick_quarry.get("band", {})
 	var fauna_id := String(herd.get("id", "")).strip_edges()
-	if fauna_id == "" or not is_expedition_quarry(band, herd, _pick_quarry_mission()):
+	if fauna_id == "" or not is_expedition_quarry(band, herd):
 		return false
 	_close_quarry_chooser()
 	_commit_pick(_pending_pick_quarry, {PICK_HERD_KEY: herd}, _pick_note_title())
@@ -794,37 +778,18 @@ func quarry_chooser() -> PopupMenu:
 		_quarry_chooser = null
 	return _quarry_chooser
 
-## Is `herd` a valid quarry for a DETACHED party from `band` on `mission`? THE single definition — the
-## pick, the chooser, the hover banner and MapView's glow all route through it (the map must never
-## promise a target the pick refuses). Wrap-aware, measured from the band's own tile. An unknown
-## distance (missing tiles) is NEVER a quarry, on any mission.
+## Is `herd` a valid quarry for a DETACHED party from `band`? THE single definition — the pick, the
+## chooser, the hover banner and MapView's glow all route through it (the map must never promise a
+## target the pick refuses). Wrap-aware, measured from the band's own tile. An unknown distance
+## (missing tiles) is NEVER a quarry.
 ##
-## **THE BEYOND-REACH RULE BELONGS TO THE HUNT, NOT TO THE EXPEDITION**, which is why the mission is a
-## parameter rather than a second definition living somewhere else. A HUNTING party exists precisely
-## for game the band cannot work from home, so a nearer herd is a local hunt — the same split the herd
-## drawer makes between "Hunt Here" and its expedition branch — and that rule is unchanged. A DENIAL
-## raid is not a way of getting food: it is a way of ERASING a herd, and wanting to break the warren
-## next door is a coherent order that hunting it at floor 0 cannot express (a hunt is carry-bounded and
-## stops at the pack). So denial may target any herd the band can see and reach, in reach or not.
-func is_expedition_quarry(band: Dictionary, herd: Dictionary,
-		mission: String = HudComposeVocab.COMPOSE_MISSION_HUNT) -> bool:
+## A denial raid is a way of ERASING a herd, so it may target any herd the band can see — in reach or
+## not. The one bound is `QUARRY_NO_REACH_BOUND`.
+func is_expedition_quarry(band: Dictionary, herd: Dictionary) -> bool:
 	var band_tile := SourceForecast.band_tile(band)
 	var distance := _hex_distance_wrapped(
 		band_tile.x, band_tile.y, int(herd.get("x", -1)), int(herd.get("y", -1)))
-	return distance > quarry_min_distance(band, mission)
-
-## The distance a quarry must lie STRICTLY beyond for `mission` — the ONE number both halves of the
-## rule are expressed in, so `is_expedition_quarry` and the `min_distance` MapView glows by are
-## literally the same value rather than two derivations of it.
-##
-## Missions are tested for the one that RELAXES the rule, so an unrecognised mission string keeps the
-## hunt's stricter bound: the failure mode of the exclusion is a refused pick the player can see, and
-## of the inclusion a silently relaxed hunt. Floored at `QUARRY_NO_REACH_BOUND` so `distance > min`
-## always implies a KNOWN distance, which is what lets the one comparison carry both rules.
-func quarry_min_distance(band: Dictionary, mission: String) -> int:
-	if mission == HudComposeVocab.COMPOSE_MISSION_DENY:
-		return QUARRY_NO_REACH_BOUND
-	return maxi(int(band.get("hunt_reach", 0)), QUARRY_NO_REACH_BOUND)
+	return distance > QUARRY_NO_REACH_BOUND
 
 ## Every herd on `(x, y)` this band could send a party to, in the snapshot's own order — the candidate
 ## set the chooser offers and the hover banner counts when a hex holds more than one.
@@ -833,8 +798,11 @@ func quarry_min_distance(band: Dictionary, mission: String) -> int:
 ## offering a herd that has walked off the tile. It is the same array `tile_info.herds` is built from
 ## (`Hud.update_herds` and `MapView._herds_on_tile` both read the snapshot's `herds`), so the click's own
 ## resolution and this list cannot disagree about what is standing there.
-func eligible_quarries_on_tile(band: Dictionary, x: int, y: int,
-		mission: String = HudComposeVocab.COMPOSE_MISSION_HUNT) -> Array:
+##
+## Eligibility runs through `is_expedition_quarry` like every other quarry question. On any one tile
+## that test is uniform — it reads only the herd's own x/y — so the filter either keeps the whole hex or
+## drops it; it is here because THIS is the definition, not because the answers could differ.
+func eligible_quarries_on_tile(band: Dictionary, x: int, y: int) -> Array:
 	var candidates: Array = []
 	if x < 0 or y < 0:
 		return candidates
@@ -848,7 +816,7 @@ func eligible_quarries_on_tile(band: Dictionary, x: int, y: int,
 			continue
 		if String(herd.get("id", "")).strip_edges() == "":
 			continue
-		if not is_expedition_quarry(band, herd, mission):
+		if not is_expedition_quarry(band, herd):
 			continue
 		candidates.append(herd)
 	return candidates
@@ -886,7 +854,7 @@ func _try_preselect(tile_info: Dictionary) -> void:
 	if _preselect.is_empty() or tile_info.is_empty():
 		return
 	var band: Dictionary = _preselect.get("band", {})
-	var mission := String(_preselect.get(PICK_QUARRY_MISSION_KEY, ""))
+	var mission := String(_preselect.get(PRESELECT_MISSION_KEY, ""))
 	var choose: Callable = _preselect.get(PICK_COMMIT_KEY, Callable())
 	if not choose.is_valid():
 		return
@@ -897,7 +865,7 @@ func _try_preselect(tile_info: Dictionary) -> void:
 		if destination != HudConst.NO_BAND_ID:
 			choose.call({PICK_TILE_KEY: Vector2i(x, y), PICK_DESTINATION_KEY: destination})
 		return
-	var candidates := eligible_quarries_on_tile(band, x, y, mission)
+	var candidates := eligible_quarries_on_tile(band, x, y)
 	if candidates.is_empty():
 		return
 	if candidates.size() == 1:

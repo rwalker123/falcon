@@ -129,6 +129,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32, floor: f32) -> (f32, f32, f32,
     // identity names — the pen's harvest (income) and the people's demand (consumption).
     app.world.entity_mut(band).insert(LaborAllocation {
         assignments: vec![LaborAssignment {
+            party: None,
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor,

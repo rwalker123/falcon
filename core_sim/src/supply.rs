@@ -37,6 +37,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bevy::math::UVec2;
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     components::{
@@ -56,9 +57,16 @@ use crate::{
 /// and its component's span. Recomputed every turn by `balance_supply_networks`. `id >= 1` is a
 /// stable-per-snapshot id shared by every band in the same multi-band connected component; a band
 /// absent from the map (singleton/isolated) reads `0`, no links and a span of `0`.
-/// Not snapshot-persisted — it is a derived readout the capture reads to tag each cohort so the
-/// client can draw supply links between members of the same network. **A resource and not a local**
-/// so a recapture between turns re-reads the turn's links rather than blanking them.
+///
+/// **Checkpoint state, carried per band** (`sim_state::BandRecord::supply`, one
+/// [`BandSupplyMembership`] each, keyed by `BandId` rather than `Entity`). Nothing *steers* off it —
+/// the balancer rebuilds it from scratch next turn — but the capture **publishes** it
+/// (`supplyNetworkId`, `poolingLinks`, `supplyNetworkSpanTiles`), and a restored world is captured
+/// before any turn runs: a save load publishes its first frame straight off the restore, and a
+/// rollback re-captures too. Left out, that frame drew every band as network 0 with no links and the
+/// exchange network vanished from the map until the next turn. A restored frame must publish the
+/// links the frame it restored did. **A resource and not a local** for the same reason: a recapture
+/// between turns re-reads the turn's links rather than blanking them.
 #[derive(Resource, Default)]
 pub struct SupplyNetworkMembership {
     networks: HashMap<Entity, u32>,
@@ -89,6 +97,31 @@ impl SupplyNetworkMembership {
         self.span_tiles.get(&entity).copied().unwrap_or(0)
     }
 
+    /// **One band's whole membership, as the checkpoint carries it** — the three readings above in
+    /// one record, so a band in no network captures as [`BandSupplyMembership::default`].
+    pub(crate) fn membership_of(&self, entity: Entity) -> BandSupplyMembership {
+        BandSupplyMembership {
+            network_id: self.network_of(entity),
+            links: self.pooling_links_of(entity).to_vec(),
+            span_tiles: self.span_tiles_of(entity),
+        }
+    }
+
+    /// **Put one band's checkpointed membership back**, under the entity the restore just spawned
+    /// for it. An empty reading inserts nothing, which is exactly how the balancer leaves a band in
+    /// no network — so a restored resource holds the same entries the captured one did.
+    pub(crate) fn restore_band(&mut self, entity: Entity, membership: &BandSupplyMembership) {
+        if membership.network_id != 0 {
+            self.networks.insert(entity, membership.network_id);
+        }
+        if !membership.links.is_empty() {
+            self.links.insert(entity, membership.links.clone());
+        }
+        if membership.span_tiles != 0 {
+            self.span_tiles.insert(entity, membership.span_tiles);
+        }
+    }
+
     fn clear(&mut self) {
         self.networks.clear();
         self.links.clear();
@@ -96,9 +129,22 @@ impl SupplyNetworkMembership {
     }
 }
 
+/// **One band's supply-network membership, as a checkpoint carries it** — the per-band slice of
+/// [`SupplyNetworkMembership`], with no `Entity` in it (every link names its far end by `BandId`).
+/// The default is a band in no network: id `0`, no links, a span of `0`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BandSupplyMembership {
+    /// [`SupplyNetworkMembership::network_of`].
+    pub network_id: u32,
+    /// [`SupplyNetworkMembership::pooling_links_of`].
+    pub links: Vec<PoolingLink>,
+    /// [`SupplyNetworkMembership::span_tiles_of`].
+    pub span_tiles: u32,
+}
+
 /// **ONE POOLING LINK, seen from one of its two ends** — a row of
 /// [`SupplyNetworkMembership::pooling_links_of`], on the wire as `PopulationCohortState.poolingLinks`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PoolingLink {
     /// The band at the other end.
     pub band: BandId,
@@ -241,15 +287,48 @@ fn link_holds(
     height: u32,
     wrap: bool,
 ) -> bool {
+    hex_distance_wrapped(a, b, width, wrap)
+        <= free_pooling_reach_tiles(
+            roads,
+            a,
+            b,
+            free_reach,
+            widest_route_reach,
+            width,
+            height,
+            wrap,
+        )
+}
+
+/// ⛔ **HOW FAR A LINK BETWEEN THESE TWO POINTS HOLDS ITSELF OPEN FOR FREE** — `reach_tiles`, or
+/// what the road between them widens it to, whichever is greater. The number [`link_holds`] tests a
+/// distance against, published because it has a **second reader**: how far a road widens it is how
+/// much of a work party's walk the road takes away (`crate::work_party::resolve_walk`), which is
+/// what makes a worn trail promote a far posting into a near one.
+///
+/// **One producer, two readers.** The pooling test is literally `distance <= this`, so what a road
+/// does for a caravan and what it does for two camps pooling can never drift apart — and the
+/// weakest-tile rule ([`crate::routes::path_reach_tiles`]) applies identically to both.
+///
+/// **Cost**: the trace only runs once the free test has failed **and** the pair is within
+/// `widest_route_reach`, so a game with no roads traces nothing.
+#[allow(clippy::too_many_arguments)] // The geometry a hex distance needs, plus the two reaches.
+pub fn free_pooling_reach_tiles(
+    roads: &crate::routes::RoadRegistry,
+    a: UVec2,
+    b: UVec2,
+    free_reach: u32,
+    widest_route_reach: u32,
+    width: u32,
+    height: u32,
+    wrap: bool,
+) -> u32 {
     let distance = hex_distance_wrapped(a, b, width, wrap);
-    if distance <= free_reach {
-        return true;
-    }
-    if distance > widest_route_reach {
-        return false;
+    if distance <= free_reach || distance > widest_route_reach {
+        return free_reach;
     }
     let path = crate::routes::trace_path(a, b, width, height, wrap, roads);
-    distance <= crate::routes::path_reach_tiles(roads, &path)
+    free_reach.max(crate::routes::path_reach_tiles(roads, &path))
 }
 
 /// ⛔ **WHAT A COMPONENT'S POOLING LOSES IN TRANSIT, as a multiple of the base friction — DERIVED

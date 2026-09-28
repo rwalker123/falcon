@@ -42,9 +42,10 @@ keeps two worktrees adding states to different harnesses off the same file.
 
 ## `tools/preview_watchdog.gd`
 
-**The hang guard for the PNG preview harnesses** — a `Watchdog` sibling node in `ui_preview.tscn`
-and `band_panel_preview.tscn`. Both harnesses render their whole walk from one long `await`ing
-`_ready()` whose last line is `get_tree().quit()`, so **any** runtime error in it aborts the run
+**The hang guard for the PNG preview harnesses** — a `Watchdog` node in `ui_preview.tscn`,
+`band_panel_preview.tscn`, `blend_probe.tscn` and `map_preview.tscn`. Each of them renders its whole walk
+from one long `await`ing `_ready()` whose last line is `get_tree().quit()`, so **any** runtime error in it
+aborts the run
 without ever exiting, and a coroutine awaiting the aborted one is never resumed either: the process
 idles forever, having stopped writing PNGs long before, leaving a stale partial frame set that looks
 like a completed run (measured once at 59 minutes).
@@ -57,6 +58,13 @@ fail to compile alongside the thing it guards is not a guard. It is a PROGRESS t
 deadline: the harness calls `note_progress()` from `_settle` (which every state reaches, including
 the PNG-less assertion blocks) and as each chapter starts, so `PROGRESS_STALL_LIMIT_MSEC` (180 s)
 bounds the gap between two signs of life rather than the run, which grows with every state added.
+
+**`blend_probe` and `map_preview` took it later, after `blend_probe` HUNG.** A parse error in
+`blend_probe.gd` left the root node scriptless, and the run then sat for 20+ minutes printing nothing, with
+no status. Both now wire it the same way: resolved in `_ready`, `note_progress()` from `_settle`, and
+`disarm()` in `_finish`. Sabotage-verified with a deliberate parse error: each is killed at **181 s** with
+`FAIL watchdog` and exit 1. Clean runs exit 0, with all 442 frames in `ui_preview_out/` byte-identical to
+the run before the guard.
 
 **Wall clock, never `delta`** — these harnesses freeze `Engine.time_scale` at 0, so a `delta`-driven
 timer would never expire, and neither would a default `SceneTree` timer. On firing it prints the

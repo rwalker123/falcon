@@ -719,13 +719,6 @@ const EXPEDITION_DELIVER_PIP_OFFSET := 0.85      # pip offset down-right from ma
 const EXPEDITION_GATHER_CUE_FACTOR := 0.30       # red gathering-cue ring radius, of marker radius
 const EXPEDITION_GATHER_CUE_OFFSET := 0.85       # cue offset down-right from marker center, of marker radius
 const EXPEDITION_GATHER_CUE_WIDTH := 2.0
-# Supply-link overlay: faint lines connecting bands sharing a supply network.
-## DERIVED: SIGNAL at `SUPPLY_LINK_OPACITY`. It was a hand-written copy of the console cyan, which
-## would have stayed teal under every other theme.
-const SUPPLY_LINK_OPACITY := 0.28
-static var SUPPLY_LINK_COLOR: Color = Color()
-const SUPPLY_LINK_WIDTH := 2.0
-const SUPPLY_NETWORK_SOLO := 0  # supply_network_id 0 == not in a shared network
 
 ## Channel key -> the tint its ramp climbs to. BUILT IN `apply_palette`, not here: every value in it is
 ## a themed colour, and a dictionary initializer runs at script load, before any theme is installed —
@@ -765,7 +758,6 @@ static func apply_palette(p: Dictionary) -> void:
 	HUNT_DANGER_OVERLAY_COLOR = HudStyle.HUNT_DANGER_ACCENT
 	READY_FOR_IMPROVEMENT_OVERLAY_COLOR = HudStyle.HEALTHY
 	HERD_DISTRESS_COLOR = HudStyle.DANGER
-	SUPPLY_LINK_COLOR = Color(HudStyle.SIGNAL, SUPPLY_LINK_OPACITY)
 	OVERLAY_COLORS = {
 		"sentiment": SENTIMENT_COLOR,
 		"corruption": CORRUPTION_COLOR,
@@ -1184,6 +1176,9 @@ var _band_overlays: BandOverlayRenderer = null
 # — see ui/AnnotationRenderer.gd). Its five PUBLIC seams keep same-named pass-throughs on MapView
 # because every one of them is reached reflectively; see the header of that file.
 var _annotations: AnnotationRenderer = null
+# The player's exchange network — pooling lines, giver/taker rings, shipment arrows — the
+# `trade_network` map layer (owned by ExchangeNetworkRenderer — see ui/ExchangeNetworkRenderer.gd).
+var _exchange_network: ExchangeNetworkRenderer = null
 # Terrain textures + the Approach-B blend shader (owned by TerrainRenderer — see ui/TerrainRenderer.gd).
 # The CPU base pass (_draw_terrain_direct) and the _cache_* SubViewport stay on MapView.
 var _terrain: TerrainRenderer = null
@@ -1317,6 +1312,7 @@ func _ready() -> void:
 	_secondary_markers = SecondaryMarkerRenderer.new(self)
 	_band_overlays = BandOverlayRenderer.new(self)
 	_annotations = AnnotationRenderer.new(self)
+	_exchange_network = ExchangeNetworkRenderer.new(self)
 	_source_list = BandSourceList.new()
 	_source_list.setup(self)
 	# A row click PANS; it deliberately does not re-select the hex — see `_on_row_pressed` there.
@@ -1328,6 +1324,9 @@ func _ready() -> void:
 	_source_list.page_changed.connect(queue_redraw)
 	_apply_ui_scale()
 	ClientSettings.changed.connect(_apply_ui_scale)
+	# A map-layer toggle (`MapToggles`) lives in the same store and is read live by its renderer, so
+	# any settings change just asks for a frame — a redraw, never a cache invalidation.
+	ClientSettings.changed.connect(queue_redraw)
 	# Note: the MinimapPanel node is created lazily from _minimap.update()
 	# This allows Main.gd to set_hud_reference() before the minimap is created
 
@@ -1633,6 +1632,10 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 		and _tile_lookups_ready()
 		and tile_updates_variant is Array
 	)
+	# The cells whose TEMPERATURE this frame may have moved — the water temperature grade's texels. Tile
+	# temperature drifts every turn and rides `tiles`, which is NOT a shader-map section, so without this the
+	# grade would render the temperature of whatever frame last rebuilt the splatmaps.
+	var temperature_cells: Array = []
 	if tiles_incremental:
 		# 6.9 ms of full-grid loop to learn about ~600 changed rows out of 4,160. Skipped entirely
 		# when the delta moved no tile at all.
@@ -1640,6 +1643,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 			for entry in (tile_updates_variant as Array):
 				if entry is Dictionary:
 					_ingest_tile(entry)
+					temperature_cells.append(
+						Vector2i(int(entry.get("x", 0)), int(entry.get("y", 0))))
 	else:
 		tile_lookup.clear()
 		tile_habitability.clear()
@@ -1673,7 +1678,12 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# splatmaps to be rebuilt, and before the manifest existed there was no way to tell the two apart.
 	# The road-map is why `routes` is on that list too; see SHADER_INPUT_SECTIONS.
 	if dimensions_changed or SnapshotSections.any_changed(snapshot, SHADER_INPUT_SECTIONS):
-		_terrain.rebuild_shader_maps()
+		_terrain.rebuild_shader_maps()   # rebuilds the temp_map with the rest
+	elif SnapshotSections.changed(snapshot, SECTION_TILES):
+		if tiles_incremental:
+			_terrain.update_temperature_cells(temperature_cells)
+		else:
+			_terrain.rebuild_temperature_map()   # every tile was re-ingested, so every texel may have moved
 	profile.end(PROFILE_SHADER, t_shader)
 	var t_markers: int = profile.begin(PROFILE_MARKERS)
 	_install_province_overlay()
@@ -2169,7 +2179,9 @@ func _draw() -> void:
 	# earlier is erased on any tile inside one. Still under the markers, so tokens read on top.
 	_draw_tile_selection_highlight(radius, origin)
 
-	_draw_supply_links(radius, origin)
+	# The exchange network sits under the band markers, so its lines run INTO a token rather than
+	# across it (and is drawn only while its map-layer toggle is on — see the renderer).
+	_exchange_network.draw_network(radius, origin)
 	_band_markers.draw_primary_bands(radius, origin)
 
 	# (Slots were computed above, before the worked-source marks that dock to them.)
@@ -2407,6 +2419,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			_terrain.toggle_terrain_textures()
 			_mark_input_handled()
 			return
+		if KeyboardArbiter.is_bare_key(event, KEY_O):
+			_terrain.toggle_water_motion()   # look-dev aid: water chop + shore pulse on/off (session-only)
+			_mark_input_handled()
+			return
 	if event is InputEventMouseButton:
 		var mouse_event: InputEventMouseButton = event
 		if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_event.pressed:
@@ -2484,38 +2500,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		if not is_zero_approx(amount):
 			_apply_zoom(amount, get_local_mouse_position())
 			_mark_input_handled()
-## Faint links between the player's bands that share a supply network (bands
-## auto-share goods by reach, grouped server-side by `supply_network_id`). Drawn
-## as a simple chain through each network's members so the player can see who is
-## pooling food. Solo bands (id 0) and non-player bands are ignored.
-func _draw_supply_links(radius: float, origin: Vector2) -> void:
-	var networks: Dictionary = {}  # supply_network_id -> Array[Vector2] of centers
-	for unit in units:
-		if not HudConst.is_player_unit(unit):
-			continue
-		var network_id: int = int(unit.get("supply_network_id", SUPPLY_NETWORK_SOLO))
-		if network_id == SUPPLY_NETWORK_SOLO:
-			continue
-		var pos: Array = Array(unit.get("pos", []))
-		if pos.size() != 2:
-			continue
-		var center: Vector2 = _hex_center_wrapped(int(pos[0]), int(pos[1]), radius, origin)
-		var members: Array = networks.get(network_id, [])
-		members.append(center)
-		networks[network_id] = members
-	for network_id in networks:
-		var members: Array = networks[network_id]
-		if members.size() < 2:
-			continue
-		# Chain the members in draw order — enough to read the grouping for the
-		# small networks these form, without an all-pairs mesh.
-		for i in range(members.size() - 1):
-			var a: Vector2 = members[i]
-			var b: Vector2 = members[i + 1]
-			# Skip wrap artifacts (a segment spanning most of the map width).
-			if abs(a.x - b.x) > last_map_size.x * 0.4:
-				continue
-			draw_line(a, b, SUPPLY_LINK_COLOR, SUPPLY_LINK_WIDTH)
 ## Coordinator push (Hud.labor_pending_changed → Main → here): the per-band optimistic pending
 ## map, stored by _band_overlays; the selected band's pending shows in a dashed-amber style.
 ## THIS SEAM IS PUBLIC AND NAME-BOUND — Main.gd wires the HUD signal to it via has_method /

@@ -11,6 +11,25 @@ paths:
 
 # Command targeting — move-band and expeditions
 
+> ⛔ **THE HUNTING EXPEDITION IS NO LONGER COMPOSED ON THE CLIENT** (`docs/plan_civilization_steps.md`
+> §One work party). A herd past the band's apron is an ordinary hunt whose crew posts a caravan, so the
+> herd sheet's expedition branch, the Parties footer's Hunt verb and `send_hunt_expedition_requested`
+> are retired (`labor-ui.md` → "A FAR SOURCE IS AN ORDINARY SHEET", `band-city-panel.md` → "THERE
+> IS NO HUNT VERB"). **Every passage below about a hunting party's quarry, reach or
+> send is superseded.** What changed here:
+>
+> - **The quarry pick has ONE rule now, the denial raid's**: every herd at a KNOWN distance is a quarry
+>   (`QUARRY_NO_REACH_BOUND`). `quarry_min_distance`, the per-mission fork and the pending pick's
+>   mission key are deleted — the quarry pick IS the Deny pick, and a parameter no reader can vary is
+>   an invitation to put the old one back. `begin_pick_quarry(band, commit, hover)`,
+>   `is_expedition_quarry(band, herd)` and `eligible_quarries_on_tile(band, x, y)` take no `mission`.
+>   The passive highlight still files the open sheet's mission (Deny or Trade) under
+>   `PRESELECT_MISSION_KEY`, since that decides what it glows.
+> - ⛔ **`hunt_reach` has no reader.** The within-reach refusal note (`PREY_WITHIN_REACH_FORMAT`) went
+>   with it; a click that names no huntable herd still says so (`PREY_PICK_MISS`), under the Deny
+>   verb's name.
+> - **The glow agrees**: MapView's herd halo filters on the same `QUARRY_NO_REACH_BOUND`.
+
 ## Key scripts
 
 | Script | Purpose |
@@ -59,9 +78,8 @@ for which band, anchored on which hex — is shared state on `ComposeState` (`op
   `try_dispatch`), so neither the selection nor the Band panel's subject moves off the band. A valid
   click calls the commit, which emits the command and closes the sheet (`close_verb_form`, which also
   clears the pending verb). A commit that answers a refusal posts it and leaves the pick armed.
-- **Invalid clicks stay armed**: a hex with no eligible herd posts `No huntable herd there`, a hunt-mission
-  herd inside `hunt_reach` posts `PREY_WITHIN_REACH_FORMAT`, a Trade click on anything but a live tie
-  posts `TRADE_PICK_MISS_TEXT`, and a Deny click on a herd the band cannot field the required party for
+- **Invalid clicks stay armed**: a hex with no eligible herd posts `PREY_PICK_MISS`, a Trade click on
+  anything but a live tie posts `TRADE_PICK_MISS_TEXT`, and a Deny click on a herd the band cannot field the required party for
   posts `SourceForecast.denial_short_handed_reason` — the one refusal the commit itself makes.
 - **The Deny chooser** (`_open_quarry_chooser`) is a `PopupMenu` at the pointer, one entry per eligible
   herd on the clicked hex (`eligible_quarries_on_tile`, derived live from `world_herds`, entries built
@@ -88,7 +106,7 @@ for which band, anchored on which hex — is shared state on `ComposeState` (`op
   - **Scout** and Move state no hover detail. A hex with nothing to state keeps the base prompt.
 - **Every banner names the band by its NAME** (`HudFormat.band_name`), never `Band <id>`. The command
   token and its instruction come from `DENY_PICK_COMMAND` / `VERB_PICK_COMMAND_*` / `MOVE_COMMAND` and
-  the `BANNER_INSTRUCTIONS` table; a hunt-mission quarry pick keeps `PICK_PREY_COMMAND`.
+  the `BANNER_INSTRUCTIONS` table.
 - **Esc cancels the pick alone.** `cancel_active_targeting` (the banner's Cancel, Esc, right-click)
   emits `verb_pick_cancelled`, which `HudLayer` routes to `BandPanelController.on_verb_pick_cancelled`:
   the sheet re-renders with its values and its send un-armed. A second Esc is `Main.escape_claimant`'s
@@ -97,8 +115,8 @@ for which band, anchored on which hex — is shared state on `ComposeState` (`op
 - **The Trade pick accepts only a LIVE tie** (`HudBandLaborState.tie_is_live`, strength above
   `TIE_STRENGTH_NONE`). A tied band still in the roster is found where it stands; one that is not is
   found where the tie last saw it.
-- **A pick's refusal notes post under the verb's name** (`_pick_note_title_for`); a hunt-mission pick
-  keeps `HUNT_PICK_NOTE_TITLE`. The herd-drawer hunt expedition does not use this pick at all.
+- **A pick's refusal notes post under the verb's name** (`_pick_note_title_for`), with
+  `PREY_PICK_NOTE_TITLE` for a mission that names no verb.
 
 Labor allocation is source-centric (assign workers to a source/role, see the **Labor
 allocation UI** bullet below). The one remaining **targeting mode** is **move-band** —
@@ -110,9 +128,8 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   remain, all built on the same `_pending_*` → `_current_targeting_info()` → `_refresh_targeting()`
   machinery ON THE CONTROLLER: `_pending_move_band` (`command: "move"`, `need: "tile"`),
   `_pending_verb_pick` (`command: "scout"` / `"trade"`, `need: "tile"`, carries the band, the verb's
-  mission and the sheet's `commit` / `hover`), and `_pending_pick_quarry` (`command: "deny"` on the
-  Deny verb, `"prey"` (`PICK_PREY_COMMAND`) on a hunt-mission pick, `need: "herd"`, plus
-  **`min_distance`** — the band, the mission and the sheet's `commit` / `hover`).
+  mission and the sheet's `commit` / `hover`), and `_pending_pick_quarry` (`command: "deny"`,
+  `need: "herd"`, plus **`min_distance`** — the band and the sheet's `commit` / `hover`).
   `_current_targeting_info()` returns a descriptor (`{active, command, need, origin_x/y,
   context_label}`) for whichever is set; `_refresh_targeting()` shows the floating **targeting
   banner** (top-centre, `HudStyle.banner_stylebox()`: cyan reticle + command + instruction + Cancel)
@@ -201,7 +218,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor]` (a trailing `0.0..=1.0`
   fraction of `K`; the server defaults `DEFAULT_ESCAPEMENT_FLOOR`, and a retired stance word is a hard
   parse error rather than a default). A HERD-targeting pick (`_pending_pick_quarry`, `need: "herd"`) —
-  Deny's, or a hunt-mission pick under `PICK_PREY_COMMAND` — resolves a huntable herd on the clicked hex
+  Deny's — resolves a huntable herd on the clicked hex
   (`_huntable_herd_on_tile` reads `tile_info.herds`); no eligible herd on the hex → a command-feed
   nudge, and the pick stays armed. For `need == "herd"` `AnnotationRenderer.draw_targeting` reticles
   the hovered hex and glows the herds that are **valid quarries — those strictly BEYOND the outfitting

@@ -172,8 +172,12 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 219 frames / 1629 `PASS` / 547 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 221 frames / 1648 `PASS` / 553 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
+
+**THE EAT-FIRST RULE'S RETIREMENT MOVED IT 193 / 1456 / 557 → 193 / 1453 / 557** on the work-party
+branch: five claims out (the ate line, the deficit line, its supplied-postings absence, its DANGER
+ink, the crew line's ink), two in (no row carries a retired line; every party line is quiet ink).
 
 **THE DENY SHEET'S PRE-SELECTED PREY MOVED IT 216 / 1602 / 541 → 219 / 1629 / 547**: three frames
 (`band_panel_compose_deny_prey`, `_short_handed`, `_two_prey`), the restored sheet take, short-handed
@@ -208,6 +212,17 @@ pixel harnesses take the seal. **Three of this harness's mechanisms belong to it
 pushes its press and release with no awaited frame between them, `_drive_drag`'s hold re-warps the
 physical pointer every frame, and every simulated event goes through the one `_push_input` wrapper
 the guard discriminates on.
+
+**THE CARAVAN PASS AND THE HUNT VERB'S RETIREMENT took out one frame and five `assert OK` and
+added two `: PASS`** — five hunt-compose frames out and four denial-hosted layout frames in, the hunt
+sheet's chart guards out (the `assert OK`s), and the work-party block re-staged for the caravan plus
+the footer claim in. The two sections at the foot of this file have what each claim can tell apart.
+
+**THE WORK PARTY's BLOCK ADDED two frames, six `assert OK` and fourteen `: PASS`** — two frames
+(`band_panel_work_party` and its narrow twin), whose bounds trios account for all **six**
+`assert OK`s, and **fourteen** `: PASS` — thirteen on the block itself plus
+`_assert_work_party_rows_fit_the_zone`, which reports as a claim rather than as an `assert OK`.
+The section at the foot of this file has the fixture and what each claim can tell apart.
 
 **THE PR #680 REVIEW FIXES MOVED IT 1328 → 1334 `PASS`**, frames and `assert OK` unchanged: **+3**
 for `_assert_closed_settings_costs_the_board_nothing` (a closed build-queue block reserves nothing,
@@ -2679,6 +2694,97 @@ for.** A run started immediately after a `--import` failed three claims with
 enough to starve the frame loop blows the budget and FAILS LOUDLY rather than hanging. The immediate
 re-run was green. **Judge it by a second run before treating it as a regression**; nothing in the
 pool-TOE arc is anywhere near that gesture.
+
+## The work party's block — one contrast frame, one narrow one (`docs/plan_civilization_steps.md`)
+
+The behaviour is `band-city-panel.md` → "The work row reports its own WORK PARTY"; what belongs here
+is the shape of the fixture and what each claim can tell apart. The party is a **caravan** now
+(`.claude/rules/core_sim/work-party.md`), and the fixture is staged for it: one row per state the
+block can be in.
+
+**IT RUNS LAST, after `_render_empty_work_zone_states`**, so no earlier frame moves — and it hands
+the world and the reference band back on the way out.
+
+⛔ **THE LOCAL ROW IS THE FIXTURE'S SUBJECT, not its scenery.** *A row with no party renders exactly
+as it did before any of this existed* is a claim about the DIFFERENCE between two rows, so the local
+forage row and the three postings are ONE board: an identity asserted on a band with no party
+anywhere on it passes on a client that never implemented the block at all. **Its party keys are ABSENT
+rather than zeroed** — absent and `party_workers == 0` are one reading, and a fixture spelling the
+zeros out would be asserting the decoder's shape rather than the row's.
+
+⛔ **AND `realized_yield` IS THE PARTY'S `net_rate_home` ON EVERY POSTED ROW** — one forecast
+publishes both, so a fixture giving them two numbers describes a row no server can send.
+
+| posting | `walkTiles` | `walkOutRemaining` | `huntersOnTheRoad` | `nextLoadHomeIn` | the block |
+|---|---|---|---|---|---|
+| local forage | — | — | — | — | **no block** |
+| walking out (deer) | 6 | 2 | 0 | 0 | crew line, `Walking out — reaches the herd in 2 turns` |
+| running (deer) | 8 | 0 | 1 | 3 | crew `· 1 on the road`, `Next load home in 3 turns` |
+| running, inedible (wolf) | 5 | 0 | 1 | 1 | crew `· 1 on the road`, `Next load home in 1 turn` |
+
+⛔ **THE WOLF POSTING WAS THE UNSUPPLIED ONE, AND IS RE-STAGED AS AN ORDINARY FAR POSTING.** Under
+the retired eat-first rule it carried `party_deficit` 1.2 and drew a DANGER `Needs … from home` line,
+and the deer posting a `Party ate 2.00`; both fields are gone from the wire
+(`.claude/rules/core_sim/work-party.md` → "RETIRED: an eat-first rule"), and a pelt take walks home
+like any other.
+
+**Each of the three live fields drives exactly one line and is set independently of the other two**
+(`_work_party_row` takes them as three arguments), so every absence claim below is a claim about one
+field rather than a coincidence of the fixture. The postings also differ in every number, so a block
+that read the wrong row's party lands on a figure a claim names.
+
+| claim | what only IT can say |
+|---|---|
+| a LOCAL row grows no block at all | the identity |
+| the walking-out posting draws TWO lines | the liveness the identity and the absences below need |
+| its crew line, by EQUALITY, with no road clause | the noun is the board's own resolver's, the tile the party's, the walk one-way `-tile walk` |
+| its walk-out line names the HERD and the plural | `walkOutRemaining` is what it reads |
+| …and it carries NO next-load line | nobody has reached the herd; a `0` drops it |
+| the rate line contains `net_rate_home` | a far row states what ARRIVES, never `0.0 · in transit` |
+| the running crew line carries `· 1 on the road` | the live road count |
+| `Next load home in 3 turns`, and the block is those TWO lines | `nextLoadHomeIn` is what it reads, and nothing follows it |
+| the running posting has NO walk-out line | the claim that keeps an arrived posting from re-promising its arrival |
+| `in 1 turn`, not `in 1 turns` | every pack passes through one on its way home |
+| the INEDIBLE posting draws the same two lines a running posting does | a pelt take is an ordinary posting |
+| NO row's drawn block carries `Party ate` or `food a turn from home` (`RETIRED_PARTY_ROW_NEEDLES`) | the eat-first rule's lines did not survive it; the size claims above are its liveness |
+| every party line on the three postings is `INK_DIM` | no line on the block is a warning any more — a render-site decision no model claim can see |
+| (PNG-less) a forage party walking out names the PATCH, singular | the plant web's noun and the walk-out singular, through the one producer |
+
+**`band_panel_work_party_narrow` is not a second picture of the same thing.** The work zone
+`clip_contents` and the board is paged in uniform rows, so a block drawing taller than the capacity
+arithmetic reserved is sliced off the bottom; `_assert_work_party_rows_fit_the_zone` measures the
+DRAWN rows against the zone with a liveness guard ahead of it. Measured: **4 rows, 304 of 759 px**.
+
+> ⛔ **THE PIPELINE MODEL'S FIXTURE IS RETIRED WITH ITS FIELDS.** It staged `porters`,
+> `travelTiles` / `transitTurns` and `partyTransitRemaining` — a near posting part-way through a walk
+> the sim counted down, a settled one whose line was open, and a `First load arrives next turn`
+> singular — and every one of those fields is gone from the wire. Its sabotage history (a client
+> reading `transitTurns` in place of the countdown) has no field left to reach for.
+
+**Sabotage-verified** by drawing the next-load line on `nextLoadHomeIn == 0` (`elif > 0` → `else`):
+**EXIT=1, exactly 3 of this block's claims fail** — the walking-out posting's two-line count
+(`Next load home in 0 turns` appears), its no-next-load absence, and the PNG-less forage walk
+out — while every presence claim stays green. Restored: green.
+
+**And by re-adding a `Needs 1.20 food a turn from home` line to every posted row's block: EXIT=1,
+exactly 5 failures** — the no-ate/deficit claim (it names the line on all three postings), the three
+postings' line counts, and the PNG-less forage walk's count; the local row's identity stays green, and
+nothing else in the run moves. Restored: green.
+
+## The quarry-eligibility guards (the Hunt verb is retired)
+
+There is no hunt verb (`band-city-panel.md` → "THERE IS NO HUNT VERB"), and with it went
+`band_panel_compose_hunt` / `_short` / `_eradicate` / `_no_prey` / `_empty` and the hunt-sheet-only
+guards (`_assert_hunt_sheet_chart`, `_assert_chart_reads_the_settled_party`, the dock's trip-bound
+clause). `SEND_HUNT_CONFIRM_META` is deleted.
+
+**The quarry-eligibility guards inverted with the rule.** `_assert_quarry_eligibility` used to require
+the near herd REFUSED (inside `hunt_reach`); every herd at a known distance is a quarry now, so it
+requires the near herd COMMITTED (handed to the pick's commit) and a herd at an UNKNOWN distance
+refused with targeting still armed. `_assert_denial_quarry_eligibility` lost its hunt half and asserts the glow at `QUARRY_NO_REACH_BOUND`.
+
+`_assert_dock_chart_carries_the_kit` survives PNG-less — it is arithmetic on `floor_chart_model`,
+which the herd sheet still draws — and is called from the same block.
 
 ## The queue HEAD's tool shortfall, the strip's DETAIL line, and the labelled withdrawal
 

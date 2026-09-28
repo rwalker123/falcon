@@ -29,8 +29,8 @@ extends RefCounted
 ## **The trade-link seam is gone with the substrate that fed it** (`update_trade_overlay` /
 ## `set_trade_overlay_enabled` / `set_trade_overlay_selection`, and the `trade_links` snapshot
 ## section behind them): the sim no longer publishes a link network at all, so the overlay drew the
-## empty set on every frame. Issue #232 rebuilds a route-network overlay against a network that
-## exists — see `docs/plan_contact_and_logistics.md`.
+## empty set on every frame. The network that DOES exist — each band's pooling links and this turn's
+## shipments — is drawn by `ExchangeNetworkRenderer` (issue #624), not here.
 ##
 ## `_targeting_time` is advanced from MapView's `_process` via `advance_targeting_time`, gated on
 ## `is_targeting_active()` — the same gate the inlined code used, so an idle client still does no
@@ -423,14 +423,12 @@ func draw_targeting(radius: float, origin: Vector2) -> void:
 	elif need == TARGETING_NEED_HERD:
 		# Quarry targeting: glow the herds that are valid targets + reticle the hovered hex, so it
 		# reads "click on a herd".
-		# `min_distance` is `TargetingController.quarry_min_distance` for the MISSION being composed, and
-		# this test is the RENDER-SIDE MIRROR of `TargetingController.is_expedition_quarry`. On a HUNT it
-		# is the outfitting band's `hunt_reach` — a herd within reach is a LOCAL hunt, not a party's job,
-		# and `TargetingController._try_pick_quarry` refuses it. On a DENIAL raid it is
-		# `TargetingController.QUARRY_NO_REACH_BOUND` (`-1`), because breaking the herd next door is a
-		# legal order; at `-1` the same strict comparison admits a herd on the band's OWN tile and still
-		# skips the unknown distance. The halo must never promise a target the pick will refuse, nor hide
-		# one it would accept, so the two tests must be changed together.
+		# `min_distance` is `TargetingController.QUARRY_NO_REACH_BOUND` (`-1`), and this test is the
+		# RENDER-SIDE MIRROR of `TargetingController.is_expedition_quarry`: breaking the herd next door is
+		# a legal denial order, so at `-1` the strict comparison admits a herd on the band's OWN tile and
+		# still skips the unknown distance. (A hunt's `hunt_reach` bound rode this key until the hunting
+		# party retired.) The halo must never promise a target the pick will refuse, nor hide one it
+		# would accept, so the two tests must be changed together.
 		# Absent (every other targeting mode omits the key) it defaults to 0 and admits everything.
 		# Fog-gated like the herd marker itself (glowing a herd you can't see would BE the leak), and an
 		# UNKNOWN distance (`-1`, origin missing) skips too — `_herd_glows` holds the whole test.

@@ -58,7 +58,7 @@ const EARTH_MAP := {
 	"FORAGE_BARREN_COLOR": Color("26241f"),
 }
 
-## Every theme: `name` is what the Options row says, `hud` is the 26 authored `HudStyle` colours and
+## Every theme: `name` is what the Options row says, `hud` is the 28 authored `HudStyle` colours and
 ## `map` the 16 authored `MapView` data-ramp colours. Everything else in either script is DERIVED —
 ## see the rule at the top of this file.
 ##
@@ -105,6 +105,10 @@ const THEMES := {
 			"ARMED_BORDER": Color("5c3a2e"),
 			"VOICE_PIGMENT": Color("d0a468"),
 			"VOICE_INK": Color("93a0a8"),
+			# TRADE — goods moving between camps on the map. A saturated GOLD, pushed yellower and
+			# brighter than this theme's amber WARN so a trade mark never reads as a warning, and clear of
+			# the blue rivers, the brown roads and the desaturated sand it is drawn over.
+			"TRADE": Color("f2c230"),
 		},
 		"map": EARTH_MAP,
 	},
@@ -142,6 +146,10 @@ const THEMES := {
 			"ARMED_BORDER": Color("5a3a30"),
 			"VOICE_PIGMENT": Color("c89c66"),
 			"VOICE_INK": Color("8d9aa4"),
+			# ⛔ **THE TOKEN EXISTS BECAUSE OF THIS THEME.** The exchange links were drawn in `SIGNAL`, and
+			# loam's SIGNAL is a pale blue — on the map they read as RIVERS. A warm gold is the one hue
+			# that can be neither water (blue) nor road (brown) nor this theme's teal READY.
+			"TRADE": Color("f5c542"),
 		},
 		"map": EARTH_MAP,
 	},
@@ -177,6 +185,9 @@ const THEMES := {
 			"ARMED_BORDER": Color("5a3a34"),
 			"VOICE_PIGMENT": Color("c99a6b"),
 			"VOICE_INK": Color("8f9aa6"),
+			# Kiln's WARN is already a pale gold, so TRADE goes deeper and more saturated rather than
+			# lighter — separated from WARN by chroma, and from the terracotta SIGNAL by hue.
+			"TRADE": Color("ffc21a"),
 		},
 		"map": EARTH_MAP,
 	},
@@ -215,6 +226,9 @@ const THEMES := {
 			"ARMED_BORDER": Color(0.353, 0.227, 0.212, 1.0),
 			"VOICE_PIGMENT": Color(0.784, 0.612, 0.400, 1.0),
 			"VOICE_INK": Color(0.510, 0.635, 0.706, 1.0),
+			# NEW key, so written in hex like `READY` above (no original literal to preserve). A clean
+			# gold, yellower than console's amber WARN and far from its cyan SIGNAL.
+			"TRADE": Color("ffd23f"),
 		},
 		"map": {
 			"SENTIMENT_COLOR": Color(1.0, 0.35, 0.25, 1.0),

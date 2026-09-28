@@ -1359,6 +1359,33 @@ fn reveal_herd(app: &mut App, pos: UVec2) {
 /// naming the species is the only way to state them.
 const REPORTED_QUARRY: &str = "Red Deer";
 
+/// Red Deer's roster key — where [`reported_world`] pins its reach.
+const REPORTED_QUARRY_KEY: &str = "deer";
+
+/// **The reach the report was filed at.** Red Deer's `engage_rate` was `1.0` then; it ships at `2.0`
+/// now, as a regional staple (`fauna.md` → "The regional staples carry their correction in reach"),
+/// which halves the per-hunter replacement arithmetic below to `ceil(2.91 / 0.70)` = 5 — inside the
+/// retired 8-hunter stepper, where the defect this fixture guards cannot be reached. The fixture
+/// therefore pins the report's own reach, so the scenario stays the one reported.
+const REPORTED_ENGAGE_RATE: f32 = 1.0;
+
+/// [`wary_world`] with Red Deer's reach held at [`REPORTED_ENGAGE_RATE`] — the reported raid's world.
+fn reported_world() -> App {
+    let mut app = build_test_app();
+    {
+        let mut handle = app.world.resource_mut::<FaunaConfigHandle>();
+        let mut config = (*handle.get()).clone();
+        config
+            .species
+            .get_mut(REPORTED_QUARRY_KEY)
+            .expect("the shipped roster carries Red Deer")
+            .engage_rate = REPORTED_ENGAGE_RATE;
+        handle.replace(std::sync::Arc::new(config));
+    }
+    app.update();
+    app
+}
+
 /// Red Deer's own `body_mass` (`fauna_config.json`). Stated here because the report counts the herd
 /// in **head** and the sim counts **biomass**, and this is the conversion between them.
 const RED_DEER_BODY_MASS: f32 = 15.0;
@@ -1428,7 +1455,7 @@ const REPORTED_SWEEP_SEEDS: [u64; 6] = [3, 11, 29, 97, 613, 40009];
 ///    test measuring a raid that would have worked at any size.
 #[test]
 fn the_reported_red_deer_raid_is_staffable_and_its_seeded_party_declines_the_herd() {
-    let mut app = wary_world();
+    let mut app = reported_world();
     let (id, pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, REPORTED_HERD);
     reveal_herd(&mut app, pos);
     recapture_snapshot_in_place(&mut app.world);
@@ -1563,7 +1590,7 @@ const REPELLED: &str = "repelled";
 fn mean_biomass_after_raiding(workers: u32) -> f32 {
     let mut endings = Vec::new();
     for seed in REPORTED_SWEEP_SEEDS {
-        let mut app = wary_world();
+        let mut app = reported_world();
         app.world.resource_mut::<SimulationConfig>().map_seed = seed;
         let (id, pos) = pin_raid_herd_of(&mut app, REPORTED_QUARRY, REPORTED_HERD);
         let home = spawn_home_band(&mut app, pos);

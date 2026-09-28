@@ -66,13 +66,18 @@ const DEFAULT_NAVIGABLE_RIVER_FORAGE_BONUS: f32 = 80.0;
 /// tending now pays through **weeding** (the favored crop's share rises within the tile's basket) plus
 /// **conversion** ([`DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN`] on that crop's own yield vector), and
 /// the rung-2 "wild < tended" guarantee lives in the roster's own bar
-/// (`core_sim/tests/flora_roster.rs`). At `1.0` a tended stand regrows exactly as fast as wild.
+/// (`core_sim/tests/flora_roster.rs`).
 ///
-/// **The lever stays** (it is not deleted): `1.0` is neutral, and a small boost can be dialed back in
-/// for playtest if the roster ever wants tending to also quicken regrowth. `validate()` forbids only a
-/// gain **below** `1.0` — tending making a stand grow *slower* than wild is incoherent whatever the
-/// crop. A **playtest dial**.
-const DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN: f32 = 1.0;
+/// **Shipped at `1.5`, the kept-herd reading of the boost.** Weeding and clearing the competing plants
+/// lowers what holds a stand back, so it comes back faster — the same argument that sets the herd
+/// gains (`pastoral_gain` 1.25, `pen_gain` 1.5: keeping lowers the death rate, it does not multiply
+/// breeding). It sits between wild (`1.0`) and the Field's `field_regrowth_gain` (2.53), which is
+/// independent of it: a settled Field reads its own gain alone (`forage::rung_regrowth_gain`), and
+/// only a Sow still being raised interpolates between the two. Weeding and conversion remain the
+/// rung's main payoff; this is a boost on top, not a replacement. History: 2.0 before S2, the neutral
+/// 1.0 from S2. `validate()` forbids only a gain **below** `1.0` — tending making a stand grow
+/// *slower* than wild is incoherent whatever the crop. A **playtest dial**.
+const DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN: f32 = 1.5;
 
 /// **THE FIELD'S CAPACITY GAIN** — how much more standing crop a sown field holds than the same
 /// ground wild ([`CultivationConfig::field_capacity_gain`]).
@@ -237,10 +242,10 @@ const DEFAULT_CULTIVATION_FIELD_SHARE_COST_CEILING: f32 = 2.0;
 #[serde(default)]
 pub struct CultivationConfig {
     /// **The tended rung's growth multiplier** — a tended patch's stock regrows `this ×` as fast as
-    /// the same patch would wild; folded in by [`crate::forage::patch_ecology`]. **Neutral at `1.0`
-    /// since Flora Roster S2**: tending pays through weeding + conversion, not this boost, so a
-    /// gain of `1.0` (regrows as fast as wild) is valid — only a gain *below* `1.0` is rejected (it
-    /// would make tending grow a stand *slower* than wild). See
+    /// the same patch would wild; folded in by [`crate::forage::patch_ecology`]. Ships at `1.5`
+    /// (weeding lets the stand come back faster); tending still pays mainly through weeding +
+    /// conversion, so a gain of `1.0` (regrows as fast as wild) is also valid — only a gain *below*
+    /// `1.0` is rejected (it would make tending grow a stand *slower* than wild). See
     /// [`DEFAULT_CULTIVATION_TENDED_REGROWTH_GAIN`].
     pub tended_regrowth_gain: f32,
     /// **THE FIELD'S CAPACITY GAIN** — a sown field holds `this ×` the standing crop the same ground
@@ -532,10 +537,19 @@ pub struct LaborConfig {
     /// the sources they exploit, so those spots provide fog reveal like the band center and
     /// scout vantages do.
     pub worked_source_sight_range: u32,
-    /// Extra distance beyond `band_work_range` a Hunt assignment reaches (leashed
-    /// follow) before it lapses and returns its workers to the pool.
+    /// ⛔ **DEAD — no system may decide anything by it.** It was the extra reach beyond
+    /// `band_work_range` a Hunt row survived out to before lapsing. Nothing lapses for distance any
+    /// more: past the band's work range **every** job posts a work party
+    /// (`crate::work_party::party_begins_past`), and a hunt four tiles out walks exactly as a gather
+    /// four tiles out does. The key survives, validated and published as the cohort's
+    /// `hunt_reach`, only until the expedition path it also served is retired.
     pub hunt_leash_tiles: u32,
     /// Tiles a `move_band` order advances the band toward its target each turn.
+    ///
+    /// **It is also the work party's walking speed** (`crate::work_party::walk_turns`): the party
+    /// walks out, and each porter walks a pack home, at exactly the rate a band walks, because it is
+    /// the same people on the same ground. A second travel rate for a party would be two answers to
+    /// one question.
     pub band_move_tiles_per_turn: u32,
     /// **The forward-projection horizon for a source's steady `realized` yield**, in turns. Each
     /// source's `SourceYield::realized` is the *average food/turn it will deliver over the next N
@@ -613,10 +627,23 @@ impl LaborConfig {
                 value: self.arrivals_horizon_turns.to_string(),
             });
         }
+        // A party walks at the band's own pace, so a zero would make a far posting's walk never
+        // end (`work_party::walk_turns` would divide by zero).
+        if self.band_move_tiles_per_turn == 0 {
+            return Err(LaborConfigError::Invalid {
+                field: "band_move_tiles_per_turn",
+                constraint:
+                    "be at least 1 (a band — and a work party — advances at least one tile \
+                             a turn)"
+                        .to_string(),
+                value: self.band_move_tiles_per_turn.to_string(),
+            });
+        }
         validate_plant_ladder_payoffs(&self.forage)
     }
 
-    /// Distance (inclusive) at which a Hunt assignment still yields before lapsing.
+    /// ⛔ **DEAD — published, and read by nothing that decides anything.** `band_work_range +
+    /// hunt_leash_tiles`, the distance a Hunt row used to lapse past. See [`Self::hunt_leash_tiles`].
     pub fn hunt_reach(&self) -> u32 {
         self.band_work_range + self.hunt_leash_tiles
     }
