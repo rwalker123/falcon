@@ -325,9 +325,9 @@ pub use routes::{
     road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
     road_neglect_grace_remaining, road_rung_span, road_upkeep_demand, road_upkeep_measure,
     road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, trace_path,
-    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteJourney, RouteTrafficLog,
-    FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_REACH_HELD_OPEN,
-    PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
+    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteJourney, RouteTrafficLog, TrafficSource,
+    FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_HERD_HAS_CROSSED,
+    NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
@@ -822,8 +822,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
         // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The registry
-        // is world state; the traffic log is a within-turn hand-off from `balance_supply_networks`,
-        // which knows which pairs pooled, to `routes::advance_roads`, which spends them.
+        // is world state; the traffic log is a hand-off from the three things that move —
+        // `balance_supply_networks` (which pairs pooled), `advance_band_movement` (who marched) and
+        // `advance_herds` (which migratory herds walked their corridor) — to `routes::advance_roads`,
+        // which spends them.
         .insert_resource(routes::RoadRegistry::default())
         .insert_resource(routes::RouteTrafficLog::default())
         .insert_resource(connections::ContactsThisTurn::default())

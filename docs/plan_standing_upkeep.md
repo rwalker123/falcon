@@ -2524,8 +2524,9 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > tan-brown object by nature and a herd trail is drawn on top of the same ground.
     >
     > > **RELATED, AND NOT THIS STEP'S: #215** — *"herd/game trails follow hex centers and become the
-    > > basis of roads."* Its own issue, and still open: nothing in the sim banks route work for an
-    > > animal today, which is why the floor rung is spelled `path` rather than `game_trail`.
+    > > basis of roads."* Its own issue, since built: migratory herds bank route work on their `Migrate`
+    > > legs, and the floor rung stays spelled `path` because it names what reaches it, not an origin.
+    > > See `.claude/rules/core_sim/routes.md` → "Game trails".
     >
     > > #### ⛔ AND THE `Roadwork` POOL HAS NOTHING TO POINT AT — THE ROSTER IS THIS STEP'S TOO
     > >

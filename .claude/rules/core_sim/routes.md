@@ -177,35 +177,41 @@ number to move, and hiding a model change behind a compensating config edit is h
 being visible.
 
 **So losing a free road is currently about 2.6× FASTER than making one**: a fully worn trail is gone
-`disuse_grace_turns + 40 / disuse_loss_per_turn` ≈ **44** turns after the last traffic, against the
+`disuse_grace_turns + 40 / disuse_loss_per_turn` ≈ **44** turns after the last traffic (on a tile no
+herd has crossed — see "Game trails"), against the
 ~114 turns of unbroken neighbourhood that wear it in. The pair was first written under the
 stored-path model, where the two were ~44 against ~57 and losing was the slower of the two. **The
 pace is settled in step 13e, not by a retune here** — and the ~114 is the *pooling-link* figure
-alone: 13b added marching parties as a second source, so a tile that also carries traffic wears in
-faster than it says by however much walks over it.
+alone: 13b added marching parties as a second source and #215 migrating herds as a third, so a tile
+that also carries traffic wears in faster than it says by however much walks over it.
 
 **Traffic converts to WORK UNITS**, the same currency `RungBuild::work_cost` is quoted in.
 `RouteTrafficLog` is **drained** by the accrual (`std::mem::take`), so a turn with no traffic wears
 nothing rather than re-wearing last turn's journeys.
 
-### TWO KINDS OF TRAFFIC, TWO LEVERS, AND THEY STAY TWO
+### THREE KINDS OF TRAFFIC, ONE LEVER EACH
 
-§4.13: *"two levers, not three: goods and people are the only two things that move, and a shipment is
-people."*
+§4.13 said *"two levers, not three: goods and people are the only two things that move, and a shipment
+is people."* That held until #215 made **animals** the third thing that moves. The rule it stated is
+the one that survives: **one lever per kind of thing that moves**, never one per cargo.
 
 | what moves | lever | recorded by |
 |---|---|---|
 | a **pooling link** — two camps sharing a larder | `work_per_link_tile_per_turn`, **per link per turn** | `RouteTrafficLog::walked`, from `supply::balance_supply_networks` |
 | a **march** — anything travelling | `work_per_worker_tile`, **per worker** | `RouteTrafficLog::marched`, from `systems::advance_band_movement` |
+| a **migrating herd** — a `RoamState::Migrate` step | `work_per_herd_tile`, **per herd** | `RouteTrafficLog::herd_passed`, from `fauna::advance_herds` |
 
 **A link is not a headcount**: two camps pooling a larder are a *standing fact*, not a party of a
 countable size — so its rate is per link per turn. **A march is people**, so its rate is per worker.
-⛔ **No third lever for shipments, and no mass term**: `balance_supply_networks` drops
-sub-dead-band moves, so a mass-driven rate is the error §4.13a ① already corrected.
+**A herd is not a headcount either** — its size is biomass — so its rate is per herd, and a
+4,000-biomass herd and a 12,000 one wear a corridor alike.
+⛔ **No lever for shipments, and no mass term**: `balance_supply_networks` drops sub-dead-band moves,
+so a mass-driven rate is the error §4.13a ① already corrected.
 
 Each log entry carries **the work each tile of that journey earns** (`RouteJourney::work_per_tile`),
-resolved where the journey was recorded — so there is still exactly one drain and one accrual loop,
-rather than two logs and a third kind of traffic forgetting one of them.
+resolved where the journey was recorded, and its **`TrafficSource`** (`Link` / `March` / `Herd`), read
+only to reset `Road::herd_idle_turns` — so there is still exactly one drain and one accrual loop,
+rather than three logs and a fourth kind of traffic forgetting one of them.
 
 > #### ⛔ ONE HOOK FILLS BOTH OF §4.13'S REMAINING TRAFFIC ROWS, AND THAT IS A FACT ABOUT THE CODE
 >
@@ -227,6 +233,41 @@ rather than two logs and a third kind of traffic forgetting one of them.
 > link** is banked in the same turn's. Each entry is banked **exactly once** — the log has one drain
 > — so nothing is lost and nothing doubles. **Do not reorder a stage for it**; it is the same shape as
 > every other lag in this arc.
+>
+> **A herd step is banked the SAME turn**: `advance_herds` runs in `TurnStage::Logistics` ahead of
+> `balance_supply_networks`, which runs ahead of `advance_roads`.
+
+### Game trails — what a migrating herd wears in (#215)
+
+The first roads were game trails: the Buffalo Trace was worn by bison walking the same corridor to the
+salt licks for generations, and hunters and then settlers followed it. So **only migratory herds, and
+only on their `Migrate` legs** — the corridor between anchors — bank route work. A graze-wandering herd
+and a loitering one wear nothing: they would scribble a local tangle, where a trace is a corridor.
+
+- **No per-species field.** `Migrate` is reached only from `Loiter`, and only the migratory spawn
+  seats a herd in `Loiter`, so the roam state already is the gate.
+- **A step banks BOTH ends**, as a march does — the journey is `from → to`. An interior corridor tile
+  is therefore banked twice per pass (entered, then left) and a leg-end tile once;
+  `work_per_herd_tile` is quoted against that.
+- **The same ceiling.** Herd traffic stops at `traffic_ceiling` like any traffic: an animal can wear a
+  trail, never a billed road.
+- **It teaches nothing by itself.** `credit_route_lessons` is connection-based and has no herd branch;
+  a game trail that happens to join two bands teaches as any trail does, because the bands use it.
+
+#### ⛔ A HERD TRAIL HOLDS ITS WEAR FOR `herd_disuse_grace_turns`, BECAUSE THE HERD COMES BACK RARELY
+
+Measured on six standard maps over 600 turns, **the same herd recrosses the same corridor tile a median
+163 turns later (p90 267)** — and a fully worn trail is gone **44** turns after its last traffic under
+the settled `disuse_grace_turns` / `disuse_loss_per_turn`. Under the people-trail disuse rule alone,
+wear never survived to the next pass and **no corridor tile ever reached the trail rung**.
+
+So a road carries a second idle counter, **`Road::herd_idle_turns`**, reset only by herd journeys. The
+disuse loss applies only when **both** counters are past their grace: `idle_turns > disuse_grace_turns`
+**and** `herd_idle_turns > herd_disuse_grace_turns`. A tile a herd still walks holds everything on it,
+people's wear included, since the herd is using the ground; once the herd stops coming, the ordinary
+flat loss takes it after the herd grace runs out. **A tile no herd has ever crossed is exactly a people
+trail**: the counter is `Option<u16>`, and `None` (`NO_HERD_HAS_CROSSED`) reads as already past the
+grace. A pruned road loses the counter with it. The people-trail numbers are untouched.
 
 ## The scale term — `UpkeepScale::RouteSpan` COLLAPSED into `SourceLoad`
 
@@ -394,21 +435,14 @@ second producer of a rung's position, the failure this arc has had three of.
   free ones: a trail holds a link 6 tiles out and takes 15% off the friction. **Free is not
   worthless** — the shape `plant:wild` has, where a wild patch feeds you for nothing.
 
-> #### ⛔ THE FLOOR RUNG IS `path` BECAUSE NOTHING IN THE SIM LETS AN ANIMAL WEAR A ROAD IN
+> #### ⛔ THE FLOOR RUNG IS `path`, NOT `game_trail` — IT NAMES WHAT REACHES IT, NOT AN ORIGIN
 >
-> It shipped as `game_trail`, named for #215's *"the first roads are the ones the animals made"*.
-> **Everything that banks route work is people**: `walked(..)` from the pooling-link pass, and
-> `marched(..)` from the movement pass — two camps sharing a larder, and a band, scout, hunt party or
-> shipment on the move. Herds move, but no herd has ever recorded a step as route traffic — so every
-> path on the map is worn in by the **player's own** bands, and the floor rung was displaying them a
-> trail the animals made. Ray hit it in play at tile (60,40).
+> It shipped as `game_trail`, and was renamed when play showed the name asserting a cause the model
+> did not have: at the time every path was worn in by the **player's own** bands (Ray hit it at tile
+> (60,40)), the same correction `96bf835d` made to the tile card's *"a path the animals made"*.
 >
-> That is the second half of a correction begun in `96bf835d`, which deleted the tile card's flavour
-> line *"a path the animals made"* for the same reason: it asserted a cause the model does not have.
->
-> **#215 is unaffected and remains open.** Even were herds to bank route work later, a path worn in
-> by the player's traders is not a game trail; the rung's name states what reaches it — traffic,
-> whoever's — rather than an origin.
+> **#215 made herds a traffic source, and the name stays `path`.** A path worn by traders and one worn
+> by a migrating herd are the same rung; the rung states what reaches it — traffic, whoever's.
 
 ### ⛔ THE CHAIN LOST A LESSON, AND THE ONE IT LOST TAUGHT NOTHING
 
@@ -707,7 +741,7 @@ road above a dirt one until a producer exists. Quarrying belongs to the minerals
 | trigger | region of the position | armed by | rate |
 |---|---|---|---|
 | **unpaid keeping** | strictly **above** `traffic_ceiling` | `Road::neglect_turns`, past the rung's own `upkeep.grace_turns` | `shortfall_fraction × meter_decay.per_turn` |
-| **disuse** | **inside** the free floor's span | `Road::idle_turns`, past `route_traffic.disuse_grace_turns` | `route_traffic.disuse_loss_per_turn`, **flat** |
+| **disuse** | **inside** the free floor's span | `Road::idle_turns`, past `route_traffic.disuse_grace_turns` — **and** `Road::herd_idle_turns` past `herd_disuse_grace_turns` (see "Game trails") | `route_traffic.disuse_loss_per_turn`, **flat** |
 
 **They do not overlap.** The free floor declares no `upkeep`, so its demand is `NO_UPKEEP_DEMAND` and
 its shortfall is permanently zero — the built rungs' path can never reach it, and 13a's collapsing of
@@ -809,13 +843,14 @@ per turn by `advance_roads`.
    registry the banking writes. The cap takes a `max` against the tile's own position, so a road
    **above** the ceiling is untouched rather than dragged back to a trail every turn a link runs over
    it;
-5. **bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns`. **After the banking**,
+5. **bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns` and, on a tile a herd
+   crossed, past `herd_disuse_grace_turns`. **After the banking**,
    because whether a road was idle is only known once this turn's journeys have been drained onto it.
 
 **Then the registry is PRUNED of every road back at `RUNG_UNSTARTED`, after the banking.** A path
 with no work in it is indistinguishable from no road; pruning *before* phase 4 would delete every road
-on the turn it formed. Remembering that animals once walked there is **#215's concern, not this
-registry's**.
+on the turn it formed. A game trail stays out of the prune because the herd keeps walking it — see
+"Game trails" above.
 
 **`routes::road_at_risk_rung` is the one answer to *which rung is at risk*** — `standing.raising` where
 anything is banked in it, else `standing.held` — because the bill interpolates through it, the grace
@@ -1039,7 +1074,9 @@ identical hole `builders` fell through one role earlier; `command_guard`'s role 
 | File | Key | Purpose |
 |---|---|---|
 | `src/data/intensification_ladder.json` | `route_traffic.work_per_link_tile_per_turn` (**0.35**) | **How fast traffic wears a road in**, in work units, **per tile a journey crosses**, per turn. **The link, not the tonnage**. Under the per-tile model *per tile* is literal, so two neighbouring camps wear each of their two tiles in over ~114 turns where the stored-path model took ~57 for the pair. Validated finite and `> 0`. **PLAYTEST DIAL**, §4.14 owns the number |
-| `src/data/intensification_ladder.json` | `route_traffic.work_per_worker_tile` (**0.05**) | **What people on the move wear in**, per tile a travelling party crosses, **per worker** — the *people* lever against the *link* lever above, and §4.13's *"two levers, not three"*. Every travelling thing reaches it through the one `advance_band_movement` hook, so there is no third lever for shipments and no mass term. Validated finite and `> 0`. Opening value chosen for **shape, not balance**: a 10-worker band's single pass puts `0.5` on a tile against a live pooling link's `0.35` a turn. **PLAYTEST DIAL**, step **13e** owns the number |
+| `src/data/intensification_ladder.json` | `route_traffic.work_per_worker_tile` (**0.05**) | **What people on the move wear in**, per tile a travelling party crosses, **per worker** — the *people* lever against the *link* lever above. Every travelling thing reaches it through the one `advance_band_movement` hook, so there is no third lever for shipments and no mass term. Validated finite and `> 0`. Opening value chosen for **shape, not balance**: a 10-worker band's single pass puts `0.5` on a tile against a live pooling link's `0.35` a turn. **PLAYTEST DIAL**, step **13e** owns the number |
+| `src/data/intensification_ladder.json` | `route_traffic.work_per_herd_tile` (**6.67**) | **What a migrating herd wears in**, per herd, on each end of every `Migrate` step — the *herd* lever. **Not scaled by biomass.** An interior corridor tile banks it twice per pass, so `40 / (2 × 6.67)` = **3 passes** to a trail. Validated finite and `> 0`. **PLAYTEST DIAL** |
+| `src/data/intensification_ladder.json` | `route_traffic.herd_disuse_grace_turns` (**300**) | **How long a tile a herd crossed forgives having no herd**, before the ordinary disuse loss may take it — sized to cover the measured return gap (median 163, p90 267 turns). Validated `>= disuse_grace_turns`: a herd trail is never more fragile than a people trail. **PLAYTEST DIAL** |
 | `src/data/intensification_ladder.json` | `route_traffic.disuse_grace_turns` (**4**) | **How many consecutive idle turns a FREE road forgives** before it gives back what traffic put into it — the free floor's own `upkeep.grace_turns`. It lives on this block rather than on a rung because it is a fact about *traffic*, and the free rungs declare no `upkeep` to hang it on. Validated finite only: a grace of `0` is meaningful and must stay expressible. **PLAYTEST DIAL**, §4.14 |
 | `src/data/intensification_ladder.json` | `route_traffic.disuse_loss_per_turn` (**1.0**) | **What an idle free road loses each turn past that grace**, in the same work units the position is banked in. **Flat, not proportional** — traffic is a yes/no. Validated finite and `> 0` (at zero the registry keeps every trail it ever laid). **PLAYTEST DIAL**, §4.14 |
 | `src/data/intensification_ladder.json` | `route_range.base_tiles` (**4**) | **How far a band keeps a road at the rung's own price**, in tiles, measured keeper→tile at the moment the verb is issued. ⛔ **READ IT THROUGH `routes::road_keeping_range`, NEVER FROM THIS FIELD** — see the callout above. Validated `> 0`: a base of zero prices every road as remote, which is a threshold that has stopped being one. **PLAYTEST DIAL**, §4.14 |

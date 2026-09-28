@@ -2581,6 +2581,11 @@ pub fn advance_herds(
     // don't have to stand up a graze layer; a `None`/empty registry falls back to plain land movement
     // (the pre-2b-i behaviour). The live app always carries a seeded `GrazeRegistry`.
     graze: Option<Res<GrazeRegistry>>,
+    // **Game trails** (issue #215): a migratory herd's step along a `Migrate` leg is route traffic,
+    // recorded here and banked by `routes::advance_roads` later this same Logistics stage. Optional
+    // for the graze layer's reason — the many isolated fauna harnesses need not stand up the route
+    // branch; the live app always carries the log.
+    mut route_traffic: Option<ResMut<crate::routes::RouteTrafficLog>>,
 ) {
     if registry.herds.is_empty() {
         telemetry.entries.clear();
@@ -2628,11 +2633,14 @@ pub fn advance_herds(
         // first place the engine reads it. §3's proximity spine falls out of the shipped records: wild
         // `roam` → pastoral `drift_to_owner` → pen `fixed`; `movement_primitive` overlays the one
         // diet-resolved case, a wild carnivore's `pursue`.
-        match movement_primitive(herd, def, &ladder) {
+        let migration_step = match movement_primitive(herd, def, &ladder) {
             // A `fixed` source does not roam — today's penned herd, pinned at `corralled_at` (Rung
             // 1c). It still grazes/regrows (ecology is independent of movement); only its wander is
             // skipped.
-            RungMovement::Fixed => herd.next_pos = None,
+            RungMovement::Fixed => {
+                herd.next_pos = None;
+                None
+            }
             RungMovement::Roam => advance_herd_roam(
                 herd,
                 def,
@@ -2697,6 +2705,12 @@ pub fn advance_herds(
                     wrap,
                 )
             }
+        };
+        // **THE CORRIDOR WEARS IN** (issue #215) — only a step on a `Migrate` leg, which only a
+        // migratory herd ever takes (`RoamState::Migrate` is entered from `Loiter`, and only the
+        // migratory spawn seats a herd in `Loiter`). Per herd, never per unit of biomass.
+        if let (Some(step), Some(log)) = (migration_step, route_traffic.as_deref_mut()) {
+            log.herd_passed(step.from, step.to, &ladder);
         }
         // **K is ecological — for a MOBILE herd its roam range, for a PENNED herd its fenced footprint**
         // (Grazing 2b-ii + 2d §2.1). Recomputed each turn (penned herds are no longer frozen) from the
@@ -3389,6 +3403,15 @@ pub fn advance_predation(
     }
 }
 
+/// **ONE STEP ALONG A MIGRATION CORRIDOR** — what [`advance_herd_roam`] reports back when the turn's
+/// move was a `RoamState::Migrate` leg step, the only herd movement that is route traffic
+/// (`routes::RouteTrafficLog::herd_passed`, issue #215).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MigrationStep {
+    from: UVec2,
+    to: UVec2,
+}
+
 /// One turn of graze-wander / loiter-migrate movement (`docs/plan_wildlife_hunting_overlay.md`
 /// "Herd Movement"). Deterministic under the per-turn seeded `rng`. Mutates the herd's
 /// `current_pos` / `dwell_remaining` / `roam` / `step_index` / `next_pos`. `def` supplies the
@@ -3406,6 +3429,10 @@ pub fn advance_predation(
 /// a tamed herd grazes around its people (and a pack around its prey) instead of freezing on the tile.
 /// `None` (a wild herbivore, an unowned pastoral herd, or a carnivore with no prey in range) is
 /// exactly today's roam.
+///
+/// **Returns the [`MigrationStep`] when the herd stepped along a `Migrate` leg** — and `None` for
+/// every other turn (a graze-wander step, a loiter nudge, an attractor pre-empt, a hemmed-in leg),
+/// because only the corridor between anchors wears a trail in.
 // Args are the herd + its cadence levers + the grid/tile context needed to land-clamp a hex step;
 // bundling them adds noise without clarity (matches the other fauna spawn/movement helpers).
 #[allow(clippy::too_many_arguments)]
@@ -3420,7 +3447,7 @@ fn advance_herd_roam(
     width: u32,
     height: u32,
     wrap: bool,
-) {
+) -> Option<MigrationStep> {
     let dwell_turns = def.map(|d| d.dwell_turns).unwrap_or(1);
     let loiter_radius = def.map(|d| d.loiter_radius).unwrap_or(2);
     herd.next_pos = None;
@@ -3433,11 +3460,11 @@ fn advance_herd_roam(
     if let Some(targets) = attractor.filter(|targets| !targets.is_empty()) {
         if herd.dwell_remaining > 0 {
             herd.dwell_remaining -= 1;
-            return;
+            return None;
         }
         if relocate_toward_resource(herd, targets, registry, tiles, graze, width, height, wrap) {
             herd.dwell_remaining = dwell_turns;
-            return;
+            return None;
         }
         // Already at the target (or no acceptable step gets nearer) → fall through to the normal roam.
     }
@@ -3448,7 +3475,7 @@ fn advance_herd_roam(
             // waypoint, advancing to the next when reached (a route_len==1 group stays put).
             if herd.dwell_remaining > 0 {
                 herd.dwell_remaining -= 1;
-                return;
+                return None;
             }
             let target = herd
                 .route
@@ -3465,12 +3492,13 @@ fn advance_herd_roam(
                 .unwrap_or(herd.current_pos);
             step_herd_toward(herd, target, registry, tiles, graze, width, height, wrap);
             herd.dwell_remaining = dwell_turns;
+            None
         }
         RoamState::Loiter { turns_left } => {
             if turns_left == 0 {
                 // Loiter expired — commit to migrating to the next anchor (starts next turn).
                 herd.roam = RoamState::Migrate;
-                return;
+                return None;
             }
             let anchor = herd
                 .route
@@ -3498,6 +3526,7 @@ fn advance_herd_roam(
             herd.roam = RoamState::Loiter {
                 turns_left: turns_left - 1,
             };
+            None
         }
         RoamState::Migrate => {
             // Directed leg to the next anchor at 1 hex/turn, no grazing pause.
@@ -3511,7 +3540,13 @@ fn advance_herd_roam(
                 .get(next_index)
                 .copied()
                 .unwrap_or(herd.current_pos);
+            let from = herd.current_pos;
             let moved = step_herd_toward(herd, target, registry, tiles, graze, width, height, wrap);
+            // **The step it took is the corridor** — arriving counts, a hemmed-in turn walked nothing.
+            let step = moved.then_some(MigrationStep {
+                from,
+                to: herd.current_pos,
+            });
             if herd.current_pos == target || !moved {
                 // Arrived (or hemmed in) → loiter at the new anchor for a fresh window.
                 herd.step_index = next_index;
@@ -3531,6 +3566,7 @@ fn advance_herd_roam(
                     wrap,
                 );
             }
+            step
         }
     }
 }

@@ -301,7 +301,9 @@ step ≤1 hex) — split by `size_class`:
 - **Migratory**: a `Loiter { turns_left }` ↔ `Migrate` state machine over the anchors. **Loiter** —
   graze-wander within `loiter_radius` of the current anchor for `loiter_turns` (sampled). **Migrate** —
   1 hex/turn toward the next anchor, **no dwell**, then loiter at the new anchor. Fixes the old bug
-  where `Herd::advance()` teleported 4–12 tiles/turn along the sparse route.
+  where `Herd::advance()` teleported 4–12 tiles/turn along the sparse route. **A `Migrate` step — and
+  only that — banks route traffic** (`RouteTrafficLog::herd_passed`), which is how migration corridors
+  wear into game trails; see `.claude/rules/core_sim/routes.md` → "Game trails".
 
 **Herd movement is a rung primitive** (intensification ladder slice 3b — the **first** behavior
 primitive the engine reads). `advance_herds` resolves the herd's rung (`fauna::herd_rung`: penned →
