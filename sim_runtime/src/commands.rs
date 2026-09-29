@@ -713,8 +713,8 @@ pub enum QueryPayload {
 }
 
 /// **THE DEPOSIT COMPOSE SHEET'S QUESTION** (#663) — what a crew of each size, off this band,
-/// carrying this kit, cuts off this working this turn, how many of them hold the held rung's tool,
-/// and what they would cut once the working is raised one rung. Priced as a **prospective row**
+/// carrying this kit, cuts off this working this turn, how many of them hold the whole kit, and what
+/// they would cut once the working is raised one rung. Priced as a **prospective row**
 /// through the turn's own functions, so committing crew `n` with this kit makes the turn pay row
 /// `n`'s [`DepositCrewTakeRow::take`].
 #[derive(Debug, Clone, PartialEq)]
@@ -740,11 +740,14 @@ pub struct DepositCrewTakeQuery {
 pub struct DepositCrewTakeRow {
     /// Echoed so the row is self-describing. Rows ascend from `1`.
     pub workers: u32,
-    /// **This turn's cut at the rung the working holds** — bare rate × crew plus the held rung's
-    /// tool, capped by the reach at the floor, off the stock renewed first. The sheet's NEXT TURN.
+    /// **This turn's cut at the rung the working holds** — bare rate × crew plus what the kit's
+    /// tools add on that rung, capped by the crew's carry over the material's weight and by the
+    /// reach at the floor, off the stock renewed first. The sheet's NEXT TURN.
     pub take: f32,
-    /// **Workers holding the held rung's tool** — the *N* of *"N of `workers` kits available"*. `0`
-    /// when the kit carries no tool for the held rung.
+    /// **Workers holding the WHOLE kit** — the scarcest of the kit's items, out of this crew's share
+    /// of the band's stock: the *N* of *"N of `workers` kits available"*, and exactly the
+    /// `kitWorkersHolding` the row publishes once this crew is committed. The crew's head count for a
+    /// kit carrying nothing (`none`).
     pub armed_workers: f32,
     /// **The crew's cut once the working is raised one rung**, before the reach caps it — the
     /// sheet's *"once felled"* figure. `0` at the top of a branch.

@@ -3065,13 +3065,16 @@ the floor)`, every hand armed, no next rung — which is why the earlier working
 NEXT TURN figures and render no deal row. Ground holding no such working is refused
 `unknown_deposit`.
 
-- **`workings_forestry_kit_curve` reads all three gear-bearing figures off the authored row at the
-  stepper's crew** — takes `[2.35, 5.40, 5.40, 6.95]`, armed `[1, 1, 1, 2]`, next-rung takes
-  `[2.55, 5.20, 7.50, 9.85]`, none of which the bare rate (`2.0 × w`) or the catalog deal
-  (`2.0 × w`) lands on. At crew 3: NEXT TURN `5.40` (not `6.00`), `1 of 3 Woodcutting kits
-  available`, `ONCE COPPICED 7.5` (not `6`). The stepper is then moved to 2 and all three are
+- **`workings_forestry_kit_curve` reads the take and the deal off the authored row at the stepper's
+  crew** — takes `[2.35, 5.40, 5.40, 6.95]`, next-rung takes `[2.55, 5.20, 7.50, 9.85]`, none of
+  which the bare rate (`2.0 × w`) or the catalog deal (`2.0 × w`) lands on. At crew 3: NEXT TURN
+  `5.40` (not `6.00`), `ONCE COPPICED 7.5` (not `6`). The stepper is then moved to 2 and both are
   asserted against row 2, which is what says the sheet reads the row AT the stepper rather than one
-  fixed row; `none` is then picked and the available line must be silent.
+  fixed row. **The available line is the band's gear, read as the hunt's is**: the curve band
+  (`_curve_band`) holds one sled and three axes, one WHOLE Woodcutting kit, so it reads `1 of 3` and
+  then `1 of 2`; a band with three sleds and no axe reads `0 of 3` — sleds alone are no kit; `none`
+  is then picked and the line must be silent. The reply's `armed_workers` is authored as the same
+  whole-kit count, since the sim publishes one number for the curve and the committed row.
 - ⛔ **THE CREW-DRAW READINGS ARE ASSERTED AGAINST AN ORACLE, AT CREW 3**
   (`_assert_draw_reads_the_curve`). The chapter walks the stock with `SourceForecast.project_stock` at
   the row's `5.40` and at the bare `6.00`, and the verdict must carry the first walk's lead

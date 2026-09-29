@@ -428,15 +428,22 @@ fn a_felling_kit_on_deadfall_neither_lifts_the_take_nor_wears_the_axe() {
     assert_eq!(axe_wear, 0.0, "and so it wears nothing there");
 }
 
-/// **THE SLED IS THE FLOOR'S TOOL** (#663): on a deadfall wood two sleds among four cutters add
-/// exactly `2 × 0.3` to the bare cut and wear on `deposit_taken`; on a felling wood the same sleds add
-/// nothing and wear nothing, because the axe is that rung's tool.
+/// **THE SLED'S `deposit_take` NAMES THE FLOOR** (#663): on a deadfall wood two sleds among four
+/// cutters add exactly `2 × 0.3` to the bare cut; on a felling wood the same sleds add nothing to the
+/// cut, because the effect names deadfall and the axe is that rung's tool. **The sleds still HAUL**
+/// — the kit is claimed whole, and a sled is charged `biomass_hauled` on every take it carries, the
+/// hunt's own haul quantum — so on felling they wear exactly the haul charge: units × wood's weight
+/// × the sled's per-biomass wear.
 #[test]
 fn a_sled_lifts_the_deadfall_take_and_nothing_above_it() {
     const CREW: u32 = 4;
     const SLEDS: u32 = 2;
     /// The sled's `deposit_take` on `forestry:deadfall` (`equipment.json`).
     const SLED_TAKE: f32 = 0.3;
+    /// Wood's `weight` (`materials.json`).
+    const WOOD_WEIGHT: f32 = 2.4;
+    /// The sled's wear per unit of biomass hauled (`equipment.json`).
+    const SLED_HAUL_WEAR: f32 = 0.02;
     let cut = |felling: bool, sleds: u32| {
         let (mut world, home) = world_of(WOODED);
         if felling {
@@ -472,7 +479,11 @@ fn a_sled_lifts_the_deadfall_take_and_nothing_above_it() {
         felling_sledded, felling_bare,
         "a sled adds nothing to a felling take"
     );
-    assert_eq!(felling_sled_wear, 0.0, "and so it wears nothing there");
+    let haul_charge = felling_sledded * WOOD_WEIGHT * SLED_HAUL_WEAR;
+    assert!(
+        haul_charge > 0.0 && (felling_sled_wear - haul_charge).abs() < 1e-4,
+        "on felling the sleds wear the haul and nothing else: {felling_sled_wear} vs {haul_charge}"
+    );
 }
 
 /// **ONE AXE ARMS ONE PERSON PER TURN, ACROSS THE TAKE ROW AND THE POOLS** (#663). The axe is in
@@ -544,13 +555,12 @@ fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
     );
 }
 
-/// ⛔ **A WORKING RAISED THIS TURN IS ARMED AT THE RUNG THE BUDGET WAS STRUCK AT** (#663 review).
+/// ⛔ **A WORKING RAISED THIS TURN ARMS NO MORE PEOPLE THAN THERE ARE AXES** (#663 review).
 ///
-/// The band's item budget is struck once, before the labour walk, off the registry as it stands —
-/// so a row whose working the builders raise mid-walk (`deadfall` → `felling`) is counted there as a
-/// sled row. Arming its take with axes after the build handed it a share of a remainder whose
-/// denominator never counted it: with two axes, one issued to the builders and another felling row
-/// beside it, **three** people were armed off two axes.
+/// The band's item budget is struck once, before the labour walk, and every extract row claims its
+/// whole kit in it — so a row whose working the builders raise mid-walk (`deadfall` → `felling`)
+/// already holds its share of the axes, and its take cannot be armed off a remainder whose
+/// denominator never counted it.
 ///
 /// Two axes; one builder (the pool, settled first, holds one); row A on a seated felling working;
 /// row B one hair short of felling's top on a queued `fell`, which the builder completes this turn.
@@ -1200,7 +1210,7 @@ fn a_worked_quarry_only_ever_goes_down_and_renews_nothing() {
         let outcome = take_from_deposit(
             &mut working,
             5,
-            core_sim::extraction::NO_DEPOSIT_GEAR,
+            core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
             TAKE_WHAT_THE_RUNG_REACHES,
             &ground,
             &config,
@@ -1238,7 +1248,7 @@ fn a_cut_wood_climbs_back_and_stops_at_capacity() {
         take_from_deposit(
             &mut working,
             12,
-            core_sim::extraction::NO_DEPOSIT_GEAR,
+            core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
             TAKE_WHAT_THE_RUNG_REACHES,
             &ground,
             &config,
@@ -1290,7 +1300,7 @@ fn enough_hands_drive_a_wood_down_turn_on_turn() {
         take_from_deposit(
             &mut working,
             10,
-            core_sim::extraction::NO_DEPOSIT_GEAR,
+            core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
             TAKE_WHAT_THE_RUNG_REACHES,
             &ground,
             &config,
@@ -1323,7 +1333,7 @@ fn a_quarry_reaches_far_more_of_one_body_than_gathering_ever_can() {
             total += take_from_deposit(
                 &mut working,
                 4,
-                core_sim::extraction::NO_DEPOSIT_GEAR,
+                core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
                 TAKE_WHAT_THE_RUNG_REACHES,
                 &ground,
                 &config,

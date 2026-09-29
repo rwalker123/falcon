@@ -263,26 +263,22 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
 - **The floor rungs stay bare-WORKABLE** (`docs/plan_extraction.md` §4d): their one tool is the
   **sled**, which costs hide and fibre and no wood, so it is an addition above a rate the bare hand
   already has and never a prerequisite for the wood the rest of the chain needs.
-- **One kit per branch, one tool per rung** — `woodcutting` (sled on deadfall, axe on felling and
-  coppice) and `stonework` (sled on gathering, wedges on the quarry). **Per branch because the kit is
-  stored on the row** at assignment and a working climbs: a row assigned on deadfall is felled on
-  the same row, so its kit has to carry the next rung's tool too. **Per rung because only one tool
-  is in anybody's hands**: `EquipmentConfig::deposit_rung_kit` narrows the row's kit to the items
-  serving the rung the working **holds** (`LaborAssignment::take_kit`), and every surface that counts
-  or rations an extract row's gear reads the narrowed kit — the take's coverage, the band item
-  budget's demand, the wear kit and the published `kitWorkersHolding`. So a deadfall crew with two
-  sleds and no axe reads 2 of 2, a felling crew with one axe reads 1 of 2 whatever sleds exist, and a
-  felling crew's idle sleds claim no share of the hunters' stock.
-- **⛔ The turn arms a take at the rung the working held when the band's item budget was struck**
-  — before this turn's build, not after it. `advance_labor_allocation` strikes `item_budget` once,
-  ahead of the labour walk, off the registry as it stands; the deposit arm then runs the build, and
-  a working raised mid-walk (`deadfall` → `felling`, `gathering` → `quarry`) is still armed with the
-  old rung's tool that once. Arming it with the new rung's tool drew axes through a `share_for`
-  whose denominator never counted the row: two axes, one to the builders and a second felling row
-  beside it, armed **three** people. So the new tool reaches the crew next turn — the same one-turn
-  lag the pools settle under — and the seed, `DepositCrewTakeQuery` and `usefulCutters`, which read
-  the registry between turns, price at exactly the rung the next turn arms at. Pinned by
-  `extraction::a_working_raised_this_turn_arms_no_more_people_than_there_are_axes`.
+- **One kit per branch, claimed whole like every job's** — `woodcutting` (sled + axe) and
+  `stonework` (sled + wedges). **Per branch because the kit is stored on the row** at assignment
+  and a working climbs: a row assigned on deadfall is felled on the same row, so its kit has to
+  carry the next rung's tool too. **The row claims every item its kit uses, on every rung**, through
+  the one claim / coverage / budget path a hunt row's kit goes through — `LaborAllocation::item_budget`
+  counts its sleds and its axes against the band's stock, and `kitWorkersHolding` is the whole-kit
+  count (the scarcer item). **Which tool lifts the cut is effect resolution**: the sled's
+  `deposit_take` names the floors and the axe's / wedges' name the rungs above, so each applies on
+  the rungs it names, and the sled's `hunt_carry` caps the cut and is a far party's pack on every
+  rung (`extraction.md` → "THE CUT IS CAPPED BY WHAT THE CREW CAN CARRY").
+- **The turn reads a take's tool effects at the rung the working held before this turn's build** —
+  a working raised mid-walk (`deadfall` → `felling`, `gathering` → `quarry`) is cut at its old rung's
+  effects that once, and its new rung's the next turn; the seed, `DepositCrewTakeQuery` and
+  `usefulCutters`, which read the registry between turns, price at exactly the rung the next turn
+  cuts at. `extraction::a_working_raised_this_turn_arms_no_more_people_than_there_are_axes` pins
+  that the axes armed never exceed the axes owned across the fellers and the keepers.
 - **A working's default kit is DERIVED, not authored** — `EquipmentConfig::deposit_kit_for`: the
   `extract` kit whose items serve the **most rungs of the working's branch**, and only where exactly
   one kit holds that count. Counting rungs rather than asking "does any item serve" is what stops the
@@ -292,8 +288,8 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
   prices it, and `DepositState.defaultKitId`. `default_kits.extract` is **`none`**, the fall-back for
   no working in hand or no single serving kit.
 - **Every pre-commit figure comes off one geared curve** — `DepositCrewTakeQuery`
-  (`extraction::deposit_crew_quote`: a prospective-row ration, the stored or picked kit narrowed to
-  the rung's tool, beside the band's other rows, less the pools' issue), and the committed row's
+  (`extraction::deposit_crew_quote`: a prospective-row ration of the stored or picked kit, whole,
+  beside the band's other rows, less the pools' issue, capped by the crew's carry), and the committed row's
   `usefulCutters` is that curve's plateau at the row's own kit (`extraction.md` → "The compose
   sheet asks a crew curve").
 - **Wear is `WearQuantum::DepositTaken`, on the units the holders cut** —

@@ -457,10 +457,8 @@ impl CaravanPricing {
     }
 
     /// **What one worker's tools add to a deposit take, crew-weighted at this coverage** — the
-    /// `deposit_take` a working's rung-bound tool grants, averaged over the staffed crew exactly as
-    /// the carries are, so a caravan forecast adds `present × this` to the bare cut each turn. The
-    /// pricing must have been resolved over the row's kit **narrowed to its held rung**
-    /// (`EquipmentConfig::deposit_rung_kit`), the kit the turn arms the take with.
+    /// `deposit_take` each tool grants on the rungs it names, averaged over the staffed crew exactly
+    /// as the carries are, so a caravan forecast adds `present × this` to the bare cut each turn.
     pub fn deposit_gear_per_worker(
         &self,
         equipment: &crate::equipment_config::EquipmentConfig,
@@ -653,8 +651,10 @@ pub fn material_pack(haul_carry: f32, weight: f32) -> f32 {
 /// out or wholly on the road reads as a zero take, never as the end of the run — only a working
 /// that will never renew and has nothing left to reach is spent.
 ///
-/// **The tools add `gear_per_worker × present` each turn** ([`CaravanPricing::deposit_gear_per_worker`]),
-/// the crew-weighted rate times the hands at the deposit — the carries' own shape.
+/// **The hands present bring `gear_per_worker × present` of tools and `pack × present` of carry**
+/// ([`crate::extraction::CrewLift`]) — the crew-weighted rates times the hands at the deposit, the
+/// carries' own shape. One pack is one porter's carry, and it is also the most one hand can cut and
+/// carry off in a turn, as a hunter's haul bounds a kill.
 #[allow(clippy::too_many_arguments)] // the take's full context, plus the caravan's own terms
 pub fn forecast_extract_caravan(
     party: &WorkParty,
@@ -672,7 +672,10 @@ pub fn forecast_extract_caravan(
         projection
             .step(
                 present,
-                gear_per_worker * present as f32,
+                crate::extraction::CrewLift {
+                    tools: gear_per_worker * present as f32,
+                    carry: pack * present as f32,
+                },
                 floor,
                 ground,
                 extraction,

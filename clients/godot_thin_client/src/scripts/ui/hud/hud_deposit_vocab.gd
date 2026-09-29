@@ -1534,17 +1534,18 @@ static func deal_value(entry: Dictionary, deposit: Dictionary, reply: Dictionary
 
 # ---- THE CREW CURVE (`ForecastQuery.KIND_DEPOSIT_CREW_TAKE`, issue #663) ------------------------
 #
-# The sheet's three gear-bearing figures — NEXT TURN, `N of M <kit> available` and the `once felled`
-# deal — are READ off one reply, one row per crew size, at the stepper's crew. None of them is
-# composed here: the sim resolves which of the kit's items serves the held rung, how the band's gear
-# is shared out, and what the reach caps the cut at. The keys are `native/src/bridge/query.rs`'s.
+# The sheet's two gear-bearing figures — NEXT TURN and the `once felled` deal — are READ off one reply,
+# one row per crew size, at the stepper's crew. Neither is composed here: the sim resolves how the
+# band's gear is shared out, what the crew's carry caps the cut at (near and far alike), and what the
+# reach caps it at. The keys are `native/src/bridge/query.rs`'s. The row's `armed_workers` — the whole
+# kits the crew holds — is the same count the committed row publishes as `kitWorkersHolding`, and the
+# sheet's available line reads the band's gear exactly as the hunt's does, so nothing here reads it.
 
 const CURVE_PER_CREW_KEY := "per_crew"
 const CURVE_WORKERS_KEY := "workers"
-## This turn's cut at the held rung, whole crew, capped by the reach at the floor — NEXT TURN.
+## This turn's cut at the working's standing rung, whole crew, capped by the crew's carry and by the
+## reach at the floor — NEXT TURN.
 const CURVE_TAKE_KEY := "take"
-## How many of the crew hold the held rung's tool — the N of `N of M <kit> available`.
-const CURVE_ARMED_WORKERS_KEY := "armed_workers"
 ## The crew's cut once the working stands one rung up — the `once felled` deal.
 const CURVE_NEXT_RUNG_TAKE_KEY := "next_rung_take"
 const CURVE_HELD_RUNG_KEY := "held_rung"
@@ -1578,20 +1579,6 @@ const DEPOSIT_TAKE_AT_SOURCE_META := &"deposit_take_at_source"
 ## serves both.
 static func curve_row(reply: Dictionary, crew: int) -> Dictionary:
 	return SourceForecast.hunt_crew_take_row(reply.get(CURVE_PER_CREW_KEY, []), crew)
-
-## **THE CURVE ROW AS THE KIT ROW'S COVERAGE PAIR** — `{kit_id, workers, kit_workers_holding}`, the
-## shape `KitRoster.shortfall_line`'s committed arm reads, so the available line is worded by the one
-## `shortfall_sentence` every sheet uses and follows its rules (silent when covered, silent for `none`).
-## `{}` — silence — where there is no row to read.
-static func curve_coverage_row(row: Dictionary, kit_id: String) -> Dictionary:
-	if row.is_empty():
-		return {}
-	return {
-		KitRoster.ROW_KIT_ID_KEY: kit_id,
-		KitRoster.ROW_WORKERS_KEY: int(row.get(CURVE_WORKERS_KEY, 0)),
-		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: float(row.get(CURVE_ARMED_WORKERS_KEY,
-			0.0)),
-	}
 
 ## The line a FAILED curve states — the unknown-deposit refusal in words, every other token on the
 ## shared failure format.

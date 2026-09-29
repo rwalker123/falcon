@@ -196,11 +196,11 @@ static func work_party_answer(hud: Node, request_id: int, ask: Dictionary) -> Di
 ## **THE DEPOSIT CREW CURVE'S STAND-IN** (`ForecastQuery.KIND_DEPOSIT_CREW_TAKE`, issue #663).
 ##
 ## A working that AUTHORS its reply under `DEPOSIT_CREW_TAKE_KEY` is answered with it verbatim — the
-## states that judge the gear lines stage their own curve, since what the sim resolves (which item
-## serves the held rung, how the band's gear is shared) is exactly what a fixture must not compose.
+## states that judge the gear lines stage their own curve, since what the sim resolves (how the
+## band's gear is shared, what the crew's carry caps the cut at) is exactly what a fixture must not compose.
 ##
 ## Every other working is answered with a BARE curve: `min(perWorkerBiomass × w, the room above the
-## floor next turn)`, every hand counted as holding the tool (so no available line), and no next rung
+## floor next turn)`, every hand counted as holding the whole kit, and no next rung
 ## (so no deal row). That is the take a kit that moves nothing would earn, which keeps every earlier
 ## frame's NEXT TURN figure where it was when the sheet composed it itself.
 ##

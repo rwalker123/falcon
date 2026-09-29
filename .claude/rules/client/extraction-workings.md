@@ -577,8 +577,8 @@ own default first, the job's second.
 **AND THE SHEET STATES BOTH FIGURES.** Past the apron the headline is the caravan's rate ARRIVING HOME
 (above), and one line beneath it states the crew curve's take AT THE WORKING
 (`HudDepositVocab.DEPOSIT_TAKE_AT_SOURCE_FORMAT`, *Cut at the working: 2.35 wood a turn*, via
-`DrawerComposeController._fill_deposit_yields`). The curve still drives everything else on the sheet
-— the available line, the deal, the chart's draw and the stepper cap — at the source.
+`DrawerComposeController._fill_deposit_yields`). The curve still drives the deal, the chart's draw and
+the stepper cap at the source; the available line is the band's gear, as on every sheet.
 
 ### ⛔ `max(rungFloorFraction, floor)` — ONE COMPOSITION, IN ONE NAMED FUNCTION
 
@@ -672,17 +672,19 @@ than three special cases) and its value is the crew curve's **`next_rung_take`**
 crew (issue #663) — see "THE CREW CURVE" below. It is absent while the curve is in flight, where the
 reply names no `next_rung` (the top of the branch), and where the row prices the next rung at `0`.
 
-### ⛔ THE CREW CURVE — EVERY GEAR-BEARING FIGURE ON THE SHEET IS THE SIM'S, AT THE STEPPER'S CREW
+### ⛔ THE CREW CURVE — THE TAKE AND THE DEAL ARE THE SIM'S, AT THE STEPPER'S CREW
 
 Issue #663. The sheet asks `ForecastQuery.KIND_DEPOSIT_CREW_TAKE` (`QueryCommand.deposit_crew_take`,
 `bridge/query.rs`, on the seated link) and is answered with one row per crew `1..=max_workers`:
 `take`, `armed_workers` and `next_rung_take`, beside `held_rung`, `next_rung` and `in_range`. The
-hunt sheet's `HuntCrewTakeQuery` is the precedent and the seam is the same one.
+hunt sheet's `HuntCrewTakeQuery` is the precedent and the seam is the same one. The row's `take` is
+capped by the crew's carry near and far alike, as the hunt's is, and the client does no arithmetic on
+it. `armed_workers` is the crew's WHOLE kits — the same count a committed row publishes as
+`kitWorkersHolding` — and the sheet does not read it (see "THE `N of M available` LINE IS THE HUNT'S").
 
 | figure | read off | before this |
 |---|---|---|
 | NEXT TURN | the row's `take` | `perWorkerBiomass × crew`, capped by the room — the bare rate, so a deadfall crew on sleds read what one without read |
-| `N of M <kit> available` | the row's `armed_workers` of `workers`, handed to the kit row as its coverage pair (`HudDepositVocab.curve_coverage_row`) so `KitRoster.shortfall_line`'s committed arm words it | a `min` over the kit's items, which reported `1 of 2 Felling kits available` on a deadfall the axes did not touch |
 | `once felled / coppiced / quarried` | the row's `next_rung_take` | `yieldPerWorkerTurn × crew`, which ignored the axes and the sled (`ONCE FELLED 4 wood a turn`) |
 
 **THE ASK.** `_deposit_crew_take_ask` composes subject, key and payload once for the build and the
@@ -694,9 +696,9 @@ one. The crew term goes through `_crew_take_workers`, the hunt curve's clamp (th
 curve: no take, no gear line. The floor chart's live drag re-asks through `_drag_deposit_crew_take`
 on the hunt drag's rate limit and members, and the live refill reads `_deposit_live_crew_view`.
 
-⛔ **WHILE THE REPLY IS PENDING THE SHEET STATES NO TAKE AND NO GEAR CLAIM** — the hunt sheet's rule.
-NEXT TURN's place carries `HudDepositVocab.DEPOSIT_TAKE_PENDING`; the available line and the deal
-row are absent. A refusal renders `HudComposeVocab.FORECAST_FAILED_FORMAT`, except
+⛔ **WHILE THE REPLY IS PENDING THE SHEET STATES NO TAKE AND NO DEAL** — the hunt sheet's rule.
+NEXT TURN's place carries `HudDepositVocab.DEPOSIT_TAKE_PENDING` and the deal row is absent; the
+available line owes the curve nothing and reads the band's gear throughout. A refusal renders `HudComposeVocab.FORECAST_FAILED_FORMAT`, except
 `unknown_deposit`, the one token with its own sentence (`DEPOSIT_TAKE_UNKNOWN_DEPOSIT`) because it is
 a state of the ground rather than a client bug.
 
@@ -1358,14 +1360,13 @@ deliberate bare-handed pick and the sim would put the axe back in their hands. `
 the one selection an omitted token could get wrong, which is why `command_guard`'s third `extract`
 drive sends it.
 
-⛔ **THE `N of M available` LINE IS THE CREW CURVE'S `armed_workers`, AND NOTHING ELSE.** A take kit
-is two items — the sled, which pays on each branch's free floor, and the rung's own tool above it —
-and only ONE of them serves the rung a working stands on. The sim knows which; the client does not.
-So `KitRoster.shortfall_line` returns before its composed arm on `JOB_EXTRACT`, and the sheet hands
-the curve row at the stepper's crew in as the coverage pair its committed arm reads: the composed arm
-takes a `min` over every item the kit carries, which on a deadfall reports a band short of axes that
-change nothing — the playtest's `1 of 2 Felling kits available` over a take the axes did not move.
-**While the curve is pending, failed or out of range the line is SILENT** rather than derived.
+⛔ **THE `N of M available` LINE IS THE HUNT'S, WITH NOTHING SPECIAL FOR A WORKING.** An extract row
+claims its WHOLE kit wherever it works — the Woodcutting kit is a sled AND an axe, the Stone kit a sled
+AND wedges, on every rung — so `KitRoster.shortfall_line` reads it exactly as it reads spears and sled:
+complete outfits, the scarcest of the kit's items, against the crew being composed, with the band's
+committed row on the working (`HudBandLaborState.extract_assignment_of`) handed in so its published
+`kitWorkersHolding` answers for the committed crew. A band holding sleds and no axe fields ZERO
+Woodcutting kits and the line says so.
 
 **`command_guard` is what keeps the two enumerations in step, and it now drives both.** `quarrywork`
 joined `ASSIGN_LABOR_ROLES` (the sweep asserts every role in that list builds a line AND that an
@@ -1409,7 +1410,7 @@ renews, so it is offered the dial, and it stands on a rung that strands 85% of t
 | `workings_tile_crews` | **THE TILE SAYS THE DIGGING IS HAPPENING** — one hex, a wood crew of 2 and a rock crew of 4, each on its own material row. The counts DIFFER on purpose: equal ones would pass a card that composed one number and printed it twice, which is the tile-keyed collapse the `material` field exists to prevent, so the frame also asserts neither row wears the other's count. And no bill or countdown arrives with the crew |
 | `workings_tile_crews_other_band` | **THE COUNT IS THE HEX'S, NOT THE PICKED BAND'S** — the same two workings, held by a band that is NOT the faction's default actor (a second, empty band is listed first). The rows read exactly as they did above, which is what "minimal display when the owning band is not selected" buys; a count taken off the selected band would go to zero here. Untouched ground under a CREWLESS band is asserted beside it to carry no crew mark of any count, the other half of `crew_clause`'s fork |
 | `workings_forestry_kit` / `workings_extraction_kit` | **THE TAKE KIT** (issue #663) — each sheet lists exactly its working's own kit and `No kit` (the other branch's kit ABSENT), marks its own `(default)`, and commits `kit woodcutting` / `kit none` / `kit stonework` |
-| `workings_forestry_kit_curve` / `workings_forestry_kit_flagged_out_of_range` | **THE CREW CURVE** (issue #663) — NEXT TURN, the available line and `ONCE COPPICED` read off the authored reply's row at the stepper's crew, and off the next row once the stepper moves; `none` silences the available line; the in-flight sheet states no take and no gear line; the verdict's settle line and *hold it after* are the curve's draw at the stepper's crew, not the bare rate's; `in_range: false` is a flag that hides nothing — the same take at the stepper's crew and a live commit. Detail in `harness-ui-preview.md` |
+| `workings_forestry_kit_curve` / `workings_forestry_kit_flagged_out_of_range` | **THE CREW CURVE** (issue #663) — NEXT TURN and `ONCE COPPICED` read off the authored reply's row at the stepper's crew, and off the next row once the stepper moves; the available line counts the band's WHOLE kits (one sled and three axes read `1 of 3`; three sleds and no axe read `0 of 3`); `none` silences it; the in-flight sheet states no take and no deal; the verdict's settle line and *hold it after* are the curve's draw at the stepper's crew, not the bare rate's; `in_range: false` is a flag that hides nothing — the same take at the stepper's crew and a live commit. Detail in `harness-ui-preview.md` |
 
 **The LADDER's row states are asserted over the PRODUCER, without a frame**: the SITE gate on a
 70-unit scatter, the CRAFT gate on a body big enough for a quarry (with the remedy naming the rung

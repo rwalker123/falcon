@@ -3134,6 +3134,8 @@ pub fn capture_snapshot(
                             herds: &herd_registry,
                             deposits: &deposits,
                             extraction: &extraction_config,
+                            labor: &labor_config,
+                            materials: &materials_config,
                             ladder: &ladder_config,
                             ground_of: &ground_of,
                         },

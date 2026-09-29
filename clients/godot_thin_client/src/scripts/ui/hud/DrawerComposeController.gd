@@ -5393,19 +5393,20 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # shortfall falls back to the published `workersOnQuotedJob`, which is `0` on a sheet where
     # nobody is assigned yet.
     #
-    # ⛔ **THE AVAILABLE LINE IS THE CURVE'S `armed_workers` OF `workers` AT THE STEPPER'S CREW** —
-    # handed to the kit row as its coverage pair, so `KitRoster.shortfall_line`'s committed arm words
-    # it with the one shortfall sentence. `{}` while the curve is pending or failed: the
-    # line is silent rather than derived, since which of the kit's two items serves the held rung is
-    # the sim's to say.
-    var curve_row_at_crew := HudDepositVocab.curve_row(curve_reply, _compose.deposit_count()) \
-        if curve_ready else {}
+    # ⛔ **THE AVAILABLE LINE IS THE HUNT'S AND THE FORAGE'S, UNCHANGED.** An extract row claims its
+    # WHOLE kit wherever it works — the Woodcutting kit is a sled AND an axe on every rung — so the line
+    # is `KitRoster.shortfall_line`'s ordinary reading: complete outfits (the scarcest of the kit's
+    # items) against the crew being composed, with the band's committed row on this working handed in
+    # so its published `kitWorkersHolding` answers for the committed crew and its own gear is handed
+    # back when it is re-composed.
     _mount_kit_row(target, kits, KitRoster.JOB_EXTRACT, kit_id, default_kit, band,
         func(picked: String) -> void:
             _compose.set_deposit_kit_id(picked)
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
         deposit, "", _compose.deposit_count(),
-        HudDepositVocab.curve_coverage_row(curve_row_at_crew, kit_id))
+        _band_labor.extract_assignment_of(band, tile.x, tile.y, material))
+    var curve_row_at_crew := HudDepositVocab.curve_row(curve_reply, _compose.deposit_count()) \
+        if curve_ready else {}
     # **THE WORK PARTY, PAST THE APRON** — the hunt and forage sheets' own section, asked of the
     # working's `(tile, material)` pair. A far wood or quarry posts the same caravan as a far patch:
     # nothing about wood or stone is special, so nothing here forks. The floor it is asked at is the

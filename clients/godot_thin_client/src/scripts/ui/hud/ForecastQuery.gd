@@ -48,8 +48,8 @@ const WORK_PARTY_SOURCE_HUNT := "hunt"
 const WORK_PARTY_SOURCE_FORAGE := "forage"
 const WORK_PARTY_SOURCE_EXTRACT := "extract"
 ## **THE DEPOSIT SHEET'S CREW CURVE** (issue #663) — one row per crew size, each the WHOLE crew's cut
-## this turn at the held rung with the band's kit applied, how many of them hold the held rung's tool,
-## and what they would cut once the working stands one rung up. The deposit twin of
+## this turn at the working's standing rung with the band's kit applied (its carry capping the cut),
+## how many whole kits the crew holds, and what they would cut once the working stands one rung up. The deposit twin of
 ## `KIND_HUNT_CREW_TAKE`, keyed the same way: on the band's pool, so a stepper tick asks nothing new.
 const KIND_DEPOSIT_CREW_TAKE := "deposit_crew_take"
 

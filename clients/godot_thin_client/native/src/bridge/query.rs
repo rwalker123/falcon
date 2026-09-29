@@ -102,7 +102,7 @@ pub(crate) const QUERY_KIND_HUNT_CREW_TAKE: &str = "hunt_crew_take";
 /// ask's `source_kind` says which, and the answer comes back under this same kind.
 pub(crate) const QUERY_KIND_WORK_PARTY: &str = "work_party_forecast";
 /// **The deposit compose sheet's question** (#663) — *"what does a crew of each size, carrying this
-/// kit, cut off this working this turn, how many of them hold the held rung's tool, and what would
+/// kit, cut off this working this turn, how many whole kits does it hold, and what would
 /// they cut once the working stands one rung up?"* One row per crew `1..=max_workers`, so the whole
 /// stepper is answered by one round trip, exactly as the hunt curve is. The working is keyed by its
 /// tile AND its material, because one hex can hold two.
@@ -735,9 +735,10 @@ fn crew_row_to_dict(row: &sim_runtime::HuntCrewTakeRow) -> VarDictionary {
 }
 
 /// One crew size on the deposit sheet — **whole-crew figures, never per-worker rates**. `take` is this
-/// turn's cut at the held rung (capped by the reach at the floor); `armed_workers` is how many of the
-/// crew hold the tool the held rung uses, fractional because the band-wide settlement divides a tier
-/// proportionally; `next_rung_take` is the cut once the working stands one rung up, before the reach.
+/// turn's cut at the working's standing rung (capped by the crew's carry and by the reach at the
+/// floor); `armed_workers` is how many of the crew hold the WHOLE kit — the scarcest of its items, the
+/// same count a committed row publishes as `kitWorkersHolding` — fractional because the band-wide
+/// settlement divides a tier proportionally; `next_rung_take` is the cut once the working stands one rung up, before the reach.
 fn deposit_crew_row_to_dict(row: &sim_runtime::DepositCrewTakeRow) -> VarDictionary {
     let mut dict = VarDictionary::new();
     let _ = dict.insert("workers", i64::from(row.workers));

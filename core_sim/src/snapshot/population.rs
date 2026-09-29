@@ -248,7 +248,6 @@ fn assigned_hunt_useful_crew(
     kit_levers: &BandKitLevers<'_>,
     hunt_crew_levers: &HuntCrewLevers<'_>,
     herds: &crate::fauna::HerdRegistry,
-    held: &crate::extraction::HeldRungs<'_>,
 ) -> u32 {
     let LaborTarget::Hunt { fauna_id, floor } = target else {
         return crate::fauna::NO_USEFUL_CREW;
@@ -259,7 +258,7 @@ fn assigned_hunt_useful_crew(
     // Resolved after the two gates, so a non-hunt row pays nothing for a vector it never reads.
     let other_rows = gear
         .allocation
-        .rows_excluding_source(kit_levers.config, target, Some(held));
+        .rows_excluding_source(kit_levers.config, target);
     crate::fauna::hunt_useful_crew(&crate::fauna::hunt_crew_take_curve(
         &crate::fauna::HuntCrewCurveInputs {
             herd,
@@ -585,26 +584,19 @@ pub(crate) struct PopulationStateInputs<'a> {
 pub(crate) struct BuildSourceInputs<'a> {
     pub(crate) forage: &'a crate::forage::ForageRegistry,
     pub(crate) herds: &'a crate::fauna::HerdRegistry,
-    /// **The deposit workings and their table** — what an `extract` row's held rung is read off,
-    /// so its published gear is narrowed to the rung its working holds exactly as the turn narrows
-    /// it ([`crate::components::LaborAssignment::take_kit`]).
+    /// **The deposit workings and their table** — what an `extract` row's crew curve
+    /// ([`crate::extraction::useful_cutters`]) prices the working off.
     pub(crate) deposits: &'a crate::extraction::DepositRegistry,
     pub(crate) extraction: &'a crate::extraction_config::ExtractionConfig,
+    /// **The two tables an `extract` row's carry is read off** — the bare haul rate and the
+    /// material's weight ([`crate::extraction::DepositCarry`]).
+    pub(crate) labor: &'a crate::labor_config::LaborConfig,
+    pub(crate) materials: &'a crate::materials_config::MaterialsConfig,
     /// The ladder, for an `extract` row's crew curve ([`crate::extraction::useful_cutters`]).
     pub(crate) ladder: &'a crate::intensification::LadderConfig,
     /// **The ground under a tile**, for an `extract` row's crew curve — the capture's own tile
     /// lookup, `None` off the map.
     pub(crate) ground_of: &'a (dyn Fn(bevy::math::UVec2) -> Option<crate::components::Tile> + Sync),
-}
-
-impl BuildSourceInputs<'_> {
-    /// The held-rung reader the turn and the seed narrow `extract` rows with.
-    fn held_rungs(&self) -> crate::extraction::HeldRungs<'_> {
-        crate::extraction::HeldRungs {
-            deposits: self.deposits,
-            extraction: self.extraction,
-        }
-    }
 }
 
 /// **THE JOB TOKEN A ROW PUBLISHES** — the rung this band's queue entry for `source` is actually
@@ -737,12 +729,17 @@ pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
     static EXTRACTION: OnceLock<std::sync::Arc<crate::extraction_config::ExtractionConfig>> =
         OnceLock::new();
     static LADDER: OnceLock<std::sync::Arc<crate::intensification::LadderConfig>> = OnceLock::new();
+    static LABOR: OnceLock<std::sync::Arc<crate::labor_config::LaborConfig>> = OnceLock::new();
+    static MATERIALS: OnceLock<std::sync::Arc<crate::materials_config::MaterialsConfig>> =
+        OnceLock::new();
     static INPUTS: OnceLock<BuildSourceInputs<'static>> = OnceLock::new();
     INPUTS.get_or_init(|| BuildSourceInputs {
         forage: FORAGE.get_or_init(Default::default),
         herds: HERDS.get_or_init(Default::default),
         deposits: DEPOSITS.get_or_init(Default::default),
         extraction: EXTRACTION.get_or_init(crate::extraction_config::ExtractionConfig::builtin),
+        labor: LABOR.get_or_init(crate::labor_config::LaborConfig::builtin),
+        materials: MATERIALS.get_or_init(crate::materials_config::MaterialsConfig::builtin),
         ladder: LADDER.get_or_init(crate::intensification::LadderConfig::builtin),
         ground_of: &no_ground,
     })
@@ -938,20 +935,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         .map(|alloc| {
             // The band-wide per-item unit budget `advance_labor_allocation` arms the source crews
             // from ([`crate::components::LaborAllocation::item_budget`]).
-            let held = build_sources.held_rungs();
-            let budget = alloc.item_budget(kit_levers.config, Some(&held));
+            let budget = alloc.item_budget(kit_levers.config);
             alloc
                 .assignments
                 .iter()
                 .map(|assignment| {
                     let workers = assignment.workers as f32;
-                    // An `extract` row is narrowed to the tools serving the rung its working
-                    // holds ([`LaborAssignment::take_kit`]), so its `kitWorkersHolding` counts
-                    // the sleds on deadfall and the axes on felling — never the min across both.
                     let row_kit = if assignment.target.is_standing_pool() {
                         kit_levers.config.no_kit()
                     } else {
-                        assignment.take_kit(kit_levers.config, Some(&held))
+                        assignment.kit_choice(kit_levers.config)
                     };
                     let coverage = kit_levers.config.coverage_from_units(
                         &row_kit,
@@ -1237,7 +1230,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         kit_levers,
                         hunt_crew_levers,
                         build_sources.herds,
-                        &build_sources.held_rungs(),
                     );
                     // **THE GOOD-SIDE SHORTFALL'S TWO TERMS** — read off the source itself, where
                     // the stamped bill and the store's payment live, because a row holds neither.
@@ -1260,18 +1252,26 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the plateau of
                     // the deposit crew curve over the same pool the hunt row's cap is struck over,
                     // read by the sheet's own rule. `0` on every non-extract row.
-                    if let LaborTarget::Extract { tile, .. } = &assignment.target {
-                        if let Some(ground) = (build_sources.ground_of)(*tile) {
+                    if let LaborTarget::Extract { tile, material, .. } = &assignment.target {
+                        if let (Some(ground), Some(carry)) = (
+                            (build_sources.ground_of)(*tile),
+                            crate::extraction::DepositCarry::of(
+                                build_sources.labor,
+                                build_sources.materials,
+                                material,
+                            ),
+                        ) {
                             row.useful_cutters = crate::extraction::useful_cutters(
                                 kit_levers.config,
                                 build_sources.ladder,
                                 build_sources.extraction,
-                                &build_sources.held_rungs(),
+                                build_sources.deposits,
                                 a,
                                 assignment,
                                 &kit,
                                 &ground,
                                 assignment.workers.saturating_add(idle_workers),
+                                &carry,
                             );
                         }
                     }

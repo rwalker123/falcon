@@ -5442,16 +5442,7 @@ pub fn advance_labor_allocation(
         // from ([`LaborAllocation::item_budget`]). Resolved here, before the walk, for the reason
         // `band_kit` is: a band's ledger is one thing, and a row that read all of it would arm its
         // own crew off gear the row beside it is already holding.
-        //
-        // An `extract` row claims only the items serving the rung its working holds
-        // ([`LaborAssignment::take_kit`]), so a felling crew's idle sleds stay the hunters'.
-        let item_budget = allocation.item_budget(
-            &equipment_cfg,
-            Some(&crate::extraction::HeldRungs {
-                deposits: &deposits,
-                extraction: &extraction_cfg,
-            }),
-        );
+        let item_budget = allocation.item_budget(&equipment_cfg);
         // **THE PARTIES THIS BAND HAS OUT**, keyed by the row that staffed them. Collected as the
         // walk goes and written back onto the assignments afterwards, because the walk borrows
         // `assignments` immutably — the same shape `lapsed` and `repaired_takes` take.
@@ -5708,32 +5699,13 @@ pub fn advance_labor_allocation(
             // ⛔ **THE CARAVAN FORECAST IS PRICED AT THE ROW'S STAFFED CREW**, through the one
             // construction the seed and the compose-sheet query make too
             // ([`crate::work_party::CaravanPricing`]). `None` on a local row, which has no caravan.
-            //
-            // **Over the kit the row ACTUALLY CLAIMS** ([`LaborAssignment::take_kit`]) — on an
-            // `extract` row, its kit narrowed to the tool serving the rung its working holds, the
-            // same narrowing the item budget above rationed with. So a woodcutting crew on deadfall
-            // hauls on its sleds, and one on felling — which claims the axes, not the sleds — hauls
-            // bare-handed. Every other row's take kit is its stored kit.
             let caravan_pricing = postings.contains_key(&idx).then(|| {
                 crate::work_party::CaravanPricing::resolve(
                     &equipment_cfg,
-                    &assignment.take_kit(
-                        &equipment_cfg,
-                        Some(&crate::extraction::HeldRungs {
-                            deposits: &deposits,
-                            extraction: &extraction_cfg,
-                        }),
-                    ),
+                    &crew_kit,
                     assignment.workers,
                     &band_kit,
-                    &allocation.rows_excluding_source(
-                        &equipment_cfg,
-                        &assignment.target,
-                        Some(&crate::extraction::HeldRungs {
-                            deposits: &deposits,
-                            extraction: &extraction_cfg,
-                        }),
-                    ),
+                    &allocation.rows_excluding_source(&equipment_cfg, &assignment.target),
                     &labor,
                 )
             });
@@ -8591,46 +8563,38 @@ pub fn advance_labor_allocation(
                     // **The stock this turn's crew is FACING** — read before the take, the term the
                     // ⚠ below is answered at, exactly as the two food webs' `biomass_before` is.
                     let stock_before = working.stock;
-                    // **THE CREW'S TAKE GEAR, struck at the rung the working HELD when the band's
-                    // item budget was struck** — the tool bound to that rung (`deposit_take` on
-                    // `forestry:felling`, never on `deadfall`), through this row's own coverage, the
-                    // seam the gather reads its baskets off: two axes among five fellers add two
-                    // tools' worth, not five.
-                    //
-                    // ⛔ **THE PRE-BUILD RUNG, NOT THE ONE THIS TURN'S BUILD JUST REACHED.** The
-                    // row's stored kit carries a tool per rung of its branch (`woodcutting` is the
-                    // sled and the axe), and only the one serving the rung held is in anybody's
-                    // hands ([`crate::equipment_config::EquipmentConfig::deposit_rung_kit`]).
-                    // `item_budget` was struck before the walk, off the registry as it stood — so
-                    // this row's demand sits on THAT rung's tool. Arming at a rung the build raised
-                    // mid-walk would hand this crew axes through a `share_for` whose denominator
-                    // never counted it, arming more people than there are axes. So a working raised
-                    // this turn is still cut with the old rung's tool this once, and picks up the
-                    // new one next turn — the same one-turn lag the pools settle under. The seed,
-                    // the crew-curve query and `usefulCutters` read the registry between turns,
-                    // which is exactly this rung for the next turn.
+                    // **THE CREW'S TAKE GEAR — its whole kit, through this row's own coverage**,
+                    // the seam every job's gear goes through (`crew_coverage` above): two axes
+                    // among five fellers add two tools' worth, not five. Each tool's
+                    // `deposit_take` applies on the rungs it names (the sled on the floors, the axe
+                    // on felling and coppice), read at the rung the working held when this turn
+                    // began — a working raised mid-walk picks its new rung's tools up next turn.
                     let held_rung = standing.held;
                     let held_key = held_rung.wire_key();
-                    let take_kit =
-                        equipment_cfg.deposit_rung_kit(&crew_kit, held_rung.branch(), &held_key);
-                    let take_coverage = equipment_cfg.coverage_from_units(
-                        &take_kit,
-                        workers as f32,
-                        &band_kit,
-                        item_budget.share_for(workers as f32, &band_kit, &equipment_cfg),
-                    );
                     let deposit_gear = equipment_cfg.deposit_gear(
-                        &take_coverage,
+                        &crew_coverage,
                         &band_kit,
                         held_rung.branch(),
                         Some(&held_key),
                     );
+                    // **AND WHAT THE CREW CAN CARRY OFF** — the hunt's own coverage-weighted haul
+                    // (`hunt_per_worker_biomass`, above) over the material's weight
+                    // ([`crate::extraction::DepositCarry`]). A hunt's kill is bounded by what its
+                    // hunters can haul; a cut is bounded the same way.
+                    let deposit_carry =
+                        crate::extraction::DepositCarry::of(&labor, &materials_cfg, material);
+                    let lift = crate::extraction::CrewLift {
+                        tools: deposit_gear.take,
+                        carry: deposit_carry.map_or(crate::extraction::NO_CARRY_CAP, |carry| {
+                            carry.crew_carry(hunt_per_worker_biomass, workers as f32)
+                        }),
+                    };
                     let take_payoff =
                         crate::extraction::deposit_payoff(working.standing(), &ladder);
                     let outcome = crate::extraction::take_from_deposit(
                         working,
                         workers,
-                        deposit_gear.take,
+                        lift,
                         // **THE PLAYER'S OWN FLOOR, composed with the RUNG'S inside the take** —
                         // `deposit_effective_floor` takes the greater of the two, so this row asks
                         // the crew to leave more standing than its rung already cannot reach, never
@@ -8640,27 +8604,18 @@ pub fn advance_labor_allocation(
                         &extraction_cfg,
                         &ladder,
                     );
-                    // **THE SLED IS CHARGED FOR WHAT A PARTY HAULS, AND ONLY THEN** — the hunt's own
-                    // haul quantum (`WearQuantum::BiomassHauled`), over the take in the carry's own
-                    // unit: material units × the material's `weight`. A local working's take is
-                    // capped by its rung and never by carry, so a sled there hauls nothing the
-                    // hands would not and is not charged for hauling — the charge-for-use rule
-                    // (`docs/plan_denial_raid.md` §1.2). Charged against the kit the row CLAIMS at
-                    // its held rung (`take_kit`), so a felling party — which claims the axes and
-                    // hauls bare-handed — wears no sled. Charged after the take, the
-                    // accrue-after-take order every carry charge follows.
-                    if postings.contains_key(&idx)
-                        && outcome.taken > crate::extraction::DEPOSIT_EMPTY
-                    {
-                        if let (Some(kit), Some(weight)) = (
-                            band_equipment.as_mut(),
-                            materials_cfg.material(material).map(|def| def.weight),
-                        ) {
+                    // **THE SLED IS CHARGED FOR WHAT THE CREW HAULS, near or far** — the hunt's own
+                    // haul quantum (`WearQuantum::BiomassHauled`) against the row's kit, over the
+                    // take in the carry's own unit: material units × the material's `weight`.
+                    // Charged after the take, the accrue-after-take order every carry charge
+                    // follows; a kit carrying no sled wears nothing on it.
+                    if outcome.taken > crate::extraction::DEPOSIT_EMPTY {
+                        if let (Some(kit), Some(carry)) = (band_equipment.as_mut(), deposit_carry) {
                             kit.wear_kit(
                                 &equipment_cfg,
-                                &take_kit,
+                                &crew_kit,
                                 crate::equipment_config::WearQuantum::BiomassHauled,
-                                outcome.taken * weight,
+                                outcome.taken * carry.weight,
                             );
                         }
                     }
@@ -8756,7 +8711,7 @@ pub fn advance_labor_allocation(
                     // fork: a finite working warns with its runway instead.
                     // **The tools are charged for the units their holders cut, and only those**
                     // (`WearQuantum::DepositTaken`, `docs/plan_denial_raid.md` §1.2) — against the
-                    // kit narrowed to what served this rung, so a woodcutter's wedges wear nothing.
+                    // items whose `deposit_take` served this rung, so an axe is not worn on deadfall.
                     // After the take, the accrue-after-take ordering every other charge site uses.
                     if let Some(kit) = band_equipment.as_mut() {
                         kit.wear_kit(
@@ -8775,7 +8730,7 @@ pub fn advance_labor_allocation(
                     yields[idx].overdraws = crate::extraction::deposit_take_overdraws(
                         working,
                         workers,
-                        deposit_gear.take,
+                        lift,
                         stock_before,
                         *floor,
                         ground,
@@ -8809,11 +8764,8 @@ pub fn advance_labor_allocation(
                     // own reading of a partly-basketed crew (`KitCoverage::weighted_rate`), so the
                     // inversion divides the take by the throughput it actually ran at.
                     let per_worker_take = if workers > crate::extraction::NO_CREW_ON_THE_DEPOSIT {
-                        crate::extraction::deposit_crew_throughput(
-                            workers,
-                            deposit_gear.take,
-                            &take_payoff,
-                        ) / workers as f32
+                        crate::extraction::deposit_crew_throughput(workers, lift, &take_payoff)
+                            / workers as f32
                     } else {
                         take_payoff.yield_per_worker_turn
                     };
@@ -11423,7 +11375,7 @@ pub fn advance_predator_raids(
         // shipped kit puts an item in both, which is why this reads identically today.
         let warrior_kit = alloc.kit_on(&LaborTarget::Warrior, &equipment_cfg);
         // `None`: the warrior line reads clubs alone, which no `extract` row's narrowing can move.
-        let warrior_budget = alloc.item_budget(&equipment_cfg, None);
+        let warrior_budget = alloc.item_budget(&equipment_cfg);
         let warrior_coverage = band_equipment.as_deref().map(|wear| {
             equipment_cfg.coverage_from_units(
                 &warrior_kit,

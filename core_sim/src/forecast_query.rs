@@ -177,19 +177,6 @@ const SOURCE_IS_KEYED_BY_QUARRY_ALONE: f32 = 0.0;
 /// building the party: the curve resolves one **per crew size** (coverage depends on how many people
 /// the kit has to stretch over, and on how many of them the rows beside it have already claimed) and
 /// at the **base** tuning rather than the expedition's.
-/// **The rung each of the band's `extract` workings holds**, so an extract row beside the asked
-/// party claims only the items that serve it (`LaborAssignment::take_kit`) — the same narrowing the
-/// turn rations with. `None` in a world carrying no deposit registry.
-fn held_rungs<'a>(
-    world: &'a World,
-    extraction: Option<&'a crate::extraction_config::ExtractionConfig>,
-) -> Option<crate::extraction::HeldRungs<'a>> {
-    Some(crate::extraction::HeldRungs {
-        deposits: world.get_resource::<crate::extraction::DepositRegistry>()?,
-        extraction: extraction?,
-    })
-}
-
 fn resolve_quarry_and_kit(
     world: &mut World,
     faction_id: u32,
@@ -226,10 +213,6 @@ fn resolve_quarry_and_kit(
     };
     // **The competing claims on that ledger**, with this herd's own row excluded — see
     // [`AskedQuarry::other_rows`].
-    let extraction = world
-        .get_resource::<crate::extraction_config::ExtractionConfigHandle>()
-        .map(|handle| handle.get());
-    let held = held_rungs(world, extraction.as_deref());
     let other_rows = allocation
         .map(|allocation| {
             allocation.rows_excluding_source(
@@ -238,7 +221,6 @@ fn resolve_quarry_and_kit(
                     fauna_id: herd_id.to_string(),
                     floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
                 },
-                held.as_ref(),
             )
         })
         .unwrap_or_default();
@@ -864,16 +846,24 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
             crate::extraction::DepositSource::opening(tile, &ask.material, capacity, branch)
         });
     crate::extraction::renew_deposit(&mut working, &ground, &extraction, &ladder);
-    let held = crate::extraction::HeldRungs {
-        deposits,
-        extraction: &extraction,
-    };
     let held_rung = working.rung();
     let wrap = world
         .resource::<crate::SimulationConfig>()
         .map_topology
         .wrap_horizontal;
-    let work_range = world.resource::<LaborConfigHandle>().get().band_work_range;
+    let labor = world.resource::<LaborConfigHandle>().get();
+    // **What the crew can carry off, per unit of haul** — the hunt's carry over the material's
+    // weight, a cap on every row's cut ([`crate::extraction::CrewLift`]).
+    let Some(carry) = crate::extraction::DepositCarry::of(
+        &labor,
+        &world
+            .resource::<crate::materials_config::MaterialsConfigHandle>()
+            .get(),
+        &ask.material,
+    ) else {
+        return query_failure(query_error::UNKNOWN_DEPOSIT);
+    };
+    let work_range = labor.band_work_range;
     let in_range =
         crate::grid_utils::hex_distance_wrapped(band_pos, tile, grid_width, wrap) <= work_range;
     let target = crate::components::LaborTarget::Extract {
@@ -887,7 +877,6 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
                 &equipment,
                 &ladder,
                 &extraction,
-                &held,
                 &allocation,
                 &target,
                 &kit,
@@ -895,6 +884,7 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
                 &wear,
                 &working,
                 &ground,
+                &carry,
             );
             DepositCrewTakeRow {
                 workers,
@@ -1118,30 +1108,12 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
             return query_failure(query_error::KIT_WRONG_JOB)
         }
     };
-    // `extraction` above is the deposit table this answer prices with; this `Option` is the
-    // `held_rungs` reading every OTHER row's claim is narrowed with, which a world with no deposit
-    // table answers `None` for.
-    let held_extraction = world
-        .get_resource::<crate::extraction_config::ExtractionConfigHandle>()
-        .map(|handle| handle.get());
-    let held = held_rungs(world, held_extraction.as_deref());
-    // **Priced over the kit this crew would ACTUALLY CLAIM** — on a deposit, the asked kit narrowed
-    // to the tool serving the rung the working holds (`EquipmentConfig::deposit_rung_kit`), the
-    // turn's own narrowing, so a far woodcutting crew on deadfall hauls on sleds and one on felling
-    // hauls bare-handed. Every other source prices the asked kit whole.
-    let claimed_kit = match &asked {
-        Asked::Extract { working, .. } => {
-            let rung = working.standing().held;
-            equipment.deposit_rung_kit(&kit, rung.branch(), &rung.wire_key())
-        }
-        _ => kit.clone(),
-    };
     let pricing = crate::work_party::CaravanPricing::resolve(
         &equipment,
-        &claimed_kit,
+        &kit,
         ask.workers,
         &wear,
-        &allocation.rows_excluding_source(&equipment, &target, held.as_ref()),
+        &allocation.rows_excluding_source(&equipment, &target),
         &labor,
     );
     let source_pos = match &asked {
@@ -1221,14 +1193,21 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     crate::fauna::ProjectionStart::BeforeRegrowth,
                 )
             }
-            // **A local working's steady rate** — its own projection at the whole crew. Carry does
-            // not cap a local take, so no pack enters it.
+            // **A local working's steady rate** — its own projection at the whole crew. The carry
+            // does cap it, like a hunt's: the crew's haul over the weight
+            // ([`crate::extraction::CrewLift`]).
             Asked::Extract {
-                working, ground, ..
+                working,
+                ground,
+                weight,
             } => crate::extraction::project_realized_deposit(
                 working,
                 ask.workers,
-                deposit_gear_per_worker(working) * ask.workers as f32,
+                crate::extraction::CrewLift {
+                    tools: deposit_gear_per_worker(working) * ask.workers as f32,
+                    carry: crate::work_party::material_pack(pricing.haul_carry, *weight)
+                        * ask.workers as f32,
+                },
                 ask.floor,
                 ground,
                 &extraction,

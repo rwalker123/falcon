@@ -1241,14 +1241,14 @@ message DepositCrewTakeRow {
   // Echoed so the row is self-describing. Rows ascend from 1.
   uint32 workers = 1;
   // THIS TURN'S CUT at the rung the working HOLDS - the rung's bare rate for the crew plus what the
-  // held rung's tool adds (`deposit_take`), capped by the working's reach at `floor`, off the stock
-  // as next turn will find it (renewed first). The sheet's NEXT TURN figure.
+  // kit's tools add on that rung (`deposit_take`), capped by what the crew can carry off (its haul
+  // carry over the material's weight) and by the working's reach at `floor`, off the stock as next
+  // turn will find it (renewed first). The sheet's NEXT TURN figure.
   float take = 2;
-  // WORKERS HOLDING THE HELD RUNG'S TOOL - the "N" of "N of `workers` kits available". The row's kit
-  // narrowed to the tool serving the held rung (the sled on deadfall and gathering, the axe on
-  // felling and coppice, the wedges on the quarry), armed out of this crew's share of the band's
-  // stock. 0 when the kit carries no tool for the held rung (`none` included). A float: coverage
-  // counts workers in fractions.
+  // WORKERS HOLDING THE WHOLE KIT - the scarcest of the kit's items, out of this crew's share of the
+  // band's stock: the "N" of "N of `workers` kits available", and exactly the `kitWorkersHolding`
+  // the row publishes once this crew is committed. The crew's head count for a kit carrying nothing
+  // (`none`), which has nothing to be short of. A float: coverage counts workers in fractions.
   float armed_workers = 3;
   // THE CREW'S CUT ONCE THE WORKING IS RAISED ONE RUNG - the next rung's own rate for the crew plus
   // the next rung's tool, before the reach caps it: the sheet's "once felled / coppiced / quarried"

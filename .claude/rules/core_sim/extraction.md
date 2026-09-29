@@ -431,12 +431,14 @@ rung and an absolute gear rate would erase the climb, and never a change to the 
 | `wedges` | `flint` only | `extraction:quarry` — **not** `gathering` | — |
 | `sled` | `plain` (the hunt's own sled) | **+0.3** on `forestry:deadfall`, **+0.4** on `extraction:gathering` — the floors' only tool, costing hide and fibre and no wood | its hunt `hunt_carry`, unchanged; shared with `big_game`/`trapping`/`ranging` through the per-item ration |
 
-**One kit per branch, one tool per rung — `woodcutting` (sled + axe) and `stonework` (sled +
-wedges) — and a working's default is derived from them.** The sled is the floors' tool (+0.3 on
-`deadfall`, +0.4 on `gathering`), costing no wood, so the floors stay bare-workable. The kit is per
-branch because it is stored on the row and a working climbs; what a crew holds is read at the rung
-the working **holds** (`LaborAssignment::take_kit` → `EquipmentConfig::deposit_rung_kit`), so the
-take, the wear, the item budget and `kitWorkersHolding` all see only that rung's tool.
+**One kit per branch — `woodcutting` (sled + axe) and `stonework` (sled + wedges) — claimed whole,
+like every job's kit, and a working's default is derived from them.** The sled's `deposit_take`
+names the floors (+0.3 on `deadfall`, +0.4 on `gathering`), costing no wood, so the floors stay
+bare-workable; the axe's and the wedges' name the rungs above. The kit is per branch because it is
+stored on the row and a working climbs. A row claims every item its kit uses wherever it works —
+through the one claim / coverage / budget path a hunt row's kit goes through
+(`LaborAllocation::item_budget`, `kitWorkersHolding`) — and each tool's `deposit_take` applies on
+the rungs it names, which is ordinary effect resolution.
 `extraction::working_default_kit` is the one function behind the kit `assign_labor extract` stores
 when the command names none, the seed, and `DepositState.defaultKitId`. `default_kits.extract` and
 `default_kits.quarrywork` are both `none`. See `equipment.md` → "The take axis".
@@ -452,15 +454,26 @@ stops before the bare `room ÷ perWorkerBiomass` quotient. Pinned by
 geared cut is the crew curve's `next_rung_take` alone; no committed-row field carries it.
 
 **One seam, three readers.** `take_from_deposit` (the turn), `server::seed_source_yield`'s `Extract`
-arm and `deposit_take_overdraws`' ability half all read the gear through `deposit_gear` at the rung
-the working **holds** (`standing.held`), so the seed, the take and the ⚠ agree. Pinned by
+arm and `deposit_take_overdraws`' ability half all read the crew's lift — the tools' `deposit_take`
+through `deposit_gear` at the rung the working **holds** (`standing.held`), and the crew's carry —
+as one `extraction::CrewLift`, so the seed, the take and the ⚠ agree. Pinned by
 `server::tests::a_deposit_crew_with_axes_is_seeded_the_cut_the_turn_pays` and, through the shipped
-turn, `extraction::a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes`.
-**The turn's "holds" is the rung before this turn's build**, the one the band's item budget was
-struck at: a working raised mid-walk is cut with its old rung's tool that turn and picks up the new
-one the next, so the budget and the arming agree on one rung and one axe arms one person
-(`equipment.md` → "The turn arms a take at the rung the working held when the band's item budget
-was struck").
+turn, `extraction::a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes`. **The
+turn reads the rung before this turn's build**: a working raised mid-walk is cut at its old rung's
+tool effects that turn and its new rung's the next.
+
+**THE CUT IS CAPPED BY WHAT THE CREW CAN CARRY, LIKE A HUNT.** `extraction::deposit_crew_throughput`
+is `min(workers × yield_per_worker_turn + tools, carry)`, where `carry` is the crew's
+coverage-weighted haul — the hunt's own `hunt_carry` resolution (bare
+`labor.hunt.per_worker_biomass_capacity` 12, the sled 40) over the same coverage a hunt row's is —
+times its head count, over the material's `weight` (`extraction::DepositCarry`). A hunt's kill is
+bounded by what its hunters can haul; a cut is bounded the same way, near or far, so a sledded crew
+cuts more of a heavy material than a bare one. The turn reads the carry its hunt arm already
+computed for the row (`hunt_per_worker_biomass`), the seed, the crew curve and the work-party query
+read it off the same coverage through `DepositCarry::lift`. Pinned by
+`work_party_caravan::a_local_extract_take_is_capped_by_carry_over_weight`. **The sled is charged
+`biomass_hauled` on every extract take** (units × weight), against the row's kit, the hunt's own
+haul quantum.
 
 ### The compose sheet asks a crew curve BEFORE the commit — `DepositCrewTakeQuery`
 
@@ -470,12 +483,13 @@ off the committed row's `materialYield` / `kitWorkersHolding` alone.
 `QueryReplyEnvelope.deposit_crew_take = 11`) asks it the hunt curve's way: band, `(x, y, material)`,
 the sheet's `kit_id` (`none` included; a kit not listing `extract` is `kit_wrong_job`), `floor` and
 `max_workers`, and answers one `DepositCrewTakeRow` per crew size — `take` (this turn's cut at the
-held rung, geared and reach-capped), `armed_workers` (holders of the held rung's tool) and
+held rung, geared, carry-capped and reach-capped), `armed_workers` (the crew's whole-kit count) and
 `next_rung_take` (the cut once raised) — plus the `held_rung` / `next_rung` it priced and `in_range`.
 
 **One model, not a second.** Each row is `extraction::deposit_crew_quote`: the crew is a
-**prospective row** (`extraction::prospective_deposit_gear` — the kit narrowed to the rung, the band's
-other rows beside it, less the pools' issue), the take runs through `deposit_take` at the working as
+**prospective row** (`extraction::prospective_deposit_gear` — the whole kit, the band's other rows
+beside it, less the pools' issue, and the crew's carry off the same coverage), the take runs through
+`deposit_take` at the working as
 the next turn finds it (renewed on a clone, the seed's rule; an unopened working derived from
 `DepositSource::opening`), and the next rung through `next_rung_take_for`. So committing crew `n`
 with kit `k` pays row
@@ -490,14 +504,19 @@ inside it: a far working posts a work party and its crew cuts the deposit as any
 and zeroes nothing — the hunt crew-take curve's rule, which carries no range gate at all. What
 reaches home, delayed by the walk, is the work-party query's `rate_home` on an `extract` source
 (`work-party.md`); pinned by `work_party_caravan::a_far_workings_crew_curve_quotes_the_cut_the_turn_makes_at_the_source`.
-**`armed_workers` differs from a committed row's
-`kitWorkersHolding` on one case only**: a kit with no tool for the held rung reads `0` armed here
-and `workers` there (*"nothing to be short of"*).
+**`armed_workers` IS the committed row's `kitWorkersHolding`**, counted the same way: the crew's
+whole-kit count (`KitCoverage::workers_holding_whole_kit`, the scarcest of the kit's items) off the
+prospective row's share of the band's stock, which for a committed crew is arithmetically the turn's
+own budget. So the sheet's *"N of M kits available"* before the commit is the row's count after it,
+exactly as a hunt sheet's committed arm reads `kitWorkersHolding`; `none` reads the whole crew
+(*"nothing to be short of"*). The per-tool share that lifts the cut stays inside the take math
+(`extraction::CrewLift`). Pinned by
+`server::tests::the_deposit_curves_kit_count_is_the_committed_rows_kit_workers_holding`.
 
 **Wear is `WearQuantum::DepositTaken`, per unit cut BY THE HOLDERS.** `extraction::deposit_geared_units`
 bills `taken × equipped_labor / labor` — the equipped workers' share of the crew's throughput,
-applied to what was actually taken — against the row's kit narrowed to the serving items
-(`DepositGear::wear_kit`), so a bare hand in a half-axed crew cuts for free, a take capped by the
+applied to what was actually taken — against the items whose `deposit_take` served that rung
+(`DepositGear::wear_kit`, effect-scoped like a build tool's wear), so a bare hand in a half-axed crew cuts for free, a take capped by the
 reach bills the smaller number, and the wedges wear nothing on a felling take.
 
 > ⛔ **THE AXE IS THE FIRST ITEM ON BOTH A TAKE ROW'S KIT AND A STANDING POOL'S REQUIREMENT**, and
@@ -506,14 +525,10 @@ reach bills the smaller number, and the wedges wear nothing on a felling take.
 > (`BandItemBudget::reserving`, pro rata) — `equipment.md` → "AND THE POOLS LEFT THE PRO-RATA ITEM
 > BUDGET" owns the rule and why the pools win.
 
-**A far working's porters carry on the kit the row CLAIMS.** Past `band_work_range` the take walks
-home a pack at a time (`work-party.md`), and one pack is the row's haul carry over the material's
-`weight` (`materials.json`). The haul carry is resolved over the row's kit **narrowed to its held
-rung** (`LaborAssignment::take_kit`), the claim the item budget rations with — so a `woodcutting` or
-`stonework` crew on a **floor** rung, which claims its sleds, hauls at the sled's `hunt_carry`, and
-one on **felling / coppice / quarry**, which claims the axe or the wedges and not the sled, hauls
-bare-handed. The sled is charged `biomass_hauled` (units × weight) only where a party carries on it.
-A local working's take is capped by its rung and never by carry, so no haul is charged there.
+**A far working's porters carry on the row's kit.** Past `band_work_range` the take walks home a
+pack at a time (`work-party.md`), and one pack is the row's haul carry over the material's `weight`
+(`materials.json`) — the same carry that caps the cut. A `woodcutting` or `stonework` crew hauls on
+its sleds on every rung, felling and quarry included, because the kit is claimed whole.
 
 ## The two road tools are WIDENED, not duplicated
 

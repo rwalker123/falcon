@@ -1231,11 +1231,11 @@ pub enum KitJob {
     /// and a working's default is DERIVED from them ([`EquipmentConfig::deposit_kit_for`]) rather than
     /// authored, so `default_kits.extract` is only the `none` fall-back (#663).
     ///
-    /// **The kit it claims is also what a FAR working's porters carry on**: a far working posts a
-    /// work party whose pack is the haul carry over the material's weight
-    /// (`crate::work_party::material_pack`), and the haul carry is read off the kit narrowed to the
-    /// held rung ([`crate::components::LaborAssignment::take_kit`]) — the sled on a floor rung, bare
-    /// hands on felling / coppice / quarry, where the row claims the axe or the wedges instead.
+    /// **The kit is claimed whole, like every job's**: a `woodcutting` row holds its sleds and its
+    /// axes wherever it works. Each tool's `deposit_take` applies on the rungs it names, and the
+    /// crew's haul carry — the sled's `hunt_carry` over its coverage, the hunt's own — caps what it
+    /// can carry off (`crate::extraction::CrewLift`) and is a far party's pack
+    /// (`crate::work_party::material_pack`), both over the material's weight.
     ///
     /// **Its token is `extract`, not `extraction`** — the same string
     /// [`crate::components::LaborTarget::kind`] publishes for the row
@@ -2373,33 +2373,6 @@ impl EquipmentConfig {
             .map(|(_, kit)| kit)
             .collect();
         (winners.len() == ONE_SERVING_KIT).then(|| winners.remove(0))
-    }
-
-    /// **THE KIT NARROWED TO THE ITEMS THAT SERVE THIS RUNG** — what a crew on an `extract` row is
-    /// actually working with at the rung its working holds (#663). A `woodcutting` kit on deadfall is
-    /// its sled; on felling, its axe. Read off the **roster** (every tier), so which items count is a
-    /// property of the kit and the rung, and whether the band owns them is the coverage's question.
-    ///
-    /// Every surface that counts or rations an `extract` row's gear reads it —
-    /// the take's coverage, the item budget's demand, and the published `kitWorkersHolding` — so a
-    /// deadfall crew holding sleds reads fully outfitted without an axe, and a felling crew is short
-    /// exactly the axes it lacks whatever sleds exist. The id is kept: the player chose the kit.
-    pub fn deposit_rung_kit(
-        &self,
-        kit: &KitChoice,
-        branch: crate::intensification::RungBranch,
-        rung: &str,
-    ) -> KitChoice {
-        let serving: Vec<Arc<str>> = kit
-            .uses
-            .iter()
-            .filter(|item| {
-                self.item(item)
-                    .is_some_and(|def| def.declares_deposit_take_on(branch, Some(rung)))
-            })
-            .cloned()
-            .collect();
-        kit.restricted_to(serving)
     }
 
     /// [`Self::deposit_kit_for`], falling back to `default_kits.extract` where the roster names no
@@ -5195,33 +5168,6 @@ mod tests {
             "none",
             "the keepers are geared through the rung requirement, not a default kit"
         );
-    }
-
-    /// **A KIT IS NARROWED TO THE TOOL SERVING THE HELD RUNG** (#663) — `woodcutting` is its sled on
-    /// deadfall and its axe on felling and coppice; `stonework` its sled on gathering and its wedges
-    /// on the quarry. One tool per rung, so a complete-kit count over the narrowed kit is the count of
-    /// that one tool.
-    #[test]
-    fn a_branch_kit_is_one_tool_at_each_rung() {
-        use crate::intensification::RungKey;
-        let config = EquipmentConfig::builtin();
-        for (kit_id, rung, tool) in [
-            ("woodcutting", RungKey::ForestryDeadfall, "sled"),
-            ("woodcutting", RungKey::ForestryFelling, "axe"),
-            ("woodcutting", RungKey::ForestryCoppice, "axe"),
-            ("stonework", RungKey::ExtractionGathering, "sled"),
-            ("stonework", RungKey::ExtractionQuarry, "wedges"),
-        ] {
-            let kit = config.kit(kit_id).expect("shipped kit");
-            let narrowed = config.deposit_rung_kit(&kit, rung.branch(), &rung.wire_key());
-            assert_eq!(
-                narrowed.uses().collect::<Vec<_>>(),
-                vec![tool],
-                "{kit_id} on {}",
-                rung.wire_key()
-            );
-            assert_eq!(narrowed.id(), kit_id, "the player's kit id is kept");
-        }
     }
 
     /// **TWO KITS SERVING ONE BRANCH EQUALLY IS NO ANSWER**, and the fall-back takes over rather than

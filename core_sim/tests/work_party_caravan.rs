@@ -537,8 +537,7 @@ const WOOD: &str = "wood";
 const WOODED: sim_schema::TerrainType = sim_schema::TerrainType::MixedWoodland;
 /// The wire's `kind` for an extract row (`LaborTarget::kind`).
 const EXTRACT_KIND: &str = "extract";
-/// The shipped forestry kit — `sled` + `axe`. On the deadfall floor the row claims its sleds; on
-/// felling it claims its axes (`LaborAssignment::take_kit`).
+/// The shipped forestry kit — `sled` + `axe`, claimed whole like every job's kit.
 const WOODCUTTING_KIT: &str = "woodcutting";
 
 fn extract_target(distance: u32) -> LaborTarget {
@@ -714,10 +713,22 @@ fn a_local_working_takes_no_party_and_its_numbers_are_unchanged() {
             &extraction,
         )
         .expect("fixture: the ground holds wood");
+        // **The bare crew's own lift**: no tools, and the bare haul over the weight as its carry.
+        let carry = core_sim::extraction::DepositCarry::of(
+            &app.world.resource::<core_sim::LaborConfigHandle>().get(),
+            &app.world
+                .resource::<core_sim::MaterialsConfigHandle>()
+                .get(),
+            WOOD,
+        )
+        .expect("wood is a material");
         core_sim::extraction::take_from_deposit(
             &mut working,
             CREW,
-            core_sim::extraction::NO_DEPOSIT_GEAR,
+            core_sim::extraction::CrewLift {
+                tools: core_sim::extraction::NO_DEPOSIT_GEAR,
+                carry: carry.crew_carry(carry.haul_baseline, CREW as f32),
+            },
             FLOOR,
             &ground,
             &extraction,
@@ -739,7 +750,7 @@ fn a_local_working_takes_no_party_and_its_numbers_are_unchanged() {
     assert_eq!(
         published_material_yield(&app),
         expected,
-        "the row publishes the take seam's own figure, uncapped by any carry"
+        "the row publishes the take seam's own figure"
     );
     assert!(
         (wood_held(&app, band) - expected).abs() < 1e-3,
@@ -876,16 +887,6 @@ fn unassigning_a_deposit_caravan_mid_walk_brings_every_pack_home_as_material() {
     );
 }
 
-/// **The row's kit narrowed to the tool it claims at `rung`** — what the turn prices a far party's
-/// haul carry over (`LaborAssignment::take_kit` → `EquipmentConfig::deposit_rung_kit`).
-fn claimed_at(kit_id: &str, rung: core_sim::RungKey) -> KitChoice {
-    EquipmentConfig::builtin().deposit_rung_kit(
-        &extract_kit(kit_id),
-        rung.branch(),
-        &rung.wire_key(),
-    )
-}
-
 /// The bare-handed pack of wood: `labor_config`'s sledless haul over wood's weight.
 fn bare_wood_pack(app: &App) -> f32 {
     let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
@@ -899,10 +900,10 @@ fn bare_wood_pack(app: &App) -> f32 {
     core_sim::work_party::material_pack(labor.hunt.per_worker_biomass_capacity, weight)
 }
 
-/// ⛔ **A WOODCUTTING CREW ON THE DEADFALL FLOOR HAULS ON ITS SLEDS** — the floor rung is where the
-/// row claims the sled (`take_kit`), so its porters carry the sled's `hunt_carry` over the material's
-/// weight, against the bare-handed carry over the same weight. Read off the first porter the turn
-/// actually sends, and pinned to the caravan pricing's own figure over the CLAIMED kit.
+/// ⛔ **A WOODCUTTING CREW HAULS ON ITS SLEDS** — the kit is claimed whole, so its porters carry the
+/// sled's `hunt_carry` over the material's weight, against the bare-handed carry over the same
+/// weight. Read off the first porter the turn actually sends, and pinned to the caravan pricing's
+/// own figure over the row's kit.
 #[test]
 fn a_woodcutting_crew_on_the_deadfall_floor_carries_a_larger_pack_than_bare_hands() {
     let (mut bare_app, bare_band) = world_extracting_at(5, None);
@@ -914,14 +915,8 @@ fn a_woodcutting_crew_on_the_deadfall_floor_carries_a_larger_pack_than_bare_hand
         (bare - priced_pack(&bare_app, bare_band, &bare_kit)).abs() < 1e-3,
         "a bare-handed porter carries the bare haul over the weight: {bare}"
     );
-    let claimed = claimed_at(WOODCUTTING_KIT, core_sim::RungKey::ForestryDeadfall);
-    assert_eq!(
-        claimed.uses().collect::<Vec<_>>(),
-        vec!["sled"],
-        "fixture: on deadfall the woodcutting row claims its sleds"
-    );
     assert!(
-        (sled - priced_pack(&sled_app, sled_band, &claimed)).abs() < 1e-3,
+        (sled - priced_pack(&sled_app, sled_band, &extract_kit(WOODCUTTING_KIT))).abs() < 1e-3,
         "a sledded porter carries the sled's haul over the weight: {sled}"
     );
     assert!(
@@ -930,42 +925,69 @@ fn a_woodcutting_crew_on_the_deadfall_floor_carries_a_larger_pack_than_bare_hand
     );
 }
 
-/// ⛔ **A WOODCUTTING CREW ON FELLING HAULS BARE-HANDED** — on the felling rung the row claims its
-/// AXES, not its sleds (`take_kit`, main's held-rung rule), so the party's porters carry the bare
-/// haul over the weight however many sleds the band owns. Paired against the same kit on the
-/// deadfall floor, which hauls on the sled — so "every pack is bare" cannot pass it.
+/// ⛔ **A FAR FELLING CREW WITH THE WOODCUTTING KIT CARRIES THE SLED PACK** — the kit is claimed
+/// whole wherever the working stands, so a felling party (whose axes cut) still hauls on its sleds:
+/// the pack is the sled's haul over the weight, the caravan pricing's own figure, and larger than
+/// the bare-handed pack.
 #[test]
-fn a_woodcutting_crew_on_felling_hauls_at_bare_carry() {
+fn a_far_felling_crew_with_the_woodcutting_kit_carries_the_sled_pack() {
     let (mut app, band) = world_extracting_at(5, Some(WOODCUTTING_KIT));
     seat_the_wood_at_felling(&mut app, 5);
     let felling = first_pack_on_the_road(&mut app, band);
-    let claimed = claimed_at(WOODCUTTING_KIT, core_sim::RungKey::ForestryFelling);
     assert!(
-        !claimed.uses().any(|item| item == "sled"),
-        "fixture: on felling the woodcutting row claims no sled"
+        (felling - priced_pack(&app, band, &extract_kit(WOODCUTTING_KIT))).abs() < 1e-3,
+        "a felling party's porter carries the pricing's haul over the weight: {felling}"
     );
     assert!(
-        app.world
-            .get::<BandEquipment>(band)
-            .expect("the fixture band carries gear")
-            .count_of("sled")
-            > 0,
-        "fixture: the band does own sleds, so the bare pack is about the claim and not the stock"
+        felling > bare_wood_pack(&app),
+        "…which is the sled's, larger than the bare pack: {felling} vs {}",
+        bare_wood_pack(&app)
     );
+}
+
+/// **A WEIGHT HEAVY ENOUGH THAT A LOCAL CREW'S CARRY BINDS** — six bare hands at deadfall cut
+/// `6 × 0.3 = 1.8` a turn, and carry `6 × 12 ÷ 100 = 0.72`; with sleds they cut more and carry
+/// `6 × 40 ÷ 100` at full cover. A fixture weight, not a tuning.
+const A_LOAD_TOO_HEAVY_TO_CUT_FREELY: f64 = 100.0;
+
+/// Install `weight` as wood's weight in the materials table.
+fn weigh_wood_at(app: &mut App, weight: f64) {
+    let mut json: serde_json::Value =
+        serde_json::from_str(core_sim::BUILTIN_MATERIALS_CONFIG).expect("builtin parses");
+    json["materials"][WOOD]["weight"] = serde_json::json!(weight);
+    let table = core_sim::MaterialsConfig::from_json_str(&json.to_string())
+        .expect("the heavier table validates");
+    app.world
+        .resource_mut::<core_sim::MaterialsConfigHandle>()
+        .replace(std::sync::Arc::new(table));
+}
+
+/// ⛔ **A LOCAL CUT IS CAPPED BY WHAT THE CREW CAN CARRY, LIKE A HUNT** — the crew's haul carry over
+/// the material's weight, in addition to the rung's cut rate. On a material heavy enough that the
+/// carry binds, a bare crew's take is exactly its bare carry over the weight, and a sledded crew
+/// (the woodcutting kit) takes more — the sled raises the cap as it raises a hunter's haul.
+#[test]
+fn a_local_extract_take_is_capped_by_carry_over_weight() {
+    let (mut bare_app, bare_band) = world_extracting_at(INSIDE_THE_APRON, None);
+    weigh_wood_at(&mut bare_app, A_LOAD_TOO_HEAVY_TO_CUT_FREELY);
+    resolve_a_turn(&mut bare_app);
+    let bare = wood_held(&bare_app, bare_band);
+    let labor = bare_app
+        .world
+        .resource::<core_sim::LaborConfigHandle>()
+        .get();
+    let bare_cap = CREW as f32 * labor.hunt.per_worker_biomass_capacity
+        / A_LOAD_TOO_HEAVY_TO_CUT_FREELY as f32;
+    assert!(bare > 0.0, "liveness: the crew cuts something");
     assert!(
-        (felling - bare_wood_pack(&app)).abs() < 1e-3,
-        "a felling party's porter carries the bare haul over the weight: {felling}"
+        (bare - bare_cap).abs() < 1e-3,
+        "a bare crew takes exactly its carry over the weight: {bare} vs {bare_cap}"
     );
-    assert!(
-        (felling - priced_pack(&app, band, &claimed)).abs() < 1e-3,
-        "…which is the caravan pricing over the claimed kit"
-    );
-    let (mut floor_app, floor_band) = world_extracting_at(5, Some(WOODCUTTING_KIT));
-    let deadfall = first_pack_on_the_road(&mut floor_app, floor_band);
-    assert!(
-        deadfall > felling,
-        "the same kit on the deadfall floor hauls on its sleds: {deadfall} vs {felling}"
-    );
+    let (mut sled_app, sled_band) = world_extracting_at(INSIDE_THE_APRON, Some(WOODCUTTING_KIT));
+    weigh_wood_at(&mut sled_app, A_LOAD_TOO_HEAVY_TO_CUT_FREELY);
+    resolve_a_turn(&mut sled_app);
+    let sled = wood_held(&sled_app, sled_band);
+    assert!(sled > bare, "the sled raises the cap: {sled} vs {bare}");
 }
 
 /// **SEAT THE FIXTURE'S WOOD AT THE TOP OF `forestry:felling`**, written straight into the registry

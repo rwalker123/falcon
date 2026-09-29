@@ -1350,14 +1350,30 @@ const OWN_KIT_INDEX := 0
 const NONE_KIT_INDEX := 1
 
 ## **THE AUTHORED CREW CURVE** (`workings_forestry_kit_curve`) — one row per crew, each figure chosen
-## so no client-side derivation lands on it: the takes are not `perWorkerBiomass × crew` (2.0 × w), one
-## holder of the held rung's tool is not the roster's `min` over a kit the band holds none of, and the
+## so no client-side derivation lands on it: the takes are not `perWorkerBiomass × crew` (2.0 × w), and the
 ## next-rung takes are not the catalog's `2.0 × crew` the deal row once multiplied out. Indexed by crew
 ## size from 1, as the reply's rows are. **Crews 2 and 3 cut the same** — the sled saturating — and that
 ## flat step is what puts the curve's *hold it after* (2) apart from the bare rate's (3): the wood's
 ## regrowth at the floor sits between the bare 4.00 and the curve's 5.40.
 const CURVE_TAKES := [2.35, 5.40, 5.40, 6.95]
-const CURVE_ARMED := [1.0, 1.0, 1.0, 2.0]
+## **THE CURVE BAND'S GEAR, AND THE WHOLE KITS IT MAKES.** One sled and three axes is ONE Woodcutting
+## kit — the scarcest of the kit's items — so a crew of three reads `1 of 3` off the band's gear exactly
+## as a hunt sheet reads its spears and sled. The reply's `armed_workers` is authored as that same
+## whole-kit count, since the sim now publishes one number for the curve and the committed row.
+const CURVE_BAND_SLEDS := 1
+const CURVE_BAND_AXES := 3
+const CURVE_WHOLE_KITS := 1
+## **A SLEDS-ONLY BAND HOLDS NO WOODCUTTING KIT.** Three sleds and no axe is zero whole kits wherever
+## the crew works — the retired held-rung narrowing would have counted the sleds on a deadfall.
+const SLEDS_ONLY_SLEDS := 3
+const SLEDS_ONLY_AXES := 0
+const SLEDS_ONLY_WHOLE_KITS := 0
+## The extract kits' second items, as the wire spells them.
+const KIT_ITEM_AXE := "axe"
+## The condition every curve-band item reports — any live value; the line counts units, not wear.
+const CURVE_BAND_ITEM_CONDITION := 80.0
+## Nobody on the band is holding these items on a committed row, so the whole ledger is free.
+const CURVE_BAND_NOBODY_HOLDING := 0.0
 const CURVE_NEXT_RUNG_TAKES := [2.55, 5.20, 7.50, 9.85]
 ## The stepper's second position — one hand fewer than `SHEET_CREW`, so the step reads a DIFFERENT row.
 const CURVE_STEPPED_CREW := SHEET_CREW - HudConst.WORKER_STEP
@@ -1546,19 +1562,22 @@ func _lists(items: Array[String], kit_name: String) -> bool:
 			return true
 	return false
 
+## The wire's `armed_workers` — the crew's whole kits, spelled here because the sheet reads it nowhere:
+## its available line comes off the band's gear, as the hunt's does.
+const CURVE_ARMED_WORKERS_KEY := "armed_workers"
 ## The wire's `in_range` flag, spelled here because the client reads it nowhere any more.
 const CURVE_IN_RANGE_FLAG_KEY := "in_range"
 
 ## The authored reply the wood carries for the curve states. `in_range` is only a FLAG now: the server
 ## quotes the real take at the source past the apron, so the rows are the same non-zero takes either
 ## way and the flag rides beside them.
-func _authored_curve(in_range: bool) -> Dictionary:
+func _authored_curve(in_range: bool, whole_kits: int = CURVE_WHOLE_KITS) -> Dictionary:
 	var rows: Array = []
 	for i in CURVE_TAKES.size():
 		rows.append({
 			HudDepositVocab.CURVE_WORKERS_KEY: i + 1,
 			HudDepositVocab.CURVE_TAKE_KEY: CURVE_TAKES[i],
-			HudDepositVocab.CURVE_ARMED_WORKERS_KEY: CURVE_ARMED[i],
+			CURVE_ARMED_WORKERS_KEY: float(mini(whole_kits, i + 1)),
 			HudDepositVocab.CURVE_NEXT_RUNG_TAKE_KEY: CURVE_NEXT_RUNG_TAKES[i],
 		})
 	return {
@@ -1570,10 +1589,22 @@ func _authored_curve(in_range: bool) -> Dictionary:
 
 ## The wood fixture carrying an authored curve reply — what the stand-in server answers the sheet's
 ## question with (`fixtures_forecast.gd` → `DEPOSIT_CREW_TAKE_KEY`).
-func _curve_wood(in_range: bool) -> Dictionary:
+func _curve_wood(in_range: bool, whole_kits: int = CURVE_WHOLE_KITS) -> Dictionary:
 	var wood := _wood_working(WOOD_OVER_CUT)
-	wood[ForecastFx.DEPOSIT_CREW_TAKE_KEY] = _authored_curve(in_range)
+	wood[ForecastFx.DEPOSIT_CREW_TAKE_KEY] = _authored_curve(in_range, whole_kits)
 	return wood
+
+## The band standing on the working, its kit ledger stating `sleds` and `axes` all in the tent — the
+## gear the sheet's available line composes its whole kits from.
+func _curve_band(sleds: int, axes: int) -> Dictionary:
+	var band := _band_at_the_working()
+	band[DetailFormat.KIT_ITEM_CONDITIONS_KEY] = [
+		BandFx.kit_condition_row(BandFx.KIT_ITEM_SLED, CURVE_BAND_ITEM_CONDITION,
+			CURVE_BAND_NOBODY_HOLDING, CURVE_BAND_NOBODY_HOLDING, sleds),
+		BandFx.kit_condition_row(KIT_ITEM_AXE, CURVE_BAND_ITEM_CONDITION,
+			CURVE_BAND_NOBODY_HOLDING, CURVE_BAND_NOBODY_HOLDING, axes),
+	]
+	return band
 
 ## Re-open the wood's sheet at `crew` over the tile carrying `wood`, settled, and hand the sheet back.
 func _open_curve_sheet(wood: Dictionary, crew: int) -> Node:
@@ -1582,13 +1613,12 @@ func _open_curve_sheet(wood: Dictionary, crew: int) -> Node:
 	await h._settle()
 	return h._hud._drawercompose._compose_sheet
 
-## ⛔ **STATES workings-forestry-kit-curve / -out-of-range — every gear-bearing figure on the deposit
-## sheet is the crew curve's, at the stepper's crew** (issue #663). Ray's report: on a deadfall the
-## sheet read `1 of 2 Felling kits available` over a take the axes did not move, `ONCE FELLED 4 wood a
-## turn` ignored the axes, and NEXT TURN was the bare rate × crew with sleds on. The sim now answers a
-## curve (`ForecastQuery.KIND_DEPOSIT_CREW_TAKE`), and the three figures are READ off it: NEXT TURN is
-## the row's `take`, the available line its `armed_workers` of `workers`, the deal its
-## `next_rung_take`. The stand-in server answers with the wood's own authored reply.
+## ⛔ **STATES workings-forestry-kit-curve / -flagged-out-of-range — NEXT TURN and the deal are the crew
+## curve's, at the stepper's crew; the available line is the hunt's** (issue #663). The sim answers a
+## curve (`ForecastQuery.KIND_DEPOSIT_CREW_TAKE`): NEXT TURN is the row's `take`, the deal its
+## `next_rung_take`. The available line is `KitRoster.shortfall_line`'s ordinary reading of the band's
+## gear — the whole kits it holds (the scarcest of sled and axe) against the crew — exactly as a hunt
+## sheet reads spears and sled. The stand-in server answers with the wood's own authored reply.
 ##
 ## **THE SEAM IS RESET FIRST**, because the key is band · working · kit · floor · gear and says
 ## nothing about the fixture: the earlier wood states asked the same question and hold its BARE answer,
@@ -1604,7 +1634,7 @@ func _crew_curve_states() -> void:
 	h._hud.update_kit_roster(_deposit_kit_roster(), BandFx.KIT_DEFAULT_HUNT,
 		BandFx.KIT_DEFAULT_FORAGE, BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
 		BandFx.KIT_DEFAULT_EXPEDITION)
-	h._hud.update_band_alerts([_band_at_the_working()])
+	h._hud.update_band_alerts([_curve_band(CURVE_BAND_SLEDS, CURVE_BAND_AXES)])
 	var wood := _curve_wood(true)
 	h._show_tile(_workings_tile([wood, _stone_working(STONE_TAKE)]))
 	await h._settle()
@@ -1617,7 +1647,8 @@ func _crew_curve_states() -> void:
 		await h._settle()
 		# ⛔ **WHILE THE ANSWER IS IN FLIGHT, NO GEAR CLAIM** — read BEFORE the frame ends, since the
 		# stand-in answers deferred, exactly as the socket does. The sheet says it is costing the crew
-		# where NEXT TURN goes, and states neither the available line nor the deal.
+		# where NEXT TURN goes, and states no deal. (The available line is the band's gear, as on the
+		# hunt sheet, so it owes the curve nothing and is not part of this claim.)
 		#
 		# **THE SHEET IS CLOSED AND SETTLED FIRST, AND THE SEAM RESET AFTER.** A rebuild `queue_free`s
 		# the previous controls, which stay in the tree until the frame ends — so an open over an open
@@ -1629,13 +1660,11 @@ func _crew_curve_states() -> void:
 		h._hud._drawercompose.open_deposit_compose(wood)
 		var pending: Node = h._hud._drawercompose._compose_sheet
 		h._assert_hud(("…while the curve is in flight the sheet says it is costing the crew, and "
-				+ "states no take, no available line and no deal (%s | %s | %s)")
-				% [Readout.yields_text(pending), Readout.kit_hint_line(pending),
-					Readout.improvement_deal_value(pending)],
+				+ "states no take and no deal (%s | %s)")
+				% [Readout.yields_text(pending), Readout.improvement_deal_value(pending)],
 			_sheet_text_contains(pending, HudDepositVocab.DEPOSIT_TAKE_PENDING)
 				and Readout.yields_account_number(pending, WOOD_MATERIAL_ID)
 					== Readout.YIELDS_ACCOUNT_ABSENT
-				and Readout.kit_hint_line(pending) == ""
 				and Readout.improvement_deal_value(pending) == Readout.DEAL_ROW_ABSENT)
 		await h._settle()
 		var sheet: Node = await _open_curve_sheet(wood, SHEET_CREW)
@@ -1648,6 +1677,26 @@ func _crew_curve_states() -> void:
 		# **THE STEPPER MOVES, THE FIGURES MOVE WITH IT — to the next row, off the same answer.**
 		sheet = await _open_curve_sheet(wood, CURVE_STEPPED_CREW)
 		_assert_curve_row_on_sheet(sheet, CURVE_STEPPED_CREW)
+		# ⛔ **SLEDS ALONE ARE NO WOODCUTTING KIT.** The kit is a sled AND an axe on every rung, so a
+		# band holding three sleds and no axe fields zero whole kits — the line says so, where the
+		# retired held-rung narrowing counted the sleds on a deadfall and read the crew as outfitted.
+		h._hud.update_band_alerts([_curve_band(SLEDS_ONLY_SLEDS, SLEDS_ONLY_AXES)])
+		var sleds_only_wood := _curve_wood(true, SLEDS_ONLY_WHOLE_KITS)
+		h._show_tile(_workings_tile([sleds_only_wood, _stone_working(STONE_TAKE)]))
+		await h._settle()
+		# The sheet is opened on the new tile first (a source change re-seeds the crew), then
+		# re-opened at the crew the claim is about — the order the state above takes.
+		await _open_curve_sheet(sleds_only_wood, SHEET_CREW)
+		sheet = await _open_curve_sheet(sleds_only_wood, SHEET_CREW)
+		var woodcutting := KitRoster.kit_by_id(h._hud._band_labor.kits(), WOODCUTTING_KIT_ID)
+		var none_held := KitRoster.shortfall_sentence(woodcutting, SLEDS_ONLY_WHOLE_KITS, SHEET_CREW)
+		h._assert_hud("…a band with %d sleds and no axe holds NO whole Woodcutting kit (%s, want %s)"
+				% [SLEDS_ONLY_SLEDS, Readout.kit_hint_line(sheet), none_held],
+			none_held != "" and Readout.kit_hint_line(sheet) == none_held)
+		h._hud.update_band_alerts([_curve_band(CURVE_BAND_SLEDS, CURVE_BAND_AXES)])
+		h._show_tile(_workings_tile([wood, _stone_working(STONE_TAKE)]))
+		await h._settle()
+		await _open_curve_sheet(wood, SHEET_CREW)
 		# **`none` CARRIES NOTHING, SO IT CAN LEAVE NOBODY SHORT** — the available line goes silent.
 		h._hud._compose.set_deposit_kit_id(BandFx.KIT_ID_NONE)
 		sheet = await _open_curve_sheet(wood, SHEET_CREW)
@@ -1699,8 +1748,8 @@ func _assert_curve_row_on_sheet(sheet: Node, crew: int) -> void:
 			% [crew, Readout.yields_account_number(sheet, WOOD_MATERIAL_ID), want_take, bare_take],
 		Readout.yields_account_number(sheet, WOOD_MATERIAL_ID) == want_take)
 	var kit := KitRoster.kit_by_id(h._hud._band_labor.kits(), WOODCUTTING_KIT_ID)
-	var want_hint := KitRoster.shortfall_sentence(kit, int(CURVE_ARMED[i]), crew)
-	h._assert_hud("…the available line at %d is the row's armed_workers (%s, want %s)"
+	var want_hint := KitRoster.shortfall_sentence(kit, mini(CURVE_WHOLE_KITS, crew), crew)
+	h._assert_hud("…the available line at %d counts the band's WHOLE kits, as the hunt's does (%s, want %s)"
 			% [crew, Readout.kit_hint_line(sheet), want_hint],
 		Readout.kit_hint_line(sheet) == want_hint)
 	var want_deal := DetailFormat.format_trimmed(CURVE_NEXT_RUNG_TAKES[i],
