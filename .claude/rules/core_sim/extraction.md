@@ -129,6 +129,10 @@ Population — once per BAND ROW on it (the `Extract` arm)
   generic material, and the batch merge is the one every other arrival uses. It is reported through
   the row's `SourceYield::materials`, which is the producer the band's income map and the material
   shortfall Alert both read.
+- **A far working's take walks home.** Past `band_work_range` the row posts a work party, the take
+  is priced at the hands at the deposit, and what is deposited this turn is what the porters land —
+  nothing while the party walks out. `outcome.taken` still draws the stock down the turn it is cut.
+  See `work-party.md` → "The deposit web: the cargo is the material".
 - **A shared working is drawn down SEQUENTIALLY** and needs no divider. Each band's row takes from
   the stock it actually finds, so the takes cannot sum past what the rung could reach — which is how
   `forage_take` divides a patch two bands gather.
@@ -417,6 +421,11 @@ tools are out of scope is a roster question left open), extraction because its t
 seam the day a felling axe declares a take stat, with `default_kits.extract: "none"` — the same
 opening `roadwork` has.
 
+**What the job does name is CARRY, and only for a far working.** The `hauling` kit lists `extract`
+and uses the sled, so a far working's porters can drag home `hunt_carry / weight` units a trip instead
+of the bare carry's — the hunt's own carry, divided by the material's `weight` (`materials.json`). A
+local working's take is capped by its rung and never by carry, so the sled there is inert and unworn.
+
 ## The two road tools are WIDENED, not duplicated
 
 `stone_dressing` — the maul, wedges and dressing hammer — declares a **second** `build_work` effect
@@ -444,11 +453,18 @@ would make which one a builder carries an alphabetical accident.
 ## The working belongs to a CAMP, like a patch — not to nobody, like a road
 
 This is the one place the arc deliberately does **not** copy `RungBranch::Route`. A road follows no
-one and is free to leave, which is why it belongs to no camp; **a quarry you walk away from is a
-quarry you lost**. So `BuildSource::Deposit` *is* backed by a labor row (`LaborTarget::Extract`),
-`holds_build_source` resolves it through that row like a patch's, and the row **lapses when the
-deposit resolves out of the band's work range** — the Forage arm's abandonment rule, byte for byte,
-and where this branch's move-or-stay pressure actually lives.
+one and is free to leave, which is why it belongs to no camp. So `BuildSource::Deposit` *is* backed
+by a labor row (`LaborTarget::Extract`), and `holds_build_source` resolves it through that row like a
+patch's.
+
+**A working past the band's work range posts a WORK PARTY, the Forage arm's rule byte for byte, and
+nothing lapses for distance.** The row keeps the working; its crew walks each full pack home and back
+(`work-party.md` → "The deposit web: the cargo is the material"). **The move-or-stay pressure is paid
+in walking**: a band that moves away from its quarry keeps it, and pays the round trip on every pack
+— the take arriving home falls with the distance, and a road between camp and quarry wins it back.
+The retired rule lapsed the row the turn the band stepped past `band_work_range`
+(`status=lapsed reason=out_of_range`), which made a working the one source a band could not keep
+from a new camp.
 
 **A working raised above its free floor keeps its row through an unstaffing**
 (`source_has_a_meter_at_risk`), with one difference from the two food webs: there is no rot to be at
@@ -646,7 +662,7 @@ an abandoned working decays toward costing nothing rather than bleeding a band's
 
 ⛔ **IT RUNS ON EVERY WORKING, HELD OR NOT** — `bill_and_stock_roads`' lesson. A pass that billed only
 the workings some band still has a row on would leave an **abandoned** working reading as kept for
-ever: never arming its counter, never decaying. A working whose band walked out of range is precisely
+ever: never arming its counter, never decaying. A working its band has abandoned is precisely
 what this branch's move-or-stay pressure is made of, so it is precisely the case that must decay.
 
 **The payment is a whole stage later** — `systems::settle_bands_extraction`, called from inside
@@ -774,7 +790,7 @@ branch.
 |---|---|
 | `src/data/extraction.json` | **THE DEPOSITS** (`extraction_config.rs`, env override **`EXTRACTION_CONFIG_PATH`**). `seed_fraction` **0.02** — what a deposit regrows from when it has been taken to nothing, evaluated *inside* the growth term so a rate of zero seeds nothing. Then one `deposits` row per material: its `branch`, and a `by_terrain` table of `{ capacity, regrowth_rate, characteristics }`. **A terrain absent from `by_terrain` holds none of that material** — absence is the answer, so there is no `enabled` flag and no parked `0.0` row, and every water terrain is absent from both tables deliberately. `DepositDef` and `DepositTerrain` are **`deny_unknown_fields`**, so the file's prose lives at file level in `_comment_*` keys, `materials.json`'s discipline. **Stone is two populations in one table**: rock bodies in the low thousands at rate `0.0` (alpine 4200, karst 3000, basalt 2600 … rolling hills 900) and loose-stone scatters in the tens at a small positive rate (periglacial 70 … mangrove 5). **Wood regrows on every row** — mixed woodland 600 at 0.03, boreal taiga 450 at 0.015, marsh withy 90 at 0.055 — because a forest that is worked out is not a forest. **The wood table stops at 50 and the floor is a design line, not a tuning one** (issue #650): eight rows under it were **deleted** rather than tuned down — canyon badlands and tundra 15, periglacial steppe 20, prairie steppe 25, crater fields 30, high plateau and semi-arid scrub 40, sinkhole field 45 — because a wood a bare-handed crew works out in a few dozen turns costs the player a decision and pays them nothing. **Absence is the config's own mechanism**, so no code carries a threshold; the terrains simply hold no timber, and each of the eight keeps its stone row, so **nothing is left holding neither material** (the only rows absent from both tables are the six water terrains and `Glacier`, deliberately). **⛔ THE STONE TABLE'S SMALL ROWS ARE THE OPPOSITE CASE AND WERE LEFT ALONE** — the low-capacity **positive-rate** scatters are *loose stone the ground keeps turning up*, which is what makes knapping flint available nearly anywhere, and a scatter that regrows is never worked out the way a 15-unit copse is. **The characteristic ratings are LIVE on both materials since issue #736**, and the shape they were authored for is the shape their readers wanted: wood's `hardness` / `pliancy` are read by the two road tools (`earthmoving` / `stone_dressing`), and stone's `hardness` / `workability` by the three knapped kit recipes — `spears_flint` and `clubs_flint` want a hard stone for a point that holds, `hoes_flint` a workable one for a blade that flakes predictably. So a deposit's ratings now decide what grade the things made out of it come out at, which is what *"genuinely opposed, no best deposit"* was written in advance of rather than instead of. They are still **playtest dials** — nothing about a rating was retuned when its reader landed. **`capacity_per_keeper`** is the divisor that turns a tile's capacity into the keeper-loads the rungs quote their `work_per_turn` per — wood **600** (`MixedWoodland`'s own capacity, so a felling working on closed woodland is exactly one load) and stone **3000** (`KarstHighland`'s — limestone, the classic quarry stone, and the middle of the rock bodies, so rolling hills reads 0.3 and an alpine mountain 1.4). Every number is a **playtest dial** |
 | `src/data/intensification_ladder.json` | The five new rung records and the `extraction_payoff` block on each — see `intensification.md` for the ladder engine. `knowledge.lesson_costs` gains `woodcraft` / `conservationism` / `quarrying` at 20 apiece. **The three BUILT rungs each declare an `upkeep`** (`scaled_by: source_load`): `forestry:felling` **1.0** work a turn per keeper-load, rot **0.6**, grace **3**; `forestry:coppice` **2.0** / **1.5** / **2**; `extraction:quarry` **1.5** / **2.5** / **4**. The rates read as *keepers on the reference ground*, because `capacity_per_keeper` is anchored there — a felling working on closed mixed woodland is exactly one keeper, against the plant web's 2.0 for a tended patch on *its* reference tile. Each `meter_decay` is the pacing-neutral inversion of the plant web's rule of thumb (a wholly unmaintained rung lapses over ~100 bleeding turns), so it tracks each rung's own `work_cost`. The graces say how forgiving each rung is of a crew re-tasked for a season: a quarry face is the most forgiving at 4 because the rock does the holding, and a **coppice** the least at 2 because a managed wood is the most perishable thing on either branch — the same direction `plant:field` runs in against `plant:tended`. **The two free floors declare none.** |
-| `src/data/equipment.json` | `default_kits.extract` and `default_kits.quarrywork` both `"none"`, the `none` kit's `jobs` gains both, and `stone_dressing`'s `plain` tier (its only one) gains its second `build_work` effect on `extraction:quarry` |
+| `src/data/equipment.json` | `default_kits.extract` and `default_kits.quarrywork` both `"none"`, the `none` kit's `jobs` gains both, and `stone_dressing`'s `plain` tier (its only one) gains its second `build_work` effect on `extraction:quarry`. The **`hauling`** kit (`jobs: ["extract"]`, `uses: ["sled"]`) is how a far working's party is sent out sled-equipped (`work-party.md`) |
 
 ## The wire — one row per DEPOSIT-BEARING TILE, and the rate picks the readout
 

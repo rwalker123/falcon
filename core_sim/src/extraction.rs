@@ -1154,6 +1154,103 @@ pub fn renew_deposit(
 // number, and the one thing that genuinely had to be per-working — the **growth term** — is
 // `advance_deposits`' now (see [`take_from_deposit`]).
 
+/// **THE WORKING A FORECAST STARTS FROM** — the live one when a band has cut it, else one
+/// **derived** at the tile's capacity on its branch's free floor, which is `snapshot::deposits`' own
+/// rule and what gives a crew put on fresh ground a figure at all. `None` for ground that holds none
+/// of the material.
+///
+/// The one construction the assign-time seed and the compose-sheet query both read, so the two
+/// cannot start a projection from different workings.
+pub fn projected_working(
+    registry: &DepositRegistry,
+    tile: UVec2,
+    material: &str,
+    ground: &Tile,
+    config: &ExtractionConfig,
+) -> Option<DepositSource> {
+    let capacity = tile_deposit_capacity(config, material, ground);
+    if capacity <= NO_DEPOSIT {
+        return None;
+    }
+    let branch = deposit_branch(config, material)?;
+    Some(
+        registry
+            .source(tile, material)
+            .cloned()
+            .unwrap_or_else(|| DepositSource::opening(tile, material, capacity, branch)),
+    )
+}
+
+/// ⛔ **ONE WORKING, STEPPED FORWARD A TURN AT A TIME — REGROW FIRST, THEN TAKE.** The deposit web's
+/// projection, and the one take formula every forward reading of a working goes through: the
+/// assign-time seed's first turn, the local row's steady rate
+/// ([`project_realized_deposit`]) and a far working's caravan forecast
+/// (`crate::work_party::forecast_extract_caravan`).
+///
+/// **The turn's own order and the turn's own seams**: [`renew_deposit`] (`advance_deposits`' phase
+/// 4, a whole stage before the take) and then [`take_from_deposit`], on a **clone**, so nothing here
+/// moves the registry. A forecast is read between turns, when the live stock is the one this turn's
+/// take already drew down, so its first step regrows before it takes (`yield-forecast.md` → "A
+/// FORECAST REGROWS FIRST").
+///
+/// The decay pass is not stepped: a projection prices the rung the working stands on today.
+#[derive(Debug, Clone)]
+pub struct DepositProjection {
+    working: DepositSource,
+}
+
+impl DepositProjection {
+    pub fn new(working: &DepositSource) -> Self {
+        Self {
+            working: working.clone(),
+        }
+    }
+
+    /// **One turn at `workers` and `floor`** — the units taken, or `None` once the working is
+    /// **spent**: nothing left to reach on ground that will never renew. A renewing working is never
+    /// spent, and a crew of nobody takes nothing while the stand goes on growing.
+    pub fn step(
+        &mut self,
+        workers: u32,
+        floor: f32,
+        ground: &Tile,
+        config: &ExtractionConfig,
+        ladder: &LadderConfig,
+    ) -> Option<f32> {
+        renew_deposit(&mut self.working, ground, config, ladder);
+        let outcome = take_from_deposit(&mut self.working, workers, floor, ground, config, ladder);
+        let renews = tile_deposit_regrowth(config, &self.working.material, ground) > NEVER_RENEWS;
+        if !renews && outcome.reachable_before <= DEPOSIT_EMPTY {
+            return None;
+        }
+        Some(outcome.taken)
+    }
+}
+
+/// **A LOCAL WORKING'S STEADY RATE** — the mean take per turn over `horizon` turns of
+/// [`DepositProjection`], at the whole crew, averaged over the turns actually stepped so a quarry
+/// worked out inside the horizon is not diluted by dead turns after it is gone (the smooth headline's
+/// own rule, `forage::project_realized_forage`). What the compose-sheet query answers for a working
+/// inside the apron, where no party is posted.
+pub fn project_realized_deposit(
+    working: &DepositSource,
+    workers: u32,
+    floor: f32,
+    ground: &Tile,
+    config: &ExtractionConfig,
+    ladder: &LadderConfig,
+    horizon: u32,
+) -> f32 {
+    let mut projection = DepositProjection::new(working);
+    let takes: Vec<f32> = (0..horizon)
+        .map_while(|_| projection.step(workers, floor, ground, config, ladder))
+        .collect();
+    if takes.is_empty() {
+        return DEPOSIT_EMPTY;
+    }
+    takes.iter().sum::<f32>() / takes.len() as f32
+}
+
 /// **THE WORKINGS' DECAY AND THIS TURN'S BILL** — the deposit branches' `routes::advance_roads`,
 /// and the half of the standing upkeep that makes neglect **self-limiting**.
 ///

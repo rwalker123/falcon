@@ -1229,9 +1229,11 @@ func update_food_modules(modules_variant: Variant) -> void:
 ## axis and published `""` — and EXPEDITION joined it with the ranging kit, which is what a
 ## provisioned party gathers and hunts on (`KitRoster.JOB_EXPEDITION`).
 func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_forage: Variant,
-        default_scout: Variant, default_warrior: Variant, default_expedition: Variant) -> void:
+        default_scout: Variant, default_warrior: Variant, default_expedition: Variant,
+        default_extract: Variant = KitRoster.NO_KIT_ID) -> void:
     _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage),
-        String(default_scout), String(default_warrior), String(default_expedition))
+        String(default_scout), String(default_warrior), String(default_expedition),
+        String(default_extract))
 
 ## The world's CRAFTING CATALOGUES (`docs/plan_crafting_and_materials.md` §7) — the materials, the
 ## shared rating vocabulary, the recipe book and each faction's craft knowledge. Forwarded by `Main`

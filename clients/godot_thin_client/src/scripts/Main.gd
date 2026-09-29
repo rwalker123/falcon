@@ -985,7 +985,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_kit_roster", [snapshot["kits"],
             snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", ""),
             snapshot.get("default_scout_kit_id", ""), snapshot.get("default_warrior_kit_id", ""),
-            snapshot.get("default_expedition_kit_id", "")])
+            snapshot.get("default_expedition_kit_id", ""),
+            snapshot.get("default_extract_kit_id", "")])
     # The CRAFTING CATALOGUES, forwarded as ONE call for the reason the kit roster is: they are one
     # fact, and a recipe book ingested without its materials renders a rail with no craft tracks and
     # costs in materials the panel cannot name. **Gated on `craft_knowledge`, not on `materials`** —
@@ -1386,8 +1387,10 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # only thing a builder can honestly say for a question that was never asked**; what it
             # MEANS is the sim's, and it answers differently per branch.
             #
-            # **STILL NO KIT TOKEN**: `default_kits.extract` is the bare `none` kit with no picker
-            # anywhere on the working card, so the tail is closed after the worker count.
+            # **THE KIT RIDES THE TAIL**, forage's and hunt's own `kit <id>` pair: an extract row may
+            # name the `hauling` kit (sleds), which enlarges a far working's porter packs. It is
+            # omitted where the selection equals the job's default (`default_kits.extract`, `none`),
+            # so a sheet nobody touched sends the line it always sent.
             var ex := int(payload.get("x", -1))
             var ey := int(payload.get("y", -1))
             var material := String(payload.get("species", "")).strip_edges().to_lower()
@@ -1404,7 +1407,7 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                         workers, "" if workers == 1 else "s", material, ex, ey,
                         _floor_percent_text(payload)]
             return {
-                "line": "%s %d" % [extract_head, workers],
+                "line": "%s %d%s" % [extract_head, workers, _kit_token(payload)],
                 "message": extract_message,
             }
         "scout", "warrior", "agriculture", "husbandry", "roadwork", "quarrywork", "builders":

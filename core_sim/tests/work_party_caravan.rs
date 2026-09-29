@@ -1,10 +1,10 @@
 //! **THE WORK PARTY AS A CARAVAN, DRIVEN THROUGH REAL TURNS AND READ OFF THE ENCODED WIRE**
 //! (`docs/plan_civilization_steps.md` §One work party, `.claude/rules/core_sim/work-party.md`).
 //!
-//! A band camped on the harness map's `(1, 1)` hunts a herd seated a stated number of hexes along
-//! the same row, so the hex distance is exactly that number. Every claim here is asserted on what a
-//! client parses — the encoded snapshot, or the query's answer — never on an in-process value the
-//! capture might not carry.
+//! A band camped on the harness map's `(1, 1)` hunts a herd — or works a wood — seated a stated
+//! number of hexes along the same row, so the hex distance is exactly that number. Every claim here is
+//! asserted on what a client parses — the encoded snapshot, or the query's answer — never on an
+//! in-process value the capture might not carry.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
@@ -14,9 +14,9 @@ use bevy::prelude::Entity;
 use core_sim::{
     advance_labor_allocation, build_test_app, recapture_snapshot_in_place, scalar_from_f32,
     scalar_one, scalar_zero, BandEquipment, BandId, EquipmentConfig, FactionId, FaunaConfigHandle,
-    GenerationId, Herd, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-    MoraleCause, PopulationCohort, ResidentBand, SizeClass, SnapshotHistory, SourcePriority,
-    TileRegistry, FOOD,
+    GenerationId, Herd, HerdRegistry, KitChoice, LaborAllocation, LaborAssignment, LaborTarget,
+    LocalStore, MoraleCause, PopulationCohort, ResidentBand, SizeClass, SnapshotHistory,
+    SourcePriority, TileRegistry, FOOD,
 };
 use sim_runtime::commands::{
     QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
@@ -86,6 +86,13 @@ fn world_hunting_at(distance: u32) -> (App, Entity) {
         registry.clear();
         registry.herds.push(herd);
     }
+    let band = spawn_camp_band(&mut app, hunt_target(), None);
+    (app, band)
+}
+
+/// **The fixture band, camped on [`CAMP`] with [`CREW`] hands on one row** — `target`, carrying
+/// `kit` (`None` = the job's default).
+fn spawn_camp_band(app: &mut App, target: LaborTarget, kit: Option<KitChoice>) -> Entity {
     let camp = app
         .world
         .resource::<TileRegistry>()
@@ -94,8 +101,7 @@ fn world_hunting_at(distance: u32) -> (App, Entity) {
     // **An empty larder, on purpose**: a party is fed by its band's ordinary consumption, so nothing
     // about the posting may depend on what the band has put by.
     let stores = LocalStore::new();
-    let band = app
-        .world
+    app.world
         .spawn((
             ResidentBand,
             BandId(BAND),
@@ -133,17 +139,16 @@ fn world_hunting_at(distance: u32) -> (App, Entity) {
             LaborAllocation {
                 assignments: vec![LaborAssignment {
                     party: None,
-                    target: hunt_target(),
+                    target,
                     workers: CREW,
-                    kit: None,
+                    kit,
                     priority: SourcePriority::default(),
                     upkeep_kit: None,
                 }],
                 ..Default::default()
             },
         ))
-        .id();
-    (app, band)
+        .id()
 }
 
 fn hunt_target() -> LaborTarget {
@@ -160,6 +165,11 @@ fn resolve_a_turn(app: &mut App) {
 }
 
 fn published_party(app: &App) -> PublishedParty {
+    published_party_of(app, "hunt")
+}
+
+/// The party the fixture band's row of `kind` publishes, off the ENCODED buffer.
+fn published_party_of(app: &App, kind: &str) -> PublishedParty {
     use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
     let snapshot = app
         .world
@@ -178,8 +188,8 @@ fn published_party(app: &App) -> PublishedParty {
         .expect("the population section carries the cohort list")
         .iter()
         .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
-        .find(|assignment| assignment.kind().unwrap_or_default() == "hunt")
-        .expect("the fixture band's hunt row is on the wire");
+        .find(|assignment| assignment.kind().unwrap_or_default() == kind)
+        .expect("the fixture band's row is on the wire");
     PublishedParty {
         party_workers: row.partyWorkers(),
         hunters_on_the_road: row.huntersOnTheRoad(),
@@ -308,7 +318,7 @@ fn unassigning_a_caravan_mid_walk_brings_every_pack_home() {
         }
     }
     let party = on_the_road.expect("liveness: the caravan must put somebody on the road");
-    let carried: f32 = party.load_food + party.on_the_road.iter().map(|w| w.food).sum::<f32>();
+    let carried: f32 = party.load_cargo + party.on_the_road.iter().map(|w| w.cargo).sum::<f32>();
     assert!(carried > 0.0, "fixture: the caravan is carrying something");
     let before = larder(&app, band);
     let received_before = app
@@ -365,8 +375,8 @@ fn a_caravan_carrying_food(app: &mut App, band: Entity) -> f32 {
             .and_then(|allocation| allocation.assignments.first())
             .and_then(|row| row.party.clone())
             .expect("the far row carries a party");
-        if party.hunters_on_the_road() > 0 && party.load_food > 0.0 {
-            return party.load_food + party.on_the_road.iter().map(|w| w.food).sum::<f32>();
+        if party.hunters_on_the_road() > 0 && party.load_cargo > 0.0 {
+            return party.load_cargo + party.on_the_road.iter().map(|w| w.cargo).sum::<f32>();
         }
     }
     panic!("liveness: the caravan must put somebody on the road with food still in the load");
@@ -509,5 +519,428 @@ fn a_vanished_herd_brings_its_caravan_home_as_the_row_lapses() {
         larder(&app, band),
         larder_after,
         "the caravan came home once — a later turn hands nothing more over"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE DEPOSIT WEB — a far working posts a party exactly as a far patch does
+// ---------------------------------------------------------------------------------------------
+//
+// ⛔ **There is nothing special about wood or stone.** A far working posts a party by the same
+// geometry, walks the same walk, and its porters carry the hunt's own haul carry divided by the
+// material's `weight` — so every test below would read the same on stone, and the last one proves it
+// by changing the weight rather than the material.
+
+/// The deposit every fixture below works — wood, which the ground below is re-terrained to hold.
+const WOOD: &str = "wood";
+/// Ground that holds a wood deposit in the shipped `extraction.json` (600 at a positive rate).
+const WOODED: sim_schema::TerrainType = sim_schema::TerrainType::MixedWoodland;
+/// The wire's `kind` for an extract row (`LaborTarget::kind`).
+const EXTRACT_KIND: &str = "extract";
+/// The shipped kit that sends a sled out on a deposit (`equipment.json` `hauling`).
+const HAULING_KIT: &str = "hauling";
+
+fn extract_target(distance: u32) -> LaborTarget {
+    LaborTarget::Extract {
+        tile: UVec2::new(CAMP.x + distance, CAMP.y),
+        material: WOOD.to_string(),
+        floor: FLOOR,
+    }
+}
+
+/// The kit `id`, resolved for the extract job the way `assign_labor` resolves one.
+fn extract_kit(id: &str) -> KitChoice {
+    EquipmentConfig::builtin()
+        .resolve_kit_for_job(Some(id), core_sim::KitJob::Extraction)
+        .expect("the roster sends this kit on a deposit")
+}
+
+/// **A band on [`CAMP`] working a wood `distance` hexes along its row**, carrying `kit`. The deposit's
+/// tile is re-terrained to [`WOODED`] so the harness map's own terrain there cannot decide whether
+/// it holds wood.
+fn world_extracting_at(distance: u32, kit: Option<&str>) -> (App, Entity) {
+    let mut app = build_test_app();
+    app.update();
+    let tile = UVec2::new(CAMP.x + distance, CAMP.y);
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .unwrap_or_else(|| panic!("fixture: the deposit's tile must be on the map ({tile:?})"));
+    app.world
+        .get_mut::<core_sim::Tile>(entity)
+        .expect("a map tile carries terrain")
+        .terrain = WOODED;
+    let band = spawn_camp_band(&mut app, extract_target(distance), kit.map(extract_kit));
+    (app, band)
+}
+
+/// The fixture band's extract row's party, in-process — for the load and the packs, which the wire
+/// does not carry.
+fn extract_party(app: &App, band: Entity) -> Option<core_sim::WorkParty> {
+    app.world
+        .get::<LaborAllocation>(band)
+        .and_then(|allocation| allocation.assignments.first())
+        .and_then(|row| row.party.clone())
+}
+
+/// Run turns until a porter is on the road with a pack, and hand back that first pack's cargo.
+fn first_pack_on_the_road(app: &mut App, band: Entity) -> f32 {
+    for _ in 0..TURNS_TO_SEE_A_PORTER {
+        resolve_a_turn(app);
+        if let Some(walker) =
+            extract_party(app, band).and_then(|party| party.on_the_road.first().cloned())
+        {
+            return walker.cargo;
+        }
+    }
+    panic!("liveness: the caravan must put a porter on the road");
+}
+
+/// How much wood the band holds.
+fn wood_held(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .expect("the band keeps its cohort")
+        .stores
+        .material_total(WOOD)
+        .to_f32()
+}
+
+/// The material the extract row published as landing this turn, off the ENCODED buffer.
+fn published_material_yield(app: &App) -> f32 {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+        .find(|assignment| assignment.kind().unwrap_or_default() == EXTRACT_KIND)
+        .expect("the fixture band's extract row is on the wire");
+    row.materialYield()
+        .into_iter()
+        .flatten()
+        .filter(|payoff| payoff.materialId().unwrap_or_default() == WOOD)
+        .map(|payoff| payoff.amount())
+        .sum()
+}
+
+/// The pack a party of this row carries, struck through the caravan's own pricing — the haul carry
+/// over the material's weight.
+fn priced_pack(app: &App, band: Entity, kit: &KitChoice) -> f32 {
+    let equipment = EquipmentConfig::builtin();
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let wear = app
+        .world
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_default();
+    let pricing =
+        core_sim::work_party::CaravanPricing::resolve(&equipment, kit, CREW, &wear, &[], &labor);
+    let weight = app
+        .world
+        .resource::<core_sim::MaterialsConfigHandle>()
+        .get()
+        .material(WOOD)
+        .expect("wood is a material")
+        .weight;
+    core_sim::work_party::material_pack(pricing.haul_carry, weight)
+}
+
+/// ⛔ **A DEPOSIT EIGHT HEXES OUT WALKS SIX EACH WAY, ON THE WIRE** — the Forage arm's posting, with
+/// no range lapse: the row survives and publishes its party.
+#[test]
+fn a_deposit_eight_hexes_out_posts_a_party_that_walks_six_each_way() {
+    let (mut app, band) = world_extracting_at(8, None);
+    resolve_a_turn(&mut app);
+    let party = published_party_of(&app, EXTRACT_KIND);
+    assert_eq!(
+        party.party_workers, CREW,
+        "a far working posts a party rather than lapsing"
+    );
+    assert_eq!(party.walk_tiles, 6, "Ray's formula: 8 − 2");
+    assert!(
+        party.walk_out_remaining > 0,
+        "a party six turns out is still walking out after its first turn"
+    );
+    assert_eq!(
+        wood_held(&app, band),
+        0.0,
+        "nothing lands while the party is still walking out"
+    );
+}
+
+/// ⛔ **THE LOCAL IDENTITY, ON THE DEPOSIT WEB** — a working inside the apron posts no party, and
+/// every number is the take seam's own: the row publishes and the store receives exactly
+/// `take_from_deposit` at the whole crew. **Carry does not cap a local take**, so a sled on the row
+/// changes nothing — and, carrying nothing the hands would not, is not worn.
+#[test]
+fn a_local_working_takes_no_party_and_its_numbers_are_unchanged() {
+    let (mut app, band) = world_extracting_at(INSIDE_THE_APRON, Some(HAULING_KIT));
+    let expected = {
+        let tile = UVec2::new(CAMP.x + INSIDE_THE_APRON, CAMP.y);
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(tile.x, tile.y)
+            .expect("the deposit's tile is on the map");
+        let ground = app
+            .world
+            .get::<core_sim::Tile>(entity)
+            .expect("a map tile carries terrain")
+            .clone();
+        let extraction = app
+            .world
+            .resource::<core_sim::ExtractionConfigHandle>()
+            .get();
+        let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+        let mut working = core_sim::extraction::projected_working(
+            app.world.resource::<core_sim::DepositRegistry>(),
+            tile,
+            WOOD,
+            &ground,
+            &extraction,
+        )
+        .expect("fixture: the ground holds wood");
+        core_sim::extraction::take_from_deposit(
+            &mut working,
+            CREW,
+            FLOOR,
+            &ground,
+            &extraction,
+            &ladder,
+        )
+        .taken
+    };
+    let sled_wear_before = app
+        .world
+        .get::<BandEquipment>(band)
+        .expect("the fixture band carries gear")
+        .clone();
+    resolve_a_turn(&mut app);
+    assert!(expected > 0.0, "liveness: a crew on a full wood takes some");
+    assert!(
+        extract_party(&app, band).is_none(),
+        "a working the band's own hands reach takes no party"
+    );
+    assert_eq!(
+        published_party_of(&app, EXTRACT_KIND).party_workers,
+        0,
+        "and publishes none"
+    );
+    assert_eq!(
+        published_material_yield(&app),
+        expected,
+        "the row publishes the take seam's own figure, uncapped by any carry"
+    );
+    assert!(
+        (wood_held(&app, band) - expected).abs() < 1e-3,
+        "the whole take lands this turn: {} of {expected}",
+        wood_held(&app, band)
+    );
+    assert_eq!(
+        app.world
+            .get::<BandEquipment>(band)
+            .expect("the fixture band carries gear")
+            .batches_of("sled"),
+        sled_wear_before.batches_of("sled"),
+        "a sled on a local working hauls nothing the hands would not, so it is not worn"
+    );
+}
+
+/// ⛔ **FORECAST == ACTUAL, ON THE DEPOSIT WEB** — the query's rate home for a deposit is exactly the
+/// `netRateHome` the extract row publishes, in wood per turn, off the encoded snapshot.
+#[test]
+fn the_query_quotes_exactly_the_rate_an_extract_row_publishes() {
+    let (mut app, band) = world_extracting_at(5, None);
+    first_pack_on_the_road(&mut app, band);
+    let published = published_party_of(&app, EXTRACT_KIND);
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+            faction_id: FACTION.0,
+            band_id: BAND,
+            source: WorkPartySource::Extract {
+                x: CAMP.x + 5,
+                y: CAMP.y,
+                material: WOOD.to_string(),
+            },
+            kit_id: EquipmentConfig::builtin()
+                .default_kit(core_sim::KitJob::Extraction)
+                .id()
+                .to_string(),
+            workers: CREW,
+            floor: FLOOR,
+        }),
+    );
+    let answer = match reply {
+        QueryReply::WorkPartyForecast(answer) => answer,
+        other => panic!("the work-party query must answer with a forecast, got {other:?}"),
+    };
+    assert!(
+        answer.posts_a_party,
+        "a working past the apron posts a party"
+    );
+    assert!(
+        answer.rate_home > 0.0,
+        "liveness: a wood brings timber home ({answer:?})"
+    );
+    assert_eq!(answer.walk_tiles, published.walk_tiles);
+    assert_eq!(
+        answer.rate_home, published.net_rate_home,
+        "the sheet and the row it becomes must quote one number"
+    );
+}
+
+/// **Ground holding none of the asked material is refused by name**, never answered with a zero.
+#[test]
+fn the_query_refuses_ground_that_holds_no_such_deposit() {
+    let (mut app, _) = world_extracting_at(5, None);
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+            faction_id: FACTION.0,
+            band_id: BAND,
+            source: WorkPartySource::Extract {
+                x: CAMP.x + 5,
+                y: CAMP.y,
+                material: "hide".to_string(),
+            },
+            kit_id: EquipmentConfig::builtin()
+                .default_kit(core_sim::KitJob::Extraction)
+                .id()
+                .to_string(),
+            workers: CREW,
+            floor: FLOOR,
+        }),
+    );
+    assert_eq!(
+        reply,
+        QueryReply::Error(sim_runtime::commands::query_error::UNKNOWN_DEPOSIT.to_string())
+    );
+}
+
+/// ⛔ **UNASSIGNING A DEPOSIT CARAVAN MID-WALK BRINGS EVERY PACK HOME AS MATERIAL** — into the store,
+/// booked as the band's own party coming home, and **nothing** onto the larder or the food ledger's
+/// route arm: a working's timber is not food.
+#[test]
+fn unassigning_a_deposit_caravan_mid_walk_brings_every_pack_home_as_material() {
+    let (mut app, band) = world_extracting_at(5, None);
+    first_pack_on_the_road(&mut app, band);
+    let party = extract_party(&app, band).expect("the far row carries a party");
+    let carried: f32 = party.load_cargo + party.on_the_road.iter().map(|w| w.cargo).sum::<f32>();
+    assert!(carried > 0.0, "fixture: the caravan is carrying something");
+    let wood_before = wood_held(&app, band);
+    let larder_before = larder(&app, band);
+    let food_routed_before = route_received(&app, band);
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .set_assignment(extract_target(5), 0, CREW, None);
+    resolve_a_turn(&mut app);
+    let landed = wood_held(&app, band) - wood_before;
+    let booked: f32 = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .last_transfer_crossings
+        .iter()
+        .filter(|row| {
+            row.commodity == WOOD
+                && row.cause == core_sim::TransferCause::PartyHome
+                && row.direction == core_sim::TransferDirection::In
+        })
+        .map(|row| row.amount)
+        .sum();
+    assert!(
+        (landed - carried).abs() < SAME_FOOD,
+        "every pack on the road and the load land in the store as wood: {landed} of {carried}"
+    );
+    assert!(
+        (booked - carried).abs() < SAME_FOOD,
+        "…booked as the band's own party coming home: {booked} of {carried}"
+    );
+    assert_eq!(
+        larder(&app, band),
+        larder_before,
+        "not one unit of it reaches the larder"
+    );
+    assert_eq!(
+        route_received(&app, band),
+        food_routed_before,
+        "…nor the food ledger's route arm"
+    );
+    assert!(
+        extract_party(&app, band).is_none(),
+        "the party is stood down"
+    );
+}
+
+/// ⛔ **A SLED-EQUIPPED FAR CREW CARRIES A BIGGER PACK** — the hunt's own `hunt_carry` over the
+/// material's weight, against the bare-handed carry over the same weight. Read off the first porter
+/// the turn actually sends, and pinned to the caravan pricing's own figure.
+#[test]
+fn a_sled_equipped_far_crew_carries_a_larger_pack_than_bare_hands() {
+    let (mut bare_app, bare_band) = world_extracting_at(5, None);
+    let bare = first_pack_on_the_road(&mut bare_app, bare_band);
+    let (mut sled_app, sled_band) = world_extracting_at(5, Some(HAULING_KIT));
+    let sled = first_pack_on_the_road(&mut sled_app, sled_band);
+    let bare_kit = EquipmentConfig::builtin().default_kit(core_sim::KitJob::Extraction);
+    assert!(
+        (bare - priced_pack(&bare_app, bare_band, &bare_kit)).abs() < 1e-3,
+        "a bare-handed porter carries the bare haul over the weight: {bare}"
+    );
+    assert!(
+        (sled - priced_pack(&sled_app, sled_band, &extract_kit(HAULING_KIT))).abs() < 1e-3,
+        "a sledded porter carries the sled's haul over the weight: {sled}"
+    );
+    assert!(
+        sled > bare,
+        "the sled must carry more timber home per trip: {sled} vs {bare}"
+    );
+}
+
+/// ⛔ **ONE PACK IS THE HAUL CARRY OVER THE MATERIAL'S WEIGHT, AND NOTHING ELSE** — the same wood,
+/// the same crew, the same carry, with only `weight` changed in the materials table: a material
+/// twice as heavy sends porters home with exactly half the units. No code path knows which material
+/// it is; the one number on the material is the whole difference.
+#[test]
+fn a_pack_is_the_haul_carry_over_the_materials_weight() {
+    const HEAVIER: f32 = 2.0;
+    let (mut shipped_app, shipped_band) = world_extracting_at(5, None);
+    let shipped = first_pack_on_the_road(&mut shipped_app, shipped_band);
+
+    let (mut heavy_app, heavy_band) = world_extracting_at(5, None);
+    let heavier = {
+        let mut json: serde_json::Value =
+            serde_json::from_str(core_sim::BUILTIN_MATERIALS_CONFIG).expect("builtin parses");
+        let weight = json["materials"][WOOD]["weight"]
+            .as_f64()
+            .expect("wood declares a weight");
+        json["materials"][WOOD]["weight"] = serde_json::json!(weight * f64::from(HEAVIER));
+        core_sim::MaterialsConfig::from_json_str(&json.to_string())
+            .expect("the heavier table validates")
+    };
+    heavy_app
+        .world
+        .resource_mut::<core_sim::MaterialsConfigHandle>()
+        .replace(std::sync::Arc::new(heavier));
+    let heavy = first_pack_on_the_road(&mut heavy_app, heavy_band);
+    assert!(shipped > 0.0, "liveness: a porter left with a pack");
+    assert!(
+        (shipped / heavy - HEAVIER).abs() < 1e-3,
+        "twice the weight, half the units per pack: {shipped} vs {heavy}"
     );
 }

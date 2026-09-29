@@ -3012,7 +3012,8 @@ branch says those things now. `workings_unopened` kept its name and its subject.
 `workings_just_assigned` below, the THREE `workings_floor_*` frames the preset loop emits
 (`SourceForecast.FLOOR_PRESETS`, one frame per preset) with `workings_floor_held` and
 `workings_floor_stripped` beside them, `workings_fresh_runway`, `workings_quarry_reach`,
-`workings_out_of_range`, and the pair `workings_tile_crews` / `workings_tile_crews_other_band`.
+`workings_far_party` / `workings_far_party_stone`, and the pair `workings_tile_crews` /
+`workings_tile_crews_other_band`.
 
 ### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
 
@@ -3258,9 +3259,12 @@ band and tile, re-aimed from the refusal to the party section: the commit is liv
 refusal's words are absent, and the section's four lines match the tile's authored reply in the
 harvesters' own noun, and its PER TURN food headline reads the reply's rate home under the
 `ONCE RUNNING · PER TURN` caption.
-`food_forage_band_far` keeps its frame as the unauthored twin. **The deposit
-refusal is still asserted** (`chapters/workings.gd`'s `workings_out_of_range`), in the shared
-sentence the forage sheet used to refuse in.
+`food_forage_band_far` keeps its frame as the unauthored twin. **The deposit refusal went the same
+way**: `chapters/workings.gd`'s `workings_out_of_range` is `workings_far_party` /
+`workings_far_party_stone` now — the far wood and stone sheets mount the section, their headline reads
+the reply's rate home in the working's MATERIAL, and the retired sentence is asserted absent.
+`ForecastFx.work_party_answer` reads an extract ask's authored reply off the `deposits` row matching
+the ask's `(x, y, material)`.
 
 **`chapters/forecast_seam.gd` asks the WORK PARTY's question now.** Its world-boundary and
 failure-class guards are about the seam's bookkeeping, not about any one question, and were made on

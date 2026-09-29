@@ -1141,6 +1141,11 @@ pub enum KitJob {
     /// ship declare `build_work`, which is the pool that *raises* a working. The day a felling axe
     /// declares a take stat, this job is what it names.
     ///
+    /// **What it does name is CARRY**: the `hauling` kit lists this job and uses the sled, because a
+    /// far working posts a work party whose porters carry the hunt's own haul carry over the
+    /// material's weight (`crate::work_party::material_pack`). A sled on a local working is inert —
+    /// carry never caps a local take — so the default stays `none`.
+    ///
     /// **Its token is `extract`, not `extraction`** — the same string
     /// [`crate::components::LaborTarget::kind`] publishes for the row
     /// ([`crate::components::EXTRACT_ROLE_KEY`]), because a kit's `jobs` list and a labor role are

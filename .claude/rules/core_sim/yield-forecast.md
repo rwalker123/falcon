@@ -781,12 +781,13 @@ both halves in the same run — the far row kept **and** the near row untouched,
 *"nothing lapses"* nor *"everything lapses"* can pass.
 
 **The assign-time seed prices a far row by stepping its caravan** — `seed_source_yield` no longer
-declines a Hunt or Forage row past range, and its Hunt gate no longer reads the retired
+declines a Hunt, Forage or Extract row past range, and its Hunt gate no longer reads the retired
 `hunt_reach()` (which made the seed and the turn disagree for every hunt three to five tiles out).
 The seeded `realized` is the caravan's rate home, the same function the turn's published
 `netRateHome` answers through; the seeded `actual` is what lands **next turn**, which is `0` for a
-party still walking out — honest, not absent. **Extract keeps its range gate**, because a working
-still lapses past range. See `.claude/rules/core_sim/work-party.md` → "One function, stepped".
+party still walking out — honest, not absent. A far Extract row seeds its `materials` the same way
+(what lands next turn, nothing while walking out) and writes no food field. See
+`.claude/rules/core_sim/work-party.md` → "One function, stepped".
 
 ### The band's hay ledger — three fields, and the sim does the arithmetic
 

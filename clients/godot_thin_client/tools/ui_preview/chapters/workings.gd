@@ -31,6 +31,7 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
+const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
@@ -1103,57 +1104,107 @@ func run(harness) -> void:
 		is_equal_approx(HudDepositVocab.composed_floor(_scatter_working(), SCATTER_DEEP_FLOOR),
 			SCATTER_DEEP_FLOOR))
 
-	# ⛔⛔ **STATE workings-out-of-range — A DEPOSIT CREW COULD BE SENT ANY DISTANCE** (issue #650).
-	# Ray, from play: *"Diggers have no range, we apparently can go as far away as we want. Given this
-	# involves bringing back the material, the initial dig sites should be limited to the same as
-	# foraging. I'm assuming wood harvesting has the same bug."* He was right about the second half
-	# too — both branches go through ONE builder, and it measured no distance at all.
+	# ⛔⛔ **STATE workings-far-party — A FAR WORKING POSTS A WORK PARTY, LIKE ANY FAR SOURCE.** This
+	# frame was `workings_out_of_range`, the range REFUSAL issue #650 put on the deposit sheets because
+	# the sim lapsed a far crew with nothing but an event-log line. The work party retired that lapse
+	# for wood and stone as it had for forage and hunt: a far working posts the same caravan, so the
+	# sheet mounts the SAME party section a far patch mounts, its headline is the rate arriving home IN
+	# THE WORKING'S OWN MATERIAL, and the commit is live. **There is nothing special about wood or
+	# stone**, which is the claim this frame exists to make.
 	#
-	# ⛔ **THE SIM WAS NEVER THE PROBLEM, AND NOTHING SIM-SIDE MOVED.** `systems::labor`'s `Extract`
-	# arm lapses an out-of-range crew against `band_work_range`, the same value its `Forage` arm
-	# uses, so the limit Ray asked for was already the rule. What was missing was the REFUSAL: the
-	# client took the order, sent it, and the sim abandoned the crew on the next turn with nothing but
-	# an event-log line — which from the player's seat reads as *no range limit* right up until the
-	# crew vanishes. A refusal is strictly kinder than a silent lapse.
+	# The band is left where the shared fixture camps it — 52 tiles from this hex against a
+	# `work_range` of 2 — so the sheet's own apron arithmetic, not a distance this file asserts, is
+	# what puts the working past it. The reply is authored on the working's own row
+	# (`ForecastFx.WORK_PARTY_FORECAST_KEY`), so every figure checked below is the fixture's.
 	#
-	# ⛔ **AND IT IS STILL A REFUSAL, THOUGH THE FORAGE SHEET'S IS GONE.** A far herd or patch posts a
-	# work party now (`docs/plan_civilization_steps.md` §One work party) — the lapse the refusal
-	# warned about was removed for those two webs — but a working still lapses past range, so on a
-	# seam the plain *no* is still the honest answer.
+	# **THE ROSTER GAINS THE SHIPPED `hauling` KIT FOR THIS STATE** — `equipment.json` lists it for the
+	# `extract` job beside `none`, and the wire's `defaultExtractKitId` is `none`. Both are pushed
+	# through the seam `Main` uses and the prologue roster is restored on the way out, so no other
+	# frame gains a picker.
+	h._hud.update_kit_roster(_roster_with_hauling(),
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION, BandFx.KIT_ID_NONE)
+	h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
 	h._hud.update_band_alerts([_band_beyond_reach()])
-	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
+	h._show_tile(_workings_tile([_far_wood_working(), _far_stone_working()]))
 	await h._settle()
-	h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
+	h._hud._drawercompose.open_deposit_compose(_far_wood_working())
 	await h._settle()
-	await h._save("workings_out_of_range")
+	await h._settle()
+	await h._save("workings_far_party")
+	h._assert_compose_sheet_fits("workings_far_party")
 	var far_sheet: Node = h._hud._drawercompose._compose_sheet
-	# ⛔ **ASSERTED ON THE WHOLE SENTENCE, WITH THE DISTANCE IN IT.** A presence test would pass on a
-	# gate that refused every sheet, and the number is the half a player acts on.
-	h._assert_hud("a forester sheet on ground beyond the band's reach states the refusal (%s)"
-			% BEYOND_REACH_SENTENCE,
-		Q.has_label_containing(far_sheet, BEYOND_REACH_SENTENCE))
-	# ⛔ **THE SENTENCE IS THE ONE THE FORAGE SHEET USED TO REFUSE IN, ONE STRING FOR ONE NUMBER** —
-	# both sheets are judged against `band_work_range`, so a second spelling would describe one limit
-	# as two.
-	h._assert_hud("…in the shared range-refusal sentence",
-		BEYOND_REACH_SENTENCE == HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT % [
-			WORKING_TILE_X, WORKING_TILE_Y, BEYOND_REACH_DISTANCE, BandFx.band_fixture()["work_range"]])
-	# **AND THE COMMIT IS DEAD, which is the half that stops the order.** The sentence alone would be
-	# a warning beside a live button.
+	# **THE KIT PICKER OFFERS THE SLEDS**, read off the roster's `jobs` rather than a hardcoded list,
+	# and OPENS on the config's default (`none`) — an untouched sheet must not send `kit hauling`.
+	var kit_picker := Q.find_meta_node(far_sheet, KitRoster.KIT_PICKER_META) as OptionButton
+	var kit_items: Array[String] = []
+	if kit_picker != null:
+		for index in range(kit_picker.item_count):
+			kit_items.append(kit_picker.get_item_text(index))
+	h._assert_hud("the far working's kit picker offers the hauling kit and opens on the default (items %s, picked %s)"
+			% [str(kit_items), h._hud._compose.deposit_kit_id()],
+		str(kit_items).contains(HAULING_KIT_NAME)
+			and h._hud._compose.deposit_kit_id() == BandFx.KIT_ID_NONE)
+	# ⛔ **NO REFUSAL, AND THE COMMIT IS LIVE** — the half that used to stop the order.
+	h._assert_hud("a forester sheet past the band's work range states no range refusal",
+		not Q.has_label_containing(far_sheet, RETIRED_RANGE_REFUSAL_NEEDLE))
 	var far_commit := Q.compose_commit_button(far_sheet)
-	h._assert_hud("…and the commit it would have sent is refused",
-		far_commit != null and far_commit.disabled)
-	# ⛔ **AND THE ROCK BESIDE IT IS REFUSED THE SAME WAY** — Ray's *"I'm assuming wood harvesting has
-	# the same bug"*, tested rather than assumed. One builder serves both branches, so a gate written
-	# on one arm would be the same defect one branch over.
-	h._hud._drawercompose.open_deposit_compose(_stone_working(STONE_TAKE))
+	h._assert_hud("…and its commit is live (got \"%s\")"
+			% ("" if far_commit == null else far_commit.text),
+		far_commit != null and not far_commit.disabled
+			and far_commit.text == HudDepositVocab.commit_verb(HudDepositVocab.BRANCH_FORESTRY))
+	# **THE SECTION, BY EQUALITY, THROUGH THE SHIPPED FORMATS** — the hunt and forage sheets' own
+	# three lines, with the forester noun in the on-the-road sentence.
+	var far_lines := Readout.work_party_lines(far_sheet)
+	var want_far := [
+		HudComposeVocab.WORK_PARTY_WALK_FORMAT % [
+			HudComposeVocab.WORK_PARTY_TILES_FORMAT % FAR_WORKING_WALK_TILES,
+			HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_WORKING_WALK_TILES,
+			FAR_WORKING_WALK_TILES],
+		HudComposeVocab.WORK_PARTY_ON_ROAD_FORMAT % [FAR_WORKING_ON_ROAD_ROUNDED,
+			HudDepositVocab.FORESTRY_CREW_NOUN.to_lower()],
+		HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT
+			% (HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_WORKING_FIRST_LOAD),
+	]
+	h._assert_hud("the far working's party section states the walk, the road and the first load — want %s, got %s"
+			% [str(want_far), str(far_lines)],
+		far_lines == want_far)
+	# ⛔ **ONE NUMBER, IN WOOD — NEVER FOOD.** The headline is the reply's `rate_home`, which is in the
+	# working's material units, under the caravan's own caption.
+	var far_wood := Readout.yields_account_number(far_sheet, "wood")
+	h._assert_hud("…and the PER TURN headline is the rate arriving home, in wood (want %s, got %s)"
+			% [SourceForecast.format_magnitude(FAR_WOOD_RATE_HOME), far_wood],
+		far_wood == SourceForecast.format_magnitude(FAR_WOOD_RATE_HOME))
+	h._assert_hud("…and no food figure anywhere on the yields row (%s)" % Readout.yields_text(far_sheet),
+		Readout.yields_account_number(far_sheet, SourceForecast.YIELD_ACCOUNT_FOOD)
+			== Readout.YIELDS_ACCOUNT_ABSENT)
+	h._assert_hud("…under the caravan's `once running · per turn` caption (got \"%s\")"
+			% Readout.yields_header(far_sheet),
+		Readout.yields_header(far_sheet) == HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
+	# ⛔ **AND THE ROCK BESIDE IT POSTS THE SAME CARAVAN** — one builder serves both branches, so a
+	# section wired on one arm would be the same defect one branch over. The finite seam has no dial,
+	# so its headline is the only reading that changes; the digger noun is the other.
+	h._hud._drawercompose.open_deposit_compose(_far_stone_working())
 	await h._settle()
+	await h._settle()
+	await h._save("workings_far_party_stone")
 	var far_digger: Node = h._hud._drawercompose._compose_sheet
 	var far_digger_commit := Q.compose_commit_button(far_digger)
-	h._assert_hud("…and the DIGGER sheet on the same hex refuses in the same sentence",
-		Q.has_label_containing(far_digger, BEYOND_REACH_SENTENCE)
-			and far_digger_commit != null and far_digger_commit.disabled)
+	var digger_lines := Readout.work_party_lines(far_digger)
+	h._assert_hud("…and the DIGGER sheet on the same hex posts a party in stone, commit live (lines %s, stone %s)"
+			% [str(digger_lines), Readout.yields_account_number(far_digger, "stone")],
+		digger_lines.size() == want_far.size()
+			and str(digger_lines).contains(HudDepositVocab.EXTRACTION_CREW_NOUN.to_lower())
+			and Readout.yields_account_number(far_digger, "stone")
+				== SourceForecast.format_magnitude(FAR_STONE_RATE_HOME)
+			and far_digger_commit != null and not far_digger_commit.disabled)
 	h._hud.close_compose_sheet()
+	h._hud.update_kit_roster(BandFx.kit_roster_fixture(),
+		BandFx.KIT_DEFAULT_HUNT, BandFx.KIT_DEFAULT_FORAGE,
+		BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
+		BandFx.KIT_DEFAULT_EXPEDITION)
+	h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
 	await h._settle()
 
 	# ⛔⛔ **STATE workings-tile-crews — THE TILE NOW SAYS THE DIGGING IS HAPPENING** (issue #650).
@@ -1485,20 +1536,23 @@ func _both_seams_two_bands() -> Array:
 const IDLE_BAND_ENTITY := 907
 const IDLE_BAND_NAME := "Coldhollow"
 
-## **HOW FAR `BandFx.band_fixture()`'s CAMP IS FROM THIS CHAPTER'S HEX** — (71,18) to (21,14) by the
-## client's own odd-r cube distance, transcribed rather than computed here so the frame pins the
-## arithmetic instead of restating it. Against the fixture's shipped `work_range` of 2 it is the
-## refusal's whole reason.
-const BEYOND_REACH_DISTANCE := 52
+## The retired range refusal's own words — the needle for a sentence that must not come back on a
+## deposit sheet now that a far working posts a work party (`sight_fog.gd` holds the patch twin).
+const RETIRED_RANGE_REFUSAL_NEEDLE := "beyond this band's work range"
 
-## `BandFx.band_fixture()`'s own `work_range`, transcribed: a const expression cannot read a fixture
-## dictionary, and the state that uses it compares the two so a drift in the fixture fails loudly.
-const BEYOND_REACH_WORK_RANGE := 2
+## **THE FAR WORKING'S AUTHORED CARAVAN** — the reply the sim's `work_party_forecast` would give for
+## the chapter's hex from the shared fixture's camp (52 tiles, apron 2, so a 50-tile walk). Rates are
+## in the working's OWN material, which is the claim: `rate_home` on an extract ask is never food.
+const FAR_WORKING_WALK_TILES := 50
+const FAR_WORKING_ON_ROAD := 1.6
+const FAR_WORKING_ON_ROAD_ROUNDED := 2
+const FAR_WORKING_FIRST_LOAD := 58
+const FAR_WOOD_RATE_HOME := 1.4
+const FAR_STONE_RATE_HOME := 0.9
 
-## …and the sentence that refusal reads, composed from the SHARED format so this file cannot freeze a
-## wording the client has moved on from.
-const BEYOND_REACH_SENTENCE := HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT % [
-	WORKING_TILE_X, WORKING_TILE_Y, BEYOND_REACH_DISTANCE, BEYOND_REACH_WORK_RANGE]
+## The shipped sled kit's id and face (`equipment.json` → `hauling`), and the roster that carries it.
+const HAULING_KIT_ID := "hauling"
+const HAULING_KIT_NAME := "Hauling kit"
 
 ## The road those two frames stand on — see `ROAD_PATH_METER` for why it helps nobody and owes
 ## nobody. Shaped as `native/src/dict/routes.rs` writes a road row, with the wire's own
@@ -1586,6 +1640,46 @@ func _wood_working(actual_take: float) -> Dictionary:
 		"rung_floor_fraction": FORESTRY_RUNG_FLOOR,
 		"per_worker_biomass": FELLING_PER_WORKER,
 		"regrowth_samples": _deposit_regrowth_samples(WOOD_CAPACITY, WOOD_REGROWTH),
+	}
+
+## The chapter's wood and rock, each carrying the caravan reply its far sheet is answered with
+## (`ForecastFx.work_party_answer` reads it off the row by `(tile, material)`).
+func _far_wood_working() -> Dictionary:
+	var working := _wood_working(WOOD_OVER_CUT)
+	working[ForecastFx.WORK_PARTY_FORECAST_KEY] = _far_caravan(FAR_WOOD_RATE_HOME)
+	return working
+
+func _far_stone_working() -> Dictionary:
+	var working := _stone_working(STONE_TAKE)
+	working[ForecastFx.WORK_PARTY_FORECAST_KEY] = _far_caravan(FAR_STONE_RATE_HOME)
+	return working
+
+## The prologue roster plus the shipped `hauling` kit, with `none` listing the `extract` job as the
+## shipped `none` does. Built from the shared fixture so every other entry is the one every frame uses.
+func _roster_with_hauling() -> Array:
+	var roster: Array = BandFx.kit_roster_fixture().duplicate(true)
+	for kit_variant in roster:
+		var kit: Dictionary = kit_variant
+		if String(kit.get("id", "")) == BandFx.KIT_ID_NONE:
+			(kit["jobs"] as Array).append(KitRoster.JOB_EXTRACT)
+	var hauling: Dictionary = {}
+	for kit_variant in roster:
+		if String((kit_variant as Dictionary).get("id", "")) == BandFx.KIT_ID_NONE:
+			hauling = (kit_variant as Dictionary).duplicate(true)
+	hauling["id"] = HAULING_KIT_ID
+	hauling["display_name"] = HAULING_KIT_NAME
+	hauling["jobs"] = [KitRoster.JOB_EXTRACT]
+	roster.insert(roster.size() - 1, hauling)
+	return roster
+
+func _far_caravan(rate_home: float) -> Dictionary:
+	return {
+		"posts_a_party": true,
+		"rate_home": rate_home,
+		"walk_tiles": FAR_WORKING_WALK_TILES,
+		"walk_turns": FAR_WORKING_WALK_TILES,
+		"hunters_on_the_road": FAR_WORKING_ON_ROAD,
+		"first_load_turn": FAR_WORKING_FIRST_LOAD,
 	}
 
 ## …and the same wood raised to its branch's top, which is the rung whose payoff is RENEWAL.

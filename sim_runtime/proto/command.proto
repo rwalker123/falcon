@@ -1027,7 +1027,7 @@ message QueryCommand {
 // A source past the band's work range is worked by a WORK PARTY that walks its take home a pack at
 // a time (docs/plan_civilization_steps.md, "One work party"). The answer steps the SAME caravan
 // function the turn publishes a row's `netRateHome` through, so the compose sheet and the assigned
-// row it becomes quote one number. Both webs, one question: a herd or a patch.
+// row it becomes quote one number. Every web, one question: a herd, a patch or a deposit.
 message WorkPartyForecastQuery {
   uint32 faction_id = 1;
   // The asking band's durable `BandId` - its position, its live gear and any party it already has
@@ -1043,6 +1043,7 @@ message WorkPartyForecastQuery {
   oneof source {
     WorkPartyHuntSource hunt = 6;
     WorkPartyForageSource forage = 7;
+    WorkPartyExtractSource extract = 8;
   }
 }
 
@@ -1056,6 +1057,15 @@ message WorkPartyForageSource {
   // Which plants the crew carries home - `flora_config.json` species keys. EMPTY TAKES THE WHOLE
   // BASKET, exactly as an assignment's own take selection does.
   repeated string take_species = 3;
+}
+
+// A DEPOSIT - the `extract` row's source. `material` is an `extraction.json` deposit id (`wood`,
+// `stone`); ground holding none of it is refused `unknown_deposit`. The reply's `rate_home` is in
+// that material's own units, since a deposit's party carries material home, not food.
+message WorkPartyExtractSource {
+  uint32 x = 1;
+  uint32 y = 2;
+  string material = 3;
 }
 
 // "If I start a game on a grid this size, how many AI factions may I ask for, and how many do I get
@@ -1198,9 +1208,9 @@ message WorkPartyForecastReply {
   // FALSE INSIDE THE BAND'S WORK RANGE: no party is posted, nobody walks, and `rate_home` is the
   // ordinary local row's steady rate. Every walk field below reads 0 with it.
   bool posts_a_party = 1;
-  // THE STEADY FOOD PER TURN ARRIVING AT THE HOME BAND - the number the assigned row will publish
-  // as `netRateHome`: every pack that lands, averaged over the forecast horizon. Comparable across
-  // a near source and a far one.
+  // THE STEADY CARGO PER TURN ARRIVING AT THE HOME BAND - food off a herd or a patch, the material's
+  // own units off a deposit - the number the assigned row will publish as `netRateHome`: every pack
+  // that lands, averaged over the forecast horizon. Comparable across a near source and a far one.
   float rate_home = 2;
   // The ONE-WAY walk in tiles, measured from the band's apron and shortened by any road.
   uint32 walk_tiles = 3;

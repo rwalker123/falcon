@@ -298,9 +298,19 @@ on a quarry is a hand not feeding the band, and labor is already allocated per a
 (`plan_standing_upkeep.md` §2.2). That, and not the walk, is what makes wood cost something.
 
 **The working belongs to a CAMP, like a patch — not to nobody, like a road.** A road follows no one
-and is free to leave, which is why it belongs to no camp; a quarry you walked away from is a quarry
-you lost. That is what puts an extraction site on the move-or-stay decision, and it is the one place
-this arc deliberately does **not** copy `RungBranch::Route`.
+and is free to leave, which is why it belongs to no camp. That is what puts an extraction site on the
+move-or-stay decision, and it is the one place this arc deliberately does **not** copy
+`RungBranch::Route`.
+
+**The move-or-stay pressure is paid in WALKING, as forage's is.** This section first read *"a quarry
+you walked away from is a quarry you lost"* — the row lapsed the turn the band stepped past
+`band_work_range`. The work party (`docs/plan_civilization_steps.md` §One work party) replaced that
+for every source: a working past the apron posts a party that walks each full pack home, so a band
+that moves on keeps its quarry and pays the round trip on every load. What distance costs is the
+material that arrives home per turn, and a road between camp and working buys it back. A porter
+carries the hunt's own carry over the material's `weight`, so a sled matters on a far quarry and
+nothing about the rule knows wood from stone (`.claude/rules/core_sim/work-party.md` → "The deposit
+web: the cargo is the material").
 
 **Holding it costs upkeep like everything else** — work per turn, interpolating on position
 (`plan_standing_upkeep.md` §2.7), drawn from a keeping pool the two branches share. Without it a

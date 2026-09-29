@@ -95,15 +95,21 @@ pub(crate) const QUERY_KIND_DENIAL_RAID: &str = "denial_raid_forecast";
 /// rows.
 pub(crate) const QUERY_KIND_HUNT_CREW_TAKE: &str = "hunt_crew_take";
 /// **The work party's question** — *"what does this crew bring HOME per turn off this source, and how
-/// far does it walk?"* — asked by the ordinary hunt and forage compose sheets past the band's apron
-/// (`core_sim::forecast_query::answer_work_party_forecast`). One kind for both webs; the ask's
-/// `source_kind` says which, and the answer comes back under this same kind.
+/// far does it walk?"* — asked by the ordinary hunt, forage and deposit compose sheets past the
+/// band's apron (`core_sim::forecast_query::answer_work_party_forecast`). One kind for every web; the
+/// ask's `source_kind` says which, and the answer comes back under this same kind.
 pub(crate) const QUERY_KIND_WORK_PARTY: &str = "work_party_forecast";
-/// The two values of a work-party ask's `source_kind`, spelled as `ForecastQuery.gd` spells them. An
-/// ask naming neither is REFUSED rather than defaulted to one web: a forecast for the wrong source is
-/// worse than no forecast.
+/// The three values of a work-party ask's `source_kind`, spelled as `ForecastQuery.gd` spells them.
+/// An ask naming none of them is REFUSED rather than defaulted to one web: a forecast for the wrong
+/// source is worse than no forecast.
+///
+/// `extract` is a deposit, keyed by its tile AND its material (one tile can hold wood and stone). A
+/// deposit holding none of that material is refused server-side as `unknown_deposit`, which reaches
+/// the sheet through the ordinary `error` field exactly as `unknown_patch` does — neither token is
+/// special-cased here.
 pub(crate) const WORK_PARTY_SOURCE_HUNT: &str = "hunt";
 pub(crate) const WORK_PARTY_SOURCE_FORAGE: &str = "forage";
+pub(crate) const WORK_PARTY_SOURCE_EXTRACT: &str = "extract";
 /// **The save channel's four asks and its two answer kinds**, spelled as `SaveSlots.gd` spells them.
 ///
 /// `list_saves` is a genuine `QueryPayload`; the other three are `CommandPayload`s that *answer on
@@ -255,6 +261,11 @@ pub(crate) fn dispatch(
                     x: dict_u32(ask, "x"),
                     y: dict_u32(ask, "y"),
                     take_species: dict_string_array(ask, "take_species"),
+                },
+                WORK_PARTY_SOURCE_EXTRACT => WorkPartySource::Extract {
+                    x: dict_u32(ask, "x"),
+                    y: dict_u32(ask, "y"),
+                    material: dict_string(ask, "material"),
                 },
                 other => return Err(format!("unknown work-party source kind {other:?}")),
             };

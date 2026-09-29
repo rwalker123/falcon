@@ -769,6 +769,11 @@ const MAX_CREW_TAKE_WORKERS: u32 = 1_000;
 /// **Inside the band's work range nothing is posted**, and the answer is the ordinary local row's
 /// steady rate with every walk field at zero — the local identity, asked for.
 ///
+/// **Every web, one question**: a herd, a patch or a deposit. A deposit's `rate_home` is in its
+/// material's own units, and its pack is the haul carry over the material's weight
+/// ([`crate::work_party::material_pack`]); ground holding none of the material is refused
+/// `unknown_deposit`.
+///
 /// It fights at the **base** tuning, like the crew-take curve and unlike the raid sheet: a party is
 /// the band's own people hunting their range, not a detached expedition.
 fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -> QueryReply {
@@ -835,8 +840,8 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
     let geometry = (tile_registry.width, tile_registry.height, wrap);
     let horizon = labor.yield_average_horizon_turns;
 
-    // **The source and the job its kit must serve.** A herd id the registry does not carry, or a
-    // tile with no patch on it, is refused by name.
+    // **The source and the job its kit must serve.** A herd id the registry does not carry, a tile
+    // with no patch on it, or ground holding none of the asked material, is refused by name.
     enum Asked {
         Hunt(Herd),
         Forage {
@@ -844,7 +849,15 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
             tile: bevy::math::UVec2,
             take: crate::components::TakeSelection,
         },
+        Extract {
+            working: crate::extraction::DepositSource,
+            ground: crate::components::Tile,
+            weight: f32,
+        },
     }
+    let extraction = world
+        .resource::<crate::extraction_config::ExtractionConfigHandle>()
+        .get();
     let (asked, target, job) = match &ask.source {
         WorkPartySource::Hunt { herd_id } => {
             let Some(herd) = world.resource::<HerdRegistry>().find(herd_id).cloned() else {
@@ -884,6 +897,46 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 KitJob::Forage,
             )
         }
+        WorkPartySource::Extract { x, y, material } => {
+            let tile = bevy::math::UVec2::new(*x, *y);
+            // **The working a forecast starts from** — the live one, else one derived at the
+            // ground's capacity: the construction the assign-time seed reads too.
+            let asked = world
+                .resource::<crate::resources::TileRegistry>()
+                .index(tile.x, tile.y)
+                .and_then(|entity| world.get::<crate::components::Tile>(entity))
+                .and_then(|ground| {
+                    let working = crate::extraction::projected_working(
+                        world.resource::<crate::extraction::DepositRegistry>(),
+                        tile,
+                        material,
+                        ground,
+                        &extraction,
+                    )?;
+                    let weight = world
+                        .resource::<crate::materials_config::MaterialsConfigHandle>()
+                        .get()
+                        .material(material)?
+                        .weight;
+                    Some(Asked::Extract {
+                        working,
+                        ground: ground.clone(),
+                        weight,
+                    })
+                });
+            let Some(asked) = asked else {
+                return query_failure(query_error::UNKNOWN_DEPOSIT);
+            };
+            (
+                asked,
+                crate::components::LaborTarget::Extract {
+                    tile,
+                    material: material.clone(),
+                    floor: ask.floor,
+                },
+                KitJob::Extraction,
+            )
+        }
     };
     // **Named, and never defaulted** — the rule every query on this channel follows.
     let kit = match equipment.resolve_kit_for_job(Some(&ask.kit_id), job) {
@@ -906,6 +959,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
     let source_pos = match &asked {
         Asked::Hunt(herd) => herd.position(),
         Asked::Forage { tile, .. } => *tile,
+        Asked::Extract { working, .. } => working.tile,
     };
     let walk = crate::work_party::resolve_walk(
         band_pos,
@@ -945,7 +999,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 crate::fauna::project_realized_hunt(
                     herd,
                     &fauna,
-                    pricing.hunt_carry,
+                    pricing.haul_carry,
                     &hunters,
                     output_multiplier,
                     ask.workers,
@@ -970,6 +1024,19 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     horizon,
                 )
             }
+            // **A local working's steady rate** — its own projection at the whole crew. Carry does
+            // not cap a local take, so no pack enters it.
+            Asked::Extract {
+                working, ground, ..
+            } => crate::extraction::project_realized_deposit(
+                working,
+                ask.workers,
+                ask.floor,
+                ground,
+                &extraction,
+                &ladder,
+                horizon,
+            ),
         };
         return QueryReply::WorkPartyForecast(WorkPartyForecastReply {
             posts_a_party: false,
@@ -993,7 +1060,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 &party,
                 herd,
                 &fauna,
-                pricing.hunt_carry,
+                pricing.haul_carry,
                 &hunters,
                 output_multiplier,
                 ask.floor,
@@ -1016,6 +1083,20 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 horizon,
             )
         }
+        Asked::Extract {
+            working,
+            ground,
+            weight,
+        } => crate::work_party::forecast_extract_caravan(
+            &party,
+            working,
+            ground,
+            &extraction,
+            &ladder,
+            crate::work_party::material_pack(pricing.haul_carry, *weight),
+            ask.floor,
+            horizon,
+        ),
     };
     QueryReply::WorkPartyForecast(WorkPartyForecastReply {
         posts_a_party: true,

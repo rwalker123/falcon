@@ -821,8 +821,9 @@ const ASSIGN_LOCAL_HERD_BUTTON := "Herd Here"
 
 # **THE PLANT WEB'S ONE COMMIT VERB, AT EVERY RUNG** (`docs/plan_standing_upkeep.md` §4.9 item 12c).
 # ⛔ **NOT RANGE-GATED ANY MORE.** A patch past the selected band's `work_range` posts a work party
-# rather than lapsing its crew, so the plant sheet mounts the party section instead of a refusal. The
-# refusal (`WORK_RANGE_REFUSAL_FORMAT`) is the DEPOSIT sheets' alone now: extraction still lapses.
+# rather than lapsing its crew, so the plant sheet mounts the party section instead of a refusal. No
+# sheet refuses on range now: a far wood or quarry posts a party too, and the retired
+# `WORK_RANGE_REFUSAL_FORMAT` went with the last sheet that used it.
 #
 # ⛔ **IT WAS A PAIR — `FORAGE_ASSIGN_BUTTON` (`"Forage"`) AND `TEND_ASSIGN_BUTTON` (`"Tend"`) — AND
 # THE FORK IS RETIRED, NOT MISLAID.** The dead claim, verbatim: *"A managed source — a Tended Patch
@@ -840,32 +841,13 @@ const ASSIGN_LOCAL_HERD_BUTTON := "Herd Here"
 # collides with nothing.
 const HARVEST_ASSIGN_BUTTON := "Harvest"
 
-# ⛔ **THE STATIONARY WEBS' ONE OUT-OF-RANGE REFUSAL, AND IT IS ONE STRING BECAUSE IT IS ONE NUMBER**
-# (issue #650). The forage sheet and the two DEPOSIT sheets are all judged against the same
-# `band_work_range` — `systems::labor`'s `Extract` arm lapses an out-of-range crew byte-for-byte as
-# its `Forage` arm does — so both sheets refuse in the same sentence, composed here once. Two
-# spellings of one limit is two limits as far as a player can tell.
-#
-# ⛔ **THE RANGE IS CALLED `work range`, WHICH IS THE SIM'S OWN NAME FOR THE NUMBER, and it was
-# `forage range` until issue #650.** That word was only ever right because foraging was the one web
-# with the gate: a digger told they are beyond their *forage* range is being refused in another web's
-# vocabulary. `LaborConfig::band_work_range` is what BOTH arms measure against, and the sim's own
-# lapse event already reads *"out of the band's work range"* — so the refusal and the abandonment a
-# player reads a turn later now use one word, and the Workbench's `Band work range` dial is a third
-# surface that always did.
-#
-# ⛔ **`hunt reach` IS NOT THIS NUMBER AND KEEPS ITS OWN NAME.** It is `band_work_range` PLUS the
-# leash, so the two names in this client name two quantities rather than one thing twice.
-#
-# **AND IT IS A PLAIN REFUSAL RATHER THAN THE HUNT SHEET'S OFFER.** A herd beyond reach can be
-# followed by a detached party, so that sheet says so (`"…Detach a party to follow it."`). Nothing in
-# the expedition roster works ground — the missions are `scout` / `hunt` / `deny` / `trade` — so a
-# seam beyond reach has no alternative to offer and the honest answer is *no*. What a player does
-# instead is move the band, which is a different control on a different surface.
-#
-# Args: `[x, y, distance, work_range]`.
-const WORK_RANGE_REFUSAL_FORMAT := \
-    "(%d,%d) is %d tiles away — beyond this band's work range (%d)."
+# ⛔ **RETIRED — `WORK_RANGE_REFUSAL_FORMAT`, THE STATIONARY WEBS' OUT-OF-RANGE REFUSAL** (issue #650).
+# It refused a patch or a deposit past the band's `band_work_range`, because the sim LAPSED such a
+# crew with nothing but an event-log line. The work party removed that lapse for every web
+# (`docs/plan_civilization_steps.md` §One work party, `docs/plan_extraction.md`): a far patch, herd,
+# wood or quarry posts a caravan and walks its take home, so a refusal would forbid the very
+# assignment the caravan exists to make. There is nothing special about wood or stone — every far
+# job is the same caravan, and the sheets mount the same party section for it.
 
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
 # player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
@@ -2158,6 +2140,8 @@ const WORK_PARTY_CREW_SINGULAR := {
     HUNT_CREW_LABEL: "hunter",
     HERD_CREW_LABEL: "herder",
     HARVEST_CREW_LABEL: "harvester",
+    HudDepositVocab.FORESTRY_CREW_NOUN: "forester",
+    HudDepositVocab.EXTRACTION_CREW_NOUN: "digger",
 }
 
 ## Where the mean rounds below one person the packs fill slowly enough that the road is usually empty,
@@ -2174,10 +2158,12 @@ const WORK_PARTY_FIRST_LOAD_FORMAT := "First load home in %s"
 ## soon. Stated rather than dropped, because it is the answer that most changes whether this posting
 ## is worth making, and stated as its CAUSE — never *within the forecast*, which is the tool talking.
 ##
-## **ONE PER WEB, IN THAT WEB'S VERB** — a hunt catches, a gather gathers — picked at the mount off
-## the section's `source_kind`, so a forage party never reads as though it hunted.
+## **ONE PER WEB, IN THAT WEB'S VERB** — a hunt catches, a gather gathers, a working is cut — picked
+## at the mount off the section's `source_kind`, so a forage party never reads as though it hunted.
+## `cut` serves both deposit branches: a forester cuts timber and a digger cuts stone.
 const WORK_PARTY_SLOW_FILL_HUNT := "Their catch builds up too slowly to fill a pack soon"
 const WORK_PARTY_SLOW_FILL_FORAGE := "What they gather builds up too slowly to fill a pack soon"
+const WORK_PARTY_SLOW_FILL_EXTRACT := "What they cut builds up too slowly to fill a pack soon"
 
 ## While the answer is in flight — the raid readout's own treatment.
 const WORK_PARTY_PENDING := "Costing the work party…"

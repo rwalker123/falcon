@@ -93,6 +93,8 @@ var _default_warrior_kit_id: String = KitRoster.NO_KIT_ID
 # Its own field beside the four because one kit arms both of the ways a detached party feeds itself;
 # see `KitRoster.JOB_EXPEDITION`.
 var _default_expedition_kit_id: String = KitRoster.NO_KIT_ID
+# The DEPOSIT crews' default — `SubsistenceSection.defaultExtractKitId`.
+var _default_extract_kit_id: String = KitRoster.NO_KIT_ID
 
 # ---- Read accessors (backing value returned by reference — no deep copy) --------------------------
 
@@ -154,12 +156,13 @@ func default_kit_id(job: String) -> String:
 		KitRoster.JOB_EXPEDITION:
 			return _default_expedition_kit_id
 		KitRoster.JOB_EXTRACT:
-			# **THE WIRE NAMES NO EXTRACT DEFAULT IN THIS INGEST**, so this answers `""` — stated
-			# rather than reached by fall-through, for the reason the builders arm below is: falling
-			# through would hand the deposit sheets the HUNT kit as their marked `(default)`, and
-			# `Main._kit_token` would then omit the token for a selection that happened to equal it.
-			# The shipped roster offers `extract` no kit at all, so nothing renders either way.
-			return KitRoster.NO_KIT_ID
+			# **THE WIRE'S `defaultExtractKitId`.** Stated rather than reached by fall-through, for
+			# the builders arm's reason: falling through would hand the deposit sheets the HUNT kit
+			# as their marked `(default)`.
+			# ⛔ **IT MATTERS BECAUSE THE ROSTER OFFERS `extract` TWO KITS** (`hauling` and `none`):
+			# with no default, `KitRoster.resolve_selection` opens on the FIRST listed — the sled —
+			# and `Main._kit_token` would send `kit hauling` on every deposit order nobody touched.
+			return _default_extract_kit_id
 		KitRoster.JOB_BUILDERS:
 			# **THE WIRE NAMES NO BUILDERS DEFAULT**, so this answers `""` — the "a job the wire has
 			# not named a default for" case above, stated rather than reached by fall-through. Falling
@@ -380,13 +383,14 @@ func connections_for_band(band_id: int) -> Array:
 			rows.append(row)
 	return rows
 
-## Ingest the world's kit roster and the FIVE job defaults. **They ride ONE call**, because they are
+## Ingest the world's kit roster and the SIX job defaults. **They ride ONE call**, because they are
 ## one fact: a roster whose defaults name kits it does not contain would let every picker open on an
 ## entry it cannot show. A non-Array roster is ignored (the last value stands), matching the
 ## `set_food_modules` / `set_forage_patches` ingest — a delta carries a section only when it changed,
 ## so absence means unchanged and never "the world has no kits".
 func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage: String,
-		default_scout: String, default_warrior: String, default_expedition: String) -> void:
+		default_scout: String, default_warrior: String, default_expedition: String,
+		default_extract: String = KitRoster.NO_KIT_ID) -> void:
 	if not (kits_variant is Array):
 		return
 	_kits = kits_variant
@@ -395,6 +399,7 @@ func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage:
 	_default_scout_kit_id = default_scout
 	_default_warrior_kit_id = default_warrior
 	_default_expedition_kit_id = default_expedition
+	_default_extract_kit_id = default_extract
 	changed.emit(&"kits")
 
 func set_panel_band(band: Dictionary) -> void:

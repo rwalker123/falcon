@@ -105,6 +105,7 @@ impl WorldSnapshot {
             default_scout_kit_id,
             default_warrior_kit_id,
             default_expedition_kit_id,
+            default_extract_kit_id,
             equipment_config_json,
             materials,
             characteristic_bands,
@@ -242,6 +243,7 @@ impl WorldSnapshot {
             &mut self.default_expedition_kit_id,
             default_expedition_kit_id,
         );
+        replace_if_some(&mut self.default_extract_kit_id, default_extract_kit_id);
         replace_if_some(&mut self.equipment_config_json, equipment_config_json);
         replace_if_some(&mut self.materials, materials);
         replace_if_some(&mut self.characteristic_bands, characteristic_bands);
@@ -557,6 +559,7 @@ mod tests {
         delta.default_scout_kit_id = Some(String::new());
         delta.default_warrior_kit_id = Some(String::new());
         delta.default_expedition_kit_id = Some(String::new());
+        delta.default_extract_kit_id = Some(String::new());
         delta.equipment_config_json = Some(String::new());
         delta.materials = Some(Vec::new());
         delta.characteristic_bands = Some(Vec::new());

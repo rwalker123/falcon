@@ -21,7 +21,7 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | Script | Purpose |
 |--------|---------|
 | `ui/hud/hud_deposit_vocab.gd` (`HudDepositVocab`) | The WORKINGS vocabulary leaf — one reader per field on a `deposits` row, one reader per field on a `deposit_rungs` CATALOG row (`catalog_*`) plus the branch-filtered walks over it (`branch_ladder` / `ladder_next_entry` / `ladder_rung_teaching`), the keeping verdict (`owes_keeping` / `is_short` / `is_at_risk`, the bool-before-the-number rule), and the FIVE composers the three surfaces state a working with: `deposit_lines` (the tile card's rows, whose crew clause is `crew_clause` + `DEPOSIT_CREW_CLAUSE_FORMAT`), `deposit_row_value` (the roster's value cell), `deposit_verdict` / `runway_aside` / `deal_label`+`deal_value` (the sheet's readout). §7's fork lives inside it, once (`renews` → `supply_clause`/`runway_clause`/`deposit_verdict`/the DIAL). It also owns the ESCAPEMENT layer (issue #650): `rung_floor_fraction_of` / `per_worker_biomass_of` / `regrowth_samples_of`, the ONE `max` composition (`composed_floor`), the forecast-shaped view of a working (`forecast_source`) and the room above the dial (`room_next_turn`), plus the three-state take/runway readers (`assigned_cutters` / `assigned_take` / `stated_take` / `stated_runway`) and the standing rung's lesson (`standing_lesson` / `standing_lesson_known`), and the PUT-DOWN layer (`DEPOSIT_IDLE_WORD` — which `GATE_SHORT_NO_CREW` reads — `is_idle`, `DEPOSIT_IDLE_TIP_FORMAT`, `WORKING_ABANDON_LABEL` / `_DROPS_FORMAT` / `_WHY_FORMAT` and the one `working_abandon_tooltip` both emitters wear). A vocab module with static funcs, the `hud_route_vocab.gd` shape: it reads `SourceForecast` / `DetailFormat` / `HudFormat` / `HudComposeVocab` / `HudSelectionVocab` / `HudLoadoutVocab` / `HudWorkVocab` / `HudConst` / `RungGates` / `HudStyle` inside functions only, never in a `const`, so it adds no load cycle |
-| `ui/hud/DrawerComposeController.gd` → `_mount_work_range_refusal` | **THE STATIONARY WEBS' ONE RANGE GATE** — one measurement, one sentence (`HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT`), one mount point, shared by the forage builder and the deposit builder so `band_work_range` cannot be described two ways. Returns the verdict its callers disable a commit on |
+| `ui/hud/DrawerComposeController.gd` → `_is_past_apron` / `_work_party_view` / `_mount_work_party_section` / `_with_home_rate` | **A FAR WORKING POSTS A WORK PARTY**, through the forage and hunt sheets' own four functions — see "⛔ A FAR WORKING IS AN ORDINARY FAR SOURCE" below. The retired `_mount_work_range_refusal` and `WORK_RANGE_REFUSAL_FORMAT` are gone |
 | `ui/hud/DrawerComposeController.gd` → the `build_deposit_drawer_actions` family | The tile card's TWO compose actions and the sheet behind them (`_fill_deposit_branch` / `_tile_workings_of_branch` / `open_deposit_compose` / `_build_deposit_assign_controls` / `_build_deposit_offer_line` / `_mount_deposit_readout` / `_deposit_source_key`), filling `%ForestryAssignControls` and `%ExtractionAssignControls` — **one container per BRANCH**, since a wooded highland offers both at once. The ESCAPEMENT half is `_deposit_chart_model` (the ONE place the two floors are composed and the teaching note re-priced at the dial's own value), `_deposit_floor_takes` (the presets' hover metric) and `_deposit_yield_model` (the take, the `now → after` pair and the `renews` gate on the yields note). Its commit is the only thing it emits: `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`, through the shared `_emit_assign_labor` |
 | `ui/hud/SubjectDrawerController.gd` → `_tile_terrain_lines`' deposit loop + `_cutters_on_working` | Where the ROWS are appended — with the rivers, **above the Discovered early return**, and the one place the catalog join is resolved and threaded in. The ROAD block is composed on that same fog-safe side and appended LAST on both branches (`roads.md`); the deposits are emitted where they are composed. `_cutters_on_working` is the SECOND join, and it is the deposit twin of `SelectionCardController._forage_workers_on_tile`: the hex's cutters on one material summed across **every player band**, pending-aware, which is what makes the crew clause band-independent |
 | `ui/hud/RungLadder.gd` → `deposit_track` / `_deposit_pile` / `_deposit_tooltip` / `deposit_building_verb` | The deposit branches' TRACK — `route_track`'s sibling, emitting the same `ROW_*` shape into the SAME `build_track` renderer |
@@ -492,11 +492,13 @@ Top to bottom, with `_build_deposit_assign_controls` the one builder:
    `_mount_crew_row`'s own `known` gate drops them rather than a branch here. That mount's trailing
    `label_tooltip` carries `CARD_CREW_HINT`, the sheet's one place to say that these hands CUT and the
    hands that HOLD are a pool on another panel.
-4. **the `Kit` row** through `_mount_kit_row`, at `KitRoster.JOB_EXTRACT`. **The shipped roster
-   declares no take gear on either branch**, so `build_kit_row` mounts nothing today — the honest
-   answer rather than an empty picker, and the row appears by itself the day a felling axe declares a
-   take stat. ⛔ **THE CREW IS HANDED ON**: omitting it is what made the forage sheet's shortfall line
-   mute for the whole life of that line.
+4. **the `Kit` row** through `_mount_kit_row`, at `KitRoster.JOB_EXTRACT`, listing whatever the
+   roster's `jobs` name for `extract` — the `hauling` kit (sleds) beside `none` on the shipped roster.
+   The sled enlarges a FAR working's porter packs and does nothing on a local one. It opens on
+   the wire's `defaultExtractKitId` (see "THE KIT RIDES THE COMMAND" below). ⛔ **THE CREW IS HANDED ON**:
+   omitting it is what made the forage sheet's shortfall line mute for the whole life of that line.
+   **Past the apron the WORK PARTY section follows it** — see "⛔ A FAR WORKING IS AN ORDINARY FAR
+   SOURCE".
 5. ⛔ **NO SPECIES CHIPS** — a deposit takes one material by construction.
 6. **the improvement POINTER LINE**, in the retired-`_emit_improvement` pattern and through the SAME
    `HudWidgets.build_improvement_control` the forage sheet's offered rung uses: `⛏ Quarry this rock
@@ -509,75 +511,52 @@ Top to bottom, with `_build_deposit_assign_controls` the one builder:
 7. **the readout box** — the take with the MATERIAL as the account name (and `next turn · now →
    after` where there is a floor to settle at), the DEAL as its own `IMPROVEMENT_DEAL_META` block, the
    VERDICT, and — on a finite seam — the runway under the dashed rule.
-8. **the OUT-OF-RANGE REFUSAL**, where the picked band's camp is beyond its `work_range` of the
-   working's hex — the forage sheet's own gate, shared as `_mount_work_range_refusal` (see below).
-9. **the commit button** — `Cut` / `Dig` at a crew above zero, `Unassign` at zero on a working this
-   band holds, dead with a hint at zero on one it does not, and dead with the refusal above it out of
-   range. The forage sheet's two zero-crew cases,
-   verbatim. **It sends the floor** in forage's own position and forage's own decimal precision:
-   `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`. A finite working sends the sheet's
-   DEFAULT rather than omitting the token, which resolves to the same number sim-side and keeps the
-   line one shape.
+8. **the commit button** — `Cut` / `Dig` at a crew above zero, `Unassign` at zero on a working this
+   band holds, dead with a hint at zero on one it does not. **No range refusal** — a far working posts
+   a party. The forage sheet's two zero-crew cases, verbatim. It sends
+   `assign_labor <f> <b> extract <x> <y> <material> [floor] <n> [kit <id>]` — the floor only where a
+   dial was offered, the kit only where it differs from `defaultExtractKitId`.
 
-### ⛔ THE RANGE GATE IS THE FORAGE SHEET'S, AND THE DEPOSIT SHEETS HAD NONE (issue #650)
+### ⛔ A FAR WORKING IS AN ORDINARY FAR SOURCE — the range gate is retired
 
-Ray, from play: *"Diggers have no range, we apparently can go as far away as we want. Given this
-involves bringing back the material, the initial dig sites should be limited to the same as foraging.
-I'm assuming wood harvesting has the same bug."* He was right about the second half too — both
-branches go through `_build_deposit_assign_controls`, which measured no distance at all.
+Issue #650 put a REFUSAL on the deposit sheets because the sim's `Extract` arm lapsed a crew past
+`band_work_range` with nothing but an event-log line: *"Diggers have no range, we apparently can go as
+far away as we want."* The work party retired that lapse for wood and stone exactly as it had for
+forage and hunt (`.claude/rules/core_sim/work-party.md`), so a far working posts a caravan and the
+refusal is gone — `_mount_work_range_refusal`, `WORK_RANGE_REFUSAL_FORMAT` and the dead commit with
+them. **There is nothing special about wood or stone**: every far job is the same caravan, and the
+deposit sheet reuses the forage and hunt sheets' four functions rather than a copy of them.
 
-**THE SIM WAS NEVER THE PROBLEM.** `systems::labor`'s `Extract` arm lapses an out-of-range crew
-against `LaborConfig::band_work_range`, the same value its `Forage` arm uses, so the limit was already
-the rule. What was missing was the client's REFUSAL: the sheet accepted the order, sent it, and the sim
-abandoned the crew on the next turn with nothing but an event-log line — *no range limit* from the
-player's seat, right up until the crew vanished. **A refusal is strictly kinder than a silent lapse**,
-which is why the whole fix is client-side.
+- **`_is_past_apron`** — the one threshold, `band_work_range` from the PICKED band's own tile, `-1`
+  UNKNOWN never FAR.
+- **`_work_party_view`** asks `ForecastQuery.KIND_WORK_PARTY` with `source_kind`
+  `WORK_PARTY_SOURCE_EXTRACT` and the working's `material` (the native bridge builds
+  `WorkPartySource::Extract { x, y, material }`). The material rides the ask AND the subject key
+  (`x,y:material`), one hex holding two workings. The floor asked is the one the committed row will
+  carry — the dial where one was offered, `FLOOR_MIN` (strip it bare, the sim's reading of an unnamed
+  floor on ground that never renews) where none was. `unknown_deposit` comes back through the ordinary
+  `error` field and renders as `FORECAST_FAILED_FORMAT`, exactly as `unknown_patch` does.
+- **`_mount_work_party_section`** draws the walk, the road and the first load under the kit row, in
+  the branch's crew noun (`HudComposeVocab.WORK_PARTY_CREW_SINGULAR` carries `forester` / `digger`,
+  keyed by `HudDepositVocab.FORESTRY_CREW_NOUN` / `EXTRACTION_CREW_NOUN`). The slow-fill line is
+  `WORK_PARTY_SLOW_FILL_EXTRACT`, in the web's own verb (*what they cut*).
+- **`_with_home_rate(model, party_view, material)`** substitutes the reply's `rate_home` into the
+  working's MATERIAL row — `rate_home` is in material units on an extract ask — so the headline reads
+  `1.40 WOOD` under `ONCE RUNNING · PER TURN`, never food. The substitution is the forage sheet's
+  own, parameterised on the account it lands in.
 
-**ONE MEASUREMENT, ONE SENTENCE, ONE MOUNT** — `DrawerComposeController._mount_work_range_refusal`
-takes the band and the tile, measures with `SourceForecast.hex_distance_wrapped` from the band's own
-camp, mounts the hint where it stands and returns the verdict; each caller then does the one remaining
-thing with it, which is disable its commit. Both the forage builder and the deposit builder go through
-it, so the two sheets cannot measure one limit two ways.
+**THE WORKINGS ROSTER ROW STATES THE PARTY ON ITS HOVER**, through the work board's own composer
+(`HudWorkVocab.party_block_lines`) plus `WORK_ROW_PARTY_RATE_HOME_FORMAT` — *Arriving home: +0.90 stone
+a turn* off the row's `netRateHome`, in the row's material. The roster row is one fixed-height line
+whose height the Work zone reserves, so the multi-line block rides the hover rather than the row
+(`band-city-panel.md` → "The work row reports its own WORK PARTY").
 
-> ⛔ **THE FORAGE SHEET NO LONGER CALLS IT — the gate is the DEPOSIT sheets' alone** (`docs/plan_
-> civilization_steps.md` §One work party). A far forage crew no longer lapses: it posts a work party
-> and walks the take home, so a refusal there would forbid the assignment the caravan exists to make,
-> and the plant sheet mounts a work-party section instead (`labor-ui.md` → "A FAR SOURCE IS AN
-> ORDINARY SHEET"). **Extraction still lapses past range, so on a working the refusal is still the
-> kind answer.** The measurement is shared as `_apron_distance`, which is what the work-party gate
-> reads too — one distance, two consequences.
-
-⛔ **A DISTANCE THE GRID CANNOT ANSWER IS NOT AN OUT-OF-RANGE ONE.** `hex_distance_wrapped` reports
-`HEX_DISTANCE_UNKNOWN` (`-1`) where it has no grid to wrap against, and the helper tests for it
-explicitly rather than relying on the comparison — a gate that read *unknown* as *too far* would
-refuse every sheet on a frame that arrived before the grid did.
-
-⛔ **THE SENTENCE IS ONE CONST, `HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT`.** Two spellings of one
-limit is two limits as far as a player can tell.
-
-⛔ **AND THE RANGE IS CALLED `work range`, WHICH IS THE SIM'S NAME FOR IT.** The forage sheet said
-`forage range` for the whole life of that gate, and it read correctly only because foraging was the
-one web that had one — a digger refused in the *forage* vocabulary is being told about another web's
-limit. `LaborConfig::band_work_range` is what both arms measure against; the sim's own lapse event
-already reads *"out of the band's work range"*, so the refusal and the abandonment a player reads a
-turn later now use one word, and the Workbench's `Band work range` dial (`tuning_manifest.json`) is a
-third surface that always did. **The forage string moved with it** — that is the point of sharing the
-const rather than half of it.
-
-⛔ **`hunt reach` IS NOT THIS NUMBER** — it was `band_work_range` PLUS the leash — **and no client
-reader decides anything by it any more**: a caravan's only threshold is `band_work_range`, for every
-job (`labor-ui.md` → "A FAR SOURCE IS AN ORDINARY SHEET").
-
-⛔ **IT IS A PLAIN REFUSAL, NOT THE HUNT SHEET'S OFFER.** A herd beyond reach offers a detached party
-(*"…Detach a party to follow it."*), because a herd can be followed. The expedition missions are
-`scout` / `hunt` / `deny` / `trade` — **none of which works ground** — so a seam beyond reach has no
-alternative to offer, and moving the band is a different control on a different surface. The forage
-sheet's *no* is the honest answer for the same reason it is there: a stand cannot be followed either.
-
-**THE UNASSIGN IS REFUSED WITH IT, deliberately matching forage** (`out_of_range or is_noop`). A crew
-the band has walked out of range of is lapsed by the sim that same turn, so the sheet reopens with
-`current == 0` and `is_unassign` cannot be true there — forking the two sheets over a state neither
-can reach would be a difference with nothing behind it.
+**THE KIT RIDES THE COMMAND.** `Main.format_assign_labor`'s extract arm appends `_kit_token`, omitted
+where the pick equals the job default. **That default is the wire's
+`SubsistenceSection.defaultExtractKitId`** (decoded as `default_extract_kit_id`, on both the full and
+the delta path, and handed to `HudBandLaborState.set_kit_roster` beside its five siblings) — and
+without it `KitRoster.resolve_selection` falls to roster order, which opens every deposit sheet on the SLED and
+sends `kit hauling` on orders nobody touched.
 
 ### ⛔ `max(rungFloorFraction, floor)` — ONE COMPOSITION, IN ONE NAMED FUNCTION
 
@@ -1237,8 +1216,7 @@ anywhere.
   from and which means the same kind of thing on a forage row (*which of the things on this ground are
   you here for*). **The FLOOR follows it in forage's own position** (issue #650), a validated NUMBER at
   `Main.FLOOR_COMMAND_DECIMALS` — never `str(float)` — with the four retired stance words refused BY
-  NAME at parse. Still no kit token: `default_kits.extract` is the bare `none` kit with no picker
-  anywhere in reach, so the tail is closed after the worker count.
+  NAME at parse. The `kit <id>` tail follows the worker count where the pick is not the default.
 - ⛔ **THE FLOOR TOKEN IS SENT ONLY WHERE A DIAL WAS OFFERED, AND THE LINE THEREFORE HAS TWO SHAPES.**
   A finite seam has no dial, so there is no floor the player named — and sending the sheet's default
   anyway was writing a conservation choice onto a row where nobody made one, indistinguishable in the
@@ -1251,13 +1229,11 @@ anywhere.
   collide with. **An earlier arc kept ONE line shape deliberately** and that is what this replaced: one
   shape cost the sim its own fork.
 
-⛔ **THE SHEET'S KIT ROW IS MOUNTED AND ITS SELECTION HAS NO TOKEN TO RIDE.** `extract`'s grammar is
-closed after the worker count, and the shipped roster offers `extract` no kit at all — so the row
-never draws and the mismatch is inert. **A take tool added to `equipment.json` needs the token first**,
-or the sheet would show a picker whose answer the line silently drops.
-`HudBandLaborState.default_kit_id` answers `NO_KIT_ID` for `JOB_EXTRACT` explicitly rather than by
-fall-through, on `builders`' own reasoning: falling through would mark the HUNT kit as this job's
-default and `Main._kit_token` would then omit the token for a selection the player made.
+**THE SHEET'S KIT SELECTION RIDES THE LINE** as the `kit <id>` tail forage and hunt use — the
+`hauling` kit made it a real choice. `HudBandLaborState.default_kit_id` answers the wire's
+`default_extract_kit_id` for `JOB_EXTRACT`, never the HUNT default by fall-through: that would
+mark the hunt kit as this job's default and `Main._kit_token` would omit the token for a selection the
+player made.
 
 **`command_guard` is what keeps the two enumerations in step, and it now drives both.** `quarrywork`
 joined `ASSIGN_LABOR_ROLES` (the sweep asserts every role in that list builds a line AND that an
@@ -1297,7 +1273,7 @@ renews, so it is offered the dial, and it stands on a rung that strands 85% of t
 | `workings_unopened` | **the state a player meets first** — both branches' free floors on one hex, untouched: the full seam as ONE figure under the floor's own name, no hazard word of either kind, and the IDLE quarry still reading `not being worked`, which is the pair `is_unopened` exists to keep apart |
 | `workings_quarry_reach` | **THE CLIENT/SIM DIVERGENCE, WITH CHECKABLE NUMBERS** — a quarry worked down to 700 of 2200, i.e. BETWEEN the rung's own 330 of floor and the sheet's default 1100, which is the one stock where `composed_floor`'s renews condition changes an answer. Its four producer claims are read at `DEFAULT_HARVEST_FLOOR` and pin the composition to the rung's 0.15, the room to the wire's own published `reachable` (370), the cap to `ceil(370 / 2.2)` = 169 cutters, and the sheet to the band's own 3 diggers at their whole `6.60 STONE`. Pre-fix every one of them collapsed — floor 0.50, room 0, cap 0, the crew clamped away and the take blank — which is a quarry reporting itself worked out with fifty turns left in it. **The renewing scatter is asserted UNCHANGED beside it, both directions** (the rung's 0.85 winning at the default, a dial of 0.90 winning over the rung), which is what makes the fix narrow rather than a floor that stopped composing |
 
-| `workings_out_of_range` | **THE GATE THE DEPOSIT SHEETS HAD NONE OF** — the chapter's band left where the shared fixture camps it, 52 tiles from this hex against a `work_range` of 2: the refusal sentence WITH its distance in it (`… beyond this band's work range (2).`), asserted equal to the forage sheet's own shared format, and the commit dead beside it. **Both branches**, because Ray guessed the wood had it too and one builder serves them: the digger sheet on the same hex is asserted to refuse in the same words |
+| `workings_far_party` / `workings_far_party_stone` | **A FAR WORKING POSTS A PARTY** — the chapter's band left where the shared fixture camps it, 52 tiles from this hex against a `work_range` of 2: no refusal, a live commit, the kit picker offering `Hauling kit` and opening on `No kit (default)`, the party section's three lines by equality in the forester noun, and the headline `1.40 WOOD` under `ONCE RUNNING · PER TURN` with no food figure. The digger sheet on the same hex posts the same caravan in stone |
 | `workings_tile_crews` | **THE TILE SAYS THE DIGGING IS HAPPENING** — one hex, a wood crew of 2 and a rock crew of 4, each on its own material row. The counts DIFFER on purpose: equal ones would pass a card that composed one number and printed it twice, which is the tile-keyed collapse the `material` field exists to prevent, so the frame also asserts neither row wears the other's count. And no bill or countdown arrives with the crew |
 | `workings_tile_crews_other_band` | **THE COUNT IS THE HEX'S, NOT THE PICKED BAND'S** — the same two workings, held by a band that is NOT the faction's default actor (a second, empty band is listed first). The rows read exactly as they did above, which is what "minimal display when the owning band is not selected" buys; a count taken off the selected band would go to zero here. Untouched ground under a CREWLESS band is asserted beside it to carry no crew mark of any count, the other half of `crew_clause`'s fork |
 
@@ -1329,12 +1305,11 @@ sheet — no take, no deal row, and the pointer line's *send crews here first* a
 one. **Measured**: that is exactly how the chapter first failed, on four claims that said nothing
 about the code under test.
 
-⛔ **AND IT STANDS THAT BAND ON THE WORKING'S OWN HEX (`_band_at_the_working`), which the range gate
-made compulsory.** `BandFx.band_fixture()` camps at (71,18) with a `work_range` of 2, some fifty tiles
-from this chapter's ground — free while the deposit sheets measured no distance, and a refusal on
-every one of them the moment they did. Each sheet claim would then have been a claim about the
-refusal. The one state that IS about the range puts the band back where the shared fixture leaves it
-(`_band_beyond_reach`).
+⛔ **AND IT STANDS THAT BAND ON THE WORKING'S OWN HEX (`_band_at_the_working`).**
+`BandFx.band_fixture()` camps at (71,18) with a `work_range` of 2, some fifty tiles from this
+chapter's ground, so every sheet there would mount a work-party section and each sheet claim would
+become a claim about the caravan. The one state that IS about distance puts the band back where the
+shared fixture leaves it (`_band_beyond_reach`) — `workings_far_party`.
 
 **Every claim is asked of the shipped composer or of the rendered surface**, never of a
 re-derivation, and the fixtures are shaped exactly as `dict/deposits.rs` and

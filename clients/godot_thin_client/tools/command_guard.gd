@@ -463,10 +463,9 @@ func _drive_assign_labor_kits() -> void:
 	# tile names neither of them.
 	#
 	# **THE FLOOR ARRIVED WITH THE ESCAPEMENT DIAL** (issue #650) and rides forage's own position after
-	# the material, a validated NUMBER the retired stance words are refused by name against. It still
-	# carries no kit (`default_kits.extract` is the bare `none` kit and the working card mounts no
-	# picker), so the tail is closed after the worker count and this is the exact line a RENEWING
-	# working's sheet — the one branch that offers a dial — emits.
+	# the material, a validated NUMBER the retired stance words are refused by name against. It names
+	# no kit, so this is the exact line a RENEWING working's sheet — the one branch that offers a dial —
+	# emits when nobody touched its kit picker.
 	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, EXTRACT_MATERIAL,
 		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
@@ -481,6 +480,13 @@ func _drive_assign_labor_kits() -> void:
 	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
 		TARGET_X, TARGET_Y, "", SourceForecast.FLOOR_UNNAMED, EXTRACT_MATERIAL,
 		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
+	await _settle()
+	# **…AND WITH THE `kit <id>` TAIL, which is what a far working's sheet sends with the sleds picked**
+	# (the work party's `hauling` kit). The tail is forage's and hunt's own named pair, lifted out of the
+	# line wherever it sits, so it has to parse after the worker count of this grammar too.
+	_hud._emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, PARTY_WORKERS,
+		TARGET_X, TARGET_Y, "", SourceForecast.DEFAULT_HARVEST_FLOOR, EXTRACT_MATERIAL,
+		SourceForecast.IMPROVEMENT_NONE, EXTRACT_KIT)
 	await _settle()
 	# **THE THIRD GRAMMAR — A BAND-WIDE ROLE, AND EVERY ROLE, NOT A REPRESENTATIVE ONE.**
 	# `assign_labor <faction> <band> <role> <workers>` takes no tile, no herd, no floor and no
@@ -1031,19 +1037,22 @@ const ASSIGN_LABOR_ROLES := [
 ## the line the client emits rather than one built out of a placeholder.
 const EXTRACT_MATERIAL := "wood"
 
+## The kit the tailed `extract` drive names — the shipped sled kit an extract row may carry.
+const EXTRACT_KIT := "hauling"
+
 ## A role name no builder knows, for the negative below.
 const ASSIGN_LABOR_UNKNOWN_ROLE := "stonemason"
 
-## The FIVE TARGETED/untailed drives made before the role sweep: the untailed hunt line
+## The SIX TARGETED/untailed drives made before the role sweep: the untailed hunt line
 ## (`_drive_assign_labor`, which named the map's quick-hunt until that shortcut was retired), hunt +
-## forage with a `kit <id>` tail, and the deposit branches' `extract` in BOTH of its shapes — with the
-## floor token and without it.
+## forage with a `kit <id>` tail, and the deposit branches' `extract` in THREE shapes — with the
+## floor token, without it, and with a `kit <id>` tail.
 ##
 ## ⛔ **`extract` IS A TARGETED GRAMMAR AND NOT A ROLE, so the sweep below cannot reach it** — it names
 ## a tile, a material AND an optional floor, where every role in that list takes a bare worker count. It is
 ## driven here for the reason the whole sweep exists: a grammar the server's dispatch takes and
 ## `sim_runtime::command_text` does not is refused INSIDE the client, with nothing failing anywhere.
-const ASSIGN_LABOR_GRAMMAR_DRIVES := 5
+const ASSIGN_LABOR_GRAMMAR_DRIVES := 6
 
 ## …and the BARE `builders` line beside its tailed one — the exact line the pool's `+` emits — plus the
 ## FAR HERD's commit (`_drive_far_herd_assign_labor`), the hunt line a sheet past the apron sends.
@@ -1051,7 +1060,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 2
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 14
+const ASSIGN_LABOR_EXPECTED := 15
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##

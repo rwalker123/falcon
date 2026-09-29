@@ -2212,7 +2212,7 @@ table LaborAssignment {
   // --- THE WORK PARTY, AS A CARAVAN (appended last, append-only) ------------------------------
   // *** WHERE THIS ROW'S WORKERS ARE STANDING, WHEN IT IS NOT WHERE THE BAND IS. ***
   //
-  // A Hunt or Forage row whose source is past the band's work range posts a work party
+  // A Hunt, Forage or Extract row whose source is past the band's work range posts a work party
   // (docs/plan_civilization_steps.md, "One work party"). It is state on this row, not an entity:
   // the workers never stopped being the band's, and the row that staffed it is the row that
   // reports it.
@@ -2248,6 +2248,8 @@ table LaborAssignment {
   // The caravan stepped forward over labor_config.yield_average_horizon_turns from this state:
   // every pack that lands, per turn - the whole take, delayed by the walk. A near row and a far row are comparable
   // figures on one board. THE TAKE FLOWS HOME, ALWAYS - to the band that owns this row.
+  // IN THE ROW'S CARGO UNITS: food on a hunt or forage row, the material's own units on an extract
+  // row (whose far working also posts a party). The row's `kind` says which.
   netRateHome:float = 0;
 }
 
@@ -6105,6 +6107,13 @@ table SubsistenceSection {
   // the rows would reshuffle the whole screen whenever a rung was added — the same defect that made
   // column order unstable before the roster carried it. An area with no domains is never drawn.
   ladderAreas:[string];
+  // --- THE DEPOSIT CREW'S DEFAULT (appended last) -----------------------------------------------
+  // Which kit an `extract` row is sent out with when the player names none — `default_kits.extract`
+  // (`none` on the shipped roster; the `hauling` kit is what a far working's porters would name).
+  // The sixth job default beside `defaultHuntKitId` ... `defaultExpeditionKitId`, so a compose
+  // sheet reads it as a typed field rather than out of `equipmentConfigJson`, which only the
+  // Workbench may read. Never empty: it always names a real roster entry.
+  defaultExtractKitId:string;
 }
 
 table KnowledgeSection {

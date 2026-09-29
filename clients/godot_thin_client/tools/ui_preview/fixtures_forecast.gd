@@ -161,9 +161,20 @@ const WORK_PARTY_FORECAST_PATCH_KEY := "patch_work_party_forecast"
 
 static func work_party_answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 	var authored := {}
-	if String(ask.get("source_kind", "")) == ForecastQuery.WORK_PARTY_SOURCE_HUNT:
+	var source_kind := String(ask.get("source_kind", ""))
+	if source_kind == ForecastQuery.WORK_PARTY_SOURCE_HUNT:
 		authored = _quarry_for_id(hud, String(ask.get("herd_id", ""))).get(
 			WORK_PARTY_FORECAST_KEY, {})
+	elif source_kind == ForecastQuery.WORK_PARTY_SOURCE_EXTRACT:
+		# **A WORKING AUTHORS ITS REPLY ON ITS OWN `deposits` ROW**, bare-keyed like a herd, and is
+		# found by the `(tile, material)` pair the ask names — one hex holds two workings.
+		var tile_info: Dictionary = hud._selection.tile_info()
+		for working_variant in tile_info.get("deposits", []):
+			var working: Dictionary = working_variant
+			if int(working.get("tile_x", -2)) == int(ask.get("x", -1)) \
+					and int(working.get("tile_y", -2)) == int(ask.get("y", -1)) \
+					and String(working.get("material", "")) == String(ask.get("material", "")):
+				authored = working.get(WORK_PARTY_FORECAST_KEY, {})
 	else:
 		var x := int(ask.get("x", -1))
 		var y := int(ask.get("y", -1))

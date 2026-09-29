@@ -3266,9 +3266,10 @@ fn band_allocation_mut(
 /// promises — so there is no jump when the turn lands, and it is overwritten by the resolved take.
 ///
 /// Only the **one source the command touched** is seeded (other sources keep their real actuals), and
-/// only where the resolution path would actually pay: a source the turn would skip (out of the band's
-/// work range / past the hunt leash, an unseeded patch, a vanished herd) keeps its zero row, and a
-/// genuinely barren source seeds `0.0` — `+0.00` stays reachable, and correct, there.
+/// only where the resolution path would actually pay: a source the turn would skip (an unseeded
+/// patch, a vanished herd) keeps its zero row, and a genuinely barren source seeds `0.0` — `+0.00`
+/// stays reachable, and correct, there. A source past the band's work range is not skipped: it posts
+/// a work party, and is seeded by stepping that caravan.
 fn seed_source_yield(
     app: &mut bevy::prelude::App,
     band: Entity,
@@ -3337,12 +3338,6 @@ fn seed_source_yield(
     else {
         return;
     };
-    let grid_width = app.world.resource::<TileRegistry>().width;
-    let wrap_horizontal = app
-        .world
-        .resource::<SimulationConfig>()
-        .map_topology
-        .wrap_horizontal;
     let labor = app.world.resource::<LaborConfigHandle>().get();
     // **The reported band's width** (`combat_config.forecast_range_sigmas`) — a readout lever, not a
     // model term (`docs/plan_hunt_through_combat.md` §6.4). Read on both webs so the one
@@ -3554,7 +3549,7 @@ fn seed_source_yield(
                     &party,
                     herd,
                     &fauna,
-                    pricing.hunt_carry,
+                    pricing.haul_carry,
                     &hunters,
                     output_mult,
                     *floor,
@@ -3582,13 +3577,10 @@ fn seed_source_yield(
             material,
             floor,
         } => {
-            // Out of the band's work range → the turn abandons the row rather than paying it. Keep
-            // the zero row, exactly as the Forage arm does.
-            if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
-                > labor.band_work_range
-            {
-                return;
-            }
+            // ⛔ **PAST THE BAND'S WORK RANGE THE ROW IS A CARAVAN, AND IS SEEDED AS ONE** — the
+            // Forage arm's rule. A far working posts a party now rather than lapsing, so a seed that
+            // declined it would publish nothing for the whole first turn of every far posting.
+            let caravan = caravan_seed_party(app, band, target, *tile, band_pos, workers);
             let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y)
             else {
                 return;
@@ -3598,51 +3590,75 @@ fn seed_source_yield(
             };
             let extraction = app.world.resource::<ExtractionConfigHandle>().get();
             let ladder = app.world.resource::<LadderConfigHandle>().get();
-            let capacity =
-                core_sim::extraction::tile_deposit_capacity(&extraction, material, &ground);
-            // Ground that holds none of it opens no working and pays nothing — absence is the
-            // answer, and `validate_labor_policy` has already refused the command in that case.
-            if capacity <= core_sim::NO_DEPOSIT {
-                return;
-            }
-            let Some(branch) = core_sim::extraction::deposit_branch(&extraction, material) else {
+            // **THE WORKING AS THE NEXT TURN WILL FIND IT.** A working nobody has opened is
+            // DERIVED, not seeded — full stock at the tile's capacity, on its branch's free floor —
+            // which is `snapshot::deposits`' own rule and the reason the commonest case of all (a
+            // crew put on fresh ground) has a figure at all. Ground that holds none of it opens no
+            // working and pays nothing — absence is the answer, and `validate_labor_policy` has
+            // already refused the command in that case.
+            let Some(working) = core_sim::extraction::projected_working(
+                app.world.resource::<core_sim::DepositRegistry>(),
+                *tile,
+                material,
+                &ground,
+                &extraction,
+            ) else {
                 return;
             };
-            // **THE WORKING AS THE NEXT TURN WILL FIND IT — REGROW FIRST, THEN TAKE.** The seed is
-            // read between turns, so the live stock is the one *this* turn's take already drew down;
-            // pricing against it quotes a turn the sim has not run (`yield-forecast.md` → "A
-            // FORECAST REGROWS FIRST"). `renew_deposit` is the very seam `advance_deposits` runs in
-            // Logistics, on a clone, so nothing here moves the registry.
-            //
-            // **A working nobody has opened is DERIVED, not seeded** — full stock at the tile's
-            // capacity, on its branch's free floor — which is `snapshot::deposits`' own rule and the
-            // reason the commonest case of all (a crew put on fresh ground) has a figure at all.
-            let mut projected = app
-                .world
-                .resource::<core_sim::DepositRegistry>()
-                .source(*tile, material)
-                .cloned()
-                .unwrap_or_else(|| {
-                    core_sim::extraction::DepositSource::opening(*tile, material, capacity, branch)
-                });
-            core_sim::renew_deposit(&mut projected, &ground, &extraction, &ladder);
-            let payoff = core_sim::extraction::deposit_payoff(projected.standing(), &ladder);
-            // **The take, through the one seam the turn takes** — `min(hands, what the crew is
-            // allowed to reach)`, the reach being the stock above `max(rung floor, this row's
-            // floor)`. So raising the floor lowers the seeded figure by exactly what it will lower
-            // the take by, and a floor at or above the standing stock seeds nothing. The ground's
-            // rate rides along because that `max` only takes the row's floor where the deposit
-            // renews, so a quarry's seeded figure is the one its crew will actually cut.
-            let regrowth_rate =
-                core_sim::extraction::tile_deposit_regrowth(&extraction, material, &ground);
-            let taken = core_sim::extraction::deposit_take(
-                workers,
-                projected.stock,
-                capacity,
-                regrowth_rate,
-                &payoff,
-                *floor,
-            );
+            // **REGROW FIRST, THEN TAKE, through the one projection the turn's forecast steps**
+            // (`core_sim::extraction::DepositProjection`). The seed is read between turns, so the
+            // live stock is the one *this* turn's take already drew down; pricing against it quotes
+            // a turn the sim has not run (`yield-forecast.md` → "A FORECAST REGROWS FIRST"). The
+            // take is the turn's own seam — `min(hands, what the crew is allowed to reach)` above
+            // `max(rung floor, this row's floor)` — so raising the floor lowers the seeded figure by
+            // exactly what it will lower the take by.
+            let taken = match caravan {
+                // **A far working is priced by stepping its caravan** — the same function the turn's
+                // published `netRateHome` answers through, at the same pricing — and what it seeds
+                // is what lands home next turn: nothing while the party walks out.
+                Some(party) => {
+                    let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+                    let band_wear = app
+                        .world
+                        .get::<BandEquipment>(band)
+                        .cloned()
+                        .unwrap_or_default();
+                    let pricing = core_sim::work_party::CaravanPricing::resolve(
+                        &equipment_cfg,
+                        &crew_kit,
+                        workers,
+                        &band_wear,
+                        &other_rows,
+                        &labor,
+                    );
+                    let Some(weight) = app
+                        .world
+                        .resource::<core_sim::MaterialsConfigHandle>()
+                        .get()
+                        .material(material)
+                        .map(|def| def.weight)
+                    else {
+                        return;
+                    };
+                    core_sim::work_party::forecast_extract_caravan(
+                        &party,
+                        &working,
+                        &ground,
+                        &extraction,
+                        &ladder,
+                        core_sim::work_party::material_pack(pricing.haul_carry, weight),
+                        *floor,
+                        labor.yield_average_horizon_turns,
+                    )
+                    .home_by_turn
+                    .first()
+                    .copied()
+                    .unwrap_or(core_sim::work_party::NOTHING_CARRIED)
+                }
+                None => core_sim::extraction::DepositProjection::new(&working)
+                    .step(workers, *floor, &ground, &extraction, &ladder)
+                    .unwrap_or(core_sim::extraction::DEPOSIT_EMPTY),
+            };
             core_sim::SourceYield {
                 // **EMPTY IS "NO ROW", NEVER A ZERO ENTRY** — `SourceYield::materials`' own rule: a
                 // crew that will take nothing next turn publishes no material line rather than one
@@ -5126,9 +5142,9 @@ fn handle_assign_labor(
 }
 
 /// Order a band to travel toward a target tile at `band_move_tiles_per_turn`/turn (Early-Game
-/// Labor). In-range sources update as the band moves; a Forage assignment the move carries out of
-/// `band_work_range` is abandoned that same turn (workers back to the pool, feed entry naming the
-/// tile). Text form: `move_band <faction> <band> <x> <y>`.
+/// Labor). In-range sources update as the band moves; a source the move carries out of
+/// `band_work_range` posts a work party on the next turn rather than lapsing
+/// (`.claude/rules/core_sim/work-party.md`). Text form: `move_band <faction> <band> <x> <y>`.
 fn handle_move_band(
     app: &mut bevy::prelude::App,
     faction: FactionId,

@@ -709,7 +709,8 @@ pub enum QueryPayload {
     WorkPartyForecast(WorkPartyForecastQuery),
 }
 
-/// **WHICH SOURCE A WORK-PARTY QUESTION IS ABOUT** — a herd or a patch, the two webs a party works.
+/// **WHICH SOURCE A WORK-PARTY QUESTION IS ABOUT** — a herd, a patch or a deposit, the three webs a
+/// party works.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorkPartySource {
     Hunt {
@@ -721,6 +722,14 @@ pub enum WorkPartySource {
         /// `flora_config.json` species keys the crew carries home. **Empty takes the whole
         /// basket**, exactly as an assignment's own take selection does.
         take_species: Vec<String>,
+    },
+    /// A deposit — the `extract` row's source. `material` is an `extraction.json` deposit id
+    /// (`wood`, `stone`); ground holding none of it is refused as
+    /// [`query_error::UNKNOWN_DEPOSIT`]. The reply's `rate_home` is in that material's own units.
+    Extract {
+        x: u32,
+        y: u32,
+        material: String,
     },
 }
 
@@ -749,8 +758,8 @@ pub struct WorkPartyForecastReply {
     /// `false` inside the band's work range: no party, no walk, and `rate_home` is the ordinary
     /// local row's steady rate. Every walk field reads `0` with it.
     pub posts_a_party: bool,
-    /// **Food per turn arriving at the home band** — what the assigned row will publish as
-    /// `netRateHome`.
+    /// **Cargo per turn arriving at the home band** — food off a herd or a patch, the material's own
+    /// units off a deposit — what the assigned row will publish as `netRateHome`.
     pub rate_home: f32,
     /// The one-way walk in tiles, from the apron and shortened by any road.
     pub walk_tiles: u32,
@@ -1030,6 +1039,8 @@ pub mod query_error {
     pub const UNKNOWN_HERD: &str = "unknown_herd";
     /// A work-party question named a tile carrying no forage patch.
     pub const UNKNOWN_PATCH: &str = "unknown_patch";
+    /// A work-party question named ground holding none of the asked material — no deposit to work.
+    pub const UNKNOWN_DEPOSIT: &str = "unknown_deposit";
     /// No band of the queried faction carries the queried `BandId`.
     pub const UNKNOWN_BAND: &str = "unknown_band";
     /// The queried `kit_id` names no `equipment.json` roster entry.
@@ -3153,6 +3164,13 @@ fn work_party_query_to_proto(ask: &WorkPartyForecastQuery) -> pb::WorkPartyForec
                     take_species: take_species.clone(),
                 })
             }
+            WorkPartySource::Extract { x, y, material } => {
+                pb::work_party_forecast_query::Source::Extract(pb::WorkPartyExtractSource {
+                    x: *x,
+                    y: *y,
+                    material: material.clone(),
+                })
+            }
         }),
     }
 }
@@ -3170,6 +3188,11 @@ fn work_party_query_from_proto(
             x: forage.x,
             y: forage.y,
             take_species: forage.take_species,
+        },
+        pb::work_party_forecast_query::Source::Extract(extract) => WorkPartySource::Extract {
+            x: extract.x,
+            y: extract.y,
+            material: extract.material,
         },
     };
     Ok(WorkPartyForecastQuery {
@@ -3222,6 +3245,11 @@ mod tests {
                 x: 17,
                 y: 23,
                 take_species: vec!["wild_emmer".to_string(), "hazel".to_string()],
+            },
+            WorkPartySource::Extract {
+                x: 29,
+                y: 31,
+                material: "stone".to_string(),
             },
         ] {
             let payload = CommandPayload::Query {

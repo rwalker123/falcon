@@ -35,8 +35,8 @@ var h
 # The three fog-of-war states MapView tags onto tile_info (mirrors Hud.VISIBILITY_*).
 const VIS_UNEXPLORED := "unexplored"
 
-## The retired forage range refusal's own words (`HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT`, which
-## the deposit sheets still render) — the needle for a sentence that must not come back on a patch.
+## The retired range refusal's own words (the retired `HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT`, which
+## no sheet renders any more) — the needle for a sentence that must not come back on a patch.
 const RETIRED_RANGE_REFUSAL_NEEDLE := "beyond this band's work range"
 
 ## YOUR OWN scouting expedition standing on an UNEXPLORED hex — the case the fog rule must NOT break.
