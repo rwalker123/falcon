@@ -876,6 +876,11 @@ const ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY := "hunt_useful_workers"
 # branch. An ABSENT key is the third reading — *this row states no coverage* — which is a hand-built
 # fixture or an optimistic row, never the decoder, and which every readout treats as silence.
 const ASSIGNMENT_KIT_WORKERS_HOLDING_KEY := "kit_workers_holding"
+# **WHAT THE NEXT RUNG WOULD PAY THIS `extract` ROW'S CREW, GEAR INCLUDED** (issue #663) — the sim's
+# own answer, struck at the row's committed `workers` with the band's kit applied. `0` on a
+# non-extract row, an empty row and at the top of a branch. The deposit sheet's `once felled / once
+# coppiced / once quarried` row prints it and multiplies nothing itself.
+const ASSIGNMENT_NEXT_RUNG_MATERIAL_YIELD_KEY := "next_rung_material_yield"
 # **THE WORK PARTY, ON A LABOR ASSIGNMENT** (`docs/plan_civilization_steps.md` §One work party) —
 # the ten keys the decoder writes for a row whose source is past the band's own apron. They ride the
 # work-row map (`HudBandLaborState.effective_worker_map`) and are read in exactly ONE place,

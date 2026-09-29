@@ -5136,7 +5136,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         _compose.begin_deposit_source(subject_key,
             int(resolved.get("entity", ComposeState.NO_BAND_ENTITY)))
         # **THE COMPOSED KIT IS DROPPED ON A SOURCE CHANGE** (issue #663) — the hunt sheet's
-        # `reset_hunt_kit` rule: every render writes the RESOLVED id back, so a `felling` resolved
+        # `reset_hunt_kit` rule: every render writes the RESOLVED id back, so a `woodcutting` resolved
         # on a wood would read as the player's own choice on the next rock and outrank that
         # working's own `default_kit_id`.
         _compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
@@ -5246,13 +5246,13 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     if capped_by_seam:
         target.add_child(HudWidgets.alloc_hint_label(
             HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()]))
-    # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Felling kit (an axe) and the
-    # Quarrying kit (wedges) beside `none`, so the picker's selection moves the take and rides the
-    # commit as `kit <id>` — see the commit button below.
+    # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Woodcutting kit (sled + axe)
+    # and the Stone kit (sled + wedges) beside `none`, so the picker's selection moves the take and
+    # rides the commit as `kit <id>` — see the commit button below.
     #
     # ⛔ **THE DEFAULT IS THE WORKING'S OWN, NOT THE JOB'S.** `default_kits.extract` is `none` and
     # means nothing here; each `deposits` row publishes the kit its own material wants
-    # (`default_kit_id` — `felling` on wood, `quarrying` on stone), so the deposit is passed as the
+    # (`default_kit_id` — `woodcutting` on wood, `stonework` on stone), so the deposit is passed as the
     # SOURCE and `KitRoster.default_kit_for` — the one precedence — answers both the opening
     # selection and the `(default)` mark off it, exactly as a herd's does on the hunt sheet.
     #
@@ -5260,7 +5260,11 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # mute for the whole life of that line: `crew` then defaults to `KIT_CREW_UNCOMPOSED` and the
     # shortfall falls back to the published `workersOnQuotedJob`, which is `0` on a sheet where
     # nobody is assigned yet.
-    var kits := _band_labor.kits()
+    # ⛔ **THE PICKER OFFERS THIS WORKING'S OWN KIT AND `none`, AND NOTHING ELSE** (issue #663). Each
+    # take kit serves one branch — a Stone kit's wedges do nothing on a wood — so listing the other
+    # branch's kit offered a choice that could only cost the crew. Narrowed on the working's published
+    # `default_kit_id`, the one field that names which kit this ground wants.
+    var kits := KitRoster.extract_kits_for_working(_band_labor.kits(), deposit)
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_EXTRACT)
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_EXTRACT, default_kit,
         _compose.deposit_kit_id(), deposit)
@@ -5289,7 +5293,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # reaches the floor), what the next rung would pay once it stands, the verdict the branch turns
     # on, and the runway under the dashed rule.
     _mount_deposit_readout(target, live_hosts, deposit, ladder, next_entry, chart_model,
-        _compose.deposit_count())
+        _compose.deposit_count(), _band_labor.extract_assignment_of(band, tile.x, tile.y, material))
     # ⛔ **THE RANGE GATE, AND IT IS THE FORAGE SHEET'S OWN** (issue #650) — the same measurement, the
     # same refusal sentence and the same dead commit, because it is the same `band_work_range` the
     # sim's `Extract` arm lapses a distant crew against. **A seam is offered no expedition**: the
@@ -5319,8 +5323,9 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # **A FINITE WORKING SENDS NO FLOOR AT ALL, because it was never asked** — `named_floor` is
     # `FLOOR_UNNAMED` there and `Main`'s extract arm drops the token, leaving the sim to answer what
     # silence means on ground that never renews. A renewing working rides the player's own dial.
-    # **THE KIT RIDES IT** (issue #663): the picker above offers the Felling and Quarrying kits, and a
-    # selection the line dropped would be a choice the sim never heard. `Main._kit_token` renders it.
+    # **THE KIT RIDES IT** (issue #663): the picker above offers the working's own take kit and
+    # `none`, and a selection the line dropped would be a choice the sim never heard.
+    # `Main._kit_token` renders it.
     assign_btn.pressed.connect(func() -> void:
         _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, _compose.deposit_count(),
             tile.x, tile.y, "", named_floor, material, SourceForecast.IMPROVEMENT_NONE,
@@ -5458,7 +5463,8 @@ func _deposit_yield_model(deposit: Dictionary, floor: float, crew: int,
 ## The caption is `next turn` unless a `now → after` pair is on the row, which
 ## `SourceForecast.yield_row_header` decides from the rows themselves.
 func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictionary,
-        ladder: Array[Dictionary], next_entry: Dictionary, model: Dictionary, crew: int) -> void:
+        ladder: Array[Dictionary], next_entry: Dictionary, model: Dictionary, crew: int,
+        band_row: Dictionary) -> void:
     var column := HudWidgets.build_readout_box(target)
     var known := bool(model.get("known", false))
     var tile := HudDepositVocab.tile_of(deposit)
@@ -5484,7 +5490,10 @@ func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictio
     # live registry, the shared mount's own rule: a payoff is a property of the finished rung and
     # nothing in it moves under a floor drag.
     var deal_label := HudDepositVocab.deal_label(next_entry)
-    var deal_value := HudDepositVocab.deal_value(next_entry, deposit, crew)
+    # **THE FIGURE IS THE SIM'S, OFF THE ACTING BAND'S OWN ROW** (issue #663) — `band_row` is the
+    # picked band's committed `extract` row, not the faction-wide `assignment` above, because the
+    # sim strikes `nextRungMaterialYield` at THAT row's crew and gear.
+    var deal_value := HudDepositVocab.deal_value(next_entry, deposit, crew, band_row)
     if deal_label != "" and deal_value != "":
         column.add_child(HudWidgets.build_improvement_deal(deal_label, deal_value))
     var verdict_host := VBoxContainer.new()

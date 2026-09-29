@@ -239,8 +239,8 @@ pub(crate) fn deposits_to_array(
             "regrowth_samples",
             &crate::dict::subsistence::regrowth_samples_packed(deposit.regrowthSamples()),
         );
-        // **THE TAKE KIT THIS WORKING'S OWN MATERIAL WANTS** (issue #663) — `felling` on wood,
-        // `quarrying` on stone, whatever rung it stands on. It is what an `assign_labor extract` with
+        // **THE TAKE KIT THIS WORKING'S OWN MATERIAL WANTS** (issue #663) — `woodcutting` on wood,
+        // `stonework` on stone, whatever rung it stands on. It is what an `assign_labor extract` with
         // no `kit` token resolves to server-side, so the compose sheet opens on it and marks it
         // `(default)`; `default_kits.extract` is the bare `none` and would be the wrong answer here.
         let _ = dict.insert("default_kit_id", deposit.defaultKitId().unwrap_or_default());

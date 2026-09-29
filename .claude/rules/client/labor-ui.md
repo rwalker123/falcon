@@ -3461,7 +3461,7 @@ value is that three surfaces cannot answer it differently: `resolve_selection` (
 on) and `build_kit_row`'s `(default)` mark both call it. A picker
 that opened on the trap and printed `(default)` on the spear would contradict itself on every
 small-game herd, which is why the mark is asserted BESIDE the selection rather than trusted to follow
-it. **Two sources publish one — a HERD and a deposit WORKING** (`felling` on wood, `quarrying` on
+it. **Two sources publish one — a HERD and a deposit WORKING** (`woodcutting` on wood, `stonework` on
 stone, issue #663) — and `KitRoster.SOURCE_DEFAULT_KIT_JOBS` names the jobs whose source is read; the
 forage web's patches carry no such field, so passing them through the same call is what keeps every
 web on one seam.

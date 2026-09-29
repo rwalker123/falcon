@@ -1390,7 +1390,7 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # **THE KIT RIDES THE TAIL AS A NAMED PAIR** (issue #663), after the worker count, on
             # `_kit_token`'s own omission rule. The grammar lifts `kit <id>` out of the tail before the
             # positional `[floor] <workers>` is read, so it never competes with the optional floor.
-            # The deposit sheet mounts a real picker (the Felling and Quarrying kits beside `none`),
+            # The deposit sheet mounts a real picker (the working's own take kit beside `none`),
             # so a selection with no token to ride would be a choice this line silently dropped. An
             # ABSENT token means *the working's own derived kit* to the sim; the payload's
             # `default_kit_id` is the job's `""` (see `HudBandLaborState.default_kit_id`), so every

@@ -409,13 +409,35 @@ const JOB_BUILDERS := "builders"
 ## …and the two deposit branches' TAKE job (issue #650) — `equipment.json`'s own `extract`, the job a
 ## felling axe or a stone hammer would declare a take stat on.
 ##
-## **THE SHIPPED ROSTER DECLARES ONE KIT PER BRANCH** (issue #663): `felling` (the axe, lifting
-## `deposit_take` on felling and coppice) and `quarrying` (the wedges, on the quarry), beside `none`.
-## One item per kit, so a complete outfit is exactly one tool. **The default is the WORKING's, not the
-## job's**: `default_kits.extract` is `none`, and each `DepositState` publishes its own
-## `default_kit_id` (`felling` on wood, `quarrying` on stone) — `default_kit_for` reads it off the
-## source, as it reads a herd's.
+## **THE SHIPPED ROSTER DECLARES ONE KIT PER BRANCH** (issue #663): `woodcutting` (sled + axe) and
+## `stonework` (sled + wedges), beside `none`. The sled pays on each branch's free floor (deadfall,
+## gathering) and the second tool on the rungs above it, so every rung has a tool — and WHICH item
+## serves the rung a working stands on is the sim's to say: `kitWorkersHolding` on an extract row
+## counts that tool alone, and `shortfall_line` reads it rather than taking a `min` over the kit.
+## **The default is the WORKING's, not the job's**: `default_kits.extract` is `none`, and each
+## `DepositState` publishes its own `default_kit_id` (`woodcutting` on wood, `stonework` on stone) —
+## `default_kit_for` reads it off the source, as it reads a herd's.
 const JOB_EXTRACT := "extract"
+
+## **THE KITS A DEPOSIT SHEET MAY OFFER: THE WORKING'S OWN AND `none`** (issue #663). Each take kit
+## serves one branch, so the other branch's kit on this sheet is a choice that can only cost the crew
+## — the playtest report was the Quarrying kit offered on a wood. Returns the ROSTER with every
+## `extract` kit other than the working's `default_kit_id` dropped; an itemless kit (`none`) and every
+## kit that does not list `extract` stay, so the rest of the roster's lookups (the bare tier is the
+## minimum across it) are unchanged. A working that publishes no default narrows nothing.
+static func extract_kits_for_working(kits: Array, working: Dictionary) -> Array:
+	var own := String(working.get(HERD_DEFAULT_KIT_KEY, NO_KIT_ID))
+	if own == NO_KIT_ID:
+		return kits
+	var out: Array = []
+	for kit_variant in kits:
+		var kit := kit_variant as Dictionary
+		var jobs: Array = kit.get(KIT_JOBS_KEY, [])
+		if jobs.has(JOB_EXTRACT) and not kit_item_ids(kit).is_empty() \
+				and String(kit.get(KIT_ID_KEY, NO_KIT_ID)) != own:
+			continue
+		out.append(kit)
+	return out
 
 ## **THE JOBS WHOSE SOURCE PUBLISHES ITS OWN DEFAULT KIT** under `HERD_DEFAULT_KIT_KEY` — a herd its
 ## derived quarry kit, a deposit working the kit its material wants. Every other job's source carries
@@ -1680,6 +1702,15 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 			return ""
 		return shortfall_sentence(kit, int(committed[ROW_COVERAGE_HELD_KEY]),
 			int(committed[ROW_COVERAGE_CREW_KEY]))
+	# ⛔ **AN `extract` ROW STATES NOTHING BEYOND THE SIM'S OWN PAIR** (issue #663). A take kit is a
+	# sled AND a second tool, and only ONE of them serves the rung a working stands on — the sled on a
+	# deadfall, the axe on a felling — which the wire states on the row (`kitWorkersHolding` counts
+	# that tool alone) and nowhere else. The composed reading below takes a `min` over every item the
+	# kit carries, so on a deadfall it would report the band short of axes that change nothing: the
+	# playtest's `1 of 2 Felling kits available` over a take that moved not at all. With no committed
+	# row to read, or a stepper off its crew, the honest answer is silence.
+	if job == JOB_EXTRACT:
+		return ""
 	var on_job := crew
 	# **A CREW IS BEING COMPOSED** — so the store is counted against it, and the units already out with
 	# the band's committed rows are not part of the store this party can draw on. A host with no

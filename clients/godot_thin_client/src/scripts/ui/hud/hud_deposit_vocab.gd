@@ -1490,9 +1490,9 @@ const DEPOSIT_DEAL_LABEL_Y_FORMAT := "once %sied"
 const DEPOSIT_DEAL_SILENT_E := "e"
 const DEPOSIT_DEAL_CONSONANT_Y := "y"
 
-## `6.60 stone a turn` — what the next rung would pay at the crew being composed, off its own
-## `yieldPerWorkerTurn`. **Not a client-side projection of the take**: it is the catalog's rate times
-## the stepper's count, which is the sim's own arithmetic before the reachable stock caps it.
+## `6.60 stone a turn` — what the next rung would pay this band's crew, off the ROW's own
+## `nextRungMaterialYield` (issue #663). **The sim prices it, gear included**: the catalog's
+## `yieldPerWorkerTurn × crew` it replaced ignored the axes and the sled, which is the playtest report.
 const DEPOSIT_DEAL_VALUE_FORMAT := "%s %s a turn"
 
 ## The deal row's label for one rung — `once quarried`. `""` for a rung with no verb, which has no
@@ -1507,15 +1507,28 @@ static func deal_label(entry: Dictionary) -> String:
 		return DEPOSIT_DEAL_LABEL_Y_FORMAT % verb.left(verb.length() - 1)
 	return DEPOSIT_DEAL_LABEL_FORMAT % verb
 
-## …and its value, at the crew the stepper is on. `""` at a crew of zero or for a rung the catalog
-## prices no take on — a deal quoted at nobody is a promise of nothing.
-static func deal_value(entry: Dictionary, deposit: Dictionary, crew: int) -> String:
-	var rate := catalog_yield_per_worker_turn(entry)
-	if rate <= RUNG_CATALOG_NO_YIELD or crew <= 0:
+## …and its value, read off the band's own COMMITTED `extract` row. `""` — and so no deal row at all
+## — unless the row exists AND the stepper still stands on its `workers`.
+##
+## ⛔ **BEFORE A ROW EXISTS, AND WHILE THE STEPPER IS OFF THE COMMITTED CREW, THE FIGURE IS HIDDEN,
+## NOT RE-DERIVED.** The sim strikes it at the committed `workers` with the band's gear applied, and
+## gear saturates at a head count, so it does not scale linearly with a crew nobody has committed. The
+## only client-side stand-in is the catalog rate times the stepper — the arithmetic that ignored the
+## axes and the sled and printed a figure the committed row then contradicted. No figure beats that
+## one; the pointer line above the readout still names the rung and the board that raises it.
+##
+## `0` from the sim is also no row: a non-extract row, an empty one, or the top of a branch.
+static func deal_value(entry: Dictionary, deposit: Dictionary, crew: int,
+		row: Dictionary) -> String:
+	if catalog_verb(entry) == RUNG_CATALOG_NONE or crew <= 0 or row.is_empty():
+		return ""
+	if int(row.get("workers", 0)) != crew:
+		return ""
+	var paid := float(row.get(SourceForecast.ASSIGNMENT_NEXT_RUNG_MATERIAL_YIELD_KEY, 0.0))
+	if paid <= RUNG_CATALOG_NO_YIELD:
 		return ""
 	return DEPOSIT_DEAL_VALUE_FORMAT % [
-		DetailFormat.format_trimmed(rate * float(crew), CARD_STOCK_DECIMALS),
-		material_of(deposit)]
+		DetailFormat.format_trimmed(paid, CARD_STOCK_DECIMALS), material_of(deposit)]
 
 # ---- WHAT THIS BAND'S CREW WILL CUT, off the ASSIGNMENT and never off the working ---------------
 #

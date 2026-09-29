@@ -897,6 +897,15 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "kit_workers_holding",
                 f64::from(assignment.kitWorkersHolding()),
             );
+            // **WHAT THE NEXT RUNG WOULD PAY THIS ROW'S CREW, GEAR INCLUDED** (issue #663) — the
+            // `once felled / once coppiced / once quarried` figure on the deposit sheet, struck by
+            // the sim at the row's committed `workers` with the band's kit already applied, so the
+            // client never multiplies a catalog rate by a crew itself. `0` on a non-`extract` row,
+            // on an empty row and at the top of a branch — there is no next rung to price.
+            let _ = entry.insert(
+                "next_rung_material_yield",
+                f64::from(assignment.nextRungMaterialYield()),
+            );
             // **HOW MANY HANDS THIS QUARRY CAN USE, FIGHT INCLUDED** — the crew beyond which more
             // hunters add nothing, and the sim's own answer rather than an input to a client
             // quotient. It is the plateau of `fauna::hunt_crew_take_curve`, the SAME curve the

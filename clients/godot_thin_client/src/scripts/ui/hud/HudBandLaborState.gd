@@ -155,7 +155,7 @@ func default_kit_id(job: String) -> String:
 			return _default_expedition_kit_id
 		KitRoster.JOB_EXTRACT:
 			# **THE EXTRACT DEFAULT IS PER WORKING, NOT PER JOB** (issue #663). Each `deposits` row
-			# publishes its own `default_kit_id` (`felling` on wood, `quarrying` on stone), which the
+			# publishes its own `default_kit_id` (`woodcutting` on wood, `stonework` on stone), which the
 			# deposit sheet reads off the SOURCE through `KitRoster.default_kit_for`; the job itself
 			# names none on the wire, so this answers `""` — stated rather than reached by
 			# fall-through, for the builders arm's reason below.
