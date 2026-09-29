@@ -145,7 +145,7 @@ func run(harness) -> void:
 	# ⛔ **THIS WAS THE OUT-OF-RANGE REFUSAL, AND THE WORK PARTY IS WHAT RETIRED IT**
 	# (`docs/plan_civilization_steps.md` §One work party): a far forage crew no longer lapses, it posts
 	# a party and walks the take home, so the sheet commits as an ordinary gather and adds the party
-	# section. The DEPOSIT sheets keep the refusal (`workings.gd`'s `workings_out_of_range`).
+	# section. The DEPOSIT sheets went the same way (`workings.gd`'s `workings_far_party`).
 	h._hud._band_labor._player_band = BandFx.forage_range_bands()[1]
 	h._hud._band_labor._player_bands = []
 	h._hud._compose.reset_forage_source()

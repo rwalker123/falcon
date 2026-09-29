@@ -1486,7 +1486,7 @@ clear, so a road visibly STOPS at the fog edge instead of leaking that hex's exi
 shader then never fetches a texel it has no business reading.
 
 **Verify** via `tools/blend_probe.gd` states **18/ROADS**, **19/WEAR**, **20/JUNCT**, **21/ATRISK**,
-and `map_preview`'s `map_road_network` + `map_road_vs_herd_trail`. `.claude/rules/client/roads.md`
+and `map_preview`'s `map_road_network` + `map_herd_corridor_trail`. `.claude/rules/client/roads.md`
 describes what each frame is for and which assertion falsifies which half.
 
 **Texture readback fix (kept from A):** `TerrainTextureManager` retains the CPU-side layer Images

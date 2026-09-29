@@ -93,8 +93,9 @@ autopsy on the first cut, which shipped the `⚒N` plate alone. What the visible
 chip reports; what far zoom hides is hidden on purpose — the tile outline is the fallback in both
 cases, exactly as it is for the two food webs.
 
-**THE GLYPH IS THE MATERIAL, NEVER THE RUNG'S VERB** (`FoodIcons.MATERIAL_ICONS` / `for_material`:
-`wood` → 🪵, `stone` → 🪨). This is `BADGE_READY_CHEVRON`'s collision one layer out — 🌲 is both
+**THE MARK IS THE MATERIAL, NEVER THE RUNG'S VERB** — bundled art (`WorkingsSprites.for_material`:
+cut logs, squared blocks) with the emoji behind it (`FoodIcons.MATERIAL_ICONS`: `wood` → 🪵,
+`stone` → 🪨), one face through `SecondaryMarkerRenderer.face_for_material`. This is `BADGE_READY_CHEVRON`'s collision one layer out — 🌲 is both
 *"Coppice"* and *"this is a wood"*, ⛏ both *"Quarry"* and *"this is a rock face"* — and a marker
 answers WHAT IS HERE, so a verb glyph on one would say the opposite of the truth on any working that
 is standing rather than climbing. What comes out of the ground has no second reading. **An unmarked
@@ -322,13 +323,24 @@ flag-disc ring.
 
 `BandMarkerRenderer._draw_expedition_body`: ⚑ scout · 🏹 hunt · 💀 denial · **📦 trade** (arc #527).
 One mission, one glyph, on all three surfaces it appears on — the map marker, the parties-strip row
-(`HudFormat.PANEL_EXPEDITION_*_GLYPH`) and the footer button that launches it
-(`HudComposeVocab.COMPOSE_MISSION_LABEL_*`) — so a party's mark means the same thing at every scale.
+(`HudFormat.PANEL_EXPEDITION_*_GLYPH`) and the band verb that launches it
+(`HudComposeVocab.BAND_VERBS`) — so a party's mark means the same thing at every scale.
 
-**The phase decorations stay gated on `is_hunt`, and the shipment is the second mission to want
-that.** The green pip means *"carrying a haul HOME"*; a denial party's haul is a rounding error it
-should not advertise, and a trade party's goods are going the OTHER way. Both therefore take the
-glyph and none of the decorations.
+**THE MAP MARKER DRAWS ART, THE GLYPH IS ITS FALLBACK.** Scout, deny and trade resolve bundled PNGs
+through `ExpeditionSprites.for_mission` (`assets/icons/expeditions/` — the footprints, the animal
+skull and the cloth bundle, the band verb's `hud/` subjects redrawn in the map-marker house style),
+drawn by `MapView._draw_marker_sprite` centred in the same dark disc and faction ring, in a box of
+`EXPEDITION_SPRITE_SIZE_FACTOR` × the marker's diameter. The keyed PNGs carry their own padding, so
+that box sits a little inside the ring where the glyph factor would overrun it. **Hunt has no art**
+(the expedition hunt is being retired): it answers `null` and keeps its 🏹 through the glyph path,
+as would any mission whose art failed to load. The party's mission-to-art key follows the glyph's
+own default, so a party that is not hunting, denying or trading reads as a scout on both faces.
+
+**The phase decorations draw over whichever face the marker wears** (`_draw_expedition_phase_marks`),
+and they stay gated on `is_hunt`. The green pip means *"carrying a haul HOME"*; a denial party's haul
+is a rounding error it should not advertise, and a trade party's goods are going the OTHER way. Both
+therefore take none of the hunt decorations. The awaiting-orders pulse is not a hunt decoration and
+rings every mission.
 
 ## The LETHAL-GROUND mark — a ⚠ on a band standing where the sim is killing people (issue #614)
 
@@ -376,3 +388,9 @@ glyph.)
 > while bare khaki terrain was **0.235** — no threshold separates those. The discriminating property
 > is REDNESS (`r − max(g, b)`), which measures ~100/255 on the glyph and ~18/255 on the terrain, so
 > `_frame_marks_warning_near_hex` asks that instead and its margin sits clear of both.
+
+## Key scripts
+
+| Script | Purpose |
+|--------|---------|
+| `ui/ExpeditionSprites.gd` | Bundled art for the expedition map marker, keyed by mission id (`HudExpeditionVocab.EXPEDITION_MISSION_*`). `for_mission(mission) -> Texture2D`, `null` for hunt or an unknown mission, which is the renderer's cue to draw the glyph. The family's row is in `sprites-widgets.md` |

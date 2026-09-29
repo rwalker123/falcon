@@ -61,12 +61,13 @@ the real handler — no terrain rows AND a non-empty roster, the two conditions 
 hid every child of the drawer. Four assertions, two of them preconditions, asked of
 `%OccupantDetail` itself because a PNG cannot tell a blank drawer from one that rendered fine.
 Sabotage-verified against the unconditional roster skip) / `tile_panel_band` (the Band/City pointer
-line, not a blank gap, **plus the drawer's `Move`** — and its behavioural ASSERTION: the hex carries
-three player bands, the SECOND is selected through the real list path, and pressing the REAL button
-must put the HUD into move-band targeting for **that** band (302), not the faction default
-`_player_band` (301). Proven to fail with `_on_move_band_pressed` resolving to `_player_band`;
-`tile_panel_crowded` additionally asserts the no-panel fallback shows exactly ONE Move, proven to
-fail with a second one added) (`tile_panel_feed_shown` — `R` on, both growing left-dock cards
+line, not a blank gap, **plus the drawer's VERB ROW** (issue #529) — the five ids of
+`HudComposeVocab.BAND_VERBS` in order (`EXPECTED_VERB_IDS`, read off `HudWidgets.VERB_BUTTON_META`) —
+and its behavioural ASSERTION: the hex carries three player bands, the SECOND is selected through the
+real list path, and pressing the REAL Move must put the HUD into move-band targeting for **that**
+band (302), not the faction default `_player_band` (301); `tile_panel_crowded` additionally asserts
+the no-panel fallback shows exactly ONE verb row, the same five in the same order)
+(`tile_panel_feed_shown` — `R` on, both growing left-dock cards
 fitting — is RETIRED with the command feed; there is one growing card in that column now, and
 `predator_feed` went with it, its alert styling having moved into `HudEventVocab` and onto the
 `event_dock_*` frames below). **The temperature-mortality states** close the chapter (issue #614, `EXPECTED_CHECKPOINTS` 74 -> 104). **The model is seeded in the PROLOGUE**, beside `TileClimate.set_cut_points`, so it is live for every frame in the walk: a fixture sitting outside the survivable range must not be the one place the HUD still hides that, which is the whole of #614. Three existing frame families gained the warning and were judged on their merits rather than suppressed — `low_morale` (-2 °C, a band being punished BY the cold, where the ⚠ is the missing half of the drawer's `harsh climate` line), `climate_polar` (-6 °C, still lethal at 1.05 %/turn; **`climate_boreal` at 2 °C LOST its pill when the cold onset moved to 0 °C, and that is the point rather than a regression** — the survival line now lands exactly on the Polar/Boreal climate line, so do not re-cool that fixture to bring the pill back), and the no-pasture glacier (-14 °C, kept because the temperature is what MAKES it a glacier; softening it to a survivable reading would have been a worse lie than the one being fixed). The chapter renders **`tile_panel_lethal_cold`** (`Fair` beside `⚠ Polar · -10.0 °C` in DANGER — it was the defect's own 3.7 °C hex until the onset moved, and **a lethal TEMPERATE tile is no longer a state the game can reach**, so the state demonstrates lethal POLAR ground now), **`tile_panel_lethal_heat`** (the OTHER tail — at 50 °C, hotter than worldgen can produce, because the heat onset is 40 °C and calibrated to the range issue #622 opens up), **`tile_panel_lethal_near_line`**, **`tile_panel_survivable`** (the ABSENCE) and **`tile_panel_lethal_bandless`**. Twenty-four assertions, made on the chip SLOT LIST and the chips' faces, INK and hover rather than on the pixels, because no PNG can prove a missing warning is missing for the right reason (a tooltip does not render into a static capture at all); a frame-less sixth state at −80 °C proves the model's cap is what the rate comes out of (the cold cap only begins to bind at −57.14 °C and clips by hundredths of a percent there, so a fixture at the edge of the future range could not tell a capped rate from an uncapped one). **`tile_panel_lethal_near_line`'s temperature is DERIVED from the published onset** rather than typed: at a literal `5.98` it was stranded 6 ° inside the survivable band by the retune, which would have turned it silently into a second survivable-tile frame. **A seventh, frame-less block asserts the THREE-WAY BRANCH itself** — a hair either side of each onset, a reading between them, and the two tails priced at equal distances to prove their slopes differ — because a chip exercises ONE arm per frame and a single-tail bug would leave every frame above looking correct.
@@ -1154,11 +1155,23 @@ vacuity guard rides between the two switches — the crew dialed to 0 on a band 
 the source, asserting the sheet really does say `Unassign` and really does drop the control, without
 which "not `Unassign`" passes on a sheet that can no longer say it.
 
-**The `Band:` picker is driven with REAL POINTER INPUT** (`_pick_actor_band`: the face, then the popup
-row, through `InputProbe`), the three gotchas `chapters/trade.gd`'s destination pick records —
-`canvas_to_window` for the embedded subwindow, the popup's own `index_pressed` as the witness for a
-derived point, and an `is_instance_valid` guard on the teardown, the pick having freed the popup by
-rebuilding the sheet.
+**The `Band:` picker is driven with REAL POINTER INPUT** (`_pick_actor_band` in `chapters/hunt.gd`:
+the face, then the popup row, through `InputProbe`). `picker.emit_signal("item_selected", 0)` would
+call the connected lambda by hand and leave every step between a click and `on_pick` untested — the
+popup opening, the entry being reachable, and the engine deciding whether a pick is a CHANGE at all.
+An `OptionButton` runs at `ACTION_MODE_BUTTON_PRESS`, so the popup is up before the release exists and
+the two halves are driven apart. **Three things about driving a popup that are not obvious:**
+- **The popup is an EMBEDDED subwindow, and `push_input` un-stretches an event into canvas space
+  before forwarding to one** — so the press goes through `InputProbe.canvas_to_window`. A raw canvas
+  point misses it entirely.
+- **Hover feedback is not available**: `PopupMenu.get_focused_item()` answers `-1` for every pushed
+  motion, so a hover-search cannot find a row. The entry's point is derived from the popup's own rect
+  and item count, and `index_pressed` is LISTENED to so the derivation is CHECKED rather than trusted.
+- **The popup is FREED under the probe** — the pick rebuilds the sheet the picker hangs off — so the
+  teardown is `is_instance_valid`-guarded and the answer is read off a MEMBER. An unguarded
+  `disconnect` raises, which aborts the call, and an aborted GDScript call answers with its return
+  type's default: `0` is a legal entry index, so a "landed on entry 0" claim passes for a helper that
+  never finished.
 
 Sabotage-verified on two DISJOINT mutations: restoring the bare `set_*_band` write fails **eight** —
 the re-seed claims on both webs, reading `got Unassign` and a missing improvement control, i.e. the
@@ -1203,57 +1216,61 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 **Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
 `selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly
-the case the release note at the end of this paragraph exists for. **Sixteen frames and eighty-three `PASS`**
-(`EXPECTED_CHECKPOINTS := 99`) — nine for the shipment itself, then seven for the typed cargo row
-(issue #620): `trade_cargo_typed`, `_typed_invalid`, `_typed_held`, `_typed_cap`, `_max`,
-`_typed_then_stepped`, `_step_clamped`. Plus
-one more in `chapters/event_dock.gd`, where the shipment's `destination=` label swap belongs
-beside the band-label trio it extends rather than in a chapter that instantiates no dock. It
-injects a real `BandCityPanel` docked RIGHT on the PARTIES tab, drives the whole compose act through
-the panel's own controls, and releases the panel and hands the reference band back before it ends —
-so a chapter appended after it starts where every other one does.
+the case the release note at the end of this paragraph exists for. **Seventeen frames and one hundred
+and three `PASS`** (`EXPECTED_CHECKPOINTS := 120`) — nine for the shipment itself, then seven for the
+typed cargo row (issue #620): `trade_cargo_typed`, `_typed_invalid`, `_typed_held`, `_typed_cap`,
+`_max`, `_typed_then_stepped`, `_step_clamped`. Plus one more in `chapters/event_dock.gd`, where the
+shipment's `destination=` label swap belongs beside the band-label trio it extends rather than in a
+chapter that instantiates no dock. It injects a real `BandCityPanel` docked RIGHT on the PARTIES tab,
+drives the whole shipment through the controls a player uses — the Trade verb on the shipper's band
+drawer, the sheet in that drawer, its send arming the destination pick, the click on the map — and
+releases the panel and hands the reference band back before it ends, so a chapter appended after it
+starts where every other one does.
 
-**Every control is driven, not set.** The footer's mission button is pressed (by
-`HudWidgets.MISSION_LAUNCH_META`, never by face), the destination is chosen with REAL POINTER INPUT
-(below), the party is raised through its stepper's `+` reading `PARTY_STEPPER_COUNT_META`
-back on each press, and each cargo row is loaded through the row's OWN handles — repeated presses of
-its `+` (`_load`), an amount TYPED into its field and committed with Enter (`_type_cargo`), or its
-`Max` (`_press_cargo_max`), all three since issue #620 — which is what exercises the clamp to the
-row's ceiling and the per-commit rebuild rather than the members behind them.
+**Every control is driven, not set.** The drawer's Trade verb is pressed (by
+`HudWidgets.VERB_BUTTON_META`, never by face), the send is pressed by `SEND_TRADE_CONFIRM_META`, the
+hover and the click go through `HudLayer.notify_hex_hovered` / `notify_targeting_click` — MapView's
+`tile_hovered` / `targeting_clicked` edges — the party is raised through its
+stepper's `+` reading `PARTY_STEPPER_COUNT_META` back on each press, and each cargo row is loaded
+through the row's OWN handles — repeated presses of its `+` (`_load`), an amount TYPED into its field
+and committed with Enter (`_type_cargo`), or its `Max` (`_press_cargo_max`), all three since issue #620
+— which is what exercises the clamp to the row's ceiling and the per-commit rebuild rather than the
+members behind them.
 
-**THE DESTINATION PICK IS TWO REAL PRESSES, AND IT USED TO BE A FAKED SIGNAL THAT COULD NOT FAIL.**
-`picker.emit_signal("item_selected", 0)` calls the connected lambda by hand, so every step between a
-click and `on_pick` — the popup opening, the entry being reachable, and the engine deciding whether a
-pick is a CHANGE at all — went untested, and the chapter stayed green through a picker that was dead
-in play (`labor-ui.md` → "A PICKER STATES ITS OWN SELECTION"). It now presses the picker's face
-(`InputProbe.press_left` / `release_left`: an `OptionButton` runs at `ACTION_MODE_BUTTON_PRESS`, so the
-popup is up before the release exists and the two halves must be driven apart) and then presses the
-entry, both through `Viewport.push_input`. Four claims ride it, and the sabotage that reverts the fix
-fails three of them plus the whole downstream chain — **twelve in all, and NOT the fourth**: the press
-really does land on entry 0 either way, and what the bug swallows is the pick, which is exactly the
-decomposition those two claims are separated to show.
+**THE DESTINATION IS THE LAST STEP, AND THE CLICK COMMITS** — `trade_verb_row` (the verb row, and where
+the 📦 mark must DRAW), `trade_sheet` (the sheet on the sender's own drawer, no pick armed, no
+destination named on it), `trade_cargo_loaded`, then the send pressed: the pick armed and the send
+drawn armed, and `trade_hover_destination` — the banner over the tied neighbour naming it with its
+REMEMBERED position and the `≈` walk. Over the parked tie the banner gives the parked reason, and a
+click there sends nothing with the pick still armed; the click on the neighbour sends ONE shipment
+with the captured party, closes the sheet, and leaves both the selection and the Band panel on the
+SENDER, and the tie highlight goes with the closed sheet.
 
-**Three things about driving a popup that are not obvious, all measured here:**
-- **The popup is an EMBEDDED subwindow, and `push_input` un-stretches an event into canvas space
-  before forwarding to one** — so the press goes through `InputProbe.canvas_to_window` like every other
-  probe. A raw canvas point misses it entirely.
-- **Hover feedback is not available**: `PopupMenu.get_focused_item()` answers `-1` for every pushed
-  motion (the accessor works — `set_focused_item` round-trips), so the `_find_open_map_point` style of
-  hover-search cannot find a row here. The entry's point is derived from the popup's own rect and item
-  count, and `index_pressed` is LISTENED to so the derivation is CHECKED rather than trusted.
-- **The popup is FREED under the probe** — the pick runs `on_pick` → `rerender()` → `queue_free` on the
-  row the picker hangs off — so its teardown is `is_instance_valid`-guarded and the answer is read off a
-  MEMBER. An unguarded `disconnect` raises, which aborts the call, and an aborted GDScript call answers
-  with its return type's default: `0` is a legal entry index, so the "landed on entry 0" claim passed
-  for a helper that never finished. That is `_instantiate_chapters`' own lesson met a second time.
-- **A lambda captures a local by VALUE**, so a witness assigning to a `var` outside it reports nothing
-  ever happened. It cost a run.
+**THE DESTINATION PRE-SELECTED ON THE MAP** — the sheet re-opened and re-loaded: its highlight rings
+the live tie's hex and never the parked one (`TARGETING_HIGHLIGHT_TILES_KEY` read off the descriptor)
+and is not targeting; a click on the ringed band sets the destination — `trade_sheet_destination`: the
+`To` row naming it, the REMEMBERED sighting under it — sending nothing and moving neither the
+selection nor the panel's subject. The row's `✕` (`HudWidgets.FIELD_CLEAR_META`) clears it, a second
+click sets it again, and the Send then sends ONE shipment to it with no pick and closes the sheet.
+
+**THE RING FOLLOWS THE TIED BAND.** The sheet is re-opened, and a new roster moves the neighbour to
+`NEIGHBOUR_MOVED_TO`: the last descriptor `targeting_changed` handed MapView must ring the NEW hex and
+not the old one, and a click on the new hex must pre-select it. Judged on the emitted descriptor
+because that is the set MapView's click capture reads. **Sabotage-verified** by making
+`TargetingController.refresh_live_targets` a no-op and dropping `set_preselect`'s changed-set check:
+EXIT=1, exactly the ring claim fails (it still rings the old hex); the click claim stays green,
+because the harness hands the click straight to `_try_preselect`, which resolves live. The sheet is
+closed and the roster restored, then re-opened and re-loaded for the cargo states that follow.
+
+**A lambda captures a local by VALUE**, so a witness assigning to a `var` outside it reports nothing
+ever happened; the chapter's witnesses are containers.
 
 **The claims that only a driven run can make:**
 
 | claim | why nothing else says it |
 |---|---|
-| the picker lists BOTH ties, the parked one disabled with its reason in its own label | a picker that filtered parked ties renders a shorter list that looks perfectly correct |
+| a click on the PARKED tie's last-seen tile sends nothing and the pick stays armed | a pick that accepted any tied band would send a shipment the server refuses |
+| the committing click moves neither the selection nor the panel's subject | a click that also selected would put the destination's drawer under a sheet it no longer shows |
 | the destination's position is worded as REMEMBERED, and the walk wears `≈` | the arc's keystone; a live-position render is indistinguishable in a screenshot |
 | a material row names the pile's RATING | the fixture holds TWO `hide` piles at different ratings, which is the only shape that can fail |
 | mass and cap composed from the FIXTURE's side | the harness and the sheet arrive at one number from opposite ends |
@@ -1265,11 +1282,10 @@ decomposition those two claims are separated to show.
 | the destination `BandId` never appears on screen | the id is distinctive (`BandFx.FIXTURE_BAND_ID_OFFSET + entity`), so a leak has something to find |
 | the `Bound for` row names the band anyway | the fixture publishes `expeditionDestinationName` as `""` — the LIVE shape, bands having no names — so the row can only read `Band 2` by joining the roster on the id beside it |
 
-**`trade_footer` exists for the GLYPH, and that is not decoration.** A mark missing from this
+**`trade_verb_row` carries the GLYPH check, and that is not decoration.** A mark missing from this
 client's fallback font renders as an INVISIBLE GAP — no tofu box, nothing an assertion can see — and
 that is exactly what 🤝 did on the Food breakdown's transfer rows before it was replaced. The frame
-is the only thing that catches it, and it caught the fifth footer button being clipped off the edge
-of a 354px column in the same pass.
+is the only thing that catches it.
 
 **The party fixture carries BOTH carry-weight levers** (`expedition_trade_material_carry_weight`
 and `expedition_trade_fodder_carry_weight`), which the native decoder echoes onto every cohort.
@@ -2835,8 +2851,7 @@ fixture is a DOMESTICATED herd and a different species** (`Red Deer`): it keeps 
 terms, not its name.
 
 Sabotage-verified two ways, DISJOINT: hard-wiring the ARMED remedy fails the two unarmed claims,
-hard-wiring the UNARMED one fails the three armed claims (and `band_panel_preview`, whose denial sheet
-composes `none` and therefore pins the unarmed arm on its own surface).
+hard-wiring the UNARMED one fails the three armed claims.
 
 ## The coverage blend, and the table that IS the regression (`chapters/compose_rungs.gd`)
 
@@ -2993,9 +3008,10 @@ byte-identical**, that frame the only mover.
 
 ## The `workings` chapter, reworked to the three surfaces (issue #650)
 
-**Nineteen frames and one hundred and eighteen checkpoints**, `EXPECTED_CHECKPOINTS` **118** —
-RE-MEASURED by raising the const to an impossible number and reading `reached` back, as this file's
-own rule says. **The const in `chapters/workings.gd` is the authority and this paragraph is the
+**Twenty-three frames and one hundred and fifty-nine checkpoints**, `EXPECTED_CHECKPOINTS` **159**
+— RE-MEASURED by raising the const to an impossible number and reading `reached` back, as this
+file's own rule says (the declared 118 had drifted to a real 121 before the first take-kit state
+landed). **The const in `chapters/workings.gd` is the authority and this paragraph is the
 description**: a figure here that disagrees with it is this file being stale, never a licence to lower
 the const to match. The chapter has been re-measured that way repeatedly — a declared 43 against a
 real 47, then a declared 91 against a real 95 — which is why a DELTA is never applied to the figure
@@ -3005,15 +3021,86 @@ written down: a delta on a stale count sets a floor the chapter can fall through
 **FOUR FRAMES WERE RETIRED WITH THE `Workings ▸` POPUP** — `workings_two_seams`, `workings_over_cut`,
 `workings_runway` and `workings_idle` — and their claims did not go with them: they are re-made
 against the tile card's rows, the two compose sheets and the ladder's producer, which is where the
-branch says those things now. `workings_unopened` kept its name and its subject. **The chapter's whole frame set is nineteen** —
+branch says those things now. `workings_unopened` kept its name and its subject. **The chapter's whole frame set is twenty-three** —
 `workings_tile_card` / `workings_payoff_rows` / `workings_forestry_sheet` /
 `workings_extraction_sheet` / `workings_unopened`, the two ORDER frames
 (`workings_road_last` / `workings_road_remembered`), `workings_worked_buttons` and
 `workings_just_assigned` below, the THREE `workings_floor_*` frames the preset loop emits
 (`SourceForecast.FLOOR_PRESETS`, one frame per preset) with `workings_floor_held` and
 `workings_floor_stripped` beside them, `workings_fresh_runway`, `workings_quarry_reach`,
-`workings_far_party` / `workings_far_party_stone`, and the pair `workings_tile_crews` /
-`workings_tile_crews_other_band`.
+`workings_far_party` / `workings_far_party_stone`, the pair `workings_tile_crews` /
+`workings_tile_crews_other_band`, and
+the take-kit pair `workings_forestry_kit` / `workings_extraction_kit` and the crew-curve pair
+`workings_forestry_kit_curve` / `workings_forestry_kit_flagged_out_of_range` last (issue #663).
+
+**THE TAKE-KIT PAIR PUSHES A ROSTER OF ITS OWN AND HANDS THE PREVIOUS ONE BACK.** The shared
+`BandFx.kit_roster_fixture()` carries no `extract` kit and its `none` does not list the job, so every
+deposit sheet earlier in the walk renders with no kit row; the states build the Woodcutting and Stone
+kits plus an extract-listing `none` locally, which keeps those frames where they were. `_wood_working`
+/ `_stone_working` publish `default_kit_id` (`woodcutting` / `stonework`) as `dict/deposits.rs` does.
+
+- **A wood and a rock on ONE hex are the claim**: each sheet lists EXACTLY its own kit and `No kit`
+  — the roster carries both take kits, so the other branch's being ABSENT is asserted by name beside
+  the count — and marks exactly ONE entry `(default)`, its OWN working's kit. A job-wide default
+  would mark the same entry on both.
+- **The commit's line is asserted for `kit woodcutting`, `kit none` and `kit stonework`** — `none`
+  being the one pick an omitted token would get wrong, an absent token meaning the working's derived
+  kit.
+- ⛔ **THE ROCK IS OPENED STRAIGHT OVER THE WOOD'S OPEN SHEET, with `woodcutting` composed** — asserted as
+  a precondition. A commit CLOSES the sheet and a close clears the deposit source, so a rock opened
+  after a close would drop the pick for that reason and the claim would say nothing about the
+  source-change reset. The same fact is why the `none` pick is written AFTER the sheet re-opens: a
+  kit written before the open is dropped by the open.
+- The pick itself is written through `ComposeState.set_deposit_kit_id` and the sheet re-opened, since
+  the claim is about what the commit carries rather than about the popup; the pending entry each
+  press writes is rolled back through `HudLayer.drop_pending_assign`.
+- **Sabotage-verified twice, disjointly**: `JOB_EXTRACT` dropped from `SOURCE_DEFAULT_KIT_JOBS` fails
+  both default-mark claims and the rock's opening/commit (4); the source-change reset removed fails
+  the precondition and the rock's opening/commit (3), reading `No kit` where the rock's kit belongs.
+
+**THE DEPOSIT CREW CURVE HAS A STAND-IN SERVER** (`fixtures_forecast.gd` →
+`deposit_crew_take_answer`). A working that authors a reply under `DEPOSIT_CREW_TAKE_KEY` is answered
+with it verbatim; every other working gets a BARE curve — `min(perWorkerBiomass × w, the room above
+the floor)`, every hand armed, no next rung — which is why the earlier workings frames kept their
+NEXT TURN figures and render no deal row. Ground holding no such working is refused
+`unknown_deposit`.
+
+- **`workings_forestry_kit_curve` reads all three gear-bearing figures off the authored row at the
+  stepper's crew** — takes `[2.35, 5.40, 5.40, 6.95]`, armed `[1, 1, 1, 2]`, next-rung takes
+  `[2.55, 5.20, 7.50, 9.85]`, none of which the bare rate (`2.0 × w`) or the catalog deal
+  (`2.0 × w`) lands on. At crew 3: NEXT TURN `5.40` (not `6.00`), `1 of 3 Woodcutting kits
+  available`, `ONCE COPPICED 7.5` (not `6`). The stepper is then moved to 2 and all three are
+  asserted against row 2, which is what says the sheet reads the row AT the stepper rather than one
+  fixed row; `none` is then picked and the available line must be silent.
+- ⛔ **THE CREW-DRAW READINGS ARE ASSERTED AGAINST AN ORACLE, AT CREW 3**
+  (`_assert_draw_reads_the_curve`). The chapter walks the stock with `SourceForecast.project_stock` at
+  the row's `5.40` and at the bare `6.00`, and the verdict must carry the first walk's lead
+  (`settles at 56%`) and not the second's (`settles at 51%`). The hold pill must equal the smallest
+  curve crew whose take covers the growth at the floor (2), not the bare `ceil(growth / 2.0)` (3). Each
+  pair carries a precondition that the two readings DIFFER, and **the takes are shaped for that**: row
+  2 repeats row 3's `5.40`, because the growth at the floor sits between `4.0` and `5.4`, so a curve
+  rising by `2.0` a hand would name the same holding crew as the bare rate.
+- ⛔ **THE SEAM IS RESET BEFORE THE STATE**, because the key is band · working · kit · floor · gear
+  and says nothing about the fixture: the earlier wood states hold the BARE answer for the same key.
+  The PENDING claim is read with no `await` after the open, the stand-in answering deferred as the
+  socket does — and on a CLOSED-then-settled sheet, since an open over an open sheet leaves the
+  previous render's `queue_free`d nodes in the tree for the rest of the frame and the claim would
+  read those.
+- **`workings_forestry_kit_flagged_out_of_range` is `in_range: false` on the same authored rows**, and
+  the claim is that the flag HIDES NOTHING: the curve row at the stepper's crew is still on the sheet,
+  the take equals the in-range frame's, and the commit is live. The server's curve no longer zeroes a
+  far crew, so a client reading the flag as "no take" is the defect this frame exists to catch.
+- **Sabotage-verified** by feeding `curve_chart_model`'s walk the bare `perWorkerBiomass × crew`:
+  exactly ONE claim fails, `…the verdict at 3 is the curve's draw, not the bare rate's`, reading
+  `settles at 51%` against the wanted `56%`, `EXIT=1`. The hold pill stays green under it, correctly —
+  the pills come from `curve_crew_reaching`, not from the walk.
+
+**THE FAR-PARTY PAIR RUNS ON THE TAKE-KIT ROSTER** (`_deposit_kit_roster`) with the job-level
+`defaultExtractKitId` pushed as `none`, so its kit claim is the working-first precedence: the wood's
+picker lists `Woodcutting kit` and not the Stone kit, and opens on `woodcutting` rather than the job's
+`none`. The far wood authors a curve (`_authored_curve(true)`), and beneath the rate-home headline the
+sheet's `DEPOSIT_TAKE_AT_SOURCE_META` line must read the curve row's take at the stepper's crew by
+equality — *Cut at the working: 2.35 wood a turn*.
 
 ### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
 
@@ -3298,7 +3385,6 @@ subtracted.
   `herd_hunt_far_party_small`; every section-equality claim stays green, which is why the claim reads
   every label rather than the section.
 
-**A clean run is 443 frames / 2300 `PASS`, exit 0 — RE-MEASURED windowed on the merge of the
-work-party branch with `main`**, not summed from either side; it read 439 / 2257 on the work-party
-branch alone.
+**A clean run is 445 frames / 2324 `PASS`, exit 0 — RE-MEASURED windowed** on the band-verbs branch
+merged with the work party, not summed from either side.
 

@@ -13,10 +13,11 @@
 //!
 //! Which connection it holds open is decided by [`names_a_faction`]:
 //!
-//! - **The three faction-bearing questions** (`HuntTripForecast`, `DenialRaidForecast`,
-//!   `HuntCrewTake`) go out on the **seated command link** (`bridge/command_link.rs`). Each names a
-//!   `faction_id` and is answered with that faction's private state — a band's live equipment wear,
-//!   its idle workers, its take curve — so asking from an unseated connection is the same disclosure
+//! - **The faction-bearing questions** (`HuntTripForecast`, `DenialRaidForecast`, `HuntCrewTake`,
+//!   `WorkPartyForecast`, `DepositCrewTake`) go out on the **seated command link**
+//!   (`bridge/command_link.rs`). Each names a `faction_id` and is answered with that faction's private
+//!   state — a band's live equipment wear, its idle workers, its take curve — so asking from an
+//!   unseated connection is the same disclosure
 //!   the seat gate closes on commands, one channel over. The link writes it and reads the answer back
 //!   asynchronously, so nothing about this queues a seat's orders behind a forecast.
 //! - **The two that name no faction** (`ListSaves`, `FactionCapacity`) and the three save verbs keep
@@ -46,8 +47,9 @@
 use godot::prelude::*;
 use sim_runtime::{
     CommandEncodeError, CommandEnvelope, CommandPayload, DenialRaidForecastQuery,
-    FactionCapacityQuery, HuntCrewTakeQuery, HuntTripForecastQuery, QueryPayload, QueryReply,
-    QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartySource, MAX_PROTO_FRAME,
+    DepositCrewTakeQuery, FactionCapacityQuery, HuntCrewTakeQuery, HuntTripForecastQuery,
+    QueryPayload, QueryReply, QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartySource,
+    MAX_PROTO_FRAME,
 };
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -99,6 +101,12 @@ pub(crate) const QUERY_KIND_HUNT_CREW_TAKE: &str = "hunt_crew_take";
 /// band's apron (`core_sim::forecast_query::answer_work_party_forecast`). One kind for every web; the
 /// ask's `source_kind` says which, and the answer comes back under this same kind.
 pub(crate) const QUERY_KIND_WORK_PARTY: &str = "work_party_forecast";
+/// **The deposit compose sheet's question** (#663) — *"what does a crew of each size, carrying this
+/// kit, cut off this working this turn, how many of them hold the held rung's tool, and what would
+/// they cut once the working stands one rung up?"* One row per crew `1..=max_workers`, so the whole
+/// stepper is answered by one round trip, exactly as the hunt curve is. The working is keyed by its
+/// tile AND its material, because one hex can hold two.
+pub(crate) const QUERY_KIND_DEPOSIT_CREW_TAKE: &str = "deposit_crew_take";
 /// The three values of a work-party ask's `source_kind`, spelled as `ForecastQuery.gd` spells them.
 /// An ask naming none of them is REFUSED rather than defaulted to one web: a forecast for the wrong
 /// source is worse than no forecast.
@@ -252,6 +260,16 @@ pub(crate) fn dispatch(
             floor: dict_f32(ask, "floor"),
             max_workers: dict_u32(ask, "max_workers"),
         }),
+        QUERY_KIND_DEPOSIT_CREW_TAKE => QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
+            faction_id: dict_u32(ask, "faction_id"),
+            band_id: dict_u64(ask, "band_id"),
+            x: dict_u32(ask, "x"),
+            y: dict_u32(ask, "y"),
+            material: dict_string(ask, "material"),
+            kit_id: dict_string(ask, "kit_id"),
+            floor: dict_f32(ask, "floor"),
+            max_workers: dict_u32(ask, "max_workers"),
+        }),
         QUERY_KIND_WORK_PARTY => {
             let source = match dict_string(ask, "source_kind").as_str() {
                 WORK_PARTY_SOURCE_HUNT => WorkPartySource::Hunt {
@@ -336,7 +354,8 @@ fn names_a_faction(query: &QueryPayload) -> bool {
         QueryPayload::HuntTripForecast(_)
         | QueryPayload::DenialRaidForecast(_)
         | QueryPayload::HuntCrewTake(_)
-        | QueryPayload::WorkPartyForecast(_) => true,
+        | QueryPayload::WorkPartyForecast(_)
+        | QueryPayload::DepositCrewTake(_) => true,
         // The save headers on disk and the roster ceiling for a grid size. Neither reads a faction's
         // state, and both are asked before a world — and therefore before a seat — exists.
         QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) => false,
@@ -546,6 +565,22 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
             let _ = dict.insert("armed_crew", i64::from(reply.armed_crew));
             let _ = dict.insert("weapon_item_id", reply.weapon_item_id.as_str());
         }
+        Ok(QueryReply::DepositCrewTake(reply)) => {
+            let _ = dict.insert("ok", true);
+            let _ = dict.insert("kind", QUERY_KIND_DEPOSIT_CREW_TAKE);
+            let mut per_crew = VarArray::new();
+            for row in &reply.per_crew {
+                per_crew.push(&deposit_crew_row_to_dict(row).to_variant());
+            }
+            let _ = dict.insert("per_crew", &per_crew);
+            // The two rung keys ride beside the rows because the rows cannot say them: `next_rung`
+            // empty is the top of the branch, where the sheet states no "once raised" figure at all.
+            let _ = dict.insert("held_rung", reply.held_rung.as_str());
+            let _ = dict.insert("next_rung", reply.next_rung.as_str());
+            // `false` past the band's work range: the turn abandons that row, so every take is `0`
+            // and the sheet states the reason rather than a zero.
+            let _ = dict.insert("in_range", reply.in_range);
+        }
         Ok(QueryReply::WorkPartyForecast(reply)) => {
             let _ = dict.insert("ok", true);
             let _ = dict.insert("kind", QUERY_KIND_WORK_PARTY);
@@ -696,6 +731,19 @@ fn crew_row_to_dict(row: &sim_runtime::HuntCrewTakeRow) -> VarDictionary {
     let _ = dict.insert("animals_low", f64::from(row.animals_low));
     let _ = dict.insert("animals_likely", f64::from(row.animals_likely));
     let _ = dict.insert("animals_high", f64::from(row.animals_high));
+    dict
+}
+
+/// One crew size on the deposit sheet — **whole-crew figures, never per-worker rates**. `take` is this
+/// turn's cut at the held rung (capped by the reach at the floor); `armed_workers` is how many of the
+/// crew hold the tool the held rung uses, fractional because the band-wide settlement divides a tier
+/// proportionally; `next_rung_take` is the cut once the working stands one rung up, before the reach.
+fn deposit_crew_row_to_dict(row: &sim_runtime::DepositCrewTakeRow) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    let _ = dict.insert("workers", i64::from(row.workers));
+    let _ = dict.insert("take", f64::from(row.take));
+    let _ = dict.insert("armed_workers", f64::from(row.armed_workers));
+    let _ = dict.insert("next_rung_take", f64::from(row.next_rung_take));
     dict
 }
 
@@ -856,6 +904,16 @@ mod tests {
                 kit_id: String::new(),
                 workers: 0,
                 floor: 0.0,
+            }),
+            QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
+                faction_id: 0,
+                band_id: 1,
+                x: 0,
+                y: 0,
+                material: String::new(),
+                kit_id: String::new(),
+                floor: 0.0,
+                max_workers: 0,
             }),
         ] {
             assert!(names_a_faction(&query));

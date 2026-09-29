@@ -308,7 +308,8 @@ you walked away from is a quarry you lost"* — the row lapsed the turn the band
 for every source: a working past the apron posts a party that walks each full pack home, so a band
 that moves on keeps its quarry and pays the round trip on every load. What distance costs is the
 material that arrives home per turn, and a road between camp and working buys it back. A porter
-carries the hunt's own carry over the material's `weight`, so a sled matters on a far quarry and
+carries the hunt's own carry over the material's `weight`, on whatever the row claims at its held
+rung — the sled on a floor rung, bare hands where the row claims the axe or the wedges — and
 nothing about the rule knows wood from stone (`.claude/rules/core_sim/work-party.md` → "The deposit
 web: the cargo is the material").
 
@@ -404,12 +405,24 @@ not a blocker: the deposit works whatever the metal is for.
   free. Recorded as an item rather than a bare decision because it makes stone tools cost more
   **labor** than bone tools while costing less **material**, which is a gameplay claim rather than a
   tuning detail. **If it plays tedious the fix is a bigger yield per turn, never a free mechanism.**
-- **Forestry's kit does not exist, and the reason it could not be written is gone.** The objection
-  was that the natural tool is an axe and, with stone tools out of scope, it would have to be
-  bone-hafted — *"which sits oddly"*. Stone tools shipped (§8), so a knapped axe is now an ordinary
-  roster row: an item with a `flint` tier and a recipe reading stone's `hardness`, beside the three
-  that already exist. **It is still not written** — forestry ships kitless, so the branch has no gear
-  decision — and what it now waits on is only somebody cutting the item, not a missing material.
+- **Forestry's kit — answered (#663).** The objection was that the natural tool is an axe and, with
+  stone tools out of scope, it would have to be bone-hafted — *"which sits oddly"*. Stone tools
+  shipped (§8), so the axe shipped as an ordinary roster row: **`axe`, one `flint` tier and no bone
+  tier**, knapped from stone read on `hardness`. It declares a new stat, **`deposit_take`** — extra
+  units one equipped worker takes per turn, **added** to the rung's bare `yield_per_worker_turn` and
+  never replacing it — on **`forestry:felling` and `forestry:coppice` only**. Beside it ship
+  **quarrying `wedges`** (`flint`, `deposit_take` on `extraction:quarry` only). **The floors' tool is
+  the sled**: its plain tier gains `deposit_take` +0.3 on `forestry:deadfall` and +0.4 on
+  `extraction:gathering` — hauling fallen wood and loose stone home is what a sled is for — and it
+  costs hide and fibre and no wood, so §4d holds: the floors stay bare-workable and the sled is only
+  an addition. **One kit per branch, one tool per rung**: `woodcutting` (sled + axe) and `stonework`
+  (sled + wedges), because the kit is stored on the row at assignment and a working climbs, so the
+  kit must carry every rung's tool; what a crew holds is read at the rung the working holds, so the
+  take, the wear and the published complete-kit count narrow the kit to that rung's tool. A
+  working's default kit is **derived** per branch (the kit serving the most rungs of it) rather than
+  authored; `default_kits.extract` is `none`. Each tool is scoped by branch and rung so it adds
+  nothing — and wears nothing — off its own rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
+  working and the keepers holding one are geared by it through the rung requirement.
 - **The road tools' pacing moved a long way and nobody has played it.** `earthmoving` and
   `stone_dressing` cost 2 **stone** instead of 2 bone since §8's change: about 5 worker-turns on a
   scatter against about 22 turns of a whole band's hunting. `recipes.json`'s `_comment_road_tools`

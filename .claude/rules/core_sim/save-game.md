@@ -114,6 +114,12 @@ only a load has:
   wrong for the two rows `carry_runtime_owned_fields` owns (`config-loading.md` → "A `load_game`
   needs the same two"). Left uncarried, the player's fog switch comes back on in the reveal frame.
 
+**The header's grid and preset are read off the live `SimulationConfig`** (`capture_header`), and
+`apply_save` sizes the power topology from them against the restored tile count — so the config
+must describe the world that exists at save time. A `reload_config` keeps them the world's for that
+reason (`config-loading.md` → "A simulation-config reload retunes the world; it never re-describes
+it"); a header that recorded the file's grid instead made the load index past its own tiles.
+
 ### Publishing a loaded world needs a THIRD kind of capture
 
 A world that arrives already resolved is neither of the two cases the snapshot layer had, and both

@@ -1179,6 +1179,7 @@ fn create_deposits<'a>(
             let build_blocked_reason = builder.create_string(&deposit.build_blocked_reason);
             let build_kit_id = builder.create_string(&deposit.build_kit_id);
             let upkeep_kit_id = builder.create_string(&deposit.upkeep_kit_id);
+            let default_kit_id = builder.create_string(&deposit.default_kit_id);
             // **Absent, not empty, where the sim published no curve** — `regrowthSamples`' own rule
             // one table over: an empty vector is *"no curve was sent"* and a client blanks its chart
             // on it, where a quarry's all-zero curve is the live reading *"this does not grow"*.
@@ -1219,6 +1220,7 @@ fn create_deposits<'a>(
                     buildKitId: Some(build_kit_id),
                     upkeepKitId: Some(upkeep_kit_id),
                     upkeepKitNamed: deposit.upkeep_kit_named,
+                    defaultKitId: Some(default_kit_id),
                 },
             )
         })
@@ -1260,6 +1262,7 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
         build_kit_id: text(deposit.buildKitId()),
         upkeep_kit_id: text(deposit.upkeepKitId()),
         upkeep_kit_named: deposit.upkeepKitNamed(),
+        default_kit_id: text(deposit.defaultKitId()),
     }
 }
 

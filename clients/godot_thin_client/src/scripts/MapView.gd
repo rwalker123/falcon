@@ -34,6 +34,12 @@ signal herd_selected(herd: Dictionary)
 # double-click is now just two selecting clicks. See `.claude/rules/client/map-renderers.md` →
 # "RETIRED — the double-click quick-hunt".
 signal tile_hovered(info: Dictionary)
+## **A LEFT CLICK WHILE A COMMAND IS TARGETING IS THE PICK, AND IT SELECTS NOTHING** (issue #529). A band
+## verb's target is the last step of its sheet and the click commits the order, so the click must not
+## move the selection — or the panel's subject — off the band whose sheet armed it. Emitted INSTEAD of
+## the selecting path (`handle_hex_click`), with the hex's visibility-redacted `tile_info`; `Main`
+## relays it to `HudLayer.notify_targeting_click`.
+signal targeting_clicked(info: Dictionary)
 signal selection_cleared()
 ## The select-then-cycle click reached the LAND stop of an OCCUPIED hex. Carries no payload: the
 ## `_emit_tile_selection` one call earlier in the same click already handed the HUD this hex's
@@ -399,10 +405,6 @@ const FOOD_HARVEST_RING_WIDTH := 2.0
 # Migration arrow: thinner, and only on the hovered/selected herd tile to cut clutter.
 const HERD_MIGRATION_ARROW_COLOR := Color(0.98, 0.58, 0.18, 0.8)
 const HERD_MIGRATION_ARROW_WIDTH := 1.6
-# Migration TRAIL: the same amber, dimmer than the arrow — where the herd has BEEN reads under
-# where it is going.
-const HERD_TRAIL_COLOR := Color(0.97, 0.69, 0.25, 0.6)
-const HERD_TRAIL_WIDTH := 2.0
 
 # Count / overflow badge (shared dark pill: primary `×N`, secondary `+N`).
 const MARKER_BADGE_BG := Color(0.05, 0.06, 0.08, 0.9)
@@ -671,6 +673,11 @@ const EXPEDITION_DISC_ALPHA := 0.55              # dark backing disc (glyph legi
 const EXPEDITION_RING_FACTOR := 1.02             # faction-tinted outer ring radius, of marker radius
 const EXPEDITION_RING_WIDTH := 3.0
 const EXPEDITION_GLYPH_SIZE_FACTOR := 1.15       # glyph size, of marker radius
+# The mission ART's box (`ExpeditionSprites`), of marker radius, per side half: the keyed PNGs carry
+# their own padding inside the 256 frame, so a box a little under the ring's diameter lands the
+# outlined subject inside the ring — the glyph factor would overrun it.
+const EXPEDITION_SPRITE_SIZE_FACTOR := 0.95
+const EXPEDITION_SPRITE_MIN_SIZE := 12.0         # px — the glyph path's own floor
 const EXPEDITION_GLYPH_COLOR := Color(0.96, 0.97, 0.92, 1.0)
 # Awaiting-orders idle indicator: a pulsing amber (WARN) ring signalling the party has reached its
 # objective and needs a command. `expeditionPhase == "awaiting"` drives it; the pulse is animated
@@ -688,12 +695,12 @@ const EXPEDITION_HUNT_MISSION := "hunt"
 const EXPEDITION_HUNT_GLYPH := "🏹"              # bow motif = a hunting party following game
 # DENIAL raid (docs/plan_denial_raid.md) — a third mission, and a third marker: it engages like a hunt
 # party but brings nothing home, so wearing the bow would read as a hunt on the map. 💀 is the mark it
-# wears everywhere else (the footer button, the parties row), so the three surfaces agree.
+# wears everywhere else (the Deny verb, the parties row), so the three surfaces agree.
 const EXPEDITION_DENY_MISSION := "deny"
 const EXPEDITION_DENY_GLYPH := "💀"
 # TRADE shipment (arc #527) — a fourth mission and a fourth marker. It carries goods to another band
 # and comes home empty, so neither the bow nor the skull says what it is: 📦 is the mark it wears on
-# its footer button and its parties row too, so the three surfaces agree. Its phase decorations stay
+# its Trade verb and its parties row too, so the three surfaces agree. Its phase decorations stay
 # OFF (`is_hunt` gates those) — the green pip is a HAUL cue, and a shipment's haul is going the other
 # way.
 const EXPEDITION_TRADE_MISSION := "trade"
@@ -903,7 +910,6 @@ var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_tag_labels: Dictionary = {}
 var units: Array = []
 var herds: Array = []
-var herd_trails: Dictionary = {}
 var food_sites: Array = []
 var food_site_lookup: Dictionary = {}
 # Wondrous Sites the player faction has discovered (per-faction snapshot field). Each entry:
@@ -2437,6 +2443,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			var offset := _point_to_offset(local_position)
 			var col: int = offset.x
 			var row: int = offset.y
+			if targeting_click_captures(col, row):
+				_emit_targeting_click(col, row)
+				_mark_input_handled()
+				return
 			handle_hex_click(col, row, mouse_event.button_index)
 			# ⛔ **NOTHING READS `mouse_event.double_click` HERE ANY MORE, and the click above is the
 			# whole handler.** The retired branch emitted `herd_quick_hunt_requested` for a herd under
@@ -2499,9 +2509,6 @@ func set_labor_pending(pending: Dictionary) -> void:
 ## reload. Everything `display_snapshot` clears-and-refills per snapshot heals itself and is
 ## deliberately absent here; what is listed below is the remainder, audited case by case:
 ##
-##   • `herd_trails` — APPENDED per herd id and pruned only when an id is ABSENT from the snapshot,
-##     so a herd id the new world happens to reuse inherits the old world's path and its trail leaps
-##     across the map. This is the cache that made the bug visible.
 ##   • `culture_layer_map` — MERGED by layer id, erased only on an explicit `culture_layer_removed`,
 ##     so a layer id the new world reuses shows the old world's layer.
 ##   • the selection triplet + `cycle_index` — entity ids / a herd id / a tile belonging to the old
@@ -2532,7 +2539,6 @@ func reset_world_state() -> void:
 	_ready_for_improvement = {}
 	_ready_for_improvement_knowledge = {}
 	_reset_deferred_overlays()
-	herd_trails.clear()
 	# The roads of a world we are about to stop showing. Both halves, together: the lookup holds the
 	# same road dicts the array does, so clearing one alone would leave a hover answering off a world
 	# that is gone.
@@ -2595,15 +2601,15 @@ func _wrapped_col_delta(from_col: int, to_col: int) -> int:
 			d += grid_width
 	return d
 
-## A connected tile path (a herd's migration trail, an order route) unwrapped into ONE continuous
+## A connected tile path (an order route, a crisis annotation) unwrapped into ONE continuous
 ## column frame, so a polyline through it follows the seam-crossing path that was actually walked
 ## instead of shooting the long way back across the whole map. `tiles` holds DATA columns — what a
-## snapshot publishes, so a herd stepping over the seam records `95` then `0`, and a raw
+## snapshot publishes, so a path stepping over the seam records `95` then `0`, and a raw
 ## `_hex_center` per point draws a segment the full width of the map at nearly constant row.
 ##
 ## The frame is anchored on the LAST tile via
-## `_band_effective_col` (the copy `_hex_center_wrapped` puts a MARKER on, so a trail's head lands
-## on its herd) and every earlier step is placed by the SHORTEST wrapped delta, which is at most
+## `_band_effective_col` (the copy `_hex_center_wrapped` puts a MARKER on, so a path's last tile lands
+## where a marker on that tile would) and every earlier step is placed by the SHORTEST wrapped delta, which is at most
 ## half a map width — so no segment CAN span the map and this needs none of the
 ## `0.4 * last_map_size.x` skip that the DISCONNECTED links use (supply links, the migration arrow,
 ## the band task arrow). A path that genuinely circles the world draws longer than one map width,
@@ -3075,21 +3081,10 @@ func _rebuild_herd_markers(snapshot: Dictionary) -> void:
 	herds = []
 	var herd_variant: Variant = snapshot.get("herds", [])
 	if not (herd_variant is Array):
-		herd_trails.clear()
 		return
-	var active_ids := {}
 	for entry in herd_variant:
 		if entry is Dictionary:
-			var herd_dict: Dictionary = (entry as Dictionary).duplicate(true)
-			herds.append(herd_dict)
-			var herd_id := String(herd_dict.get("id", ""))
-			if herd_id != "":
-				active_ids[herd_id] = true
-				_update_herd_trail(herd_id, herd_dict)
-	var stale_ids := herd_trails.keys()
-	for herd_id in stale_ids:
-		if not active_ids.has(herd_id):
-			herd_trails.erase(herd_id)
+			herds.append((entry as Dictionary).duplicate(true))
 
 ## Select a subject chosen from the HUD selection list (no hex click). `kind` is
 ## "unit" (id = entity_id int), "herd" (id = herd_id String) or **"land"** (no id — the tile
@@ -3280,41 +3275,6 @@ func _handle_entity_selection(col: int, row: int, occupants: Array, occupant_ind
 		# falls back to (refresh_selection_payload → {"kind": "tile"}, Hud.clear_selection → select_land).
 		queue_redraw()
 
-func _update_herd_trail(herd_id: String, herd: Dictionary) -> void:
-	if herd_id == "":
-		return
-	var x := int(herd.get("x", -1))
-	var y := int(herd.get("y", -1))
-	if x < 0 or y < 0:
-		return
-	var current := Vector2i(x, y)
-	var trail: Array = herd_trails.get(herd_id, [])
-	if trail.is_empty() or trail[trail.size() - 1] != current:
-		trail.append(current)
-	var max_len := int(herd.get("route_length", trail.size()))
-	if max_len > 0:
-		while trail.size() > max_len:
-			trail.remove_at(0)
-	herd_trails[herd_id] = trail
-
-func _draw_herd_trail(herd_id: String, radius: float, origin: Vector2) -> void:
-	if herd_id == "":
-		return
-	if not herd_trails.has(herd_id):
-		return
-	var trail: Array = herd_trails[herd_id]
-	if trail.size() < 2:
-		return
-	var tiles: Array = []
-	for tile in trail:
-		if tile is Vector2i:
-			tiles.append(tile)
-	if tiles.size() < 2:
-		return
-	# The trail holds DATA columns, so it MUST be unwrapped into one frame before it is connected —
-	# see `_unwrapped_path_points`.
-	draw_polyline(_unwrapped_path_points(tiles, radius, origin), HERD_TRAIL_COLOR, HERD_TRAIL_WIDTH)
-
 func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8.0) -> void:
 	var direction := end - start
 	if direction.length() <= 0.1:
@@ -3327,6 +3287,22 @@ func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8
 	var right := base_point - ortho * (size * 0.5)
 	var pts := PackedVector2Array([tip, left, right])
 	draw_polygon(pts, PackedColorArray([color, color, color]))
+
+## **DOES A LEFT CLICK ON (col, row) GO TO `targeting_clicked` RATHER THAN SELECT?** Every click while a
+## command is targeting; and, under the PASSIVE highlight an open Deny or Trade sheet draws, a click on
+## a highlighted target only — it pre-selects the sheet's target, and every other click selects as
+## usual.
+func targeting_click_captures(col: int, row: int) -> bool:
+	if _annotations.is_targeting_active():
+		return true
+	return _annotations.is_passive_highlight() and _annotations.highlighted_at(col, row)
+
+## The targeting twin of `_emit_tile_selection`: the same visibility-redacted `tile_info`, and NO
+## `selected_tile` write — see `targeting_clicked`.
+func _emit_targeting_click(col: int, row: int) -> void:
+	if col < 0 or row < 0 or col >= grid_width or row >= grid_height:
+		return
+	emit_signal("targeting_clicked", _apply_visibility_to_info(_tile_info_at(col, row), col, row))
 
 func _emit_tile_selection(col: int, row: int) -> void:
 	if col < 0 or row < 0 or col >= grid_width or row >= grid_height:
@@ -5417,9 +5393,9 @@ func _process(delta: float) -> void:
 			# `_apply_zoom`'s pivot is in LOCAL coords, so the centre is measured in them too.
 			var viewport_center: Vector2 = screen_size_local() * 0.5
 			_apply_zoom(zoom_direction * KEYBOARD_ZOOM_SPEED * ClientSettings.zoom_speed_multiplier * delta, viewport_center)
-	# Animate the targeting overlay (pulsing glow / reticle) while a command is
-	# being targeted.
-	if _annotations.is_targeting_active():
+	# Animate the targeting overlay (pulsing glow / reticle) while a command is being targeted, and
+	# the passive herd highlight while a Deny sheet is open.
+	if _annotations.has_targeting_overlay():
 		_annotations.advance_targeting_time(delta)
 		queue_redraw()
 	# Animate the awaiting-orders pulse on any expedition idle at its objective.

@@ -194,12 +194,13 @@ static func face_for_food_site(site: Dictionary) -> Dictionary:
 	return {"sprite": sprite,
 		"glyph": "" if sprite != null else FoodIcons.for_site(module_key, is_hunt, terrain_id)}
 
-## A working's face — its MATERIAL's own mark. **No sprite arm today and the key is still stated**: a
-## material has no bundled art yet, and the two food webs' faces prove a family gains one without its
-## readers changing. A material this client has no mark for answers an empty face, which is exactly
-## what denies the working a slot below.
+## A working's face — its MATERIAL's own mark: bundled art (`WorkingsSprites`) where the material has
+## it, the OS emoji otherwise. Both halves key on the same normalised material id, so the art and the
+## emoji cannot name two materials. A material this client has no mark for answers an empty face,
+## which is exactly what denies the working a slot below.
 static func face_for_material(material: String) -> Dictionary:
-	return {"sprite": null, "glyph": FoodIcons.for_material(material)}
+	var sprite := WorkingsSprites.for_material(material)
+	return {"sprite": sprite, "glyph": "" if sprite != null else FoodIcons.for_material(material)}
 
 ## Does a face render anything at all — the shared test behind `_working_renders` and the row list's
 ## "draw no icon" fall-back, so neither can answer differently from the face itself.
@@ -240,9 +241,13 @@ func draw_workings(radius: float, origin: Vector2) -> void:
 		var tile_center: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
 		# THE ROW'S ICON AND THIS ONE ARE ONE LOOKUP — see the face resolvers above.
 		var face := face_for_material(String(entry.get("material", "")))
-		_view._draw_marker_glyph(slot_center(tile_center, slot, radius),
-			String(face.get("glyph", "")),
-			_secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
+		var icon_center := slot_center(tile_center, slot, radius)
+		var sprite: Texture2D = face.get("sprite")
+		if sprite != null:
+			_view._draw_marker_sprite(icon_center, sprite, _secondary_icon_size(radius))
+		else:
+			_view._draw_marker_glyph(icon_center, String(face.get("glyph", "")),
+				_secondary_icon_size(radius), _view.SECONDARY_ICON_COLOR)
 
 func _secondary_icon_size(radius: float) -> int:
 	return int(maxf(_view.SECONDARY_ICON_MIN_SIZE, radius * _view.SECONDARY_ICON_SIZE_FACTOR))
@@ -318,10 +323,6 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var slot: int = _secondary_slot_lookup.get(herd_key(herd_id), -1)
 	if slot < 0:
 		return   # far-zoom LOD or overflowed into the +N chip
-	# Herd trail stays centered on the hex path (a route, not a marker), but only
-	# when the herd icon itself draws — no orphaned trail for an LOD-suppressed or
-	# overflowed herd (its slot is gone).
-	_view._draw_herd_trail(herd_id, radius, origin)
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
 	var icon_center := slot_center(tile_center, slot, radius)
 	# Bundled PNG art where we have it (identical on every OS), OS emoji for the species that

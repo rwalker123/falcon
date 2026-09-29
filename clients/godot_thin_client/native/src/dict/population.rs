@@ -919,6 +919,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "hunt_useful_workers",
                 i64::from(assignment.huntUsefulWorkers()),
             );
+            // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** — the extract row's twin of
+            // `hunt_useful_workers`: the smallest crew in `1..=pool` whose geared take reaches the
+            // deposit crew curve's best within tolerance, at the row's own kit and floor. It is the
+            // compose sheet's `curve_useful_cutters` rule, so the Work board, the map overlay and the
+            // sheet's `+` quote one ceiling. The pool while the take is still rising, `1` where the
+            // curve pays nothing, and `0` on every non-extract row (does not apply). Always inserted
+            // so the entry shape is stable.
+            let _ = entry.insert("useful_cutters", i64::from(assignment.usefulCutters()));
             // **THE WORK PARTY — WHERE THIS ROW'S WORKERS ARE STANDING WHEN IT IS NOT WHERE THE
             // BAND IS** (`docs/plan_civilization_steps.md` §One work party). A Hunt or Forage row
             // whose source drifts past the band's own apron no longer lapses: it posts a party, and

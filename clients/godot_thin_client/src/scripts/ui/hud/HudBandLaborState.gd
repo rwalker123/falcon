@@ -156,12 +156,12 @@ func default_kit_id(job: String) -> String:
 		KitRoster.JOB_EXPEDITION:
 			return _default_expedition_kit_id
 		KitRoster.JOB_EXTRACT:
-			# **THE WIRE'S `defaultExtractKitId`.** Stated rather than reached by fall-through, for
-			# the builders arm's reason: falling through would hand the deposit sheets the HUNT kit
-			# as their marked `(default)`.
-			# ⛔ **IT MATTERS BECAUSE THE ROSTER OFFERS `extract` TWO KITS** (`hauling` and `none`):
-			# with no default, `KitRoster.resolve_selection` opens on the FIRST listed — the sled —
-			# and `Main._kit_token` would send `kit hauling` on every deposit order nobody touched.
+			# **THE JOB-LEVEL FALLBACK, THE WIRE'S `defaultExtractKitId`.** The extract default is
+			# PER WORKING first (issue #663): each `deposits` row publishes its own `default_kit_id`
+			# (`woodcutting` on wood, `stonework` on stone), which the deposit sheet and
+			# `Hud._emit_assign_labor` read off the SOURCE through `KitRoster.default_kit_for` — the
+			# hunt's herd-first precedence, with this as the fallback behind a working that states
+			# none. Stated rather than reached by fall-through, for the builders arm's reason below.
 			return _default_extract_kit_id
 		KitRoster.JOB_BUILDERS:
 			# **THE WIRE NAMES NO BUILDERS DEFAULT**, so this answers `""` — the "a job the wire has
@@ -362,6 +362,13 @@ func band_label_for_id(band_id: int) -> String:
 			return HudFormat.band_name(party)
 	return ""
 
+## **A LIVE TIE IS ONE WITH STRENGTH ABOVE ZERO** — the sim's own gate (`strength > NO_TIE`), read in
+## one place so the shipment sheet's destination, its live re-resolve and the Trade verb's map pick
+## (`TargetingController.trade_destination_at`) can never disagree about which bands a shipment may
+## name.
+static func tie_is_live(tie: Dictionary) -> bool:
+	return float(tie.get("strength", 0.0)) > HudConst.TIE_STRENGTH_NONE
+
 ## **THE TIES ONE BAND HOLDS**, in the ledger's own order (the sim publishes a stable `BTreeMap`
 ## walk, so the picker's rows do not reshuffle frame to frame).
 ##
@@ -503,6 +510,19 @@ func set_deposits(deposits_variant: Variant) -> void:
 ## The working rows, BY REFERENCE — every reader is read-only.
 func deposits() -> Array:
 	return _deposits
+
+## The `deposits` row at `(x, y)` holding `material`, `{}` where the frame carries none — the working
+## a deposit command is ABOUT, which is what `KitRoster.default_kit_for` reads the working's own
+## default kit off. Keyed by the pair: one hex can hold wood and stone both.
+func find_deposit(x: int, y: int, material: String) -> Dictionary:
+	for row_variant in _deposits:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("tile_x", -1)) == x and int(row.get("tile_y", -1)) == y \
+				and String(row.get("material", "")) == material:
+			return row
+	return {}
 
 ## ⛔ **WHICH ROAD TILES THE PLAYER HAS QUEUED — `{Vector2i: true}` over EVERY player band's queue.**
 ##

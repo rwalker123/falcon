@@ -183,8 +183,48 @@ func set_targeting(info: Dictionary) -> void:
 	if not bool(_targeting.get("active", false)):
 		_targeting_time = 0.0
 
+## Is a command TARGETING — a pick the next click answers? The PASSIVE highlight
+## (`TargetingController.TARGETING_PASSIVE_KEY`, an open Deny or Trade sheet) is drawn but is not
+## targeting: Esc, right-click and every click off a highlighted target behave normally under it.
 func is_targeting_active() -> bool:
+	return has_targeting_overlay() and not is_passive_highlight()
+
+## Is anything drawn by `draw_targeting` — a pick, or the passive highlight?
+func has_targeting_overlay() -> bool:
 	return bool(_targeting.get("active", false))
+
+func is_passive_highlight() -> bool:
+	return has_targeting_overlay() and bool(_targeting.get(TargetingController.TARGETING_PASSIVE_KEY, false))
+
+## Is (col, row) a target the current overlay highlights — a glowing herd's hex, or a hex in the
+## descriptor's `TARGETING_HIGHLIGHT_TILES_KEY` set? The click MapView captures under the PASSIVE
+## highlight is exactly this set, so a click can only pre-select a target the map glowed.
+func highlighted_at(col: int, row: int) -> bool:
+	if _highlight_tiles().has(Vector2i(col, row)) and _view._is_tile_visible(col, row):
+		return true
+	if String(_targeting.get("need", "")) != TARGETING_NEED_HERD:
+		return false
+	for herd in _view.herds:
+		if int(herd.get("x", -1)) == col and int(herd.get("y", -1)) == row and _herd_glows(herd):
+			return true
+	return false
+
+## The descriptor's explicit highlight set (a Trade sheet's live-tie bands), `[]` when it carries none.
+func _highlight_tiles() -> Array:
+	var tiles: Variant = _targeting.get(TargetingController.TARGETING_HIGHLIGHT_TILES_KEY, [])
+	return tiles as Array if tiles is Array else []
+
+## THE HERD GLOW'S TEST, shared by the draw and `highlighted_at`: huntable, visible, and strictly
+## beyond `min_distance` from the origin — the RENDER-SIDE MIRROR of
+## `TargetingController.is_expedition_quarry` (see `draw_targeting`).
+func _herd_glows(herd: Dictionary) -> bool:
+	if not bool(herd.get("huntable", false)):
+		return false
+	var hx := int(herd.get("x", -1))
+	var hy := int(herd.get("y", -1))
+	if hx < 0 or hy < 0 or not _view._is_tile_visible(hx, hy):
+		return false
+	return _targeting_distance(hx, hy) > int(_targeting.get("min_distance", TARGETING_NO_MIN_DISTANCE))
 
 ## WORLD BOUNDARY (`MapView.reset_world_state`): drop the annotations that describe a world we are
 ## about to stop showing. `_crisis_annotations` and `_routes` are refilled from every full snapshot,
@@ -343,7 +383,7 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 	if tiles.size() < ROUTE_MIN_POINTS:
 		return
 	# A route's waypoints are DATA columns, so a seam-crossing leg drawn from the raw `_hex_center`
-	# would shoot back across the whole map — the herd-trail bug, in the same shape. Unwrap the whole
+	# would shoot back across the whole map. Unwrap the whole
 	# path into one column frame first (`MapView._unwrapped_path_points`).
 	var points := _view._unwrapped_path_points(tiles, radius, origin)
 	for i in range(points.size() - 1):
@@ -352,7 +392,7 @@ func _draw_route(order: Dictionary, radius: float, origin: Vector2) -> void:
 ## The command-targeting overlay: which things on the map are valid targets for the command the HUD
 ## is currently asking the player to aim, plus a reticle on the hovered hex.
 func draw_targeting(radius: float, origin: Vector2) -> void:
-	if not is_targeting_active():
+	if not has_targeting_overlay():
 		return
 	var need := String(_targeting.get("need", ""))
 	var pulse: float = TARGETING_PULSE_BASE + TARGETING_PULSE_AMPLITUDE * sin(_targeting_time * TARGETING_PULSE_SPEED)
@@ -390,34 +430,39 @@ func draw_targeting(radius: float, origin: Vector2) -> void:
 		# party retired.) The halo must never promise a target the pick will refuse, nor hide one it
 		# would accept, so the two tests must be changed together.
 		# Absent (every other targeting mode omits the key) it defaults to 0 and admits everything.
-		var min_distance := int(_targeting.get("min_distance", TARGETING_NO_MIN_DISTANCE))
+		# Fog-gated like the herd marker itself (glowing a herd you can't see would BE the leak), and an
+		# UNKNOWN distance (`-1`, origin missing) skips too — `_herd_glows` holds the whole test.
 		for herd in _view.herds:
-			if not bool(herd.get("huntable", false)):
+			if not _herd_glows(herd):
 				continue
 			var hx := int(herd.get("x", -1))
 			var hy := int(herd.get("y", -1))
-			# Fog-gated like the herd marker itself: glowing a herd you can't see would BE the leak
-			# (it would draw a "valid target here" halo onto an empty-looking fogged hex).
-			if hx < 0 or hy < 0 or not _view._is_tile_visible(hx, hy):
-				continue
-			# An UNKNOWN distance (`-1`, origin missing) skips too — `_is_expedition_quarry` also
-			# refuses one, so the mirror holds at the degenerate end as well.
-			if _targeting_distance(hx, hy) <= min_distance:
-				continue
 			var hcenter: Vector2 = _view._hex_center_wrapped(hx, hy, radius, origin)
 			var hring_radius: float = radius * (TARGETING_HERD_RING_FACTOR + TARGETING_RING_PULSE_FACTOR * pulse)
 			var hring_color := Color(cyan.r, cyan.g, cyan.b,
 				TARGETING_RING_ALPHA_BASE + TARGETING_RING_ALPHA_PULSE * pulse)
 			_view.draw_arc(hcenter, hring_radius, 0, TAU, TARGETING_RING_SEGMENTS, hring_color, TARGETING_RING_WIDTH)
-		if _view._hovered_tile.x >= 0 and _view._hovered_tile.y >= 0:
+		# The reticle is a pick's "click here"; the passive highlight draws the glow alone.
+		if not is_passive_highlight() and _view._hovered_tile.x >= 0 and _view._hovered_tile.y >= 0:
 			var herd_reticle: Vector2 = _view._hex_center_wrapped(
 				_view._hovered_tile.x, _view._hovered_tile.y, radius, origin)
 			_view._draw_reticle(herd_reticle, radius * TARGETING_RETICLE_FACTOR, cyan, pulse)
 	elif need == TARGETING_NEED_TILE:
-		if _view._hovered_tile.x >= 0 and _view._hovered_tile.y >= 0:
+		if not is_passive_highlight() and _view._hovered_tile.x >= 0 and _view._hovered_tile.y >= 0:
 			var reticle_center: Vector2 = _view._hex_center_wrapped(
 				_view._hovered_tile.x, _view._hovered_tile.y, radius, origin)
 			_view._draw_reticle(reticle_center, radius * TARGETING_RETICLE_FACTOR, cyan, pulse)
+	# The explicit highlight set (a Trade sheet's live-tie bands) rings each hex the way the herd glow
+	# rings a herd, fog-gated the same way.
+	for tile_variant in _highlight_tiles():
+		var tile: Vector2i = tile_variant
+		if not _view._is_tile_visible(tile.x, tile.y):
+			continue
+		var tcenter: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
+		var tring_radius: float = radius * (TARGETING_HERD_RING_FACTOR + TARGETING_RING_PULSE_FACTOR * pulse)
+		var tring_color := Color(cyan.r, cyan.g, cyan.b,
+			TARGETING_RING_ALPHA_BASE + TARGETING_RING_ALPHA_PULSE * pulse)
+		_view.draw_arc(tcenter, tring_radius, 0, TAU, TARGETING_RING_SEGMENTS, tring_color, TARGETING_RING_WIDTH)
 
 func _draw_targeting_hover_label(unit: Dictionary, radius: float, origin: Vector2) -> void:
 	var pos: Array = Array(unit.get("pos", []))

@@ -537,8 +537,9 @@ const WOOD: &str = "wood";
 const WOODED: sim_schema::TerrainType = sim_schema::TerrainType::MixedWoodland;
 /// The wire's `kind` for an extract row (`LaborTarget::kind`).
 const EXTRACT_KIND: &str = "extract";
-/// The shipped kit that sends a sled out on a deposit (`equipment.json` `hauling`).
-const HAULING_KIT: &str = "hauling";
+/// The shipped forestry kit — `sled` + `axe`. On the deadfall floor the row claims its sleds; on
+/// felling it claims its axes (`LaborAssignment::take_kit`).
+const WOODCUTTING_KIT: &str = "woodcutting";
 
 fn extract_target(distance: u32) -> LaborTarget {
     LaborTarget::Extract {
@@ -684,11 +685,10 @@ fn a_deposit_eight_hexes_out_posts_a_party_that_walks_six_each_way() {
 
 /// ⛔ **THE LOCAL IDENTITY, ON THE DEPOSIT WEB** — a working inside the apron posts no party, and
 /// every number is the take seam's own: the row publishes and the store receives exactly
-/// `take_from_deposit` at the whole crew. **Carry does not cap a local take**, so a sled on the row
-/// changes nothing — and, carrying nothing the hands would not, is not worn.
+/// `take_from_deposit` at the whole crew, uncapped by any carry.
 #[test]
 fn a_local_working_takes_no_party_and_its_numbers_are_unchanged() {
-    let (mut app, band) = world_extracting_at(INSIDE_THE_APRON, Some(HAULING_KIT));
+    let (mut app, band) = world_extracting_at(INSIDE_THE_APRON, None);
     let expected = {
         let tile = UVec2::new(CAMP.x + INSIDE_THE_APRON, CAMP.y);
         let entity = app
@@ -717,6 +717,7 @@ fn a_local_working_takes_no_party_and_its_numbers_are_unchanged() {
         core_sim::extraction::take_from_deposit(
             &mut working,
             CREW,
+            core_sim::extraction::NO_DEPOSIT_GEAR,
             FLOOR,
             &ground,
             &extraction,
@@ -724,11 +725,6 @@ fn a_local_working_takes_no_party_and_its_numbers_are_unchanged() {
         )
         .taken
     };
-    let sled_wear_before = app
-        .world
-        .get::<BandEquipment>(band)
-        .expect("the fixture band carries gear")
-        .clone();
     resolve_a_turn(&mut app);
     assert!(expected > 0.0, "liveness: a crew on a full wood takes some");
     assert!(
@@ -749,14 +745,6 @@ fn a_local_working_takes_no_party_and_its_numbers_are_unchanged() {
         (wood_held(&app, band) - expected).abs() < 1e-3,
         "the whole take lands this turn: {} of {expected}",
         wood_held(&app, band)
-    );
-    assert_eq!(
-        app.world
-            .get::<BandEquipment>(band)
-            .expect("the fixture band carries gear")
-            .batches_of("sled"),
-        sled_wear_before.batches_of("sled"),
-        "a sled on a local working hauls nothing the hands would not, so it is not worn"
     );
 }
 
@@ -888,28 +876,132 @@ fn unassigning_a_deposit_caravan_mid_walk_brings_every_pack_home_as_material() {
     );
 }
 
-/// ⛔ **A SLED-EQUIPPED FAR CREW CARRIES A BIGGER PACK** — the hunt's own `hunt_carry` over the
-/// material's weight, against the bare-handed carry over the same weight. Read off the first porter
-/// the turn actually sends, and pinned to the caravan pricing's own figure.
+/// **The row's kit narrowed to the tool it claims at `rung`** — what the turn prices a far party's
+/// haul carry over (`LaborAssignment::take_kit` → `EquipmentConfig::deposit_rung_kit`).
+fn claimed_at(kit_id: &str, rung: core_sim::RungKey) -> KitChoice {
+    EquipmentConfig::builtin().deposit_rung_kit(
+        &extract_kit(kit_id),
+        rung.branch(),
+        &rung.wire_key(),
+    )
+}
+
+/// The bare-handed pack of wood: `labor_config`'s sledless haul over wood's weight.
+fn bare_wood_pack(app: &App) -> f32 {
+    let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+    let weight = app
+        .world
+        .resource::<core_sim::MaterialsConfigHandle>()
+        .get()
+        .material(WOOD)
+        .expect("wood is a material")
+        .weight;
+    core_sim::work_party::material_pack(labor.hunt.per_worker_biomass_capacity, weight)
+}
+
+/// ⛔ **A WOODCUTTING CREW ON THE DEADFALL FLOOR HAULS ON ITS SLEDS** — the floor rung is where the
+/// row claims the sled (`take_kit`), so its porters carry the sled's `hunt_carry` over the material's
+/// weight, against the bare-handed carry over the same weight. Read off the first porter the turn
+/// actually sends, and pinned to the caravan pricing's own figure over the CLAIMED kit.
 #[test]
-fn a_sled_equipped_far_crew_carries_a_larger_pack_than_bare_hands() {
+fn a_woodcutting_crew_on_the_deadfall_floor_carries_a_larger_pack_than_bare_hands() {
     let (mut bare_app, bare_band) = world_extracting_at(5, None);
     let bare = first_pack_on_the_road(&mut bare_app, bare_band);
-    let (mut sled_app, sled_band) = world_extracting_at(5, Some(HAULING_KIT));
+    let (mut sled_app, sled_band) = world_extracting_at(5, Some(WOODCUTTING_KIT));
     let sled = first_pack_on_the_road(&mut sled_app, sled_band);
     let bare_kit = EquipmentConfig::builtin().default_kit(core_sim::KitJob::Extraction);
     assert!(
         (bare - priced_pack(&bare_app, bare_band, &bare_kit)).abs() < 1e-3,
         "a bare-handed porter carries the bare haul over the weight: {bare}"
     );
+    let claimed = claimed_at(WOODCUTTING_KIT, core_sim::RungKey::ForestryDeadfall);
+    assert_eq!(
+        claimed.uses().collect::<Vec<_>>(),
+        vec!["sled"],
+        "fixture: on deadfall the woodcutting row claims its sleds"
+    );
     assert!(
-        (sled - priced_pack(&sled_app, sled_band, &extract_kit(HAULING_KIT))).abs() < 1e-3,
+        (sled - priced_pack(&sled_app, sled_band, &claimed)).abs() < 1e-3,
         "a sledded porter carries the sled's haul over the weight: {sled}"
     );
     assert!(
         sled > bare,
         "the sled must carry more timber home per trip: {sled} vs {bare}"
     );
+}
+
+/// ⛔ **A WOODCUTTING CREW ON FELLING HAULS BARE-HANDED** — on the felling rung the row claims its
+/// AXES, not its sleds (`take_kit`, main's held-rung rule), so the party's porters carry the bare
+/// haul over the weight however many sleds the band owns. Paired against the same kit on the
+/// deadfall floor, which hauls on the sled — so "every pack is bare" cannot pass it.
+#[test]
+fn a_woodcutting_crew_on_felling_hauls_at_bare_carry() {
+    let (mut app, band) = world_extracting_at(5, Some(WOODCUTTING_KIT));
+    seat_the_wood_at_felling(&mut app, 5);
+    let felling = first_pack_on_the_road(&mut app, band);
+    let claimed = claimed_at(WOODCUTTING_KIT, core_sim::RungKey::ForestryFelling);
+    assert!(
+        !claimed.uses().any(|item| item == "sled"),
+        "fixture: on felling the woodcutting row claims no sled"
+    );
+    assert!(
+        app.world
+            .get::<BandEquipment>(band)
+            .expect("the fixture band carries gear")
+            .count_of("sled")
+            > 0,
+        "fixture: the band does own sleds, so the bare pack is about the claim and not the stock"
+    );
+    assert!(
+        (felling - bare_wood_pack(&app)).abs() < 1e-3,
+        "a felling party's porter carries the bare haul over the weight: {felling}"
+    );
+    assert!(
+        (felling - priced_pack(&app, band, &claimed)).abs() < 1e-3,
+        "…which is the caravan pricing over the claimed kit"
+    );
+    let (mut floor_app, floor_band) = world_extracting_at(5, Some(WOODCUTTING_KIT));
+    let deadfall = first_pack_on_the_road(&mut floor_app, floor_band);
+    assert!(
+        deadfall > felling,
+        "the same kit on the deadfall floor hauls on its sleds: {deadfall} vs {felling}"
+    );
+}
+
+/// **SEAT THE FIXTURE'S WOOD AT THE TOP OF `forestry:felling`**, written straight into the registry
+/// so a test about the claim does not spend forty turns of builders raising it first.
+fn seat_the_wood_at_felling(app: &mut App, distance: u32) {
+    let tile = UVec2::new(CAMP.x + distance, CAMP.y);
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    let extraction = app
+        .world
+        .resource::<core_sim::ExtractionConfigHandle>()
+        .get();
+    let entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(tile.x, tile.y)
+        .expect("the deposit's tile is on the map");
+    let ground = app
+        .world
+        .get::<core_sim::Tile>(entity)
+        .expect("a map tile carries terrain")
+        .clone();
+    let felling = core_sim::RungKey::ForestryFelling;
+    let mut working = core_sim::extraction::projected_working(
+        app.world.resource::<core_sim::DepositRegistry>(),
+        tile,
+        WOOD,
+        &ground,
+        &extraction,
+    )
+    .expect("fixture: the ground holds wood");
+    let (base, width) = core_sim::extraction::deposit_rung_span(felling, &ladder);
+    working.set_ladder_position(base + width, &ladder, felling.branch());
+    assert_eq!(working.rung(), felling, "fixture: seated on felling");
+    app.world
+        .resource_mut::<core_sim::DepositRegistry>()
+        .insert(working);
 }
 
 /// ⛔ **ONE PACK IS THE HAUL CARRY OVER THE MATERIAL'S WEIGHT, AND NOTHING ELSE** — the same wood,
@@ -942,5 +1034,69 @@ fn a_pack_is_the_haul_carry_over_the_materials_weight() {
     assert!(
         (shipped / heavy - HEAVIER).abs() < 1e-3,
         "twice the weight, half the units per pack: {shipped} vs {heavy}"
+    );
+}
+
+/// How close the crew curve's quote and the turn's cut must agree — both run `deposit_take` off one
+/// renewed stock, so this only absorbs float order.
+const SAME_CUT: f32 = 1e-4;
+
+/// ⛔ **A FAR WORKING'S CREW CURVE QUOTES THE CUT AT THE SOURCE, NOT ZERO** — past the apron the row
+/// posts a party and its crew cuts the working exactly as a near crew does, so the compose sheet's
+/// row for the crew PRESENT must equal what the turn then cuts. Staged mid-posting (the walk out done,
+/// porters on the road) so the present crew is genuinely short of the staffed one, and read against
+/// the working's own `last_take` after a whole turn in stage order (Logistics' renewal, then the
+/// take) — the "as the next turn will find it" state the curve quotes. `in_range` stays a plain
+/// fact: `false` out here, and it zeroes nothing.
+#[test]
+fn a_far_workings_crew_curve_quotes_the_cut_the_turn_makes_at_the_source() {
+    let (mut app, band) = world_extracting_at(5, None);
+    // Past the walk out, so there are hands at the source to quote.
+    first_pack_on_the_road(&mut app, band);
+    let present = {
+        let mut party = extract_party(&app, band).expect("the far row carries a party");
+        party.open_turn().present
+    };
+    assert!(
+        present > 0 && present < CREW,
+        "fixture: some hands at the source next turn and some on the road ({present} of {CREW})"
+    );
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &QueryPayload::DepositCrewTake(sim_runtime::commands::DepositCrewTakeQuery {
+            faction_id: FACTION.0,
+            band_id: BAND,
+            x: CAMP.x + 5,
+            y: CAMP.y,
+            material: WOOD.to_string(),
+            kit_id: EquipmentConfig::builtin()
+                .default_kit(core_sim::KitJob::Extraction)
+                .id()
+                .to_string(),
+            floor: FLOOR,
+            max_workers: CREW,
+        }),
+    );
+    let curve = match reply {
+        QueryReply::DepositCrewTake(curve) => curve,
+        other => panic!("the deposit crew query must answer with a curve, got {other:?}"),
+    };
+    assert!(!curve.in_range, "past the apron, in_range says so");
+    let quoted = curve.per_crew[present as usize - 1].take;
+    assert!(
+        quoted > 0.0,
+        "a far working's curve quotes a real cut, never the retired zero"
+    );
+    app.world.run_system_once(core_sim::advance_deposits);
+    resolve_a_turn(&mut app);
+    let cut = app
+        .world
+        .resource::<core_sim::DepositRegistry>()
+        .source(UVec2::new(CAMP.x + 5, CAMP.y), WOOD)
+        .expect("the working stands")
+        .last_take;
+    assert!(
+        (quoted - cut).abs() < SAME_CUT,
+        "the curve's row for the {present} hands present is what the turn cut: {quoted} vs {cut}"
     );
 }

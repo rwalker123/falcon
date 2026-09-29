@@ -391,8 +391,8 @@ abandon test passed under sabotage because its fixture sat in the one state the 
   fakes the signal cannot fail for a broken widget; it only asserts that the callback the harness just
   invoked runs. Push real input through `InputProbe` (`ui_preview/input_probe.gd`) instead, and where
   the gesture is more than one press — a popup opens on the press, so the release is a separate
-  event — drive the halves apart. `chapters/trade.gd`'s destination pick is the worked example, in
-  `harness-ui-preview.md`.
+  event — drive the halves apart. `chapters/hunt.gd`'s `Band:` picker (`_pick_actor_band`) is the worked
+  example, in `harness-ui-preview.md`.
 - **Count the terms a "states all THREE" claim names.** Matching the middle term alone survives losing
   either of the others.
 - **A fixture that cannot reach the state being claimed makes the assertion decorative** — check the

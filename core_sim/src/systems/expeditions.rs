@@ -1,5 +1,4 @@
 use super::*;
-use crate::combat;
 use crate::components::RaidOrders;
 use crate::fauna::AnimalTake;
 
@@ -1138,7 +1137,7 @@ pub fn advance_expeditions(
                             wariness,
                             quarry_fight,
                             &party_for(body_mass),
-                            fauna::HuntDraw::Seeded(seed),
+                            RaidRoll::Live(seed),
                             stop,
                             &mut herd.hunt_credit,
                         );
@@ -1925,11 +1924,8 @@ fn expedition_take_biomass(
     // exempt from the gate**: a detached party that cannot beat the quarry's `defense` spends its
     // whole trip taking casualties and killing nothing.
     party: &fauna::HuntingParty,
-    // **Live or forecast** — a live raid draws the retreat and the attack rolls from its per-event
-    // seed ([`fauna::retreat_seed`]), never a shared RNG stream, or raid ordering would change
-    // outcomes and rollback would stop reproducing (§6.2); a forecast reads both off their own
-    // binomials, because a projection has no tick to seed with (`fauna::HuntDraw`).
-    draw: fauna::HuntDraw,
+    // **Live or forecast** — see [`RaidRoll`].
+    roll: RaidRoll,
     // **Does a full pack stop this party engaging?** — the one line a denial raid changes
     // (`docs/plan_denial_raid.md` §1). It reaches only the quantiser and the bound reading; every
     // other term above is the hunt's, unchanged.
@@ -1977,10 +1973,51 @@ fn expedition_take_biomass(
     // `systems::hunt_take` uses; see the note there. A raid quoted for a trapping party must project
     // the trap's stand-off, and `expedition_take_biomass` is both the raid's take and its own
     // forecast, so the two cannot diverge once this is right.
-    let stayed = party.stayers(engaged, wariness, draw);
-    // **The fight decides the kill** (§4) — the same resolution the resident band runs.
-    // A detached party builds nothing, so its whole crew fights.
-    let fight = fauna::resolve_hunt_fight(stayed, workers as f32, party, &quarry, draw);
+    let (stayed, fight) = match roll {
+        RaidRoll::Live(seed) => {
+            let draw = fauna::HuntDraw::Seeded(seed);
+            let stayed = party.stayers(engaged, wariness, draw);
+            // **The fight decides the kill** (§4) — the same resolution the resident band runs.
+            // A detached party builds nothing, so its whole crew fights.
+            (
+                stayed,
+                fauna::resolve_hunt_fight(stayed, workers as f32, party, &quarry, draw),
+            )
+        }
+        // **A forecast reads the kill over the retreat's OUTCOMES, never at their mean** — the
+        // fight clamps each turn's blow to the bodies standing and that clamp is concave, so the
+        // blow at the mean head count over-reads the take (`fauna::retreat_outcomes`). The same
+        // seam the resident band's projections read ([`fauna::kill_over_retreat`]), banked into
+        // whole bodies on the quarry's own wound ledger exactly as `fauna::KillCarry` banks them.
+        RaidRoll::Forecast(reading) => {
+            let outcomes = party.stayer_outcomes(engaged, wariness);
+            let bodies = fauna::kill_over_retreat(
+                engaged,
+                wariness,
+                workers,
+                party,
+                Some(&quarry),
+                quarry.wounds,
+                fauna::EngagementQuantum::WholeAnimals,
+                reading,
+            );
+            let mut wounds = quarry.wounds;
+            let brought_down = wounds.bank_units(bodies, &quarry.profile);
+            (
+                fauna::expected_stayers(&outcomes),
+                fauna::HuntFight {
+                    brought_down,
+                    expected_brought_down: bodies,
+                    // A forecast charges nothing and reports no battle — nothing it reads needs
+                    // either, and a projected casualty is not one the band has taken.
+                    casualties: fauna::FightCasualties::default(),
+                    fought: false,
+                    wounds,
+                    strike_charges: Vec::new(),
+                },
+            )
+        }
+    };
     // Whole animals through **the** quantiser: as many as the bank has readied, bounded by what the
     // party brought down and by what the pack can seat but never below one — so if the pack cannot
     // seat one (`carryable == 0`) while the herd has banked one, the party still kills ONE and wastes
@@ -2025,7 +2062,8 @@ fn expedition_take_biomass(
 /// (`core_sim/tests/expedition_hunt.rs`).
 /// The quarry's engagement/retreat dials come in resolved (`FaunaConfig::engage_rate_for` /
 /// `wariness_for`) alongside its [`HuntYield`], and the caller composes the retreat seed the way the
-/// take path does (`fauna::HuntDraw::Seeded`) — this function reads no config handle, only numbers.
+/// take path does ([`RaidRoll::Live`]) or asks for a reading of the take ([`RaidRoll::Forecast`]) —
+/// this function reads no config handle, only numbers.
 ///
 /// **`per_worker_biomass_capacity` is a RESOLVED haul tier, not a config read.** Since the equipped
 /// rate moved onto the sled's tier, `labor_config`'s key is the *bare-handed* baseline, so a caller
@@ -2043,7 +2081,7 @@ pub fn expedition_take_provisions(
     wariness: f32,
     quarry: fauna::QuarryFight,
     party: &fauna::HuntingParty,
-    draw: fauna::HuntDraw,
+    roll: RaidRoll,
 ) -> f32 {
     // A single-turn preview starting from an empty bank (this readout is the client's per-turn rate,
     // not a specific banked turn) — the forward-sim `hunt_trip_forecast` is the one pinned to actual.
@@ -2061,7 +2099,7 @@ pub fn expedition_take_provisions(
         wariness,
         quarry,
         party,
-        draw,
+        roll,
         // **This readout is a HUNT's per-turn rate** — the client's per-herd preview, quoted for the
         // hunting verb. A denial raid's readout is its own forecast (`denial_forecast`).
         fauna::EngagementStop::WhenPackFull,
@@ -2494,7 +2532,27 @@ const FIRST_HUNTING_TURN: u32 = 1;
 /// pinned raid number moved. Slice 7 authored the roster's wariness (§3.1), so the retreat half is
 /// now a real distribution and a raid preview quotes its **expectation** — which is precisely the
 /// promise the retired seed could not have kept.
-const RAID_FORECAST_DRAW: fauna::HuntDraw = fauna::HuntDraw::EXPECTED;
+///
+/// **The expectation of the TAKE, not the take at the expected head count.** This used to be
+/// `HuntDraw::EXPECTED`, which handed the fight the retreat's mean standing count; the fight clamps
+/// each turn's blow to the bodies standing and that clamp is concave, so the preview over-read every
+/// raid the fight and the retreat both bind — at 8 speared hunters, Steppe Runners `5.09` food a
+/// turn previewed against `4.56` paid, Red Deer `5.04` / `4.51`, Wild Aurochs `5.37` / `4.74`. It
+/// now reads the kill over the retreat's outcomes ([`fauna::kill_over_retreat`]), pinned by
+/// `raid_forecast_tests::a_raids_previewed_delivery_is_the_live_takes_mean`.
+const RAID_FORECAST_DRAW: RaidRoll = RaidRoll::Forecast(fauna::TakeReading::Mean);
+
+/// **How a raid take resolves its two stochastic stages** — drawn, or read off their distribution.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RaidRoll {
+    /// **A live raid** — the retreat and the attack rolls drawn from this per-event seed
+    /// ([`fauna::retreat_seed`]), never a shared RNG stream, or raid ordering would change outcomes
+    /// and rollback would stop reproducing (§6.2).
+    Live(u64),
+    /// **A forecast** — a projection has no tick to seed with (`fauna::HuntDraw`), so it reads the
+    /// kill off the retreat's outcomes: their mean, or one edge of the band.
+    Forecast(fauna::TakeReading),
+}
 
 /// Forecast a hunting **raid** by simulating it forward turn by turn against the herd's own ecology,
 /// on the sim's arithmetic, until the party comes home — the pack fills, the **standing surplus is
@@ -2955,6 +3013,11 @@ struct DenialProjection {
 /// for: at `wariness 0` and `hit_chance 1.0` every stage takes its exact identity and all three runs
 /// return the same turn.
 ///
+/// **Each run reads the kill off the retreat's outcomes** ([`RaidRoll::Forecast`]): the middle run at
+/// their mean, the two ends at [`fauna::retreat_band_edge`]'s quantiles of them, each turn — so an
+/// end of the band is a projection in which every turn's kill is one the retreat can produce, never a
+/// head count between two outcomes.
+///
 /// `range_sigmas` is `combat_config.forecast_range_sigmas`, a **readout width** — nothing the sim
 /// resolves reads it, so widening the band cannot move an animal.
 #[allow(clippy::too_many_arguments)] // every config the forward simulation reads is a lever
@@ -2973,7 +3036,7 @@ pub fn denial_forecast(
     party: &fauna::HuntingParty,
     range_sigmas: f32,
 ) -> DenialForecast {
-    let at = |sigmas: f32| {
+    let at = |reading: fauna::TakeReading| {
         denial_projection_at(
             workers,
             herd,
@@ -2981,14 +3044,20 @@ pub fn denial_forecast(
             per_worker_haul,
             expedition,
             party,
-            fauna::HuntDraw::Quantile { sigmas },
+            RaidRoll::Forecast(reading),
         )
     };
-    let likely = at(combat::EXPECTED_STRIKES);
+    let likely = at(fauna::TakeReading::Mean);
     DenialForecast {
         turns_to_collapse: likely.turns,
-        turns_to_collapse_low: at(range_sigmas.abs()).turns,
-        turns_to_collapse_high: at(-range_sigmas.abs()).turns,
+        turns_to_collapse_low: at(fauna::TakeReading::Edge {
+            sigmas: range_sigmas.abs(),
+        })
+        .turns,
+        turns_to_collapse_high: at(fauna::TakeReading::Edge {
+            sigmas: -range_sigmas.abs(),
+        })
+        .turns,
         outcome: likely.outcome,
         animals_killed: likely.animals_killed,
         delivered_food: likely.delivered_food,
@@ -3026,7 +3095,7 @@ fn denial_projection_at(
     per_worker_haul: f32,
     expedition: &ExpeditionConfig,
     party: &fauna::HuntingParty,
-    draw: fauna::HuntDraw,
+    roll: RaidRoll,
 ) -> DenialProjection {
     let hunt_yield = fauna::herd_hunt_yield(herd, fauna);
     // The party's pack — a **carry** bound only, never a stop. There is no fill target to resolve:
@@ -3093,7 +3162,7 @@ fn denial_projection_at(
             wariness,
             quarry_fight,
             party,
-            draw,
+            roll,
             fauna::EngagementStop::Never,
             &mut quarry.hunt_credit,
         );
@@ -3372,5 +3441,171 @@ mod denial_outcome_tests {
             !DenialOutcome::Horizon.succeeded(),
             "a raid still grinding when the forecast ran out has not driven the herd down"
         );
+    }
+}
+
+/// **A RAID'S PREVIEW IS WHAT THE RAID PAYS ON AVERAGE** — [`hunt_trip_forecast`]'s delivered food,
+/// per hunting turn, against the live raid take ([`expedition_take_biomass`] at its per-event seed)
+/// averaged over thousands of turns on one steady herd.
+///
+/// The preview used to resolve the fight on the retreat's mean head count while the live take draws
+/// whole bodies and the fight clamps each turn's blow to the bodies actually standing — a concave
+/// clamp, so the average of the live blows is **less** than the blow at the average standing. The
+/// resident band's projections had the same defect (`tests/hunt_realized_matches_take.rs`); this is
+/// the raid's twin.
+///
+/// **Why the functions and not a world**, as in that file: the claim is a mean over the retreat's
+/// draw, and a world walks the herd, re-derives its `K` and wears the spears out long before thousands
+/// of turns resolve it. So this drives the calls the raid's own turn makes, in its order: the preview
+/// between turns, then `regrow_biomass` (Logistics), then the take (Population) with the wounds and
+/// the kill-credit bank carried forward exactly as the live `Hunting` arm carries them. The pack is
+/// sized so it never fills and the herd is fat enough that its surplus is never spent, so every
+/// preview runs its whole horizon and its delivered food is a sum of per-turn takes.
+#[cfg(test)]
+mod raid_forecast_tests {
+    use super::{expedition_take_biomass, hunt_trip_forecast, RaidRoll};
+    use crate::expedition_config::ExpeditionConfig;
+    use crate::fauna::{self, Herd, HuntingParty};
+    use crate::fauna_config::{FaunaConfig, SizeClass};
+    use bevy::math::UVec2;
+
+    /// The hunters on every herd — enough that the fight and the retreat both bind.
+    const HUNTERS: u32 = 8;
+    /// The default escapement floor.
+    const FLOOR: f32 = 0.5;
+    /// One hunter's haul — the equipped tier the resident fixtures pass.
+    const PER_HUNTER_HAUL: f32 = 40.0;
+    /// A pack no preview can fill within its horizon, so every preview runs the whole horizon.
+    const BOTTOMLESS_PACK: f32 = 1.0e9;
+    /// A band at neutral productivity.
+    const NEUTRAL_OUTPUT: f32 = 1.0;
+    /// Turns run before anything is counted, so the herd settles to the take.
+    const WARMUP_TURNS: u64 = 200;
+    /// Turns averaged.
+    const MEASURED_TURNS: u64 = 4000;
+    /// Three standard errors of the live mean.
+    const STANDARD_ERRORS: f32 = 3.0;
+    /// The tolerance must sit well inside the ~10% the mean-retreat reading over-read by.
+    const RESOLVES_A_SHARE_OF: f32 = 0.05;
+    /// A herd starts here as a share of its `K`.
+    const OPENING_STOCK_SHARE: f32 = 0.9;
+    /// The map seed the live retreat is drawn from.
+    const MAP_SEED: u64 = 7;
+    /// The herd's id — the retreat seed hashes it.
+    const HERD_ID: &str = "raided";
+
+    /// `(species, K)` — the resident test's herds.
+    const HERDS: [(&str, f32); 3] = [
+        ("Steppe Runners", 20_000.0),
+        ("Red Deer", 6_000.0),
+        ("Wild Aurochs", 8_000.0),
+    ];
+
+    fn mean(values: &[f32]) -> f32 {
+        values.iter().sum::<f32>() / values.len() as f32
+    }
+
+    fn standard_error(values: &[f32]) -> f32 {
+        let m = mean(values);
+        let variance =
+            values.iter().map(|v| (v - m).powi(2)).sum::<f32>() / (values.len() - 1) as f32;
+        (variance / values.len() as f32).sqrt()
+    }
+
+    /// `(live per-turn food, previewed per-turn food)` over the measured turns.
+    fn drive(species: &str, capacity: f32) -> (Vec<f32>, Vec<f32>) {
+        let fauna = FaunaConfig::builtin();
+        let def = fauna
+            .species_by_display(species)
+            .expect("a shipped species");
+        let mut expedition = ExpeditionConfig::builtin().as_ref().clone();
+        expedition.hunt.per_worker_carry = BOTTOMLESS_PACK;
+        let horizon = expedition.hunt.forecast_horizon_turns;
+        let mut herd = Herd::new(
+            HERD_ID.to_string(),
+            species.to_string(),
+            SizeClass::Big,
+            vec![UVec2::ZERO],
+            capacity * OPENING_STOCK_SHARE,
+            capacity,
+            def.fodder_per_biomass,
+            def.regrowth_rate.expect("a wild species carries its own r"),
+            def.body_mass,
+        );
+        let party = HuntingParty::builtin_equipped();
+        let hunt_yield = fauna.hunt_yield_for(&herd.species);
+        let engage_rate = fauna.engage_rate_for(&herd.species);
+        let wariness = fauna::herd_wariness(&herd, &fauna);
+        let (mut live, mut previewed) = (Vec::new(), Vec::new());
+        for tick in 0..WARMUP_TURNS + MEASURED_TURNS {
+            let preview = hunt_trip_forecast(
+                HUNTERS,
+                &herd,
+                FLOOR,
+                &fauna,
+                PER_HUNTER_HAUL,
+                &expedition,
+                &party,
+            );
+            fauna::regrow_biomass(&mut herd, &fauna);
+            let capacity = fauna::herd_capacity(&herd, &fauna);
+            let outcome = expedition_take_biomass(
+                HUNTERS,
+                PER_HUNTER_HAUL,
+                FLOOR,
+                herd.biomass,
+                capacity,
+                herd.body_mass,
+                f32::INFINITY,
+                engage_rate,
+                wariness,
+                fauna::herd_quarry_fight(&herd, &fauna),
+                &party,
+                RaidRoll::Live(fauna::retreat_seed(MAP_SEED, tick, HERD_ID, HUNTERS)),
+                fauna::EngagementStop::WhenPackFull,
+                &mut herd.hunt_credit,
+            );
+            herd.wounds = outcome.fight.wounds;
+            herd.biomass -= outcome.take.killed_biomass();
+            if tick >= WARMUP_TURNS {
+                assert!(
+                    preview.turns_to_fill.is_none(),
+                    "fixture: the preview must run its whole horizon, or its delivery is not a \
+                     sum of per-turn takes ({species}, {:?})",
+                    preview.bound
+                );
+                live.push(
+                    hunt_yield
+                        .apply(outcome.take.carried, NEUTRAL_OUTPUT)
+                        .provisions,
+                );
+                previewed.push(preview.delivered_food / horizon as f32);
+            }
+        }
+        (live, previewed)
+    }
+
+    #[test]
+    fn a_raids_previewed_delivery_is_the_live_takes_mean() {
+        for (species, capacity) in HERDS {
+            let (live, previewed) = drive(species, capacity);
+            let paid = mean(&live);
+            let published = mean(&previewed);
+            let tolerance = STANDARD_ERRORS * standard_error(&live);
+            assert!(
+                paid > 0.0,
+                "liveness: {species} must be paying something ({paid})"
+            );
+            assert!(
+                tolerance < RESOLVES_A_SHARE_OF * paid,
+                "{species}: the run must resolve the take to {RESOLVES_A_SHARE_OF} of itself \
+                 ({tolerance} against {paid})"
+            );
+            assert!(
+                (published - paid).abs() <= tolerance,
+                "{species}: the raid preview must be the take's mean — previewed {published}, \
+                 paid {paid} (tolerance {tolerance})"
+            );
+        }
     }
 }

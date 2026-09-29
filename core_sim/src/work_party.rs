@@ -456,6 +456,22 @@ impl CaravanPricing {
         }
     }
 
+    /// **What one worker's tools add to a deposit take, crew-weighted at this coverage** — the
+    /// `deposit_take` a working's rung-bound tool grants, averaged over the staffed crew exactly as
+    /// the carries are, so a caravan forecast adds `present × this` to the bare cut each turn. The
+    /// pricing must have been resolved over the row's kit **narrowed to its held rung**
+    /// (`EquipmentConfig::deposit_rung_kit`), the kit the turn arms the take with.
+    pub fn deposit_gear_per_worker(
+        &self,
+        equipment: &crate::equipment_config::EquipmentConfig,
+        wear: &crate::components::BandEquipment,
+        branch: crate::intensification::RungBranch,
+        rung: &str,
+    ) -> f32 {
+        self.coverage
+            .weighted_rate(|kit| equipment.deposit_take_per_worker(kit, wear, branch, Some(rung)))
+    }
+
     /// **The hunters as they fight this quarry**, at the resident band's **base** tuning — a party
     /// is the band's own people hunting, not a detached raid.
     pub fn hunters(
@@ -606,6 +622,8 @@ pub fn forecast_hunt_caravan(
                 output_multiplier,
                 present,
                 floor,
+                // A party's load waits at the source for the next porter — it keeps every carcass.
+                crate::fauna::CarcassKept::Whole,
             )
             .map(|turn| SourceTake {
                 cargo: turn.yields.provisions,
@@ -634,7 +652,10 @@ pub fn material_pack(haul_carry: f32, weight: f32) -> f32 {
 /// A crew of nobody cuts nothing and the working goes on renewing, so a turn the party is walking
 /// out or wholly on the road reads as a zero take, never as the end of the run — only a working
 /// that will never renew and has nothing left to reach is spent.
-#[allow(clippy::too_many_arguments)] // the take's full context, plus the caravan's own term
+///
+/// **The tools add `gear_per_worker × present` each turn** ([`CaravanPricing::deposit_gear_per_worker`]),
+/// the crew-weighted rate times the hands at the deposit — the carries' own shape.
+#[allow(clippy::too_many_arguments)] // the take's full context, plus the caravan's own terms
 pub fn forecast_extract_caravan(
     party: &WorkParty,
     working: &crate::extraction::DepositSource,
@@ -642,13 +663,21 @@ pub fn forecast_extract_caravan(
     extraction: &crate::extraction_config::ExtractionConfig,
     ladder: &crate::intensification::LadderConfig,
     pack: f32,
+    gear_per_worker: f32,
     floor: f32,
     horizon: u32,
 ) -> CaravanForecast {
     let mut projection = crate::extraction::DepositProjection::new(working);
     forecast_caravan(party, horizon, pack, |present| {
         projection
-            .step(present, floor, ground, extraction, ladder)
+            .step(
+                present,
+                gear_per_worker * present as f32,
+                floor,
+                ground,
+                extraction,
+                ladder,
+            )
             .map(|taken| SourceTake {
                 cargo: taken,
                 bulk: taken,

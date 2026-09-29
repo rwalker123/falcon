@@ -123,6 +123,8 @@ static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 	var kind := String(ask.get("kind", ""))
 	if kind == ForecastQuery.KIND_WORK_PARTY:
 		return work_party_answer(hud, request_id, ask)
+	if kind == ForecastQuery.KIND_DEPOSIT_CREW_TAKE:
+		return deposit_crew_take_answer(hud, request_id, ask)
 	if kind == ForecastQuery.KIND_HUNT_CREW_TAKE:
 		return {"request_id": request_id, "ok": true, "kind": kind,
 			"per_crew": crew_take_rows(_quarry_for_id(hud, String(ask.get("herd_id", ""))),
@@ -190,6 +192,60 @@ static func work_party_answer(hud: Node, request_id: int, ask: Dictionary) -> Di
 	for key in authored:
 		reply[key] = authored[key]
 	return reply
+
+## **THE DEPOSIT CREW CURVE'S STAND-IN** (`ForecastQuery.KIND_DEPOSIT_CREW_TAKE`, issue #663).
+##
+## A working that AUTHORS its reply under `DEPOSIT_CREW_TAKE_KEY` is answered with it verbatim — the
+## states that judge the gear lines stage their own curve, since what the sim resolves (which item
+## serves the held rung, how the band's gear is shared) is exactly what a fixture must not compose.
+##
+## Every other working is answered with a BARE curve: `min(perWorkerBiomass × w, the room above the
+## floor next turn)`, every hand counted as holding the tool (so no available line), and no next rung
+## (so no deal row). That is the take a kit that moves nothing would earn, which keeps every earlier
+## frame's NEXT TURN figure where it was when the sheet composed it itself.
+##
+## Ground that holds no such working is refused `unknown_deposit`, as the sim refuses it.
+const DEPOSIT_CREW_TAKE_KEY := "deposit_crew_take"
+const QUERY_ERROR_UNKNOWN_DEPOSIT := "unknown_deposit"
+
+static func deposit_crew_take_answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
+	var working := _working_for(hud, int(ask.get("x", -1)), int(ask.get("y", -1)),
+		String(ask.get("material", "")))
+	var kind := ForecastQuery.KIND_DEPOSIT_CREW_TAKE
+	if working.is_empty():
+		return {"request_id": request_id, "ok": false, "kind": kind,
+			"error": QUERY_ERROR_UNKNOWN_DEPOSIT}
+	var authored: Dictionary = working.get(DEPOSIT_CREW_TAKE_KEY, {})
+	var reply := {"request_id": request_id, "ok": true, "kind": kind,
+		"held_rung": String(working.get("rung", "")), "next_rung": "", "in_range": true,
+		"per_crew": []}
+	if not authored.is_empty():
+		for key in authored:
+			reply[key] = authored[key]
+		return reply
+	var rate := HudDepositVocab.per_worker_biomass_of(working)
+	var room := HudDepositVocab.room_next_turn(working, float(ask.get("floor", 0.0)))
+	var rows: Array = []
+	for workers in range(1, int(ask.get("max_workers", 0)) + 1):
+		rows.append({"workers": workers, "take": minf(rate * float(workers), room),
+			"armed_workers": float(workers), "next_rung_take": 0.0})
+	reply["per_crew"] = rows
+	return reply
+
+## The working at `(x, y)` carrying `material`, off the selected tile first (where a sheet is opened)
+## and then off the labor model's whole section; `{}` where neither holds it.
+static func _working_for(hud: Node, x: int, y: int, material: String) -> Dictionary:
+	var sources: Array = []
+	sources.append_array(hud._selection.tile_info().get("deposits", []))
+	sources.append_array(hud._band_labor.deposits())
+	for working_variant in sources:
+		if not (working_variant is Dictionary):
+			continue
+		var working: Dictionary = working_variant
+		var tile := HudDepositVocab.tile_of(working)
+		if tile.x == x and tile.y == y and HudDepositVocab.material_of(working) == material:
+			return working
+	return {}
 
 ## **THE PLATEAU, SCANNED OVER THE FIXTURE'S OWN PARTY AXIS.** The sim walks `1..=max` contiguously;
 ## a fixture table carries the sizes it was authored with, so this walks those. It scans the component

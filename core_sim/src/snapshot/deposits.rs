@@ -87,6 +87,8 @@ pub(crate) fn deposit_states<'a>(
     fog_enabled: bool,
     ladder: &LadderConfig,
     config: &crate::extraction_config::ExtractionConfig,
+    // **The kit roster a working's default take kit is derived from** (`working_default_kit`).
+    equipment: &crate::equipment_config::EquipmentConfig,
     // **Which workings some band of the viewer's has queued** — read off the bands' queues at
     // capture rather than off the source, because the row's scratch lags a command by a whole turn
     // and the state the countdown separates exists precisely in that frame.
@@ -120,7 +122,7 @@ pub(crate) fn deposit_states<'a>(
                     }
                 };
                 Some(deposit_row(
-                    source, tile, capacity, ladder, config, build_kits,
+                    source, tile, capacity, ladder, config, equipment, build_kits,
                 ))
             })
         })
@@ -178,6 +180,7 @@ fn deposit_row(
     capacity: f32,
     ladder: &LadderConfig,
     config: &crate::extraction_config::ExtractionConfig,
+    equipment: &crate::equipment_config::EquipmentConfig,
     build_kits: &crate::snapshot::subsistence::QueuedBuildSources,
 ) -> sim_runtime::DepositState {
     let tile = source.tile;
@@ -221,7 +224,9 @@ fn deposit_row(
         // **WHAT ONE CUTTER MOVES PER TURN AT THIS RUNG**, in the material's own units — the deposit
         // twin of `ForagePatchState::per_worker_biomass` and named after it, because the client's
         // crew arithmetic (*clear it now* / *hold it after*) is the same division on either web.
-        // There is no seasonal weight and no kit term on this branch, so it is the rung's rate flat.
+        // There is no seasonal weight on this branch, and this is a SOURCE row with no band behind
+        // it, so it is the rung's BARE rate flat: a row's take tools add `deposit_take` per equipped
+        // worker on top (`extraction::deposit_take`).
         per_worker_biomass: payoff.yield_per_worker_turn,
         // **THIS DEPOSIT'S OWN GROWTH CURVE, SAMPLED** — the third model on the wire's one
         // x-axis, and a **quarry's is all zeros** rather than absent: *this does not grow* is a
@@ -270,5 +275,12 @@ fn deposit_row(
         build_kit_id: crate::snapshot::subsistence::NO_SITE_KIT_ID.to_string(),
         upkeep_kit_id: crate::snapshot::subsistence::NO_SITE_KIT_ID.to_string(),
         upkeep_kit_named: crate::snapshot::subsistence::NO_SITE_KIT_NAMED,
+        // **THE TAKE CREW'S DEFAULT KIT** (#663) — through the one function `assign_labor` stores a
+        // no-kit row's kit with, so the picker's `(default)` is the kit the turn will arm. A fact
+        // about the roster and the working's branch, not about any band, so it rides every row the
+        // fog gate lets through.
+        default_kit_id: crate::extraction::working_default_kit(equipment, source)
+            .id()
+            .to_string(),
     }
 }

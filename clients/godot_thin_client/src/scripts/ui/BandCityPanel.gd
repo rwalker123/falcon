@@ -170,10 +170,8 @@ const ICON_BUTTON_SIZE := 24.0
 ## What an action's bundled ART may occupy on that 24x24 face, through the stock `icon_max_width`
 ## theme constant. A cap is needed at all because the source PNGs are 256px and a `Button` reserves
 ## its icon's drawn size in its MINIMUM — one art-bearing action would otherwise set the whole icon
-## family's button size and blow the row apart. The compose sheet's quarry picker caps at 20
-## (`HudComposeVocab.COMPOSE_PREY_ICON_MAX_WIDTH`), but that is a wide label-bearing button; here
-## the cap plus its padding IS the whole face, so it is the art's size rather than a ceiling it will
-## never reach.
+## family's button size and blow the row apart. Here the cap plus its padding IS the whole face, so
+## it is the art's size rather than a ceiling it will never reach.
 const ICON_BUTTON_ICON_MAX_WIDTH := 18
 ## What the face pads with when it carries ART. **The ghost chrome pads for a LABEL** —
 ## `HudStyle.BUTTON_PADDING_H/V` are 11 and 9, which a glyph simply overflows — and on a 24px face
@@ -298,8 +296,8 @@ const HORIZONTAL_BODY_CHROME := 60.0
 ## the 294px worst case that used to pin this budget for both counts. What is left, per zone:
 ##
 ##   * **band flank** — `BAND_ZONE_TWO_COLUMN_EXTENT`, the binding one.
-##   * **parties zone** — its fixed chrome only now: the head, the pinned Scout/Hunt/Deny row and
-##     `HudWorkVocab.PARTIES_LIST_MIN_HEIGHT`. Measured well under the flank, so it cannot bind.
+##   * **parties zone** — its fixed chrome only now: the head and `HudWorkVocab.PARTIES_LIST_MIN_HEIGHT`
+##     (the command footer left for the action bar, issue #529). Well under the flank, so it cannot bind.
 ##   * **work zone** — ⛔ **IT BINDS NOW, AND THIS BULLET USED TO SAY IT COULD NOT.** The old reading
 ##     was *"pages itself against `work_zone_size()`, so a shorter box costs it a board row rather than
 ##     overflowing — it never binds by construction"*, and that was TRUE while the zone was head +
@@ -482,6 +480,8 @@ const ACTION_BAR_SEPARATION := HEADER_SEPARATION
 ## the subject block. HALF the body gutter: this is chrome sitting next to chrome, not a separated
 ## region — the full `BODY_SEPARATION` is what the narrow shell puts between its tab bar and content.
 const ACTION_BAR_MARGIN_V := BODY_SEPARATION / 2
+## `register_action`'s "put it last" position.
+const ACTION_APPEND := -1
 ## Registry keys of an action descriptor (`register_action` builds them; nothing else writes one).
 const ACTION_SPEC_ID := "id"
 const ACTION_SPEC_GLYPH := "glyph"
@@ -957,8 +957,8 @@ func _shown_zones() -> Array[StringName]:
 	return shown
 
 ## The CARD's global rect — the island the strip holds, not the strip (`_root`) itself. Published for
-## the free-floating compose card, which anchors itself to the card's map-facing edge and must never
-## overlap it; every other reader of this geometry lives inside this file. See `_position_card_and_rail`
+## the work inspector's dialog, which centres itself in the room the card leaves on its map-facing
+## side and must never overlap it; every other reader of this geometry lives inside this file. See `_position_card_and_rail`
 ## for why the two rects stopped being the same one.
 func card_rect() -> Rect2:
 	return _panel.get_global_rect() if _panel != null else Rect2()
@@ -1318,7 +1318,7 @@ func _build_header_full() -> HBoxContainer:
 	var dock_chooser := _build_dock_chooser()
 	header.add_child(dock_chooser)
 
-	_collapse_button = _make_icon_button(COLLAPSE_GLYPH, "Collapse")
+	_collapse_button = make_icon_button(COLLAPSE_GLYPH, "Collapse")
 	_collapse_button.pressed.connect(_on_collapse_pressed)
 	header.add_child(_collapse_button)
 
@@ -1354,7 +1354,7 @@ func _build_cycler() -> HBoxContainer:
 	cycler.name = "Cycler"
 	cycler.add_theme_constant_override("separation", 4)
 
-	var prev := _make_icon_button(CYCLE_PREV_GLYPH, "Previous settlement")
+	var prev := make_icon_button(CYCLE_PREV_GLYPH, "Previous settlement")
 	prev.pressed.connect(func(): _on_cycle_pressed(CYCLE_PREV))
 	cycler.add_child(prev)
 
@@ -1366,7 +1366,7 @@ func _build_cycler() -> HBoxContainer:
 	_count_label.text = "–"
 	cycler.add_child(_count_label)
 
-	var nxt := _make_icon_button(CYCLE_NEXT_GLYPH, "Next settlement")
+	var nxt := make_icon_button(CYCLE_NEXT_GLYPH, "Next settlement")
 	nxt.pressed.connect(func(): _on_cycle_pressed(CYCLE_NEXT))
 	cycler.add_child(nxt)
 
@@ -1432,7 +1432,7 @@ func _build_header_rail() -> BoxContainer:
 	_rail_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rail.add_child(_rail_spacer)
 
-	_rail_expand_button = _make_icon_button(EXPAND_GLYPH, "Expand")
+	_rail_expand_button = make_icon_button(EXPAND_GLYPH, "Expand")
 	# Centred on the cross axis for the glyph's reason, and in the vertical rail so the button never
 	# stretches past the icon square it is styled as.
 	_rail_expand_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -1493,13 +1493,17 @@ func _apply_header_rail_orientation() -> void:
 ##
 ## - `id` — the stable key the press comes back on (`action_invoked`), and the handle
 ##   `unregister_action` takes.
-## - `glyph` / `tooltip` — the face. Built with `_make_icon_button`, the same builder the collapse
+## - `glyph` / `tooltip` — the face. Built with `make_icon_button`, the same builder the collapse
 ##   toggle and the cycler arrows use, so every action reads as a member of the panel's icon family.
 ## - `sprite` — bundled ART for that face, or `null`. Where given it REPLACES the glyph (a `Button`
 ##   carries art on its own `icon` property, so it is art OR glyph, never both), and the `glyph` is
 ##   then what renders when the art is absent. Like `glyph` and unlike a pip it is a DECLARED input,
 ##   resolved once at wiring time, which is what keeps it inside the descriptor contract above rather
 ##   than making the mount rebuild do a texture lookup per button.
+## - `insert_at` — where a NEW id lands in the row: `ACTION_APPEND` (the default) puts it last, an
+##   index puts it before whatever is there. The band verbs take it so they lead the row ahead of the
+##   panel's own `⚒` / `▲`, which this panel registers first. Ignored on a re-registration, which keeps
+##   its place.
 ## - `enabled` — a zero-argument `Callable` answering `bool`, re-asked by `refresh_actions()`. An
 ##   EMPTY Callable means always enabled; a predicate is never called during layout, only when the
 ##   caller says the world moved, so the bar's geometry can never become a function of band state.
@@ -1509,7 +1513,8 @@ func _apply_header_rail_orientation() -> void:
 ## `set_rail_width` contract. It is a DECLARED input, made at wiring time and not per snapshot, so it
 ## cannot put the reservation on the render's hot path.
 func register_action(id: StringName, glyph: String, tooltip: String,
-		enabled: Callable = Callable(), sprite: Texture2D = null) -> void:
+		enabled: Callable = Callable(), sprite: Texture2D = null,
+		insert_at: int = ACTION_APPEND) -> void:
 	if id.is_empty():
 		return
 	var spec := {
@@ -1522,6 +1527,8 @@ func register_action(id: StringName, glyph: String, tooltip: String,
 	var at := _action_index(id)
 	if at >= 0:
 		_actions[at] = spec
+	elif insert_at >= 0 and insert_at < _actions.size():
+		_actions.insert(insert_at, spec)
 	else:
 		_actions.append(spec)
 	_apply_action_registry()
@@ -1642,7 +1649,7 @@ func _rebuild_action_mount() -> void:
 	var host: BoxContainer = _action_host_for(_action_mount)
 	for spec in _actions:
 		var id := StringName(spec[ACTION_SPEC_ID])
-		var button := _make_icon_button(String(spec[ACTION_SPEC_GLYPH]),
+		var button := make_icon_button(String(spec[ACTION_SPEC_GLYPH]),
 			String(spec[ACTION_SPEC_TOOLTIP]), spec.get(ACTION_SPEC_SPRITE, null) as Texture2D)
 		button.disabled = not _action_is_enabled(spec)
 		button.pressed.connect(func(): action_invoked.emit(id))
@@ -2821,7 +2828,7 @@ func _position_seam() -> void:
 	_seam.visible = _is_vertical_edge(_dock_edge)
 	if not _seam.visible:
 		return
-	match _map_facing_edge():
+	match map_facing_edge():
 		SIDE_LEFT:
 			_seam.anchor_left = 0.0; _seam.anchor_right = 0.0
 			_seam.anchor_top = 0.0; _seam.anchor_bottom = 1.0
@@ -2934,7 +2941,10 @@ func _collapsed_cross_axis_size() -> float:
 func _is_vertical_edge(edge: int) -> bool:
 	return edge == SIDE_LEFT or edge == SIDE_RIGHT
 
-func _map_facing_edge() -> int:
+## **WHICH SIDE OF THE CARD FACES THE MAP: the OPPOSITE of the edge it is docked to.** Public for the
+## work inspector's dialog (`WorkInspectorDialog.mount`), which cuts its room off that side — one table,
+## so the seam and the dialog cannot disagree about the same geometry.
+func map_facing_edge() -> int:
 	match _dock_edge:
 		SIDE_LEFT:
 			return SIDE_RIGHT
@@ -3010,7 +3020,11 @@ func _apply_action_pip(button: Button, count: int) -> void:
 ##
 ## UNTINTED, for the same reason the quarry picker is: `apply_button` sets no `icon_*_color` and the
 ## stock theme's is opaque white, so the mark renders in its authored two-tone fill.
-func _make_icon_button(glyph: String, tooltip: String, sprite: Texture2D = null) -> Button:
+##
+## **PUBLIC AND `static`** because the tile panel's band drawer builds its verb row from it
+## (`SubjectDrawerController`): the drawer's row and this panel's action bar offer the same verbs, so
+## they wear the same face — and the no-dock host has no panel instance to ask.
+static func make_icon_button(glyph: String, tooltip: String, sprite: Texture2D = null) -> Button:
 	var btn := Button.new()
 	if sprite != null:
 		btn.icon = sprite
@@ -3023,7 +3037,7 @@ func _make_icon_button(glyph: String, tooltip: String, sprite: Texture2D = null)
 	btn.add_theme_font_size_override("font_size", ICON_BUTTON_FONT_SIZE)
 	HudStyle.apply_button(btn, "ghost")
 	if sprite != null:
-		_repad_button_for_sprite(btn)
+		repad_button_for_sprite(btn)
 	return btn
 
 ## Swap an art-bearing face's LABEL padding for ART padding. Re-asks `HudStyle.button_styleboxes` for
@@ -3031,7 +3045,7 @@ func _make_icon_button(glyph: String, tooltip: String, sprite: Texture2D = null)
 ## the content margins, so the two faces cannot drift into two looks the way a hand-built stylebox
 ## would. Safe to mutate: `button_styleboxes` constructs a fresh set per call, so these boxes belong
 ## to this button alone.
-func _repad_button_for_sprite(btn: Button) -> void:
+static func repad_button_for_sprite(btn: Button) -> void:
 	var boxes := HudStyle.button_styleboxes("ghost")
 	for item in boxes:
 		var sb: StyleBoxFlat = boxes[item]
@@ -3066,10 +3080,9 @@ func _apply_stage_visual(label: Label, sprite_rect: TextureRect, sprite: Texture
 		label.text = glyph
 		label.visible = sprite == null
 
-## The card's own stylebox. PUBLIC and `static` because a second surface draws in it — the
-## free-floating compose card (`BandComposeFloat`), which is this panel's content taken off the panel
-## and must therefore read as the panel's own surface rather than as a second kind of card. One
-## definition, so the two cannot drift into two looks.
+## The card's own stylebox. PUBLIC and `static` so any surface that carries this panel's content off
+## the panel reads as the panel's own surface rather than as a second kind of card. One definition, so
+## two surfaces cannot drift into two looks.
 static func panel_card_stylebox() -> StyleBoxFlat:
 	# Square-edged card (the strip meets the screen edge — no rounding/shadow).
 	var sb := StyleBoxFlat.new()

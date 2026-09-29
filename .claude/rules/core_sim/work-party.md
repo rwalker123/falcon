@@ -26,7 +26,7 @@ see "The deposit web: the cargo is the material".
 | `src/data/labor_config.json` | `band_work_range` (**2**) is the apron: past it every job posts a party, and the walk is measured from it. `band_move_tiles_per_turn` (**1**) is read a second time as the party's walking speed — the walk out and every porter's walk home — and is validated `>= 1` for that reason. **No lever of this arc's own exists**: the share of a party on the road falls out of carry, take rate and distance |
 | `src/data/supply_network_config.json` | Read, not written: `reach_tiles` is subtracted from `supply::free_pooling_reach_tiles` to give the **road bonus** — how much of a walk a road takes away. `friction` is **not** read: distance is paid in walking |
 | `src/data/materials.json` | Read, not written: every material's required **`weight`** — biomass-equivalent mass per unit, validated positive and finite — is what a deposit's pack is divided by (wood **2.4**, stone **3.0**; every value PROVISIONAL, stated in the file's `_comment_weight`) |
-| `src/data/equipment.json` | Read, not written: the **`hauling`** kit (`jobs: ["extract"]`, `uses: ["sled"]`) is how an extract row names a sled. `default_kits.extract` stays `none` |
+| `src/data/equipment.json` | Read, not written: the extract kits `woodcutting` (`sled` + `axe`) and `stonework` (`sled` + `wedges`). A row claims only the tool serving its working's **held** rung (`LaborAssignment::take_kit`, `extraction.md`), and a far working's porters haul on whatever that claim carries — the sled on a floor rung, nothing on felling / coppice / quarry |
 
 ## A party is state ON the labor assignment, not an entity
 
@@ -200,16 +200,22 @@ number, so the caravan arithmetic is unchanged.
 
 **⛔ ONE PACK IS THE HUNT'S OWN HAUL CARRY OVER THE MATERIAL'S WEIGHT.** `work_party::material_pack`
 is `CaravanPricing::haul_carry / weight`: the bare `labor.hunt.per_worker_biomass_capacity` (**12**),
-or the sled's `hunt_carry` (**40**) under the coverage and wear the row's kit resolves — the same
-carry a hunter's pack is struck from. So a bare porter carries `12 / 2.4 = 5` wood and a sledded one
+or the sled's `hunt_carry` (**40**) under the coverage and wear of the kit the row **claims** — the
+same carry a hunter's pack is struck from. So a bare porter carries `12 / 2.4 = 5` wood and a sledded one
 `40 / 2.4 ≈ 16.7`. The whole difference between two materials is the one `weight` on each; a
 per-material branch, or an extraction-only carry lever, would be the defect.
 
-**The sled** reaches an extract row through the ordinary kit mechanism — the `hauling` roster entry
-lists the `extract` job — never through a code branch. It is **charged `biomass_hauled` over what a
-party takes, in the carry's unit** (units × weight), at the take and after it, the hunt's own haul
-quantum and ordering. **A local working's take is capped by its rung's `yield_per_worker_turn` and
-never by carry**, so a sled there carries nothing the hands would not and is not worn.
+**The haul carry is read off the kit the row ACTUALLY CLAIMS.** `CaravanPricing` is resolved over
+`LaborAssignment::take_kit` — on an extract row, the stored kit narrowed to the tool serving the rung
+its working holds, the same claim `LaborAllocation::item_budget` rations the band's gear with. So a
+`woodcutting` / `stonework` crew on **deadfall / gathering** claims its sleds and hauls at the sled's
+carry, and one on **felling / coppice / quarry** claims the axe or the wedges, not the sled, and
+hauls **bare-handed**. The pricing's crew-weighted `deposit_take` per worker
+(`CaravanPricing::deposit_gear_per_worker`) is the tool term the forecast adds to each turn's cut,
+`present ×` that rate. The sled is **charged `biomass_hauled` over what a party takes, in the
+carry's unit** (units × weight), against that same claimed kit, at the take and after it — the
+hunt's own haul quantum and ordering. **A local working's take is capped by its rung's
+`yield_per_worker_turn` and the tools' `deposit_take`, never by carry**, so no haul is charged there.
 
 **The take site** routes `outcome.taken` through `deliver_take_home` like every other arm. What
 lands this turn — walkers' deliveries plus any pack landed now — is what is deposited through
@@ -369,8 +375,9 @@ the arm reach this row"* is the question the settlements must go on asking.
 | `work_party_caravan::a_vanished_herd_brings_its_caravan_home_as_the_row_lapses` | a vanished herd's caravan comes home once, before the row lapses |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes` | forecast == actual on the encoded snapshot |
 | `work_party_caravan::a_deposit_eight_hexes_out_posts_a_party_that_walks_six_each_way` | a far working posts a party on the wire, and nothing lands while it walks out |
-| `work_party_caravan::a_local_working_takes_no_party_and_its_numbers_are_unchanged` | the deposit web's local identity: the take seam's own figure, uncapped by carry, sled not worn |
+| `work_party_caravan::a_local_working_takes_no_party_and_its_numbers_are_unchanged` | the deposit web's local identity: the take seam's own figure, uncapped by carry |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_an_extract_row_publishes` | forecast == actual on the deposit web, in material units |
 | `work_party_caravan::unassigning_a_deposit_caravan_mid_walk_brings_every_pack_home_as_material` | every pack lands in the store as wood, booked `PartyHome`, and nothing on the larder or the food route arm |
-| `work_party_caravan::a_sled_equipped_far_crew_carries_a_larger_pack_than_bare_hands` | the first porter's pack is the pricing's haul carry over the weight, larger with a sled |
+| `work_party_caravan::a_woodcutting_crew_on_the_deadfall_floor_carries_a_larger_pack_than_bare_hands` | on the floor the row claims its sleds, and the first porter's pack is the pricing's haul carry over the weight — larger than bare hands |
+| `work_party_caravan::a_woodcutting_crew_on_felling_hauls_at_bare_carry` | on felling the row claims its axes, not its sleds, so the pack is the bare haul over the weight — paired against the same kit on deadfall |
 | `work_party_caravan::a_pack_is_the_haul_carry_over_the_materials_weight` | twice the weight, half the units per pack — the material's one number is the whole difference |

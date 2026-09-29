@@ -114,7 +114,7 @@ mod tests {
             default_scout_kit_id: "wayfinding".to_string(),
             default_warrior_kit_id: "warrior".to_string(),
             default_expedition_kit_id: "ranging".to_string(),
-            default_extract_kit_id: "hauling".to_string(),
+            default_extract_kit_id: "stonework".to_string(),
             herds: vec![HerdTelemetryState {
                 id: "herd_wild".to_string(),
                 // The quarry's OWN default kit, deliberately not the snapshot's
@@ -152,7 +152,7 @@ mod tests {
         assert_eq!(subsistence.defaultScoutKitId(), Some("wayfinding"));
         assert_eq!(subsistence.defaultWarriorKitId(), Some("warrior"));
         assert_eq!(subsistence.defaultExpeditionKitId(), Some("ranging"));
-        assert_eq!(subsistence.defaultExtractKitId(), Some("hauling"));
+        assert_eq!(subsistence.defaultExtractKitId(), Some("stonework"));
         let option = subsistence.kits().expect("the roster is published").get(0);
         assert_eq!(option.id(), Some("none"));
         assert_eq!(option.displayName(), Some("No kit"));

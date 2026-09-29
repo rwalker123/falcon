@@ -65,9 +65,32 @@ fighting a reason to go.
 
 A band that stands still eats its patch down. The intensification arc models this as actual vs
 sustainable income on every source row. The resistance to settling is therefore not a new system: it
-is the existing overdraw made to bite on a stationary band *before* the tether forms. Why moving did
-not pay in play has **not been measured** — the guess is that depletion is slow enough and land
-uniform enough that a band never feels the patch thin under it. Measure before tuning.
+is the existing overdraw made to bite on a stationary band *before* the tether forms.
+
+**Measured (issue #705, `core_sim/tests/stationary_push_probe.rs`).** A shipped `late_forager_tribe`
+band (30 people, 17 working hands) stood still for 100 turns on five start biomes — PrairieSteppe,
+MixedWoodland, RiverDelta, Floodplain, OasisBasin — staffed two ways (the apron's best gathering site
+plus the nearest herd; every apron site plus the largest herd in reach), half gathering, half hunting,
+at the default floor. The guess that depletion is *slow* was wrong; the guess that land is *uniform*
+was right:
+
+- **Depletion is a cliff, not a thinning.** A gathering site under nine gatherers falls to
+  `floor · K` in 3–4 turns (2.87 → 0.92 food/turn on the delta, 2.65 → 0.62 on the steppe) and holds
+  there for the rest of the run.
+- **Every patch is the same patch.** Every apron gathering site carries `K ≈ 150–210`, so each settles
+  at 0.6–0.9 food/turn. The next patch over offers a few turns of the pre-cliff rate, not a better
+  place.
+- **The cliff is invisible.** The Food/turn headline reads each row's forward-projected `realized`,
+  which quotes the post-cliff rate from turn 1, and `overdraws` never fires, because the default floor
+  sits exactly on the food peak. What a player sees is the larder shrinking, not a source thinning.
+- **A starting band runs no surplus.** Income is ≈2.5–4.5 food/turn against 4.07 eaten. The band
+  lives off its starting larder (≈74), grows by birth to 35–41 while it lasts, crashes when it empties
+  (turns 25–56), and settles at 3–22 people where income equals consumption. Net over turns 51–100 is
+  ≈0 in every run. This is the start's intended friction: the starting tiles do not carry the starting
+  band.
+
+So why moving did not pay is less that the patch thins too slowly than that the thinning cannot be
+seen, and the patch a band would move to is no better than the one it left.
 
 ### The first pulls are not productive
 
@@ -375,7 +398,10 @@ surplus**:
 **Order for the arc (leaning):** spoilage with the storage lesson → the tile-source seam
 (settlement arc) with storage as its first branch → the granary as a tether → directed labor and the
 `leadership` term.
-Measure how much surplus a well-placed band actually runs today before setting the lesson's pace.
+**Measured (#705):** a starting band on its starting tiles runs **no** surplus — net ≈0 once its
+starting larder is spent, on every biome measured (see "The push is depletion" above). The storage
+lesson's pace therefore cannot be set against a starting band; it has to be set against whatever
+first raises a band's income past its consumption.
 
 **There is no carry cap (decided).** The stale plan decision above argued for a hard bound on what
 a band carries, so that a fixed store would be the only way to hold more. Spoilage is enough: food
