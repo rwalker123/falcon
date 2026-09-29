@@ -251,6 +251,7 @@ impl EquippedElsewhere {
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
             | EquipmentStat::BuildWork
+            | EquipmentStat::DepositTake
             | EquipmentStat::Dispersion
             | EquipmentStat::Exposure
             | EquipmentStat::CraftSpeed
@@ -932,7 +933,8 @@ fn quantum_units_per_noun(quantum: WearQuantum, reference_build_cost: f32) -> f3
         | WearQuantum::BiomassGathered
         | WearQuantum::BiomassCollected
         | WearQuantum::TileRevealed
-        | WearQuantum::ItemCrafted => ONE_UNIT_IS_ITS_OWN_NOUN,
+        | WearQuantum::ItemCrafted
+        | WearQuantum::DepositTaken => ONE_UNIT_IS_ITS_OWN_NOUN,
     }
 }
 

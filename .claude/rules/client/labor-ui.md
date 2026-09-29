@@ -1835,7 +1835,7 @@ refuse. Every negative sentinel these ceilings use is `-1` — `MAX_USEFUL_UNBOU
 
 **IT IS UNREACHABLE FROM A COMPOSE SHEET, which is why it needed a hazard at all.** All three webs cap
 their stepper at this same ceiling (`_forecast_worker_cap` for the food webs,
-`HudDepositVocab.max_useful_cutters` for a working), so the over-assignment cannot be MADE where the
+the crew curve's plateau for a working — `HudDepositVocab.curve_useful_cutters`), so the over-assignment cannot be MADE where the
 crew is chosen. What reaches the player is the GROUND MOVING UNDER A STANDING CREW — a patch drawn
 down, a herd thinned, a seam worked out — and no stepper can gate that.
 
@@ -3461,8 +3461,10 @@ value is that three surfaces cannot answer it differently: `resolve_selection` (
 on) and `build_kit_row`'s `(default)` mark both call it. A picker
 that opened on the trap and printed `(default)` on the spear would contradict itself on every
 small-game herd, which is why the mark is asserted BESIDE the selection rather than trusted to follow
-it. Only a HUNT row has a source that publishes one; the forage web's patches carry no such field, so
-passing them through the same call is what keeps both webs on one seam.
+it. **Two sources publish one — a HERD and a deposit WORKING** (`woodcutting` on wood, `stonework` on
+stone, issue #663) — and `KitRoster.SOURCE_DEFAULT_KIT_JOBS` names the jobs whose source is read; the
+forage web's patches carry no such field, so passing them through the same call is what keeps every
+web on one seam.
 
 **THE HONESTY TEST THIS DEFAULT ONCE HAD TO KEEP IN STEP WITH IS RETIRED.** The two per-herd estimate
 tables were quoted at ONE kit and a sheet composing another had to refuse them; the forecast QUERY

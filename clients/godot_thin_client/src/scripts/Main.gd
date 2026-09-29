@@ -1363,7 +1363,8 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             }
         "extract":
             # **THE TWO DEPOSIT BRANCHES' TAKE ROW** (`docs/plan_extraction.md` §6, arc #583) —
-            # `assign_labor <f> <b> extract <x> <y> <material> <workers>`, and `0` unassigns.
+            # `assign_labor <f> <b> extract <x> <y> <material> [floor] <workers> [kit <id>]`, and `0`
+            # unassigns.
             #
             # ⛔ **THE MATERIAL RIDES THE `species` TOKEN, AND IT IS NOT OPTIONAL.** That is where
             # the sim's own `"extract"` arm reads it from — it is the one free-form string this
@@ -1386,8 +1387,15 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # only thing a builder can honestly say for a question that was never asked**; what it
             # MEANS is the sim's, and it answers differently per branch.
             #
-            # **STILL NO KIT TOKEN**: `default_kits.extract` is the bare `none` kit with no picker
-            # anywhere on the working card, so the tail is closed after the worker count.
+            # **THE KIT RIDES THE TAIL AS A NAMED PAIR** (issue #663), after the worker count, on
+            # `_kit_token`'s own omission rule. The grammar lifts `kit <id>` out of the tail before the
+            # positional `[floor] <workers>` is read, so it never competes with the optional floor.
+            # The deposit sheet mounts a real picker (the working's own take kit beside `none`),
+            # so a selection with no token to ride would be a choice this line silently dropped. An
+            # ABSENT token means *the working's own derived kit* to the sim; the payload's
+            # `default_kit_id` is the job's `""` (see `HudBandLaborState.default_kit_id`), so every
+            # named selection is sent — `none` included, which is the one pick an omitted token
+            # would get wrong — and pinning the kit the sim would have derived anyway is harmless.
             var ex := int(payload.get("x", -1))
             var ey := int(payload.get("y", -1))
             var material := String(payload.get("species", "")).strip_edges().to_lower()
@@ -1404,7 +1412,7 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                         workers, "" if workers == 1 else "s", material, ex, ey,
                         _floor_percent_text(payload)]
             return {
-                "line": "%s %d" % [extract_head, workers],
+                "line": "%s %d%s" % [extract_head, workers, _kit_token(payload)],
                 "message": extract_message,
             }
         "scout", "warrior", "agriculture", "husbandry", "roadwork", "quarrywork", "builders":

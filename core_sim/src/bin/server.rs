@@ -27,8 +27,8 @@ use core_sim::record::{CommandRecord, RecordingSink, RunInfo, RunRecorder, RECOR
 use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
-    apply_port_base, available_workers, carry_runtime_owned_fields, floor_is_valid,
-    forage_source_yield_preview, herd_build_verb, hunt_source_yield_preview, knows,
+    apply_port_base, available_workers, carry_runtime_owned_fields, carry_world_identity,
+    floor_is_valid, forage_source_yield_preview, herd_build_verb, hunt_source_yield_preview, knows,
     load_simulation_config_for_new_world, output_multiplier, patch_build_verb, patch_composition,
     resolve_active_profile, resolve_committed_species, resolve_take_selection, rung_site_refusal,
     species_stands_in, tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile,
@@ -3299,6 +3299,13 @@ fn seed_source_yield(
     // `advance_labor_allocation` will divide by next turn.
     let crew_gear = {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+        let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+        // **The held rung of every `extract` working**, so an extract row claims only the items
+        // serving it — the turn's own narrowing (`LaborAssignment::take_kit`).
+        let held = core_sim::extraction::HeldRungs {
+            deposits: app.world.resource::<core_sim::DepositRegistry>(),
+            extraction: &extraction,
+        };
         app.world
             .get::<LaborAllocation>(band)
             .and_then(|allocation| {
@@ -3309,11 +3316,11 @@ fn seed_source_yield(
                     .map(|assignment| {
                         (
                             assignment.kit_choice(&equipment_cfg),
-                            allocation.item_budget(&equipment_cfg),
+                            allocation.item_budget(&equipment_cfg, Some(&held)),
                             // **The rows this one competes with for the band's gear** — what a far
                             // row's caravan forecast is priced beside
                             // (`core_sim::work_party::CaravanPricing`).
-                            allocation.rows_excluding_source(&equipment_cfg, target),
+                            allocation.rows_excluding_source(&equipment_cfg, target, Some(&held)),
                         )
                     })
             })
@@ -3635,8 +3642,35 @@ fn seed_source_yield(
             // renews, so a quarry's seeded figure is the one its crew will actually cut.
             let regrowth_rate =
                 core_sim::extraction::tile_deposit_regrowth(&extraction, material, &ground);
+            // **The crew's take gear, through the seam the turn strikes it at** — this row's own
+            // coverage off its share of the band's gear, at the rung the projected working HOLDS
+            // (`EquipmentConfig::deposit_gear`). A seed priced bare would promise an axe-carrying
+            // crew the bare-handed cut and jump the moment the turn landed.
+            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+            let band_wear = app
+                .world
+                .get::<BandEquipment>(band)
+                .cloned()
+                .unwrap_or_default();
+            // **Narrowed to the tool serving the rung the working holds**, as the turn narrows it.
+            let held_rung = projected.standing().held;
+            let held_key = held_rung.wire_key();
+            let take_kit = equipment_cfg.deposit_rung_kit(&crew_kit, held_rung.branch(), &held_key);
+            let crew_coverage = equipment_cfg.coverage_from_units(
+                &take_kit,
+                workers as f32,
+                &band_wear,
+                item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
+            );
+            let gear = equipment_cfg.deposit_gear(
+                &crew_coverage,
+                &band_wear,
+                held_rung.branch(),
+                Some(&held_key),
+            );
             let taken = core_sim::extraction::deposit_take(
                 workers,
+                gear.take,
                 projected.stock,
                 capacity,
                 regrowth_rate,
@@ -4658,6 +4692,34 @@ fn labor_event_kind(role: &str) -> CommandEventKind {
     }
 }
 
+/// **THE WORKING ON `(tile, material)` AS IT STANDS NOW** — the registry's live working, or, where no
+/// band has opened one, the derived opening state (`snapshot::deposits`' own rule). `None` for ground
+/// holding none of the material or a tile off the map.
+fn working_as_it_stands(
+    app: &bevy::prelude::App,
+    tile: UVec2,
+    material: &str,
+) -> Option<core_sim::extraction::DepositSource> {
+    if let Some(live) = app
+        .world
+        .resource::<core_sim::DepositRegistry>()
+        .source(tile, material)
+    {
+        return Some(live.clone());
+    }
+    let entity = app.world.resource::<TileRegistry>().index(tile.x, tile.y)?;
+    let ground = app.world.get::<Tile>(entity)?;
+    let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+    let capacity = core_sim::extraction::tile_deposit_capacity(&extraction, material, ground);
+    if capacity <= core_sim::NO_DEPOSIT {
+        return None;
+    }
+    let branch = core_sim::extraction::deposit_branch(&extraction, material)?;
+    Some(core_sim::extraction::DepositSource::opening(
+        tile, material, capacity, branch,
+    ))
+}
+
 /// **What this row runs on when the player names no kit** — the herd's own default for a Hunt on a
 /// resolvable quarry, the job's default for everything else.
 ///
@@ -4679,6 +4741,17 @@ fn default_kit_for_target(
     target: &LaborTarget,
 ) -> KitChoice {
     let job = target.kit_job();
+    // **A WORKING'S DEFAULT IS DERIVED FROM ITS BRANCH** (#663) — the same
+    // `extraction::working_default_kit` the published `DepositState.defaultKitId` is read through, so
+    // the kit this command stores (and the turn and the seed then price with) is the picker's
+    // `(default)`. Ground holding none of the material falls to the job default;
+    // `validate_labor_policy` refuses that row anyway.
+    if let LaborTarget::Extract { tile, material, .. } = target {
+        return working_as_it_stands(app, *tile, material).map_or_else(
+            || equipment.default_kit(job),
+            |working| core_sim::extraction::working_default_kit(equipment, &working),
+        );
+    }
     let LaborTarget::Hunt { fauna_id, .. } = target else {
         return equipment.default_kit(job);
     };
@@ -9901,8 +9974,15 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
     {
         let mut metadata = app.world.resource_mut::<SimulationConfigMetadata>();
         metadata.set_path(applied_path.clone());
+        // The FILE's seed intent — read before the carry below replaces the seed with the world's.
         metadata.set_seed_random(new_config.map_seed == 0);
     }
+
+    // **A reload retunes the world that exists; it never re-describes it** — the grid, preset,
+    // seed, topology, start profile and fog switch stay the running world's (see
+    // `carry_world_identity`). What the file names for the grid is only reported, below.
+    let file_grid_size = new_config.grid_size;
+    carry_world_identity(&mut new_config, &current_config);
 
     {
         let mut config_res = app.world.resource_mut::<SimulationConfig>();
@@ -9940,11 +10020,11 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
         "simulation_config.reloaded"
     );
 
-    if new_config.grid_size != current_config.grid_size {
+    if file_grid_size != current_config.grid_size {
         warn!(
             target: "shadow_scale::config",
             old = ?current_config.grid_size,
-            new = ?new_config.grid_size,
+            new = ?file_grid_size,
             "simulation_config.grid_size_changed=map_reset_recommended"
         );
     }
@@ -11576,6 +11656,9 @@ fn querying_faction(query: &QueryPayload) -> Option<(FactionId, &'static str)> {
         QueryPayload::WorkPartyForecast(ask) => {
             Some((FactionId(ask.faction_id), "work_party_forecast"))
         }
+        QueryPayload::DepositCrewTake(ask) => {
+            Some((FactionId(ask.faction_id), "deposit_crew_take"))
+        }
         // The save headers on disk, and the roster ceiling for a grid size. Neither reads a
         // faction's state, and both are asked from the landing screen — before a world, and
         // therefore before any seat — so a gate applied to them would close the load menu.
@@ -13164,6 +13247,105 @@ mod tests {
             0,
             "with fog off every tile publishes Active; {fogged} of {} did not",
             raster.samples.len()
+        );
+
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// ⛔ **A SIMULATION-CONFIG RELOAD KEEPS THE RUNNING WORLD'S IDENTITY — and a save written after
+    /// one still loads.**
+    ///
+    /// The world is built at a grid, preset and seed the `new_game` command chose, none of which is
+    /// the file's. A hot reload used to replace the live `SimulationConfig` wholesale, so the config
+    /// then described the FILE's world: `save_game` recorded the file's grid over this world's
+    /// tiles, and the load built its power topology for `width × height` nodes against a tile count
+    /// that was smaller — `index out of bounds` in `PowerTopology::from_grid`. Reached in play by the
+    /// config watcher delivering a write late, which is how `save_load_over_the_socket` hit it only
+    /// under load.
+    #[test]
+    fn a_config_reload_keeps_the_worlds_grid_preset_and_seed_so_its_save_still_loads() {
+        /// A grid no shipped config names, so the reload's file cannot agree with it by accident.
+        const WORLD_GRID: UVec2 = UVec2::new(24, 16);
+        /// A preset other than the shipped file's `earthlike`, for the same reason.
+        const WORLD_PRESET: &str = "polar_contrast";
+        /// A seed other than the shipped file's `0` (which asks for a random one).
+        const WORLD_SEED: u64 = 7;
+
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("reload_identity");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = build_test_app();
+        app.insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            WORLD_PRESET.to_string(),
+            WORLD_GRID.x,
+            WORLD_GRID.y,
+            WORLD_SEED,
+            "late_forager_tribe".to_string(),
+            None,
+            &flat,
+        );
+        assert!(world_active, "the fixture world must build");
+        let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/data/simulation_config.json");
+        let file = SimulationConfig::from_file(&shipped).expect("the shipped config parses");
+        assert!(
+            file.grid_size != WORLD_GRID
+                && file.map_preset_id != WORLD_PRESET
+                && file.map_seed != WORLD_SEED,
+            "fixture: the file must disagree with the world on all three, or the test proves nothing"
+        );
+        let before = app.world.resource::<SimulationConfig>().clone();
+
+        handle_reload_simulation_config(&mut app, Some(shipped.display().to_string()));
+
+        let after = app.world.resource::<SimulationConfig>().clone();
+        assert_eq!(
+            after.grid_size, before.grid_size,
+            "a reload resized the world"
+        );
+        assert_eq!(after.map_preset_id, before.map_preset_id);
+        assert_eq!(after.map_seed, before.map_seed);
+        assert_eq!(
+            after.map_topology.wrap_horizontal,
+            before.map_topology.wrap_horizontal
+        );
+        assert_eq!(after.start_profile_id, before.start_profile_id);
+        assert_eq!(
+            after.seat_turn_timeout_seconds, file.seat_turn_timeout_seconds,
+            "liveness: a tunable still comes off the reloaded file"
+        );
+
+        resolve_turn_with_auto_orders(&mut app);
+        assert!(handle_save_game(&app, world_active, "after reload").ok);
+        let bytes = std::fs::read(dir.join("after reload.shdw")).expect("the save is on disk");
+        let header = core_sim::save::read_save_header(&bytes).expect("the header reads");
+        assert_eq!(
+            (header.world.width, header.world.height),
+            (WORLD_GRID.x, WORLD_GRID.y),
+            "the save recorded a grid other than the world's"
+        );
+        assert_eq!(header.world.map_preset_id, WORLD_PRESET);
+
+        let mut command_log = None;
+        let answer = handle_load_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "after reload",
+            &flat,
+        );
+        assert!(answer.ok, "the load must land: {}", answer.error);
+        assert_eq!(
+            app.world.resource::<SimulationConfig>().grid_size,
+            WORLD_GRID
         );
 
         std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
@@ -22931,6 +23113,9 @@ mod tests {
         let faction = FactionId(0);
         let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
         let band = spawn_idle_band(&mut app, faction, tile);
+        // **A band holding nothing**, so the seed is the bare hands' alone — the stocked fixture
+        // band carries sleds, which are the deadfall rung's tool (#663).
+        app.world.entity_mut(band).insert(BandEquipment::default());
 
         assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
 
@@ -22956,6 +23141,672 @@ mod tests {
             "⛔ and it pays NO FOOD — `food_income` is `Sum(actual)` and one side of the larder \
              identity, so a working must contribute nothing to it"
         );
+    }
+
+    /// **A `forestry:felling` working seated on [`WORKING`] at the top of its rung**, full stand —
+    /// the rung the axe serves. Returns the rung's bare per-worker rate at that position.
+    fn seat_a_felling_working(app: &mut bevy::prelude::App, tile: Entity) -> f32 {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+        let ground = app
+            .world
+            .get::<Tile>(tile)
+            .cloned()
+            .expect("the working's tile");
+        let capacity = core_sim::extraction::tile_deposit_capacity(&extraction, "wood", &ground);
+        let mut working = core_sim::extraction::DepositSource::opening(
+            WORKING,
+            "wood",
+            capacity,
+            core_sim::RungBranch::Forestry,
+        );
+        let (base, width) =
+            core_sim::extraction::deposit_rung_span(core_sim::RungKey::ForestryFelling, &ladder);
+        working.set_ladder_position(base + width, &ladder, core_sim::RungBranch::Forestry);
+        assert_eq!(
+            working.rung(),
+            core_sim::RungKey::ForestryFelling,
+            "fixture: the working must hold the felling rung the axe serves"
+        );
+        let bare_rate =
+            core_sim::extraction::deposit_payoff(working.standing(), &ladder).yield_per_worker_turn;
+        app.world
+            .resource_mut::<core_sim::DepositRegistry>()
+            .insert(working);
+        bare_rate
+    }
+
+    /// One full turn as a deposit row spans it — Logistics' renewal and bill, then the labour pass.
+    fn resolve_deposit_turn(app: &mut bevy::prelude::App) {
+        {
+            use bevy_ecs::system::RunSystemOnce;
+            app.world.run_system_once(core_sim::advance_deposits);
+        }
+        resolve_labor(app);
+    }
+
+    /// **THE SEED IS RATIONED LIKE THE TURN WHEN A POOL SHARES THE AXES** (#663). Two axes, a
+    /// felling crew, and two quarrywork keepers holding the same working: the pools settle first and
+    /// take the axe the keepers' bill needs, so the fellers are armed out of what is left — and the
+    /// seed, which reads the same `LaborAllocation::item_budget` (less the pools' issued units the
+    /// turn parked on `last_pool_toe`), must quote exactly the cut the next turn pays.
+    #[test]
+    fn a_seed_beside_a_pool_holding_axes_quotes_the_cut_the_turn_pays() {
+        const AXES: u32 = 2;
+        const KEEPERS: u32 = 2;
+
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        seat_a_felling_working(&mut app, tile);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", AXES, "flint", None);
+        app.world.entity_mut(band).insert(ledger);
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+        app.world
+            .get_mut::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .assignments
+            .push(core_sim::LaborAssignment {
+                party: None,
+                target: LaborTarget::Quarrywork,
+                workers: KEEPERS,
+                kit: None,
+                priority: core_sim::SourcePriority::default(),
+                upkeep_kit: None,
+            });
+        // One turn so the settlement has parked what the pools were issued.
+        resolve_deposit_turn(&mut app);
+        let pool_axes: f32 = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .last_pool_toe
+            .iter()
+            .filter(|line| line.item == "axe")
+            .map(|line| line.filled)
+            .sum();
+        assert!(
+            pool_axes >= 1.0,
+            "fixture: the keepers must hold an axe, or the seed has nothing to be rationed by — \
+             {pool_axes}"
+        );
+
+        // Re-seed the row through the seam the assign command calls, then resolve the turn it
+        // quotes.
+        seed_source_yield(
+            &mut app,
+            band,
+            &LaborTarget::Extract {
+                tile: WORKING,
+                material: "wood".to_string(),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+            },
+            None,
+            BAND_WORKERS,
+        );
+        let seeded = source_materials(&app, band)
+            .first()
+            .expect("a staffed working publishes the material it will cut")
+            .amount;
+        resolve_deposit_turn(&mut app);
+        let resolved = source_materials(&app, band)
+            .first()
+            .expect("the turn paid the working's material")
+            .amount;
+        assert!(
+            (resolved - seeded).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the turn must pay the seeded cut (seed {seeded}, resolved {resolved})"
+        );
+    }
+
+    /// The kit stored on this band's `extract` row for `material` — what the turn and the seed price
+    /// the crew with.
+    fn stored_extract_kit(app: &bevy::prelude::App, band: Entity, material: &str) -> String {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .assignments
+            .iter()
+            .find_map(|assignment| match &assignment.target {
+                LaborTarget::Extract { material: m, .. } if m == material => {
+                    assignment.kit.as_ref().map(|kit| kit.id().to_string())
+                }
+                _ => None,
+            })
+            .expect("the extract row stores the kit it was assigned with")
+    }
+
+    /// **Capture the deposit grid's frame.** The grid fixture runs no worldgen, so the one resource
+    /// the capture asks of it — an elevation field — is supplied flat over the grid.
+    fn capture_deposit_grid(app: &mut bevy::prelude::App) {
+        let cells = (DEPOSIT_GRID * DEPOSIT_GRID) as usize;
+        app.world
+            .insert_resource(core_sim::heightfield::ElevationField::new(
+                DEPOSIT_GRID,
+                DEPOSIT_GRID,
+                vec![0.0; cells],
+            ));
+        recapture_snapshot_in_place(&mut app.world);
+    }
+
+    /// **A NO-KIT `extract` ROW IS SENT WITH THE KIT THE WIRE PUBLISHES AS THAT WORKING'S DEFAULT**
+    /// (#663). Rolling hills carry timber and rock on one hex, so one fixture asks both branches: the
+    /// wood row stores `felling`, the stone row `quarrying`, and each equals the `defaultKitId` its
+    /// own `DepositState` row publishes — the kit the turn arms and the picker's `(default)` mark are
+    /// one answer, through `extraction::working_default_kit`.
+    #[test]
+    fn a_no_kit_extract_row_is_sent_with_the_kit_the_wire_publishes_for_that_working() {
+        let mut app = build_test_app();
+        app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, TWO_DEPOSIT_TERRAIN);
+        let band = spawn_idle_band(&mut app, faction, tile);
+
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+        assign_extract(&mut app, faction, WORKING, "stone", None, BAND_WORKERS);
+        assert_eq!(stored_extract_kit(&app, band, "wood"), "woodcutting");
+        assert_eq!(stored_extract_kit(&app, band, "stone"), "stonework");
+
+        capture_deposit_grid(&mut app);
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("a snapshot was captured");
+        for material in ["wood", "stone"] {
+            let row = snapshot
+                .deposits
+                .iter()
+                .find(|row| {
+                    row.tile_x == WORKING.x && row.tile_y == WORKING.y && row.material == material
+                })
+                .expect("the worked deposit publishes a row");
+            assert_eq!(
+                row.default_kit_id,
+                stored_extract_kit(&app, band, material),
+                "{material}: the published default is the kit the row was sent with"
+            );
+        }
+    }
+
+    /// The published `extract` row for wood on this band, off a freshly captured frame.
+    fn published_wood_row(app: &mut bevy::prelude::App) -> sim_schema::state::LaborAssignmentState {
+        capture_deposit_grid(app);
+        app.world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("a snapshot was captured")
+            .populations
+            .iter()
+            .flat_map(|cohort| cohort.labor_assignments.iter())
+            .find(|row| row.material == "wood")
+            .cloned()
+            .expect("the extract row is published")
+    }
+
+    /// **`kitWorkersHolding` COUNTS THE TOOL SERVING THE RUNG THE WORKING HOLDS** (#663) — the
+    /// Woodcutting kit is a sled on deadfall and an axe on felling, and a complete-kit count over both
+    /// would be the min of the two. Three arms, all on the same five-crew wood row:
+    ///
+    /// - **deadfall, two sleds and no axes** → 2 of 5: the sleds are the whole kit there;
+    /// - **felling, three axes and no sleds** → 3 of 5: the axes are, and the missing sleds do not
+    ///   zero it;
+    /// - **felling, three axes and five sleds** → 3 of 5: the sleds, which serve nothing on felling,
+    ///   do not raise it either.
+    #[test]
+    fn a_wood_crews_complete_kit_count_is_the_tool_serving_its_held_rung() {
+        let arm =
+            |felling: bool, sleds: u32, axes: u32| -> sim_schema::state::LaborAssignmentState {
+                let mut app = build_test_app();
+                let faction = FactionId(0);
+                let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+                let band = spawn_idle_band(&mut app, faction, tile);
+                if felling {
+                    seat_a_felling_working(&mut app, tile);
+                }
+                let mut ledger = BandEquipment::default();
+                ledger.stock("sled", sleds, "plain", None);
+                ledger.stock("axe", axes, "flint", None);
+                app.world.entity_mut(band).insert(ledger);
+                assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+                published_wood_row(&mut app)
+            };
+        let deadfall = arm(false, 2, 0);
+        assert_eq!(deadfall.kit_id, "woodcutting");
+        assert_eq!(
+            deadfall.kit_workers_holding, 2.0,
+            "two sleds outfit two on deadfall"
+        );
+        let felling_bare_of_sleds = arm(true, 0, 3);
+        assert_eq!(
+            felling_bare_of_sleds.kit_workers_holding, 3.0,
+            "three axes outfit three fellers, sleds or no sleds"
+        );
+        let felling_with_sleds = arm(true, 5, 3);
+        assert_eq!(
+            felling_with_sleds.kit_workers_holding, 3.0,
+            "sleds serve nothing on felling and add nothing to the count"
+        );
+    }
+
+    /// A band on [`WORKING`]'s grid, addressable by [`DEPOSIT_BAND_ID`], holding `ledger` — the
+    /// shape every deposit crew-curve fixture below starts from.
+    fn deposit_band_holding(
+        app: &mut bevy::prelude::App,
+        tile: Entity,
+        ledger: BandEquipment,
+    ) -> Entity {
+        let band = spawn_idle_band(app, FactionId(0), tile);
+        app.world
+            .entity_mut(band)
+            .insert((BandId(DEPOSIT_BAND_ID), ledger));
+        band
+    }
+
+    /// Ask the shipped deposit crew-take query and hand back its reply, or panic on a refusal.
+    fn deposit_crew_curve(
+        app: &mut bevy::prelude::App,
+        material: &str,
+        kit: &str,
+        floor: f32,
+        max_workers: u32,
+    ) -> sim_runtime::commands::DepositCrewTakeReply {
+        match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::DepositCrewTake(deposit_ask(material, kit, floor, max_workers)),
+        ) {
+            QueryReply::DepositCrewTake(reply) => reply,
+            other => panic!("the deposit crew ask must be answered with a curve: {other:?}"),
+        }
+    }
+
+    /// The ask itself, so the refusal cases can perturb one field of it.
+    fn deposit_ask(
+        material: &str,
+        kit: &str,
+        floor: f32,
+        max_workers: u32,
+    ) -> sim_runtime::commands::DepositCrewTakeQuery {
+        sim_runtime::commands::DepositCrewTakeQuery {
+            faction_id: 0,
+            band_id: DEPOSIT_BAND_ID,
+            x: WORKING.x,
+            y: WORKING.y,
+            material: material.to_string(),
+            kit_id: kit.to_string(),
+            floor,
+            max_workers,
+        }
+    }
+
+    /// Commit a crew with a NAMED kit, through the command.
+    fn assign_extract_with_kit(
+        app: &mut bevy::prelude::App,
+        material: &str,
+        workers: u32,
+        kit: &str,
+    ) {
+        handle_assign_labor(
+            app,
+            FactionId(0),
+            None,
+            "extract".to_string(),
+            workers,
+            Some(WORKING.x),
+            Some(WORKING.y),
+            None,
+            Some(material.to_string()),
+            None,
+            Some(kit.to_string()),
+            Vec::new(),
+        );
+    }
+
+    /// ⛔ **THE DEPOSIT CREW CURVE IS WHAT THE TURN PAYS** (#663) — for crew `n` with kit `k`, asking
+    /// before the commit, then committing `n` with `k` and resolving, pays row `n`'s `take`. Three
+    /// arms so the agreement is not a coincidence of one rung or one kit:
+    ///
+    /// - a seated **felling** wood, Woodcutting kit, two axes and three sleds among four fellers —
+    ///   the axes arm two, the sleds serve nothing there;
+    /// - an **unopened** deadfall wood, Woodcutting kit, two sleds among three — the sled is the
+    ///   floor's tool;
+    /// - the felling wood again on **`none`** — the bare cut, nobody armed.
+    #[test]
+    fn the_deposit_crew_curve_is_what_the_turn_pays() {
+        struct Arm {
+            felling: bool,
+            kit: &'static str,
+            sleds: u32,
+            axes: u32,
+            crew: u32,
+            armed: f32,
+        }
+        for arm in [
+            Arm {
+                felling: true,
+                kit: "woodcutting",
+                sleds: 3,
+                axes: 2,
+                crew: 4,
+                armed: 2.0,
+            },
+            Arm {
+                felling: false,
+                kit: "woodcutting",
+                sleds: 2,
+                axes: 0,
+                crew: 3,
+                armed: 2.0,
+            },
+            Arm {
+                felling: true,
+                kit: "none",
+                sleds: 0,
+                axes: 2,
+                crew: 4,
+                armed: 0.0,
+            },
+        ] {
+            let mut app = build_test_app();
+            let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+            if arm.felling {
+                seat_a_felling_working(&mut app, tile);
+            }
+            let mut ledger = BandEquipment::default();
+            ledger.stock("sled", arm.sleds, "plain", None);
+            ledger.stock("axe", arm.axes, "flint", None);
+            let band = deposit_band_holding(&mut app, tile, ledger);
+
+            let curve = deposit_crew_curve(
+                &mut app,
+                "wood",
+                arm.kit,
+                DEFAULT_ESCAPEMENT_FLOOR,
+                arm.crew + 1,
+            );
+            let row = curve
+                .per_crew
+                .iter()
+                .find(|row| row.workers == arm.crew)
+                .cloned()
+                .expect("the curve carries the crew asked about");
+            assert_eq!(
+                row.armed_workers, arm.armed,
+                "{}: holders of the held rung's tool",
+                arm.kit
+            );
+
+            assign_extract_with_kit(&mut app, "wood", arm.crew, arm.kit);
+            resolve_deposit_turn(&mut app);
+            let paid = app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("band has an allocation")
+                .last_yields
+                .first()
+                .and_then(|row| row.materials.first())
+                .map(|payoff| payoff.amount)
+                .expect("the turn paid the working's material");
+            assert!(
+                (paid - row.take).abs() < A_CLOSE_ENOUGH_AMOUNT,
+                "{} felling={}: the turn pays the curve's row — quoted {}, paid {paid}",
+                arm.kit,
+                arm.felling,
+                row.take
+            );
+        }
+    }
+
+    /// **THE CURVE'S NEXT-RUNG FIGURE IS WHAT THE TURN PAYS ONCE RAISED** (#663) — an unopened wood
+    /// with two axes, the sheet asked at five fellers before any commit: `next_rung_take` is felling's
+    /// rate × 5 plus two axes, the reply names the rungs it priced, and after the commit and the
+    /// raise the turn pays that figure.
+    #[test]
+    fn the_deposit_crew_curves_next_rung_is_what_the_turn_pays_once_raised() {
+        const CREW: u32 = 5;
+        let mut app = build_test_app();
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", 2, "flint", None);
+        let band = deposit_band_holding(&mut app, tile, ledger);
+
+        let curve = deposit_crew_curve(
+            &mut app,
+            "wood",
+            "woodcutting",
+            DEFAULT_ESCAPEMENT_FLOOR,
+            CREW,
+        );
+        assert_eq!(curve.held_rung, "forestry:deadfall");
+        assert_eq!(curve.next_rung, "forestry:felling");
+        assert!(curve.in_range);
+        assert_eq!(curve.per_crew.len(), CREW as usize);
+        let quoted = curve.per_crew[CREW as usize - 1].next_rung_take;
+
+        assign_extract_with_kit(&mut app, "wood", CREW, "woodcutting");
+        seat_a_felling_working(&mut app, tile);
+        resolve_deposit_turn(&mut app);
+        let paid = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .last_yields
+            .first()
+            .and_then(|row| row.materials.first())
+            .map(|payoff| payoff.amount)
+            .expect("the turn paid the working's material");
+        assert!(
+            (paid - quoted).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the raise pays the curve's once-felled figure: quoted {quoted}, paid {paid}"
+        );
+    }
+
+    /// **THE DEPOSIT CREW ASK IS REFUSED BY NAME, FIELD BY FIELD** — the hunt curve's perturbation
+    /// table, one question over: each case breaks exactly one field of an ask the base case answers,
+    /// so a refusal cannot be passing for the wrong reason. `max_workers 0` is not a refusal but an
+    /// empty curve.
+    #[test]
+    fn a_deposit_crew_ask_is_refused_field_by_field() {
+        let mut app = build_test_app();
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        deposit_band_holding(&mut app, tile, BandEquipment::default());
+        let base = deposit_ask("wood", "woodcutting", DEFAULT_ESCAPEMENT_FLOOR, 3);
+        assert!(
+            matches!(
+                core_sim::forecast_query::answer_forecast_query(
+                    &mut app.world,
+                    &QueryPayload::DepositCrewTake(base.clone()),
+                ),
+                QueryReply::DepositCrewTake(ref reply) if reply.per_crew.len() == 3
+            ),
+            "fixture: the unperturbed ask must be answered"
+        );
+        type Perturb = fn(&mut sim_runtime::commands::DepositCrewTakeQuery);
+        let cases: [(&str, Perturb, &str); 6] = [
+            (
+                "unknown band",
+                |ask| ask.band_id += 1,
+                query_error::UNKNOWN_BAND,
+            ),
+            (
+                "unknown kit",
+                |ask| ask.kit_id = "no_such_kit".into(),
+                query_error::UNKNOWN_KIT,
+            ),
+            (
+                "a hunt kit",
+                |ask| ask.kit_id = "big_game".into(),
+                query_error::KIT_WRONG_JOB,
+            ),
+            (
+                "floor above 1",
+                |ask| ask.floor = 1.5,
+                query_error::INVALID_FLOOR,
+            ),
+            (
+                "a crew nobody has",
+                |ask| ask.max_workers = u32::MAX,
+                query_error::INVALID_CREW,
+            ),
+            (
+                "a material the ground does not hold",
+                |ask| ask.material = "gold".into(),
+                query_error::UNKNOWN_DEPOSIT,
+            ),
+        ];
+        for (label, perturb, token) in cases {
+            let mut ask = base.clone();
+            perturb(&mut ask);
+            match core_sim::forecast_query::answer_forecast_query(
+                &mut app.world,
+                &QueryPayload::DepositCrewTake(ask),
+            ) {
+                QueryReply::Error(reason) => assert_eq!(reason, token, "{label}"),
+                other => panic!("{label}: expected {token}, got {other:?}"),
+            }
+        }
+        let mut empty = base;
+        empty.max_workers = 0;
+        match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::DepositCrewTake(empty),
+        ) {
+            QueryReply::DepositCrewTake(reply) => assert!(reply.per_crew.is_empty()),
+            other => panic!("max_workers 0 is an empty curve, not a refusal: {other:?}"),
+        }
+    }
+
+    /// **THE SHEET'S PLATEAU RULE, AS THE CLIENT READS IT** — `HudDepositVocab.curve_useful_cutters`
+    /// transcribed for the test: the smallest crew whose take reaches the curve's best within the
+    /// shared 0.1% tolerance, `1` where it pays nothing, the row count where it is still rising.
+    fn sheet_plateau(reply: &sim_runtime::commands::DepositCrewTakeReply) -> u32 {
+        const REACH_TOLERANCE: f32 = 0.001;
+        let best = reply
+            .per_crew
+            .iter()
+            .map(|row| row.take)
+            .fold(0.0_f32, f32::max);
+        if best <= 0.0 {
+            return 1;
+        }
+        reply
+            .per_crew
+            .iter()
+            .find(|row| row.take >= best * (1.0 - REACH_TOLERANCE))
+            .map_or(reply.per_crew.len() as u32, |row| row.workers)
+    }
+
+    /// ⛔ **`usefulCutters` IS THE SHEET CURVE'S PLATEAU, AND GEAR LOWERS IT** (#663). A felling wood
+    /// drawn down to a small room above the floor, five fellers committed, the band's thirty working
+    /// hands the crew pool. The published `usefulCutters` must equal the plateau of the curve the
+    /// sheet asks for (same band, kit, floor and pool), read by the sheet's own rule — and with three
+    /// axes it must stop strictly earlier than the same ground's bare curve (`none`), which is the
+    /// `room ÷ perWorkerBiomass` quotient the roster used to flag against.
+    #[test]
+    fn useful_cutters_is_the_sheet_curves_plateau_and_gear_lowers_it() {
+        /// What the drawn-down wood leaves above the floor before renewal — small enough that the
+        /// plateau lands well inside the band's pool.
+        const ROOM: f32 = 10.0;
+        let mut app = build_test_app();
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        seat_a_felling_working(&mut app, tile);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", 3, "flint", None);
+        deposit_band_holding(&mut app, tile, ledger);
+        assign_extract(&mut app, FactionId(0), WORKING, "wood", None, BAND_WORKERS);
+        {
+            let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+            let ground = app.world.get::<Tile>(tile).cloned().expect("the tile");
+            let capacity =
+                core_sim::extraction::tile_deposit_capacity(&extraction, "wood", &ground);
+            let mut registry = app.world.resource_mut::<core_sim::DepositRegistry>();
+            let working = registry
+                .source_mut(WORKING, "wood")
+                .expect("the seated working");
+            working.stock = DEFAULT_ESCAPEMENT_FLOOR * capacity + ROOM;
+        }
+        let pool = BAND_WORKING_AGE;
+        let published = published_wood_row(&mut app).useful_cutters;
+        let geared = deposit_crew_curve(
+            &mut app,
+            "wood",
+            "woodcutting",
+            DEFAULT_ESCAPEMENT_FLOOR,
+            pool,
+        );
+        let bare = deposit_crew_curve(&mut app, "wood", "none", DEFAULT_ESCAPEMENT_FLOOR, pool);
+        let geared_plateau = sheet_plateau(&geared);
+        let bare_plateau = sheet_plateau(&bare);
+        assert!(
+            geared_plateau < pool,
+            "fixture: the room must bind inside the pool, or the plateau is the pool — {geared_plateau}"
+        );
+        assert_eq!(
+            published, geared_plateau,
+            "the roster's cap is the sheet's plateau for the same band, kit and floor"
+        );
+        assert!(
+            published < bare_plateau,
+            "three axes saturate the room sooner than bare hands: {published} against {bare_plateau}"
+        );
+    }
+
+    /// **A CREW HOLDING AXES IS SEEDED THE CUT THE TURN WILL PAY** (#663) — the seed strikes the
+    /// take gear through `EquipmentConfig::deposit_gear` at the rung the working holds, the same seam
+    /// the turn's `Extract` arm reads, so the quoted figure does not jump when the turn lands.
+    ///
+    /// Two axes among five fellers on a seated `forestry:felling` working: the expectation is written
+    /// out from the rung's own rate plus the two axes' `deposit_take`, independently of the seam, and
+    /// the resolved turn is then required to pay exactly the seed. The stand is at capacity, where the
+    /// logistic term is zero, so the regrowth the seed projects and the one the turn applies agree.
+    #[test]
+    fn a_deposit_crew_with_axes_is_seeded_the_cut_the_turn_pays() {
+        /// Fewer axes than fellers, so the partly-equipped sum is what is priced.
+        const AXES: u32 = 2;
+        /// The shipped flint axe's `deposit_take` on felling (`equipment.json`).
+        const AXE_TAKE: f32 = 1.0;
+
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        let bare_rate = seat_a_felling_working(&mut app, tile);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", AXES, "flint", None);
+        // **Wedges in the same ledger**, so the command path's derived kit is what keeps them off a
+        // wood crew: a no-kit row on timber is sent with the Woodcutting kit, which does not carry them.
+        ledger.stock("wedges", AXES, "flint", None);
+        app.world.entity_mut(band).insert(ledger);
+
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+        assert_eq!(stored_extract_kit(&app, band, "wood"), "woodcutting");
+        let seeded = source_materials(&app, band)
+            .first()
+            .expect("a staffed working publishes the material it will cut")
+            .amount;
+        let expected = bare_rate * BAND_WORKERS as f32 + AXES as f32 * AXE_TAKE;
+        assert!(
+            (seeded - expected).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the seed is the crew's bare rate plus two axes' take: {seeded} against {expected}"
+        );
+
+        resolve_deposit_turn(&mut app);
+        let resolved = source_materials(&app, band)
+            .first()
+            .expect("the turn paid the working's material")
+            .amount;
+        assert!(
+            (resolved - seeded).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the turn must pay the seeded cut (seed {seeded}, resolved {resolved})"
+        );
+        let wear = app
+            .world
+            .get::<BandEquipment>(band)
+            .expect("the band keeps its ledger");
+        assert!(wear.wear_of("axe") > 0.0, "the axes did the cutting");
+        assert_eq!(wear.wear_of("wedges"), 0.0, "the wedges never left camp");
     }
 
     /// **THE FLOOR BOUNDS THE SEEDED FIGURE, and at the top of the dial it bounds it to nothing** —
@@ -24103,6 +24954,19 @@ mod tests {
                     band_id: 1,
                     herd_id,
                     kit_id,
+                    floor: 0.25,
+                    max_workers: 4,
+                }),
+            ),
+            (
+                "deposit_crew_take",
+                QueryPayload::DepositCrewTake(sim_runtime::commands::DepositCrewTakeQuery {
+                    faction_id: faction.0,
+                    band_id: 1,
+                    x: 0,
+                    y: 0,
+                    material: "wood".to_string(),
+                    kit_id: "woodcutting".to_string(),
                     floor: 0.25,
                     max_workers: 4,
                 }),

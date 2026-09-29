@@ -2249,6 +2249,20 @@ table LaborAssignment {
   // every pack that lands, per turn - the whole take, delayed by the walk. A near row and a far row are comparable
   // figures on one board. THE TAKE FLOWS HOME, ALWAYS - to the band that owns this row.
   netRateHome:float = 0;
+  // --- HOW MANY CUTTERS THIS WORKING CAN USE, WITH THIS BAND'S GEAR (appended last, #663) -----
+  // *** THE CREW BEYOND WHICH MORE HANDS CUT NOTHING MORE THIS TURN. *** The plateau of the SAME
+  // curve `DepositCrewTakeQuery` answers - one quote per crew size over this row's crew pool (its
+  // own workers plus the band's idle hands), at the row's stored kit and floor, geared and capped by
+  // the working's reach - read by the same rule the compose sheet reads that curve by
+  // (`curve_useful_cutters`): the smallest crew whose take reaches the curve's best within a 0.1%
+  // tolerance. So the Work board's overstaffed flag and the sheet's `+` stop at one crew, and a band
+  // with axes stops earlier than the bare `room / perWorkerBiomass` quotient.
+  //
+  // == THE POOL when the take is still rising at the last crew (every hand buys take; the client's
+  // CUTTERS_UNCAPPED reading). 1 on a working whose curve pays nothing at any size (CUTTERS_BARREN -
+  // the honest ceiling is one hand, never none). 0 on every non-extract row and on a row with no
+  // crew pool at all. Derived at capture.
+  usefulCutters:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -6546,9 +6560,9 @@ table DepositState {
   //   clearItNow(floor)  = ceil(reachable        / perWorkerBiomass)
   //   holdItAfter(floor) = ceil(regrowthAt(floor) / perWorkerBiomass)
   //
-  // There is no seasonal weight and no TAKE kit on either deposit branch (the two quarry tools
-  // declare `build_work`, which lands on the pool that RAISES a working), so unlike a patch's this
-  // is the rung's rate flat and is never 0 on a live rung.
+  // There is no seasonal weight, and this is a SOURCE row with no band behind it, so it is the
+  // rung's BARE rate flat and is never 0 on a live rung. A crew's take tools add `deposit_take` per
+  // equipped worker ON TOP of it (#663) - the axe on felling/coppice, the wedges on the quarry.
   perWorkerBiomass:float = 0;
   // This deposit's OWN per-turn regrowth, sampled across its capacity - the third curve on the wire
   // beside ForagePatchState.regrowthSamples and HerdTelemetryState.regrowthSamples, on the same
@@ -6563,6 +6577,20 @@ table DepositState {
   // rather than the herd curve's, and the seeded reading inside the growth term is what lets a wood
   // cut clean come back while leaving rock at zero.
   regrowthSamples:[float];
+
+  // --- THE WORKING'S DEFAULT TAKE KIT (appended, issue #663) -------------------------------------
+  // THE `extract` KIT A CREW ON THIS WORKING IS SENT WITH WHEN THE COMMAND NAMES NONE - the id the
+  // picker marks "(default)". DERIVED, not authored (`EquipmentConfig::deposit_kit_for`): the
+  // extract kit whose items declare `deposit_take` on the MOST RUNGS of this working's branch,
+  // counted over the whole branch rather than at the rung it holds, because the kit rides the row
+  // and the working climbs. So a wood reads "woodcutting" and a scatter or a quarry "stonework", on
+  // every rung. `default_kits.extract` ("none") only where no single kit holds that top count - a
+  // tie, or a branch with no take tool at all.
+  //
+  // *** IT IS THE KIT THE SIM WILL USE. *** `assign_labor extract` with no `kit` token stores this
+  // same id on the row (extraction::working_default_kit is the one function), so the compose
+  // sheet's default and the kit the turn prices the crew with cannot disagree.
+  defaultKitId:string;
 }
 
 // --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------

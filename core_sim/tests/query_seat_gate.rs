@@ -34,8 +34,8 @@ use std::time::{Duration, Instant};
 
 use core_sim::{apply_port_base, SimulationConfig};
 use sim_runtime::commands::{
-    query_error, DenialRaidForecastQuery, FactionCapacityQuery, HuntCrewTakeQuery,
-    HuntTripForecastQuery, QueryPayload, SeatClaimReply,
+    query_error, DenialRaidForecastQuery, DepositCrewTakeQuery, FactionCapacityQuery,
+    HuntCrewTakeQuery, HuntTripForecastQuery, QueryPayload, SeatClaimReply,
 };
 use sim_runtime::{CommandEnvelope, CommandPayload, QueryReply, QueryReplyEnvelope};
 
@@ -310,6 +310,21 @@ fn crew_take_about(faction_id: u32) -> QueryPayload {
     })
 }
 
+/// The deposit compose sheet's question (#663) — answered out of the named band's gear, rows and
+/// pool issue, so seat-gated like the hunt curve.
+fn deposit_crew_take_about(faction_id: u32) -> QueryPayload {
+    QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
+        faction_id,
+        band_id: ANY_BAND,
+        x: 0,
+        y: 0,
+        material: "wood".to_string(),
+        kit_id: "woodcutting".to_string(),
+        floor: ANY_FLOOR,
+        max_workers: ANY_CREW_CAP,
+    })
+}
+
 /// Boot a server on its own port block with its own save directory, and hand back where to reach it.
 fn start_server(case: &str) -> (ServerProcess, Scratch, PathBuf, Ports) {
     let scratch = Scratch {
@@ -508,6 +523,11 @@ fn a_question_about_another_seats_faction_is_refused_over_the_socket() {
             HOME_ASKS_THE_RIVALS_ID + 2 * REQUEST_ID_STRIDE,
             crew_take_about(RIVAL_SEAT),
             "hunt_crew_take",
+        ),
+        (
+            HOME_ASKS_THE_RIVALS_ID + 3 * REQUEST_ID_STRIDE,
+            deposit_crew_take_about(RIVAL_SEAT),
+            "deposit_crew_take",
         ),
     ] {
         let refused = home.ask(
