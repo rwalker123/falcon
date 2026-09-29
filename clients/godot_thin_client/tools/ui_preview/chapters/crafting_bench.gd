@@ -73,6 +73,10 @@ const BASKETS_REED_RECIPE := "baskets"
 const BASKETS_WITHY_RECIPE := "baskets_withy"
 const BASKETS_REED_LABEL := "Reed"
 const BASKETS_WITHY_LABEL := "Withy"
+## The second Traps recipe the shrug-with-a-link state adds — offer-only, never suggested, so the row
+## still describes the reference `traps` recipe and only its item cell changes shape.
+const TRAPS_SINEW_RECIPE := "traps_sinew"
+const TRAPS_SINEW_LABEL := "Sinew"
 const CLUBS_BONE_RECIPE := "clubs"
 const CLUBS_STONE_RECIPE := "clubs_stone"
 const CLUBS_BONE_LABEL := "Bone"
@@ -744,6 +748,7 @@ func _crafting_states() -> void:
 	await _map_gesture_state()
 	await _bench_priority_states()
 	await _recipe_states()
+	await _shrug_with_a_link_state()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -1200,6 +1205,7 @@ func _assert_panel_renders() -> void:
 		shrug_button != null and not shrug_button.disabled
 			and is_equal_approx(_effective_alpha(shrug_button), 1.0)
 			and shrug_reason != null and _effective_alpha(shrug_reason) < 1.0)
+	_assert_no_control_on_the_row_is_dimmed(panel, "Traps", 1)
 	# **THE UNBLOCKED HALF OF THE BENCH PAIR** (states 14 and 15 are the others): this band's bench is
 	# running, so the well states its progress and carries no refusal line under it at all — no empty
 	# label, no reserved gap. A one-sided claim on the blocked frame alone would pass on a panel that
@@ -1504,6 +1510,31 @@ func _label_texts(node: Node) -> Array:
 
 func _index_of(texts: Array, needle: String) -> int:
 	return texts.find(needle)
+
+## **EVERY CONTROL ON A SHRUG ROW RENDERS AT FULL STRENGTH WHILE ITS NAME DIMS** — the general form of
+## the Make claim, asked of every `BaseButton` descendant (Make, and the `N recipes` link on a
+## multi-recipe row) so a new control on the row is covered the day it lands. `min_controls` is the
+## vacuity guard: a row with fewer controls than the fixture stages proves nothing about them.
+func _assert_no_control_on_the_row_is_dimmed(panel: Node, item_name: String, min_controls: int) -> void:
+	var row := _ledger_row(panel, item_name)
+	var controls: Array = [] if row == null else _row_controls(row)
+	var faded: Array = []
+	for control: BaseButton in controls:
+		if not is_equal_approx(_effective_alpha(control), 1.0):
+			faded.append("%s %.2f" % [control.get_class(), _effective_alpha(control)])
+	var name_alpha := _row_alpha(panel, item_name)
+	h._assert_hud("crafting — no control on the %s shrug row is dimmed while its name is (%d controls,"
+			% [item_name, controls.size()] + " faded %s, name %.2f)" % [faded, name_alpha],
+		controls.size() >= min_controls and faded.is_empty()
+			and name_alpha >= 0.0 and name_alpha < 1.0)
+
+func _row_controls(node: Node) -> Array:
+	var found: Array = []
+	if node is BaseButton:
+		found.append(node)
+	for child in node.get_children():
+		found.append_array(_row_controls(child))
+	return found
 
 ## The RENDERED alpha of the item name on the ledger row naming `item_name` — the modulate product up
 ## the tree, since the shrug dims the row's information cells rather than the row itself, and a claim
@@ -2991,4 +3022,32 @@ func _press_card_chrome(panel: CraftingPanel) -> void:
 	InputProbe.press_left(viewport, point)
 	await h.get_tree().process_frame
 	InputProbe.release_left(viewport, point)
+	await h._settle()
+
+# ---- the shrug with a link: a control IN the item cell ------------------------------------------
+
+## **A SHRUG ROW WHOSE ITEM CELL HOLDS A CONTROL.** Traps gain a second recipe, so their item cell
+## carries the `N recipes` link in place of the role line — a live control inside the very cell the
+## shrug dims. The first cut of the fix faded that whole cell, link included; this frame is where a
+## player would see it, and the claim is that the link and Make stay full-strength beside a dimmed name.
+func _shrug_with_a_link_state() -> void:
+	var band := _crafting_band()
+	var offers: Array = band["craft_offers"]
+	offers.append(_offer(TRAPS_SINEW_RECIPE, "Traps", HudCraftingVocab.GROUP_KIT, "traps", true,
+		"Sinew → good", HudCraftingVocab.SEVERITY_NEUTRAL, [], false,
+		{"recipe_label": TRAPS_SINEW_LABEL, "output_grade": "good", "suggested": false}))
+	band["craft_offers"] = offers
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting — the shrug-with-a-link panel is open", false)
+		return
+	# Precondition: the row really is a multi-recipe row, else the link half is vacuous.
+	h._assert_hud("crafting — the multi-recipe shrug row carries its recipes link",
+		_recipes_link(_ledger_row(panel, "Traps")) != null)
+	_assert_no_control_on_the_row_is_dimmed(panel, "Traps", 2)
+	await h._save("crafting_panel_shrug_recipes")
+	h._hud.close_crafting_panel()
 	await h._settle()

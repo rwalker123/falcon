@@ -584,7 +584,8 @@ const SECTION_SEPARATION := 22
 
 ## The dim a row's INFORMATION wears when its offer is a shrug rather than a problem — *"Not needed
 ## yet"*, sorted last and DIMMED rather than hidden, because a kit you own and never use is information
-## too. **Never worn by the Make button**, which a fade would make read as disabled.
+## too. **Never worn by a control** — the Make button or the `N recipes` link — which a fade would make
+## read as disabled.
 const DIMMED_ROW_ALPHA := 0.55
 
 const TITLE_FONT_SIZE := 12

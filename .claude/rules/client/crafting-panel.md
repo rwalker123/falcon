@@ -360,12 +360,15 @@ the sim's own `Untouched`. Matching the string would be parsing a resolved wordi
 render and must not read as data. A tier shipping a lower `starting_durability` simply never dims,
 which is the conservative direction — nothing is hidden, one row merely reads at full strength.
 
-**The dim falls on the row's information, never its control.** `_dim_shrug` fades the item, Owned
-and cost cells and the reason line under the button; the Make button and every node above it stay
-at full alpha. The first cut modulated the whole row, which faded a LIVE Make into the look of a
-disabled one — a player read an untouched Hoes row with a flint recipe open as "can't make it".
-The chapter asserts it as a pair on the Traps row: the button's modulate product up the tree is
-`1.0` while its reason's is below it.
+**The dim falls on the row's information, never its controls.** `_dim_shrug` fades the item's name
+and role line, the Owned and cost cells, and the reason line under the button; the Make button and
+the `N recipes` link, and every node above either, stay at full alpha. That is why the item cell dims
+LABEL BY LABEL rather than as a column: on a multi-recipe row the column holds the link. The first
+cut modulated the whole row, which faded a LIVE Make into the look of a disabled one — a player read
+an untouched Hoes row with a flint recipe open as "can't make it". The chapter asserts that every
+`BaseButton` on a shrug row has a modulate product up the tree of `1.0` while the row's name is
+below it, on the single-recipe Traps row and again (`crafting_panel_shrug_recipes`) with Traps given
+a second recipe so the link is present.
 
 ## The ledger row is a JOIN, and neither half can answer alone
 

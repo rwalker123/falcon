@@ -1128,19 +1128,20 @@ func _build_ledger_row(ledger_row: Dictionary, batches_by_item: Dictionary,
 	# it can read as the shrug it is — a neutral offer on a kit that is not worn is nothing to do, and
 	# styling it like a shortage would make a problem out of a non-problem.
 	#
-	# **IT DIMS THE ROW'S INFORMATION, NEVER ITS CONTROL.** The item, Owned and cost cells and the
-	# reason under the button wear the dim; the Make button does not, and nothing above it may either —
-	# a `modulate` on the row would fade the button with it, and a faded button reads as a DISABLED
-	# one. A player read a live Make on an untouched Hoes row as "can't make it" exactly that way.
+	# **IT DIMS THE ROW'S INFORMATION, NEVER ITS CONTROLS.** The item's name and role line, the Owned
+	# and cost cells and the reason under the button wear the dim; the Make button and the `N recipes`
+	# link do not, and nothing above either may — a `modulate` on the row (or on the whole item cell)
+	# would fade them with it, and a faded control reads as a DISABLED one. A player read a live Make
+	# on an untouched Hoes row as "can't make it" exactly that way.
 	var shrug := _is_shrug(ledger_row, batch)
-	var item_cell := _build_item_cell(ledger_row, payload)
+	var item_cell := _build_item_cell(ledger_row, payload, shrug)
 	var owned := _build_owned_cell(offer, _batches_for(offer, batches_by_item), group, payload,
 		batches_by_material)
 	owned.set_meta(HudCraftingVocab.OWNED_CELL_META,
 		String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, "")))
 	var cost_cell := _build_cost_cell(offer, payload)
 	if shrug:
-		for info_cell: Control in [item_cell, owned, cost_cell]:
+		for info_cell: Control in [owned, cost_cell]:
 			_dim_shrug(info_cell)
 	row.add_child(_column_cell(item_cell, 0.0, true))
 	row.add_child(_column_cell(owned, HudCraftingVocab.COLUMN_OWNED_WIDTH, false))
@@ -1150,7 +1151,8 @@ func _build_ledger_row(ledger_row: Dictionary, batches_by_item: Dictionary,
 	return row
 
 ## Fade one piece of a shrug row's INFORMATION — the one place `DIMMED_ROW_ALPHA` is applied, so the
-## cells and the reason line cannot drift apart. Never handed the Make button (`_build_ledger_row`).
+## cells and the reason line cannot drift apart. Never handed a control — the Make button or the
+## `N recipes` link — nor any container holding one (`_build_ledger_row`).
 func _dim_shrug(info: Control) -> void:
 	info.modulate = Color(1.0, 1.0, 1.0, HudCraftingVocab.DIMMED_ROW_ALPHA)
 
@@ -1181,7 +1183,10 @@ func _is_shrug(ledger_row: Dictionary, batch: Dictionary) -> bool:
 ## than stacking under it**, which is what keeps every row two lines tall: a kit row's role line names
 ## the craft that makes it, and an item with several recipes has several crafts, so the row cannot
 ## name one of them honestly — the popup is where the recipes are told apart.
-func _build_item_cell(ledger_row: Dictionary, payload: Dictionary) -> Control:
+##
+## **On a shrug row (`shrug`) the name and the role line dim label by label, never the column**, since
+## the column may hold the `N recipes` link, a live control a fade would make read as disabled.
+func _build_item_cell(ledger_row: Dictionary, payload: Dictionary, shrug: bool) -> Control:
 	var offer: Dictionary = ledger_row["offer"]
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 0)
@@ -1189,6 +1194,8 @@ func _build_item_cell(ledger_row: Dictionary, payload: Dictionary) -> Control:
 	name_label.text = String(offer.get(HudCraftingVocab.OFFER_DISPLAY_NAME_KEY, ""))
 	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.ITEM_NAME_FONT_SIZE)
 	name_label.add_theme_color_override("font_color", HudStyle.INK)
+	if shrug:
+		_dim_shrug(name_label)
 	column.add_child(name_label)
 	var recipe_count := (ledger_row["offers"] as Array).size()
 	if recipe_count > 1:
@@ -1200,6 +1207,8 @@ func _build_item_cell(ledger_row: Dictionary, payload: Dictionary) -> Control:
 		role_label.text = role
 		role_label.add_theme_font_size_override("font_size", HudCraftingVocab.ITEM_ROLE_FONT_SIZE)
 		role_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+		if shrug:
+			_dim_shrug(role_label)
 		column.add_child(role_label)
 	return column
 
