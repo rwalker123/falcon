@@ -273,6 +273,16 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
   budget's demand, the wear kit and the published `kitWorkersHolding`. So a deadfall crew with two
   sleds and no axe reads 2 of 2, a felling crew with one axe reads 1 of 2 whatever sleds exist, and a
   felling crew's idle sleds claim no share of the hunters' stock.
+- **⛔ The turn arms a take at the rung the working held when the band's item budget was struck**
+  — before this turn's build, not after it. `advance_labor_allocation` strikes `item_budget` once,
+  ahead of the labour walk, off the registry as it stands; the deposit arm then runs the build, and
+  a working raised mid-walk (`deadfall` → `felling`, `gathering` → `quarry`) is still armed with the
+  old rung's tool that once. Arming it with the new rung's tool drew axes through a `share_for`
+  whose denominator never counted the row: two axes, one to the builders and a second felling row
+  beside it, armed **three** people. So the new tool reaches the crew next turn — the same one-turn
+  lag the pools settle under — and the seed, `DepositCrewTakeQuery` and `usefulCutters`, which read
+  the registry between turns, price at exactly the rung the next turn arms at. Pinned by
+  `extraction::a_working_raised_this_turn_arms_no_more_people_than_there_are_axes`.
 - **A working's default kit is DERIVED, not authored** — `EquipmentConfig::deposit_kit_for`: the
   `extract` kit whose items serve the **most rungs of the working's branch**, and only where exactly
   one kit holds that count. Counting rungs rather than asking "does any item serve" is what stops the

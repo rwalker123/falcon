@@ -8422,19 +8422,25 @@ pub fn advance_labor_allocation(
                     // **The stock this turn's crew is FACING** — read before the take, the term the
                     // ⚠ below is answered at, exactly as the two food webs' `biomass_before` is.
                     let stock_before = working.stock;
-                    // **THE CREW'S TAKE GEAR, struck at the rung the working HOLDS** — the rate the
-                    // take runs at is that rung's, so the tool that lifts it must be the one bound
-                    // to it (`deposit_take` on `forestry:felling`, never on `deadfall`). Through this
-                    // row's own coverage, the seam the gather reads its baskets off: two axes among
-                    // five fellers add two tools' worth, not five.
+                    // **THE CREW'S TAKE GEAR, struck at the rung the working HELD when the band's
+                    // item budget was struck** — the tool bound to that rung (`deposit_take` on
+                    // `forestry:felling`, never on `deadfall`), through this row's own coverage, the
+                    // seam the gather reads its baskets off: two axes among five fellers add two
+                    // tools' worth, not five.
                     //
-                    // ⛔ **THE COVERAGE IS STRUCK AT THE HELD RUNG, NOT OFF `crew_coverage`.** The
+                    // ⛔ **THE PRE-BUILD RUNG, NOT THE ONE THIS TURN'S BUILD JUST REACHED.** The
                     // row's stored kit carries a tool per rung of its branch (`woodcutting` is the
-                    // sled and the axe), and only the one serving the rung held NOW is in anybody's
-                    // hands ([`crate::equipment_config::EquipmentConfig::deposit_rung_kit`]) — read
-                    // here, after this turn's build, so a working raised this turn is cut with the
-                    // new rung's tool.
-                    let held_rung = working.standing().held;
+                    // sled and the axe), and only the one serving the rung held is in anybody's
+                    // hands ([`crate::equipment_config::EquipmentConfig::deposit_rung_kit`]).
+                    // `item_budget` was struck before the walk, off the registry as it stood — so
+                    // this row's demand sits on THAT rung's tool. Arming at a rung the build raised
+                    // mid-walk would hand this crew axes through a `share_for` whose denominator
+                    // never counted it, arming more people than there are axes. So a working raised
+                    // this turn is still cut with the old rung's tool this once, and picks up the
+                    // new one next turn — the same one-turn lag the pools settle under. The seed,
+                    // the crew-curve query and `usefulCutters` read the registry between turns,
+                    // which is exactly this rung for the next turn.
+                    let held_rung = standing.held;
                     let held_key = held_rung.wire_key();
                     let take_kit =
                         equipment_cfg.deposit_rung_kit(&crew_kit, held_rung.branch(), &held_key);

@@ -1954,8 +1954,9 @@ pub struct DepositState {
     pub upkeep_kit_named: bool,
     /// **The `extract` kit a crew on this working is sent with when nobody names one** — derived
     /// from the roster per branch (`extraction::working_default_kit`), the same id `assign_labor`
-    /// stores on a row that named no kit. `"felling"` on a wood, `"quarrying"` on stone; the job
-    /// default (`"none"`) only where no single kit serves the branch.
+    /// stores on a row that named no kit: the kit whose items serve the most rungs of the branch
+    /// (`EquipmentConfig::deposit_kit_for`). `"woodcutting"` on a wood, `"stonework"` on stone; the
+    /// job default (`"none"`) only where no single kit holds that top count.
     pub default_kit_id: String,
 }
 

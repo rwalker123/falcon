@@ -452,6 +452,11 @@ arm and `deposit_take_overdraws`' ability half all read the gear through `deposi
 the working **holds** (`standing.held`), so the seed, the take and the ⚠ agree. Pinned by
 `server::tests::a_deposit_crew_with_axes_is_seeded_the_cut_the_turn_pays` and, through the shipped
 turn, `extraction::a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes`.
+**The turn's "holds" is the rung before this turn's build**, the one the band's item budget was
+struck at: a working raised mid-walk is cut with its old rung's tool that turn and picks up the new
+one the next, so the budget and the arming agree on one rung and one axe arms one person
+(`equipment.md` → "The turn arms a take at the rung the working held when the band's item budget
+was struck").
 
 ### The compose sheet asks a crew curve BEFORE the commit — `DepositCrewTakeQuery`
 

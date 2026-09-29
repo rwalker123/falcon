@@ -476,7 +476,7 @@ fn a_sled_lifts_the_deadfall_take_and_nothing_above_it() {
 }
 
 /// **ONE AXE ARMS ONE PERSON PER TURN, ACROSS THE TAKE ROW AND THE POOLS** (#663). The axe is in
-/// the `extract` row's kit (`felling`) *and* in the quarrywork keepers' rung requirement (its
+/// the `extract` row's kit (`woodcutting`) *and* in the quarrywork keepers' rung requirement (its
 /// `build_work` on `forestry`), and the two used to be rationed by allocations that never saw each
 /// other — so two axes armed two fellers **and** a keeper.
 ///
@@ -541,6 +541,143 @@ fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
         ((four - bare) / AXE_TAKE).round(),
         FELLERS as f32,
         "**LIVENESS**: with axes to spare, every feller is armed"
+    );
+}
+
+/// ⛔ **A WORKING RAISED THIS TURN IS ARMED AT THE RUNG THE BUDGET WAS STRUCK AT** (#663 review).
+///
+/// The band's item budget is struck once, before the labour walk, off the registry as it stands —
+/// so a row whose working the builders raise mid-walk (`deadfall` → `felling`) is counted there as a
+/// sled row. Arming its take with axes after the build handed it a share of a remainder whose
+/// denominator never counted it: with two axes, one issued to the builders and another felling row
+/// beside it, **three** people were armed off two axes.
+///
+/// Two axes; one builder (the pool, settled first, holds one); row A on a seated felling working;
+/// row B one hair short of felling's top on a queued `fell`, which the builder completes this turn.
+/// Each row's armed count is read off its own take against a no-axe control of the same world (an
+/// armed feller cuts `deposit_take` more), and the pool's off `last_pool_toe`. **At most two in all.**
+#[test]
+fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
+    const AXES: u32 = 2;
+    const FELLERS_PER_ROW: u32 = 2;
+    /// One builder: the pool claims one axe, leaving one for the take rows.
+    const BUILDERS: u32 = 1;
+    /// The shipped flint axe's `deposit_take` on felling.
+    const AXE_TAKE: f32 = 1.0;
+    /// How far below felling's top row B's working is seated — far less than one bare builder banks
+    /// in a turn, so the raise completes this turn in both arms.
+    const SHORT_OF_THE_TOP: f32 = 0.01;
+
+    let seated = UVec2::new(0, 0);
+    let climbing = UVec2::new(1, 0);
+    let run = |axes: u32| {
+        let (mut world, home) = world_of(WOODED);
+        seat_working(&mut world, seated, WOOD, RungKey::ForestryFelling);
+        {
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let config = world.resource::<ExtractionConfigHandle>().get();
+            let ground = Tile {
+                position: climbing,
+                terrain: WOODED,
+                ..Default::default()
+            };
+            let capacity = tile_deposit_capacity(&config, WOOD, &ground);
+            let mut working =
+                DepositSource::opening(climbing, WOOD, capacity, RungBranch::Forestry);
+            let (base, width) =
+                core_sim::extraction::deposit_rung_span(RungKey::ForestryFelling, &ladder);
+            working.set_ladder_position(
+                base + width - SHORT_OF_THE_TOP,
+                &ladder,
+                RungBranch::Forestry,
+            );
+            assert_eq!(
+                working.rung(),
+                RungKey::ForestryDeadfall,
+                "fixture: the climbing working must still hold deadfall"
+            );
+            world.resource_mut::<DepositRegistry>().insert(working);
+        }
+        world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(
+                FACTION,
+                core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
+                scalar_one(),
+            );
+        let band = spawn_keepers(
+            &mut world,
+            home,
+            &[(seated, WOOD), (climbing, WOOD)],
+            FELLERS_PER_ROW,
+            0,
+        );
+        send_with_the_woodcutting_kit(&mut world, band);
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments.push(LaborAssignment {
+                party: None,
+                target: LaborTarget::Builders,
+                workers: BUILDERS,
+                kit: None,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            });
+            assert!(allocation.enqueue_build(
+                core_sim::BuildSource::Deposit {
+                    tile: climbing,
+                    material: WOOD.to_string(),
+                },
+                core_sim::BuildJob::Rung(core_sim::Improvement::Fell),
+            ));
+        }
+        let mut ledger = core_sim::BandEquipment::default();
+        if axes > 0 {
+            ledger.stock("axe", axes, "flint", None);
+        }
+        world.entity_mut(band).insert(ledger);
+        run_full_turn(&mut world);
+
+        let registry = world.resource::<DepositRegistry>();
+        assert_eq!(
+            registry
+                .source(climbing, WOOD)
+                .expect("the climbing working")
+                .rung(),
+            RungKey::ForestryFelling,
+            "fixture: the raise must complete this turn ({axes} axes)"
+        );
+        let take = |tile| registry.source(tile, WOOD).expect("the working").last_take;
+        let pool_axes: f32 = world
+            .get::<LaborAllocation>(band)
+            .expect("the band keeps its allocation")
+            .last_pool_toe
+            .iter()
+            .filter(|line| line.item == "axe")
+            .map(|line| line.filled)
+            .sum();
+        (take(seated), take(climbing), pool_axes)
+    };
+
+    let (bare_seated, bare_climbing, no_pool_axes) = run(0);
+    assert_eq!(no_pool_axes, 0.0, "fixture: a band with no axe issues none");
+    let (seated_take, climbing_take, pool_axes) = run(AXES);
+    let armed_seated = ((seated_take - bare_seated) / AXE_TAKE).round();
+    let armed_climbing = ((climbing_take - bare_climbing) / AXE_TAKE).round();
+    assert_eq!(
+        pool_axes, BUILDERS as f32,
+        "fixture: the builders pool must hold one axe, or the take rows share a different remainder"
+    );
+    assert!(
+        armed_seated >= 1.0,
+        "**LIVENESS**: the seated felling row is armed out of the remainder — {armed_seated}"
+    );
+    assert!(
+        armed_seated + armed_climbing + pool_axes <= AXES as f32,
+        "two axes armed {armed_seated} on the felling row + {armed_climbing} on the row raised \
+         this turn + {pool_axes} to the builders"
     );
 }
 

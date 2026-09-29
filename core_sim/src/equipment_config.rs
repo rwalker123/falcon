@@ -5541,7 +5541,7 @@ mod tests {
     /// [`each_route_rung_derives_its_own_kit_and_the_other_rungs_tool_is_worth_nothing`].
     ///
     /// ⛔ **AND A BRANCH MAY SHIP WITH NO BUILDERS KIT, WHICH IS WHY THE MISSING-KIT ARM IS A FORK.**
-    /// `forestry` does: its build tool, the axe, rides `felling` — an `extract` kit — and
+    /// `forestry` does: its build tool, the axe, rides `woodcutting` — an `extract` kit — and
     /// reaches the builders through the rung requirement ([`EquipmentConfig::pool_toe`]), which
     /// asks items rather than kits. The failure this test exists to catch is a **partial**
     /// roster — one rung's kit gone missing while its siblings keep theirs, after which every build

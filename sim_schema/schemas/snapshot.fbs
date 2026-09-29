@@ -6580,11 +6580,12 @@ table DepositState {
 
   // --- THE WORKING'S DEFAULT TAKE KIT (appended, issue #663) -------------------------------------
   // THE `extract` KIT A CREW ON THIS WORKING IS SENT WITH WHEN THE COMMAND NAMES NONE - the id the
-  // picker marks "(default)". DERIVED, not authored: the extract kit whose items declare
-  // `deposit_take` serving this working's branch (at the rung it holds, else anywhere on the
-  // branch), so a wood reads "felling" and a scatter or a quarry "quarrying" - even on the bare
-  // floor rungs, where the tool adds nothing until the working is raised. `default_kits.extract`
-  // ("none") only where no single kit serves the branch.
+  // picker marks "(default)". DERIVED, not authored (`EquipmentConfig::deposit_kit_for`): the
+  // extract kit whose items declare `deposit_take` on the MOST RUNGS of this working's branch,
+  // counted over the whole branch rather than at the rung it holds, because the kit rides the row
+  // and the working climbs. So a wood reads "woodcutting" and a scatter or a quarry "stonework", on
+  // every rung. `default_kits.extract` ("none") only where no single kit holds that top count - a
+  // tie, or a branch with no take tool at all.
   //
   // *** IT IS THE KIT THE SIM WILL USE. *** `assign_labor extract` with no `kit` token stores this
   // same id on the row (extraction::working_default_kit is the one function), so the compose
