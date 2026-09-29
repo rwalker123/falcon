@@ -1015,9 +1015,14 @@ Extension seams are present and empty — future factors/consequences slot in wi
   morale ≥ 0.25, 7.5% at 0.125, up to `max_rate` (0.15) at rock-bottom (gentle at onset, ramping to
   the cap). The total is split across brackets ∝ `bracket_size × weight` (working = 1.0, dependents
   = `dependent_weight` 0.4), so leavers are mostly workers while the headline fraction stays exact.
-  They seek the **highest-morale eligible band within reach**, their own people's first (`base_reach` 4 hexes ×
-  a movement-tech factor). *No concrete movement/transport tech signal exists yet, so the factor is
-  stubbed at 1.0 with a `TODO(phase2)` hook.* Eligible = `morale ≥ attractive_morale` (0.5) AND
+  They seek the **highest-morale eligible band within reach**, their own people's first. **Reach
+  is `hex_distance − road_bonus <= base_reach`** (4 hex steps): the road bonus is
+  `supply::free_pooling_reach_tiles − supply_network_config.reach_tiles`, the one seam the work
+  party's walk (`work-party.md` → "The walk") and band pooling already read, so a road between two
+  camps brings them into each other's reach exactly as it shortens a caravan's walk. Roads are the
+  sim's only distance-shortener; there is no movement-tech factor. The path is traced only for a pair
+  past plain reach and within `base_reach + (max_route_reach_tiles − reach_tiles)`, so a game with no
+  roads traces nothing. Eligible = `morale ≥ attractive_morale` (0.5) AND
   `morale > source + min_morale_gap` (0.05). Found → **relocate** (source shrinks, destination
   grows; `last_emigrated`/`last_immigrated` recorded); none reachable → **stay** (grievance accrues
   faster via the trapped bonus). **Another people's band is a destination only when none of the

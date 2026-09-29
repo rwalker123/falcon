@@ -63,9 +63,17 @@ reading.** The sim spells the band from its durable id (`Band 4`) and repeats it
 in the viewer's roster. On the losing side the band has left, `band_label_for_id` answers `""`, and
 `_swap_band_label`'s empty-name refusal leaves the sim's own spelling standing. That is the honest
 answer rather than a gap: there is no client-side name for a band this people no longer has.
-**`from=` / `to=` are FACTION ids and get no such join** — the sim authors no faction names
-(`People 1` is its own fallback), so there is nothing to join them to, and minting a client-side
-naming rule for a people is a decision this table is not the place to take.
+**`from=` / `to=` are FACTION ids and get the same kind of join.** The sim spells a people
+`People <id>` (`systems::population::people_label`, mirrored as `HudEventVocab.SIM_PEOPLE_LABEL_FORMAT`),
+and `EventDockPanel._swap_people_label` replaces that span with the name the map's faction marks carry
+— `FactionMark.faction_name`, the ONE people-name resolver in the client; do not add a second. The
+walk is `HudEventVocab.PEOPLE_ID_TOKEN_KEYS` (`from`, `to`), keyed on the token exactly as the `band=`
+walk is: the prose is searched only for the span the token names, bounded at a digit (`_swap_span`,
+shared with the band join), and never parsed for a number. The viewer's own people resolves the same
+way. A token whose `People <id>` the label does not spell is a no-op — `band_changed_hands`' viewer-side
+token is said as "us", so it has no span. An id with no seeded name takes the resolver's own fallback
+(`HudTradeVocab.FACTION_NAME_FALLBACK_FORMAT`), never the sim's spelling. The tokens themselves stay in
+`DETAIL_KEY_HIDDEN`: the label says the people, so the detail column never prints a raw id.
 
 **`party_defected` is ALERT on both sides — `band_changed_hands` one scale down** (issue #512,
 `docs/plan_band_fission.md` §Defection). A whole party walks off to another people on the sim's own
@@ -75,14 +83,15 @@ only per-row override is `DETAIL_STATUS_STYLE`, which matches a `key=value` frag
 a `side=gained` entry there would demote `band_changed_hands`' gained half with it. **The lost row
 names no place by design** — its detail is `side=lost expedition=<bits>` alone, both keys hidden, so
 it renders an empty detail phrase and no `Work tab` link: the party is out of contact and the notice
-says only that it is gone. The gained row (`A party of N joined Band Y`, `band= count= from=
-side=gained`) takes the ordinary `band=` join.
+says only that it is gone. The gained row (`A party of N from People F joined Band Y`, `band=
+count= from= side=gained`) takes the ordinary `band=` join and the `from=` people join below.
 
 **A cross-people `migrated` line takes the handover's treatment exactly.** The source side reads
 `N left Band X to join People F` with `to=<faction>`, the destination side `N from People F joined
-Band Y` with `from=<faction>`; `DETAIL_KEY_HIDDEN` drops `to` / `from` for every kind, and the people
-stays the sim's own `People F` — the same no-client-naming-rule decision stated above for
-`band_changed_hands`.
+Band Y` with `from=<faction>`; `DETAIL_KEY_HIDDEN` drops `to` / `from` for every kind, and the label's
+`People F` reads as that people's name through the same token join `band_changed_hands` takes. The
+gained `party_defected` line names its people the same way (`A party of N from People F joined Band
+Y`, joined on `from=`).
 
 **`trade_delivered` is NOTABLE, and it is the one expedition event that happens where OTHER PEOPLE
 live** (arc #527). That novelty is what earns it a kind of its own sim-side; it is not what decides

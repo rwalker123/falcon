@@ -578,7 +578,7 @@ pub(crate) fn band_label(band: BandId) -> String {
 /// else — so the id is all there is to say, and it is said in [`band_label`]'s register. The
 /// `from=`/`to=` detail tokens carry the raw ids, so a client that later knows a people's name
 /// substitutes it the same way it substitutes a band's.
-fn people_label(faction: FactionId) -> String {
+pub(crate) fn people_label(faction: FactionId) -> String {
     format!("People {}", faction.0)
 }
 
@@ -2539,6 +2539,10 @@ mod wellbeing_tests {
         world.insert_resource(crate::routes::RoadRegistry::default());
         world.insert_resource(crate::resources::BandNameAllocator::default());
         world.insert_resource(crate::band_names::BandNameCatalogHandle::default());
+        world.insert_resource(crate::forage::ForageRegistry::default());
+        world.insert_resource(crate::fauna::HerdRegistry::default());
+        world.insert_resource(crate::intensification::LadderConfigHandle::default());
+        world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         let tiles: Vec<Entity> = positions
             .iter()
             .map(|&(x, y)| {

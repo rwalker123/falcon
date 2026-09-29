@@ -348,8 +348,9 @@ side a row describes rides its detail:
   *"Your scouting party has left your control."* (the mission's noun — scouting / hunting / raiding /
   trading), whose detail is `side=lost expedition=<entity bits>` and nothing else: no reason, no
   place, no band, no destination — out of communication range they have no way to know why their
-  people did not come back. The receiving people's line, *"A party of N joined Band Y"*, carries
-  `band=/count=/from=<faction>/side=gained`. Pinned by
+  people did not come back. The receiving people's line, *"A party of N from People F joined Band
+  Y"*, names the other people in `migrated`'s `direction=in` register (`people_label`) so a client
+  can substitute its real name, and carries `band=/count=/from=<faction>/side=gained`. Pinned by
   `defection::a_party_accrues_pull_and_goes_whole_once_it_reaches_the_threshold`, which asserts the
   losing line carries none of `band= to= from= x= y=`.
 

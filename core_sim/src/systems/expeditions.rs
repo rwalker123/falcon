@@ -254,8 +254,8 @@ pub fn advance_party_defection(
     let pull_threshold = scalar_from_f32(configs.expedition.get().defection.party_pull_threshold);
     let attractive_morale = scalar_from_f32(mig_cfg.attractive_morale);
     let min_gap = scalar_from_f32(mig_cfg.min_morale_gap);
-    // The trickle's reach, measured the trickle's way, from the party's own tile.
-    let reach_sq = (mig_cfg.base_reach * mig_cfg.base_reach) as i32;
+    // The trickle's reach in hex steps, from the party's own tile — and WITHOUT the road bonus the
+    // trickle adds: a party in the field is off the road.
     let width = tile_registry.width;
     let wrap = configs.sim.map_topology.wrap_horizontal;
 
@@ -316,12 +316,13 @@ pub fn advance_party_defection(
                     if candidate.faction == cohort.faction
                         || candidate.morale < attractive_morale
                         || candidate.morale <= home_morale + min_gap
-                        || crate::grid_utils::wrapped_distance_sq(
+                        || crate::grid_utils::hex_distance_wrapped(
                             party_pos,
                             candidate.pos,
                             width,
                             wrap,
-                        ) > reach_sq
+                        ) as f32
+                            > mig_cfg.base_reach
                         || !borders.is_open(candidate.faction)
                     {
                         continue;
@@ -392,7 +393,8 @@ pub fn advance_party_defection(
             CommandEventKind::PartyDefected,
             defection.destination_people,
             format!(
-                "A party of {head_count} joined {}",
+                "A party of {head_count} from {} joined {}",
+                crate::systems::population::people_label(lost_people),
                 crate::systems::population::band_label(defection.destination_band)
             ),
             Some(format!(

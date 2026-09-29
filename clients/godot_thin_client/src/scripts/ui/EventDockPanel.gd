@@ -1414,7 +1414,23 @@ func _row_label(event: Dictionary) -> String:
 	for token_key in HudEventVocab.BAND_ID_TOKEN_LABELS:
 		label = _swap_band_label(label, detail, String(token_key),
 			String(HudEventVocab.BAND_ID_TOKEN_LABELS[token_key]))
+	for token_key in HudEventVocab.PEOPLE_ID_TOKEN_KEYS:
+		label = _swap_people_label(label, detail, String(token_key))
 	return label
+
+## **A PEOPLE NAMED BY A `from=` / `to=` TOKEN reads with the client's name for it** — the name the
+## map's faction marks carry (`FactionMark.faction_name`, the ONE resolver; the viewer's own people
+## included). Joined on the TOKEN exactly as `band=` is: the sim spells the people `People <id>` from
+## the same id, and the prose is only searched for that span, never parsed for a number. A label that
+## does not carry the span (a `band_changed_hands` line's `from=` is the viewer, said as "us") is
+## left untouched.
+func _swap_people_label(label: String, detail: String, token_key: String) -> String:
+	var raw_id := _detail_token(detail, token_key)
+	if not raw_id.is_valid_int():
+		return label
+	var faction := int(raw_id)
+	return _swap_span(label, HudEventVocab.SIM_PEOPLE_LABEL_FORMAT % faction,
+		FactionMark.faction_name(faction))
 
 ## One token's swap: replace the SIM's rendering of the band named by `token_key` with the client's
 ## own name for it. `label` unchanged when the token is absent, the roster does not know the id, or
@@ -1434,8 +1450,13 @@ func _swap_band_label(label: String, detail: String, token_key: String,
 	# `Band <id>` is a worse name than the roster's, and a strictly better one than nothing.
 	if client_name == "":
 		return label
-	var sim_name: String = sim_format % int(raw_id)
-	if client_name == sim_name:
+	return _swap_span(label, sim_format % int(raw_id), client_name)
+
+## Replace the first occurrence of `sim_name` in `label` with `client_name`, bounded at a DIGIT
+## boundary so `Band 3` never rewrites the head of `Band 30` (nor `People 1` of `People 12`). Shared by
+## the band and the people joins, so the boundary rule is written once.
+func _swap_span(label: String, sim_name: String, client_name: String) -> String:
+	if client_name == "" or client_name == sim_name:
 		return label
 	var at := label.find(sim_name)
 	while at >= 0:

@@ -667,16 +667,28 @@ const HANDOVER_BAND_ID := 4
 const HANDOVER_BAND_NAME := "Thornhollow"
 const HANDOVER_BAND_LABELS := {"4": HANDOVER_BAND_NAME}
 
+## The people on the other side of every cross-people row below: faction 1, which the map's faction
+## marks call `Obsidian` (`MapView.SEEDED_FACTION_NAMES`, read through `FactionMark.faction_name`). The
+## rows are asserted against THIS literal rather than against the resolver, so a resolver that stopped
+## answering the map's name fails here instead of agreeing with itself.
+const OTHER_PEOPLE_NAME := "Obsidian"
+## …and the viewer's own people, faction 0 — the same resolver, the same join.
+const OWN_PEOPLE_NAME := "Aurora"
+
 ## THE GAINING SIDE — the viewer is faction 0 and the band arrives from People 1, so `to` is the
-## viewer. Its roster now holds the band, so `band=` joins and the row says the client's own name.
+## viewer. Its roster now holds the band, so `band=` joins and the row says the client's own name —
+## and `from=1` joins the people to its own name the same way.
 const HANDOVER_GAINED_SIM_LABEL := "Band 4 joined us from People 1"
-const HANDOVER_GAINED_LABEL := "Thornhollow joined us from People 1"
+const HANDOVER_GAINED_LABEL := "Thornhollow joined us from " + OTHER_PEOPLE_NAME
 const HANDOVER_GAINED_DETAIL := "band=4 from=1 to=0 side=gained"
 
 ## THE LOSING SIDE — the same handover from the other seat, so `from` is the viewer and the band is
 ## gone from its roster. There is no name left to join, which is why this half keeps the sim's own
 ## `Band 4` and why that is the CORRECT reading rather than a missing substitution.
 const HANDOVER_LOST_SIM_LABEL := "Band 4 left us for People 1"
+## …with the people it left for named by `to=1`. The `from=0` token is the viewer, said as "us", so it
+## has no `People 0` span to join and the label carries none.
+const HANDOVER_LOST_LABEL := "Band 4 left us for " + OTHER_PEOPLE_NAME
 const HANDOVER_LOST_DETAIL := "band=4 from=0 to=1 side=lost"
 
 ## The detail column's expected rendering: NOTHING. Every token this kind writes is said by its label
@@ -714,16 +726,38 @@ const DEFECTION_KIND := "party_defected"
 const DEFECTION_LOST_LABEL := "Your scouting party has left your control."
 const DEFECTION_LOST_DETAIL := "side=lost expedition=4294967311"
 const MIGRATED_OUT_SIM_LABEL := "3 left Band 4 to join People 1"
-const MIGRATED_OUT_LABEL := "3 left Thornhollow to join People 1"
+const MIGRATED_OUT_LABEL := "3 left Thornhollow to join " + OTHER_PEOPLE_NAME
 const MIGRATED_OUT_DETAIL := "band=4 count=3 direction=out to=1"
 
 ## THE GAINING SEAT: the same party arriving, and another people's leavers joining a band.
-const DEFECTION_GAINED_SIM_LABEL := "A party of 3 joined Band 4"
-const DEFECTION_GAINED_LABEL := "A party of 3 joined Thornhollow"
+const DEFECTION_GAINED_SIM_LABEL := "A party of 3 from People 1 joined Band 4"
+const DEFECTION_GAINED_LABEL := "A party of 3 from " + OTHER_PEOPLE_NAME + " joined Thornhollow"
 const DEFECTION_GAINED_DETAIL := "band=4 count=3 from=1 side=gained"
 const MIGRATED_IN_SIM_LABEL := "2 from People 1 joined Band 4"
-const MIGRATED_IN_LABEL := "2 from People 1 joined Thornhollow"
+const MIGRATED_IN_LABEL := "2 from " + OTHER_PEOPLE_NAME + " joined Thornhollow"
 const MIGRATED_IN_DETAIL := "band=4 count=2 direction=in from=1"
+
+## THE PEOPLE JOIN, PNG-less — the claims a frame cannot make. The row label is asked directly of the
+## dock's own `_row_label`, over rows the fixtures above do not stage:
+##   • the viewer's OWN people reads its own name through the same resolver (no shipped label names
+##     the viewer's people today — a synthetic row, marked as one);
+##   • the join is bounded at a digit, so `People 1` never rewrites the head of `People 12`;
+##   • an id with no seeded name takes the resolver's own fallback, never the sim's spelling;
+##   • a row whose token names a people its label does not spell is untouched.
+func _people_join_assertions(dock: EventDockPanel) -> void:
+	var own := dock._row_label({"label": "2 from People 0 joined Band 4",
+		"detail": "band=4 count=2 direction=in from=0"})
+	h._assert_hud("the viewer's own people reads its own name (\"%s\")" % own,
+		own == "2 from " + OWN_PEOPLE_NAME + " joined Band 4")
+	var twelve := dock._row_label({"label": "2 from People 12 joined Band 4",
+		"detail": "band=4 count=2 direction=in from=12"})
+	h._assert_hud("the people join is bounded at a digit and resolves an unseeded id through the ONE resolver (\"%s\")" % twelve,
+		twelve == "2 from " + FactionMark.faction_name(12) + " joined Band 4"
+			and not twelve.contains("People"))
+	var wrong_id := dock._row_label({"label": "2 from People 12 joined Band 4",
+		"detail": "band=4 count=2 direction=in from=1"})
+	h._assert_hud("a token naming a people the label does not spell leaves the label alone (\"%s\")" % wrong_id,
+		wrong_id == "2 from People 12 joined Band 4")
 
 func _event_dock_defection_lost_fixture() -> Array:
 	return [
@@ -2611,7 +2645,9 @@ func run(harness) -> void:
 	h._assert_hud("the LOSING side is the same Alert, and keeps the sim's `Band 4` — it has no roster row left (got %s)"
 			% _preview_event_rung(event_dock, HANDOVER_LOST_SIM_LABEL),
 		_preview_event_rung(event_dock, HANDOVER_LOST_SIM_LABEL) == HudEventVocab.RUNG_ALERT
-			and _preview_event_label_count(event_dock, HANDOVER_LOST_SIM_LABEL, true) == 1)
+			and _preview_event_label_count(event_dock, HANDOVER_LOST_LABEL, true) == 1)
+	await h._save("event_dock_band_changed_hands_lost")
+	_people_join_assertions(event_dock)
 
 	# ---- A PARTY DEFECTS (issue #512) — the losing seat, then the gaining one ------------------
 	# Rendered at the DEFAULT floor, where the player lives: the defection line is ALERT and must be
@@ -2635,8 +2671,8 @@ func run(harness) -> void:
 	h._assert_hud("…and it offers no jump anywhere (link bands %s)"
 			% str(_preview_dock_link_bands(event_dock)),
 		_preview_dock_link_bands(event_dock).is_empty())
-	# The cross-people leavers: the band is the roster's own name; the people is the sim's `People 1`,
-	# the handover rows' own spelling — the client has no people-name join to make.
+	# The cross-people leavers: the band is the roster's own name, and the people is the name the
+	# map's faction marks carry, joined on `to=` exactly as `band=` is.
 	h._assert_hud("a cross-people leave reads with the roster's band name (\"%s\")" % MIGRATED_OUT_LABEL,
 		_preview_event_label_count(event_dock, MIGRATED_OUT_LABEL, true) == 1)
 	var out_phrase := EventDockPanel.detail_phrase(MIGRATED_OUT_DETAIL)

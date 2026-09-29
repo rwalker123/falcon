@@ -19,12 +19,14 @@ mod faction_support;
 
 use core_sim::{
     advance_party_defection, advance_population_migration, run_turn, scalar_from_f32,
-    split_band_from_parent, BandId, BandIdAllocator, BandName, CommandEventKind, CommandEventLog,
-    ConnectionKey, ConnectionLedger, ConnectionsConfigHandle, DiscoveryProgressLedger, Expedition,
-    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FactionBorderPolicies, FactionId,
-    LaborAllocation, LadderConfigHandle, LocalStore, PartySightings, PopulationCohort,
-    ResidentBand, RoadKeeper, RoadRegistry, Scalar, SettleConfig, SimulationConfig, StartingUnit,
-    Tile, TileRegistry, TransferCause, WellbeingConfigHandle, FOOD,
+    split_band_from_parent, trace_path, traffic_ceiling, BandId, BandIdAllocator, BandName,
+    CommandEventKind, CommandEventLog, ConnectionKey, ConnectionLedger, ConnectionsConfigHandle,
+    DiscoveryProgressLedger, Expedition, ExpeditionConfigHandle, ExpeditionMission,
+    ExpeditionPhase, FactionBorderPolicies, FactionId, ForageRegistry, HerdRegistry,
+    LaborAllocation, LaborAssignment, LaborTarget, LadderConfigHandle, LocalStore, PartySightings,
+    PopulationCohort, ResidentBand, RoadKeeper, RoadRegistry, Scalar, SettleConfig,
+    SimulationConfig, SourcePriority, StartingUnit, TakeSelection, Tile, TileRegistry,
+    TransferCause, WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, FOOD,
 };
 use faction_support::{two_faction_world, HOME, RIVAL};
 
@@ -557,7 +559,12 @@ fn a_party_accrues_pull_and_goes_whole_once_it_reaches_the_threshold() {
     let gained: Vec<_> = lines.iter().filter(|(f, ..)| *f == RIVAL).collect();
     assert_eq!(gained.len(), 1);
     assert!(
-        gained[0].1.contains(&format!("Band {}", s.rival_id.0)) && gained[0].2.contains("from=0"),
+        gained[0].1
+            == format!(
+                "A party of {} from People {} joined Band {}",
+                PARTY_WORKERS as u32, HOME.0, s.rival_id.0
+            )
+            && gained[0].2.contains("from=0"),
         "the receivers are told a party joined one of their bands: {gained:?}"
     );
 }
@@ -798,4 +805,226 @@ fn a_party_out_from_a_band_that_goes_over_goes_with_it_and_still_comes_home() {
         returned.iter().any(|(f, ..)| *f == RIVAL),
         "and its homecoming is told to the people it now belongs to: {returned:?}"
     );
+}
+
+/// A labor row on `target`, held at zero hands — a held row is still that band's work.
+fn work(app: &mut App, band: Entity, target: LaborTarget) {
+    let row = LaborAssignment {
+        party: None,
+        target,
+        workers: 0,
+        kit: None,
+        priority: SourcePriority::default(),
+        upkeep_kit: None,
+    };
+    match app.world.get_mut::<LaborAllocation>(band) {
+        Some(mut allocation) => allocation.assignments.push(row),
+        None => {
+            app.world.entity_mut(band).insert(LaborAllocation {
+                assignments: vec![row],
+                ..Default::default()
+            });
+        }
+    }
+}
+
+fn forage_row(tile: UVec2) -> LaborTarget {
+    LaborTarget::Forage {
+        tile,
+        floor: DEFAULT_ESCAPEMENT_FLOOR,
+        species: None,
+        take_species: TakeSelection::EVERYTHING,
+    }
+}
+
+/// Two patches and a herd the home people own. `(sole, shared, herd)`.
+fn owned_improvements(app: &mut App) -> (UVec2, UVec2, String) {
+    let mut tiles: Vec<UVec2> = app
+        .world
+        .resource::<ForageRegistry>()
+        .patches
+        .keys()
+        .copied()
+        .collect();
+    tiles.sort_by_key(|t| (t.y, t.x));
+    assert!(
+        tiles.len() >= 2,
+        "fixture: the world carries forage patches"
+    );
+    let (sole, shared) = (tiles[0], tiles[1]);
+    {
+        let mut forage = app.world.resource_mut::<ForageRegistry>();
+        for tile in [sole, shared] {
+            forage.patches.get_mut(&tile).unwrap().owner = Some(HOME);
+        }
+    }
+    let herd = {
+        let mut herds = app.world.resource_mut::<HerdRegistry>();
+        let herd = herds
+            .herds
+            .first_mut()
+            .expect("fixture: the world carries herds");
+        herd.owner = Some(HOME);
+        herd.id.clone()
+    };
+    (sole, shared, herd)
+}
+
+#[test]
+fn a_band_that_goes_over_takes_the_improvements_only_it_works() {
+    let mut app = two_faction_world();
+    let s = stage(&mut app);
+    tie(&mut app, s.home_id, s.rival_id);
+    // A second band of the home people, sharing one patch with the band that will go over.
+    let settle = SettleConfig {
+        min_founding_workers: 1,
+        parent_min_workers: 0,
+    };
+    let split = split_band_from_parent(&mut app.world, s.home, 10, &settle)
+        .expect("the staged band can split");
+    let sibling = entity_of(&mut app, split.band);
+    let floor = app
+        .world
+        .resource::<ExpeditionConfigHandle>()
+        .get()
+        .settle
+        .parent_min_workers;
+    with_cohort(&mut app, s.home, |c| {
+        c.working = Scalar::from_u32(floor);
+        c.children = Scalar::zero();
+        c.elders = Scalar::zero();
+    });
+    let (sole, shared, herd) = owned_improvements(&mut app);
+    work(&mut app, s.home, forage_row(sole));
+    work(&mut app, s.home, forage_row(shared));
+    work(
+        &mut app,
+        s.home,
+        LaborTarget::Hunt {
+            fauna_id: herd.clone(),
+            floor: DEFAULT_ESCAPEMENT_FLOOR,
+        },
+    );
+    work(&mut app, sibling, forage_row(shared));
+
+    migrate(&mut app);
+
+    assert_eq!(
+        cohort(&app, s.home).faction,
+        RIVAL,
+        "fixture: the band went over"
+    );
+    assert_eq!(
+        cohort(&app, sibling).faction,
+        HOME,
+        "fixture: its sibling did not"
+    );
+    let forage = app.world.resource::<ForageRegistry>();
+    assert_eq!(
+        forage.patches[&sole].owner,
+        Some(RIVAL),
+        "a patch only it worked goes with it"
+    );
+    assert_eq!(
+        forage.patches[&shared].owner,
+        Some(HOME),
+        "a patch a band of its old people still works stays theirs"
+    );
+    assert_eq!(
+        app.world
+            .resource::<HerdRegistry>()
+            .find(&herd)
+            .unwrap()
+            .owner,
+        Some(RIVAL),
+        "and so does a herd only it worked"
+    );
+}
+
+/// Seat a fully worn trail on every tile of the path between two points — a kept road by
+/// arithmetic, since the free floor owes nothing.
+fn trail_between(app: &mut App, a: UVec2, b: UVec2) {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let config = app.world.resource::<SimulationConfig>().clone();
+    let (width, height, wrap) = (
+        config.grid_size.x,
+        config.grid_size.y,
+        config.map_topology.wrap_horizontal,
+    );
+    let path = {
+        let roads = app.world.resource::<RoadRegistry>();
+        trace_path(a, b, width, height, wrap, roads)
+    };
+    let mut roads = app.world.resource_mut::<RoadRegistry>();
+    for tile in path {
+        roads
+            .road_or_trail(tile, &ladder)
+            .set_position(traffic_ceiling(&ladder), &ladder);
+    }
+}
+
+/// How many hex steps past plain `base_reach` a staged destination stands.
+const JUST_OUT_OF_REACH: u32 = 1;
+
+/// Move `band` to the tile `base_reach + JUST_OUT_OF_REACH` hex steps along `at`'s row.
+fn place_just_out_of_reach(app: &mut App, band: Entity, at: UVec2) -> UVec2 {
+    let reach = app
+        .world
+        .resource::<WellbeingConfigHandle>()
+        .get()
+        .migration
+        .base_reach as u32;
+    let width = app.world.resource::<SimulationConfig>().grid_size.x;
+    let there = UVec2::new((at.x + reach + JUST_OUT_OF_REACH) % width, at.y);
+    let tile = tile_at(app, there.x, there.y);
+    with_cohort(app, band, |c| {
+        c.home = tile;
+        c.current_tile = tile;
+    });
+    there
+}
+
+/// Stage a miserable home band and a thriving destination just out of plain reach, with or without
+/// a trail between them. `foreign`: the destination is the rival's camp (tied); otherwise it is a
+/// home-people splinter.
+fn reach_along_a_road(foreign: bool, road: bool) -> bool {
+    let mut app = two_faction_world();
+    let s = stage(&mut app);
+    let at = position_of(&app, s.home);
+    let destination = if foreign {
+        tie(&mut app, s.home_id, s.rival_id);
+        s.rival
+    } else {
+        let settle = SettleConfig {
+            min_founding_workers: 1,
+            parent_min_workers: 0,
+        };
+        let split = split_band_from_parent(&mut app.world, s.home, 10, &settle)
+            .expect("the staged band can split");
+        let child = entity_of(&mut app, split.band);
+        with_cohort(&mut app, child, |c| c.morale = scalar_from_f32(THRIVING));
+        // The rival is not tied, so it is no destination; only the splinter can take them.
+        child
+    };
+    let there = place_just_out_of_reach(&mut app, destination, at);
+    if road {
+        trail_between(&mut app, at, there);
+    }
+    let before = cohort(&app, s.home).total();
+    migrate(&mut app);
+    cohort(&app, s.home).total() < before
+}
+
+#[test]
+fn a_band_just_out_of_reach_is_brought_in_by_a_road_between_them() {
+    for foreign in [false, true] {
+        assert!(
+            !reach_along_a_road(foreign, false),
+            "foreign={foreign}: just out of reach and no road — nobody moves"
+        );
+        assert!(
+            reach_along_a_road(foreign, true),
+            "foreign={foreign}: the same pair with a road between them — they move"
+        );
+    }
 }

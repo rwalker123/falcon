@@ -10786,13 +10786,49 @@ pub struct BandFlipFollowers<'w, 's> {
         (Entity, &'static mut PopulationCohort, &'static Expedition),
         Without<ResidentBand>,
     >,
+    /// The improvements a band works — a patch's and a herd's `owner` is the PEOPLE who raised it,
+    /// and a band that goes over takes the ones only it was working.
+    pub forage: ResMut<'w, ForageRegistry>,
+    pub herds: ResMut<'w, HerdRegistry>,
+    /// Every resident band's labor rows — which sources it works, for the shared-source test.
+    pub labor: Query<'w, 's, (Entity, &'static LaborAllocation), With<ResidentBand>>,
 }
 
 /// One band that changed people this turn.
 struct BandFlip {
     entity: Entity,
     band: BandId,
+    from: FactionId,
     to: FactionId,
+}
+
+/// A source a labor row works that can carry an improvement — the patch's tile or the herd's id.
+/// Every other target (a role, a deposit) has no people-level `owner`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum OwnableSource {
+    /// Row-major `(y, x)` — a `UVec2` has no order, and a set of sources must iterate in one.
+    Patch(u32, u32),
+    Herd(String),
+}
+
+impl OwnableSource {
+    fn of(target: &LaborTarget) -> Option<Self> {
+        match target {
+            LaborTarget::Forage { tile, .. } => Some(Self::Patch(tile.y, tile.x)),
+            LaborTarget::Hunt { fauna_id, .. } => Some(Self::Herd(fauna_id.clone())),
+            _ => None,
+        }
+    }
+}
+
+/// The ownable sources a band's labor rows name — every row, staffed or held at zero hands, since a
+/// held row is still that band's work.
+fn ownable_sources(allocation: &LaborAllocation) -> BTreeSet<OwnableSource> {
+    allocation
+        .assignments
+        .iter()
+        .filter_map(|assignment| OwnableSource::of(&assignment.target))
+        .collect()
 }
 
 /// **A band that goes over takes what is its own with it** (`factions.md` → "A band that changes
@@ -10805,12 +10841,18 @@ struct BandFlip {
 ///   re-minted on the new people's own permutation (`band-names.md`'s mint path), drawing slots until
 ///   one is free; a party homed on the band carries the new name too, since a party inherits its home
 ///   band's;
+/// - **its improvements** — every patch or herd its OLD people own (`ForagePatch::owner` /
+///   `Herd::owner`) that this band has a labor row on passes to the new people, unless another band
+///   still of the old people also works it; the rung and its progress are untouched;
 /// - **its parties already out** — their people's families went over, so each party's
 ///   `cohort.faction` follows. The losing people is told nothing beyond the band's own
 ///   `band_changed_hands` line.
 ///
 /// Everything else keyed to the band — its entity, `BandId`, stores, kit, bench, labor rows, build
 /// queue, loadout window — is already keyed to the band itself rather than to a people.
+///
+/// The shared-source test reads factions after every earlier flip this turn, so two bands of one
+/// people going over together take a patch they both worked.
 fn follow_the_band_to_its_new_people(
     followers: &mut BandFlipFollowers,
     cohorts: &Query<(Entity, &mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
@@ -10856,6 +10898,44 @@ fn follow_the_band_to_its_new_people(
             }
         }
 
+        // **Its improvements go with it** — every patch or herd the OLD people own that this band
+        // works passes to the new people, unless another band still of the old people works it too
+        // (then the old people keep it). Only the owner moves; the rung and its build progress stay.
+        let mine = followers
+            .labor
+            .get(flip.entity)
+            .map(|(_, allocation)| ownable_sources(allocation))
+            .unwrap_or_default();
+        let still_theirs: BTreeSet<OwnableSource> = followers
+            .labor
+            .iter()
+            .filter(|(entity, _)| {
+                *entity != flip.entity
+                    && cohorts
+                        .get(*entity)
+                        .is_ok_and(|(_, cohort, _)| cohort.faction == flip.from)
+            })
+            .flat_map(|(_, allocation)| ownable_sources(allocation))
+            .collect();
+        for source in mine.difference(&still_theirs) {
+            let owner = match source {
+                OwnableSource::Patch(y, x) => followers
+                    .forage
+                    .patches
+                    .get_mut(&UVec2::new(*x, *y))
+                    .map(|patch| &mut patch.owner),
+                OwnableSource::Herd(id) => followers
+                    .herds
+                    .herds
+                    .iter_mut()
+                    .find(|herd| &herd.id == id)
+                    .map(|herd| &mut herd.owner),
+            };
+            if let Some(owner) = owner.filter(|owner| **owner == Some(flip.from)) {
+                *owner = Some(flip.to);
+            }
+        }
+
         let homed: Vec<Entity> = followers
             .parties
             .iter()
@@ -10877,6 +10957,11 @@ fn follow_the_band_to_its_new_people(
 /// bands themselves, bundled so the system stays well inside Bevy's argument budget.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct MigrationGates<'w> {
+    /// The route ladder and the pooling reach — the two terms of the road bonus a migration's reach
+    /// is extended by (`supply::free_pooling_reach_tiles − reach_tiles`, the work party's seam). The
+    /// roads themselves are read through [`BandFlipFollowers::roads`], which already holds them.
+    pub ladder: Res<'w, LadderConfigHandle>,
+    pub supply: Res<'w, crate::supply_network_config::SupplyNetworkConfigHandle>,
     /// Perception: a live band-to-band tie (`ConnectionLedger::tie_is_live`) is what "a band you
     /// have actually seen" means for a destination of another people.
     pub connections: Res<'w, ConnectionLedger>,
@@ -10946,14 +11031,17 @@ pub fn advance_population_migration(
     let wrap = sim_config.map_topology.wrap_horizontal;
     let parent_min_workers = gates.expedition.get().settle.parent_min_workers;
 
-    // Movement-tech reach factor. No concrete movement/transport tech signal exists in the sim yet
-    // (capability flags cover construction/industry/power/naval/air/espionage/megaprojects, none of
-    // which is a mobility tier), so Phase 1 keeps this at 1.0.
-    // TODO(phase2): scale by the civilization's movement/transport tech tier (design doc defers
-    // concrete tiers) so advanced factions send emigrants farther.
-    let movement_tech_factor = 1.0_f32;
-    let reach = mig_cfg.base_reach * movement_tech_factor;
-    let reach_sq = (reach * reach) as i32;
+    // **Reach is hex steps, and a road shortens them.** A candidate is in reach when
+    // `hex_distance − road_bonus <= base_reach`, where the road bonus is the one every other
+    // distance-shortener reads — `supply::free_pooling_reach_tiles − reach_tiles`, the work party's
+    // walk seam — so a road does for people moving camp what it does for a caravan and for pooling.
+    let height = tile_registry.height;
+    let reach = mig_cfg.base_reach;
+    let supply_reach = gates.supply.get().reach_tiles;
+    let widest_route_reach = crate::routes::max_route_reach_tiles(&gates.ladder.get());
+    // No road can shorten a walk by more than the widest route reach over the free reach, so a pair
+    // past `base_reach + max_road_bonus` is out of reach without tracing a path.
+    let max_road_bonus = widest_route_reach.saturating_sub(supply_reach);
     let attractive_morale = scalar_from_f32(mig_cfg.attractive_morale);
     let min_gap = scalar_from_f32(mig_cfg.min_morale_gap);
     let dependent_weight = scalar_from_f32(mig_cfg.dependent_weight);
@@ -11040,8 +11128,26 @@ pub fn advance_population_migration(
             if dest.morale < attractive_morale || dest.morale <= bands[i].morale + min_gap {
                 continue;
             }
-            if crate::grid_utils::wrapped_distance_sq(src_pos, dest_pos, width, wrap) > reach_sq {
-                continue;
+            let distance = crate::grid_utils::hex_distance_wrapped(src_pos, dest_pos, width, wrap);
+            if distance as f32 > reach {
+                // Past plain reach: only a road can bring it in, and only within the widest bonus.
+                if distance as f32 > reach + max_road_bonus as f32 {
+                    continue;
+                }
+                let road_bonus = crate::supply::free_pooling_reach_tiles(
+                    &followers.roads,
+                    src_pos,
+                    dest_pos,
+                    supply_reach,
+                    widest_route_reach,
+                    width,
+                    height,
+                    wrap,
+                )
+                .saturating_sub(supply_reach);
+                if distance.saturating_sub(road_bonus) as f32 > reach {
+                    continue;
+                }
             }
             let best = if dest.faction == bands[i].faction {
                 &mut best_own
@@ -11214,6 +11320,7 @@ pub fn advance_population_migration(
                 flips.push(BandFlip {
                     entity,
                     band: *band_id,
+                    from: left,
                     to: joined,
                 });
             }

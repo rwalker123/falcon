@@ -734,7 +734,8 @@ Layer 3b) also moves them to **another people's** band — nothing else about it
 - **Push.** Only a band below `migration.morale_threshold` sheds anyone, at
   `total × migration_move_fraction(morale)`. A well-fed band never loses a person.
 - **Pull.** The destination's morale is `≥ attractive_morale` and `> source + min_morale_gap`, within
-  `base_reach` of the source's home tile.
+  reach of the source's home tile: `hex_distance − road_bonus <= base_reach`, a road between the two
+  camps bringing a farther band in (`campaign.md` → Layer 3b has the seam).
 - **Own people first.** The search keeps two bests — own people's and other peoples' — and takes the
   foreign one only when the own one is `None`. A foreign band that is happier than every own band
   still loses to any qualifying own band.
@@ -774,29 +775,27 @@ query order.
 |---|---|
 | `routes::RoadKeeper.faction` | every road the band keeps is re-pointed at the new people, so it lights *their* fog. `RoadKeeper` carries the faction beside the band because the fog grant reads a faction; it must never disagree with the keeper band's own `cohort.faction` |
 | `BandName` | **kept**, unless a band of the new people already answers to it — then re-minted on the **new** people's permutation through `BandNameAllocator::mint` (`band-names.md`), drawing slots until one no other band of theirs uses. Slots are injective per faction, so the draw ends. The collision set is read after the earlier flips of the same turn, so two bands going over together cannot land on one name |
+| `ForagePatch::owner` / `Herd::owner` — the people who raised an improvement | every patch or herd the band has a labor row on (staffed or held at zero hands) and the **old** people own passes to the new people — **unless another band still of the old people works it too**, in which case the old people keep it. Only the owner moves; the rung and its build progress stay as they are. The shared-source test reads factions after every earlier flip this turn, so two bands of one people going over together take a patch they both worked |
 | a party already out (`Expedition.home_band` → this band) | its `cohort.faction` follows (the party's families went over), and it carries the re-minted name if there was one. It folds back into its band through the ordinary `Returning` arm, which never asks a faction. The losing people hears nothing beyond the band's own `band_changed_hands` pair |
 | the band's entity, `BandId`, stores, kit, bench, labor rows, build queue, `StartingLoadout` window | keyed to the band itself, not to a people — nothing to move |
 
-**Two faction-keyed things are deliberately NOT moved, because they belong to a PEOPLE, not to a
-band:**
-
-- `ForagePatch::owner` / `Herd::owner` — the people who raised a patch's or a herd's improvement
-  (the first faction to bank work on it; only the owner makes further progress). Several of a
-  people's bands may work one patch, so a band leaving does not carry the improvement with it.
-- `ExpeditionMission::Trade::destination_faction` and every `TransferCounterparty` — facts fixed at
-  booking about whose band a shipment was addressed to, never branched on.
+**What is deliberately NOT moved:** `ExpeditionMission::Trade::destination_faction` and every
+`TransferCounterparty` — facts fixed at booking about whose band a shipment was addressed to, never
+branched on.
 
 Guards: `defection::{a_band_that_goes_over_takes_the_roads_it_keeps,
+a_band_that_goes_over_takes_the_improvements_only_it_works,
 a_band_that_goes_over_keeps_its_name_unless_its_new_people_already_use_it,
 a_party_out_from_a_band_that_goes_over_goes_with_it_and_still_comes_home}` — each paired with its
-control (a road another band keeps stays put; no clash, no rename).
+control (a road another band keeps stays put; a patch a sibling of the old people still works stays
+theirs; no clash, no rename).
 
 ### A detached party goes whole
 
 `advance_party_defection` (Population chain, after `advance_population_migration`). A party carries
 its **home band's** morale. Each turn the home band is below `migration.morale_threshold` **and** the
-party saw — on its own sweep **this turn** — a foreign band within `base_reach` of the party's tile
-that passes the pull test against the home band's morale and belongs to an open people, the party
+party saw — on its own sweep **this turn** — a foreign band within `base_reach` hex steps of the
+party's tile (no road bonus — a party in the field is off the road) that passes the pull test against the home band's morale and belongs to an open people, the party
 accrues `migration_move_fraction(home morale)` onto `Expedition::defection_pull`; any other turn
 resets it to `0`. At `defection.party_pull_threshold` the whole party joins the best such band
 (highest morale, ties to the lowest `BandId`).

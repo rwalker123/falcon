@@ -340,8 +340,10 @@ The rule is the wellbeing trickle that already moves people between a faction's 
 - **Pull — what "better off" means.** The destination band's morale is at least
   `attractive_morale` (0.5) **and** clearly above the source's (`min_morale_gap`). Morale is the
   one number that already sums what a person would weigh — food, shelter, crowding.
-- **Perception — only a band you have actually seen.** The destination is within `base_reach` (4
-  tiles) of the source **and** a live tie joins those *two bands* (`ConnectionLedger::tie_is_live`).
+- **Perception — only a band you have actually seen.** The destination is within reach of the
+  source — `base_reach` (4) hex steps, less whatever a road between the two camps takes off the
+  distance (the same road bonus a work party's walk and band pooling read) — **and** a live tie joins
+  those *two bands* (`ConnectionLedger::tie_is_live`).
   Contact is band-to-band, never people-to-people: one scout meeting one rival camp does not make
   every band of both peoples eligible.
 - **Your own people come first.** If a band of the source's own people qualifies, the leavers go
@@ -372,7 +374,8 @@ A detached party (any `Expedition`) is a few people far from home, so a fraction
 thing. The party carries its **home band's** morale — they are that band's people.
 
 - Each turn the home band is below the push threshold **and** the party can see (within
-  `base_reach` of its own tile, observed on its own sweep this turn) a foreign band that passes the
+  `base_reach` hex steps of its own tile — no road bonus: a party in the field is off the road —
+  observed on its own sweep this turn) a foreign band that passes the
   pull test and belongs to an **open** people, the party accrues `migration_move_fraction(home
   morale)` of *pull*. A turn without such a band resets it to zero.
 - At `expedition_config.json` → `defection.party_pull_threshold` the **whole party** joins that
