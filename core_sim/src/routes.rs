@@ -1133,7 +1133,11 @@ const NO_ROAD_HERE: u32 = 0;
 
 /// The rank of whatever this tile is **holding** — never the rung being raised on it, which is work
 /// in progress and not something a traveller can walk on.
-fn tile_rank(registry: &RoadRegistry, tile: UVec2) -> u32 {
+///
+/// **The one road test every traveller's tie-break reads** — [`trace_path`] for a journey, and a
+/// migratory herd's `Migrate` step (`fauna::best_land_neighbor_toward`) — so *"prefer the road"*
+/// means one thing whoever is walking.
+pub(crate) fn tile_rank(registry: &RoadRegistry, tile: UVec2) -> u32 {
     registry
         .road(tile)
         .map_or(NO_ROAD_HERE, |road| rung_rank(road.held_rung()))

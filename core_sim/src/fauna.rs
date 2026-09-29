@@ -2144,6 +2144,7 @@ pub fn migratory_corridor_tiles(
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
     graze: &GrazeRegistry,
+    roads: Option<&crate::routes::RoadRegistry>,
     width: u32,
     height: u32,
     wrap: bool,
@@ -2162,7 +2163,7 @@ pub fn migratory_corridor_tiles(
         let target = anchors[(i + 1) % anchors.len()];
         while cursor != target {
             match best_land_neighbor_toward(
-                cursor, target, registry, tiles, graze, width, height, wrap,
+                cursor, target, registry, tiles, graze, roads, width, height, wrap,
             ) {
                 Some(next) => {
                     cursor = next;
@@ -2213,13 +2214,30 @@ pub fn stamp_migratory_game_trails(
     let wrap = config.map_topology.wrap_horizontal;
     let empty_graze = GrazeRegistry::default();
     let graze = graze.as_deref().unwrap_or(&empty_graze);
-    for herd in herds
+    // ⛔ **EVERY CORRIDOR IS TRACED BEFORE ANY IS STAMPED**, against the roads as they stood before
+    // this pass — `trace_path`'s rule. The trace prefers a road among equally good steps, so stamping
+    // herd by herd would let the first herd's trail steer the second's trace, making the corridors
+    // depend on the order the registry lists the herds. At world creation the registry is empty, so
+    // every trace is the bare land walk.
+    let traced: Vec<(&Herd, Vec<UVec2>, usize)> = herds
         .herds
         .iter()
         .filter(|herd| herd.size_class == SizeClass::Migratory)
-    {
-        let (corridor, hemmed_legs) =
-            migratory_corridor_tiles(herd, &tile_registry, &tiles, graze, width, height, wrap);
+        .map(|herd| {
+            let (corridor, hemmed_legs) = migratory_corridor_tiles(
+                herd,
+                &tile_registry,
+                &tiles,
+                graze,
+                Some(&roads),
+                width,
+                height,
+                wrap,
+            );
+            (herd, corridor, hemmed_legs)
+        })
+        .collect();
+    for (herd, corridor, hemmed_legs) in traced {
         for tile in &corridor {
             let road = roads.road_or_trail(*tile, &ladder);
             let worn = road.position().max(ceiling);
@@ -2699,6 +2717,9 @@ pub fn advance_herds(
     // for the graze layer's reason — the many isolated fauna harnesses need not stand up the route
     // branch; the live app always carries the log.
     mut route_traffic: Option<ResMut<crate::routes::RouteTrafficLog>>,
+    // **The trails a `Migrate` step prefers** (issue #215) — the roads as last turn's `advance_roads`
+    // left them. Optional for the graze layer's reason; with none, every step ranks alike.
+    road_registry: Option<Res<crate::routes::RoadRegistry>>,
 ) {
     if registry.herds.is_empty() {
         telemetry.entries.clear();
@@ -2717,6 +2738,7 @@ pub fn advance_herds(
     // A `None`/empty graze layer → plain land movement (pre-2b-i); a seeded one → graze-aware roam.
     let empty_graze = GrazeRegistry::default();
     let graze = graze.as_deref().unwrap_or(&empty_graze);
+    let roads = road_registry.as_deref();
     let owner_camps = owner_camp_tiles(&bands, &tiles);
     // **The prey index** (Predators Phase 1a) — a start-of-turn snapshot of every herbivore herd, built
     // in this immutable pass *before* the mutable loop below so a carnivore's `K` (computed inside that
@@ -2761,6 +2783,7 @@ pub fn advance_herds(
                 &tile_registry,
                 &tiles,
                 graze,
+                roads,
                 &mut rng,
                 width,
                 height,
@@ -2777,6 +2800,7 @@ pub fn advance_herds(
                     &tile_registry,
                     &tiles,
                     graze,
+                    roads,
                     &mut rng,
                     width,
                     height,
@@ -2812,6 +2836,7 @@ pub fn advance_herds(
                     &tile_registry,
                     &tiles,
                     graze,
+                    roads,
                     &mut rng,
                     width,
                     height,
@@ -3556,6 +3581,7 @@ fn advance_herd_roam(
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
     graze: &GrazeRegistry,
+    roads: Option<&crate::routes::RoadRegistry>,
     rng: &mut SmallRng,
     width: u32,
     height: u32,
@@ -3603,7 +3629,10 @@ fn advance_herd_roam(
                 .get(herd.step_index)
                 .copied()
                 .unwrap_or(herd.current_pos);
-            step_herd_toward(herd, target, registry, tiles, graze, width, height, wrap);
+            // A graze-wander step mills about its ground and follows no trail.
+            step_herd_toward(
+                herd, target, registry, tiles, graze, None, width, height, wrap,
+            );
             herd.dwell_remaining = dwell_turns;
             None
         }
@@ -3654,7 +3683,9 @@ fn advance_herd_roam(
                 .copied()
                 .unwrap_or(herd.current_pos);
             let from = herd.current_pos;
-            let moved = step_herd_toward(herd, target, registry, tiles, graze, width, height, wrap);
+            let moved = step_herd_toward(
+                herd, target, registry, tiles, graze, roads, width, height, wrap,
+            );
             // **The step it took is the corridor** — arriving counts, a hemmed-in turn walked nothing.
             let step = moved.then_some(MigrationStep {
                 from,
@@ -3674,6 +3705,7 @@ fn advance_herd_roam(
                     registry,
                     tiles,
                     graze,
+                    roads,
                     width,
                     height,
                     wrap,
@@ -3694,6 +3726,7 @@ fn step_herd_toward(
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
     graze: &GrazeRegistry,
+    roads: Option<&crate::routes::RoadRegistry>,
     width: u32,
     height: u32,
     wrap: bool,
@@ -3707,6 +3740,7 @@ fn step_herd_toward(
         registry,
         tiles,
         graze,
+        roads,
         width,
         height,
         wrap,
@@ -3724,9 +3758,21 @@ fn step_herd_toward(
 /// never barren glacier / rock / desert, where a grazer would starve on ground it should never cross),
 /// and strictly closer to `target` than `from` (so a herd never oscillates, backtracks, or wanders
 /// away from its anchor). Among those, the closest wins; **ties break toward the richer pasture**
-/// (higher graze capacity) so a herd drifts along fertile ground, and direction order breaks the rest.
-/// `None` = no grazeable step gets closer, so the herd stays put — a herd hemmed in by barren does not
-/// cross it.
+/// (higher graze capacity) so a herd drifts along fertile ground, then — **only when `roads` is
+/// handed in** — **toward the tile holding the higher road rung**, and direction order breaks the
+/// rest. `None` = no grazeable step gets closer, so the herd stays put — a herd hemmed in by barren
+/// does not cross it.
+///
+/// ⛔ **A HERD FOLLOWS ITS OWN TRAIL, AND NEVER DETOURS TO REACH ONE** (issue #215) — the rule
+/// `routes::trace_path` states for people, applied to the `Migrate` step: the road is a tie-break
+/// **below** distance and pasture, so a trail is taken only among steps already equally good, and a
+/// herd never takes a worse step to reach one. The road test is `routes::tile_rank`, the one
+/// `trace_path` reads. It is what keeps a herd on the corridor it wore instead of wandering off it by
+/// however far its loiter left it from the anchor.
+///
+/// **`roads` is `Some` for a `Migrate` leg only** — the step itself, its heading arrow and the
+/// corridor trace (`migratory_corridor_tiles`). A graze-wandering game group passes `None`: it mills
+/// about its ground rather than walking a line, so it has no trail to follow.
 #[allow(clippy::too_many_arguments)]
 fn best_land_neighbor_toward(
     from: UVec2,
@@ -3734,28 +3780,41 @@ fn best_land_neighbor_toward(
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
     graze: &GrazeRegistry,
+    roads: Option<&crate::routes::RoadRegistry>,
     width: u32,
     height: u32,
     wrap: bool,
 ) -> Option<UVec2> {
     let cur_dist = hex_distance_wrapped(from, target, width, wrap);
-    // (pos, hex distance to target, graze capacity) — closest-then-richest.
-    let mut best: Option<(UVec2, u32, f32)> = None;
+    let rank =
+        |tile: UVec2| roads.map_or(NO_TRAIL_PREFERENCE, |r| crate::routes::tile_rank(r, tile));
+    // (pos, hex distance to target, graze capacity, road rank) — closest, then richest, then the
+    // best-worn road. Replacing only on a strictly better step leaves direction order holding a tie.
+    let mut best: Option<(UVec2, u32, f32, u32)> = None;
     for (np, cap) in acceptable_steps(from, registry, tiles, graze, width, height, wrap) {
         let d = hex_distance_wrapped(np, target, width, wrap);
         if d >= cur_dist {
             continue;
         }
+        let road = rank(np);
         let better = match best {
             None => true,
-            Some((_, best_dist, best_cap)) => d < best_dist || (d == best_dist && cap > best_cap),
+            Some((_, best_dist, best_cap, best_road)) => {
+                d < best_dist
+                    || (d == best_dist && cap > best_cap)
+                    || (d == best_dist && cap == best_cap && road > best_road)
+            }
         };
         if better {
-            best = Some((np, d, cap));
+            best = Some((np, d, cap, road));
         }
     }
-    best.map(|(pos, _, _)| pos)
+    best.map(|(pos, _, _, _)| pos)
 }
+
+/// **Every step ranks alike when no road registry is consulted** — the graze-wander step's reading,
+/// so its tie-break is exactly the pasture-then-direction order it always had.
+const NO_TRAIL_PREFERENCE: u32 = 0;
 
 /// **The steps a herd may take at all** — the acceptance filter *every* movement primitive orders
 /// within (Grazing 2b-i §4.1), so `roam` and `drift_to_owner` can never disagree about what ground is

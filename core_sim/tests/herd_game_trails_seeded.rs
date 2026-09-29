@@ -61,6 +61,9 @@ fn corridors(app: &mut App) -> Vec<(String, Vec<UVec2>, usize)> {
                         &tile_registry,
                         &tiles,
                         &graze,
+                        // The stamp traced against the roads as they stood before it ran, which at
+                        // world creation is none — so the bare land walk, with no trail to prefer.
+                        None,
                         width,
                         height,
                         wrap,

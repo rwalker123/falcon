@@ -15,6 +15,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::prelude::World;
 
+use core_sim::grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT};
 use core_sim::{
     advance_herds, advance_roads, traffic_ceiling, FaunaConfigHandle, Herd, HerdDensityMap,
     HerdRegistry, HerdTelemetry, LadderConfig, LadderConfigHandle, RoadRegistry, RoamState,
@@ -371,6 +372,131 @@ fn herd_traffic_resets_disuse() {
         (unwalked.position() - (seated - loss)).abs() < TOLERANCE,
         "liveness: the unwalked control really did bleed the disuse rate: {}",
         unwalked.position()
+    );
+}
+
+/// A herd standing here faces a genuine tie toward [`TIE_TARGET`] on the all-land fixture: two (or
+/// more) neighbours close the distance equally, and there is no graze layer to rank them.
+const TIE_FROM: UVec2 = UVec2::new(10, ROW);
+/// Three rows down and level in `x` — on an odd-r hex grid a diagonal target like this is reached by
+/// more than one equally short first step.
+const TIE_TARGET: UVec2 = UVec2::new(10, ROW + 3);
+
+/// The neighbours of `from`, each with its hex distance to `target`.
+fn neighbours_toward(from: UVec2, target: UVec2) -> Vec<(UVec2, u32)> {
+    (0..HEX_DIRECTION_COUNT)
+        .filter_map(|dir| hex_neighbor(from.x, from.y, dir, WORLD_WIDTH, WORLD_HEIGHT, false))
+        .map(|(x, y)| {
+            let tile = UVec2::new(x, y);
+            (tile, hex_distance_wrapped(tile, target, WORLD_WIDTH, false))
+        })
+        .collect()
+}
+
+/// A herd at [`TIE_FROM`] heading for [`TIE_TARGET`], in the given roam state and size class.
+fn tie_herd(size_class: SizeClass, roam: RoamState) -> Herd {
+    let mut herd = fixture_herd(
+        "herd_tie",
+        MIGRATORY_SPECIES,
+        size_class,
+        vec![TIE_FROM, TIE_TARGET],
+    );
+    herd.current_pos = TIE_FROM;
+    herd.roam = roam;
+    herd
+}
+
+/// One `advance_herds` pass with a road seated at `trail` (if any), returning where the herd went.
+fn step_with_trail(size_class: SizeClass, roam: RoamState, trail: Option<UVec2>) -> UVec2 {
+    let mut world = land_world();
+    add_herd(&mut world, tie_herd(size_class, roam));
+    if let Some(tile) = trail {
+        let ladder = ladder(&world);
+        let ceiling = traffic_ceiling(&ladder);
+        world
+            .resource_mut::<RoadRegistry>()
+            .road_or_trail(tile, &ladder)
+            .set_position(ceiling, &ladder);
+    }
+    world.run_system_once(advance_herds);
+    herd_pos(&world, "herd_tie")
+}
+
+/// The tied best steps from [`TIE_FROM`], and the one the bare land walk takes among them.
+fn the_tie() -> (Vec<UVec2>, UVec2) {
+    let options = neighbours_toward(TIE_FROM, TIE_TARGET);
+    let best = options
+        .iter()
+        .map(|(_, d)| *d)
+        .min()
+        .expect("the tile has neighbours");
+    let tied: Vec<UVec2> = options
+        .iter()
+        .filter(|(_, d)| *d == best)
+        .map(|(t, _)| *t)
+        .collect();
+    assert!(
+        tied.len() >= 2,
+        "the fixture's premise: more than one equally good step: {options:?}"
+    );
+    let bare = step_with_trail(SizeClass::Migratory, RoamState::Migrate, None);
+    assert!(tied.contains(&bare), "the bare walk takes a best step");
+    (tied, bare)
+}
+
+/// **A migrating herd facing equally good steps takes the one holding a trail.** The bare walk picks
+/// one of the tied steps by direction order; seat a trail on another and the herd takes that one.
+#[test]
+fn a_migrating_herd_takes_the_trail_among_equally_good_steps() {
+    let (tied, bare) = the_tie();
+    let trail = *tied
+        .iter()
+        .find(|t| **t != bare)
+        .expect("a tied step the bare walk does not take");
+    let taken = step_with_trail(SizeClass::Migratory, RoamState::Migrate, Some(trail));
+    assert_eq!(
+        taken, trail,
+        "the herd follows the trail ({trail:?}) rather than the direction-order pick ({bare:?})"
+    );
+}
+
+/// **It never takes a strictly worse step to reach a trail.** A trail on a neighbour that does not
+/// close the distance as well is ignored, and the herd takes the same step the bare walk does.
+#[test]
+fn a_migrating_herd_never_detours_onto_a_trail() {
+    let (_, bare) = the_tie();
+    let options = neighbours_toward(TIE_FROM, TIE_TARGET);
+    let best = options.iter().map(|(_, d)| *d).min().unwrap();
+    let worse = options
+        .iter()
+        .find(|(_, d)| *d > best)
+        .map(|(t, _)| *t)
+        .expect("a neighbour that is a strictly worse step");
+    let taken = step_with_trail(SizeClass::Migratory, RoamState::Migrate, Some(worse));
+    assert_eq!(
+        taken, bare,
+        "a trail on a worse step ({worse:?}) does not pull the herd off its best step"
+    );
+}
+
+/// **Only the `Migrate` step follows a trail.** A graze-wandering game group facing the same tie
+/// with the same trail seated takes the direction-order pick, as it always did.
+#[test]
+fn a_graze_wander_step_does_not_follow_trails() {
+    let bare_game = step_with_trail(SizeClass::Big, RoamState::GrazeWander, None);
+    let (tied, _) = the_tie();
+    assert!(
+        tied.contains(&bare_game),
+        "liveness: the game group steps along the same tie"
+    );
+    let trail = *tied
+        .iter()
+        .find(|t| **t != bare_game)
+        .expect("a tied step the game group does not take");
+    let taken = step_with_trail(SizeClass::Big, RoamState::GrazeWander, Some(trail));
+    assert_eq!(
+        taken, bare_game,
+        "a graze-wander step ignores the trail and keeps its direction-order pick"
     );
 }
 
