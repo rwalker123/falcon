@@ -9,8 +9,8 @@ class_name HudDepositVocab
 ## thing none of them is. The sim's own word for a live deposit a band has opened is a **working**,
 ## and `quarrywork` survives only as the server's command token, which no player reads.
 ##
-## The hunt's own row no longer competes for the word: the compose sheet's field row reads `Prey`
-## (issue #650, `HudComposeVocab.COMPOSE_FIELD_PREY`), which is what leaves `quarry` free to mean the
+## The hunt's own vocabulary no longer competes for the word: a herd pick's banner reads `PREY`
+## (issue #650, `TargetingController.PICK_PREY_COMMAND`), which is what leaves `quarry` free to mean the
 ## pit on every surface here.
 ##
 ## ⛔ **A WORKING IS KEYED `(tile, material)`, AND THE PAIR IS INDIVISIBLE.** One tile can hold two —

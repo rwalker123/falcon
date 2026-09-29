@@ -23,6 +23,8 @@ with the settlement.
    game/others later) keep detailing in the selection area's drawer. Only the
    **resident band** branch of the drawer moves out. (Expeditions — transient
    detached parties — stay inline for now; revisit later.)
+   *Superseded for the band's orders by issue #529 — see `.claude/rules/client/band-city-panel.md` →
+   "THE BAND VERBS".*
 2. **Panel cycling recenters the map** on the cycled settlement (trial; may revisit).
 3. **All four dock edges** (left default). Content should, over time, **adapt to a
    tall (L/R) vs wide (T/B)** dock — vertical stack vs columnar reflow.

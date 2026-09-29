@@ -537,7 +537,7 @@ static func apply_palette() -> void:
 ## `AutoSizingPanel.fit_width`, so a long recipe name widens the card instead of clipping the table.
 const PANEL_WIDTH := 960.0
 const PANEL_MIN_HEIGHT := 240.0
-## Clearance kept between the card and the viewport edges — the same margin `BandComposeFloat` keeps.
+## Clearance kept between the card and the viewport edges — the same margin `WorkInspectorDialog` keeps.
 const VIEWPORT_MARGIN := 12.0
 
 ## The materials rail, fixed. The main column takes whatever is left.

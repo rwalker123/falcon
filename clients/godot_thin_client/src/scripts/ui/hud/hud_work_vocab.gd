@@ -362,8 +362,7 @@ const FACTION_LIST_ROWS_MAX := 6
 
 const FACTION_LIST_MORE_FORMAT := "+%d more"
 
-## A faction with no party out. The band page's parties zone says this with a disabled footer button;
-## this page has no footer, so it says it in words.
+## A faction with no party out, said in words — the page has no list rows to say it with.
 const FACTION_PARTIES_EMPTY := "No parties out"
 
 ## The composition KEY's chip gap and type size. The bar/swatch geometry travelled to `HudWidgets`
@@ -758,7 +757,7 @@ const ROLE_CARD_HINT_HEIGHT := 28.0
 const WORK_ROW_HEIGHT := 28.0
 
 ## The node name of the PARTIES zone's scrolling LIST — the party rows plus whichever inspector strip
-## is open, between that zone's fixed head and its fixed Scout/Hunt/Deny footer.
+## is open, under that zone's fixed head.
 ##
 ## **IT IS ONE OF THE BAND/CITY PANEL'S TWO SANCTIONED `ScrollContainer`s, and the NAME is how that
 ## stays true.** The panel is no-scroll by default: a zone whose content height fed back into a FIXED
@@ -1457,7 +1456,7 @@ const WORK_CHIP_KIND_FORMAT := "%s %d · %s"
 
 ## The kind chip's face once its mark is bundled ART — the same line with the leading `%s` gone,
 ## because a `Button` carries art on its `icon` PROPERTY and a chip that kept the glyph would state
-## its kind twice. Art OR glyph, never both, the rule `BandCityPanel._make_icon_button` already
+## its kind twice. Art OR glyph, never both, the rule `BandCityPanel.make_icon_button` already
 ## follows for the knowledge launcher.
 const WORK_CHIP_KIND_SPRITE_FORMAT := "%d · %s"
 

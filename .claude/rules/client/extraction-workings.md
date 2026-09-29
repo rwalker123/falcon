@@ -36,6 +36,7 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | `ui/hud/ComposeState.gd` → the `deposit_*` group | The composition: a source key, a crew, **a floor and its autofill one-shot**, the acting band and the band it was seeded from, and a kit. Still **no take species, no commit crop and no second axis** — a working takes one material and its rung is declared from the Work board. The floor is real on BOTH branches and offered on one: on a finite seam the member sits at its default for the sheet's own arithmetic and **does not ride the command** — the token is omitted so the sim's `unnamed_deposit_floor` fork answers, § "THE FLOOR TOKEN IS SENT ONLY WHERE A DIAL WAS OFFERED". `seed_deposit(count, floor)` seeds both from the band's own `extract` row |
 | `ui/hud/HudBandLaborState.gd` → `floor_for_extract` | The dial's SEED, and the rule it exists to keep: a reopened sheet seeds from the ASSIGNMENT, never from `DepositState.floor` (see the note under the decoder's row) |
 | `MapView.gd` → `_ingest_deposit_workings` / `_workings_on_tile` / `deposit_tile_lookup` | The per-TILE index the card's rows and its two actions read out of, `_ingest_road_network`'s twin. ⛔ **It does NOT de-duplicate on the tile** — two rows on one hex is the ordinary case here — and it holds the frame's rows **by reference** with its own profile span (`layers.deposits`), this being the widest section the client ingests |
+| `ui/WorkingsSprites.gd` → `for_material` | The working marker's ART, material id → `assets/icons/workings/` texture, `null` for a material with no art (it keeps `FoodIcons.for_material`'s emoji). Read only through `SecondaryMarkerRenderer.face_for_material`, the one face the hex marker and the band source list's row icon share. The family's row is in `sprites-widgets.md` |
 | `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per DEPOSIT-BEARING TILE, keyed `(tile, material)`, carrying the live working's state where a band has opened one — and `deposit_rungs_to_array`, the per-world CATALOG for both branches, `route_rungs_to_array`'s twin. The module header carries the whole field contract. The escapement three are appended last: `rung_floor_fraction` · `per_worker_biomass` · `regrowth_samples`, the curve through the SHARED `subsistence::regrowth_samples_packed` so an ABSENT vector stays EMPTY (*no curve was sent*) and a quarry's all-zero one stays a reading (*this does not grow*). **`default_kit_id`** rides every row too (issue #663) — the take kit the working's MATERIAL wants, which the deposit sheet reads as its source default |
 
 ## ⛔ THE WORD "QUARRY" NAMES ONE RUNG, NEVER THIS BRANCH
@@ -402,8 +403,9 @@ card. It is deliberately **not** a rung glyph (`FoodIcons.POLICY_ICONS`): a crew
 from a rung, and those glyphs already collide with the standing-rung marks.
 
 **A CREWED WORKING NOW WEARS THAT BADGE ON THE MAP TOO** (issue #650) — a fourth secondary marker
-category, drawn ONLY where a crew is on it, glyphed by the MATERIAL (🪵 / 🪨) and carrying the same
-`⚒N` plate. It is the map half of this clause and the reason the two must not drift;
+category, drawn ONLY where a crew is on it, marked by the MATERIAL — bundled art
+(`WorkingsSprites`: wood's cut logs, stone's squared blocks) with the 🪵 / 🪨 emoji as the fallback
+for a material that has none — and carrying the same `⚒N` plate. It is the map half of this clause and the reason the two must not drift;
 `map-markers.md` owns the decision and `overlay-channels.md` the draw.
 
 ⛔ **THE COUNT IS THE PENDING-AWARE READ (`effective_extract_workers`), unlike the land row's.** The

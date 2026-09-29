@@ -1,7 +1,7 @@
 # Bundled Icon Generation Prompts
 #
 # The icon twin of assets/terrain/texture_prompts.txt. These prompts generate the
-# bundled PNG art behind the seven icon families:
+# bundled PNG art behind the nine icon families:
 #
 #   assets/icons/fauna/    herd map markers      (ui/FaunaSprites.gd)
 #   assets/icons/sites/    food-site markers     (ui/SiteSprites.gd)
@@ -10,9 +10,12 @@
 #   assets/icons/crops/    crop-ROLE row marks   (ui/CropRoleSprites.gd)
 #   assets/icons/flora/    per-SPECIES row marks (ui/FloraSprites.gd)
 #   assets/icons/hud/      HUD chrome marks      (ui/HudSprites.gd)
+#   assets/icons/workings/ worked-deposit markers (ui/WorkingsSprites.gd)
+#   assets/icons/expeditions/ party markers      (ui/ExpeditionSprites.gd)
 #
-# THE FOUR MAP-MARKER FAMILIES — `fauna/`, `sites/`, `wonders/`, `stages/` — share ONE
-# pipeline and ONE house style, so both are documented once here rather than per family.
+# THE SIX MAP-MARKER FAMILIES — `fauna/`, `sites/`, `wonders/`, `stages/`, `workings/`,
+# `expeditions/` — share ONE pipeline and ONE house style, so both are documented once here
+# rather than per family.
 # THE OTHER THREE DO NOT. `crops/`, `flora/` and `hud/` are not map markers: they are small
 # marks drawn over a DARK HUD PANEL, in a text row or on a button face, and they override
 # several of the clauses below. Read their own sections before generating one; do not start
@@ -793,7 +796,7 @@ village: Flat vector game icon of a small cluster of three simple houses with pi
 #     the ramp per the catfish note (`--lo 85 --hi 240`) and count the residual.
 #   * `.import`: `process/size_limit=64` as everywhere else (headroom for HiDPI and
 #     the `expand` stretch), but MIPMAPS ARE LIVE HERE — `mipmaps/generate=true` is
-#     inert in all four marker families because `MapView` pins
+#     inert in all six marker families because `MapView` pins
 #     `TEXTURE_FILTER_NEAREST` on itself, and a RichTextLabel does NOT inherit that.
 #     `project.godot` sets no `default_texture_filter`, so this family draws through
 #     Godot's Linear default and genuinely uses the mip chain. Do not copy a fauna
@@ -1549,12 +1552,12 @@ scout: Flat vector interface mark of two bare human footprints in the dirt, one 
 #      `InfluencerPanel`, `KnowledgePanel`, `PowerPanel`) — the whole PANEL is a placeholder
 #      saying a system is not built yet, so drawing its padlock is dressing a stub.
 #
-#   The map's expedition markers (`MapView.EXPEDITION_HUNT_GLYPH` and its 💀 / 📦 twins) — these
-#      draw over the MAP through `draw_string`, at marker size, over whatever terrain is under
-#      them. That is the house style's situation, NOT `hud/`'s: an outlined map marker, front-on
-#      pale-on-near-black art would vanish on it. If they move, they move as a new `expeditions/`
-#      map-marker family with the house style's outline clause, and `BandMarkerRenderer` draws a
-#      texture rather than a glyph — a different mechanism from either one `hud/` uses.
+#   The map's expedition markers (⚑ / 💀 / 📦, and the hunt party's 🏹) — these draw over the
+#      MAP, at marker size, over whatever terrain is under them. That is the house style's
+#      situation, NOT `hud/`'s: an outlined map marker, where front-on pale-on-near-black art
+#      would vanish. They are the `expeditions/` map-marker family, drawn by `BandMarkerRenderer`
+#      as a texture with the glyph as fallback — see the EXPEDITION MARKERS section at the end of
+#      this file. The hunt party's 🏹 stays a glyph: expedition hunt is being retired.
 #
 #   `FoodIcons.HERD_SPECIES` / `SITE_ICONS` / `CROP_ROLE_ICONS` — these are FALLBACKS behind
 #      `fauna/`, `sites/` and `crops/`, which already ship complete coverage. The emoji is the
@@ -1703,6 +1706,47 @@ deny: Flat vector interface mark of an animal skull seen straight on from the fr
 trade: Flat vector interface mark of a bound cloth bundle of trade goods, a plump rounded sack gathered into a knotted neck at the top with two short tie ends flicking outward, clearly wider at the bottom than at the top and taller than it is wide, no box, no crate, no slats, no lid, no barrel, no arrow, no coin, no scale, no hand, no animal, no pole, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a warm pale sand and a light cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line marking the knotted neck and no thinner than one sixth of the icon width, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the bundle on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 13 pixels, strategy game interface icon
 
 
+# THE BAND VERB ROW — `move` and `split` (issue #529)
+# The five band verbs (`HudComposeVocab.BAND_VERBS`) share ONE row, on the Band panel's action bar
+# and in the Tile Panel's band drawer, beside the `cairn` launcher, and all five draw `hud/` art. These
+# two closed a row that had drawn Move (`➜`) and Split (`⌂`) as text beside three drawn marks, so
+# they moved TOGETHER — a set moves whole or not at all. Each verb's `VERB_KEY_MARK` names its file.
+# JUDGE BOTH AT 16px, NOT 13: they draw on the 24px action-bar button and on the collapsed rail,
+# which is the cairn's situation, not the kit picker's.
+# THE ROW'S NEIGHBOURS FIX THE SUBJECTS. `scout` is footprints, so Move must not be feet or a walker.
+# `cairn` sits on the same bar and exists to stop reading as a triangle, so neither mark may be a
+# cone, a tent or a peak. `trade` is a bundle, so Move must not be a pack.
+# HUE LANES: bone-cream (scout / deny / cairn), amber (hunt), gold (trade), green (forage) and slate
+# (warrior) are taken. Move takes TERRACOTTA and Split takes PALE TEAL. Teal is cool, and warm red
+# sits near the key's hue on the far side, so expect `--hi 200` for both (the warrior lesson above).
+
+# move.png — the `Move` verb: the whole band relocates.
+# STATUS: SHIPPED at `assets/icons/hud/move.png` and WIRED on the verb row.
+# ⛔ KEYED `--size 256 --lo 60 --hi 130`, NOT the `--hi 200` the header predicted. Terracotta sits
+# only ~150 RGB-distance from the magenta key, so at `--hi 200` the body keyed at alpha ~150: an
+# arrow at 60% opacity, and nothing but an alpha percentile says so. At 130 the body is 255.
+# Coverage 23.2%.
+# THE CHOSEN RENDER — of two, the one with the LARGER arrowhead. The rejected twin's head came out
+# narrower, so at 16px its tip blurred into the shaft and read as a smear curving right.
+# ONE MASS: a single broad sweeping arrow. It is the one subject that says "go there" with no
+# second piece, and it cannot collide with the footprints two buttons along. The prompt breaks the
+# family's usual "no arrow" clause on purpose, because here the arrow IS the subject.
+move: Flat vector interface mark of a single broad curved arrow sweeping up and to the right in one smooth arc, the shaft a thick tapering band no thinner than one sixth of the icon width ending in a large blunt wedge-shaped arrowhead, no feet, no footprints, no figure, no path, no road, no map, no compass, no pack, no second arrow, no dotted trail, drawn as a single bold solid shape with NO outline of any kind and no dark border, filled in a warm pale terracotta and a light peach-cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, at most one interior division line, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the arrow on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 16 pixels, strategy game interface icon
+
+# split.png — the `Split` verb: part of the band leaves to form a new band.
+# STATUS: SHIPPED at `assets/icons/hud/split.png` and WIRED on the verb row.
+# Keyed `--size 256 --lo 85 --hi 200`; body alpha 255 throughout.
+# THE CHOSEN RENDER — of two near-identical ones, the one with the WIDER gap. The gap is the whole
+# read, and at 16px the narrower one closes toward a one-pixel seam.
+# ⚠ COVERAGE 50.7%, the heaviest mark in the family (warrior 44%). A disc is a solid mass; the
+# bar's 24px button face caps its drawn size, so it does not outgrow its neighbours.
+# The read is ONE THING BECOMING TWO: a round mass cut into two unequal halves pulled apart. The gap
+# is drawn in the background MAGENTA so it keys to a real cut with the panel showing through — the
+# `deny` sockets' trick. Painted dark, it would key as fill and close up at 16px. The halves are
+# unequal because the new band is always the smaller party.
+split: Flat vector interface mark of a single round pebble-like disc split vertically into two unequal halves that are pulled slightly apart, the left half clearly larger than the right, the two halves separated by a clean straight gap no thinner than one sixth of the icon width that is filled with the SAME flat magenta as the background so it reads as a cut clean through the shape, no crack lines, no jagged edge, no figures, no people, no huts, no tent, no house, no arrow, no hand, drawn as two bold solid shapes with NO outline of any kind and no dark border, filled in a pale teal and a light mint-cream in two flat tones so the fill alone carries the silhouette against a very dark near-black interface panel, no ground, no shadow, no background scenery, no text, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching both halves on every side, an extremely simple graphic shape that stays clearly readable when scaled down to 16 pixels, strategy game interface icon
+
+
 # workers.png — the turn orb's `idle_workers` AND `crew_handoff` rows. ONE FILE for both kinds:
 # `KIND_ICON` already spells them with the same 🛠 because both rows are about the HANDS — one
 # says nobody is using them, the other says they have moved to another job.
@@ -1816,7 +1860,7 @@ kit_fallback: Flat vector interface mark of a simple shoulder satchel, one slim 
 
 
 # ============================================================================
-# WORKINGS  ->  assets/icons/workings/  (resolver arrives with the art)
+# WORKINGS  ->  assets/icons/workings/  (ui/WorkingsSprites.gd)
 # ============================================================================
 #
 # The eighth family, and the one added by issue #650 (the extraction arc's client half).
@@ -1827,10 +1871,15 @@ kit_fallback: Flat vector interface mark of a simple shoulder satchel, one slim 
 # Keyed by the sim's MATERIAL id from `core_sim/src/data/materials.json` — `wood`, `stone`,
 # and whatever the minerals arc adds. Two files today.
 #
-# STATUS: NOT GENERATED. `ui/FoodIcons.for_material` currently answers the OS emoji — 🪵 for
-# wood, 🪨 for stone — which is what `SecondaryMarkerRenderer.draw_workings` draws. The
-# emoji are the fallback the bundled art replaces, exactly as `stages/` replaced ⛺/🛖/🏘️.
-# The resolver lands with the PNGs; there is no empty table to fill in the meantime.
+# STATUS: SHIPPED AND WIRED. `ui/WorkingsSprites.for_material(id)` resolves both PNGs, read
+# through `SecondaryMarkerRenderer.face_for_material` — the one face the hex marker
+# (`draw_workings`) and the band source list's row icon share. `FoodIcons.for_material`'s OS
+# emoji (🪵 / 🪨) is the fallback for a material with no art, exactly as `stages/` keeps
+# ⛺/🛖/🏘️. A material the minerals arc adds gets a table entry when its PNG lands, not before.
+#
+# CHOSEN RENDERS, both keyed `--size 256 --lo 55 --hi 170`:
+#   wood  -0   fully solid; -1 keyed at alpha 213 at the rim.
+#   stone -1   paler blocks; -0 sank into the grey ground at 24px.
 #
 # ⛔ THE MARKER MEANS **A WORKING BEING WORKED**, NOT THE MATERIAL LYING THERE. Untouched
 # ground draws nothing at all (Ray's decision — nearly every land tile holds stone, so
@@ -1859,3 +1908,46 @@ wood: Flat vector game icon of a small stack of three cut logs resting one above
 # Squared and stacked is the read, and it is also what keeps this off `great_peak`'s
 # natural-mountain silhouette. Keep the corners hard; a rounded pile is a boulder.
 stone: Flat vector game icon of a small stack of three squared cut stone blocks resting one above two, each block a plain rectangular slab with hard square corners and flat quarried faces, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire stack and one dividing line between the blocks, flat limited color palette in warm mid-grey stone with a paler grey top face so the stacking reads, simple two-tone shading, no speckle, no texture, no cracks, no rubble, no loose chips, no rounded boulder, no mountain, no pick, no tool, no ground line, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+
+# ============================================================================
+# EXPEDITION MARKERS  ->  assets/icons/expeditions/   (ui/ExpeditionSprites.gd)
+# ============================================================================
+#
+# The map marker a detached party wears while it is out, centred on a dark backing disc
+# (`EXPEDITION_DISC_ALPHA` 0.55) inside a faction-tinted ring. The glyphs it replaces —
+# `MapView.EXPEDITION_GLYPH` (⚑, scout), `EXPEDITION_DENY_GLYPH` (💀) and
+# `EXPEDITION_TRADE_GLYPH` (📦) — stay as the fallback. The hunt party's 🏹 has no prompt:
+# expedition hunt is being retired.
+#
+# THESE TAKE THE HOUSE STYLE, NOT `hud/`'s. They draw over the MAP, over whatever terrain is under
+# the half-transparent disc, at marker size — the fauna situation. So they keep the thick dark
+# charcoal outline, and the pale fill sits inside it. Front-on, since none of them has a facing.
+#
+# THE SUBJECT IS THE `hud/` MARK'S SUBJECT, redrawn in the map style. One activity, one mark: the
+# party's Scout / Deny / Trade button and its map marker must be recognisably the same thing, so the
+# footprints, the animal skull and the cloth bundle carry over and only the style changes.
+#
+# Pipeline: the fauna pipeline at the top of this file — key at `--size 256 --lo 55 --hi 170`, fix
+# the `.import` sidecar (mipmaps on, `size_limit=64`) and judge at true marker size (24-41px),
+# composited over a dark disc over terrain, never at 1024.
+#
+# STATUS: SHIPPED AND WIRED. `ui/ExpeditionSprites.for_mission(mission)` resolves the three PNGs
+# by mission id and answers `null` for hunt; `BandMarkerRenderer._draw_expedition_body` draws the
+# texture in the disc and ring and falls back to the glyph on `null`.
+#
+# CHOSEN RENDERS, all keyed `--size 256 --lo 55 --hi 170`:
+#   scout -0   coverage 13%, the faintest of the three: two small footprints.
+#   deny  -0   rounder skull, wider sockets.
+#   trade -0   body alpha 255, where -1 was 241 at the rim.
+
+# scout.png — a scouting party out on the map.
+scout: Flat vector game icon of two bare human footprints one ahead of the other as if walking away, seen from directly above, each footprint a simple bold rounded sole shape with a single separated toe pad and no individual toes, no boot tread, no compass, no flag, no arrow, no map, drawn as a bold simplified silhouette with a thick dark charcoal outline around each footprint, flat limited color palette in pale bone-cream with a warm mid tan inner sole, simple two-tone shading that stays clearly lighter than the outline, crisp clean edges, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the footprints on every side, no ground, no shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# deny.png — a denial raid out on the map.
+# The eye sockets are drawn in the background MAGENTA so they key to real holes, as in `hud/deny.png`.
+deny: Flat vector game icon of an animal skull seen straight on from the front in a symmetrical upright pose, one broad rounded cranium above a short blunt muzzle, with two large simple oval eye sockets and a small nasal hole, no horns, no antlers, no teeth, no jawbone detail, no crossbones, no weapon, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire skull, flat limited color palette in pale bone-white with cool mid grey shading, simple two-tone shading that stays clearly lighter than the outline, the eye sockets and nasal hole filled with the SAME flat magenta as the background so they read as holes cut clean through the skull, drawn large enough to stay open at 24 pixels, crisp clean edges, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the skull on every side, no ground, no shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# trade.png — a trade shipment out on the map.
+# A gathered cloth bundle, never a box: a squared crate centred in the frame reads as a tile.
+trade: Flat vector game icon of a bound cloth bundle of trade goods, a plump rounded sack gathered into a knotted neck at the top with two short tie ends flicking outward, clearly wider at the bottom than at the top and taller than it is wide, no box, no crate, no slats, no barrel, no coin, no scale, no animal, no pole, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire bundle, flat limited color palette in warm gold sackcloth with a light cream knotted neck, simple two-tone shading that stays clearly lighter than the outline, crisp clean edges, centered with even padding on a plain solid magenta background, no rounded square, no tile, no card, no badge, no frame, no border, the flat magenta touching the bundle on every side, no ground, no shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon

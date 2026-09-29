@@ -33,8 +33,13 @@ var h
 # anything but the list selection answers 301 instead.
 const TILE_PANEL_MOVE_BAND_ENTITY := 302
 
-# The Move button's face, in both hosts (the drawer's §18 button and the Band/City Orders block).
-const MOVE_BUTTON_TEXT := "Move"
+# **THE BAND VERBS THE DRAWER'S ROW MUST CARRY, IN ORDER** (issue #529) — spelled out here rather than
+# read off `HudComposeVocab.BAND_VERBS`, because the claim is that the row offers exactly these five
+# and quoting the list under test would only assert that it equals itself.
+const EXPECTED_VERB_IDS: Array[StringName] = [
+	HudComposeVocab.VERB_MOVE, HudComposeVocab.VERB_SCOUT, HudComposeVocab.VERB_DENY,
+	HudComposeVocab.VERB_TRADE, HudComposeVocab.VERB_SPLIT,
+]
 
 # The crowded hex the sticky-land-selection state clicks, and a grid just large enough to contain it
 # (the crowded fixtures all sit at 58, 24). Prairie steppe, matching that fixture's biome.
@@ -126,13 +131,30 @@ func _mouse_button_event(button_index: int, pressed: bool = true,
 	return event
 
 ## How many Buttons under `root` wear this face — the "is the same order offered twice?" test.
-func _count_buttons_by_text(root: Node, text: String) -> int:
+## The verb-row ids under `root`, in tree order — read off `HudWidgets.VERB_BUTTON_META`, never off a
+## face (a verb's face is art or a glyph).
+func _verb_ids(root: Node) -> Array[StringName]:
+	var ids: Array[StringName] = []
 	if root == null:
-		return 0
-	var total := 1 if (root is Button and (root as Button).text == text) else 0
+		return ids
+	if root is Button and (root as Button).has_meta(HudWidgets.VERB_BUTTON_META):
+		ids.append(StringName((root as Button).get_meta(HudWidgets.VERB_BUTTON_META)))
 	for child in root.get_children():
-		total += _count_buttons_by_text(child, text)
-	return total
+		ids.append_array(_verb_ids(child))
+	return ids
+
+## The verb-row button for `verb_id` under `root`, or `null`.
+func _verb_button(root: Node, verb_id: StringName) -> Button:
+	if root == null:
+		return null
+	if root is Button and StringName((root as Button).get_meta(
+			HudWidgets.VERB_BUTTON_META, &"")) == verb_id:
+		return root as Button
+	for child in root.get_children():
+		var found := _verb_button(child, verb_id)
+		if found != null:
+			return found
+	return null
 
 ## **THE STAND IS SILENT WHERE THE VERB IS UNAVAILABLE** (issue #464), asserted over the REAL line
 ## producer rather than a picture: a `Foraging` row that never rendered and one that rendered off the
@@ -869,10 +891,12 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("tile_panel_crowded")
 	# NO Band/City panel is injected here, so this is the legacy fallback path — it renders
-	# `%AllocationPanel`, whose Orders block already carries a Move. The drawer's §18 button must NOT
-	# be added on top of it, or the player would see the same order offered twice.
-	h._assert_hud("the no-panel fallback shows exactly ONE Move button",
-		_count_buttons_by_text(h._hud.allocation_panel, MOVE_BUTTON_TEXT) == 1)
+	# `%AllocationPanel` with the band's zones stacked flat, and the band's verb row under them. The
+	# row must be there exactly ONCE, with the five verbs in order: none offered strands the band, and
+	# two would offer every order twice.
+	h._assert_hud("the no-panel fallback shows ONE verb row — the five verbs, in order (%s)"
+			% str(_verb_ids(h._hud.allocation_panel)),
+		_verb_ids(h._hud.allocation_panel) == EXPECTED_VERB_IDS)
 
 	# tile_panel_no_flash — THE FLASH-MECHANISM GUARD (docs/plan_hud_decomposition.md §2a). The
 	# tile-inspector "flash" on every turn-advance was `_render_selection_panel` UNCONDITIONALLY
@@ -1450,11 +1474,16 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("tile_panel_band")
 
-	# THE MOVE ASSERTION (§18). Driven through the drawer's REAL button — calling
-	# `_targeting.begin_move_band` directly would assert the resolver, not the wiring — and the pending
-	# move must name the band SELECTED IN THE LIST (302), never the faction default
-	# (`_player_band`, 301), which is what a naive wiring resolves to on a crowded hex.
-	var tile_panel_move_btn: Button = Q.find_button_by_text(h._hud.allocation_panel, MOVE_BUTTON_TEXT)
+	# THE VERB ROW (§18, issue #529): the docked drawer offers the SAME five verbs the Band panel's
+	# action bar does, in the same order.
+	h._assert_hud("the player-band drawer's verb row carries the five verbs, in order (%s)"
+			% str(_verb_ids(h._hud.allocation_panel)),
+		_verb_ids(h._hud.allocation_panel) == EXPECTED_VERB_IDS)
+	# THE MOVE ASSERTION. Driven through the row's REAL button — calling `_targeting.begin_move_band`
+	# directly would assert the resolver, not the wiring — and the pending move must name the band
+	# SELECTED IN THE LIST (302), never the faction default (`_player_band`, 301), which is what a naive
+	# wiring resolves to on a crowded hex.
+	var tile_panel_move_btn: Button = _verb_button(h._hud.allocation_panel, HudComposeVocab.VERB_MOVE)
 	h._assert_hud("the player-band drawer offers Move", tile_panel_move_btn != null)
 	if tile_panel_move_btn != null:
 		tile_panel_move_btn.emit_signal("pressed")

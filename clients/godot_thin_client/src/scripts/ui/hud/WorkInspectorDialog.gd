@@ -25,9 +25,8 @@ class_name WorkInspectorDialog
 ##
 ## ⛔ **AND IT IS NON-MODAL: NO CATCHER, NO SCRIM.** `ComposeSheet` IS a full-viewport
 ## `MOUSE_FILTER_STOP` dismiss catcher; this card covers its own rect and nothing else, because the
-## board underneath has to stay live for the re-target to be reachable at all. `BandComposeFloat` is
-## the precedent (its own header carries the same reason for the quarry picker) and `PanelRoot`'s
-## autopsy applies in reverse: every pixel this node claims is a pixel of dead map, so it claims only
+## board underneath has to stay live for the re-target to be reachable at all. `PanelRoot`'s autopsy
+## applies in reverse: every pixel this node claims is a pixel of dead map, so it claims only
 ## the card.
 ##
 ## **THIS IS THE FREE-FLOATING CASE, hence `AutoSizingPanel`** (`.claude/rules/client/panel-framework.md`):
@@ -47,7 +46,7 @@ class_name WorkInspectorDialog
 ## drawing POLICY, PRIORITY and KITS together took it to **340**, and a 340px card centred in a 1080
 ## viewport spans y=370…710 while a bottom dock's panel card starts at **624**. It covered the header
 ## and the top of the very board it exists to free — measured, and caught by the assertion that says
-## so. The room is cut back off the panel card now (`BandComposeFloat.map_facing_side`, the one table
+## so. The room is cut back off the panel card now (`BandCityPanel.map_facing_edge`, the one table
 ## that names which side of a docked card faces the map), so *"the board stays visible"* is
 ## structural rather than a consequence of the card being small.
 ##
@@ -57,14 +56,12 @@ class_name WorkInspectorDialog
 ## mechanisms answering one question, and the room a bottom band dock leaves is not centred on
 ## anything the player is looking at.
 
-## Clearance kept between the card and the viewport edges — `BandComposeFloat`'s own read of the same
-## quantity, and the same number for the same reason: enough to read as a floating surface rather than
-## as a thing stuck to the window.
+## Clearance kept between the card and the viewport edges: enough to read as a floating surface rather
+## than as a thing stuck to the window.
 const VIEWPORT_MARGIN := 12.0
 
 ## The clearance kept between the panel card's map-facing edge and this card — the same read as the
-## wide shell's inter-zone gutter, and the same number `BandComposeFloat` keeps for the same seam:
-## enough that the two read as two surfaces rather than one.
+## wide shell's inter-zone gutter: enough that the two read as two surfaces rather than one.
 const ANCHOR_GAP := 12.0
 
 ## **THE COLUMN THE STRIP WAS AUTHORED FOR.** Every line in `_build_work_inspector` elides against the
@@ -88,7 +85,7 @@ var _body: VBoxContainer = null
 ## claim anybody can still make.
 var _reserved: float = 0.0
 ## The panel card's global rect and which of its sides faces the map, as of the last mount — the two
-## terms `_room` cuts with. `BandComposeFloat` holds the identical pair for the identical reason.
+## terms `_room` cuts with.
 var _anchor: Rect2 = Rect2()
 var _edge: int = SIDE_TOP
 ## A fit is in flight — see `refit`, which COALESCES on this rather than discarding.
@@ -221,8 +218,8 @@ func reserved_height() -> float:
 func room() -> Rect2:
 	return _room()
 
-## Re-fit the card to its content and re-centre it. Coalesced across one frame for the reason
-## `BandComposeFloat.refit` is: the content's height is a function of the card's width, so a
+## Re-fit the card to its content and re-centre it. Coalesced across one frame because the content's
+## height is a function of the card's width, so a
 ## measurement taken in the same frame the body was rebuilt reports the PREVIOUS content's wrapping.
 ##
 ## ⛔ **THAT SENTENCE IS TRUE AND IT IS NOT THE WHOLE REASON, WHICH IS HOW THE CARD CAME TO DRAW AT
@@ -297,8 +294,8 @@ func _place() -> void:
 ## room scrolls, it does not creep back across the seam.
 ##
 ## An UNSET anchor (a zero rect, i.e. a panel that could not state its geometry) leaves the whole
-## viewport, which is the honest answer rather than a guessed cut — `BandComposeFloat`'s rule that the
-## drastic branch must be positively justified, read one surface over.
+## viewport, which is the honest answer rather than a guessed cut: the drastic branch must be
+## positively justified.
 func _room() -> Rect2:
 	var room := available_room(VIEWPORT_MARGIN)
 	if _anchor.size.x <= 0.0 or _anchor.size.y <= 0.0:
@@ -314,7 +311,7 @@ func _room() -> Rect2:
 			return _cut_to(room, room.position.y, _anchor.position.y - ANCHOR_GAP, false)
 
 ## `room` narrowed to `[lo, hi]` on one axis, never inverted (a panel taller than the window leaves a
-## zero-extent room rather than a negative one). `BandComposeFloat._cut_to`'s twin.
+## zero-extent room rather than a negative one).
 func _cut_to(room: Rect2, lo: float, hi: float, horizontal: bool) -> Rect2:
 	var low: float = maxf(lo, room.position.x if horizontal else room.position.y)
 	var high: float = minf(hi, room.end.x if horizontal else room.end.y)
@@ -346,7 +343,7 @@ func _scroll_gutter() -> float:
 
 ## **`remove_child` BEFORE `queue_free`, never `queue_free` alone.** The free is deferred, so a body
 ## cleared with `queue_free` still reports its old child on the very next `add_child` and the card
-## measures two strips — `BandComposeFloat` carries the same loop for the same reason.
+## measures two strips.
 func _clear_body() -> void:
 	if _body == null:
 		return

@@ -1187,6 +1187,61 @@ func _ready() -> void:
 	await _save("map_quarry_targeting")
 	_map.set_targeting({})
 
+	# State M3 — THE DENY SHEET'S PASSIVE HIGHLIGHT (issue #529): an open Deny sheet glows every
+	# eligible herd — both here, the denial raid having no beyond-reach rule — with the pick UNARMED.
+	# It is drawn but it is not targeting: no reticle, and only a click on a glowing herd is captured
+	# (it pre-selects the sheet's prey); every other click selects as usual.
+	var near_herd := Vector2i(BAND_X + QUARRY_NEAR_OFFSET, BAND_Y)
+	var far_herd := Vector2i(BAND_X + QUARRY_FAR_OFFSET, BAND_Y)
+	_map.set_targeting({
+		"active": true, TargetingController.TARGETING_PASSIVE_KEY: true,
+		"command": TargetingController.DENY_PICK_COMMAND, "need": "herd",
+		"origin_x": BAND_X, "origin_y": BAND_Y,
+		"min_distance": TargetingController.QUARRY_NO_REACH_BOUND, "context_label": "Band 1",
+	})
+	await _settle()
+	await _save("map_deny_highlight")
+	_assert_map("the Deny highlight is drawn and is not targeting",
+		_map._annotations.has_targeting_overlay() and not _map._annotations.is_targeting_active())
+	_assert_map("…a click on either glowing herd is captured to pre-select it",
+		_map.targeting_click_captures(near_herd.x, near_herd.y)
+			and _map.targeting_click_captures(far_herd.x, far_herd.y))
+	_assert_map("…and a click anywhere else selects as usual",
+		not _map.targeting_click_captures(BAND_X, BAND_Y + 1))
+	_map.set_targeting({})
+
+	# State M4 — THE TRADE SHEET'S PASSIVE HIGHLIGHT: the hexes of the bands tied LIVE to the sender,
+	# carried on the descriptor as an explicit set and ringed the herd glow's way.
+	var tied_tile := Vector2i(BAND_X + QUARRY_FAR_OFFSET, BAND_Y + 2)
+	_map.set_targeting({
+		"active": true, TargetingController.TARGETING_PASSIVE_KEY: true,
+		"command": TargetingController.VERB_PICK_COMMAND_TRADE, "need": "tile",
+		"origin_x": BAND_X, "origin_y": BAND_Y, "context_label": "Band 1",
+		TargetingController.TARGETING_HIGHLIGHT_TILES_KEY: [tied_tile],
+	})
+	await _settle()
+	await _save("map_trade_highlight")
+	_assert_map("the Trade highlight captures a click on the tied band's hex",
+		_map.targeting_click_captures(tied_tile.x, tied_tile.y))
+	_assert_map("…and on no other hex, the herds included",
+		not _map.targeting_click_captures(near_herd.x, near_herd.y)
+			and not _map.targeting_click_captures(BAND_X, BAND_Y))
+	_map.set_targeting({})
+
+	# State M5 — EXPEDITION MARKER ART: a scouting, a denying and a trading party wear their bundled
+	# `expeditions/` art centred in the dark disc and ring; the hunting party has no art and keeps its
+	# 🏹 glyph. The trading party is AWAITING, so its orders pulse draws over the art face.
+	_map.display_snapshot(_snapshot_expedition_art())
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_expedition_art")
+	_assert_map("scout, deny and trade parties resolve marker art; hunt resolves none and keeps its glyph",
+		ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_SCOUT) != null
+			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_DENY) != null
+			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_TRADE) != null
+			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_HUNT) == null)
+
 	# State N — selected TRAVELLING band destination (non-wrapping map): the band reports
 	# `is_traveling` + a `travel_target` a few hexes away → a thin cyan line from its tile to the
 	# destination hex + a target reticle on that hex. Only drawn because the band is selected.
@@ -4793,6 +4848,19 @@ func _snapshot_hunt_expeditions() -> Dictionary:
 	snap["populations"].append(_hunt_expedition(9204, 3, 4, "returning"))
 	return snap
 
+## One party per mission for the marker-art frame: scout, deny and trade (art) beside a hunt (glyph).
+func _snapshot_expedition_art() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
+	snap["populations"].append(_expedition(9211, 11, 3, "outbound"))
+	var deny := _expedition(9212, 5, 9, "outbound")
+	deny["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_DENY
+	snap["populations"].append(deny)
+	var trade := _expedition(9213, 10, 8, "awaiting")
+	trade["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_TRADE
+	snap["populations"].append(trade)
+	snap["populations"].append(_hunt_expedition(9214, 3, 4, "hunting"))
+	return snap
+
 ## A selected band in transit: carries `is_traveling` + a `travel_target` a few hexes SE of its
 ## tile, so the destination reticle + line draw on a non-wrapping map.
 func _snapshot_travel_band() -> Dictionary:
@@ -5648,6 +5716,8 @@ const WORKING_WORKED_OFFSET := Vector2i(-1, 0)     # the hex a crew is on
 const WORKING_BARE_OFFSET := Vector2i(1, 0)        # the CONTROL: same deposits, nobody on them
 const WORKING_MATERIAL_WOOD := "wood"
 const WORKING_MATERIAL_STONE := "stone"
+## A material id with no bundled art (and no emoji) — the art family's null answer.
+const WORKING_MATERIAL_UNKNOWN := "obsidian"
 ## The two together, where a probe wants "every working in this fixture" as a count rather than as
 ## two names — one list, so a fixture that grew a third material cannot leave a probe behind.
 const WORKING_MATERIALS: Array[String] = [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]
@@ -6047,6 +6117,13 @@ func _worked_working_states() -> void:
 		% [FoodIcons.for_material(WORKING_MATERIAL_WOOD), FoodIcons.for_material(WORKING_MATERIAL_STONE)],
 		FoodIcons.for_material(WORKING_MATERIAL_WOOD) != FoodIcons.for_material(WORKING_MATERIAL_STONE)
 			and FoodIcons.for_material(WORKING_MATERIAL_WOOD) != "")
+	# The marks this frame DRAWS are the bundled art, not those emoji: both materials resolve a texture
+	# (two different ones), and a material with no art answers null so its working keeps the emoji path.
+	var wood_art := WorkingsSprites.for_material(WORKING_MATERIAL_WOOD)
+	var stone_art := WorkingsSprites.for_material(WORKING_MATERIAL_STONE)
+	_assert_map("map_working_pair — wood and stone resolve marker art; an unknown material resolves none",
+		wood_art != null and stone_art != null and wood_art != stone_art
+			and WorkingsSprites.for_material(WORKING_MATERIAL_UNKNOWN) == null)
 
 	# State "working overflow" — the crowded hex, where three wonders take every visible slot before
 	# the working is reached. Read for: the `+N` chip carrying `⚒`, which is what stops a capped
@@ -6106,9 +6183,11 @@ func _worked_working_states() -> void:
 	for far_row_variant in far_rows:
 		var far_row: Dictionary = far_row_variant
 		if String(far_row.get("key", "")).begins_with(WORKING_ROW_KEY_PREFIX):
+			# The icon is the row's FACE — art (`WorkingsSprites`) or its emoji fallback — so the test
+			# is `face_renders`, never the glyph alone: a material with art answers an empty glyph.
 			_assert_map("map_working_farzoom — a working row still carries its own icon at far zoom, so its rate needs no noun (%s)"
-					% String(far_row.get("glyph", "")),
-				String(far_row.get("glyph", "")) != "")
+					% ("art" if far_row.get("sprite") != null else String(far_row.get("glyph", ""))),
+				SecondaryMarkerRenderer.face_renders(far_row))
 
 	# State "working unselected" (issue #650) — THE PERSISTENT HALF. The same single crewed wood
 	# working with NO band selected: the ring and the `⚒3` plate are the marks that belong to the

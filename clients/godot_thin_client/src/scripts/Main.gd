@@ -458,11 +458,18 @@ func _ready() -> void:
         if map_view.has_signal("tile_selected"):
             if hud != null and hud.has_method("show_tile_selection") and not map_view.is_connected("tile_selected", Callable(self, "_on_map_tile_selected")):
                 map_view.connect("tile_selected", Callable(self, "_on_map_tile_selected"))
-            if hud != null and hud.has_method("notify_hex_selected") and not map_view.is_connected("tile_selected", Callable(hud, "notify_hex_selected")):
-                map_view.connect("tile_selected", Callable(hud, "notify_hex_selected"))
+        # **A CLICK WHILE A COMMAND IS TARGETING IS THE PICK, NOT A SELECTION** (issue #529): MapView
+        # emits `targeting_clicked` INSTEAD of selecting, and the HUD commits the armed verb against it.
+        if map_view.has_signal("targeting_clicked") and hud != null and hud.has_method("notify_targeting_click"):
+            if not map_view.is_connected("targeting_clicked", Callable(hud, "notify_targeting_click")):
+                map_view.connect("targeting_clicked", Callable(hud, "notify_targeting_click"))
         if map_view.has_signal("tile_hovered") and hud != null and hud.has_method("show_tooltip"):
             if not map_view.is_connected("tile_hovered", Callable(hud, "show_tooltip")):
                 map_view.connect("tile_hovered", Callable(hud, "show_tooltip"))
+        # …and the hex under the pointer feeds an armed Deny / Trade pick's banner.
+        if map_view.has_signal("tile_hovered") and hud != null and hud.has_method("notify_hex_hovered"):
+            if not map_view.is_connected("tile_hovered", Callable(hud, "notify_hex_hovered")):
+                map_view.connect("tile_hovered", Callable(hud, "notify_hex_hovered"))
         # Targeting mode: HUD publishes the active target request; the map draws
         # the reticle / valid-target glow, and routes Esc/right-click cancels back.
         if hud != null and hud.has_signal("targeting_changed") and map_view.has_method("set_targeting"):
@@ -1212,7 +1219,6 @@ func _on_map_selection_cleared() -> void:
 
 func _on_map_tile_selected(tile_info: Dictionary) -> void:
     _hud_invoke("show_tile_selection", [tile_info])
-    _hud_invoke("notify_hex_selected", [tile_info])
 
 # ---- Band-addressed command TEXT -----------------------------------------------------------------
 #
@@ -2453,6 +2459,10 @@ func _send_runtime_command(line: String, message: String,
 ##   (2) an open COMPOSE SHEET closes — it is the innermost working surface, so it claims ESC ahead
 ##       of targeting (docs/plan_tile_panel_layout.md §15);
 ##   (3) active targeting keeps ESC for MapView's targeting-cancel path (we must NOT consume it);
+##   (3b) an open band VERB SHEET closes (issue #529) — behind targeting, because the sheet's send is
+##       what armed the pick: the first Esc takes the pick down and leaves the sheet, the second closes
+##       it. `verb_form_open` is the trailing parameter and defaults false, so a caller that predates
+##       the sheet asks the chain it always asked;
 ##   (4) the Band panel's WORK INSPECTOR dialog closes;
 ##   (5) an open KNOWLEDGE READING closes;
 ##   (6) otherwise the pause menu opens.
@@ -2480,18 +2490,21 @@ func _send_runtime_command(line: String, message: String,
 const ESC_RESUME := "resume"
 const ESC_COMPOSE_SHEET := "compose_sheet"
 const ESC_TARGETING := "targeting"
+const ESC_VERB_FORM := "verb_form"
 const ESC_WORK_INSPECTOR := "work_inspector"
 const ESC_KNOWLEDGE_DETAIL := "knowledge_detail"
 const ESC_PAUSE := "pause"
 
 static func escape_claimant(pause_open: bool, compose_open: bool, targeting: bool,
-        work_inspector_open: bool, knowledge_detail_open: bool) -> String:
+        work_inspector_open: bool, knowledge_detail_open: bool, verb_form_open: bool = false) -> String:
     if pause_open:
         return ESC_RESUME
     if compose_open:
         return ESC_COMPOSE_SHEET
     if targeting:
         return ESC_TARGETING
+    if verb_form_open:
+        return ESC_VERB_FORM
     if work_inspector_open:
         return ESC_WORK_INSPECTOR
     if knowledge_detail_open:
@@ -2505,7 +2518,8 @@ func _unhandled_input(event: InputEvent) -> void:
             hud != null and hud.has_method("is_compose_sheet_open") and bool(hud.call("is_compose_sheet_open")),
             hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")),
             hud != null and hud.has_method("is_work_inspector_open") and bool(hud.call("is_work_inspector_open")),
-            hud != null and hud.has_method("is_knowledge_detail_open") and bool(hud.call("is_knowledge_detail_open")))
+            hud != null and hud.has_method("is_knowledge_detail_open") and bool(hud.call("is_knowledge_detail_open")),
+            hud != null and hud.has_method("is_verb_form_open") and bool(hud.call("is_verb_form_open")))
         match claimant:
             ESC_RESUME:
                 _hide_pause_menu()
@@ -2515,6 +2529,9 @@ func _unhandled_input(event: InputEvent) -> void:
                 get_viewport().set_input_as_handled()
             ESC_TARGETING:
                 return
+            ESC_VERB_FORM:
+                hud.call("close_verb_form")
+                get_viewport().set_input_as_handled()
             ESC_WORK_INSPECTOR:
                 hud.call("close_work_inspector")
                 get_viewport().set_input_as_handled()

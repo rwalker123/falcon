@@ -365,6 +365,13 @@ func band_label_for_id(band_id: int) -> String:
 			return HudFormat.band_name(party)
 	return ""
 
+## **A LIVE TIE IS ONE WITH STRENGTH ABOVE ZERO** — the sim's own gate (`strength > NO_TIE`), read in
+## one place so the shipment sheet's destination, its live re-resolve and the Trade verb's map pick
+## (`TargetingController.trade_destination_at`) can never disagree about which bands a shipment may
+## name.
+static func tie_is_live(tie: Dictionary) -> bool:
+	return float(tie.get("strength", 0.0)) > HudConst.TIE_STRENGTH_NONE
+
 ## **THE TIES ONE BAND HOLDS**, in the ledger's own order (the sim publishes a stable `BTreeMap`
 ## walk, so the picker's rows do not reshuffle frame to frame).
 ##

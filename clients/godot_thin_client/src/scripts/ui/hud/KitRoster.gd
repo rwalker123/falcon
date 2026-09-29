@@ -492,8 +492,7 @@ const JOB_CARRY_AXES := {
 
 ## The `OptionButton` the kit row mounts, as meta — the stable handle for the preview harnesses. A
 ## node-type search finds the compose sheets' `Band:` picker too (and, before the control became an
-## `OptionButton`, the quarry chooser and the zone `⋯` menus), so it needs a handle of its own exactly
-## as `QUARRY_CHOICES_META` does.
+## `OptionButton`, the zone `⋯` menus), so it needs a handle of its own.
 const KIT_PICKER_META := "kit_picker"
 
 ## The hint label beneath it, as meta: the claim a harness makes about the effective tier is about
@@ -573,8 +572,8 @@ static func default_kit_for(job: String, source: Dictionary, job_default_id: Str
 ## kit the command would refuse.
 ##
 ## **THE COMPOSED CHOICE STILL OUTRANKS THE DEFAULT, and that is why the composed id is dropped on a
-## SOURCE CHANGE rather than being overridden here** (`ComposeState.reset_hunt_kit` /
-## `set_party_quarry`). A player who picked `none` on this animal to compare bare-handed must keep it
+## SOURCE CHANGE rather than being overridden here** (`ComposeState.reset_hunt_kit`, and the Deny sheet's
+## kit reset with its verb). A player who picked `none` on this animal to compare bare-handed must keep it
 ## across the re-render their own click causes; what they must not keep is a choice made about a
 ## DIFFERENT animal, since the default is now a fact about the quarry.
 ##

@@ -648,7 +648,11 @@ static func apply_option_button(picker: OptionButton) -> void:
 	if picker == null:
 		return
 	apply_button(picker, "ghost")
-	var popup := picker.get_popup()
+	apply_popup_menu(picker.get_popup())
+
+## Dress a free-standing `PopupMenu` in the console's own menu — the popup half of `apply_option_button`,
+## for a menu that has no face (the Deny pick's herd chooser).
+static func apply_popup_menu(popup: PopupMenu) -> void:
 	if popup == null:
 		return
 	popup.add_theme_stylebox_override("panel", popup_panel_stylebox())

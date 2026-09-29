@@ -376,6 +376,29 @@ the position the breadcrumb was.
 
 **It saves no PNG**; it ends on the herd-less snapshot and the next state re-fits the camera.
 
+### `map_deny_highlight` / `map_trade_highlight` — the verb sheets' PASSIVE highlight (issue #529)
+
+An open Deny or Trade sheet highlights every target its pick would accept, with NO pick armed
+(`targeting.md` → "THE BAND VERBS' TARGET IS THE LAST STEP"). Both states set the passive descriptor
+straight after `map_quarry_targeting` and clear it again, so no later frame inherits it:
+
+- **`map_deny_highlight`** — `need: "herd"` at the denial raid's `QUARRY_NO_REACH_BOUND`, so BOTH herds
+  of the quarry snapshot glow (a hunt pick glows only the far one). Asserted: the overlay is drawn but
+  `is_targeting_active()` is false; `MapView.targeting_click_captures` takes a click on either glowing
+  herd and refuses one on an empty hex.
+- **`map_trade_highlight`** — `need: "tile"` with an explicit `TARGETING_HIGHLIGHT_TILES_KEY` set of one
+  hex, ringed the herd glow's way. Asserted: a click there is captured, a click on a herd or the band's
+  own hex is not.
+
+Both rings pulse off `delta`, so both frames rely on the frozen animation time above.
+
+### `map_expedition_art` — the expedition markers' bundled art
+
+One party per mission beside the band: scout, deny and trade wear their `ExpeditionSprites` art in
+the disc and ring, the hunting party keeps its 🏹 glyph, and the trade party is AWAITING so its orders
+pulse draws over an art face. Asserted: scout, deny and trade resolve a texture and hunt resolves
+`null`.
+
 ### `map_overlay_picker` — the channel picker OPEN, and the two claims a picture cannot carry
 
 `docs/plan_knowledge_screen.md` §6. The picker is mounted on the MINIMAP, so its `◐` button rides
@@ -1031,8 +1054,8 @@ That contrast is the frame — `map-markers.md` has the decision it renders.
 
 | frame | stages | read for |
 |---|---|---|
-| `map_working_worked` | ONE crewed working (wood, `⚒3`) beside the bare pair | a single 🪵 in an edge slot with its plate, and the neighbour hex **empty** |
-| `map_working_pair` | BOTH workings on one hex crewed | 🪵 `⚒3` and 🪨 `⚒2` in two DIFFERENT slots — a hex cutting timber and quarrying rock cannot read as one working |
+| `map_working_worked` | ONE crewed working (wood, `⚒3`) beside the bare pair | a single wood mark (cut-log art) in an edge slot with its plate, and the neighbour hex **empty** |
+| `map_working_pair` | BOTH workings on one hex crewed | wood `⚒3` and stone `⚒2` in two DIFFERENT slots, round log ends against squared blocks — a hex cutting timber and quarrying rock cannot read as one working. Asserted: both materials resolve `WorkingsSprites` art (two different textures) and an unknown material resolves `null` |
 | `map_working_overflow` | the `_snapshot_mixed` crowded hex, plus a crewed wood working | the `+3 ⚒` chip, which is what stops a capped marker reading as *nothing is happening here* |
 | `map_working_farzoom` | the same crewed pair on a 110×80 grid (fit r **12.7** < the 16.0 gate) | nothing but the band token, its range border and the faint tile outline the LOD fallback leaves |
 | `map_working_unselected` | ONE crewed wood working, NO band selected | the thin slate ring and the `⚒3` plate — the marks that belong to the SOURCE — and no link, no pill, no range borders |

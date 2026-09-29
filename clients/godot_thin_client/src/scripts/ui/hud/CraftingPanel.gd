@@ -2019,7 +2019,7 @@ func _amount_text(amount: float) -> String:
 
 # ---- geometry ---------------------------------------------------------------
 
-## The room the card may use. Unlike `BandComposeFloat` this panel is not anchored to another card —
+## The room the card may use. Unlike the work inspector this panel is not anchored to another card —
 ## it is its own surface and is centred in what is left.
 ##
 ## **"WHAT IS LEFT" IS THE ROOM NOTHING ELSE HAS CLAIMED, NOT THE RAW VIEWPORT.** Two different
