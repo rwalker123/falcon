@@ -1702,13 +1702,14 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 			return ""
 		return shortfall_sentence(kit, int(committed[ROW_COVERAGE_HELD_KEY]),
 			int(committed[ROW_COVERAGE_CREW_KEY]))
-	# ⛔ **AN `extract` ROW STATES NOTHING BEYOND THE SIM'S OWN PAIR** (issue #663). A take kit is a
+	# ⛔ **AN `extract` SHEET STATES NOTHING BEYOND THE SIM'S OWN PAIR** (issue #663). A take kit is a
 	# sled AND a second tool, and only ONE of them serves the rung a working stands on — the sled on a
-	# deadfall, the axe on a felling — which the wire states on the row (`kitWorkersHolding` counts
-	# that tool alone) and nowhere else. The composed reading below takes a `min` over every item the
-	# kit carries, so on a deadfall it would report the band short of axes that change nothing: the
-	# playtest's `1 of 2 Felling kits available` over a take that moved not at all. With no committed
-	# row to read, or a stepper off its crew, the honest answer is silence.
+	# deadfall, the axe on a felling — which only the sim knows. The deposit sheet hands in the crew
+	# curve's row at the stepper's crew (`HudDepositVocab.curve_coverage_row`: `armed_workers` of
+	# `workers`) and case 1 above words it. The composed reading below takes a `min` over every item
+	# the kit carries, so on a deadfall it would report the band short of axes that change nothing:
+	# the playtest's `1 of 2 Felling kits available` over a take that moved not at all. With no curve
+	# row to read — the reply still in flight — the honest answer is silence.
 	if job == JOB_EXTRACT:
 		return ""
 	var on_job := crew

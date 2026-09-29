@@ -31,13 +31,14 @@ const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const TileFx := preload("res://tools/ui_preview/fixtures_tile.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
+const ForecastFx := preload("res://tools/ui_preview/fixtures_forecast.gd")
 ## `format_assign_labor` is `static`, so the deposit-kit states read the line the commit would send
 ## without standing a `Main` up.
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 145
+const EXPECTED_CHECKPOINTS := 159
 
 ## The `ui_preview` harness node: the HUD under test, plus `_settle` / `_save` / `_assert_hud`.
 var h
@@ -429,12 +430,11 @@ func run(harness) -> void:
 					_catalog_entry(HudDepositVocab.RUNG_KEY_COPPICE),
 					HudDepositVocab.BRANCH_FORESTRY))
 				and _offer_text(sheet).contains(HudComposeVocab.WORK_TAB_LINK_TEXT))
-		# ⛔ **THE DEAL IS THE SIM'S, OFF THE BAND'S COMMITTED ROW — AND THIS BAND HAS NONE** (issue
-		# #663). `nextRungMaterialYield` is struck at a committed crew with its gear applied, so before
-		# a row exists there is no figure to quote, and the catalog-rate-times-stepper stand-in is the
-		# arithmetic the playtest caught ignoring the axes. The committed half is
-		# `workings_forestry_kit_committed`, which prints the row's own figure.
-		h._assert_hud("…and with no committed row the deal row is ABSENT, not the catalog x crew (%s)"
+		# ⛔ **THE DEAL IS THE CREW CURVE'S `next_rung_take`, AND THIS STAND-IN PRICES NO NEXT RUNG**
+		# (issue #663) — the bare curve `fixtures_forecast` answers with names none. The catalog rate
+		# times the stepper is the arithmetic the playtest caught ignoring the axes, so there is no
+		# figure without the sim's. `workings_forestry_kit_curve` is where an authored curve prints one.
+		h._assert_hud("…and with a curve pricing no next rung the deal row is ABSENT, not catalog x crew (%s)"
 				% Readout.improvement_deal_value(sheet),
 			crew > 0 and Readout.improvement_deal_value(sheet) == Readout.DEAL_ROW_ABSENT)
 		# **THE RENEWING ARM OF §7's FORK, in the readout's own note and verdict.**
@@ -1284,14 +1284,23 @@ const DEPOSIT_KIT_PICKER_ENTRIES := 2
 const OWN_KIT_INDEX := 0
 const NONE_KIT_INDEX := 1
 
-## **THE COMMITTED WOOD ROW** (`workings_forestry_kit_committed`) — the band's own `extract` row on the
-## wood, carrying the two figures the sim prices at the committed crew: how many of those hands hold
-## the tool that serves the rung (`kitWorkersHolding`), and what the next rung would pay them, gear
-## included (`nextRungMaterialYield`). Both are chosen so no client-side derivation lands on them: one
-## of three holding the tool is not the roster's `min` over a kit the band holds none of, and 7.5 is
-## not the catalog's `2.0 × 3` the deal row used to multiply out.
-const COMMITTED_KIT_HOLDERS := 1
-const COMMITTED_NEXT_RUNG_YIELD := 7.5
+## **THE AUTHORED CREW CURVE** (`workings_forestry_kit_curve`) — one row per crew, each figure chosen
+## so no client-side derivation lands on it: the takes are not `perWorkerBiomass × crew` (2.0 × w), one
+## holder of the held rung's tool is not the roster's `min` over a kit the band holds none of, and the
+## next-rung takes are not the catalog's `2.0 × crew` the deal row once multiplied out. Indexed by crew
+## size from 1, as the reply's rows are. **Crews 2 and 3 cut the same** — the sled saturating — and that
+## flat step is what puts the curve's *hold it after* (2) apart from the bare rate's (3): the wood's
+## regrowth at the floor sits between the bare 4.00 and the curve's 5.40.
+const CURVE_TAKES := [2.35, 5.40, 5.40, 6.95]
+const CURVE_ARMED := [1.0, 1.0, 1.0, 2.0]
+const CURVE_NEXT_RUNG_TAKES := [2.55, 5.20, 7.50, 9.85]
+## The stepper's second position — one hand fewer than `SHEET_CREW`, so the step reads a DIFFERENT row.
+const CURVE_STEPPED_CREW := SHEET_CREW - HudConst.WORKER_STEP
+## The rung keys the authored reply names, as the sim spells them.
+const CURVE_HELD_RUNG := "forestry:felling"
+const CURVE_NEXT_RUNG := "forestry:coppice"
+## How the readout prints a take — two decimals, the yields row's own register.
+const CURVE_TAKE_FORMAT := "%.2f"
 
 ## One extract kit's roster entry, carrying the bare tier on every axis it does not touch — an axe and
 ## a wedge move `deposit_take`, which no roster axis on this wire states.
@@ -1454,7 +1463,7 @@ func _deposit_kit_states() -> void:
 		h._hud._drawercompose.close_compose_sheet()
 		await h._settle()
 	h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
-	await _committed_wood_row_state()
+	await _crew_curve_states()
 	h._hud.update_kit_roster(prev_kits, prev_defaults[0], prev_defaults[1], prev_defaults[2],
 		prev_defaults[3], prev_defaults[4])
 	h._show_tile(_workings_tile([]))
@@ -1472,29 +1481,50 @@ func _lists(items: Array[String], kit_name: String) -> bool:
 			return true
 	return false
 
-## ⛔ **STATE workings-forestry-kit-committed — the two figures the playtest caught the client
-## deriving, read off the band's own committed row instead** (issue #663). Ray's report: on a
-## deadfall the sheet read `1 of 2 Felling kits available` over a take the axes did not move, and
-## `ONCE FELLED 4 wood a turn` ignored the axes. Both came from client arithmetic — a `min` over the
-## kit's items, and the catalog rate times the stepper — and the sim now states both on the row:
-## `kitWorkersHolding` counts the ONE tool that serves the rung, and `nextRungMaterialYield` is the
-## next rung's pay, gear included. The figures are chosen so neither derivation lands on them.
-func _committed_wood_row_state() -> void:
-	var band := _band_at_the_working()
-	var rows: Array = band["labor_assignments"]
-	rows.append({
-		"kind": HudConst.LABOR_KIND_EXTRACT,
-		"workers": SHEET_CREW,
-		"target_x": WORKING_TILE_X, "target_y": WORKING_TILE_Y, "fauna_id": "",
-		"material": WOOD_MATERIAL_ID,
-		"actual_yield": 0.0,
-		"sustainable_yield": 0.0,
-		"material_yield": [],
-		"workers_needed": SHEET_CREW,
-		"kit_id": WOODCUTTING_KIT_ID,
-		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: COMMITTED_KIT_HOLDERS,
-		SourceForecast.ASSIGNMENT_NEXT_RUNG_MATERIAL_YIELD_KEY: COMMITTED_NEXT_RUNG_YIELD,
-	})
+## The authored reply the wood carries for the curve states, with `in_range` as given.
+func _authored_curve(in_range: bool) -> Dictionary:
+	var rows: Array = []
+	for i in CURVE_TAKES.size():
+		rows.append({
+			HudDepositVocab.CURVE_WORKERS_KEY: i + 1,
+			HudDepositVocab.CURVE_TAKE_KEY: CURVE_TAKES[i] if in_range else 0.0,
+			HudDepositVocab.CURVE_ARMED_WORKERS_KEY: CURVE_ARMED[i],
+			HudDepositVocab.CURVE_NEXT_RUNG_TAKE_KEY: CURVE_NEXT_RUNG_TAKES[i] if in_range else 0.0,
+		})
+	return {
+		HudDepositVocab.CURVE_PER_CREW_KEY: rows,
+		HudDepositVocab.CURVE_HELD_RUNG_KEY: CURVE_HELD_RUNG,
+		HudDepositVocab.CURVE_NEXT_RUNG_KEY: CURVE_NEXT_RUNG,
+		HudDepositVocab.CURVE_IN_RANGE_KEY: in_range,
+	}
+
+## The wood fixture carrying an authored curve reply — what the stand-in server answers the sheet's
+## question with (`fixtures_forecast.gd` → `DEPOSIT_CREW_TAKE_KEY`).
+func _curve_wood(in_range: bool) -> Dictionary:
+	var wood := _wood_working(WOOD_OVER_CUT)
+	wood[ForecastFx.DEPOSIT_CREW_TAKE_KEY] = _authored_curve(in_range)
+	return wood
+
+## Re-open the wood's sheet at `crew` over the tile carrying `wood`, settled, and hand the sheet back.
+func _open_curve_sheet(wood: Dictionary, crew: int) -> Node:
+	h._hud._compose.set_deposit_count(crew)
+	h._hud._drawercompose.open_deposit_compose(wood)
+	await h._settle()
+	return h._hud._drawercompose._compose_sheet
+
+## ⛔ **STATES workings-forestry-kit-curve / -out-of-range — every gear-bearing figure on the deposit
+## sheet is the crew curve's, at the stepper's crew** (issue #663). Ray's report: on a deadfall the
+## sheet read `1 of 2 Felling kits available` over a take the axes did not move, `ONCE FELLED 4 wood a
+## turn` ignored the axes, and NEXT TURN was the bare rate × crew with sleds on. The sim now answers a
+## curve (`ForecastQuery.KIND_DEPOSIT_CREW_TAKE`), and the three figures are READ off it: NEXT TURN is
+## the row's `take`, the available line its `armed_workers` of `workers`, the deal its
+## `next_rung_take`. The stand-in server answers with the wood's own authored reply.
+##
+## **THE SEAM IS RESET FIRST**, because the key is band · working · kit · floor · gear and says
+## nothing about the fixture: the earlier wood states asked the same question and hold its BARE answer,
+## which would otherwise stand in for the authored one — and the reset is what lets the PENDING state be
+## read at all.
+func _crew_curve_states() -> void:
 	var labor = h._hud._band_labor
 	var prev_kits: Array = labor.kits()
 	var prev_defaults := [
@@ -1504,56 +1534,189 @@ func _committed_wood_row_state() -> void:
 	h._hud.update_kit_roster(_deposit_kit_roster(), BandFx.KIT_DEFAULT_HUNT,
 		BandFx.KIT_DEFAULT_FORAGE, BandFx.KIT_DEFAULT_SCOUT, BandFx.KIT_DEFAULT_WARRIOR,
 		BandFx.KIT_DEFAULT_EXPEDITION)
-	h._hud.update_band_alerts([band])
-	h._show_tile(_workings_tile([_wood_working(WOOD_OVER_CUT), _stone_working(STONE_TAKE)]))
+	h._hud.update_band_alerts([_band_at_the_working()])
+	var wood := _curve_wood(true)
+	h._show_tile(_workings_tile([wood, _stone_working(STONE_TAKE)]))
 	await h._settle()
+	h._hud.forecast_query().reset()
 	var foresters := _assign_button(h._hud.forestry_assign_controls,
 		HudDepositVocab.BRANCH_FORESTRY)
-	h._assert_hud("the committed-row state has a foresters' button to open", foresters != null)
+	h._assert_hud("the curve state has a foresters' button to open", foresters != null)
 	if foresters != null:
 		foresters.pressed.emit()
 		await h._settle()
-		h._hud._compose.set_deposit_count(SHEET_CREW)
-		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
-		await h._settle()
-		var sheet: Node = h._hud._drawercompose._compose_sheet
-		var crew: int = h._hud._compose.deposit_count()
-		h._assert_hud("…the sheet stands on the committed row's crew (%d of %d)" % [crew, SHEET_CREW],
-			crew == SHEET_CREW)
-		var kit := KitRoster.kit_by_id(labor.kits(), WOODCUTTING_KIT_ID)
-		var want_hint := KitRoster.shortfall_sentence(kit, COMMITTED_KIT_HOLDERS, SHEET_CREW)
-		h._assert_hud("…and the available line is the row's own `kitWorkersHolding` (%s, want %s)"
-				% [Readout.kit_hint_line(sheet), want_hint],
-			Readout.kit_hint_line(sheet) == want_hint)
-		var want_deal := DetailFormat.format_trimmed(COMMITTED_NEXT_RUNG_YIELD,
-			HudDepositVocab.CARD_STOCK_DECIMALS)
-		var catalog_deal := DetailFormat.format_trimmed(CATALOG_COPPICE_YIELD * float(SHEET_CREW),
-			HudDepositVocab.CARD_STOCK_DECIMALS)
-		h._assert_hud(("…and the once-coppiced figure is the row's `nextRungMaterialYield`, not the "
-				+ "catalog x crew (%s | want %s, not %s)") % [Readout.improvement_deal_value(sheet),
-				want_deal, catalog_deal],
-			Readout.improvement_deal_text(sheet).contains(
-					HudDepositVocab.deal_label(_catalog_entry(HudDepositVocab.RUNG_KEY_COPPICE)).to_upper())
-				and Readout.improvement_deal_value(sheet).contains(want_deal)
-				and not Readout.improvement_deal_value(sheet).contains(catalog_deal))
-		await h._save("workings_forestry_kit_committed")
-		# **THE STEPPER OFF THE COMMITTED CREW HIDES BOTH** — the sim priced `SHEET_CREW`, and a figure
-		# at any other count would be a derivation this client is not allowed to make.
-		h._hud._compose.set_deposit_count(SHEET_CREW - HudConst.WORKER_STEP)
-		h._hud._drawercompose.open_deposit_compose(_wood_working(WOOD_OVER_CUT))
-		await h._settle()
-		sheet = h._hud._drawercompose._compose_sheet
-		h._assert_hud("…and off the committed crew both go silent (hint %s | deal %s)"
-				% [Readout.kit_hint_line(sheet), Readout.improvement_deal_value(sheet)],
-			Readout.kit_hint_line(sheet) == ""
-				and Readout.improvement_deal_value(sheet) == Readout.DEAL_ROW_ABSENT)
+		# ⛔ **WHILE THE ANSWER IS IN FLIGHT, NO GEAR CLAIM** — read BEFORE the frame ends, since the
+		# stand-in answers deferred, exactly as the socket does. The sheet says it is costing the crew
+		# where NEXT TURN goes, and states neither the available line nor the deal.
+		#
+		# **THE SHEET IS CLOSED AND SETTLED FIRST, AND THE SEAM RESET AFTER.** A rebuild `queue_free`s
+		# the previous controls, which stay in the tree until the frame ends — so an open over an open
+		# sheet would be read off the PREVIOUS render's answered nodes, and the claim would be about a
+		# sheet that was never pending.
 		h._hud._drawercompose.close_compose_sheet()
 		await h._settle()
+		h._hud.forecast_query().reset()
+		h._hud._drawercompose.open_deposit_compose(wood)
+		var pending: Node = h._hud._drawercompose._compose_sheet
+		h._assert_hud(("…while the curve is in flight the sheet says it is costing the crew, and "
+				+ "states no take, no available line and no deal (%s | %s | %s)")
+				% [Readout.yields_text(pending), Readout.kit_hint_line(pending),
+					Readout.improvement_deal_value(pending)],
+			_sheet_text_contains(pending, HudDepositVocab.DEPOSIT_TAKE_PENDING)
+				and Readout.yields_account_number(pending, WOOD_MATERIAL_ID)
+					== Readout.YIELDS_ACCOUNT_ABSENT
+				and Readout.kit_hint_line(pending) == ""
+				and Readout.improvement_deal_value(pending) == Readout.DEAL_ROW_ABSENT)
+		await h._settle()
+		var sheet: Node = await _open_curve_sheet(wood, SHEET_CREW)
+		h._assert_hud("…the sheet stands on the crew it was composed at (%d)"
+				% h._hud._compose.deposit_count(),
+			h._hud._compose.deposit_count() == SHEET_CREW)
+		_assert_curve_row_on_sheet(sheet, SHEET_CREW)
+		_assert_draw_reads_the_curve(sheet, wood, SHEET_CREW)
+		await h._save("workings_forestry_kit_curve")
+		# **THE STEPPER MOVES, THE FIGURES MOVE WITH IT — to the next row, off the same answer.**
+		sheet = await _open_curve_sheet(wood, CURVE_STEPPED_CREW)
+		_assert_curve_row_on_sheet(sheet, CURVE_STEPPED_CREW)
+		# **`none` CARRIES NOTHING, SO IT CAN LEAVE NOBODY SHORT** — the available line goes silent.
+		h._hud._compose.set_deposit_kit_id(BandFx.KIT_ID_NONE)
+		sheet = await _open_curve_sheet(wood, SHEET_CREW)
+		h._assert_hud("…and with `none` picked the available line is silent (%s)"
+				% Readout.kit_hint_line(sheet),
+			Readout.kit_hint_line(sheet) == "")
+		h._hud._drawercompose.close_compose_sheet()
+		await h._settle()
+	# ⛔ **OUT OF RANGE, BY THE SIM'S ANSWER** — the band stands on the working, so this sheet's own
+	# measurement mounts no refusal; the reason on the sheet is the curve's `in_range: false`, and no
+	# zero take, no available line and no deal stand beside it. The commit is dead.
+	h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
+	var far_wood := _curve_wood(false)
+	h._show_tile(_workings_tile([far_wood, _stone_working(STONE_TAKE)]))
+	await h._settle()
+	h._hud.forecast_query().reset()
+	foresters = _assign_button(h._hud.forestry_assign_controls, HudDepositVocab.BRANCH_FORESTRY)
+	if foresters != null:
+		foresters.pressed.emit()
+		await h._settle()
+		var sheet: Node = await _open_curve_sheet(far_wood, SHEET_CREW)
+		var commit := Q.find_meta_node(sheet, HudWidgets.COMPOSE_COMMIT_META) as Button
+		h._assert_hud(("…out of range by the curve's own answer, the sheet says why and states no take, "
+				+ "no available line and no deal (%s | %s | %s)") % [Readout.yields_text(sheet),
+				Readout.kit_hint_line(sheet), Readout.improvement_deal_value(sheet)],
+			_sheet_text_contains(sheet, HudDepositVocab.DEPOSIT_TAKE_OUT_OF_RANGE)
+				and Readout.yields_account_number(sheet, WOOD_MATERIAL_ID)
+					== Readout.YIELDS_ACCOUNT_ABSENT
+				and Readout.kit_hint_line(sheet) == ""
+				and Readout.improvement_deal_value(sheet) == Readout.DEAL_ROW_ABSENT)
+		h._assert_hud("…and its commit is dead", commit != null and commit.disabled)
+		# ⛔ **AND NOTHING THAT ADVISES ABOUT A DRAW** — the verdict, both crew pills and the teaching
+		# line all speak of what this crew takes, and the turn will take nothing.
+		h._assert_hud(("…and no verdict, no crew pills and no teaching line stand beside the reason "
+				+ "(verdict %s | clear %d | hold %d | teaching %s)") % [Readout.verdict_text(sheet),
+				Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_CLEAR),
+				Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_HOLD),
+				Readout.teaching_line(sheet)],
+			Readout.verdict_text(sheet) == ""
+				and Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_CLEAR)
+					== Readout.CREW_TARGET_ABSENT
+				and Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_HOLD)
+					== Readout.CREW_TARGET_ABSENT
+				and Readout.teaching_line(sheet) == "")
+		await h._save("workings_forestry_kit_out_of_range")
+		h._hud._drawercompose.close_compose_sheet()
+		await h._settle()
+	h._assert_hud("…and the one refusal with its own words is the unknown-deposit one (%s)"
+			% HudDepositVocab.take_failed_text(HudDepositVocab.QUERY_ERROR_UNKNOWN_DEPOSIT),
+		HudDepositVocab.take_failed_text(HudDepositVocab.QUERY_ERROR_UNKNOWN_DEPOSIT)
+			== HudDepositVocab.DEPOSIT_TAKE_UNKNOWN_DEPOSIT)
 	h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
 	h._hud.update_kit_roster(prev_kits, prev_defaults[0], prev_defaults[1], prev_defaults[2],
 		prev_defaults[3], prev_defaults[4])
-	h._hud.update_band_alerts([_band_at_the_working()])
 	await h._settle()
+
+## The three gear-bearing figures at `crew`, each asserted against the authored row for that crew and
+## against the derivation it replaced — so a sheet reading the wrong row or composing its own fails.
+func _assert_curve_row_on_sheet(sheet: Node, crew: int) -> void:
+	var i := crew - 1
+	var want_take := CURVE_TAKE_FORMAT % CURVE_TAKES[i]
+	var bare_take := CURVE_TAKE_FORMAT % (FELLING_PER_WORKER * float(crew))
+	h._assert_hud("…NEXT TURN at %d is the curve row's take (%s, want %s, not the bare %s)"
+			% [crew, Readout.yields_account_number(sheet, WOOD_MATERIAL_ID), want_take, bare_take],
+		Readout.yields_account_number(sheet, WOOD_MATERIAL_ID) == want_take)
+	var kit := KitRoster.kit_by_id(h._hud._band_labor.kits(), WOODCUTTING_KIT_ID)
+	var want_hint := KitRoster.shortfall_sentence(kit, int(CURVE_ARMED[i]), crew)
+	h._assert_hud("…the available line at %d is the row's armed_workers (%s, want %s)"
+			% [crew, Readout.kit_hint_line(sheet), want_hint],
+		Readout.kit_hint_line(sheet) == want_hint)
+	var want_deal := DetailFormat.format_trimmed(CURVE_NEXT_RUNG_TAKES[i],
+		HudDepositVocab.CARD_STOCK_DECIMALS)
+	var catalog_deal := DetailFormat.format_trimmed(CATALOG_COPPICE_YIELD * float(crew),
+		HudDepositVocab.CARD_STOCK_DECIMALS)
+	h._assert_hud(("…and ONCE COPPICED at %d is the row's next_rung_take (%s | want %s, not the "
+			+ "catalog x crew %s)") % [crew, Readout.improvement_deal_value(sheet), want_deal,
+			catalog_deal],
+		Readout.improvement_deal_text(sheet).contains(
+				HudDepositVocab.deal_label(_catalog_entry(HudDepositVocab.RUNG_KEY_COPPICE)).to_upper())
+			and Readout.improvement_deal_value(sheet).contains(want_deal)
+			and not Readout.improvement_deal_value(sheet).contains(catalog_deal))
+
+## ⛔ **THE CREW-DRAW READINGS ARE THE CURVE'S, NOT THE BARE RATE'S** (issue #663). The oracle walks
+## the stock with the shared `SourceForecast.project_stock` primitive at the authored row's take and,
+## beside it, at `FELLING_PER_WORKER × crew` — the draw the sheet used before — and the sheet must state
+## the first and NOT the second. Each pair is guarded by a precondition that the two readings DIFFER,
+## or the claim would pass on a sheet that never read the curve.
+func _assert_draw_reads_the_curve(sheet: Node, wood: Dictionary, crew: int) -> void:
+	var prefix := HudComposeVocab.BARE_FORECAST_PREFIX
+	var samples := SourceForecast.regrowth_samples(HudDepositVocab.forecast_source(wood), prefix)
+	var capacity := HudDepositVocab.capacity_of(wood)
+	var stock := HudDepositVocab.stock_of(wood)
+	var floor_value := SourceForecast.clamp_floor(
+		HudDepositVocab.composed_floor(wood, h._hud._compose.deposit_floor()))
+	var curve_take: float = CURVE_TAKES[crew - 1]
+	var bare_take := FELLING_PER_WORKER * float(crew)
+	var curve_line := _verdict_lead(SourceForecast.project_stock(samples, stock, capacity,
+		floor_value, SourceForecast.ENGAGEMENT_UNBOUNDED, curve_take))
+	var bare_line := _verdict_lead(SourceForecast.project_stock(samples, stock, capacity,
+		floor_value, bare_take))
+	h._assert_hud("precondition: the curve's %.2f and the bare %.2f draw different verdicts (%s | %s)"
+			% [curve_take, bare_take, curve_line, bare_line], curve_line != bare_line)
+	h._assert_hud("…the verdict at %d is the curve's draw, not the bare rate's (%s | want %s, not %s)"
+			% [crew, Readout.verdict_text(sheet), curve_line, bare_line],
+		Readout.verdict_text(sheet).contains(curve_line)
+			and not Readout.verdict_text(sheet).contains(bare_line))
+	var growth := SourceForecast.regrowth_at(samples, floor_value)
+	var curve_hold := SourceForecast.NO_CREW_ANSWER
+	for i in CURVE_TAKES.size():
+		if float(CURVE_TAKES[i]) >= growth * (1.0 - SourceForecast.CREW_TAKE_REACH_TOLERANCE):
+			curve_hold = i + 1
+			break
+	var bare_hold := maxi(1, ceili(growth / FELLING_PER_WORKER))
+	h._assert_hud("precondition: the curve and the bare rate name different holding crews (%d | %d)"
+			% [curve_hold, bare_hold], curve_hold != bare_hold)
+	h._assert_hud("…and *hold it after* is the curve's smallest holding crew (%d, want %d, not %d)"
+			% [Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_HOLD), curve_hold, bare_hold],
+		Readout.crew_target_count(sheet, HudWidgets.CREW_TARGET_HOLD) == curve_hold)
+
+## The verdict sentence's leading clause for a walk — the arm the shared verdict takes before any crew
+## remedy is appended, so the claim is about the DRAW and not about the reaching crew.
+func _verdict_lead(walk: Dictionary) -> String:
+	var reached := int(walk["reached_turn"])
+	if reached == 1:
+		return SourceForecast.VERDICT_REACHES_ONE_TURN
+	if reached != SourceForecast.PROJECTION_REACHED_NONE:
+		return SourceForecast.VERDICT_REACHES_FORMAT % reached
+	return SourceForecast.VERDICT_SETTLES_FORMAT % int(round(float(walk["settled_fraction"])
+		* SourceForecast.FLOOR_PERCENT_SCALE))
+
+## Whether any Label under `root` carries `needle` — the pending and out-of-range sentences are hint
+## labels in the yields host, which `Readout.yields_text` (the ROW's faces) does not reach.
+func _sheet_text_contains(root: Node, needle: String) -> bool:
+	if root is Label and (root as Label).text.contains(needle):
+		return true
+	for child in root.get_children():
+		if _sheet_text_contains(child, needle):
+			return true
+	return false
 
 ## Press the sheet's REAL commit and return the line `Main` would send for it. The optimistic pending
 ## entry the press writes is rolled back through the HUD's own `drop_pending_assign`, so the next claim

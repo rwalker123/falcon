@@ -448,6 +448,33 @@ the working **holds** (`standing.held`), so the seed, the take and the ⚠ agree
 `server::tests::a_deposit_crew_with_axes_is_seeded_the_cut_the_turn_pays` and, through the shipped
 turn, `extraction::a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes`.
 
+### The compose sheet asks a crew curve BEFORE the commit — `DepositCrewTakeQuery`
+
+Every figure on the deposit compose sheet is read before the player presses Cut, so it cannot come
+off the committed row's `materialYield` / `kitWorkersHolding` / `nextRungMaterialYield` alone.
+`QueryPayload::DepositCrewTake` (proto `QueryCommand.deposit_crew_take = 8`, answered on
+`QueryReplyEnvelope.deposit_crew_take = 11`) asks it the hunt curve's way: band, `(x, y, material)`,
+the sheet's `kit_id` (`none` included; a kit not listing `extract` is `kit_wrong_job`), `floor` and
+`max_workers`, and answers one `DepositCrewTakeRow` per crew size — `take` (this turn's cut at the
+held rung, geared and reach-capped), `armed_workers` (holders of the held rung's tool) and
+`next_rung_take` (the cut once raised) — plus the `held_rung` / `next_rung` it priced and `in_range`.
+
+**One model, not a second.** Each row is `extraction::deposit_crew_quote`: the crew is a
+**prospective row** (`extraction::prospective_deposit_gear` — the kit narrowed to the rung, the band's
+other rows beside it, less the pools' issue), the take runs through `deposit_take` at the working as
+the next turn finds it (renewed on a clone, the seed's rule; an unopened working derived from
+`DepositSource::opening`), and the next rung through `next_rung_take_for` — the function a committed
+row's `nextRungMaterialYield` is itself struck through. So committing crew `n` with kit `k` pays row
+`n`'s `take`: `server::tests::the_deposit_crew_curve_is_what_the_turn_pays` (felling with axes and
+idle sleds, an unopened deadfall with sleds, and `none`) and
+`::the_deposit_crew_curves_next_rung_is_what_the_turn_pays_once_raised`. It is seat-gated like the
+hunt curve (`querying_faction`), refuses a bad band, kit, floor, crew or material by token
+(`::a_deposit_crew_ask_is_refused_field_by_field`; ground holding none of the material is
+`unknown_deposit`), and past the band's work range answers `in_range: false` with every take `0`,
+because the turn abandons that row. **`armed_workers` differs from a committed row's
+`kitWorkersHolding` on one case only**: a kit with no tool for the held rung reads `0` armed here
+and `workers` there (*"nothing to be short of"*).
+
 **Wear is `WearQuantum::DepositTaken`, per unit cut BY THE HOLDERS.** `extraction::deposit_geared_units`
 bills `taken × equipped_labor / labor` — the equipped workers' share of the crew's throughput,
 applied to what was actually taken — against the row's kit narrowed to the serving items

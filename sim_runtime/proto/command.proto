@@ -1018,7 +1018,38 @@ message QueryCommand {
     // 6 is held by `faction_capacity`, so the work party's question takes 7. Seat-gated: it is
     // answered out of the named band's private state (its position, its gear, its standing party).
     WorkPartyForecastQuery work_party_forecast = 7;
+    // 7 is held by `work_party_forecast`, so the deposit compose sheet's question takes 8.
+    // Seat-gated: it is answered out of the named band's gear, rows and pool issue.
+    DepositCrewTakeQuery deposit_crew_take = 8;
   }
+}
+
+// THE DEPOSIT COMPOSE SHEET'S QUESTION: "What does a crew of each size, off THIS band, carrying THIS
+// kit, cut off THIS working this turn - how many of them hold the rung's tool - and what would they
+// cut once the working is raised one rung?" (issue #663)
+//
+// Asked BEFORE the player presses Cut, so every figure on the sheet includes the gear the band holds
+// rather than the bare `perWorkerBiomass x crew`. Each row is priced as a PROSPECTIVE ROW - the crew
+// competes with the band's other rows for each tool and loses what the standing pools were issued -
+// through the same functions the turn cuts with, so committing crew n with this kit makes the turn
+// pay row n's `take`.
+message DepositCrewTakeQuery {
+  uint32 faction_id = 1;
+  // The asking band's durable `BandId`.
+  uint64 band_id = 2;
+  // The working's tile and material - one tile can hold two deposits.
+  uint32 x = 3;
+  uint32 y = 4;
+  string material = 5;
+  // An `equipment.json` roster id, REQUIRED (the sheet's pick; `none` is a real answer). Unknown, or
+  // one whose `jobs` does not list `extract`, is a `QueryError`.
+  string kit_id = 6;
+  // The composed escapement floor, as a fraction of the deposit's capacity - a term in the answer:
+  // it bounds the reach on a working that renews. Send 0 on a finite working, as the command does.
+  float floor = 7;
+  // The largest crew to quote - the stepper's cap. One row per crew size `1..=max_workers`; 0 asks
+  // for nothing. Refused above the query channel's crew bound (`invalid_crew`).
+  uint32 max_workers = 8;
 }
 
 // THE WORK ROW'S QUESTION: "What does THIS crew, off THIS band, carrying THIS kit, bring home per
@@ -1190,7 +1221,44 @@ message QueryReplyEnvelope {
     ClaimSeatReply seat_claim = 9;
     // 9 is held by `seat_claim`, so the work party's answer takes 10.
     WorkPartyForecastReply work_party_forecast = 10;
+    // 10 is held by `work_party_forecast`, so the deposit compose sheet's answer takes 11.
+    DepositCrewTakeReply deposit_crew_take = 11;
   }
+}
+
+// ONE CREW SIZE ON THE DEPOSIT COMPOSE SHEET.
+message DepositCrewTakeRow {
+  // Echoed so the row is self-describing. Rows ascend from 1.
+  uint32 workers = 1;
+  // THIS TURN'S CUT at the rung the working HOLDS - the rung's bare rate for the crew plus what the
+  // held rung's tool adds (`deposit_take`), capped by the working's reach at `floor`, off the stock
+  // as next turn will find it (renewed first). The sheet's NEXT TURN figure.
+  float take = 2;
+  // WORKERS HOLDING THE HELD RUNG'S TOOL - the "N" of "N of `workers` kits available". The row's kit
+  // narrowed to the tool serving the held rung (the sled on deadfall and gathering, the axe on
+  // felling and coppice, the wedges on the quarry), armed out of this crew's share of the band's
+  // stock. 0 when the kit carries no tool for the held rung (`none` included). A float: coverage
+  // counts workers in fractions.
+  float armed_workers = 3;
+  // THE CREW'S CUT ONCE THE WORKING IS RAISED ONE RUNG - the next rung's own rate for the crew plus
+  // the next rung's tool, before the reach caps it: the sheet's "once felled / coppiced / quarried"
+  // figure, and the same function as a committed row's `nextRungMaterialYield`. 0 at the top of a
+  // branch.
+  float next_rung_take = 4;
+}
+
+// The answer to `DepositCrewTakeQuery`.
+message DepositCrewTakeReply {
+  // ONE ROW PER CREW SIZE, ascending, `1..=max_workers`. Empty when `max_workers` is 0.
+  repeated DepositCrewTakeRow per_crew = 1;
+  // The rung the working HOLDS, as "<branch>:<id>" - the rung `take` and `armed_workers` are priced
+  // at. An unopened working reads its branch's free floor.
+  string held_rung = 2;
+  // The rung directly above it, "" at the top of the branch - the rung `next_rung_take` prices.
+  string next_rung = 3;
+  // FALSE when the working is past the band's work range: the turn abandons such a row, so every
+  // `take` and `next_rung_take` reads 0 and the sheet should say why rather than quote nothing.
+  bool in_range = 4;
 }
 
 // The answer to `WorkPartyForecastQuery`.

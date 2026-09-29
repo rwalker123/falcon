@@ -690,21 +690,79 @@ pub fn working_default_kit(
     equipment.extract_default_kit(source.rung().branch())
 }
 
+/// **THE GEAR A PROSPECTIVE CREW WORKS `rung` WITH** — the one ration every deposit quote is armed
+/// from (#663). `kit` is the row's kit as stored or picked; it is narrowed to the items serving
+/// `rung` ([`crate::equipment_config::EquipmentConfig::deposit_rung_kit`]), and the crew is cut from
+/// its share of each of those items as a **prospective row**: competing with the band's other rows
+/// ([`crate::components::LaborAllocation::rows_excluding_source`], themselves narrowed to their own
+/// held rungs) and less what the standing pools were issued. For a committed row that is
+/// arithmetically the turn's own budget, which is why a quote agrees with the take it predicts.
+#[allow(clippy::too_many_arguments)] // the ration's own inputs: roster, holdings, rows, crew, rung
+pub fn prospective_deposit_gear(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    held: &HeldRungs<'_>,
+    allocation: &crate::components::LaborAllocation,
+    target: &crate::components::LaborTarget,
+    kit: &crate::equipment_config::KitChoice,
+    workers: u32,
+    band_kit: &crate::components::BandEquipment,
+    rung: RungKey,
+) -> crate::equipment_config::DepositGear {
+    let key = rung.wire_key();
+    let crew = workers as f32;
+    let narrowed = equipment.deposit_rung_kit(kit, rung.branch(), &key);
+    let other_rows = allocation.rows_excluding_source(equipment, target, Some(held));
+    let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
+        other_rows.iter().map(|(kit, held)| (kit, *held)),
+        &narrowed,
+        crew,
+    )
+    .reserving(allocation.pool_issued());
+    let coverage = equipment.coverage_from_units(
+        &narrowed,
+        crew,
+        band_kit,
+        budget.share_for(crew, band_kit, equipment),
+    );
+    equipment.deposit_gear(&coverage, band_kit, rung.branch(), Some(&key))
+}
+
+/// **WHAT A CREW WOULD CUT A TURN ONCE `held` IS RAISED ONE RUNG** — the next rung's own bare rate ×
+/// the crew plus the next rung's tool ([`prospective_deposit_gear`]), before the reach caps it:
+/// [`deposit_crew_throughput`] at the next rung's payoff, the take's own function. `NO_TAKE_THIS_TURN`
+/// at the top of a branch or for an empty crew.
+#[allow(clippy::too_many_arguments)] // the ration's inputs plus the ladder and the held rung
+pub fn next_rung_take_for(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    ladder: &LadderConfig,
+    held: &HeldRungs<'_>,
+    allocation: &crate::components::LaborAllocation,
+    target: &crate::components::LaborTarget,
+    kit: &crate::equipment_config::KitChoice,
+    workers: u32,
+    band_kit: &crate::components::BandEquipment,
+    held_rung: RungKey,
+) -> f32 {
+    if workers == NO_CREW_ON_THE_DEPOSIT {
+        return NO_TAKE_THIS_TURN;
+    }
+    let Some(next) = held_rung.above() else {
+        return NO_TAKE_THIS_TURN;
+    };
+    let Some(payoff) = ladder.rung(next).extraction_payoff else {
+        return NO_TAKE_THIS_TURN;
+    };
+    let gear = prospective_deposit_gear(
+        equipment, held, allocation, target, kit, workers, band_kit, next,
+    );
+    deposit_crew_throughput(workers, gear.take, &payoff)
+}
+
 /// **WHAT THIS `extract` ROW'S CREW WOULD CUT A TURN ONCE ITS WORKING IS RAISED ONE RUNG** (#663) —
-/// the next rung's own bare rate × the crew, **plus what this band's gear adds there**, before the
-/// reachable stock caps it: [`deposit_crew_throughput`] at the next rung's payoff, the take's own
-/// function. Published as `LaborAssignment.nextRungMaterialYield` so the compose sheet's *"once
-/// felled: X a turn"* is a number the sim struck rather than a bare catalog rate × crew the client
-/// multiplies.
-///
-/// **The same ration the turn arms with**, as a prospective row: the stored kit narrowed to the
-/// NEXT rung's tools ([`crate::equipment_config::EquipmentConfig::deposit_rung_kit`]), competing
-/// with the band's other rows ([`crate::components::LaborAllocation::rows_excluding_source`]) and
-/// less what the standing pools were issued — which is exactly how the row will be cut once the rung
-/// is raised and its own claim moves to the new tool.
-///
-/// `NO_TAKE_THIS_TURN` for any other row, an empty row, a working at the top of its branch, or a
-/// material the deposits table does not carry.
+/// [`next_rung_take_for`] at the row's own stored kit and committed crew. Published as
+/// `LaborAssignment.nextRungMaterialYield` so the compose sheet's *"once felled: X a turn"* is a
+/// number the sim struck. `NO_TAKE_THIS_TURN` for any other row, an empty row, a working at the top of
+/// its branch, or a material the deposits table does not carry.
 pub fn next_rung_geared_take(
     equipment: &crate::equipment_config::EquipmentConfig,
     ladder: &LadderConfig,
@@ -716,37 +774,81 @@ pub fn next_rung_geared_take(
     let crate::components::LaborTarget::Extract { tile, material, .. } = &assignment.target else {
         return NO_TAKE_THIS_TURN;
     };
-    if assignment.workers == NO_CREW_ON_THE_DEPOSIT {
-        return NO_TAKE_THIS_TURN;
-    }
     let Some(held_rung) = held.held(*tile, material) else {
         return NO_TAKE_THIS_TURN;
     };
-    let Some(next) = held_rung.above() else {
-        return NO_TAKE_THIS_TURN;
-    };
-    let Some(payoff) = ladder.rung(next).extraction_payoff else {
-        return NO_TAKE_THIS_TURN;
-    };
-    let next_key = next.wire_key();
-    let workers = assignment.workers as f32;
-    let kit =
-        equipment.deposit_rung_kit(&assignment.kit_choice(equipment), next.branch(), &next_key);
-    let other_rows = allocation.rows_excluding_source(equipment, &assignment.target, Some(held));
-    let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        other_rows.iter().map(|(kit, held)| (kit, *held)),
-        &kit,
-        workers,
-    )
-    .reserving(allocation.pool_issued());
-    let coverage = equipment.coverage_from_units(
-        &kit,
-        workers,
+    next_rung_take_for(
+        equipment,
+        ladder,
+        held,
+        allocation,
+        &assignment.target,
+        &assignment.kit_choice(equipment),
+        assignment.workers,
         band_kit,
-        budget.share_for(workers, band_kit, equipment),
+        held_rung,
+    )
+}
+
+/// **ONE CREW SIZE'S QUOTE ON THE DEPOSIT COMPOSE SHEET** — [`deposit_crew_quote`]'s answer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DepositCrewQuote {
+    /// This turn's cut at the held rung, geared and reach-capped ([`deposit_take`]).
+    pub take: f32,
+    /// Workers holding the held rung's tool.
+    pub armed_workers: f32,
+    /// The cut once the working is raised one rung ([`next_rung_take_for`]).
+    pub next_rung_take: f32,
+}
+
+/// **WHAT A PROSPECTIVE CREW OF `workers` CUTS OFF THIS WORKING WITH THIS KIT** (#663) — the deposit
+/// compose sheet's row, through the functions the turn cuts with: the held rung's gear off
+/// [`prospective_deposit_gear`], the take off [`deposit_take`] at the working's own payoff, reach and
+/// the row's floor, and the next rung off [`next_rung_take_for`].
+///
+/// `working` is the working **as the next turn will find it** — renewed first
+/// ([`renew_deposit`] on a clone), the rule the assign-time seed follows — so committing this crew
+/// and resolving pays [`DepositCrewQuote::take`].
+#[allow(clippy::too_many_arguments)] // the ration's inputs plus the working and its ground
+pub fn deposit_crew_quote(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    ladder: &LadderConfig,
+    config: &ExtractionConfig,
+    held: &HeldRungs<'_>,
+    allocation: &crate::components::LaborAllocation,
+    target: &crate::components::LaborTarget,
+    kit: &crate::equipment_config::KitChoice,
+    workers: u32,
+    band_kit: &crate::components::BandEquipment,
+    working: &DepositSource,
+    ground: &Tile,
+) -> DepositCrewQuote {
+    let floor = match target {
+        crate::components::LaborTarget::Extract { floor, .. } => *floor,
+        _ => crate::components::STRIP_IT_BARE,
+    };
+    let held_rung = working.rung();
+    let gear = prospective_deposit_gear(
+        equipment, held, allocation, target, kit, workers, band_kit, held_rung,
     );
-    let gear = equipment.deposit_gear(&coverage, band_kit, next.branch(), Some(&next_key));
-    deposit_crew_throughput(assignment.workers, gear.take, &payoff)
+    let capacity = tile_deposit_capacity(config, &working.material, ground);
+    let regrowth_rate = tile_deposit_regrowth(config, &working.material, ground);
+    let payoff = deposit_payoff(working.standing(), ladder);
+    DepositCrewQuote {
+        take: deposit_take(
+            workers,
+            gear.take,
+            working.stock,
+            capacity,
+            regrowth_rate,
+            &payoff,
+            floor,
+        ),
+        armed_workers: gear.equipped_workers,
+        next_rung_take: next_rung_take_for(
+            equipment, ladder, held, allocation, target, kit, workers, band_kit, held_rung,
+        ),
+    }
 }
 
 /// **WHAT THE CREW'S HANDS AND TOOLS CAN LIFT THIS TURN** — the unclamped half of

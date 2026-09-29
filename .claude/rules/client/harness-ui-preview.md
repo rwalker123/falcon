@@ -2993,7 +2993,7 @@ byte-identical**, that frame the only mover.
 
 ## The `workings` chapter, reworked to the three surfaces (issue #650)
 
-**Twenty-two frames and one hundred and forty-five checkpoints**, `EXPECTED_CHECKPOINTS` **145**
+**Twenty-three frames and one hundred and fifty-nine checkpoints**, `EXPECTED_CHECKPOINTS` **159**
 — RE-MEASURED by raising the const to an impossible number and reading `reached` back, as this
 file's own rule says (the declared 118 had drifted to a real 121 before the first take-kit state
 landed). **The const in `chapters/workings.gd` is the authority and this paragraph is the
@@ -3006,7 +3006,7 @@ written down: a delta on a stale count sets a floor the chapter can fall through
 **FOUR FRAMES WERE RETIRED WITH THE `Workings ▸` POPUP** — `workings_two_seams`, `workings_over_cut`,
 `workings_runway` and `workings_idle` — and their claims did not go with them: they are re-made
 against the tile card's rows, the two compose sheets and the ladder's producer, which is where the
-branch says those things now. `workings_unopened` kept its name and its subject. **The chapter's whole frame set is twenty-two** —
+branch says those things now. `workings_unopened` kept its name and its subject. **The chapter's whole frame set is twenty-three** —
 `workings_tile_card` / `workings_payoff_rows` / `workings_forestry_sheet` /
 `workings_extraction_sheet` / `workings_unopened`, the two ORDER frames
 (`workings_road_last` / `workings_road_remembered`), `workings_worked_buttons` and
@@ -3014,8 +3014,8 @@ branch says those things now. `workings_unopened` kept its name and its subject.
 (`SourceForecast.FLOOR_PRESETS`, one frame per preset) with `workings_floor_held` and
 `workings_floor_stripped` beside them, `workings_fresh_runway`, `workings_quarry_reach`,
 `workings_out_of_range`, the pair `workings_tile_crews` / `workings_tile_crews_other_band`, and
-the take-kit trio `workings_forestry_kit` / `workings_extraction_kit` /
-`workings_forestry_kit_committed` last (issue #663).
+the take-kit pair `workings_forestry_kit` / `workings_extraction_kit` and the crew-curve pair
+`workings_forestry_kit_curve` / `workings_forestry_kit_out_of_range` last (issue #663).
 
 **THE TAKE-KIT PAIR PUSHES A ROSTER OF ITS OWN AND HANDS THE PREVIOUS ONE BACK.** The shared
 `BandFx.kit_roster_fixture()` carries no `extract` kit and its `none` does not list the job, so every
@@ -3041,14 +3041,44 @@ kits plus an extract-listing `none` locally, which keeps those frames where they
 - **Sabotage-verified twice, disjointly**: `JOB_EXTRACT` dropped from `SOURCE_DEFAULT_KIT_JOBS` fails
   both default-mark claims and the rock's opening/commit (4); the source-change reset removed fails
   the precondition and the rock's opening/commit (3), reading `No kit` where the rock's kit belongs.
-- **`workings_forestry_kit_committed` is the playtest's two figures, read off the ROW.** The band
-  carries a committed wood `extract` row at `SHEET_CREW` with `kit_workers_holding` 1 and
-  `next_rung_material_yield` 7.5 — figures no client derivation lands on (the catalog's `2.0 × 3` is
-  6, and the band holds no axes for a `min` to count). The available line must EQUAL
-  `KitRoster.shortfall_sentence(kit, 1, 3)` and the `ONCE COPPICED` value must carry `7.5` and NOT
-  `6`. A PNG-less leg then steps the crew off the row's `workers` and asserts BOTH go silent, which is
-  the hide rule's half; the forestry sheet's own deal claim above is the other half — with no row at
-  all the deal row is ABSENT.
+
+**THE DEPOSIT CREW CURVE HAS A STAND-IN SERVER** (`fixtures_forecast.gd` →
+`deposit_crew_take_answer`). A working that authors a reply under `DEPOSIT_CREW_TAKE_KEY` is answered
+with it verbatim; every other working gets a BARE curve — `min(perWorkerBiomass × w, the room above
+the floor)`, every hand armed, no next rung — which is why the earlier workings frames kept their
+NEXT TURN figures and render no deal row. Ground holding no such working is refused
+`unknown_deposit`.
+
+- **`workings_forestry_kit_curve` reads all three gear-bearing figures off the authored row at the
+  stepper's crew** — takes `[2.35, 5.40, 5.40, 6.95]`, armed `[1, 1, 1, 2]`, next-rung takes
+  `[2.55, 5.20, 7.50, 9.85]`, none of which the bare rate (`2.0 × w`) or the catalog deal
+  (`2.0 × w`) lands on. At crew 3: NEXT TURN `5.40` (not `6.00`), `1 of 3 Woodcutting kits
+  available`, `ONCE COPPICED 7.5` (not `6`). The stepper is then moved to 2 and all three are
+  asserted against row 2, which is what says the sheet reads the row AT the stepper rather than one
+  fixed row; `none` is then picked and the available line must be silent.
+- ⛔ **THE CREW-DRAW READINGS ARE ASSERTED AGAINST AN ORACLE, AT CREW 3**
+  (`_assert_draw_reads_the_curve`). The chapter walks the stock with `SourceForecast.project_stock` at
+  the row's `5.40` and at the bare `6.00`, and the verdict must carry the first walk's lead
+  (`settles at 56%`) and not the second's (`settles at 51%`). The hold pill must equal the smallest
+  curve crew whose take covers the growth at the floor (2), not the bare `ceil(growth / 2.0)` (3). Each
+  pair carries a precondition that the two readings DIFFER, and **the takes are shaped for that**: row
+  2 repeats row 3's `5.40`, because the growth at the floor sits between `4.0` and `5.4`, so a curve
+  rising by `2.0` a hand would name the same holding crew as the bare rate.
+- ⛔ **THE SEAM IS RESET BEFORE THE STATE**, because the key is band · working · kit · floor · gear
+  and says nothing about the fixture: the earlier wood states hold the BARE answer for the same key.
+  The PENDING claim is read with no `await` after the open, the stand-in answering deferred as the
+  socket does — and on a CLOSED-then-settled sheet, since an open over an open sheet leaves the
+  previous render's `queue_free`d nodes in the tree for the rest of the frame and the claim would
+  read those.
+- **`workings_forestry_kit_out_of_range` is `in_range: false` on a band standing ON the working**, so
+  the sheet's own range gate mounts nothing and the sentence on the sheet can only be the curve's
+  (`DEPOSIT_TAKE_OUT_OF_RANGE`); no take, no available line and no deal stand beside it, and the
+  commit is dead. **Nor any verdict, crew pill or teaching line** — asserted in one claim over the
+  verdict text, both pills' `CREW_TARGET_ABSENT` and an empty teaching line.
+- **Sabotage-verified** by feeding `curve_chart_model`'s walk the bare `perWorkerBiomass × crew`:
+  exactly ONE claim fails, `…the verdict at 3 is the curve's draw, not the bare rate's`, reading
+  `settles at 51%` against the wanted `56%`, `EXIT=1`. The hold pill stays green under it, correctly —
+  the pills come from `curve_crew_reaching`, not from the walk.
 
 ### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
 

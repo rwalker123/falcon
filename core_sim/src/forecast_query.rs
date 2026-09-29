@@ -44,9 +44,10 @@
 
 use bevy::prelude::World;
 use sim_runtime::commands::{
-    query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, HuntCrewTakeQuery,
-    HuntCrewTakeReply, HuntCrewTakeRow, HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow,
-    QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
+    query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, DepositCrewTakeQuery,
+    DepositCrewTakeReply, DepositCrewTakeRow, HuntCrewTakeQuery, HuntCrewTakeReply,
+    HuntCrewTakeRow, HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow, QueryPayload,
+    QueryReply, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
 };
 
 use crate::combat_config::CombatConfigHandle;
@@ -70,6 +71,7 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         QueryPayload::DenialRaidForecast(ask) => answer_denial_raid_forecast(world, ask),
         QueryPayload::HuntCrewTake(ask) => answer_hunt_crew_take(world, ask),
         QueryPayload::WorkPartyForecast(ask) => answer_work_party_forecast(world, ask),
+        QueryPayload::DepositCrewTake(ask) => answer_deposit_crew_take(world, ask),
         // **Answered by the server, from disk.** The slot list is a question about the filesystem,
         // not about a world — it has no `World` to resolve against and must be answerable while the
         // server is idle, which is exactly when a player opens the load menu. Reaching here means
@@ -760,6 +762,157 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         per_crew,
         armed_crew,
         weapon_item_id,
+    })
+}
+
+/// ⛔ **THE DEPOSIT COMPOSE SHEET'S QUESTION, ANSWERED BY THE TAKE'S OWN FUNCTIONS** (#663) — one row
+/// per crew size with this turn's geared, reach-capped cut at the held rung, the workers holding
+/// that rung's tool, and the cut once the working is raised one rung.
+///
+/// **Each row is [`crate::extraction::deposit_crew_quote`]**: the crew is a prospective row,
+/// competing with the band's other rows for each tool and losing what the pools were issued — the
+/// ration `next_rung_geared_take` and the turn arm from — and the take runs through `deposit_take`
+/// at the working **as the next turn will find it** (renewed on a clone, the seed's rule). So
+/// committing crew `n` with this kit and resolving pays row `n`'s `take`.
+///
+/// **An unopened working is derived**, never refused: full stock at the tile's capacity on its
+/// branch's free floor (`DepositSource::opening`, the capture's own rule), because the commonest
+/// sheet is a crew about to be put on fresh ground. Ground holding none of the material is
+/// `unknown_deposit`. **Past the band's work range** the turn abandons the row, so every take reads
+/// `0` and `in_range` says why.
+fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> QueryReply {
+    if !floor_is_valid(ask.floor) {
+        return query_failure(query_error::INVALID_FLOOR);
+    }
+    if ask.max_workers > MAX_CREW_TAKE_WORKERS {
+        return query_failure(query_error::INVALID_CREW);
+    }
+    let wanted = BandId(ask.band_id);
+    let faction = FactionId(ask.faction_id);
+    let Some(band) = world
+        .query::<(bevy::prelude::Entity, &BandId, &PopulationCohort)>()
+        .iter(world)
+        .find(|(_, id, cohort)| **id == wanted && cohort.faction == faction)
+        .map(|(entity, _, _)| entity)
+    else {
+        return query_failure(query_error::UNKNOWN_BAND);
+    };
+    let current_tile = world
+        .get::<PopulationCohort>(band)
+        .expect("the band was found by its cohort")
+        .current_tile;
+    let Some(band_pos) = world
+        .get::<crate::components::Tile>(current_tile)
+        .map(|tile| tile.position)
+    else {
+        return query_failure(query_error::UNKNOWN_BAND);
+    };
+    let wear = world
+        .get::<BandEquipment>(band)
+        .cloned()
+        .unwrap_or_default();
+    let allocation = world
+        .get::<crate::components::LaborAllocation>(band)
+        .cloned()
+        .unwrap_or_default();
+    let equipment = world.resource::<EquipmentConfigHandle>().get();
+    let kit = match equipment.resolve_kit_for_job(Some(&ask.kit_id), KitJob::Extraction) {
+        Ok(kit) => kit,
+        Err(crate::equipment_config::KitSelectionError::Unknown { .. }) => {
+            return query_failure(query_error::UNKNOWN_KIT)
+        }
+        Err(crate::equipment_config::KitSelectionError::WrongJob { .. }) => {
+            return query_failure(query_error::KIT_WRONG_JOB)
+        }
+    };
+    let tile = bevy::math::UVec2::new(ask.x, ask.y);
+    let registry = world.resource::<crate::resources::TileRegistry>();
+    let Some(ground) = registry
+        .index(ask.x, ask.y)
+        .and_then(|entity| world.get::<crate::components::Tile>(entity))
+        .cloned()
+    else {
+        return query_failure(query_error::UNKNOWN_DEPOSIT);
+    };
+    let grid_width = registry.width;
+    let extraction = world
+        .resource::<crate::extraction_config::ExtractionConfigHandle>()
+        .get();
+    let ladder = world
+        .resource::<crate::intensification::LadderConfigHandle>()
+        .get();
+    let capacity = crate::extraction::tile_deposit_capacity(&extraction, &ask.material, &ground);
+    let Some(branch) = crate::extraction::deposit_branch(&extraction, &ask.material)
+        .filter(|_| capacity > crate::extraction_config::NO_DEPOSIT)
+    else {
+        return query_failure(query_error::UNKNOWN_DEPOSIT);
+    };
+    let deposits = world.resource::<crate::extraction::DepositRegistry>();
+    // **THE WORKING AS THE NEXT TURN WILL FIND IT** — the live one or the derived opening, renewed on
+    // a clone: the turn regrows in Logistics before it cuts.
+    let mut working = deposits
+        .source(tile, &ask.material)
+        .cloned()
+        .unwrap_or_else(|| {
+            crate::extraction::DepositSource::opening(tile, &ask.material, capacity, branch)
+        });
+    crate::extraction::renew_deposit(&mut working, &ground, &extraction, &ladder);
+    let held = crate::extraction::HeldRungs {
+        deposits,
+        extraction: &extraction,
+    };
+    let held_rung = working.rung();
+    let wrap = world
+        .resource::<crate::SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let work_range = world.resource::<LaborConfigHandle>().get().band_work_range;
+    let in_range =
+        crate::grid_utils::hex_distance_wrapped(band_pos, tile, grid_width, wrap) <= work_range;
+    let target = crate::components::LaborTarget::Extract {
+        tile,
+        material: ask.material.clone(),
+        floor: ask.floor,
+    };
+    let per_crew = (1..=ask.max_workers)
+        .map(|workers| {
+            let quote = crate::extraction::deposit_crew_quote(
+                &equipment,
+                &ladder,
+                &extraction,
+                &held,
+                &allocation,
+                &target,
+                &kit,
+                workers,
+                &wear,
+                &working,
+                &ground,
+            );
+            DepositCrewTakeRow {
+                workers,
+                take: if in_range {
+                    quote.take
+                } else {
+                    crate::extraction::NO_TAKE_THIS_TURN
+                },
+                armed_workers: quote.armed_workers,
+                next_rung_take: if in_range {
+                    quote.next_rung_take
+                } else {
+                    crate::extraction::NO_TAKE_THIS_TURN
+                },
+            }
+        })
+        .collect();
+    QueryReply::DepositCrewTake(DepositCrewTakeReply {
+        per_crew,
+        held_rung: held_rung.wire_key(),
+        next_rung: held_rung
+            .above()
+            .map(|rung| rung.wire_key())
+            .unwrap_or_default(),
+        in_range,
     })
 }
 

@@ -2977,9 +2977,10 @@ func _workings_roster_cutters(band: Dictionary, model: Dictionary) -> int:
 ##
 ## **THE FLOOR IS `floor_for_extract`, NEVER `DepositState.floor`.** That wire field is the SOURCE's
 ## reading — the deepest floor any band cutting this working named — so a cap struck at it would
-## measure this band's crew against another band's order. The compose sheet's own stepper is capped
-## at the identical quotient (`DrawerComposeController`'s `max_useful_cutters` call), which is what
-## makes *the `+` refused it* and *the row flags it* one ceiling rather than two.
+## measure this band's crew against another band's order. **It is the BARE quotient** — the roster
+## holds no crew curve per row — while the compose sheet caps its stepper at the curve's plateau
+## (`HudDepositVocab.curve_useful_cutters`, issue #663). The two agree for an unequipped crew; for a
+## geared one the plateau comes at fewer hands, so this row can pass a crew the sheet would refuse.
 func _workings_roster_max_useful(band: Dictionary, model: Dictionary) -> int:
     var tile: Vector2i = model["tile"]
     return HudDepositVocab.max_useful_cutters(model["deposit"] as Dictionary,

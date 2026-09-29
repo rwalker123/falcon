@@ -1490,8 +1490,8 @@ const DEPOSIT_DEAL_LABEL_Y_FORMAT := "once %sied"
 const DEPOSIT_DEAL_SILENT_E := "e"
 const DEPOSIT_DEAL_CONSONANT_Y := "y"
 
-## `6.60 stone a turn` — what the next rung would pay this band's crew, off the ROW's own
-## `nextRungMaterialYield` (issue #663). **The sim prices it, gear included**: the catalog's
+## `6.60 stone a turn` — what the next rung would pay the crew on the stepper, off the crew curve's
+## `next_rung_take` (issue #663). **The sim prices it, gear included**: the catalog's
 ## `yieldPerWorkerTurn × crew` it replaced ignored the axes and the sled, which is the playtest report.
 const DEPOSIT_DEAL_VALUE_FORMAT := "%s %s a turn"
 
@@ -1507,28 +1507,222 @@ static func deal_label(entry: Dictionary) -> String:
 		return DEPOSIT_DEAL_LABEL_Y_FORMAT % verb.left(verb.length() - 1)
 	return DEPOSIT_DEAL_LABEL_FORMAT % verb
 
-## …and its value, read off the band's own COMMITTED `extract` row. `""` — and so no deal row at all
-## — unless the row exists AND the stepper still stands on its `workers`.
+## …and its value: the crew curve's `next_rung_take` at the stepper's crew (`row` is
+## `curve_row(reply, crew)`). `""` — and so no deal row at all — while the curve has not answered, past
+## the top of the branch (`next_rung` empty), and where the sim prices the next rung at nothing.
 ##
-## ⛔ **BEFORE A ROW EXISTS, AND WHILE THE STEPPER IS OFF THE COMMITTED CREW, THE FIGURE IS HIDDEN,
-## NOT RE-DERIVED.** The sim strikes it at the committed `workers` with the band's gear applied, and
-## gear saturates at a head count, so it does not scale linearly with a crew nobody has committed. The
-## only client-side stand-in is the catalog rate times the stepper — the arithmetic that ignored the
-## axes and the sled and printed a figure the committed row then contradicted. No figure beats that
-## one; the pointer line above the readout still names the rung and the board that raises it.
-##
-## `0` from the sim is also no row: a non-extract row, an empty one, or the top of a branch.
-static func deal_value(entry: Dictionary, deposit: Dictionary, crew: int,
+## ⛔ **THE FIGURE IS NEVER DERIVED HERE.** The catalog rate times the crew was this row's value until
+## the playtest caught it ignoring the axes and the sled; gear saturates at a head count, so no client
+## multiplication of a per-worker rate lands on the sim's answer. No curve, no figure.
+static func deal_value(entry: Dictionary, deposit: Dictionary, reply: Dictionary,
 		row: Dictionary) -> String:
-	if catalog_verb(entry) == RUNG_CATALOG_NONE or crew <= 0 or row.is_empty():
+	if catalog_verb(entry) == RUNG_CATALOG_NONE or row.is_empty():
 		return ""
-	if int(row.get("workers", 0)) != crew:
+	if String(reply.get(CURVE_NEXT_RUNG_KEY, "")) == CURVE_NO_NEXT_RUNG:
 		return ""
-	var paid := float(row.get(SourceForecast.ASSIGNMENT_NEXT_RUNG_MATERIAL_YIELD_KEY, 0.0))
+	var paid := float(row.get(CURVE_NEXT_RUNG_TAKE_KEY, 0.0))
 	if paid <= RUNG_CATALOG_NO_YIELD:
 		return ""
 	return DEPOSIT_DEAL_VALUE_FORMAT % [
 		DetailFormat.format_trimmed(paid, CARD_STOCK_DECIMALS), material_of(deposit)]
+
+# ---- THE CREW CURVE (`ForecastQuery.KIND_DEPOSIT_CREW_TAKE`, issue #663) ------------------------
+#
+# The sheet's three gear-bearing figures — NEXT TURN, `N of M <kit> available` and the `once felled`
+# deal — are READ off one reply, one row per crew size, at the stepper's crew. None of them is
+# composed here: the sim resolves which of the kit's items serves the held rung, how the band's gear
+# is shared out, and what the reach caps the cut at. The keys are `native/src/bridge/query.rs`'s.
+
+const CURVE_PER_CREW_KEY := "per_crew"
+const CURVE_WORKERS_KEY := "workers"
+## This turn's cut at the held rung, whole crew, capped by the reach at the floor — NEXT TURN.
+const CURVE_TAKE_KEY := "take"
+## How many of the crew hold the held rung's tool — the N of `N of M <kit> available`.
+const CURVE_ARMED_WORKERS_KEY := "armed_workers"
+## The crew's cut once the working stands one rung up — the `once felled` deal.
+const CURVE_NEXT_RUNG_TAKE_KEY := "next_rung_take"
+const CURVE_HELD_RUNG_KEY := "held_rung"
+const CURVE_NEXT_RUNG_KEY := "next_rung"
+## `""` on `next_rung` — the working stands at the top of its branch.
+const CURVE_NO_NEXT_RUNG := ""
+## `false` past the band's work range, where the turn abandons the row and every take reads `0`.
+const CURVE_IN_RANGE_KEY := "in_range"
+
+## The sim's refusal for ground that holds none of the asked material
+## (`sim_runtime::commands::query_error::UNKNOWN_DEPOSIT`).
+const QUERY_ERROR_UNKNOWN_DEPOSIT := "unknown_deposit"
+
+## **WHILE THE CURVE IS IN FLIGHT** — the deposit twin of `HudComposeVocab.HUNT_TAKE_PENDING`, and it
+## stands where NEXT TURN would: the sheet states no take it has not been told.
+const DEPOSIT_TAKE_PENDING := "Costing what this crew cuts…"
+## **THE ONE REFUSAL WITH ITS OWN WORDS** — every other token rides `FORECAST_FAILED_FORMAT`, being a
+## client bug if it ever fires; this one is a real state of the ground (a seam cut out, or a tile the
+## selection has moved off) and a player can act on it.
+const DEPOSIT_TAKE_UNKNOWN_DEPOSIT := "This ground holds none of that material any more."
+## **THE SIM SAYS THIS BAND IS OUT OF RANGE** (`in_range: false`), so every take is `0` — the turn
+## abandons the row. Said in the range gate's own term, `work range`, and stated only where this
+## sheet's own measurement has not already mounted `HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT`.
+const DEPOSIT_TAKE_OUT_OF_RANGE := \
+	"Beyond this band's work range — a crew sent here is dropped and cuts nothing."
+
+## The row for `crew` off a curve reply, or `{}` where there is none (no reply, crew `0`, a crew past
+## the rows asked). The rows are workers-indexed exactly as the hunt curve's are, so the one lookup
+## serves both.
+static func curve_row(reply: Dictionary, crew: int) -> Dictionary:
+	return SourceForecast.hunt_crew_take_row(reply.get(CURVE_PER_CREW_KEY, []), crew)
+
+## Whether the curve says this band can work the ground at all. Absent (no reply) reads `true`: the
+## reply is what states the refusal, and a sheet with no reply states nothing about range.
+static func curve_in_range(reply: Dictionary) -> bool:
+	return bool(reply.get(CURVE_IN_RANGE_KEY, true))
+
+## Whether an ANSWERED reply says the band cannot work the ground. `false` for no reply at all — a
+## sheet waiting on its answer states nothing about range.
+static func curve_says_out_of_range(reply: Dictionary) -> bool:
+	return not reply.is_empty() and not curve_in_range(reply)
+
+## **THE CURVE ROW AS THE KIT ROW'S COVERAGE PAIR** — `{kit_id, workers, kit_workers_holding}`, the
+## shape `KitRoster.shortfall_line`'s committed arm reads, so the available line is worded by the one
+## `shortfall_sentence` every sheet uses and follows its rules (silent when covered, silent for `none`).
+## `{}` — silence — where there is no row to read.
+static func curve_coverage_row(row: Dictionary, kit_id: String) -> Dictionary:
+	if row.is_empty():
+		return {}
+	return {
+		KitRoster.ROW_KIT_ID_KEY: kit_id,
+		KitRoster.ROW_WORKERS_KEY: int(row.get(CURVE_WORKERS_KEY, 0)),
+		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: float(row.get(CURVE_ARMED_WORKERS_KEY,
+			0.0)),
+	}
+
+## The line a FAILED curve states — the unknown-deposit refusal in words, every other token on the
+## shared failure format.
+static func take_failed_text(error: String) -> String:
+	if error == QUERY_ERROR_UNKNOWN_DEPOSIT:
+		return DEPOSIT_TAKE_UNKNOWN_DEPOSIT
+	return HudComposeVocab.FORECAST_FAILED_FORMAT % error
+
+## This turn's cut at `crew` off a curve reply, `0` where the reply has no row for it (crew `0`, no
+## reply, a crew past the rows asked).
+static func curve_take_at(reply: Dictionary, crew: int) -> float:
+	return float(curve_row(reply, crew).get(CURVE_TAKE_KEY, 0.0))
+
+## How many crew sizes the reply priced — `1..this` are the crews it can answer for.
+static func curve_rows(reply: Dictionary) -> int:
+	return Array(reply.get(CURVE_PER_CREW_KEY, [])).size()
+
+## The smallest crew in the curve whose cut reaches `amount` a turn, or `NO_CREW_ANSWER` where no crew
+## the reply was asked about gets there — which, the curve being asked for the band's whole pool, is
+## *no crew this band can field*. Never extrapolated past the last row.
+static func curve_crew_reaching(reply: Dictionary, amount: float) -> int:
+	var target := amount * (1.0 - SourceForecast.CREW_TAKE_REACH_TOLERANCE)
+	for crew in range(1, curve_rows(reply) + 1):
+		if curve_take_at(reply, crew) >= target:
+			return crew
+	return SourceForecast.NO_CREW_ANSWER
+
+## **THE STEPPER'S "USEFUL" CAP, OFF THE CURVE** — the smallest crew whose cut equals the curve's best,
+## i.e. where more hands stop buying take. `CUTTERS_UNCAPPED` where the take is still rising at the
+## last row (every hand the band has is buying take, so the pool is the ceiling), `CUTTERS_BARREN`
+## where the curve pays nothing at any size. It replaces `max_useful_cutters` on the sheet once the
+## curve has arrived, because that one divides by the bare per-worker rate and a geared crew saturates
+## sooner.
+static func curve_useful_cutters(reply: Dictionary) -> int:
+	var rows := curve_rows(reply)
+	var best := 0.0
+	for crew in range(1, rows + 1):
+		best = maxf(best, curve_take_at(reply, crew))
+	if best <= 0.0:
+		return CUTTERS_BARREN
+	var useful := curve_crew_reaching(reply, best)
+	return CUTTERS_UNCAPPED if useful >= rows else useful
+
+## Set on a chart model when the sheet has no curve to draw a crew's draw from — the reply is in
+## flight, refused, or says the band is out of range. Every reading that projects what the crew takes
+## (the walk, the two crew pills, the verdict) is withheld, never replaced by the bare rate.
+const CHART_DRAW_WITHHELD_KEY := "draw_withheld"
+## …and set beside it when the reason is the band's range, which additionally withholds every reading
+## that ADVISES about a draw at all (the teaching line, the finite verdict and runway).
+const CHART_OUT_OF_RANGE_KEY := "out_of_range"
+
+## ⛔ **THE CHART'S CREW-DRAW READINGS, RECOMPOSED OFF THE CREW CURVE** (issue #663). `floor_chart_model`
+## walks the stock down at `perWorkerBiomass × crew`, which is the bare rate — a crew with sleds and
+## axes drew on the chart as one without. This takes that model and replaces the four readings that
+## stand for *what this crew takes a turn*:
+##
+## - the WALK (`series` / `reached_turn` / `settled_fraction`) — `project_stock` at the curve's `take`
+##   for the composed crew, with no carry cap of its own;
+## - *hold it after* — the smallest crew whose take covers the regrowth at the floor;
+## - *clear it now* — the smallest crew whose take covers the room above the floor, floored on the
+##   reaching crew exactly as the shared composer floors it;
+## - the VERDICT — the shared `harvest_verdict`, its "K would reach the floor" being the smallest crew
+##   in the curve whose projection reaches it, and its no-remedy ending where none does.
+##
+## **THE ROW'S TAKE IS A SAFE STAND-IN FOR THE CREW'S LIFT.** The sim caps it at the room next turn, so a row reads either
+## the crew's whole lift (below the room) or the room itself (a crew that clears it in one turn), and a
+## walk whose first step clears the room reaches the floor either way — the walk agrees with the sim's
+## own on both arms.
+##
+## Everything else on the model (the regrowth curve, the room, the floor, the teaching note) is a fact
+## about the ground and is left as `floor_chart_model` composed it.
+static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int, view: Dictionary,
+		crew_noun: String) -> Dictionary:
+	if not bool(model.get("known", false)):
+		return model
+	var out := model.duplicate()
+	var reply: Dictionary = view.get("answer", {})
+	var ready := String(view.get("state", ForecastQuery.STATE_PENDING)) == ForecastQuery.STATE_READY
+	var out_of_range := ready and not curve_in_range(reply)
+	if not ready or out_of_range:
+		out[CHART_DRAW_WITHHELD_KEY] = true
+		out[CHART_OUT_OF_RANGE_KEY] = out_of_range
+		out["series"] = PackedFloat32Array()
+		out["reached_turn"] = SourceForecast.PROJECTION_REACHED_NONE
+		out["verdict"] = {}
+		out["crew_to_clear"] = SourceForecast.NO_CREW_ANSWER
+		out["crew_to_hold"] = SourceForecast.NO_CREW_ANSWER
+		return out
+	var prefix := HudComposeVocab.BARE_FORECAST_PREFIX
+	var src := forecast_source(deposit)
+	var samples := SourceForecast.regrowth_samples(src, prefix)
+	var capacity := capacity_of(deposit)
+	var biomass := stock_of(deposit)
+	var floor_value := float(model.get("floor", SourceForecast.FLOOR_MIN))
+	var walk := SourceForecast.project_stock(samples, biomass, capacity, floor_value,
+		SourceForecast.ENGAGEMENT_UNBOUNDED, curve_take_at(reply, crew))
+	var reaching := _curve_crew_that_reaches(reply, samples, biomass, capacity, floor_value)
+	var growth := SourceForecast.regrowth_at(samples, floor_value)
+	var hold := 0 if growth <= 0.0 else curve_crew_reaching(reply, growth)
+	var room := SourceForecast.escapement_room(src, prefix, floor_value)
+	var clear := 0
+	if room > 0.0:
+		clear = curve_crew_reaching(reply, room)
+		if clear != SourceForecast.NO_CREW_ANSWER:
+			clear = maxi(clear, maxi(reaching, 0))
+	out["series"] = walk["series"]
+	out["reached_turn"] = int(walk["reached_turn"])
+	out["settled_fraction"] = float(walk["settled_fraction"])
+	out["crew_to_hold"] = hold
+	out["crew_to_clear"] = clear
+	out["verdict"] = SourceForecast.harvest_verdict(walk, crew, biomass, capacity, floor_value,
+		reaching, crew_noun, 0.0, "",
+		SourceForecast.escapement_room_next_turn(src, prefix, floor_value) > 0.0)
+	return out
+
+## The smallest crew in the curve whose projection reaches the floor — `0` where the stock already
+## stands at or below it, `NO_CREW_ANSWER` where no crew the band can field does.
+static func _curve_crew_that_reaches(reply: Dictionary, samples: PackedFloat32Array,
+		biomass: float, capacity: float, floor_value: float) -> int:
+	if capacity <= 0.0:
+		return SourceForecast.NO_CREW_ANSWER
+	if clampf(biomass / capacity, 0.0, 1.0) <= SourceForecast.clamp_floor(floor_value):
+		return 0
+	for crew in range(1, curve_rows(reply) + 1):
+		var walk := SourceForecast.project_stock(samples, biomass, capacity, floor_value,
+			SourceForecast.ENGAGEMENT_UNBOUNDED, curve_take_at(reply, crew))
+		if int(walk["reached_turn"]) != SourceForecast.PROJECTION_REACHED_NONE:
+			return crew
+	return SourceForecast.NO_CREW_ANSWER
 
 # ---- WHAT THIS BAND'S CREW WILL CUT, off the ASSIGNMENT and never off the working ---------------
 #

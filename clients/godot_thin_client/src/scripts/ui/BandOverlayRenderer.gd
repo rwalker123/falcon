@@ -1145,8 +1145,8 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# waste arm arrives below as its own argument.
 				HudDepositVocab.hazard_clause(deposit),
 				# **AND THE WASTE QUESTION, AT THIS BAND'S OWN FLOOR** — `max_useful_cutters` is the
-				# same quotient the working's compose sheet caps its stepper at, so a `+` the sheet
-				# refused and a row that flags the hands already standing there are one ceiling.
+				# BARE quotient; the compose sheet caps at the crew curve's plateau (issue #663), which
+				# a geared crew reaches with fewer hands, so the two agree only for an unequipped crew.
 				HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
 					HudDepositVocab.max_useful_cutters(deposit, _entry_floor(entry))),
 				# **THE WORKING'S OWN MATERIAL RATE, which is what this row HEADLINES** — `food` is

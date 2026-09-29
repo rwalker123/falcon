@@ -11649,6 +11649,9 @@ fn querying_faction(query: &QueryPayload) -> Option<(FactionId, &'static str)> {
         QueryPayload::WorkPartyForecast(ask) => {
             Some((FactionId(ask.faction_id), "work_party_forecast"))
         }
+        QueryPayload::DepositCrewTake(ask) => {
+            Some((FactionId(ask.faction_id), "deposit_crew_take"))
+        }
         // The save headers on disk, and the roster ceiling for a grid size. Neither reads a
         // faction's state, and both are asked from the landing screen — before a world, and
         // therefore before any seat — so a gate applied to them would close the load menu.
@@ -23282,6 +23285,293 @@ mod tests {
         );
     }
 
+    /// A band on [`WORKING`]'s grid, addressable by [`DEPOSIT_BAND_ID`], holding `ledger` — the
+    /// shape every deposit crew-curve fixture below starts from.
+    fn deposit_band_holding(
+        app: &mut bevy::prelude::App,
+        tile: Entity,
+        ledger: BandEquipment,
+    ) -> Entity {
+        let band = spawn_idle_band(app, FactionId(0), tile);
+        app.world
+            .entity_mut(band)
+            .insert((BandId(DEPOSIT_BAND_ID), ledger));
+        band
+    }
+
+    /// Ask the shipped deposit crew-take query and hand back its reply, or panic on a refusal.
+    fn deposit_crew_curve(
+        app: &mut bevy::prelude::App,
+        material: &str,
+        kit: &str,
+        floor: f32,
+        max_workers: u32,
+    ) -> sim_runtime::commands::DepositCrewTakeReply {
+        match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::DepositCrewTake(deposit_ask(material, kit, floor, max_workers)),
+        ) {
+            QueryReply::DepositCrewTake(reply) => reply,
+            other => panic!("the deposit crew ask must be answered with a curve: {other:?}"),
+        }
+    }
+
+    /// The ask itself, so the refusal cases can perturb one field of it.
+    fn deposit_ask(
+        material: &str,
+        kit: &str,
+        floor: f32,
+        max_workers: u32,
+    ) -> sim_runtime::commands::DepositCrewTakeQuery {
+        sim_runtime::commands::DepositCrewTakeQuery {
+            faction_id: 0,
+            band_id: DEPOSIT_BAND_ID,
+            x: WORKING.x,
+            y: WORKING.y,
+            material: material.to_string(),
+            kit_id: kit.to_string(),
+            floor,
+            max_workers,
+        }
+    }
+
+    /// Commit a crew with a NAMED kit, through the command.
+    fn assign_extract_with_kit(
+        app: &mut bevy::prelude::App,
+        material: &str,
+        workers: u32,
+        kit: &str,
+    ) {
+        handle_assign_labor(
+            app,
+            FactionId(0),
+            None,
+            "extract".to_string(),
+            workers,
+            Some(WORKING.x),
+            Some(WORKING.y),
+            None,
+            Some(material.to_string()),
+            None,
+            Some(kit.to_string()),
+            Vec::new(),
+        );
+    }
+
+    /// ⛔ **THE DEPOSIT CREW CURVE IS WHAT THE TURN PAYS** (#663) — for crew `n` with kit `k`, asking
+    /// before the commit, then committing `n` with `k` and resolving, pays row `n`'s `take`. Three
+    /// arms so the agreement is not a coincidence of one rung or one kit:
+    ///
+    /// - a seated **felling** wood, Woodcutting kit, two axes and three sleds among four fellers —
+    ///   the axes arm two, the sleds serve nothing there;
+    /// - an **unopened** deadfall wood, Woodcutting kit, two sleds among three — the sled is the
+    ///   floor's tool;
+    /// - the felling wood again on **`none`** — the bare cut, nobody armed.
+    #[test]
+    fn the_deposit_crew_curve_is_what_the_turn_pays() {
+        struct Arm {
+            felling: bool,
+            kit: &'static str,
+            sleds: u32,
+            axes: u32,
+            crew: u32,
+            armed: f32,
+        }
+        for arm in [
+            Arm {
+                felling: true,
+                kit: "woodcutting",
+                sleds: 3,
+                axes: 2,
+                crew: 4,
+                armed: 2.0,
+            },
+            Arm {
+                felling: false,
+                kit: "woodcutting",
+                sleds: 2,
+                axes: 0,
+                crew: 3,
+                armed: 2.0,
+            },
+            Arm {
+                felling: true,
+                kit: "none",
+                sleds: 0,
+                axes: 2,
+                crew: 4,
+                armed: 0.0,
+            },
+        ] {
+            let mut app = build_test_app();
+            let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+            if arm.felling {
+                seat_a_felling_working(&mut app, tile);
+            }
+            let mut ledger = BandEquipment::default();
+            ledger.stock("sled", arm.sleds, "plain", None);
+            ledger.stock("axe", arm.axes, "flint", None);
+            let band = deposit_band_holding(&mut app, tile, ledger);
+
+            let curve = deposit_crew_curve(
+                &mut app,
+                "wood",
+                arm.kit,
+                DEFAULT_ESCAPEMENT_FLOOR,
+                arm.crew + 1,
+            );
+            let row = curve
+                .per_crew
+                .iter()
+                .find(|row| row.workers == arm.crew)
+                .cloned()
+                .expect("the curve carries the crew asked about");
+            assert_eq!(
+                row.armed_workers, arm.armed,
+                "{}: holders of the held rung's tool",
+                arm.kit
+            );
+
+            assign_extract_with_kit(&mut app, "wood", arm.crew, arm.kit);
+            resolve_deposit_turn(&mut app);
+            let paid = app
+                .world
+                .get::<LaborAllocation>(band)
+                .expect("band has an allocation")
+                .last_yields
+                .first()
+                .and_then(|row| row.materials.first())
+                .map(|payoff| payoff.amount)
+                .expect("the turn paid the working's material");
+            assert!(
+                (paid - row.take).abs() < A_CLOSE_ENOUGH_AMOUNT,
+                "{} felling={}: the turn pays the curve's row — quoted {}, paid {paid}",
+                arm.kit,
+                arm.felling,
+                row.take
+            );
+        }
+    }
+
+    /// **THE CURVE'S NEXT-RUNG FIGURE IS WHAT THE TURN PAYS ONCE RAISED** (#663) — an unopened wood
+    /// with two axes, the sheet asked at five fellers before any commit: `next_rung_take` is felling's
+    /// rate × 5 plus two axes, the reply names the rungs it priced, and after the commit and the
+    /// raise the turn pays that figure.
+    #[test]
+    fn the_deposit_crew_curves_next_rung_is_what_the_turn_pays_once_raised() {
+        const CREW: u32 = 5;
+        let mut app = build_test_app();
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", 2, "flint", None);
+        let band = deposit_band_holding(&mut app, tile, ledger);
+
+        let curve = deposit_crew_curve(
+            &mut app,
+            "wood",
+            "woodcutting",
+            DEFAULT_ESCAPEMENT_FLOOR,
+            CREW,
+        );
+        assert_eq!(curve.held_rung, "forestry:deadfall");
+        assert_eq!(curve.next_rung, "forestry:felling");
+        assert!(curve.in_range);
+        assert_eq!(curve.per_crew.len(), CREW as usize);
+        let quoted = curve.per_crew[CREW as usize - 1].next_rung_take;
+
+        assign_extract_with_kit(&mut app, "wood", CREW, "woodcutting");
+        seat_a_felling_working(&mut app, tile);
+        resolve_deposit_turn(&mut app);
+        let paid = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .last_yields
+            .first()
+            .and_then(|row| row.materials.first())
+            .map(|payoff| payoff.amount)
+            .expect("the turn paid the working's material");
+        assert!(
+            (paid - quoted).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the raise pays the curve's once-felled figure: quoted {quoted}, paid {paid}"
+        );
+    }
+
+    /// **THE DEPOSIT CREW ASK IS REFUSED BY NAME, FIELD BY FIELD** — the hunt curve's perturbation
+    /// table, one question over: each case breaks exactly one field of an ask the base case answers,
+    /// so a refusal cannot be passing for the wrong reason. `max_workers 0` is not a refusal but an
+    /// empty curve.
+    #[test]
+    fn a_deposit_crew_ask_is_refused_field_by_field() {
+        let mut app = build_test_app();
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        deposit_band_holding(&mut app, tile, BandEquipment::default());
+        let base = deposit_ask("wood", "woodcutting", DEFAULT_ESCAPEMENT_FLOOR, 3);
+        assert!(
+            matches!(
+                core_sim::forecast_query::answer_forecast_query(
+                    &mut app.world,
+                    &QueryPayload::DepositCrewTake(base.clone()),
+                ),
+                QueryReply::DepositCrewTake(ref reply) if reply.per_crew.len() == 3
+            ),
+            "fixture: the unperturbed ask must be answered"
+        );
+        type Perturb = fn(&mut sim_runtime::commands::DepositCrewTakeQuery);
+        let cases: [(&str, Perturb, &str); 6] = [
+            (
+                "unknown band",
+                |ask| ask.band_id += 1,
+                query_error::UNKNOWN_BAND,
+            ),
+            (
+                "unknown kit",
+                |ask| ask.kit_id = "no_such_kit".into(),
+                query_error::UNKNOWN_KIT,
+            ),
+            (
+                "a hunt kit",
+                |ask| ask.kit_id = "big_game".into(),
+                query_error::KIT_WRONG_JOB,
+            ),
+            (
+                "floor above 1",
+                |ask| ask.floor = 1.5,
+                query_error::INVALID_FLOOR,
+            ),
+            (
+                "a crew nobody has",
+                |ask| ask.max_workers = u32::MAX,
+                query_error::INVALID_CREW,
+            ),
+            (
+                "a material the ground does not hold",
+                |ask| ask.material = "gold".into(),
+                query_error::UNKNOWN_DEPOSIT,
+            ),
+        ];
+        for (label, perturb, token) in cases {
+            let mut ask = base.clone();
+            perturb(&mut ask);
+            match core_sim::forecast_query::answer_forecast_query(
+                &mut app.world,
+                &QueryPayload::DepositCrewTake(ask),
+            ) {
+                QueryReply::Error(reason) => assert_eq!(reason, token, "{label}"),
+                other => panic!("{label}: expected {token}, got {other:?}"),
+            }
+        }
+        let mut empty = base;
+        empty.max_workers = 0;
+        match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::DepositCrewTake(empty),
+        ) {
+            QueryReply::DepositCrewTake(reply) => assert!(reply.per_crew.is_empty()),
+            other => panic!("max_workers 0 is an empty curve, not a refusal: {other:?}"),
+        }
+    }
+
     /// **THE NEXT RUNG'S CUT IS PUBLISHED WITH THE GEAR, AND IS WHAT THE TURN PAYS ONCE RAISED**
     /// (#663). A wood on deadfall, five fellers, two axes: `nextRungMaterialYield` is felling's own
     /// rate × 5 **plus** two axes' `deposit_take` — the playtest's *"once felled"* line, which had
@@ -24528,6 +24818,19 @@ mod tests {
                     band_id: 1,
                     herd_id,
                     kit_id,
+                    floor: 0.25,
+                    max_workers: 4,
+                }),
+            ),
+            (
+                "deposit_crew_take",
+                QueryPayload::DepositCrewTake(sim_runtime::commands::DepositCrewTakeQuery {
+                    faction_id: faction.0,
+                    band_id: 1,
+                    x: 0,
+                    y: 0,
+                    material: "wood".to_string(),
+                    kit_id: "woodcutting".to_string(),
                     floor: 0.25,
                     max_workers: 4,
                 }),
