@@ -213,19 +213,20 @@ pub use fauna::{
     herd_upkeep_shortfall, herd_upkeep_supply, herd_upkeep_workers_needed, herd_wariness,
     hunt_armed_crew, hunt_crew_take_curve, hunt_engage_workers, hunt_escapement_ceiling,
     hunt_haul_workers, hunt_source_yield_preview, hunt_take_bound, hunt_take_overdraws,
-    hunt_take_workers, hunt_useful_crew, kill_over_retreat, next_turns_quarry,
-    per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt, quantise_animal_take,
-    quarry_default_hunt_kit, regrow_biomass, regrowth_delta_at, repopulate_fauna,
-    resolve_hunt_engagement, resolve_hunt_fight, retreat_band_edge, retreat_mean, retreat_seed,
-    spawn_initial_herds, species_requires_denial, stay_fraction, sustainable_yield,
-    unqueue_build_and_cancel_ring, would_be_herders_needed, AnimalTake, CarcassKept, EcologyPhase,
-    EngagementQuantum, EngagementStop, FightCasualties, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HerdTelemetryEntry, HuntCrew, HuntCrewCurveInputs, HuntCrewTake, HuntDraw,
-    HuntEngagement, HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills,
-    PartyResolution, PreyDatum, ProjectedHuntTurn, ProjectionStart, QuarryFight, RetreatOutcome,
-    RoamState, SourceYieldForecast, TakeRange, TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED,
-    HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_STANDING_COMMITMENT,
-    NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
+    hunt_take_workers, hunt_useful_crew, kill_over_retreat, migratory_corridor_tiles,
+    next_turns_quarry, per_hunter_take_biomass, project_arrivals_hunt, project_realized_hunt,
+    quantise_animal_take, quarry_default_hunt_kit, regrow_biomass, regrowth_delta_at,
+    repopulate_fauna, resolve_hunt_engagement, resolve_hunt_fight, retreat_band_edge, retreat_mean,
+    retreat_seed, spawn_initial_herds, species_requires_denial, stamp_migratory_game_trails,
+    stay_fraction, sustainable_yield, unqueue_build_and_cancel_ring, would_be_herders_needed,
+    AnimalTake, CarcassKept, EcologyPhase, EngagementQuantum, EngagementStop, FightCasualties,
+    Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, HuntCrew,
+    HuntCrewCurveInputs, HuntCrewTake, HuntDraw, HuntEngagement, HuntFight, HuntProjection,
+    HuntTakeBound, HuntingParty, OutcomeKills, PartyResolution, PreyDatum, ProjectedHuntTurn,
+    ProjectionStart, QuarryFight, RetreatOutcome, RoamState, SourceYieldForecast, TakeRange,
+    TakeReading, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
+    NO_DEATHS_TO_REPORT, NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD,
+    PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
@@ -327,9 +328,9 @@ pub use routes::{
     road_build_fraction, road_keeping_basis, road_keeping_range, road_measure,
     road_neglect_grace_remaining, road_rung_span, road_upkeep_demand, road_upkeep_measure,
     road_upkeep_workers_needed, route_rungs_in_climb_order, rung_grants_sight, trace_path,
-    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteJourney, RouteTrafficLog,
-    FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_REACH_HELD_OPEN,
-    PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
+    traffic_ceiling, Road, RoadKeeper, RoadRegistry, RouteJourney, RouteTrafficLog, TrafficSource,
+    FIRST_BUILT_RUNG, FREE_FLOOR_TOP_RUNG, METER_FULL, NEAR_ENOUGH_TO_KEEP, NO_HERD_HAS_CROSSED,
+    NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID, ROADBUILDING_DISCOVERY_ID,
 };
 pub use sedentarization::{
     sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
@@ -824,8 +825,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(visibility::VisibilitySweepTracker::default())
         .insert_resource(connections::ConnectionLedger::default())
         // **The roads and this turn's traffic** (`docs/plan_standing_upkeep.md` §4.13). The registry
-        // is world state; the traffic log is a within-turn hand-off from `balance_supply_networks`,
-        // which knows which pairs pooled, to `routes::advance_roads`, which spends them.
+        // is world state; the traffic log is a hand-off from the three things that move —
+        // `balance_supply_networks` (which pairs pooled), `advance_band_movement` (who marched) and
+        // `advance_herds` (which migratory herds walked their corridor) — to `routes::advance_roads`,
+        // which spends them.
         .insert_resource(routes::RoadRegistry::default())
         .insert_resource(routes::RouteTrafficLog::default())
         .insert_resource(connections::ContactsThisTurn::default())
@@ -982,6 +985,9 @@ pub fn build_headless_app() -> App {
                 spawn_initial_herds,
                 spawn_initial_forage,
                 spawn_initial_graze,
+                // **The game trails the herds wore before the game began** (#215) — after the graze
+                // layer, because the live Migrate step it traces reads that layer.
+                fauna::stamp_migratory_game_trails,
                 espionage::initialise_espionage_roster,
             )
                 .chain()

@@ -217,18 +217,19 @@ called to fix (the range-disk reasoning one section up, applied to a polyline).
 
 **`_unwrapped_path_points(tiles, radius, origin)` is the third idiom, and connected geometry uses
 it.** It resolves the LAST tile's effective column with `_band_effective_col` — the copy
-`_hex_center_wrapped` puts a MARKER on, so a trail's head lands on its own herd — then walks
+`_hex_center_wrapped` puts a MARKER on, so a path's last tile lands where a marker on it would — then walks
 backwards placing each earlier tile by `_wrapped_col_delta` off the frame already fixed. Every step
 is then at most half a map width **by construction**, so a connected path needs none of the
 `0.4 * last_map_size.x` skip the DISCONNECTED links carry (the exchange network, the migration arrow, the
 band task arrow, the pending link): there is no artifact to skip. A path that genuinely circles the
 world draws longer than one map width, which is the truth about it.
 
-Its callers are the connected paths the client draws: `MapView._draw_herd_trail`,
-`AnnotationRenderer._draw_route`, and `AnnotationRenderer.draw_crisis_annotations`' multi-hop branch.
-**Only the trail was reported.** The other two are the same defect in the same shape and were fixed
-with it rather than because a frame showed them — the route half being latent (nothing publishes
-`orders`, so only `map_routes`' fixture has ever fed it).
+Its callers are the connected paths the client draws: `AnnotationRenderer._draw_route` and
+`AnnotationRenderer.draw_crisis_annotations`' multi-hop branch. The defect was reported on a third
+caller, the herd-trail breadcrumb, which is deleted (issue #215 — a herd's trail is now road rows,
+`roads.md`); these two are the same defect in the same shape and were fixed with it rather than
+because a frame showed them — the route half being latent (nothing publishes `orders`, so only
+`map_routes`' fixture has ever fed it).
 
 **Crisis annotations are the case that shows why the count picks the idiom.** That draw ingests a
 path and then branches on its length, and the two branches want DIFFERENT helpers: a multi-hop
@@ -245,9 +246,8 @@ lands where `_hex_center` put it. Measured — the whole `map_preview` set came 
 byte-identical** across the change, every wrapping fixture in it being one that none of these three
 draws appears on. **Which is also the limit of what a frame proves here**: `map_crisis_annotations`
 and `map_routes` are non-wrapping fixtures, so they show the refactor changed nothing and cannot show
-the seam behaviour at all. The only seam claim with pixels behind it is
-`_assert_herd_trail_unwraps`, the PNG-less probe in `harness-map-probes.md` — which reads pixels for
-the reason the selection guard does.
+the seam behaviour at all. The seam probe that had pixels behind it drove the herd-trail
+breadcrumb and went with it, so no seam claim about this helper has pixels behind it.
 
 ## A POINTER-DRIVEN NAVIGATION INPUT IS DECLINED WHERE A CONTROL CLAIMS THE PIXEL
 

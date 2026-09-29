@@ -1318,9 +1318,10 @@ impl RungKey {
             // **Not `wild`.** The route floor is a *path* rather than "no road", because it is a
             // real thing traffic made — and giving it the two food webs' shared `wild` spelling would
             // put a third rung under one id for no gain. It is spelled `path` and not `game_trail`
-            // because nothing in the sim lets an animal wear a road in: the sole source of route work
-            // is `route_traffic.walked` in `supply.rs`'s pooling-link pass, which is the player's own
-            // bands walking between camps that share a larder.
+            // because the rung names untouched ground reached by traffic — whoever's traffic —
+            // rather than who made it: pooling links (`RouteTrafficLog::walked`), marching parties
+            // (`::marched`) and migratory herds on their corridor legs (`::herd_passed`) all wear
+            // the same rung in.
             RungKey::RoutePath => "path",
             RungKey::RouteTrail => "trail",
             RungKey::RouteDirtRoad => "dirt_road",
@@ -3333,13 +3334,14 @@ pub struct RouteTraffic {
     /// **WHAT PEOPLE ON THE MOVE WEAR IN, PER TILE CROSSED, PER WORKER** — the same work units, one
     /// kind of traffic over.
     ///
-    /// ⛔ **TWO LEVERS, AND THEY STAY TWO** (§4.13: *"two levers, not three: goods and people are the
-    /// only two things that move, and a shipment is people"*). [`Self::work_per_link_tile_per_turn`]
-    /// is the **link** lever and this is the **people** lever: a link is not a headcount — two camps
-    /// pooling a larder are a *standing fact*, so its rate is per link per turn — while a march **is**
-    /// people, so its rate is per worker.
+    /// ⛔ **ONE LEVER PER KIND OF THING THAT MOVES** (§4.13: *"goods and people are the only two
+    /// things that move, and a shipment is people"* — and, since issue #215, migratory herds).
+    /// [`Self::work_per_link_tile_per_turn`] is the **link** lever, this is the **people** lever and
+    /// [`Self::work_per_herd_tile`] is the **herd** lever: a link is not a headcount — two camps
+    /// pooling a larder are a *standing fact*, so its rate is per link per turn — while a march
+    /// **is** people, so its rate is per worker.
     ///
-    /// **There is no third lever for shipments and there must not be.** A trade shipment is a
+    /// **There is no lever for shipments and there must not be.** A trade shipment is a
     /// `PopulationCohort` carrying a `BandTravel` exactly as a band, a scout and a hunt party are, and
     /// `crate::systems::advance_band_movement` is the single system that steps all of them — so one
     /// hook fills both of §4.13's remaining traffic rows. **And no mass term**:
@@ -3350,6 +3352,22 @@ pub struct RouteTraffic {
     /// balance** — a 10-worker band's single pass puts `0.5` on a tile against a live pooling link's
     /// `0.35` a turn. **PLAYTEST DIAL, step 13e owns it.**
     pub work_per_worker_tile: f32,
+
+    /// **WHAT A MIGRATORY HERD WEARS IN, PER TILE CROSSED ON A `Migrate` LEG, PER HERD** — the same
+    /// work units, the third kind of traffic (issue #215). The first roads were game trails: mass
+    /// herds walking the same corridor between their grounds cycle after cycle.
+    ///
+    /// ⛔ **PER HERD, NEVER SCALED BY BIOMASS.** A herd is not a headcount — its biomass is a food
+    /// stock, not a number of hooves — and a mass-driven rate is the error §4.13a ① already corrected
+    /// for the link lever. Only a `Migrate` leg banks it: a graze-wandering game group and a
+    /// loitering herd mill about their ground and wear no line into it.
+    ///
+    /// It is ordinary traffic once recorded: capped at `routes::traffic_ceiling` like every other
+    /// journey, so a herd can wear at most a **trail**, never a billed road; and it resets a road's
+    /// idle count, so a herd that returns each cycle keeps its trail alive.
+    ///
+    /// Validated finite and `> 0`, beside its siblings. **PLAYTEST DIAL.**
+    pub work_per_herd_tile: f32,
 
     /// **HOW MANY CONSECUTIVE IDLE TURNS A FREE ROAD FORGIVES** before it starts losing what
     /// traffic put into it — the free floor's own `upkeep.grace_turns`, and it lives here rather
@@ -3371,6 +3389,20 @@ pub struct RouteTraffic {
     /// **§4.14 owns the number.** Validated finite only — a grace of `0` is the meaningful *"a road
     /// starts fading the turn its traffic stops"* and must stay expressible.
     pub disuse_grace_turns: u32,
+
+    /// **HOW LONG A GAME TRAIL WAITS FOR ITS HERD** — consecutive turns since a migratory herd last
+    /// crossed a tile before the disuse loss may take it (issue #215). The loss needs **both** this
+    /// and [`Self::disuse_grace_turns`] to have run out, so a tile a herd still comes back to holds
+    /// its wear through the gap between passes.
+    ///
+    /// **Why a second grace at all**: a herd returns to a corridor tile a median ~160 turns later
+    /// (p90 ~270, measured on the standard map), while a worn trail is gone ~44 turns after people
+    /// stop using it. Under the people grace alone a herd's wear never outlived the gap, so no
+    /// corridor ever became a trail. A tile no herd has crossed never reads this.
+    ///
+    /// Validated `>= disuse_grace_turns`: a herd trail may be longer-lived than a people trail, never
+    /// more fragile.
+    pub herd_disuse_grace_turns: u32,
 
     /// **WHAT AN IDLE FREE ROAD LOSES EACH TURN, past [`Self::disuse_grace_turns`]**, in the same
     /// work units the position is banked in — the free floor's `upkeep.meter_decay.per_turn`.
@@ -3815,6 +3847,19 @@ impl LadderConfig {
                 value: self.route_traffic.work_per_worker_tile.to_string(),
             });
         }
+        if !self.route_traffic.work_per_herd_tile.is_finite()
+            || self.route_traffic.work_per_herd_tile <= 0.0
+        {
+            return Err(LadderConfigError::Invalid {
+                field: "route_traffic.work_per_herd_tile".to_string(),
+                constraint:
+                    "wear a game trail in under migrating herds at a finite, positive rate \
+                             — at zero every herd walks its corridor cycle after cycle without \
+                             leaving a mark on the ground, while the dial still reads live"
+                        .to_string(),
+                value: self.route_traffic.work_per_herd_tile.to_string(),
+            });
+        }
         if self.route_range.base_tiles == 0 {
             return Err(LadderConfigError::Invalid {
                 field: "route_range.base_tiles".to_string(),
@@ -3835,6 +3880,17 @@ impl LadderConfig {
                              which inverts the whole term"
                     .to_string(),
                 value: self.route_range.remote_cost_multiplier.to_string(),
+            });
+        }
+        if self.route_traffic.herd_disuse_grace_turns < self.route_traffic.disuse_grace_turns {
+            return Err(LadderConfigError::Invalid {
+                field: "route_traffic.herd_disuse_grace_turns".to_string(),
+                constraint: format!(
+                    "forgive at least as many idle turns as a people trail does ({}) — a game \
+                     trail may outlast a road people wore, never fade faster than one",
+                    self.route_traffic.disuse_grace_turns
+                ),
+                value: self.route_traffic.herd_disuse_grace_turns.to_string(),
             });
         }
         if !self.route_traffic.disuse_loss_per_turn.is_finite()
@@ -6285,6 +6341,49 @@ mod tests {
             json["rungs"][idx]["build"]["work_cost"] = (0.0).into();
         });
         assert_rejects(err, "plant:tended");
+    }
+
+    /// **The herd lever rejects zero** — at zero every migratory herd walks its corridor without
+    /// wearing a trail while the dial reads live (issue #215).
+    #[test]
+    fn rejects_a_herd_traffic_rate_of_zero() {
+        let err = reject(|json| {
+            json["route_traffic"]["work_per_herd_tile"] = (0.0).into();
+        });
+        assert_rejects(err, "route_traffic.work_per_herd_tile");
+    }
+
+    /// **…and a non-finite rate**, which JSON cannot spell, so the struct is mutated directly and
+    /// handed to the same `validate` every load path runs.
+    #[test]
+    fn rejects_a_non_finite_herd_traffic_rate() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut ladder = (*LadderConfig::builtin()).clone();
+            ladder.route_traffic.work_per_herd_tile = bad;
+            let err = ladder
+                .validate()
+                .expect_err("a non-finite herd traffic rate should be rejected");
+            assert_rejects(err, "route_traffic.work_per_herd_tile");
+        }
+    }
+
+    /// **A herd trail may never be more fragile than a people trail** — a herd grace below the
+    /// people grace is rejected; equal is the floor and is accepted.
+    #[test]
+    fn rejects_a_herd_disuse_grace_below_the_people_grace() {
+        let err = reject(|json| {
+            let people = json["route_traffic"]["disuse_grace_turns"]
+                .as_u64()
+                .expect("the people grace is an integer");
+            json["route_traffic"]["herd_disuse_grace_turns"] = (people - 1).into();
+        });
+        assert_rejects(err, "route_traffic.herd_disuse_grace_turns");
+
+        let mut ladder = (*LadderConfig::builtin()).clone();
+        ladder.route_traffic.herd_disuse_grace_turns = ladder.route_traffic.disuse_grace_turns;
+        ladder
+            .validate()
+            .expect("a herd grace equal to the people grace is legal");
     }
 
     // **RETIRED: `rejects_a_free_investment` / `rejects_a_starving_investment`** — the two bounds on

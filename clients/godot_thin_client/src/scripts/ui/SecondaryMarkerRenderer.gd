@@ -318,10 +318,6 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var slot: int = _secondary_slot_lookup.get(herd_key(herd_id), -1)
 	if slot < 0:
 		return   # far-zoom LOD or overflowed into the +N chip
-	# Herd trail stays centered on the hex path (a route, not a marker), but only
-	# when the herd icon itself draws — no orphaned trail for an LOD-suppressed or
-	# overflowed herd (its slot is gone).
-	_view._draw_herd_trail(herd_id, radius, origin)
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
 	var icon_center := slot_center(tile_center, slot, radius)
 	# Bundled PNG art where we have it (identical on every OS), OS emoji for the species that

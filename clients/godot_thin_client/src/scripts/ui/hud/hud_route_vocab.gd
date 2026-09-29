@@ -54,9 +54,10 @@ const RUNG_ORDER := [
 ## road really holds and the row therefore renders, not the absence of one (issue #215).
 ##
 ## ⛔ **IT IS A PATH AND NOT A *"GAME TRAIL"*, AND THAT IS A CORRECTION.** The old name asserted an
-## ORIGIN the sim does not model: exactly one pass banks route work — the pooling-link pass in
-## `core_sim/src/supply.rs` — and no animal has ever worn a step of any road. So a path worn in by
-## the player's own trade traffic was shown to him as *"Game trail"*. Same reason the row's retired
+## ORIGIN: when it was renamed the only pass banking route work was the pooling-link pass in
+## `core_sim/src/supply.rs`, so a path worn in by the player's own trade traffic was shown to him as
+## *"Game trail"*. Migratory herds now bank route traffic too (issue #215), so a path can have either
+## origin and the rung name states neither. Same reason the row's retired
 ## `nothing — a path the animals made` clause went (see RETIRED `ROAD_BUYS_NOTHING` below); this is
 ## the second half of that fix, on the rung the sentence was hung off.
 const RUNG_LABELS := {
@@ -332,11 +333,12 @@ const ROAD_BONUS_LINK_FORMAT := "links camps up to %d tiles apart"
 # RETIRED — `ROAD_BUYS_NOTHING` (`nothing — a path the animals made`), the sentence a rung buying
 # nothing on every axis used to print (issue #566).
 #
-# ⛔ **IT WAS FACTUALLY WRONG, NOT MERELY WORDY.** It asserted an ORIGIN the sim does not model: a
-# path is a rung a tile HOLDS, and the commonest way a tile comes to hold it is the player's own
-# bands walking the same ground and banking traffic into the meter — nothing about it is a path
-# animals made. The rung buying nothing is now said by the row's ABSENCE, which states the same fact
-# and cannot state a false one beside it.
+# ⛔ **IT WAS FACTUALLY WRONG, NOT MERELY WORDY.** It asserted an ORIGIN as the rung's meaning: a
+# path is a rung a tile HOLDS, worn in by any of three kinds of traffic — bands pooling food over
+# the same ground, people on the move (bands, scouts, hunt parties, shipments), or a migratory herd's
+# Migrate legs (issue #215) — and a sentence naming one cause is false of the others. The rung
+# buying nothing is now said by the row's ABSENCE, which states the same fact and cannot state a
+# false one beside it.
 
 ## The friction multiplier at which a rung takes nothing off the loss. Named because it is the
 ## PATH's own reading and the test the friction clause is gated on, not a rounding tolerance.
