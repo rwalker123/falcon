@@ -281,11 +281,11 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
   is the one function behind the kit `assign_labor extract` stores on a no-kit row, the seed that
   prices it, and `DepositState.defaultKitId`. `default_kits.extract` is **`none`**, the fall-back for
   no working in hand or no single serving kit.
-- **The next rung's cut is published with the gear** — `LaborAssignment.nextRungMaterialYield`,
-  `extraction::next_rung_geared_take`: the rung above's own rate × the crew plus this band's
-  `deposit_take` there, through the take's function and a prospective-row ration (the stored kit
-  narrowed to the next rung's tool, beside the band's other rows, less the pools' issue). The
-  compose sheet's *"once felled: X a turn"* reads it rather than multiplying the bare catalog rate.
+- **Every pre-commit figure comes off one geared curve** — `DepositCrewTakeQuery`
+  (`extraction::deposit_crew_quote`: a prospective-row ration, the stored or picked kit narrowed to
+  the rung's tool, beside the band's other rows, less the pools' issue), and the committed row's
+  `usefulCutters` is that curve's plateau at the row's own kit (`extraction.md` → "The compose
+  sheet asks a crew curve").
 - **Wear is `WearQuantum::DepositTaken`, on the units the holders cut** —
   `extraction::deposit_geared_units` = `taken ×` the equipped workers' share of the crew's
   throughput, `Strike`'s attribution applied to a continuous take. Gauge noun *"units cut"*.
@@ -299,7 +299,7 @@ Pinned by `extraction::tests::take_gear_adds_on_top_of_the_bare_rate_and_the_rea
 `equipment_config::tests::a_workings_default_kit_is_the_kit_of_its_branch_on_every_rung`,
 `tests/extraction.rs::a_sled_lifts_the_deadfall_take_and_nothing_above_it`,
 `server::tests::a_wood_crews_complete_kit_count_is_the_tool_serving_its_held_rung`,
-`server::tests::the_next_rungs_cut_includes_the_gear_and_is_what_the_turn_pays_once_raised`,
+`server::tests::the_deposit_crew_curves_next_rung_is_what_the_turn_pays_once_raised`,
 `tests/extraction.rs::a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes`
 (the shipped turn) and `server::tests::a_deposit_crew_with_axes_is_seeded_the_cut_the_turn_pays`
 (the seed agrees with the turn).

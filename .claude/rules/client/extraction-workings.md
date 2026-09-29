@@ -717,9 +717,9 @@ abandons that crew, so the take row is replaced by `DEPOSIT_TAKE_OUT_OF_RANGE` �
 sheet's own `_mount_work_range_refusal` already mounts the distance sentence — the gear lines are
 absent, and the commit is disabled.
 
-⛔ **THE COMMITTED ROW'S `kitWorkersHolding` / `nextRungMaterialYield` ARE NOT READ BY THIS SHEET.**
-The curve answers every stepper position, the committed crew included, so the sheet has one source
-per figure. `next_rung_material_yield` is still decoded onto the assignment dict; nothing renders it.
+⛔ **THE COMMITTED ROW'S `kitWorkersHolding` IS NOT READ BY THIS SHEET.** The curve answers every
+stepper position, the committed crew included, so the sheet has one source per figure. The row's
+next-rung figure (`nextRungMaterialYield`) was removed from the wire for the same reason.
 
 ### ⛔ EVERY CREW-DRAW FIGURE IS THE CURVE'S TOO — THE WALK, THE PILLS, THE VERDICT AND THE CAP
 

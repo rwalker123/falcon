@@ -1242,8 +1242,7 @@ message DepositCrewTakeRow {
   float armed_workers = 3;
   // THE CREW'S CUT ONCE THE WORKING IS RAISED ONE RUNG - the next rung's own rate for the crew plus
   // the next rung's tool, before the reach caps it: the sheet's "once felled / coppiced / quarried"
-  // figure, and the same function as a committed row's `nextRungMaterialYield`. 0 at the top of a
-  // branch.
+  // figure. 0 at the top of a branch.
   float next_rung_take = 4;
 }
 

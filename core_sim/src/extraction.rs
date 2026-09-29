@@ -758,36 +758,92 @@ pub fn next_rung_take_for(
     deposit_crew_throughput(workers, gear.take, &payoff)
 }
 
-/// **WHAT THIS `extract` ROW'S CREW WOULD CUT A TURN ONCE ITS WORKING IS RAISED ONE RUNG** (#663) —
-/// [`next_rung_take_for`] at the row's own stored kit and committed crew. Published as
-/// `LaborAssignment.nextRungMaterialYield` so the compose sheet's *"once felled: X a turn"* is a
-/// number the sim struck. `NO_TAKE_THIS_TURN` for any other row, an empty row, a working at the top of
-/// its branch, or a material the deposits table does not carry.
-pub fn next_rung_geared_take(
+/// **NO USEFUL-CUTTERS ANSWER** — a row that is not `extract`, or has no crew pool to price.
+pub const NO_USEFUL_CUTTERS: u32 = 0;
+
+/// **A WORKING WHOSE CURVE PAYS NOTHING CAPS AT ONE HAND, NOT NONE** — the client's
+/// `CUTTERS_BARREN`: a cap of nobody would pin the stepper at zero on exactly the ground a player
+/// must crew to climb out of it.
+pub const USEFUL_CUTTERS_BARREN: u32 = 1;
+
+/// **HOW CLOSE COUNTS AS THE CURVE'S BEST** — relative, and the client's
+/// `SourceForecast.CREW_TAKE_REACH_TOLERANCE` exactly, because both read the same curve and must agree
+/// about where it stopped rising.
+const USEFUL_CUTTERS_REACH_TOLERANCE: f32 = 0.001;
+
+/// **HOW MANY CUTTERS THIS `extract` ROW'S WORKING CAN USE, GEAR INCLUDED** (#663) — published as
+/// `LaborAssignment.usefulCutters`, so the Work board's overstaffed flag stops where the compose
+/// sheet's `+` does.
+///
+/// It is the plateau of the **same curve** [`deposit_crew_quote`] answers the sheet with — one quote
+/// per crew size `1..=pool` at the row's stored kit and floor, off the working as next turn finds it
+/// — read by the **same rule** the client reads that curve by (`HudDepositVocab.curve_useful_cutters`):
+/// `best` = the curve's largest take, and the answer is the smallest crew whose take reaches `best`
+/// within [`USEFUL_CUTTERS_REACH_TOLERANCE`]. A curve still rising at its last row answers `pool`
+/// (the client's `CUTTERS_UNCAPPED` reading, since `useful >= rows`); a curve paying nothing at any
+/// size answers [`USEFUL_CUTTERS_BARREN`].
+///
+/// `pool` is the row's own workers plus the band's idle hands — the crew the sheet's stepper can
+/// reach, and the pool `hunt_useful_workers` is struck over.
+#[allow(clippy::too_many_arguments)] // the curve's inputs, plus the ground and the pool
+pub fn useful_cutters(
     equipment: &crate::equipment_config::EquipmentConfig,
     ladder: &LadderConfig,
+    config: &ExtractionConfig,
     held: &HeldRungs<'_>,
     allocation: &crate::components::LaborAllocation,
     assignment: &crate::components::LaborAssignment,
     band_kit: &crate::components::BandEquipment,
-) -> f32 {
+    ground: &Tile,
+    pool: u32,
+) -> u32 {
     let crate::components::LaborTarget::Extract { tile, material, .. } = &assignment.target else {
-        return NO_TAKE_THIS_TURN;
+        return NO_USEFUL_CUTTERS;
     };
-    let Some(held_rung) = held.held(*tile, material) else {
-        return NO_TAKE_THIS_TURN;
+    if pool == NO_CREW_ON_THE_DEPOSIT {
+        return NO_USEFUL_CUTTERS;
+    }
+    let capacity = tile_deposit_capacity(config, material, ground);
+    let Some(branch) = deposit_branch(config, material) else {
+        return NO_USEFUL_CUTTERS;
     };
-    next_rung_take_for(
-        equipment,
-        ladder,
-        held,
-        allocation,
-        &assignment.target,
-        &assignment.kit_choice(equipment),
-        assignment.workers,
-        band_kit,
-        held_rung,
-    )
+    if capacity <= NO_DEPOSIT {
+        return NO_USEFUL_CUTTERS;
+    }
+    let mut working = held
+        .deposits
+        .source(*tile, material)
+        .cloned()
+        .unwrap_or_else(|| DepositSource::opening(*tile, material, capacity, branch));
+    renew_deposit(&mut working, ground, config, ladder);
+    let kit = assignment.kit_choice(equipment);
+    let takes: Vec<f32> = (1..=pool)
+        .map(|crew| {
+            deposit_crew_quote(
+                equipment,
+                ladder,
+                config,
+                held,
+                allocation,
+                &assignment.target,
+                &kit,
+                crew,
+                band_kit,
+                &working,
+                ground,
+            )
+            .take
+        })
+        .collect();
+    let best = takes.iter().copied().fold(DEPOSIT_EMPTY, f32::max);
+    if best <= DEPOSIT_EMPTY {
+        return USEFUL_CUTTERS_BARREN;
+    }
+    let target = best * (1.0 - USEFUL_CUTTERS_REACH_TOLERANCE);
+    takes
+        .iter()
+        .position(|take| *take >= target)
+        .map_or(pool, |index| index as u32 + 1)
 }
 
 /// **ONE CREW SIZE'S QUOTE ON THE DEPOSIT COMPOSE SHEET** — [`deposit_crew_quote`]'s answer.

@@ -425,9 +425,9 @@ fn create_populations<'a>(
                                 walkOutRemaining: assignment.walk_out_remaining,
                                 nextLoadHomeIn: assignment.next_load_home_in,
                                 netRateHome: assignment.net_rate_home,
-                                // **THE NEXT RUNG'S CUT, GEAR INCLUDED** — what the compose sheet's
-                                // "once felled" row prints. Appended last.
-                                nextRungMaterialYield: assignment.next_rung_material_yield,
+                                // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** — the
+                                // deposit crew curve's plateau. Appended last.
+                                usefulCutters: assignment.useful_cutters,
                             },
                         )
                     })
@@ -1273,7 +1273,7 @@ fn decode_labor_assignment(
         walk_out_remaining: assignment.walkOutRemaining(),
         next_load_home_in: assignment.nextLoadHomeIn(),
         net_rate_home: assignment.netRateHome(),
-        next_rung_material_yield: assignment.nextRungMaterialYield(),
+        useful_cutters: assignment.usefulCutters(),
     })
 }
 

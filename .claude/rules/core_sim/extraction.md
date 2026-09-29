@@ -437,10 +437,15 @@ take, the wear, the item budget and `kitWorkersHolding` all see only that rung's
 when the command names none, the seed, and `DepositState.defaultKitId`. `default_kits.extract` and
 `default_kits.quarrywork` are both `none`. See `equipment.md` → "The take axis".
 
-**The next rung's cut is on the row** — `LaborAssignment.nextRungMaterialYield`
-(`extraction::next_rung_geared_take`): the rung above's rate × the crew plus this band's gear there,
-through the take's function and a prospective-row ration, so the compose sheet's *"once felled"*
-figure includes the axes.
+**The useful-crew cap is on the row** — `LaborAssignment.usefulCutters`
+(`extraction::useful_cutters`): the plateau of the deposit crew curve over the row's crew pool (its
+workers plus the band's idle hands) at the row's own kit and floor, read by the compose sheet's own
+rule (`HudDepositVocab.curve_useful_cutters` — the smallest crew whose take reaches the curve's best
+within `0.1%`; the pool while still rising; `1` where the curve pays nothing; `0` off an extract
+row). So the Work board's overstaffed flag and the sheet's `+` stop at one crew, and a band with axes
+stops before the bare `room ÷ perWorkerBiomass` quotient. Pinned by
+`server::tests::useful_cutters_is_the_sheet_curves_plateau_and_gear_lowers_it`. The next rung's
+geared cut is the crew curve's `next_rung_take` alone; no committed-row field carries it.
 
 **One seam, three readers.** `take_from_deposit` (the turn), `server::seed_source_yield`'s `Extract`
 arm and `deposit_take_overdraws`' ability half all read the gear through `deposit_gear` at the rung
@@ -451,7 +456,7 @@ turn, `extraction::a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_on
 ### The compose sheet asks a crew curve BEFORE the commit — `DepositCrewTakeQuery`
 
 Every figure on the deposit compose sheet is read before the player presses Cut, so it cannot come
-off the committed row's `materialYield` / `kitWorkersHolding` / `nextRungMaterialYield` alone.
+off the committed row's `materialYield` / `kitWorkersHolding` alone.
 `QueryPayload::DepositCrewTake` (proto `QueryCommand.deposit_crew_take = 8`, answered on
 `QueryReplyEnvelope.deposit_crew_take = 11`) asks it the hunt curve's way: band, `(x, y, material)`,
 the sheet's `kit_id` (`none` included; a kit not listing `extract` is `kit_wrong_job`), `floor` and
@@ -463,8 +468,8 @@ held rung, geared and reach-capped), `armed_workers` (holders of the held rung's
 **prospective row** (`extraction::prospective_deposit_gear` — the kit narrowed to the rung, the band's
 other rows beside it, less the pools' issue), the take runs through `deposit_take` at the working as
 the next turn finds it (renewed on a clone, the seed's rule; an unopened working derived from
-`DepositSource::opening`), and the next rung through `next_rung_take_for` — the function a committed
-row's `nextRungMaterialYield` is itself struck through. So committing crew `n` with kit `k` pays row
+`DepositSource::opening`), and the next rung through `next_rung_take_for`. So committing crew `n`
+with kit `k` pays row
 `n`'s `take`: `server::tests::the_deposit_crew_curve_is_what_the_turn_pays` (felling with axes and
 idle sleds, an unopened deadfall with sleds, and `none`) and
 `::the_deposit_crew_curves_next_rung_is_what_the_turn_pays_once_raised`. It is seat-gated like the

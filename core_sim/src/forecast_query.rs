@@ -771,7 +771,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
 ///
 /// **Each row is [`crate::extraction::deposit_crew_quote`]**: the crew is a prospective row,
 /// competing with the band's other rows for each tool and losing what the pools were issued — the
-/// ration `next_rung_geared_take` and the turn arm from — and the take runs through `deposit_take`
+/// ration the turn arms from — and the take runs through `deposit_take`
 /// at the working **as the next turn will find it** (renewed on a clone, the seed's rule). So
 /// committing crew `n` with this kit and resolving pays row `n`'s `take`.
 ///

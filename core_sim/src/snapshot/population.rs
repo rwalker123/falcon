@@ -590,9 +590,11 @@ pub(crate) struct BuildSourceInputs<'a> {
     /// it ([`crate::components::LaborAssignment::take_kit`]).
     pub(crate) deposits: &'a crate::extraction::DepositRegistry,
     pub(crate) extraction: &'a crate::extraction_config::ExtractionConfig,
-    /// The ladder, for an `extract` row's next-rung projection
-    /// ([`crate::extraction::next_rung_geared_take`]).
+    /// The ladder, for an `extract` row's crew curve ([`crate::extraction::useful_cutters`]).
     pub(crate) ladder: &'a crate::intensification::LadderConfig,
+    /// **The ground under a tile**, for an `extract` row's crew curve — the capture's own tile
+    /// lookup, `None` off the map.
+    pub(crate) ground_of: &'a (dyn Fn(bevy::math::UVec2) -> Option<crate::components::Tile> + Sync),
 }
 
 impl BuildSourceInputs<'_> {
@@ -720,6 +722,12 @@ fn resolved_build_job(
 /// A queue entry on a source neither registry carries resolves to `""`, which is the honest answer:
 /// the sim cannot say what is being raised on ground it does not have. Fixtures that assert on the
 /// **job token** seed real registries instead.
+/// A fixture with no map: every tile is off it.
+#[cfg(test)]
+fn no_ground(_: bevy::math::UVec2) -> Option<crate::components::Tile> {
+    None
+}
+
 #[cfg(test)]
 pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
     use std::sync::OnceLock;
@@ -736,6 +744,7 @@ pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
         deposits: DEPOSITS.get_or_init(Default::default),
         extraction: EXTRACTION.get_or_init(crate::extraction_config::ExtractionConfig::builtin),
         ladder: LADDER.get_or_init(crate::intensification::LadderConfig::builtin),
+        ground_of: &no_ground,
     })
 }
 
@@ -1248,16 +1257,24 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         // was cut from, so two rows naming one kit state the share each really got.
                         row_gear[i].1.workers_holding_whole_kit(),
                     );
-                    // **THE NEXT RUNG'S CUT, GEAR INCLUDED** (#663) — the take's own function at the
-                    // rung above, off the ration the turn arms with. `0` on every non-extract row.
-                    row.next_rung_material_yield = crate::extraction::next_rung_geared_take(
-                        kit_levers.config,
-                        build_sources.ladder,
-                        &build_sources.held_rungs(),
-                        a,
-                        assignment,
-                        &kit,
-                    );
+                    // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the plateau of
+                    // the deposit crew curve over the same pool the hunt row's cap is struck over,
+                    // read by the sheet's own rule. `0` on every non-extract row.
+                    if let LaborTarget::Extract { tile, .. } = &assignment.target {
+                        if let Some(ground) = (build_sources.ground_of)(*tile) {
+                            row.useful_cutters = crate::extraction::useful_cutters(
+                                kit_levers.config,
+                                build_sources.ladder,
+                                build_sources.extraction,
+                                &build_sources.held_rungs(),
+                                a,
+                                assignment,
+                                &kit,
+                                &ground,
+                                assignment.workers.saturating_add(idle_workers),
+                            );
+                        }
+                    }
                     row
                 })
                 .collect()

@@ -2249,22 +2249,20 @@ table LaborAssignment {
   // every pack that lands, per turn - the whole take, delayed by the walk. A near row and a far row are comparable
   // figures on one board. THE TAKE FLOWS HOME, ALWAYS - to the band that owns this row.
   netRateHome:float = 0;
-  // --- THE NEXT RUNG'S CUT, WITH THIS BAND'S GEAR (appended last, issue #663) ------------------
-  // *** WHAT THIS ROW'S CREW WOULD CUT A TURN ONCE ITS WORKING IS RAISED ONE RUNG. *** The number
-  // the compose sheet's "once felled / once coppiced / once quarried: X a turn" row prints, so the
-  // client reads a figure rather than multiplying the catalog's bare `yieldPerWorkerTurn` by the
-  // crew and leaving the tools out. It is the next rung's own `yield_per_worker_turn` x `workers`
-  // PLUS what this band's gear adds there (`deposit_take`: the axe on felling/coppice, the wedges on
-  // the quarry), struck through the same ration and the same function the turn cuts with - the
-  // band's share of each tool beside its other rows, less what the standing pools were issued.
+  // --- HOW MANY CUTTERS THIS WORKING CAN USE, WITH THIS BAND'S GEAR (appended last, #663) -----
+  // *** THE CREW BEYOND WHICH MORE HANDS CUT NOTHING MORE THIS TURN. *** The plateau of the SAME
+  // curve `DepositCrewTakeQuery` answers - one quote per crew size over this row's crew pool (its
+  // own workers plus the band's idle hands), at the row's stored kit and floor, geared and capped by
+  // the working's reach - read by the same rule the compose sheet reads that curve by
+  // (`curve_useful_cutters`): the smallest crew whose take reaches the curve's best within a 0.1%
+  // tolerance. So the Work board's overstaffed flag and the sheet's `+` stop at one crew, and a band
+  // with axes stops earlier than the bare `room / perWorkerBiomass` quotient.
   //
-  // BEFORE THE REACHABLE STOCK CAPS IT, like the catalog figure it replaces: it is the crew's
-  // throughput at that rung, not a forecast of this particular seam's remaining stock.
-  //
-  // At the row's CURRENT `workers`: a stepper press re-seeds it. 0 on every non-extract row, on a
-  // working already at the top of its branch (no next rung), and on a row with nobody on it.
-  // Derived at capture.
-  nextRungMaterialYield:float = 0;
+  // == THE POOL when the take is still rising at the last crew (every hand buys take; the client's
+  // CUTTERS_UNCAPPED reading). 1 on a working whose curve pays nothing at any size (CUTTERS_BARREN -
+  // the honest ceiling is one hand, never none). 0 on every non-extract row and on a row with no
+  // crew pool at all. Derived at capture.
+  usefulCutters:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

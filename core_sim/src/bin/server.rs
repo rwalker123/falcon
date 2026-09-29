@@ -23572,48 +23572,78 @@ mod tests {
         }
     }
 
-    /// **THE NEXT RUNG'S CUT IS PUBLISHED WITH THE GEAR, AND IS WHAT THE TURN PAYS ONCE RAISED**
-    /// (#663). A wood on deadfall, five fellers, two axes: `nextRungMaterialYield` is felling's own
-    /// rate × 5 **plus** two axes' `deposit_take` — the playtest's *"once felled"* line, which had
-    /// read the bare catalog rate × crew. Then the working is raised to felling and one turn runs:
-    /// the cut the turn pays equals the figure published beforehand.
+    /// **THE SHEET'S PLATEAU RULE, AS THE CLIENT READS IT** — `HudDepositVocab.curve_useful_cutters`
+    /// transcribed for the test: the smallest crew whose take reaches the curve's best within the
+    /// shared 0.1% tolerance, `1` where it pays nothing, the row count where it is still rising.
+    fn sheet_plateau(reply: &sim_runtime::commands::DepositCrewTakeReply) -> u32 {
+        const REACH_TOLERANCE: f32 = 0.001;
+        let best = reply
+            .per_crew
+            .iter()
+            .map(|row| row.take)
+            .fold(0.0_f32, f32::max);
+        if best <= 0.0 {
+            return 1;
+        }
+        reply
+            .per_crew
+            .iter()
+            .find(|row| row.take >= best * (1.0 - REACH_TOLERANCE))
+            .map_or(reply.per_crew.len() as u32, |row| row.workers)
+    }
+
+    /// ⛔ **`usefulCutters` IS THE SHEET CURVE'S PLATEAU, AND GEAR LOWERS IT** (#663). A felling wood
+    /// drawn down to a small room above the floor, five fellers committed, the band's thirty working
+    /// hands the crew pool. The published `usefulCutters` must equal the plateau of the curve the
+    /// sheet asks for (same band, kit, floor and pool), read by the sheet's own rule — and with three
+    /// axes it must stop strictly earlier than the same ground's bare curve (`none`), which is the
+    /// `room ÷ perWorkerBiomass` quotient the roster used to flag against.
     #[test]
-    fn the_next_rungs_cut_includes_the_gear_and_is_what_the_turn_pays_once_raised() {
-        const AXES: u32 = 2;
-        const AXE_TAKE: f32 = 1.0;
+    fn useful_cutters_is_the_sheet_curves_plateau_and_gear_lowers_it() {
+        /// What the drawn-down wood leaves above the floor before renewal — small enough that the
+        /// plateau lands well inside the band's pool.
+        const ROOM: f32 = 10.0;
         let mut app = build_test_app();
-        let faction = FactionId(0);
         let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
-        let band = spawn_idle_band(&mut app, faction, tile);
-        let mut ledger = BandEquipment::default();
-        ledger.stock("axe", AXES, "flint", None);
-        app.world.entity_mut(band).insert(ledger);
-        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
-
-        let ladder = app.world.resource::<LadderConfigHandle>().get();
-        let felling_rate = ladder
-            .rung(core_sim::RungKey::ForestryFelling)
-            .extraction_payoff
-            .as_ref()
-            .expect("a deposit rung prices a take")
-            .yield_per_worker_turn;
-        let projected = published_wood_row(&mut app).next_rung_material_yield;
-        let expected = felling_rate * BAND_WORKERS as f32 + AXES as f32 * AXE_TAKE;
-        assert!(
-            (projected - expected).abs() < A_CLOSE_ENOUGH_AMOUNT,
-            "once felled: the rung's rate for the crew plus two axes — {projected} against {expected}"
-        );
-
-        // **Raise it**: the working seated where the felling rung is ARRIVED at, its own rate.
         seat_a_felling_working(&mut app, tile);
-        resolve_deposit_turn(&mut app);
-        let paid = source_materials(&app, band)
-            .first()
-            .expect("the turn paid the working's material")
-            .amount;
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", 3, "flint", None);
+        deposit_band_holding(&mut app, tile, ledger);
+        assign_extract(&mut app, FactionId(0), WORKING, "wood", None, BAND_WORKERS);
+        {
+            let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+            let ground = app.world.get::<Tile>(tile).cloned().expect("the tile");
+            let capacity =
+                core_sim::extraction::tile_deposit_capacity(&extraction, "wood", &ground);
+            let mut registry = app.world.resource_mut::<core_sim::DepositRegistry>();
+            let working = registry
+                .source_mut(WORKING, "wood")
+                .expect("the seated working");
+            working.stock = DEFAULT_ESCAPEMENT_FLOOR * capacity + ROOM;
+        }
+        let pool = BAND_WORKING_AGE;
+        let published = published_wood_row(&mut app).useful_cutters;
+        let geared = deposit_crew_curve(
+            &mut app,
+            "wood",
+            "woodcutting",
+            DEFAULT_ESCAPEMENT_FLOOR,
+            pool,
+        );
+        let bare = deposit_crew_curve(&mut app, "wood", "none", DEFAULT_ESCAPEMENT_FLOOR, pool);
+        let geared_plateau = sheet_plateau(&geared);
+        let bare_plateau = sheet_plateau(&bare);
         assert!(
-            (paid - projected).abs() < A_CLOSE_ENOUGH_AMOUNT,
-            "the turn after the raise pays the published figure: {paid} against {projected}"
+            geared_plateau < pool,
+            "fixture: the room must bind inside the pool, or the plateau is the pool — {geared_plateau}"
+        );
+        assert_eq!(
+            published, geared_plateau,
+            "the roster's cap is the sheet's plateau for the same band, kit and floor"
+        );
+        assert!(
+            published < bare_plateau,
+            "three axes saturate the room sooner than bare hands: {published} against {bare_plateau}"
         );
     }
 

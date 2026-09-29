@@ -2919,6 +2919,13 @@ pub fn capture_snapshot(
                 ))
             })
             .collect();
+        // **The ground under a tile**, for an `extract` row's crew curve (`usefulCutters`).
+        let ground_of = |pos: UVec2| {
+            tile_registry
+                .index(pos.x, pos.y)
+                .and_then(|entity| tiles.get(entity).ok())
+                .map(|(_, tile, _)| tile.clone())
+        };
         let mut population_states: Vec<PopulationCohortState> = populations
             .iter()
             .filter_map(
@@ -3111,6 +3118,7 @@ pub fn capture_snapshot(
                             deposits: &deposits,
                             extraction: &extraction_config,
                             ladder: &ladder_config,
+                            ground_of: &ground_of,
                         },
                     }))
                 },
