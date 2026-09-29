@@ -17,9 +17,10 @@ use bevy::prelude::World;
 
 use core_sim::grid_utils::{hex_distance_wrapped, hex_neighbor, HEX_DIRECTION_COUNT};
 use core_sim::{
-    advance_herds, advance_roads, traffic_ceiling, FaunaConfigHandle, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LadderConfig, LadderConfigHandle, RoadRegistry, RoamState,
-    RouteTrafficLog, SimulationConfig, SimulationTick, SizeClass, Tile, TileRegistry,
+    advance_herds, advance_roads, traffic_ceiling, FaunaConfigHandle, GrazePatch, GrazeRegistry,
+    Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LadderConfig, LadderConfigHandle,
+    RoadRegistry, RoamState, RouteTrafficLog, SimulationConfig, SimulationTick, SizeClass, Tile,
+    TileRegistry,
 };
 
 /// A shipped **migratory** species — its `def` resolves, so the herd runs the species' own cadence.
@@ -408,7 +409,39 @@ fn tie_herd(size_class: SizeClass, roam: RoamState) -> Herd {
 
 /// One `advance_herds` pass with a road seated at `trail` (if any), returning where the herd went.
 fn step_with_trail(size_class: SizeClass, roam: RoamState, trail: Option<UVec2>) -> UVec2 {
+    step_on_pasture(size_class, roam, trail, None)
+}
+
+/// Every tile's pasture when the fixture seats a graze layer — any positive capacity, so no tile is
+/// barren and every land step stays acceptable.
+const PLAIN_PASTURE: f32 = 50.0;
+/// The one richer tile the pasture test seats — strictly above [`PLAIN_PASTURE`].
+const RICH_PASTURE: f32 = 200.0;
+
+/// [`step_with_trail`], optionally over a seeded graze layer: every tile at [`PLAIN_PASTURE`] and
+/// `rich` (if any) at [`RICH_PASTURE`].
+fn step_on_pasture(
+    size_class: SizeClass,
+    roam: RoamState,
+    trail: Option<UVec2>,
+    rich: Option<UVec2>,
+) -> UVec2 {
     let mut world = land_world();
+    if let Some(rich) = rich {
+        let mut graze = GrazeRegistry::default();
+        for y in 0..WORLD_HEIGHT {
+            for x in 0..WORLD_WIDTH {
+                let tile = UVec2::new(x, y);
+                let capacity = if tile == rich {
+                    RICH_PASTURE
+                } else {
+                    PLAIN_PASTURE
+                };
+                graze.patches.insert(tile, GrazePatch::new(tile, capacity));
+            }
+        }
+        world.insert_resource(graze);
+    }
     add_herd(&mut world, tie_herd(size_class, roam));
     if let Some(tile) = trail {
         let ladder = ladder(&world);
@@ -476,6 +509,30 @@ fn a_migrating_herd_never_detours_onto_a_trail() {
     assert_eq!(
         taken, bare,
         "a trail on a worse step ({worse:?}) does not pull the herd off its best step"
+    );
+}
+
+/// **A trail beats a richer pasture among equally close steps** — a migrating herd is travelling,
+/// not grazing, so the corridor it wore outranks the grass beside it. Liveness: with no trail seated
+/// the herd does take the richer tile, so the pasture tie-break is live and the trail is what beat it.
+#[test]
+fn a_migrating_herd_takes_the_trail_over_a_richer_equally_close_tile() {
+    let (tied, _) = the_tie();
+    let (rich, trail) = (tied[0], tied[1]);
+    let untrailed = step_on_pasture(SizeClass::Migratory, RoamState::Migrate, None, Some(rich));
+    assert_eq!(
+        untrailed, rich,
+        "liveness: with no trail the herd takes the richer tied tile ({rich:?})"
+    );
+    let taken = step_on_pasture(
+        SizeClass::Migratory,
+        RoamState::Migrate,
+        Some(trail),
+        Some(rich),
+    );
+    assert_eq!(
+        taken, trail,
+        "the trail ({trail:?}) beats the richer tile ({rich:?}) among equally close steps"
     );
 }
 

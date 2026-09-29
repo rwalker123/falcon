@@ -269,6 +269,41 @@ flat loss takes it after the herd grace runs out. **A tile no herd has ever cros
 trail**: the counter is `Option<u16>`, and `None` (`NO_HERD_HAS_CROSSED`) reads as already past the
 grace. A pruned road loses the counter with it. The people-trail numbers are untouched.
 
+#### ⛔ THE CORRIDORS EXIST AT TURN 0 — the herds did not come into existence with the game
+
+Even with the herd grace, wearing a corridor in live took a median **~300 turns** — by then there are
+paved roads and the herds may be hunted out. Ray: *"It isn't like they came into existence just as the
+game starts."* So **`fauna::stamp_migratory_game_trails` stamps every migratory corridor as a full
+trail at world creation**:
+
+- **Where it runs**: the Startup chain, right after `spawn_initial_graze` (the Migrate step reads the
+  graze layer), under `save::worldgen_wanted` — so **never on load and never mid-game**. A loaded
+  save carries its roads; nothing is rebuilt from the herds.
+- **What it traces**: `fauna::migratory_corridor_tiles` — the live Migrate step walked anchor to
+  anchor around the whole cycle, so the stamped tiles are the ones the herd will walk. A hemmed leg
+  stops, and the next leg starts where the walk stopped, as the live herd does.
+- **Trace all, then stamp** — every corridor is traced against the registry as it stood before the
+  pass, `advance_roads` phase 4's rule, so the result cannot depend on registry order. At world
+  creation that registry is empty, so the trace is the bare land walk.
+- **What a stamped tile holds**: `traffic_ceiling` (a full `route:trail`), `herd_idle_turns
+  Some(0)`, `idle_turns 0`, no keeper. No RNG is drawn; the herd layout is unchanged.
+- **A corridor whose herd is gone** is pruned `herd_disuse_grace_turns + ceiling /
+  disuse_loss_per_turn` = **340** turns after the last crossing — the ghost of a migration you ended.
+- **A feral shed** (`fauna::spawn_feral_group`) can seat a `Migratory` herd mid-game. It is not
+  stamped; it wears its trail in live.
+- **The trail payoff and the connection lesson apply from turn 0**: two bands joined by a corridor
+  credit `roadbuilding` from the first turn — people learned roads from the animals' trails.
+
+#### A migrating herd FOLLOWS ITS OWN TRAIL
+
+A herd sets out on each leg from wherever its loiter left it, up to `loiter_radius` off the anchor,
+and a bare Migrate step does not know the trail is there — measured, only ~68% of live steps landed on
+a seeded corridor and the rest of the corridor bled away. So **the Migrate step (and its heading
+arrow) ranks candidates distance → `routes::tile_rank` → graze capacity → direction order** — the
+same road test `trace_path` reads, in the same place in the order. Distance first means **it never
+detours** onto a trail; the trail outranks pasture because a migrating herd is travelling, not
+grazing (`Migrate` has no dwell). Graze-wander and loiter do not read roads.
+
 ## The scale term — `UpkeepScale::RouteSpan` COLLAPSED into `SourceLoad`
 
 ```text
@@ -352,7 +387,8 @@ remaining hex distance, prefers the one carrying the **highest held rung** (no r
 rule so the walk stays deterministic. Only steps already tied for best are compared, so the hex
 distance bounds the walk exactly as before: it cannot get longer and it cannot loop. What it buys is
 that the second journey between two camps runs over the road the first one wore, rather than beside
-it.
+it. **Migrating herds follow the same rule through the same `routes::tile_rank`** — see "A migrating
+herd FOLLOWS ITS OWN TRAIL".
 
 **The named limitation**: a road only helps a link where it lies along a *shortest* hex path between
 the two camps. That is self-consistent rather than a gap — roads are worn in by traced journeys in

@@ -3757,18 +3757,23 @@ fn step_herd_toward(
 /// §4.1). A candidate must be land, **grazeable** (a `GrazeRegistry` patch with positive capacity —
 /// never barren glacier / rock / desert, where a grazer would starve on ground it should never cross),
 /// and strictly closer to `target` than `from` (so a herd never oscillates, backtracks, or wanders
-/// away from its anchor). Among those, the closest wins; **ties break toward the richer pasture**
-/// (higher graze capacity) so a herd drifts along fertile ground, then — **only when `roads` is
-/// handed in** — **toward the tile holding the higher road rung**, and direction order breaks the
-/// rest. `None` = no grazeable step gets closer, so the herd stays put — a herd hemmed in by barren
-/// does not cross it.
+/// away from its anchor). The order is **distance → road rung → graze capacity → direction**: the
+/// closest wins; among equally close steps — **only when `roads` is handed in** — the tile holding
+/// the higher road rung; then the richer pasture (higher graze capacity), so a herd drifts along
+/// fertile ground; and direction order breaks the rest. `None` = no grazeable step gets closer, so
+/// the herd stays put — a herd hemmed in by barren does not cross it.
 ///
 /// ⛔ **A HERD FOLLOWS ITS OWN TRAIL, AND NEVER DETOURS TO REACH ONE** (issue #215) — the rule
-/// `routes::trace_path` states for people, applied to the `Migrate` step: the road is a tie-break
-/// **below** distance and pasture, so a trail is taken only among steps already equally good, and a
-/// herd never takes a worse step to reach one. The road test is `routes::tile_rank`, the one
-/// `trace_path` reads. It is what keeps a herd on the corridor it wore instead of wandering off it by
-/// however far its loiter left it from the anchor.
+/// `routes::trace_path` states for people, in `trace_path`'s own order (distance, then road). The
+/// road test is `routes::tile_rank`, the one `trace_path` reads.
+///
+/// - **Distance first is the no-detour guarantee**: a trail is only ever chosen among steps that
+///   close the distance equally, so a herd never takes a worse step to reach one.
+/// - **The trail beats the richer pasture because a migrating herd is TRAVELLING, not grazing** — a
+///   `Migrate` leg has no dwell, so the pasture of the tile it passes through feeds it nothing. A
+///   worn trail among equally close steps keeps the herd on the corridor it wore; ranking pasture
+///   first let an adjacent richer tile pull it off (measured: ~71% of live migrating steps on a
+///   seeded trail with pasture first, ~75% with the trail first).
 ///
 /// **`roads` is `Some` for a `Migrate` leg only** — the step itself, its heading arrow and the
 /// corridor trace (`migratory_corridor_tiles`). A graze-wandering game group passes `None`: it mills
@@ -3788,8 +3793,8 @@ fn best_land_neighbor_toward(
     let cur_dist = hex_distance_wrapped(from, target, width, wrap);
     let rank =
         |tile: UVec2| roads.map_or(NO_TRAIL_PREFERENCE, |r| crate::routes::tile_rank(r, tile));
-    // (pos, hex distance to target, graze capacity, road rank) — closest, then richest, then the
-    // best-worn road. Replacing only on a strictly better step leaves direction order holding a tie.
+    // (pos, hex distance to target, graze capacity, road rank) — closest, then the best-worn road,
+    // then richest. Replacing only on a strictly better step leaves direction order holding a tie.
     let mut best: Option<(UVec2, u32, f32, u32)> = None;
     for (np, cap) in acceptable_steps(from, registry, tiles, graze, width, height, wrap) {
         let d = hex_distance_wrapped(np, target, width, wrap);
@@ -3801,8 +3806,8 @@ fn best_land_neighbor_toward(
             None => true,
             Some((_, best_dist, best_cap, best_road)) => {
                 d < best_dist
-                    || (d == best_dist && cap > best_cap)
-                    || (d == best_dist && cap == best_cap && road > best_road)
+                    || (d == best_dist && road > best_road)
+                    || (d == best_dist && road == best_road && cap > best_cap)
             }
         };
         if better {
