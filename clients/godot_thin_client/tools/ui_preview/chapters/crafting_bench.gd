@@ -1187,6 +1187,19 @@ func _assert_panel_renders() -> void:
 	var used_alpha := _row_alpha(panel, "Sled")
 	h._assert_hud("crafting — the untouched row is dimmed and the used one is not",
 		untouched_alpha >= 0.0 and untouched_alpha < 1.0 and is_equal_approx(used_alpha, 1.0))
+	# **…AND THE SHRUG DIMS THE ROW'S INFORMATION, NEVER ITS CONTROL.** A LIVE Make on the untouched
+	# row must render at full strength — a faded button reads as a disabled one, which is how a
+	# player read an untouched Hoes row as unmakeable. Asserted as a PAIR on the SAME row: the button's
+	# alpha is the modulate product up the whole tree, so a dim on the row or any ancestor fails it,
+	# and the reason beside it still dims, so a fix that simply dropped the shrug passes neither half.
+	var shrug_button := _row_make_button(panel, "Traps")
+	var shrug_reason := _label_with_text(panel, "Not needed yet")
+	h._assert_hud("crafting — the shrug row's Make is live and full-strength while its reason dims"
+			+ " (button %.2f, reason %.2f)" % [_effective_alpha(shrug_button),
+				_effective_alpha(shrug_reason)],
+		shrug_button != null and not shrug_button.disabled
+			and is_equal_approx(_effective_alpha(shrug_button), 1.0)
+			and shrug_reason != null and _effective_alpha(shrug_reason) < 1.0)
 	# **THE UNBLOCKED HALF OF THE BENCH PAIR** (states 14 and 15 are the others): this band's bench is
 	# running, so the well states its progress and carries no refusal line under it at all — no empty
 	# label, no reserved gap. A one-sided claim on the blocked frame alone would pass on a panel that
@@ -1492,21 +1505,49 @@ func _label_texts(node: Node) -> Array:
 func _index_of(texts: Array, needle: String) -> int:
 	return texts.find(needle)
 
-## The `modulate.a` of the ledger row naming `item_name` — how the dimming is applied, so it is what
-## the claim has to read. `1.0` when no such row is found, which fails the dimmed half honestly.
+## The RENDERED alpha of the item name on the ledger row naming `item_name` — the modulate product up
+## the tree, since the shrug dims the row's information cells rather than the row itself, and a claim
+## reading only the row's own `modulate` would see `1.0` on a correctly dimmed row. `-1.0` when no
+## such row is found, which fails the dimmed half honestly.
 ##
 ## **IT LOOKS FOR THE INNERMOST MATCHING `HBoxContainer`, and that is not fussiness.** The zones row
 ## is an `HBoxContainer` too and every ledger row is a descendant of it, so a walk that took the first
 ## match from the top answered the ZONES row's alpha — a flat `1.0` — for every item in the table, and
 ## the dimming claim failed against a frame that was rendering it correctly.
 func _row_alpha(node: Node, item_name: String) -> float:
+	var row := _ledger_row(node, item_name)
+	if row == null:
+		return -1.0
+	return _effective_alpha(_label_with_text(row, item_name))
+
+## The alpha `node` actually renders at: its own `modulate`/`self_modulate` times every ancestor
+## `CanvasItem`'s `modulate`. `-1.0` for a missing node, which fails either direction of a claim.
+func _effective_alpha(node: Node) -> float:
+	if node == null:
+		return -1.0
+	var alpha := 1.0
+	if node is CanvasItem:
+		alpha *= (node as CanvasItem).self_modulate.a
+	var walk := node
+	while walk != null:
+		if walk is CanvasItem:
+			alpha *= (walk as CanvasItem).modulate.a
+		walk = walk.get_parent()
+	return alpha
+
+## The Make button on the ledger row naming `item_name`, found by IDENTITY inside that row.
+func _row_make_button(panel: Node, item_name: String) -> Button:
+	var row := _ledger_row(panel, item_name)
+	return null if row == null else _any_make_button(row)
+
+func _any_make_button(node: Node) -> Button:
+	if node is Button and node.has_meta(HudCraftingVocab.MAKE_BUTTON_META):
+		return node as Button
 	for child in node.get_children():
-		var found := _row_alpha(child, item_name)
-		if found >= 0.0:
+		var found := _any_make_button(child)
+		if found != null:
 			return found
-	if node is HBoxContainer and _label_texts(node).has(item_name):
-		return (node as HBoxContainer).modulate.a
-	return -1.0
+	return null
 
 ## A head's rendered face — the caret the fold state picks, then the name, uppercased exactly as the
 ## panel builds it. Composed through the panel's own vocabulary rather than typed out, so the claim
