@@ -196,8 +196,13 @@ branches on mission:
 >   **The raid's economics turn on it**: where the herd's regrowth outpaces what a legal party can
 >   reach, the surplus is never spent and the raid does not complete inside
 >   `hunt.forecast_horizon_turns` — an honest "this party cannot clear this herd", not a stall.
->   **The forecast DRAWS NOTHING — it resolves at the expectation** (`RAID_FORECAST_DRAW` =
->   `fauna::HuntDraw::EXPECTED`). A projection has no tick to name, so it cannot compose the live
+>   **The forecast DRAWS NOTHING — it reads the take's expectation** (`RAID_FORECAST_DRAW` =
+>   `RaidRoll::Forecast(TakeReading::Mean)`: the kill averaged over the retreat's outcomes through
+>   `fauna::kill_over_retreat` and banked on the quarry's wounds, never the fight at the retreat's
+>   mean head count, which over-read a raid of 8 speared hunters by ~11–13% — Steppe Runners `5.09`
+>   previewed against `4.56` paid; pinned by
+>   `raid_forecast_tests::a_raids_previewed_delivery_is_the_live_takes_mean`). A projection has no
+>   tick to name, so it cannot compose the live
 >   take's per-event seed at all. This replaced a `forecast_retreat_seed` that built a real seed out
 >   of zeros for the two world terms a projection lacks: stable and reproducible, and still wrong in
 >   *kind* — it drew a **sample** and presented it as the answer, so the moment a stochastic stage was
@@ -961,8 +966,10 @@ party's patience.
 `systems::denial_forecast` — the denial analogue of `hunt_trip_forecast`, and the same bounded forward
 simulation (`fauna::regrow_biomass` then `expedition_take_biomass`, in the live order) through the
 **same** helper, so a preview cannot quote a raid the sim does not run. It is evaluated at **three
-quantiles** (`±combat_config.forecast_range_sigmas` and the expectation), which is slice 6's shape
-applied to a turn count instead of a biomass (`docs/plan_hunt_through_combat.md` §6.4).
+readings** of each turn's kill over the retreat's outcomes — their mean, and
+`fauna::retreat_band_edge` at `±combat_config.forecast_range_sigmas` — which is slice 6's shape
+applied to a turn count instead of a biomass (`docs/plan_hunt_through_combat.md` §6.4). An end of
+the band is a projection in which every turn's kill is one the retreat can produce.
 
 - **`low` is the FEWEST turns** — more animals staying and more strikes landing is the *optimistic*
   draw for a raid, so `+sigmas` produces the low end. Getting that backwards would report a band that
