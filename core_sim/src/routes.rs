@@ -601,9 +601,11 @@ impl RouteTrafficLog {
     /// biomass is a food stock, not a number of hooves, and a mass term here is the error §4.13a ①
     /// already corrected for the link lever.
     ///
-    /// **Only the corridor wears in.** `fauna::advance_herds` calls this for a step taken on a
-    /// `RoamState::Migrate` leg and for nothing else — a grazing-wander game group and a loitering
-    /// herd mill about their ground rather than walking a line, so they bank nothing. The traffic it
+    /// **Only the corridor wears in, and only a wild herd walks one.** `fauna::advance_herds` calls
+    /// this for a step an **ownerless** herd takes on a `RoamState::Migrate` leg and for nothing else
+    /// — a grazing-wander game group and a loitering herd mill about their ground rather than walking
+    /// a line, and a tamed or penned herd follows its people rather than a migration corridor, so
+    /// none of them bank anything. The traffic it
     /// records is ordinary traffic from here on: capped at [`traffic_ceiling`] like every other
     /// journey, and it resets [`Road::idle_turns`] and [`Road::herd_idle_turns`] — the second is what
     /// holds a game trail through the long gap before the herd comes back

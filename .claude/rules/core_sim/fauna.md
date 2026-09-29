@@ -301,8 +301,8 @@ step ≤1 hex) — split by `size_class`:
 - **Migratory**: a `Loiter { turns_left }` ↔ `Migrate` state machine over the anchors. **Loiter** —
   graze-wander within `loiter_radius` of the current anchor for `loiter_turns` (sampled). **Migrate** —
   1 hex/turn toward the next anchor, **no dwell**, then loiter at the new anchor. Fixes the old bug
-  where `Herd::advance()` teleported 4–12 tiles/turn along the sparse route. **A `Migrate` step — and
-  only that — banks route traffic** (`RouteTrafficLog::herd_passed`), and the step prefers a tile
+  where `Herd::advance()` teleported 4–12 tiles/turn along the sparse route. **A wild herd's `Migrate` step
+  — and only that; an owned herd banks nothing — banks route traffic** (`RouteTrafficLog::herd_passed`), and the step prefers a tile
   holding a road among equally close steps (distance → `routes::tile_rank` → graze capacity), so a
   herd follows its own trail and never detours to one. The corridors are stamped as full trails at
   world creation (`stamp_migratory_game_trails`, after `spawn_initial_graze`); see

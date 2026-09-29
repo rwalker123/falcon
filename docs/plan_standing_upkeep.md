@@ -2519,6 +2519,10 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > `HudStyle.DANGER` (`AnnotationRenderer` line ~428), which nothing else on the map uses. **It is
     > > the ordinary, healthy road that must not be amber.**
     > >
+    > > **#215 removed the amber herd line** (`MapView.HERD_TRAIL_COLOR` and the polyline it drew are
+    > > deleted): a herd's path is now the worn ground itself, drawn by the road art. The rule that a
+    > > healthy road is not amber stands on its own — amber is `HudStyle.WARN`.
+    > >
     > > So the fade is over ALPHA and WIDTH of a road's own hue, never a ramp toward the warning
     > > colour — and the art of #600 has to clear the same bar, since a stylised dirt track is a
     > > tan-brown object by nature and a herd trail is drawn on top of the same ground.

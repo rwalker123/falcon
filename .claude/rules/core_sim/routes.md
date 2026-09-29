@@ -244,8 +244,12 @@ salt licks for generations, and hunters and then settlers followed it. So **only
 only on their `Migrate` legs** — the corridor between anchors — bank route work. A graze-wandering herd
 and a loitering one wear nothing: they would scribble a local tangle, where a trace is a corridor.
 
-- **No per-species field.** `Migrate` is reached only from `Loiter`, and only the migratory spawn
-  seats a herd in `Loiter`, so the roam state already is the gate.
+- **No per-species field — the gate is a `Migrate` step AND `herd.owner.is_none()`.** The roam state
+  alone is not enough: taming leaves `roam` untouched, and a tamed herd held on its owner's camp by
+  `drift_to_owner` falls through to its old `Migrate` leg, steps toward its wild anchor and is pulled
+  back next turn — which wore a trail spoke out of the camp that the herd grace then kept alive.
+  Ownership is the test, not `RungMovement::Roam`, because taming sets the owner before the rung
+  completes. A tamed or penned herd follows its people, not a corridor, and banks nothing.
 - **A step banks BOTH ends**, as a march does — the journey is `from → to`. An interior corridor tile
   is therefore banked twice per pass (entered, then left) and a leg-end tile once;
   `work_per_herd_tile` is quoted against that.

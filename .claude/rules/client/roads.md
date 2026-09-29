@@ -368,8 +368,9 @@ Three clauses, each off a published field:
 **A rung buying nothing on every axis RENDERS NO ROW**, which is both free rungs. It used to say so in
 words — `nothing — a path the animals made`, in dim ink — and that sentence was **factually wrong, not
 merely wordy**: it asserted an ORIGIN as the rung's meaning. A path is a rung a tile HOLDS, worn
-in by bands pooling food over the same ground or by a migratory herd's Migrate legs (issue #215), and
-a sentence naming one cause is false of the other. The row's absence states the
+in by any of three kinds of traffic — bands pooling food over the same ground, people on the move
+(bands, scouts, hunt parties, shipments), or a migratory herd's Migrate legs (issue #215) — and a
+sentence naming one cause is false of the others. The row's absence states the
 same fact — both of the floor's terms are at their own neutral — and cannot state a false one beside
 it.
 

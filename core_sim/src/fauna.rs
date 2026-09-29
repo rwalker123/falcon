@@ -2844,10 +2844,22 @@ pub fn advance_herds(
                 )
             }
         };
-        // **THE CORRIDOR WEARS IN** (issue #215) — only a step on a `Migrate` leg, which only a
-        // migratory herd ever takes (`RoamState::Migrate` is entered from `Loiter`, and only the
-        // migratory spawn seats a herd in `Loiter`). Per herd, never per unit of biomass.
-        if let (Some(step), Some(log)) = (migration_step, route_traffic.as_deref_mut()) {
+        // **THE CORRIDOR WEARS IN** (issue #215) — only a step on a `Migrate` leg (`RoamState::Migrate`
+        // is entered from `Loiter`, and only the migratory spawn seats a herd in `Loiter`), and only
+        // by an **OWNERLESS** herd. Per herd, never per unit of biomass.
+        //
+        // ⛔ **THE ROAM STATE IS NOT THE WHOLE GATE.** Taming leaves `roam` untouched, so a tamed
+        // migratory herd keeps its `Migrate` leg: under `drift_to_owner` the attractor holds it at its
+        // owner's camp, the turn falls through to the roam machine, the leg steps it one hex toward its
+        // old wild anchor, and next turn the attractor pulls it back — a trail spoke worn out of the
+        // camp and held by the herd grace. A kept herd follows its people, not a migration corridor,
+        // so it banks nothing: `owner.is_none()` is the gate (taming and penning both set an owner,
+        // so an ownerless herd is a wild one).
+        if let (Some(step), Some(log), true) = (
+            migration_step,
+            route_traffic.as_deref_mut(),
+            herd.owner.is_none(),
+        ) {
             log.herd_passed(step.from, step.to, &ladder);
         }
         // **K is ecological — for a MOBILE herd its roam range, for a PENNED herd its fenced footprint**

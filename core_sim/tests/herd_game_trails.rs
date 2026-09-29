@@ -22,6 +22,10 @@ use core_sim::{
     RoadRegistry, RoamState, RouteTrafficLog, SimulationConfig, SimulationTick, SizeClass, Tile,
     TileRegistry,
 };
+use core_sim::{
+    scalar_zero, FactionId, GenerationId, LocalStore, MoraleCause, PopulationCohort, ResidentBand,
+    Scalar,
+};
 
 /// A shipped **migratory** species — its `def` resolves, so the herd runs the species' own cadence.
 const MIGRATORY_SPECIES: &str = "Thunder Mammoths";
@@ -509,6 +513,93 @@ fn a_migrating_herd_never_detours_onto_a_trail() {
     assert_eq!(
         taken, bare,
         "a trail on a worse step ({worse:?}) does not pull the herd off its best step"
+    );
+}
+
+/// A migratory species that can be tamed (its `husbandry_ceiling` is `pastoral`), for the owned-herd
+/// fixture — `MIGRATORY_SPECIES` is `wild`-ceiling and cannot be.
+const TAMEABLE_MIGRATORY_SPECIES: &str = "Steppe Runners";
+/// The faction owning the tamed herd and the camp it drifts to.
+const OWNER_FACTION: FactionId = FactionId(3);
+/// A camp's head count — any positive number; only its position and faction are read.
+const CAMP_SIZE: u32 = 20;
+
+/// A resident band of `faction` camped at `at` — the attractor a `drift_to_owner` herd steers to.
+fn spawn_camp(world: &mut World, at: UVec2, faction: FactionId) {
+    let tile = world
+        .resource::<TileRegistry>()
+        .index(at.x, at.y)
+        .expect("the camp tile resolves");
+    world.spawn((
+        PopulationCohort {
+            home: tile,
+            current_tile: tile,
+            size: CAMP_SIZE,
+            children: scalar_zero(),
+            working: Scalar::from_u32(CAMP_SIZE),
+            elders: scalar_zero(),
+            stores: LocalStore::new(),
+            morale: scalar_zero(),
+            last_food_consumption: 0.0,
+            last_turn_food_transfers: Default::default(),
+            last_turn_fodder_transfers: Default::default(),
+            last_turn_transfer_crossings: Vec::new(),
+            last_morale_delta: scalar_zero(),
+            last_morale_cause: MoraleCause::None,
+            last_morale_contributions: Default::default(),
+            last_fertility_factors: Default::default(),
+            discontent_fraction: scalar_zero(),
+            grievance: scalar_zero(),
+            last_emigrated: 0,
+            last_immigrated: 0,
+            age_turns: 0,
+            generation: 0 as GenerationId,
+            faction,
+            knowledge: Vec::new(),
+            migration: None,
+        },
+        ResidentBand,
+    ));
+}
+
+/// **An owned migratory herd banks no route traffic, even on a `Migrate` leg.** A tamed herd
+/// standing on its owner's camp is held there by `drift_to_owner`, so the turn falls through to the
+/// roam machine, whose `Migrate` leg steps it toward its old wild anchor — the spoke-out-of-camp the
+/// ownership gate exists for. Liveness: the herd really does step, and really is owned and migrating.
+#[test]
+fn an_owned_migratory_herd_on_its_owners_camp_banks_nothing() {
+    let mut world = land_world();
+    let ladder = ladder(&world);
+    spawn_camp(&mut world, LEG_START, OWNER_FACTION);
+    let mut herd = fixture_herd(
+        "herd_tamed",
+        TAMEABLE_MIGRATORY_SPECIES,
+        SizeClass::Migratory,
+        vec![LEG_START, LEG_END],
+    );
+    herd.roam = RoamState::Migrate;
+    assert!(
+        herd.tame_outright(OWNER_FACTION, &ladder),
+        "the fixture's premise: this species can be tamed"
+    );
+    assert!(herd.is_domesticated() && herd.owner == Some(OWNER_FACTION));
+    add_herd(&mut world, herd);
+
+    world.run_system_once(advance_herds);
+    assert_ne!(
+        herd_pos(&world, "herd_tamed"),
+        LEG_START,
+        "liveness: the tamed herd stepped off its owner's camp along the Migrate leg"
+    );
+    assert!(
+        world.resource::<RouteTrafficLog>().journeys.is_empty(),
+        "an owned herd's step is not route traffic"
+    );
+    world.run_system_once(advance_roads);
+    assert_eq!(
+        world.resource::<RoadRegistry>().iter().count(),
+        0,
+        "no trail spoke is worn out of the camp"
     );
 }
 

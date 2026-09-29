@@ -334,9 +334,11 @@ const ROAD_BONUS_LINK_FORMAT := "links camps up to %d tiles apart"
 # nothing on every axis used to print (issue #566).
 #
 # ⛔ **IT WAS FACTUALLY WRONG, NOT MERELY WORDY.** It asserted an ORIGIN as the rung's meaning: a
-# path is a rung a tile HOLDS, worn in by bands pooling food over the same ground or by a migratory
-# herd's Migrate legs (issue #215), and a sentence naming one cause is false of the other. The rung buying nothing is now said by the row's ABSENCE, which states the same fact
-# and cannot state a false one beside it.
+# path is a rung a tile HOLDS, worn in by any of three kinds of traffic — bands pooling food over
+# the same ground, people on the move (bands, scouts, hunt parties, shipments), or a migratory herd's
+# Migrate legs (issue #215) — and a sentence naming one cause is false of the others. The rung
+# buying nothing is now said by the row's ABSENCE, which states the same fact and cannot state a
+# false one beside it.
 
 ## The friction multiplier at which a rung takes nothing off the loss. Named because it is the
 ## PATH's own reading and the test the friction clause is gated on, not a rounding tolerance.
