@@ -135,6 +135,13 @@ pub struct PowerTopology {
 
 impl PowerTopology {
     pub fn from_grid(node_count: usize, width: u32, height: u32, default_capacity: Scalar) -> Self {
+        // One node per tile, row-major: a grid that disagrees with the node count indexes past the
+        // adjacency table below. Named here so the mismatch reads as a mismatch, not a bare index.
+        debug_assert_eq!(
+            node_count,
+            (width as usize) * (height as usize),
+            "PowerTopology::from_grid: {node_count} nodes cannot be a {width}x{height} grid"
+        );
         let count = node_count;
         let mut adjacency = vec![Vec::new(); count];
         for y in 0..height {

@@ -27,8 +27,8 @@ use core_sim::record::{CommandRecord, RecordingSink, RunInfo, RunRecorder, RECOR
 use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
-    apply_port_base, available_workers, carry_runtime_owned_fields, floor_is_valid,
-    forage_source_yield_preview, herd_build_verb, hunt_source_yield_preview, knows,
+    apply_port_base, available_workers, carry_runtime_owned_fields, carry_world_identity,
+    floor_is_valid, forage_source_yield_preview, herd_build_verb, hunt_source_yield_preview, knows,
     load_simulation_config_for_new_world, output_multiplier, patch_build_verb, patch_composition,
     resolve_active_profile, resolve_committed_species, resolve_take_selection, rung_site_refusal,
     species_stands_in, tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile,
@@ -9974,8 +9974,15 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
     {
         let mut metadata = app.world.resource_mut::<SimulationConfigMetadata>();
         metadata.set_path(applied_path.clone());
+        // The FILE's seed intent — read before the carry below replaces the seed with the world's.
         metadata.set_seed_random(new_config.map_seed == 0);
     }
+
+    // **A reload retunes the world that exists; it never re-describes it** — the grid, preset,
+    // seed, topology, start profile and fog switch stay the running world's (see
+    // `carry_world_identity`). What the file names for the grid is only reported, below.
+    let file_grid_size = new_config.grid_size;
+    carry_world_identity(&mut new_config, &current_config);
 
     {
         let mut config_res = app.world.resource_mut::<SimulationConfig>();
@@ -10013,11 +10020,11 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
         "simulation_config.reloaded"
     );
 
-    if new_config.grid_size != current_config.grid_size {
+    if file_grid_size != current_config.grid_size {
         warn!(
             target: "shadow_scale::config",
             old = ?current_config.grid_size,
-            new = ?new_config.grid_size,
+            new = ?file_grid_size,
             "simulation_config.grid_size_changed=map_reset_recommended"
         );
     }
@@ -13240,6 +13247,105 @@ mod tests {
             0,
             "with fog off every tile publishes Active; {fogged} of {} did not",
             raster.samples.len()
+        );
+
+        std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);
+    }
+
+    /// ⛔ **A SIMULATION-CONFIG RELOAD KEEPS THE RUNNING WORLD'S IDENTITY — and a save written after
+    /// one still loads.**
+    ///
+    /// The world is built at a grid, preset and seed the `new_game` command chose, none of which is
+    /// the file's. A hot reload used to replace the live `SimulationConfig` wholesale, so the config
+    /// then described the FILE's world: `save_game` recorded the file's grid over this world's
+    /// tiles, and the load built its power topology for `width × height` nodes against a tile count
+    /// that was smaller — `index out of bounds` in `PowerTopology::from_grid`. Reached in play by the
+    /// config watcher delivering a write late, which is how `save_load_over_the_socket` hit it only
+    /// under load.
+    #[test]
+    fn a_config_reload_keeps_the_worlds_grid_preset_and_seed_so_its_save_still_loads() {
+        /// A grid no shipped config names, so the reload's file cannot agree with it by accident.
+        const WORLD_GRID: UVec2 = UVec2::new(24, 16);
+        /// A preset other than the shipped file's `earthlike`, for the same reason.
+        const WORLD_PRESET: &str = "polar_contrast";
+        /// A seed other than the shipped file's `0` (which asks for a random one).
+        const WORLD_SEED: u64 = 7;
+
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("reload_identity");
+        std::env::set_var(core_sim::save_store::SAVE_DIR_ENV, &dir);
+
+        let flat = loopback_snapshot_server();
+        let (mut world_active, mut world_epoch) = (false, 0u32);
+        let mut app = build_test_app();
+        app.insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        handle_new_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            WORLD_PRESET.to_string(),
+            WORLD_GRID.x,
+            WORLD_GRID.y,
+            WORLD_SEED,
+            "late_forager_tribe".to_string(),
+            None,
+            &flat,
+        );
+        assert!(world_active, "the fixture world must build");
+        let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/data/simulation_config.json");
+        let file = SimulationConfig::from_file(&shipped).expect("the shipped config parses");
+        assert!(
+            file.grid_size != WORLD_GRID
+                && file.map_preset_id != WORLD_PRESET
+                && file.map_seed != WORLD_SEED,
+            "fixture: the file must disagree with the world on all three, or the test proves nothing"
+        );
+        let before = app.world.resource::<SimulationConfig>().clone();
+
+        handle_reload_simulation_config(&mut app, Some(shipped.display().to_string()));
+
+        let after = app.world.resource::<SimulationConfig>().clone();
+        assert_eq!(
+            after.grid_size, before.grid_size,
+            "a reload resized the world"
+        );
+        assert_eq!(after.map_preset_id, before.map_preset_id);
+        assert_eq!(after.map_seed, before.map_seed);
+        assert_eq!(
+            after.map_topology.wrap_horizontal,
+            before.map_topology.wrap_horizontal
+        );
+        assert_eq!(after.start_profile_id, before.start_profile_id);
+        assert_eq!(
+            after.seat_turn_timeout_seconds, file.seat_turn_timeout_seconds,
+            "liveness: a tunable still comes off the reloaded file"
+        );
+
+        resolve_turn_with_auto_orders(&mut app);
+        assert!(handle_save_game(&app, world_active, "after reload").ok);
+        let bytes = std::fs::read(dir.join("after reload.shdw")).expect("the save is on disk");
+        let header = core_sim::save::read_save_header(&bytes).expect("the header reads");
+        assert_eq!(
+            (header.world.width, header.world.height),
+            (WORLD_GRID.x, WORLD_GRID.y),
+            "the save recorded a grid other than the world's"
+        );
+        assert_eq!(header.world.map_preset_id, WORLD_PRESET);
+
+        let mut command_log = None;
+        let answer = handle_load_game(
+            &mut app,
+            &mut world_active,
+            &mut world_epoch,
+            &mut command_log,
+            "after reload",
+            &flat,
+        );
+        assert!(answer.ok, "the load must land: {}", answer.error);
+        assert_eq!(
+            app.world.resource::<SimulationConfig>().grid_size,
+            WORLD_GRID
         );
 
         std::env::remove_var(core_sim::save_store::SAVE_DIR_ENV);

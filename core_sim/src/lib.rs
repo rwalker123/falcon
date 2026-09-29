@@ -407,7 +407,7 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    apply_port_base, apply_port_base_override, carry_runtime_owned_fields,
+    apply_port_base, apply_port_base_override, carry_runtime_owned_fields, carry_world_identity,
     load_simulation_config_for_new_world, port_base_override, BandIdAllocator, BandNameAllocator,
     CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
     CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
