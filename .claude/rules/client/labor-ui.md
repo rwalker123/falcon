@@ -1835,7 +1835,7 @@ refuse. Every negative sentinel these ceilings use is `-1` — `MAX_USEFUL_UNBOU
 
 **IT IS UNREACHABLE FROM A COMPOSE SHEET, which is why it needed a hazard at all.** All three webs cap
 their stepper at this same ceiling (`_forecast_worker_cap` for the food webs,
-`HudDepositVocab.max_useful_cutters` for a working), so the over-assignment cannot be MADE where the
+the crew curve's plateau for a working — `HudDepositVocab.curve_useful_cutters`), so the over-assignment cannot be MADE where the
 crew is chosen. What reaches the player is the GROUND MOVING UNDER A STANDING CREW — a patch drawn
 down, a herd thinned, a seam worked out — and no stepper can gate that.
 

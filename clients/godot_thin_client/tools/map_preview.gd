@@ -6423,15 +6423,20 @@ const SOURCE_LIST_FIT_TILE := Vector2i(BAND_X + 2, BAND_Y)
 ## which is why every OTHER working in this harness is `CUTTERS_UNCAPPED` and unaffected by this pair.
 const SOURCE_LIST_WORN_PER_WORKER := 2.2
 
-## The stand after it was cut back: a `deadfall` wood working whose stock has come down to a hair over
-## its composed floor, so the room next turn is worth about one cutter. **A REAL WORKING, not a
+## The stand after it was cut back: a `deadfall` wood working whose stock has come down near its
+## composed floor, so the room next turn is worth about five BARE cutters. **A REAL WORKING, not a
 ## sentinel** — the seam still pays, and the row still states a rate.
-const SOURCE_LIST_WORN_STOCK := 302.0
+const SOURCE_LIST_WORN_STOCK := 311.0
 const SOURCE_LIST_WORN_TAKE := 0.18
 
-## …and the hands beyond what that ground can use. The fixture's crew is the shipped cap PLUS this,
-## rather than a typed number, so a re-dial of `max_useful_cutters` moves the fixture with it and the
-## claim cannot quietly become vacuous.
+## ⛔ **THE SIM'S GEARED CAP ON THAT GROUND** (`LaborAssignment.usefulCutters`, issue #663) — what the
+## band's kit lets three cutters take, BELOW the bare quotient of the room over `perWorkerBiomass`.
+## That gap is the whole claim: a row measuring the bare quotient cannot flag the crew below, and one
+## measuring the published cap does. Asserted as a premise rather than trusted.
+const SOURCE_LIST_WORN_USEFUL := 3
+
+## …and the hands beyond what that ground can use. The fixture's crew is the published cap PLUS this,
+## so the overstaffed row is overstaffed BY CONSTRUCTION and still inside the bare quotient.
 const SOURCE_LIST_WASTED_HANDS := 2
 ## How many ACCOUNTS the footer's total has to name before "it is not a sum across accounts" says
 ## anything at all — on a single-account band that claim passes vacuously.
@@ -6550,12 +6555,18 @@ func _worn_working(tile: Vector2i) -> Dictionary:
 	deposit["reachable"] = SOURCE_LIST_WORN_STOCK
 	return deposit
 
-## **THE SHIPPED CEILING FOR THAT GROUND, asked of the producer rather than typed here** — the same
-## quotient the working's own compose sheet caps its `+` at. Both crews below are sized from it, so
-## the overstaffed row is overstaffed BY CONSTRUCTION and the fully-staffed one sits exactly on it.
+## **THE PUBLISHED CEILING FOR THAT GROUND** — what each `extract` row on the pair carries on the
+## wire. Both crews below are sized from it, so the overstaffed row is overstaffed BY CONSTRUCTION and
+## the fully-staffed one sits exactly on it.
 func _worn_cap() -> int:
-	return HudDepositVocab.max_useful_cutters(
-		_worn_working(SOURCE_LIST_WORN_TILE), WORK_PEAK_FLOOR)
+	return SOURCE_LIST_WORN_USEFUL
+
+## **THE BARE QUOTIENT** the overlay used to measure against — the room above the row's floor over the
+## bare `perWorkerBiomass`, rounded up. The premise's oracle, never the flag's.
+func _worn_bare_cap() -> int:
+	var deposit := _worn_working(SOURCE_LIST_WORN_TILE)
+	return ceili(HudDepositVocab.room_next_turn(deposit, WORK_PEAK_FLOOR)
+		/ HudDepositVocab.per_worker_biomass_of(deposit))
 
 ## One `extract` row on one of that pair, at a stated crew.
 func _worn_working_assignment(tile: Vector2i, crew: int) -> Dictionary:
@@ -6565,6 +6576,7 @@ func _worn_working_assignment(tile: Vector2i, crew: int) -> Dictionary:
 		"target_x": tile.x, "target_y": tile.y,
 		"material": WORKING_MATERIAL_WOOD,
 		"floor": WORK_PEAK_FLOOR,
+		HudDepositVocab.ASSIGNMENT_USEFUL_CUTTERS_KEY: SOURCE_LIST_WORN_USEFUL,
 		SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY: [
 			{"material_id": WORKING_MATERIAL_WOOD, "amount": SOURCE_LIST_WORN_TAKE},
 		],
@@ -6743,13 +6755,18 @@ func _source_list_states() -> void:
 	# ---- A CREW BIGGER THAN ITS GROUND CAN USE (the third web joins the other two) ---------------
 	#
 	# ⛔ **THE PREMISE FIRST, because every claim under it is vacuous without one.** The pair is sized
-	# from the SHIPPED ceiling, so if `max_useful_cutters` ever answered `CUTTERS_UNCAPPED` for this
-	# ground — a fixture that lost its per-cutter rate, say — the overstaffed crew would be `1` and the
-	# fully-staffed one `-1`, and both rows would pass for the wrong reason.
+	# from the PUBLISHED ceiling, which must be a real cap — and it must sit BELOW the bare quotient with
+	# the overstaffed crew between them, or the flag below passes on an overlay still dividing the room
+	# by the bare `perWorkerBiomass`.
 	var worn_cap := _worn_cap()
+	var worn_bare := _worn_bare_cap()
 	_assert_map("map_source_list — premise: the cut-back stand PRICES a ceiling (max %d cutters)"
 			% worn_cap,
 		worn_cap != HudDepositVocab.CUTTERS_UNCAPPED and worn_cap > 0)
+	_assert_map(("map_source_list — premise: gear lowers the cap below the bare quotient, and the bare "
+			+ "one would NOT flag the crew (%d published < %d cutters <= %d bare)")
+			% [worn_cap, worn_cap + SOURCE_LIST_WASTED_HANDS, worn_bare],
+		worn_cap + SOURCE_LIST_WASTED_HANDS <= worn_bare)
 	var by_key := _rows_by_key(rows)
 	var worn_row: Dictionary = by_key.get(_map.secondary_working_key(
 		SOURCE_LIST_WORN_TILE.x, SOURCE_LIST_WORN_TILE.y, WORKING_MATERIAL_WOOD), {})

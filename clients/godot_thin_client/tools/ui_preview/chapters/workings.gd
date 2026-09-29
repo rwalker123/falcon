@@ -126,7 +126,8 @@ const WORKED_QUARRY_STOCK := 700.0
 ## no floor — and the figure `room_next_turn` must reproduce, rock's curve being all zeros so the
 ## growth term is nothing.
 const WORKED_QUARRY_REACHABLE := 370.0
-## `ceil(370 / 2.2)` — the most cutters the seam can use, `max_useful_cutters`' own division.
+## `ceil(370 / 2.2)` — the most BARE cutters the room above the rung's floor can use. The sheet's own
+## cap is the crew curve's plateau now; this division is what says the room is real rather than zero.
 const WORKED_QUARRY_MAX_CUTTERS := 169
 ## The crew the band has on it, and the take it lifts: `3 × QUARRY_PER_WORKER`, comfortably inside
 ## the room above, so what the sheet quotes is the CREW's arithmetic rather than a clamp.
@@ -1066,12 +1067,12 @@ func run(harness) -> void:
 				WORKED_QUARRY_REACHABLE],
 		is_equal_approx(HudDepositVocab.room_next_turn(_worked_down_quarry(),
 			SourceForecast.DEFAULT_HARVEST_FLOOR), WORKED_QUARRY_REACHABLE))
-	h._assert_hud("…and the cap is the rung's own recovery over the rate, %d cutters (%d)"
-			% [WORKED_QUARRY_MAX_CUTTERS,
-				HudDepositVocab.max_useful_cutters(_worked_down_quarry(),
-					SourceForecast.DEFAULT_HARVEST_FLOOR)],
-		HudDepositVocab.max_useful_cutters(_worked_down_quarry(),
-			SourceForecast.DEFAULT_HARVEST_FLOOR) == WORKED_QUARRY_MAX_CUTTERS)
+	var bare_cutters := ceili(HudDepositVocab.room_next_turn(_worked_down_quarry(),
+		SourceForecast.DEFAULT_HARVEST_FLOOR)
+		/ HudDepositVocab.per_worker_biomass_of(_worked_down_quarry()))
+	h._assert_hud("…and that room is the rung's own recovery, %d bare cutters' worth (%d)"
+			% [WORKED_QUARRY_MAX_CUTTERS, bare_cutters],
+		bare_cutters == WORKED_QUARRY_MAX_CUTTERS)
 	h._hud._drawercompose.open_deposit_compose(_worked_down_quarry())
 	await h._settle()
 	var reach_sheet: Node = h._hud._drawercompose._compose_sheet

@@ -5303,7 +5303,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # count the stepper below will not clamp away.
     var cap := crew_pool
     # ⛔ **THE "USEFUL" CAP IS THE CURVE'S PLATEAU** (issue #663) — where more hands stop buying take,
-    # off the rows the sim priced WITH the band's kit. `max_useful_cutters` divides the room by the
+    # off the rows the sim priced WITH the band's kit. A bare quotient would divide the room by the
     # bare per-worker rate, which a geared crew out-cuts; with no curve in hand (pending, refused, out
     # of range) there is no gear-bearing answer and the pool alone bounds the stepper.
     var useful := HudDepositVocab.CUTTERS_UNCAPPED

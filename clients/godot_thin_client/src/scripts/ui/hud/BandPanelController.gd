@@ -2865,8 +2865,8 @@ func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     # roster can ask, and the composer answers `CUTTERS_UNSTATED` for every caller that cannot.
     var cutters := _workings_roster_cutters(band, model)
     # **AND THE CEILING THAT CREW IS MEASURED AGAINST**, which is the second thing a `deposits` row
-    # cannot state: the cap is struck at THIS band's own floor, so the clause and the compose sheet's
-    # stepper are read off one number. See `_workings_roster_max_useful`.
+    # cannot state: it is THIS band's own `extract` row's published cap, at its own kit and floor, so
+    # the clause and the compose sheet's stepper are read off one rule. See `_workings_roster_max_useful`.
     var useful := _workings_roster_max_useful(band, model)
     value.text = HudDepositVocab.deposit_row_value(deposit, ladder, cutters, useful)
     value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
@@ -2970,21 +2970,16 @@ func _workings_roster_cutters(band: Dictionary, model: Dictionary) -> int:
     var tile: Vector2i = model["tile"]
     return _band_labor.effective_extract_workers(band, tile.x, tile.y, String(model["material"]))
 
-## ⛔ **THE MOST CUTTERS THIS GROUND CAN USE, AT THE FLOOR THIS BAND'S OWN ROW NAMED** — the other
-## half of the roster's waste question, and the reason it is asked here rather than inside the
-## composer: a working publishes no crew AND no band's floor, so both arguments come from the band's
-## `extract` row or not at all.
-##
-## **THE FLOOR IS `floor_for_extract`, NEVER `DepositState.floor`.** That wire field is the SOURCE's
-## reading — the deepest floor any band cutting this working named — so a cap struck at it would
-## measure this band's crew against another band's order. **It is the BARE quotient** — the roster
-## holds no crew curve per row — while the compose sheet caps its stepper at the curve's plateau
-## (`HudDepositVocab.curve_useful_cutters`, issue #663). The two agree for an unequipped crew; for a
-## geared one the plateau comes at fewer hands, so this row can pass a crew the sheet would refuse.
+## ⛔ **THE MOST CUTTERS THIS BAND'S ROW CAN USE, GEAR INCLUDED** — the other half of the roster's
+## waste question, and the reason it is asked here rather than inside the composer: a working
+## publishes no crew AND no band's kit or floor, so the cap comes off the band's own `extract` row or
+## not at all. It is the sim's `usefulCutters` (`HudDepositVocab.published_useful_cutters`), the rule
+## the compose sheet's `+` caps at — never a client quotient over the bare `perWorkerBiomass`, which a
+## geared crew out-cuts. A band with no row here reads `CUTTERS_UNCAPPED`.
 func _workings_roster_max_useful(band: Dictionary, model: Dictionary) -> int:
     var tile: Vector2i = model["tile"]
-    return HudDepositVocab.max_useful_cutters(model["deposit"] as Dictionary,
-        _band_labor.floor_for_extract(band, tile.x, tile.y, String(model["material"])))
+    return HudDepositVocab.published_useful_cutters(_band_labor.extract_assignment_of(
+        band, tile.x, tile.y, String(model["material"])))
 
 ## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.depositRungs`, per world.
 ## `[]` before any snapshot has arrived, which every consumer renders as *no ladder to show* rather

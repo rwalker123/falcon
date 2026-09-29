@@ -3048,3 +3048,13 @@ measurement chose, the relay's first hop, the friction row, the 1190 threshold w
 and `_assert_scroll_only_where_sanctioned` across both shells. The frames are listed in
 `band-city-panel.md` → "The Trade tab".
 
+## `band_panel_workings_overstaffed` measures the GEARED cap (issue #663)
+
+`_assert_a_working_flags_the_crew_that_outgrew_it` stages its cut-back pair with a room of `11` over
+a bare `2.2` per cutter, so the bare quotient is five, and publishes the sim's geared
+`useful_cutters` on the band's two `extract` rows below it (`WORKINGS_WORN_USEFUL`: wood 3, stone 2).
+Five cutters on the wood sit BETWEEN the two ceilings, so a roster row still dividing the room by the
+bare rate says nothing where the published cap says `overstaffed`. **That premise is asserted, not
+trusted**, against a chapter-local bare quotient (`_worn_workings_bare_cap`) — a fixture where the two
+ceilings agreed could not say which one the row read. The stone crew sits exactly on its own published
+cap and must carry nothing, the pair's negative half.

@@ -1220,3 +1220,12 @@ assertion for an unrelated reason.
 > and the probe window moved below the glyph besides (`_frame_inks_red_below_hex`, against the ⚠'s
 > `_frame_inks_red_near_hex`, which must contain its token). See `map-markers.md` for the
 > measurements and for `FACTION_BAR_INK_RED_MARGIN`'s re-derivation to 0.12.
+
+## The overlay's overstaffed flag measures the GEARED cap (issue #663)
+
+`map_source_list`'s worn pair publishes `useful_cutters` (`SOURCE_LIST_WORN_USEFUL`, 3) on both
+`extract` rows, over a stand whose room is worth about five BARE cutters (`SOURCE_LIST_WORN_STOCK`
+311). The overstaffed crew is the published cap plus two, so it sits inside the bare quotient: an
+overlay still measuring `room ÷ perWorkerBiomass` would not flag it. A premise asserts exactly that
+against a local bare quotient (`_worn_bare_cap`), beside the existing *prices a real ceiling* premise,
+and the fully-staffed twin on the published cap still carries nothing.

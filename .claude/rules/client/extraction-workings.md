@@ -760,9 +760,18 @@ hint aside and a dead commit.
 - the finite seam's runway aside — the sim's seeded assignment rate or its published
   `turnsRemaining`, never a client-side rate.
 - the finite `deposit_verdict` — about reach, not about a crew's draw.
-- the Work board roster row's and the map overlay's overstaffed flag — `max_useful_cutters`, the bare
-  quotient, because neither holds a curve per row. For a geared crew the sheet's plateau comes at fewer
-  hands, so those flags can pass a crew the sheet's `+` would refuse.
+
+⛔ **THE WORK BOARD AND THE MAP OVERLAY READ THE SAME CAP, OFF THE ROW.** Neither holds a curve per
+row, so the sim publishes the plateau on every committed `extract` row as `LaborAssignment.
+usefulCutters` (decoded as `useful_cutters`): the smallest crew in `1..=pool` whose geared take reaches
+the curve's best, at the row's own kit and floor — `curve_useful_cutters`' rule, with the sheet's own
+pool. `HudDepositVocab.published_useful_cutters` reads it for the roster row
+(`BandPanelController._workings_roster_max_useful`, through the band's own `extract_assignment_of`) and
+for the overlay's overstaffed flag (`BandOverlayRenderer`). The pool while the take is still rising
+needs no mapping — no hand on the row can exceed it — `CUTTERS_BARREN` arrives as `1`, and `0` (*does
+not apply*) reads as `CUTTERS_UNCAPPED`. **There is no client quotient over the bare
+`perWorkerBiomass` left anywhere**: `max_useful_cutters` is deleted, so a geared crew is measured
+against one ceiling on all three surfaces.
 
 ### ⛔ THE CREW NOUN IS PER BRANCH, NEVER PER RUNG
 
@@ -777,13 +786,11 @@ repeat the material.
 
 ### ⛔ THE CAP IS THE SMALLER OF THE BAND'S HANDS AND WHAT THE WORKING CAN USE
 
-A crew takes `min(crew × perWorkerBiomass, the room above the composed floor)` in a turn, so a hand
-beyond that quotient carries nothing home and the `+` must not offer it —
-`HudDepositVocab.max_useful_cutters`, with `CUTTERS_UNCAPPED` where the wire prices no rate (a client
-that has not been sent a row), which leaves the band's own pool as the only ceiling. The forage sheet's
-max-useful rule, arrived at from the SEAM rather than from a forecast this branch does not publish.
-**On the compose sheet that quotient is replaced by the crew curve's plateau** (`curve_useful_cutters`,
-above); `max_useful_cutters` still serves the Work board and the map overlay, which hold no curve.
+A hand beyond the crew curve's plateau carries nothing home, so the `+` must not offer it —
+`HudDepositVocab.curve_useful_cutters` over the reply, with `CUTTERS_UNCAPPED` while the curve is
+pending, refused or out of range, which leaves the band's own pool as the only ceiling. The forage
+sheet's max-useful rule, read off the sim's gear-bearing rows rather than a bare quotient. The Work
+board and the map overlay read the same rule off the committed row (`published_useful_cutters`, above).
 
 ⛔ **THE RATE IS `DepositState.perWorkerBiomass`, NOT THE CATALOG'S `yieldPerWorkerTurn`.** They are
 the same number for the rung the working STANDS on, and the wire one is published for
@@ -1263,7 +1270,8 @@ this one producer — two spellings would teach the player two marks for one sta
 
 The predicate is `SourceForecast.crew_is_wasted` (`workers > useful`, strictly) and nothing here
 re-derives it; what differs per web is only which ceiling is handed in — `max_useful_workers` for the
-food webs, `max_useful_cutters` for a working. `labor-ui.md` → "The cap note and the waste hazard are
+food webs, the crew curve's plateau for a working (`curve_useful_cutters` on the sheet,
+`published_useful_cutters` off the committed row). `labor-ui.md` → "The cap note and the waste hazard are
 two questions of one ceiling" holds the predicate's own rules.
 
 ⛔ **`hazard_clause` RANKS THE TWO, IT DOES NOT JOIN THEM.** Its signature is

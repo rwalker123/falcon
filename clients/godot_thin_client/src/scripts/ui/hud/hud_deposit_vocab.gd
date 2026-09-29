@@ -579,7 +579,7 @@ const OVERSTAFFED_WORD := "overstaffed"
 ## fits, which is every correctly-staffed source and every source nobody can price a ceiling for.
 ##
 ## **THE PREDICATE IS `SourceForecast.crew_is_wasted` AND NOTHING HERE RE-DERIVES IT** — the food webs
-## measure against `max_useful_workers` and a working against `max_useful_cutters`, and the two
+## measure against `max_useful_workers` and a working against `published_useful_cutters`, and the two
 ## ceilings meet at this one test so a hunt row and a seam row cannot disagree about what *wasted*
 ## means.
 static func overstaffed_clause(workers: int, useful: int) -> String:
@@ -1624,7 +1624,9 @@ static func curve_crew_reaching(reply: Dictionary, amount: float) -> int:
 ## **THE STEPPER'S "USEFUL" CAP, OFF THE CURVE** — the smallest crew whose cut equals the curve's best,
 ## i.e. where more hands stop buying take. `CUTTERS_UNCAPPED` where the take is still rising at the
 ## last row (every hand the band has is buying take, so the pool is the ceiling), `CUTTERS_BARREN`
-## where the curve pays nothing at any size. It replaces `max_useful_cutters` on the sheet once the
+## where the curve pays nothing at any size. The sim answers the same rule per committed row as
+## `published_useful_cutters`, which is what the Work board and the map overlay read; the sheet reads it
+## off the reply once the
 ## curve has arrived, because that one divides by the bare per-worker rate and a geared crew saturates
 ## sooner.
 static func curve_useful_cutters(reply: Dictionary) -> int:
@@ -1864,16 +1866,10 @@ static func runway_aside(deposit: Dictionary, assignment: Dictionary = {}) -> St
 		return DEPOSIT_RUNWAY_ASIDE_ONE
 	return DEPOSIT_RUNWAY_ASIDE_FORMAT % turns
 
-## ⛔ **THE MOST CUTTERS THIS WORKING CAN USE — the room above the composed floor over
-## `perWorkerBiomass`, rounded UP.** A crew takes `min(crew × rate, the room)` in a turn, so hands
-## beyond that quotient take nothing and the `+` states so rather than offering them.
-## `CUTTERS_UNCAPPED` where the wire prices no rate, which is a client that has not been sent a row —
-## the cap is then the band's own pool and nothing else.
-##
-## ⛔ **THE ROOM IS THE DIAL'S, NOT `reachable`.** `reachable` is the sim's reading at the floor LAST
-## turn's crews worked to; the sheet is pricing the floor the player is dragging right now, and a cap
-## struck at the old floor would offer hands the composition itself refuses. On a working with no dial
-## the two are the same number (`room_next_turn`).
+## **NO CEILING BUT THE BAND'S OWN POOL** — the sentinel `SourceForecast.crew_is_wasted` reads as *no
+## cap to measure against*. The sheet answers it where the crew curve is still rising at the band's
+## last row (every hand buys take) or has not arrived; `published_useful_cutters` answers it on a row
+## the sim priced no cap for.
 const CUTTERS_UNCAPPED := -1
 
 ## **NOBODY IS ON THIS WORKING**, and it is a real and common state rather than an absence: the roster
@@ -1887,18 +1883,29 @@ const CUTTERS_NONE := 0
 ## ground pays, and right now it is nothing, so the honest ceiling is one worker.*
 ##
 ## **THE SHEET'S CAP ANSWERS *may I open this at all*, WHICH IS NEVER *no*.** A finite seam worked
-## down to `stock == rung floor × capacity` has `room_next_turn == 0`, so the quotient below is `0`
-## — and a cap of nobody pins the stepper at zero, kills the `+` and disables the commit under *Put
-## diggers on it to open this ground*. The row then LAPSES (free floor, no crew, nothing queued) and
+## down to `stock == rung floor × capacity` has `room_next_turn == 0`, so every row of its crew curve
+## takes `0` — and a cap of nobody pins the stepper at zero, kills the `+` and disables the commit under
+## *Put diggers on it to open this ground*. The row then LAPSES (free floor, no crew, nothing queued) and
 ## the rung ladder lapses with it, which strands the other ~85% of a rate-0 rock body for good: the
 ## ground the player must crew to climb out is the one ground the cap refused to let them crew.
 const CUTTERS_BARREN := 1
 
-static func max_useful_cutters(deposit: Dictionary, floor: float) -> int:
-	var rate := per_worker_biomass_of(deposit)
-	if not SourceForecast.can_price_crew(rate):
-		return CUTTERS_UNCAPPED
-	return maxi(int(ceil(room_next_turn(deposit, floor) / rate)), CUTTERS_BARREN)
+## The key a committed `extract` row publishes its geared crew cap under (`LaborAssignment.
+## usefulCutters`, decoded in `dict/population.rs`).
+const ASSIGNMENT_USEFUL_CUTTERS_KEY := "useful_cutters"
+
+## ⛔ **THE MOST CUTTERS THIS BAND'S ROW CAN USE, AS THE SIM PRICED IT — gear included** (issue #663).
+## The smallest crew in `1..=pool` whose geared take reaches the deposit crew curve's best, at the
+## row's own kit and floor: the same rule `curve_useful_cutters` applies to the sheet's reply, so the
+## Work board, the map overlay and the sheet's `+` read ONE ceiling. The sim already answers the two
+## edge cases in the sheet's own terms — the pool while the take is still rising (no hand on the row
+## can exceed it), and `CUTTERS_BARREN` where the curve pays nothing.
+##
+## **`0` IS *does not apply*** — a non-extract row, or a row with no pool or no ground — and reads as
+## `CUTTERS_UNCAPPED`, so a row the sim priced no cap for is never flagged as wasted.
+static func published_useful_cutters(extract_row: Dictionary) -> int:
+	var useful := int(extract_row.get(ASSIGNMENT_USEFUL_CUTTERS_KEY, CUTTERS_NONE))
+	return CUTTERS_UNCAPPED if useful <= CUTTERS_NONE else useful
 
 ## The dead commit button's explanation — a crew of zero on a working nobody holds, where the command
 ## would do nothing at all. **A dead button is always explained**, the `+` stepper's cap note being
