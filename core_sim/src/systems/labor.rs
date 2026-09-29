@@ -5262,7 +5262,16 @@ pub fn advance_labor_allocation(
         // from ([`LaborAllocation::item_budget`]). Resolved here, before the walk, for the reason
         // `band_kit` is: a band's ledger is one thing, and a row that read all of it would arm its
         // own crew off gear the row beside it is already holding.
-        let item_budget = allocation.item_budget(&equipment_cfg);
+        //
+        // An `extract` row claims only the items serving the rung its working holds
+        // ([`LaborAssignment::take_kit`]), so a felling crew's idle sleds stay the hunters'.
+        let item_budget = allocation.item_budget(
+            &equipment_cfg,
+            Some(&crate::extraction::HeldRungs {
+                deposits: &deposits,
+                extraction: &extraction_cfg,
+            }),
+        );
         // **THE PARTIES THIS BAND HAS OUT**, keyed by the row that staffed them. Collected as the
         // walk goes and written back onto the assignments afterwards, because the walk borrows
         // `assignments` immutably — the same shape `lapsed` and `repaired_takes` take.
@@ -5525,7 +5534,14 @@ pub fn advance_labor_allocation(
                     &crew_kit,
                     assignment.workers,
                     &band_kit,
-                    &allocation.rows_excluding_source(&equipment_cfg, &assignment.target),
+                    &allocation.rows_excluding_source(
+                        &equipment_cfg,
+                        &assignment.target,
+                        Some(&crate::extraction::HeldRungs {
+                            deposits: &deposits,
+                            extraction: &extraction_cfg,
+                        }),
+                    ),
                     &labor,
                 )
             });
@@ -8411,10 +8427,25 @@ pub fn advance_labor_allocation(
                     // to it (`deposit_take` on `forestry:felling`, never on `deadfall`). Through this
                     // row's own coverage, the seam the gather reads its baskets off: two axes among
                     // five fellers add two tools' worth, not five.
+                    //
+                    // ⛔ **THE COVERAGE IS STRUCK AT THE HELD RUNG, NOT OFF `crew_coverage`.** The
+                    // row's stored kit carries a tool per rung of its branch (`woodcutting` is the
+                    // sled and the axe), and only the one serving the rung held NOW is in anybody's
+                    // hands ([`crate::equipment_config::EquipmentConfig::deposit_rung_kit`]) — read
+                    // here, after this turn's build, so a working raised this turn is cut with the
+                    // new rung's tool.
                     let held_rung = working.standing().held;
                     let held_key = held_rung.wire_key();
+                    let take_kit =
+                        equipment_cfg.deposit_rung_kit(&crew_kit, held_rung.branch(), &held_key);
+                    let take_coverage = equipment_cfg.coverage_from_units(
+                        &take_kit,
+                        workers as f32,
+                        &band_kit,
+                        item_budget.share_for(workers as f32, &band_kit, &equipment_cfg),
+                    );
                     let deposit_gear = equipment_cfg.deposit_gear(
-                        &crew_coverage,
+                        &take_coverage,
                         &band_kit,
                         held_rung.branch(),
                         Some(&held_key),
@@ -11131,7 +11162,8 @@ pub fn advance_predator_raids(
         // cut from, so a warrior row cannot arm itself off gear a hunt row is already carrying. No
         // shipped kit puts an item in both, which is why this reads identically today.
         let warrior_kit = alloc.kit_on(&LaborTarget::Warrior, &equipment_cfg);
-        let warrior_budget = alloc.item_budget(&equipment_cfg);
+        // `None`: the warrior line reads clubs alone, which no `extract` row's narrowing can move.
+        let warrior_budget = alloc.item_budget(&equipment_cfg, None);
         let warrior_coverage = band_equipment.as_deref().map(|wear| {
             equipment_cfg.coverage_from_units(
                 &warrior_kit,

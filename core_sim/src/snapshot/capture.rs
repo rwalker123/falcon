@@ -3108,6 +3108,9 @@ pub fn capture_snapshot(
                         build_sources: &crate::snapshot::population::BuildSourceInputs {
                             forage: &forage_registry,
                             herds: &herd_registry,
+                            deposits: &deposits,
+                            extraction: &extraction_config,
+                            ladder: &ladder_config,
                         },
                     }))
                 },

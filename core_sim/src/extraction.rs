@@ -464,6 +464,31 @@ pub fn deposit_branch(config: &ExtractionConfig, material: &str) -> Option<RungB
     config.deposit(material).map(|deposit| deposit.branch)
 }
 
+/// **THE RUNG EACH WORKING HOLDS, FOR THE SURFACES THAT NARROW AN `extract` ROW'S KIT TO IT** —
+/// the registry's live working, or, for ground no band has opened, its branch's free floor
+/// (`DepositSource::opening`'s own standing). Borrowed by the turn, the assign-time seed and the
+/// capture, so all three narrow a row's kit at the same rung
+/// ([`crate::equipment_config::EquipmentConfig::deposit_rung_kit`]).
+#[derive(Clone, Copy)]
+pub struct HeldRungs<'a> {
+    pub deposits: &'a DepositRegistry,
+    pub extraction: &'a ExtractionConfig,
+}
+
+impl HeldRungs<'_> {
+    /// The rung the working on `(tile, material)` holds. `None` only for a material the deposits
+    /// table does not carry.
+    pub fn held(&self, tile: UVec2, material: &str) -> Option<RungKey> {
+        self.deposits
+            .source(tile, material)
+            .map(DepositSource::rung)
+            .or_else(|| {
+                deposit_branch(self.extraction, material)
+                    .map(|branch| RungStanding::unstarted(branch).held)
+            })
+    }
+}
+
 // **RETIRED BEFORE IT HAD A CALLER: `terrain_deposits`** — *"every material this terrain holds"*,
 // in the config's own id order.
 //
@@ -626,9 +651,9 @@ pub fn deposit_reachable(
 /// per rung, and an absolute gear rate would erase the climb — and it never touches the reach:
 /// `min(labor, reachable)` caps a geared crew exactly where it caps a bare one.
 ///
-/// ⛔ **THE FLOOR RUNGS STAY BARE-WORKABLE** (`docs/plan_extraction.md` §4d). No shipped tool is
-/// bound to `forestry:deadfall` or `extraction:gathering`, so `yield_per_worker_turn` there is the
-/// whole rate a crew gets, and a band with no kit at all can start the material economy. Pass
+/// ⛔ **THE FLOOR RUNGS STAY BARE-WORKABLE** (`docs/plan_extraction.md` §4d). The one tool bound to
+/// `forestry:deadfall` and `extraction:gathering` is the sled, an addition above the bare rate that
+/// costs no wood, so a band with no kit at all can still start the material economy. Pass
 /// [`NO_DEPOSIT_GEAR`] where no band stands behind the take.
 pub fn deposit_take(
     workers: u32,
@@ -654,16 +679,74 @@ pub fn deposit_take(
 /// seed and the published `DepositState.defaultKitId` all resolve a working's default through, so
 /// the picker's `(default)` mark and the kit the turn arms are one answer.
 ///
-/// Derived from the roster at the rung the working **holds**
-/// ([`crate::equipment_config::EquipmentConfig::deposit_kit_for`]): a wood defaults to the Felling
-/// kit, a scatter or a quarry to the Quarrying kit, even on the bare floor rungs where the tool adds
-/// nothing yet.
+/// Derived from the roster for the working's **branch**
+/// ([`crate::equipment_config::EquipmentConfig::deposit_kit_for`]): every wood defaults to the
+/// Woodcutting kit and every scatter or quarry to the Stone kit, on every rung, because the kit is
+/// stored on the row and must stay right as the working climbs.
 pub fn working_default_kit(
     equipment: &crate::equipment_config::EquipmentConfig,
     source: &DepositSource,
 ) -> crate::equipment_config::KitChoice {
-    let held = source.rung();
-    equipment.extract_default_kit(held.branch(), Some(&held.wire_key()))
+    equipment.extract_default_kit(source.rung().branch())
+}
+
+/// **WHAT THIS `extract` ROW'S CREW WOULD CUT A TURN ONCE ITS WORKING IS RAISED ONE RUNG** (#663) —
+/// the next rung's own bare rate × the crew, **plus what this band's gear adds there**, before the
+/// reachable stock caps it: [`deposit_crew_throughput`] at the next rung's payoff, the take's own
+/// function. Published as `LaborAssignment.nextRungMaterialYield` so the compose sheet's *"once
+/// felled: X a turn"* is a number the sim struck rather than a bare catalog rate × crew the client
+/// multiplies.
+///
+/// **The same ration the turn arms with**, as a prospective row: the stored kit narrowed to the
+/// NEXT rung's tools ([`crate::equipment_config::EquipmentConfig::deposit_rung_kit`]), competing
+/// with the band's other rows ([`crate::components::LaborAllocation::rows_excluding_source`]) and
+/// less what the standing pools were issued — which is exactly how the row will be cut once the rung
+/// is raised and its own claim moves to the new tool.
+///
+/// `NO_TAKE_THIS_TURN` for any other row, an empty row, a working at the top of its branch, or a
+/// material the deposits table does not carry.
+pub fn next_rung_geared_take(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    ladder: &LadderConfig,
+    held: &HeldRungs<'_>,
+    allocation: &crate::components::LaborAllocation,
+    assignment: &crate::components::LaborAssignment,
+    band_kit: &crate::components::BandEquipment,
+) -> f32 {
+    let crate::components::LaborTarget::Extract { tile, material, .. } = &assignment.target else {
+        return NO_TAKE_THIS_TURN;
+    };
+    if assignment.workers == NO_CREW_ON_THE_DEPOSIT {
+        return NO_TAKE_THIS_TURN;
+    }
+    let Some(held_rung) = held.held(*tile, material) else {
+        return NO_TAKE_THIS_TURN;
+    };
+    let Some(next) = held_rung.above() else {
+        return NO_TAKE_THIS_TURN;
+    };
+    let Some(payoff) = ladder.rung(next).extraction_payoff else {
+        return NO_TAKE_THIS_TURN;
+    };
+    let next_key = next.wire_key();
+    let workers = assignment.workers as f32;
+    let kit =
+        equipment.deposit_rung_kit(&assignment.kit_choice(equipment), next.branch(), &next_key);
+    let other_rows = allocation.rows_excluding_source(equipment, &assignment.target, Some(held));
+    let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
+        other_rows.iter().map(|(kit, held)| (kit, *held)),
+        &kit,
+        workers,
+    )
+    .reserving(allocation.pool_issued());
+    let coverage = equipment.coverage_from_units(
+        &kit,
+        workers,
+        band_kit,
+        budget.share_for(workers, band_kit, equipment),
+    );
+    let gear = equipment.deposit_gear(&coverage, band_kit, next.branch(), Some(&next_key));
+    deposit_crew_throughput(assignment.workers, gear.take, &payoff)
 }
 
 /// **WHAT THE CREW'S HANDS AND TOOLS CAN LIFT THIS TURN** — the unclamped half of

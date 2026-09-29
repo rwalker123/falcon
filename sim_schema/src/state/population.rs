@@ -416,6 +416,14 @@ pub struct LaborAssignmentState {
     /// The number the work row prints.
     #[serde(default)]
     pub net_rate_home: f32,
+    /// **WHAT THIS ROW'S CREW WOULD CUT A TURN ONCE ITS WORKING IS RAISED ONE RUNG** (#663) — the
+    /// next rung's own `yield_per_worker_turn × workers` **plus** what this band's gear adds there
+    /// (`deposit_take`), through the ration and the function the turn cuts with, before the
+    /// reachable stock caps it. The compose sheet's *"once felled: X a turn"* reads it rather than
+    /// multiplying a bare catalog rate. `0` on a non-extract row, at the top of a branch, and on an
+    /// empty row.
+    #[serde(default)]
+    pub next_rung_material_yield: f32,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and

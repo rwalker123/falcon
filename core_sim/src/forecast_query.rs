@@ -175,6 +175,19 @@ const SOURCE_IS_KEYED_BY_QUARRY_ALONE: f32 = 0.0;
 /// building the party: the curve resolves one **per crew size** (coverage depends on how many people
 /// the kit has to stretch over, and on how many of them the rows beside it have already claimed) and
 /// at the **base** tuning rather than the expedition's.
+/// **The rung each of the band's `extract` workings holds**, so an extract row beside the asked
+/// party claims only the items that serve it (`LaborAssignment::take_kit`) — the same narrowing the
+/// turn rations with. `None` in a world carrying no deposit registry.
+fn held_rungs<'a>(
+    world: &'a World,
+    extraction: Option<&'a crate::extraction_config::ExtractionConfig>,
+) -> Option<crate::extraction::HeldRungs<'a>> {
+    Some(crate::extraction::HeldRungs {
+        deposits: world.get_resource::<crate::extraction::DepositRegistry>()?,
+        extraction: extraction?,
+    })
+}
+
 fn resolve_quarry_and_kit(
     world: &mut World,
     faction_id: u32,
@@ -211,6 +224,10 @@ fn resolve_quarry_and_kit(
     };
     // **The competing claims on that ledger**, with this herd's own row excluded — see
     // [`AskedQuarry::other_rows`].
+    let extraction = world
+        .get_resource::<crate::extraction_config::ExtractionConfigHandle>()
+        .map(|handle| handle.get());
+    let held = held_rungs(world, extraction.as_deref());
     let other_rows = allocation
         .map(|allocation| {
             allocation.rows_excluding_source(
@@ -219,6 +236,7 @@ fn resolve_quarry_and_kit(
                     fauna_id: herd_id.to_string(),
                     floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
                 },
+                held.as_ref(),
             )
         })
         .unwrap_or_default();
@@ -895,12 +913,16 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
             return query_failure(query_error::KIT_WRONG_JOB)
         }
     };
+    let extraction = world
+        .get_resource::<crate::extraction_config::ExtractionConfigHandle>()
+        .map(|handle| handle.get());
+    let held = held_rungs(world, extraction.as_deref());
     let pricing = crate::work_party::CaravanPricing::resolve(
         &equipment,
         &kit,
         ask.workers,
         &wear,
-        &allocation.rows_excluding_source(&equipment, &target),
+        &allocation.rows_excluding_source(&equipment, &target, held.as_ref()),
         &labor,
     );
     let source_pos = match &asked {

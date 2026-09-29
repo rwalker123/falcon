@@ -3299,6 +3299,13 @@ fn seed_source_yield(
     // `advance_labor_allocation` will divide by next turn.
     let crew_gear = {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+        let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+        // **The held rung of every `extract` working**, so an extract row claims only the items
+        // serving it — the turn's own narrowing (`LaborAssignment::take_kit`).
+        let held = core_sim::extraction::HeldRungs {
+            deposits: app.world.resource::<core_sim::DepositRegistry>(),
+            extraction: &extraction,
+        };
         app.world
             .get::<LaborAllocation>(band)
             .and_then(|allocation| {
@@ -3309,11 +3316,11 @@ fn seed_source_yield(
                     .map(|assignment| {
                         (
                             assignment.kit_choice(&equipment_cfg),
-                            allocation.item_budget(&equipment_cfg),
+                            allocation.item_budget(&equipment_cfg, Some(&held)),
                             // **The rows this one competes with for the band's gear** — what a far
                             // row's caravan forecast is priced beside
                             // (`core_sim::work_party::CaravanPricing`).
-                            allocation.rows_excluding_source(&equipment_cfg, target),
+                            allocation.rows_excluding_source(&equipment_cfg, target, Some(&held)),
                         )
                     })
             })
@@ -3645,14 +3652,16 @@ fn seed_source_yield(
                 .get::<BandEquipment>(band)
                 .cloned()
                 .unwrap_or_default();
+            // **Narrowed to the tool serving the rung the working holds**, as the turn narrows it.
+            let held_rung = projected.standing().held;
+            let held_key = held_rung.wire_key();
+            let take_kit = equipment_cfg.deposit_rung_kit(&crew_kit, held_rung.branch(), &held_key);
             let crew_coverage = equipment_cfg.coverage_from_units(
-                &crew_kit,
+                &take_kit,
                 workers as f32,
                 &band_wear,
                 item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
             );
-            let held_rung = projected.standing().held;
-            let held_key = held_rung.wire_key();
             let gear = equipment_cfg.deposit_gear(
                 &crew_coverage,
                 &band_wear,
@@ -22995,6 +23004,9 @@ mod tests {
         let faction = FactionId(0);
         let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
         let band = spawn_idle_band(&mut app, faction, tile);
+        // **A band holding nothing**, so the seed is the bare hands' alone — the stocked fixture
+        // band carries sleds, which are the deadfall rung's tool (#663).
+        app.world.entity_mut(band).insert(BandEquipment::default());
 
         assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
 
@@ -23185,8 +23197,8 @@ mod tests {
 
         assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
         assign_extract(&mut app, faction, WORKING, "stone", None, BAND_WORKERS);
-        assert_eq!(stored_extract_kit(&app, band, "wood"), "felling");
-        assert_eq!(stored_extract_kit(&app, band, "stone"), "quarrying");
+        assert_eq!(stored_extract_kit(&app, band, "wood"), "woodcutting");
+        assert_eq!(stored_extract_kit(&app, band, "stone"), "stonework");
 
         capture_deposit_grid(&mut app);
         let snapshot = app
@@ -23210,24 +23222,10 @@ mod tests {
         }
     }
 
-    /// **A WOOD CREW HOLDING AXES AND NO WEDGES READS ARMED** — the Felling kit carries the axe
-    /// alone, so its complete-kit coverage (`kitWorkersHolding`) is the axes the band holds, not the
-    /// zero a bundled axe-and-wedges kit read against a band with no wedges.
-    #[test]
-    fn a_felling_crew_holding_axes_publishes_the_axes_as_outfitted() {
-        const AXES: u32 = 3;
-        let mut app = build_test_app();
-        let faction = FactionId(0);
-        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
-        let band = spawn_idle_band(&mut app, faction, tile);
-        let mut ledger = BandEquipment::default();
-        ledger.stock("axe", AXES, "flint", None);
-        app.world.entity_mut(band).insert(ledger);
-
-        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
-        capture_deposit_grid(&mut app);
-        let row = app
-            .world
+    /// The published `extract` row for wood on this band, off a freshly captured frame.
+    fn published_wood_row(app: &mut bevy::prelude::App) -> sim_schema::state::LaborAssignmentState {
+        capture_deposit_grid(app);
+        app.world
             .resource::<SnapshotHistory>()
             .last_snapshot()
             .expect("a snapshot was captured")
@@ -23236,11 +23234,96 @@ mod tests {
             .flat_map(|cohort| cohort.labor_assignments.iter())
             .find(|row| row.material == "wood")
             .cloned()
-            .expect("the extract row is published");
-        assert_eq!(row.kit_id, "felling");
+            .expect("the extract row is published")
+    }
+
+    /// **`kitWorkersHolding` COUNTS THE TOOL SERVING THE RUNG THE WORKING HOLDS** (#663) — the
+    /// Woodcutting kit is a sled on deadfall and an axe on felling, and a complete-kit count over both
+    /// would be the min of the two. Three arms, all on the same five-crew wood row:
+    ///
+    /// - **deadfall, two sleds and no axes** → 2 of 5: the sleds are the whole kit there;
+    /// - **felling, three axes and no sleds** → 3 of 5: the axes are, and the missing sleds do not
+    ///   zero it;
+    /// - **felling, three axes and five sleds** → 3 of 5: the sleds, which serve nothing on felling,
+    ///   do not raise it either.
+    #[test]
+    fn a_wood_crews_complete_kit_count_is_the_tool_serving_its_held_rung() {
+        let arm =
+            |felling: bool, sleds: u32, axes: u32| -> sim_schema::state::LaborAssignmentState {
+                let mut app = build_test_app();
+                let faction = FactionId(0);
+                let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+                let band = spawn_idle_band(&mut app, faction, tile);
+                if felling {
+                    seat_a_felling_working(&mut app, tile);
+                }
+                let mut ledger = BandEquipment::default();
+                ledger.stock("sled", sleds, "plain", None);
+                ledger.stock("axe", axes, "flint", None);
+                app.world.entity_mut(band).insert(ledger);
+                assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+                published_wood_row(&mut app)
+            };
+        let deadfall = arm(false, 2, 0);
+        assert_eq!(deadfall.kit_id, "woodcutting");
         assert_eq!(
-            row.kit_workers_holding, AXES as f32,
-            "three axes outfit three of the five fellers"
+            deadfall.kit_workers_holding, 2.0,
+            "two sleds outfit two on deadfall"
+        );
+        let felling_bare_of_sleds = arm(true, 0, 3);
+        assert_eq!(
+            felling_bare_of_sleds.kit_workers_holding, 3.0,
+            "three axes outfit three fellers, sleds or no sleds"
+        );
+        let felling_with_sleds = arm(true, 5, 3);
+        assert_eq!(
+            felling_with_sleds.kit_workers_holding, 3.0,
+            "sleds serve nothing on felling and add nothing to the count"
+        );
+    }
+
+    /// **THE NEXT RUNG'S CUT IS PUBLISHED WITH THE GEAR, AND IS WHAT THE TURN PAYS ONCE RAISED**
+    /// (#663). A wood on deadfall, five fellers, two axes: `nextRungMaterialYield` is felling's own
+    /// rate × 5 **plus** two axes' `deposit_take` — the playtest's *"once felled"* line, which had
+    /// read the bare catalog rate × crew. Then the working is raised to felling and one turn runs:
+    /// the cut the turn pays equals the figure published beforehand.
+    #[test]
+    fn the_next_rungs_cut_includes_the_gear_and_is_what_the_turn_pays_once_raised() {
+        const AXES: u32 = 2;
+        const AXE_TAKE: f32 = 1.0;
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let band = spawn_idle_band(&mut app, faction, tile);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("axe", AXES, "flint", None);
+        app.world.entity_mut(band).insert(ledger);
+        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let felling_rate = ladder
+            .rung(core_sim::RungKey::ForestryFelling)
+            .extraction_payoff
+            .as_ref()
+            .expect("a deposit rung prices a take")
+            .yield_per_worker_turn;
+        let projected = published_wood_row(&mut app).next_rung_material_yield;
+        let expected = felling_rate * BAND_WORKERS as f32 + AXES as f32 * AXE_TAKE;
+        assert!(
+            (projected - expected).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "once felled: the rung's rate for the crew plus two axes — {projected} against {expected}"
+        );
+
+        // **Raise it**: the working seated where the felling rung is ARRIVED at, its own rate.
+        seat_a_felling_working(&mut app, tile);
+        resolve_deposit_turn(&mut app);
+        let paid = source_materials(&app, band)
+            .first()
+            .expect("the turn paid the working's material")
+            .amount;
+        assert!(
+            (paid - projected).abs() < A_CLOSE_ENOUGH_AMOUNT,
+            "the turn after the raise pays the published figure: {paid} against {projected}"
         );
     }
 
@@ -23267,12 +23350,12 @@ mod tests {
         let mut ledger = BandEquipment::default();
         ledger.stock("axe", AXES, "flint", None);
         // **Wedges in the same ledger**, so the command path's derived kit is what keeps them off a
-        // wood crew: a no-kit row on timber is sent with the Felling kit, which does not carry them.
+        // wood crew: a no-kit row on timber is sent with the Woodcutting kit, which does not carry them.
         ledger.stock("wedges", AXES, "flint", None);
         app.world.entity_mut(band).insert(ledger);
 
         assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
-        assert_eq!(stored_extract_kit(&app, band, "wood"), "felling");
+        assert_eq!(stored_extract_kit(&app, band, "wood"), "woodcutting");
         let seeded = source_materials(&app, band)
             .first()
             .expect("a staffed working publishes the material it will cut")

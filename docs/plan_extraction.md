@@ -399,14 +399,18 @@ not a blocker: the deposit works whatever the metal is for.
   shipped (§8), so the axe shipped as an ordinary roster row: **`axe`, one `flint` tier and no bone
   tier**, knapped from stone read on `hardness`. It declares a new stat, **`deposit_take`** — extra
   units one equipped worker takes per turn, **added** to the rung's bare `yield_per_worker_turn` and
-  never replacing it — on **`forestry:felling` and `forestry:coppice` only**; `deadfall` stays bare,
-  so §4d holds. Beside it ship **quarrying `wedges`** (`flint`, `deposit_take` on `extraction:quarry`
-  only; `gathering` stays bare). Each rides its own `extract` kit — **`felling`** (the axe) and
-  **`quarrying`** (the wedges) — because the two serve disjoint branches, and a working's default kit
-  is **derived** from them per branch (the kit whose tool serves the branch, at any rung, so a
-  deadfall wood already defaults to `felling`) rather than authored; `default_kits.extract` is
-  `none`. Each tool is scoped by branch and rung so it adds nothing — and wears nothing — off its
-  own rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
+  never replacing it — on **`forestry:felling` and `forestry:coppice` only**. Beside it ship
+  **quarrying `wedges`** (`flint`, `deposit_take` on `extraction:quarry` only). **The floors' tool is
+  the sled**: its plain tier gains `deposit_take` +0.3 on `forestry:deadfall` and +0.4 on
+  `extraction:gathering` — hauling fallen wood and loose stone home is what a sled is for — and it
+  costs hide and fibre and no wood, so §4d holds: the floors stay bare-workable and the sled is only
+  an addition. **One kit per branch, one tool per rung**: `woodcutting` (sled + axe) and `stonework`
+  (sled + wedges), because the kit is stored on the row at assignment and a working climbs, so the
+  kit must carry every rung's tool; what a crew holds is read at the rung the working holds, so the
+  take, the wear and the published complete-kit count narrow the kit to that rung's tool. A
+  working's default kit is **derived** per branch (the kit serving the most rungs of it) rather than
+  authored; `default_kits.extract` is `none`. Each tool is scoped by branch and rung so it adds
+  nothing — and wears nothing — off its own rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
   working and the keepers holding one are geared by it through the rung requirement.
 - **The road tools' pacing moved a long way and nobody has played it.** `earthmoving` and
   `stone_dressing` cost 2 **stone** instead of 2 bone since §8's change: about 5 worker-turns on a

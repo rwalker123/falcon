@@ -317,15 +317,15 @@ fn a_band_with_no_kit_at_all_takes_from_the_floor_rung_of_both_branches() {
     }
 }
 
-/// **NAME THE FELLING KIT ON EVERY `extract` ROW** — what `assign_labor extract` stores on a wood's
+/// **NAME THE WOODCUTTING KIT ON EVERY `extract` ROW** — what `assign_labor extract` stores on a wood's
 /// row when the command names no kit (`extraction::working_default_kit`). These fixtures build their
 /// rows by hand, and a hand-built row with no kit resolves the job default, `none`.
-fn send_with_the_felling_kit(world: &mut World, band: Entity) {
+fn send_with_the_woodcutting_kit(world: &mut World, band: Entity) {
     let felling = world
         .resource::<core_sim::EquipmentConfigHandle>()
         .get()
-        .kit("felling")
-        .expect("the shipped roster carries the Felling kit");
+        .kit("woodcutting")
+        .expect("the shipped roster carries the Woodcutting kit");
     for assignment in &mut world
         .get_mut::<LaborAllocation>(band)
         .expect("the fixture band has an allocation")
@@ -343,7 +343,7 @@ fn send_with_the_felling_kit(world: &mut World, band: Entity) {
 ///
 /// The geared band must take **exactly** the bare take plus two axes' `deposit_take` (the addition,
 /// never a replacement rate), its axes must wear, and its **wedges must not**: they are in the band's
-/// ledger but not in the Felling kit a wood's crew is sent with, and they serve only the quarry.
+/// ledger but not in the Woodcutting kit a wood's crew is sent with, and they serve only the quarry.
 #[test]
 fn a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes() {
     /// Fewer axes than fellers, so the partly-equipped sum is what the turn resolves.
@@ -357,7 +357,7 @@ fn a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes() {
         let (mut world, home) = world_of(WOODED);
         seat_working(&mut world, UVec2::new(0, 0), WOOD, RungKey::ForestryFelling);
         let band = spawn_extractors(&mut world, home, WOOD, CREW);
-        send_with_the_felling_kit(&mut world, band);
+        send_with_the_woodcutting_kit(&mut world, band);
         if let Some(ledger) = ledger {
             world.entity_mut(band).insert(ledger);
         }
@@ -389,8 +389,8 @@ fn a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes() {
     );
 }
 
-/// **ON DEADFALL THE FELLING KIT IS THE DEFAULT AND THE AXE DOES NOTHING** (#663). A wood on its
-/// free floor defaults to the Felling kit — it is the tool the working will want once raised — but
+/// **ON DEADFALL THE WOODCUTTING KIT IS THE DEFAULT AND THE AXE DOES NOTHING** (#663). A wood on its
+/// free floor defaults to the Woodcutting kit — the axe in it is the tool the working will want once raised — but
 /// fallen wood is not axe work: a crew sent with it and holding axes cuts exactly what a bare crew
 /// cuts, and the axes wear nothing (`docs/plan_extraction.md` §4d).
 #[test]
@@ -399,7 +399,7 @@ fn a_felling_kit_on_deadfall_neither_lifts_the_take_nor_wears_the_axe() {
     let cut = |axes: u32| {
         let (mut world, home) = world_of(WOODED);
         let band = spawn_extractors(&mut world, home, WOOD, CREW);
-        send_with_the_felling_kit(&mut world, band);
+        send_with_the_woodcutting_kit(&mut world, band);
         let mut ledger = core_sim::BandEquipment::default();
         if axes > 0 {
             ledger.stock("axe", axes, "flint", None);
@@ -428,6 +428,53 @@ fn a_felling_kit_on_deadfall_neither_lifts_the_take_nor_wears_the_axe() {
     assert_eq!(axe_wear, 0.0, "and so it wears nothing there");
 }
 
+/// **THE SLED IS THE FLOOR'S TOOL** (#663): on a deadfall wood two sleds among four cutters add
+/// exactly `2 × 0.3` to the bare cut and wear on `deposit_taken`; on a felling wood the same sleds add
+/// nothing and wear nothing, because the axe is that rung's tool.
+#[test]
+fn a_sled_lifts_the_deadfall_take_and_nothing_above_it() {
+    const CREW: u32 = 4;
+    const SLEDS: u32 = 2;
+    /// The sled's `deposit_take` on `forestry:deadfall` (`equipment.json`).
+    const SLED_TAKE: f32 = 0.3;
+    let cut = |felling: bool, sleds: u32| {
+        let (mut world, home) = world_of(WOODED);
+        if felling {
+            seat_working(&mut world, UVec2::new(0, 0), WOOD, RungKey::ForestryFelling);
+        }
+        let band = spawn_extractors(&mut world, home, WOOD, CREW);
+        send_with_the_woodcutting_kit(&mut world, band);
+        let mut ledger = core_sim::BandEquipment::default();
+        if sleds > 0 {
+            ledger.stock("sled", sleds, "plain", None);
+        }
+        world.entity_mut(band).insert(ledger);
+        run_turn(&mut world);
+        let wear = world
+            .get::<core_sim::BandEquipment>(band)
+            .expect("the band keeps its ledger")
+            .wear_of("sled");
+        (held(&world, band, WOOD), wear)
+    };
+    let (bare, _) = cut(false, 0);
+    let (sledded, sled_wear) = cut(false, SLEDS);
+    assert!(
+        (sledded - (bare + SLEDS as f32 * SLED_TAKE)).abs() < 1e-4,
+        "two sleds add two sleds' deadfall take: {sledded} against {bare}"
+    );
+    assert!(
+        sled_wear > 0.0,
+        "the sleds did the extra hauling, so they wear"
+    );
+    let (felling_bare, _) = cut(true, 0);
+    let (felling_sledded, felling_sled_wear) = cut(true, SLEDS);
+    assert_eq!(
+        felling_sledded, felling_bare,
+        "a sled adds nothing to a felling take"
+    );
+    assert_eq!(felling_sled_wear, 0.0, "and so it wears nothing there");
+}
+
 /// **ONE AXE ARMS ONE PERSON PER TURN, ACROSS THE TAKE ROW AND THE POOLS** (#663). The axe is in
 /// the `extract` row's kit (`felling`) *and* in the quarrywork keepers' rung requirement (its
 /// `build_work` on `forestry`), and the two used to be rationed by allocations that never saw each
@@ -451,7 +498,7 @@ fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
         let tile = UVec2::new(0, 0);
         seat_working(&mut world, tile, WOOD, RungKey::ForestryFelling);
         let band = spawn_keepers(&mut world, home, &[(tile, WOOD)], FELLERS, KEEPERS);
-        send_with_the_felling_kit(&mut world, band);
+        send_with_the_woodcutting_kit(&mut world, band);
         let mut ledger = core_sim::BandEquipment::default();
         if axes > 0 {
             ledger.stock("axe", axes, "flint", None);
