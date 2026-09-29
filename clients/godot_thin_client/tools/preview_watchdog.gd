@@ -45,7 +45,8 @@ const PROGRESS_STALL_LIMIT_MSEC := 180_000
 const EXIT_HUNG := 1
 
 ## Prefix on this node's own output, so a stall reads as the harness's failure rather than a stray
-## engine message. Set by the harness scene's node name (`ui_preview` / `band_panel_preview`).
+## engine message. Set by the harness scene (`ui_preview` / `band_panel_preview` / `blend_probe` /
+## `map_preview`).
 @export var harness_name: String = "preview"
 
 var _last_progress_msec: int = 0

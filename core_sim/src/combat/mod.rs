@@ -673,6 +673,20 @@ impl DamageLedger {
         }
     }
 
+    /// **Bank a blow already priced in WHOLE-UNIT terms** — `units` of this profile's durability,
+    /// struck with no standing clamp, handing back the whole units it completes.
+    ///
+    /// It is for a caller that has **already applied** the per-turn clamp itself: a forecast that
+    /// averages [`Self::strike_blow`]'s `expected_units_down` over the retreat's outcomes
+    /// (`fauna::expected_kill_over_retreat`) holds a clamped expectation, and clamping it a second
+    /// time against a *mean* standing count is the very error that expectation exists to avoid.
+    /// The remainder is banked exactly as a live blow's is.
+    pub fn bank_units(&mut self, units: f32, profile: &CombatStats) -> f32 {
+        let durability = profile.durability.max(DURABILITY_EPS);
+        self.strike_blow(units.max(0.0) * durability, profile, f32::INFINITY)
+            .units_down
+    }
+
     /// **One turn's healing** — a body left alone knits back `recovery_rate × durability`
     /// ([`CombatTuning::wound_recovery_rate`]).
     ///

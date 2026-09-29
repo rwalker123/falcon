@@ -4578,9 +4578,14 @@ pub fn advance_labor_allocation(
     let supply_cfg = configs.supply_network.get();
     let widest_route_reach = crate::routes::max_route_reach_tiles(&ladder);
     // The forward-projection horizon for each source's steady `realized` yield: `realized` is the
-    // average food/turn the source will deliver over the next N turns, simulated forward from its
-    // current (pre-take) state, so the headline "Food /turn" is smooth and the assign-time seed matches
-    // the first resolved value exactly.
+    // average food/turn the source will deliver over the next N turns, simulated forward so the
+    // headline "Food /turn" is smooth where `actual` pulses. **The seed and the resolved row start
+    // one regrowth apart, on purpose** (`fauna::ProjectionStart`): the assign-time seed projects
+    // between turns, from a source the next Logistics has not regrown yet, so it starts
+    // `BeforeRegrowth`; the resolved row projects from the pre-take state inside this turn, which
+    // Logistics has already regrown, so it starts `AfterRegrowth` and its first step is this turn's
+    // take. Starting both at the same point would credit one turn's growth twice over the window.
+    // The two therefore agree on the take they project, not bit for bit on the number.
     let realized_horizon = labor.yield_average_horizon_turns;
     // The horizon for each source's discrete **arrival schedule** — what lands on each of the next N
     // turns, from the same forward simulation `realized` averages, reported per TURN instead of
@@ -5954,10 +5959,12 @@ pub fn advance_labor_allocation(
                     // property of the pre-take patch; the **credit** is applied inside each branch,
                     // once its take is known — see `credit_rung_lesson`.
                     let lesson_rung = patch_rung(patch, &ladder);
-                    // **The steady headline** — the forward-projected average food/turn over the next
-                    // `realized_horizon` turns, computed from the patch's PRE-take state (before either
-                    // branch draws it down), so it equals the assign-time seed exactly. Both the Field
-                    // and the drawn-down branches record this one value.
+                    // **The steady headline** — the forward-projected average food/turn over this turn
+                    // and the `realized_horizon − 1` after it, computed from the patch's PRE-take state
+                    // (before either branch draws it down). Logistics has **already regrown** that
+                    // state, so the projection's first step is this turn's take rather than a second
+                    // regrowth of the same turn (`fauna::ProjectionStart`). Both the Field and the
+                    // drawn-down branches record this one value.
                     let forage_realized = crate::forage::project_realized_forage(
                         patch,
                         &tile_composition,
@@ -5970,6 +5977,7 @@ pub fn advance_labor_allocation(
                         *floor,
                         take_species,
                         realized_horizon,
+                        fauna::ProjectionStart::AfterRegrowth,
                     );
                     // **RETIRED: the rung-3 MANAGED HARVEST BRANCH.** A Field used to be paid a
                     // flat rate on its whole standing crop and never drawn down — no escapement
@@ -6763,12 +6771,12 @@ pub fn advance_labor_allocation(
                     // under-kept flock **sheds animals** instead. So nothing eats an animal build,
                     // and the countdown below reads the crew's own output. See `fauna::herd_meter_rot`.
                     let meter_rot = fauna::herd_meter_rot(herd, &fauna, &ladder);
-                    // **The steady headline** — the forward-projected average food/turn over the next
-                    // `realized_horizon` turns, computed from the herd's PRE-take state (before the pen
-                    // feed/harvest or the wild take mutates it), so it equals the assign-time seed
-                    // exactly. Rate-based (an average over the horizon), so it is smooth where `actual` pulses;
-                    // a corralled herd projects its managed pen yield instead. Both the pen-tend and the
-                    // wild-take branches record this one value.
+                    // **The steady headline** — the forward-projected average food/turn over this turn
+                    // and the `realized_horizon − 1` after it, computed from the herd's PRE-take state
+                    // (before the pen feed/harvest or the wild take mutates it) — a state Logistics has
+                    // already regrown, so the first projected step is this turn's take. Rate-based (an
+                    // average over the horizon), so it is smooth where `actual` pulses. Both the
+                    // pen-tend and the wild-take branches record this one value.
                     let hunt_realized = fauna::project_realized_hunt(
                         herd,
                         &fauna,
@@ -6778,6 +6786,9 @@ pub fn advance_labor_allocation(
                         workers,
                         *floor,
                         realized_horizon,
+                        // Logistics already regrew this herd — the first projected step is this
+                        // turn's take (`fauna::ProjectionStart`).
+                        fauna::ProjectionStart::AfterRegrowth,
                     );
                     // **THE earn path (§4)** — the exact mirror of the Forage arm's call, and the
                     // heart of this ladder: the lesson is read off **the rung this herd stands on**,
@@ -7056,12 +7067,8 @@ pub fn advance_labor_allocation(
                         // what its packs cannot seat; a party's load is still standing at the
                         // source, so what one porter cannot shoulder waits for the next one. Its
                         // take is therefore every animal brought down, not the part carried.
-                        let party_keeps_the_carcass = postings.contains_key(&idx);
-                        let loaded = if party_keeps_the_carcass {
-                            take.killed_biomass()
-                        } else {
-                            take.carried
-                        };
+                        let loaded =
+                            fauna::CarcassKept::for_posting(postings.contains_key(&idx)).of(&take);
                         let paid = pen_yield.apply(loaded, mult_f);
                         // **THE MILK, THE EGGS AND THE DOWN** — what the herd pays for standing
                         // there, at the species' own per-head rates

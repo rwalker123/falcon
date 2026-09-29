@@ -112,6 +112,8 @@ const REGISTRY := [
 		"keycode": KEY_H, "site": SITE_MAP_UNHANDLED},
 	{"id": "map_terrain_textures", "class": CLASS_MAP_VIEW, "kind": KIND_KEYCODE,
 		"keycode": KEY_T, "site": SITE_MAP_UNHANDLED},
+	{"id": "map_ocean_motion", "class": CLASS_MAP_VIEW, "kind": KIND_KEYCODE,
+		"keycode": KEY_O, "site": SITE_MAP_UNHANDLED},
 	{"id": "toggle_inspector", "class": CLASS_PANEL_TOGGLE, "kind": KIND_POLLED_ACTION,
 		"keycode": KEY_I, "site": SITE_MAIN_PROCESS},
 	{"id": "toggle_victory", "class": CLASS_PANEL_TOGGLE, "kind": KIND_POLLED_ACTION,

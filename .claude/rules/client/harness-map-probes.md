@@ -171,6 +171,11 @@ they encode current behaviour including any bugs in it. That is exactly the righ
 decomposition safety net and the wrong one to mistake for a correctness test; the same caveat
 applies to any fixture added to protect a refactor rather than to pin a decision.
 
+**It carries the HANG GUARD** (`tools/preview_watchdog.gd`, a `Watchdog` node in `map_preview.tscn`;
+`test-harnesses.md` → `tools/preview_watchdog.gd`). `_settle` is its sign of life and `_finish` disarms
+it. A parse error in `map_preview.gd` is killed at 181 s with `FAIL watchdog` and exit 1, instead of
+idling forever.
+
 **It PINS ITS CANVAS AND WAITS FOR THE WM** — the `blend_probe` treatment (`_pin_canvas` /
 `_ensure_canvas` from `_settle` / the `_capture` geometry guard / `CANVAS_PIN_MAX_FRAMES`), because
 `project.godot` opens MAXIMIZED and macOS applies — and RE-applies — that asynchronously, so the
@@ -592,6 +597,15 @@ symmetric cross-fade), `_canyon` (peak↔non-peak — the control), `_lake` (the
 DESIGN), `_iso` + `_iso_alpine` (the mandatory isolated-hex shred checks; both sit on the LEFT of
 the frame because MapView's minimap CanvasLayer is NOT hidden and a bottom-right crop captures IT).
 
+**It carries the HANG GUARD** (`tools/preview_watchdog.gd`, a `Watchdog` node in `blend_probe.tscn`;
+`test-harnesses.md` → `tools/preview_watchdog.gd`), because it HUNG.
+- **What happened:** a parse error left the root node scriptless, and a run sat for 20+ minutes printing
+  nothing — no frames, no `FAIL`, no status.
+- **How it is wired:** `_settle` is the sign of life, and `_finish` disarms it.
+- **Verified:** the same parse error is now killed at **181 s** with `FAIL watchdog` and exit 1.
+- **Gaps between signs of life:** the longest PNG-less assertion blocks settle between their captures, so
+  no gap comes near the 180 s limit.
+
 **A `--only=` state filter** (`scripts/preview.sh res://tools/blend_probe.tscn -- --only=G`, or
 `--only=1,4,G`; keys are `<number>/<letter>`, no filter = every state) renders one state instead of
 all 14 — a diagnosis loop re-renders one state many times.
@@ -639,6 +653,13 @@ untouched and only which texels of the water art land where is pinned (confirmed
 AMPLITUDE term (`A * sin(t)`) VANISHES at phase 0 and a frame that is deterministic because its
 subject disappeared is worse than one that varies, whereas an offset or a midpoint idiom (`0.5 + 0.5
 * sin(t)` → 0.5 at t = 0) survives — classify the new term before trusting the freeze.
+
+**The water surface was classified that way when it landed** (`terrain-blend-shader.md` → Water
+surface): it is the third reader of `TIME`, and every one of its terms is an offset — the waves a UV
+scroll, the chop and the shore pulse positions on their noise fields' time axis — so phase 0 still draws
+them. The set stayed bit-identical run to run (308/308 across consecutive runs with state 29 in it).
+States 29 and 30 reach other phases through the `water_time_offset` uniform, not by un-freezing the
+clock.
 
 **One more state (15, D): the THREE-SCALE shore profile — CLIFF vs BEACH vs LAKE, and the MIXED
 coast** → `D*.png`, the ragged coast against **dark `rocky_reg`** (prairie's tan camouflages both
@@ -781,6 +802,180 @@ lines). Measure the straddle-pixel ratio on the chain's exit edges ((3,4)E, (4,5
 edges, and the pockets' six edges; `_crop0` is the bend whose exit edge the meander carried the channel
 across. Before any fix it read up to **2.99** on an exit edge and **5.27** on a pocket edge; after, **≤ 0.96**
 and **≤ 1.37**.
+
+**One more state (29, OCEAN): the open-ocean REPEAT GRID and the water surface that breaks it** →
+`OCEAN_*.png`, at the GAME's r ≈ 45 (`GRID_W × GRID_H`), grid OFF. A field of `deep_ocean` — the terrain
+with nothing on it to hide the base art's exact-copy repeat — with a ragged `continental_shelf` band down
+the east side and a five-hex prairie island on it, so the deep↔shelf depth field and a real coast share
+the frame with the open water (`terrain-blend-shader.md` → Water surface). Frames, each a
+`water_surface` block laid over the shipped one:
+
+| frame | levers | read for |
+|---|---|---|
+| `OCEAN_off` (+ `_open` / `_seam` / `_coast`) | variation, waves and chop all 0 | the BEFORE: the grid, unmistakable |
+| `OCEAN_static` (+ crops) | waves and chop 0 | the anti-tiling alone; no flat blotches where the patches meet |
+| `OCEAN_waves`, `_t2`, `_motion_diff` | chop 0, two phases | the scrolled-texture term alone (it ships off) — kept because it is the term that measured as invisible |
+| `OCEAN_chop`, `_t2`, `_motion_diff` | waves 0, two phases | the chop alone |
+| `OCEAN_shipped` (+ crops), `_t2`, `OCEAN_motion_diff` | shipped, two phases | the whole surface, and the coast / seam crops against `OCEAN_off`'s; `OCEAN_shipped_open` is the r ≈ 45 open-water crop |
+| `OCEAN_seq0..3` | shipped, four phases a second apart | the look-at sequence the chop was tuned on |
+| `OCEAN_zoomed_out`, `_t2`, `_motion_diff` | shipped, on a 42×28 grid at r ≈ 25.7 | the 1.0×-like frame: just above `motion_min_radius` (24), so the chop is ON — the zoom where the retired swell drew a map-wide diagonal, and where the chop must show no map-scale patches. Below the gate (the r ≈ 22.8 far-zoom grid) the motion is off and the water is static |
+| `OCEAN_live` (+ `_open`) | shipped, on a 31×21 grid at r ≈ 35 | the LIVE-like frame, the radius of Ray's 1.5× screenshots: open water, chop only |
+| `OCEAN_live_2x` | shipped, on a 23×16 grid at r ≈ 47 | Ray's 2.0× (radius = cover-fit base × zoom_factor, so 35 px at 1.5× → ~47 at 2.0×). `_snapshot_ocean` floors its scale at 1, so a grid smaller than `GRID_W` keeps the base geography |
+
+The second phase is `OCEAN_MOTION_DT` (**2 s**) set on the `water_time_offset` uniform, since the
+harness clock is frozen. The frames that show the open surface's own terms (`OCEAN_off` / `_static` / `_waves` /
+`_chop`) switch the shore pulse off too, so the island's surf does not muddy them. Eight PNG-less
+claims ride it, and each fails on its own:
+
+- **The repeat measure.** Over a deep-only box, mean |ΔL| between each pixel and the one ONE TEXTURE
+  PERIOD east (`2·r / base_scale` px), over the same at half a period. An exact copy scores ~0, an
+  unrelated texture ~1. The premise is asserted first — `OCEAN_off` must read as a repeat
+  (≤ `OCEAN_REPEAT_OFF_MAX`, measured **0.15**) — or the ON claim passes on a frame that never repeated;
+  then `OCEAN_static` must reach `OCEAN_REPEAT_ON_MIN` (0.6; measured **0.73**). **It is blind to sample
+  B's own period**, which is rotated off the horizontal: at `variation_cell` 4 it scored 0.84 on a frame
+  where B covered most of the water and its repeat showed on a diagonal. Judge the frame, not only the
+  number, when retuning the cell.
+- **Motion at game zoom, measured as MAGNITUDE.** Over the deep-ocean box, the mean |ΔL| between two
+  phases `OCEAN_MOTION_DT` (2 s) apart must reach `OCEAN_MOTION_MIN_MEAN_DL` (**1.5 levels** on this
+  water, luma ≈ 30); measured **3.28** at `chop_strength` 0.05. The bar guards against the term going
+  invisible, NOT the tuned look — that is Ray's live call: at `chop_strength` 0.06 / `chop_rate` 0.8 (~4
+  levels/s) the chop read in play as clouds changing too fast, so it went to 0.035 / 0.4 and the window
+  doubled with the rate; 0.035 was too faint once the caps left open water, and it ships at 0.05.
+  ⛔ **It was a changed-pixel COUNT, and the count passed a sea that looked still.** A scrolled texture
+  moves nearly every pixel by a level or two, so the first claim read 1.55M of 2.07M pixels changed
+  while the whole frame had moved **1.18 levels mean over eight seconds** — Ray ran it live and saw no
+  waves. A count answers *did anything change*; what a player sees is *how far the brightness moved*,
+  so the claim is on that. **Sabotaged** by shipping the old texture term alone: **0.94 levels**, fail —
+  while **1.44M pixels** changed, which the count would have passed.
+- **Steady motion.** One 1 s sample of a rate can land anywhere in a pulse, so the same surface is
+  measured over `OCEAN_STEADY_INTERVALS` (12) consecutive `OCEAN_STEADY_DT` (0.5 s) intervals — 6 s,
+  2.4 lattice periods of the coarse octave at `chop_rate` 0.4 and 3.3 of the fine one, four samples a
+  period — each read as a rate (mean |ΔL| / dt). The slowest must reach the magnitude bar's own rate,
+  `OCEAN_MOTION_MIN_MEAN_DL / OCEAN_MOTION_DT` (`OCEAN_STEADY_MIN_FRACTION` 1.0: a window's change is at
+  most the sum of its interval changes, so only a pause drops one below it), and max/min ≤
+  `OCEAN_STEADY_MAX_RATIO` (1.5). Shipped: **2.09–2.19 levels/s** — ratio **1.05** (at 0.035 it held
+  1.47–1.53, ratio 1.04). (At the earlier 0.06 / 0.8 tuning it held
+  5.01–5.23, and the single-copy sabotage swung 2.59–6.74, ratio 2.60.)
+  **Sabotaged** with one noise copy per octave (the form before `CHOP_PAIR_*`): **2.74, 6.21, 6.74, 4.86,
+  3.59, 4.62, 5.57, 5.82, 6.10, 4.46, 2.59, 5.13** — ratio **2.60**, fail; slowest 2.59, under the floor
+  too.
+- **No net direction.** The MOTION field — a phase minus its motion-off twin (`OCEAN_STATIC_SURFACE`:
+  chop and waves off), so the art cancels and only the motion is left — at two phases
+  `OCEAN_DIRECTION_DT` (1 s) apart is cross-correlated at every offset within ±24 px; the best
+  correlation more than 4 px from zero may not beat zero's by more than 0.02. Shipped (chop only, 0.05):
+  **0.739 at zero, 0.618 at best elsewhere**. **Sabotaged** with a single travelling sine train at the chop's own size:
+  **−0.807 at zero, 0.999 at (10, 12) px**, fail; and with the retired swell: **0.800 vs 0.984**, fail.
+- **No map-scale pattern.** The same motion field block-averaged over 2-hex-radius blocks — a low-pass —
+  and its std taken as a FRACTION of the per-pixel std (an absolute bar would scale with
+  `chop_strength`). Independent ~0.5 r patches keep about feature/block ≈ 0.25 of their std; bands or
+  blobs the size of a block survive nearly whole. Bar **0.35**; shipped **0.29**; **sabotaged** with the
+  retired swell: **0.43**, fail. (The small travelling train reads 0.02 here and fails only the
+  direction claim — the two measure different things.) The margin is honest rather than wide: a 3 r
+  wavelength is partly averaged by 2 r blocks, and `chop_scale` near 0.7 r approaches the bar.
+- **Open water has NO caps.** At two phases (0 and 1.3 s), the shipped frame against its pulse-off twin
+  (`SHORE_PULSE_OFF` over `shore`): over the deep-ocean box they must be byte-identical — the pulse moves only
+  the surf. The premise is that the pair DOES differ somewhere, at the island's surf. Shipped: **0 deep px differ,
+  14 023 in the whole frame**. **Sabotaged** by feeding the pulse into the open-water motion: **1 363 738 deep
+  px**, fail. A SWELL is state 31's claim (f): with the swell in both frames it would cancel here.
+  - **What went with the open-water caps.** Their seven claims and the `OCEAN_no_whitecaps` and
+    `OCEAN_cap_life0..4` frames are retired from this state. Two followed the generator to state 31 and were
+    retired again with the coastal foam.
+- **The `O` toggle.** With `TerrainRenderer.set_water_motion_enabled(false)`, two phases of the SHIPPED
+  surface `OCEAN_MOTION_DT` apart differ by **exactly 0 px** (the magnitude claim is its premise:
+  toggled on, they differ). The toggle is restored after.
+- **No motion at far zoom.** The same geography on a grid twice the size fits at r ≈ 22.8, under
+  `motion_min_radius` (24) and above `EDGE_BLEND_MIN_RADIUS`, and the two phases must differ by **exactly
+  0 px**. The static anti-tiling reads no `TIME`, so any pixel there is the LOD gate leaking. The pair is
+  the claim: a gate that never opened passes this half, one that never closed passes the one above.
+
+Sabotaged by zeroing the surface strengths in `terrain_config.json`: the repeat claim fails at 0.152 and
+the game-zoom motion claim at 0 px, and the other 291 frames came back byte-identical to the render
+before the water surface existed.
+
+**One more state (30, OCEANTEMP): the WATER TEMPERATURE GRADE** → `OCEANTEMP_*.png`, state 29's ocean at
+r ≈ 45, grid OFF, waves at phase 0, on a temperature gradient running polar (top row) → tropical (bottom
+row), plus a five-hex `coral_shelf` patch in the warm rows (ungraded water, so the graded-ness must ramp
+across its seam). **The climate anchors are read out of `core_sim/src/data/simulation_config.json` at run
+time** (`climate.polar/boreal/temperate_max_temp` — 0 / 3 / 18 °C) and published through the same
+`climate_*_max_temp` overlay keys the decoder emits, so the fixture cannot drift from what the server
+sends; the gradient overshoots each end anchor by `OCEANTEMP_OVERSHOOT` of that side's span, so the top
+and bottom rows sit at FULL cold and FULL warm (`terrain-blend-shader.md` → Water temperature grade).
+
+| frame | reads for |
+|---|---|
+| `OCEANTEMP_off` / `OCEANTEMP` (+ `_open` / `_seam` / `_coast` / `_coral`) | strength 0 against shipped: slate polar sea, turquoise tropics, neither garish |
+| `OCEANTEMP_zero` | the no-coral geography at strength 0 — claim (a)'s subject |
+| `OCEANTEMP_split_off` / `OCEANTEMP_split` | top half polar, bottom half tropical — the largest step two neighbouring hexes can carry, claim (c)'s subject |
+
+Three PNG-less claims, each sabotage-verified to fail on its own:
+
+- **(a) Strength 0 is bit-exact** — the temperature fixture WITH temperatures and published anchors, at
+  strength 0, against state 29's own fixture captured first: **0 px** differ.
+- **(b) Monotone cold → warm.** Per hex row over the deep-ocean columns, the mean luma and saturation
+  SHIFT (graded minus the strength-0 frame, so the texture cancels) must be negative at the top,
+  positive at the bottom, and never fall row to row by more than `OCEANTEMP_LUMA_TOLERANCE` /
+  `OCEANTEMP_SAT_TOLERANCE`. Measured **−4.4 / −0.27 → +4.7 / +0.14**. The saturation tolerance is 0.02
+  because the full-cold rows share one grade over different texture and wobble by ~0.01. **Sabotaged**
+  by swapping the cold and warm weights: 23 failures.
+- **(c) No hex step.** On the SPLIT fixture, along 216 lines crossing the cold|warm hex edges, on the
+  graded-minus-off luma: the 2-px |Δ| straddling the edge over the largest 2-px |Δ| elsewhere on the
+  same line (the ECO straddle-ratio idea, asked of the grade alone). A blended edge is no steeper than
+  the ramp around it: measured **0.13** against a bar of 1.5. **Sabotaged** by grading each hex on its
+  own temperature (no neighbour blend): **6.61**, fail.
+
+- **RETIRED — (d), the caps on the graded sea.** Its subject was the open-water caps. It moved to state 31
+  (COAST) with the coastal foam and went when that foam was removed: with no foam laid on the water there
+  is no colour for the grade to tint.
+- **(d) The grade reaches the waterline.** The waterline cross-fade rebuilds its water side from an
+  estimate of the water base, and before the fix that estimate was ungraded — every cold or warm coast
+  wore a rim where the sea lost its grade over the last ~5 px before land. At the island's coast, the
+  fixture at full cold and then full warm, surf off, S = graded minus its strength-0 twin: water within
+  0.05 r of the shoreline against water 0.3–0.6 r out, ratio ≥ 0.5 with the reference carrying ≥ 3
+  levels (`OCEANTEMP_RIM_*`). Shipped **0.64 / 0.64** (cold / warm); under 1 legitimately, since up to
+  half of the cross-fade at the waterline is the ungraded LAND base. **Sabotaged** by reverting the fix:
+  **0.00 / 0.00**, fail.
+
+**One more state (31, SHORE): the SHORE PULSE** → `SHORE*.png`, at the game's r ≈ 45, grid OFF
+(`terrain-blend-shader.md` → Shore pulse). It replaced the COAST state, whose incoming-swell claims went with the
+swell. The fixture is a JAGGED coastline: land from the east edge in by `COAST_LAND_DEPTH[row]` hexes (bays,
+headlands, a one-hex inlet), a `COAST_SHELF_WIDTH`-hex shelf off it, deep ocean beyond, a three-hex island and a
+three-hex `inland_sea` lake, all placed from the EAST edge so the geography fits the narrower grids.
+
+| frame | reads for |
+|---|---|
+| `SHORE_off` | the pulse off — the reference for what it adds |
+| `SHORE`, `_t2`, `SHORE_motion_diff` | two phases 2 s apart: the surf surging on some stretches and drawing back on others |
+| `SHORE_seq0..3` | a 5-radius crop of a jagged stretch at 0 / 1.1 / 2.3 / 3.4 s (about a quarter cycle apart): the crashes STAGGERED along the coast |
+| `SHORE_lake` | the lake: its surf never surges |
+| `SHORE_2x` / `SHORE_live` | the same fixture at r ≈ 47 (Ray's 2.0×) and r ≈ 35 (his 1.5×) |
+
+**S** below is the shipped frame minus its pulse-off twin (`SHORE_PULSE_OFF`, over the `shore` block). Six claims,
+each sabotage-verified to fail on its own:
+
+- **(a) The pulse moves the surf on sea coasts**, (b) **never on the lake**, (c) **never a land pixel**: shipped vs
+  pulse-off at 0.7 / 1.9 / 3.1 s. At least 1 000 sea pixels must change; 0 lake and 0 land. A land pixel counts only
+  if the land reaches 2 px past it in every direction (a pixel ON the hex line is rasterised by the shader's own
+  point-in-hex pick, which need not be this probe's).
+  - **Shipped:** **90 020 sea px, 0 lake, 0 land**.
+  - **Sabotaged** with `surge` 0: **0 sea px**, fail.
+  - **Sabotaged** with the lake's `surge_scale` 1: **11 600 lake px**, fail.
+  - **Sabotaged** by surging the inland wash too: **42 666 land px**, fail.
+  - **Reported, not asserted:** the brightest 5% of the surged surf renders saturation **0.131**, RGB about
+    **(126, 142, 145)** — the shoreline's own muted grey-blue `foam_color`, an earlier decision.
+- **(d) Not in unison.** S (chop off) at 12 phases evenly across one crash cycle. The frame is binned into 1 r
+  cells; a cell whose summed |S| peaks at 200 levels·px or more is a coastal sample point, and its peak sample is
+  its crash time. The circular spread of those times (1 − the mean resultant length: 0 = the whole coast crashes
+  together) must reach 0.5.
+  - **Shipped:** **0.83** over 94 points.
+  - **Sabotaged** with a constant offset (no along-shore noise): **0.00**, fail.
+- **(e) `O` off gives byte-identical phases.** Two phases 2 s apart with motion toggled off: **0 px**.
+  **Sabotaged** by leaving the pulse ungated by the motion switch: **34 390 px**, fail.
+- **(f) No swell anywhere.** With the chop off, two phases 2 s apart may differ only on the coast's own hexes (the
+  surf). In every water hex with no land neighbour — beyond the foam band, whose reach is well under one hex —
+  **0 px** may change; the premise is that the pair differs somewhere.
+  - **Shipped:** 34 390 px move, **0** of them beyond the coast's own hexes.
+  - **Sabotaged** by adding a travelling swell to the water motion (and running it with the chop off): **1 175 901
+    px**, fail. It also fails (d) at 0.06: a swell makes the whole coast crash together.
 
 ## Worked-source mark states (issue #412)
 

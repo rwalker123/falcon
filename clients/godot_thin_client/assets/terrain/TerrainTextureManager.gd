@@ -65,7 +65,9 @@ var layer_luma_texture: ImageTexture = null
 #                that peak is what conceals the base's own step at the waterline.
 #   wisp_scale — multiplies the secondary offshore disturbance: its centre distance, its half-width AND its
 #                strength (0 = no second disturbance).
-# A water terrain with no `shore_profile` block gets the NEUTRAL default (1, 1, 1), i.e. exactly the global
+#   surge_scale — multiplies the SHORE PULSE, the surf's seaward reach surging as each wave lands (0 = the surf
+#                never surges: a lake). Packed in the texel's A channel.
+# A water terrain with no `shore_profile` block gets the NEUTRAL default (1, 1, 1, 1), i.e. exactly the global
 # profile — bit-identical to before this table existed. Read by the shader as `layer_shore_map` and blended
 # across the water NEIGHBOURS by shared-edge proximity, so a cliff coast transitions into a beach coast
 # instead of switching at a bisector (see terrain_blend.gdshader's shore block).
@@ -74,6 +76,7 @@ var layer_shore_texture: ImageTexture = null
 const SHORE_PROFILE_DEFAULT_SAND_SCALE := 1.0
 const SHORE_PROFILE_DEFAULT_FOAM_SCALE := 1.0
 const SHORE_PROFILE_DEFAULT_WISP_SCALE := 1.0
+const SHORE_PROFILE_DEFAULT_SURGE_SCALE := 1.0
 # Guard rails on the config values: a negative scale is meaningless, and nothing needs to more than double
 # the shipped (ocean-tuned) profile.
 const SHORE_PROFILE_MAX_SCALE := 2.0
@@ -82,7 +85,7 @@ const SHORE_PROFILE_MAX_SCALE := 2.0
 # land-side field. It is a gate, never a widening, hence the 1.0 cap; foam/wisp are the water's alone.
 const SHORE_WATER_BLEND_CLASS := "water"
 const SHORE_PROFILE_LAND_MAX_SAND_SCALE := 1.0
-const SHORE_PROFILE_WATER_ONLY_KEYS: Array[String] = ["foam_scale", "wisp_scale"]
+const SHORE_PROFILE_WATER_ONLY_KEYS: Array[String] = ["foam_scale", "wisp_scale", "surge_scale"]
 
 # PER-TERRAIN BLEND PROFILE (R = width_scale, G = noise_scale, B = noise_cell_scale), one texel per terrain id
 # — the same 1×N by-layer-index lookup table as layer_shore_texture, and the flat↔flat seam's analog of it.
@@ -295,7 +298,7 @@ func _build_layer_luma() -> void:
 func rebuild_layer_shore_map() -> void:
 	## Pack each terrain's optional `shore_profile` block into a 1×N RGBA float texture the shader fetches by
 	## layer index (same construction/binding pattern as _build_layer_luma). Terrains with no block get the
-	## neutral (1, 1, 1) default, which is a no-op on the shore profile.
+	## neutral (1, 1, 1, 1) default, which is a no-op on the shore profile.
 	## PUBLIC because it re-reads `terrain_config` from scratch: the blend probe sweeps per-terrain shore
 	## profiles by mutating the live config and calling this. The ImageTexture is UPDATED in place (never
 	## replaced) so MapView's one-time `layer_shore_map` binding stays valid across a rebuild.
@@ -306,7 +309,7 @@ func rebuild_layer_shore_map() -> void:
 		SHORE_PROFILE_DEFAULT_SAND_SCALE,
 		SHORE_PROFILE_DEFAULT_FOAM_SCALE,
 		SHORE_PROFILE_DEFAULT_WISP_SCALE,
-		1.0
+		SHORE_PROFILE_DEFAULT_SURGE_SCALE
 	)
 	var shore_img := Image.create(terrain_count, 1, false, Image.FORMAT_RGBAF)
 	for terrain_id: int in range(terrain_count):
@@ -333,14 +336,14 @@ func rebuild_layer_shore_map() -> void:
 					0.0, SHORE_PROFILE_LAND_MAX_SAND_SCALE),
 				SHORE_PROFILE_DEFAULT_FOAM_SCALE,
 				SHORE_PROFILE_DEFAULT_WISP_SCALE,
-				1.0
+				SHORE_PROFILE_DEFAULT_SURGE_SCALE
 			))
 			continue
 		shore_img.set_pixel(tid, 0, Color(
 			_shore_scale(profile, "sand_scale", SHORE_PROFILE_DEFAULT_SAND_SCALE),
 			_shore_scale(profile, "foam_scale", SHORE_PROFILE_DEFAULT_FOAM_SCALE),
 			_shore_scale(profile, "wisp_scale", SHORE_PROFILE_DEFAULT_WISP_SCALE),
-			1.0
+			_shore_scale(profile, "surge_scale", SHORE_PROFILE_DEFAULT_SURGE_SCALE)
 		))
 	if layer_shore_texture == null:
 		layer_shore_texture = ImageTexture.create_from_image(shore_img)

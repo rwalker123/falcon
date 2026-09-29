@@ -951,6 +951,8 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     ask.workers,
                     ask.floor,
                     horizon,
+                    // A query answers between turns — the next thing that happens is a regrowth.
+                    crate::fauna::ProjectionStart::BeforeRegrowth,
                 )
                 .provisions
             }
@@ -968,6 +970,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     ask.floor,
                     take,
                     horizon,
+                    crate::fauna::ProjectionStart::BeforeRegrowth,
                 )
             }
         };
@@ -1755,8 +1758,17 @@ mod tests {
     }
 
     /// **What the sim itself pays this crew, PER TURN OVER A RUN** — `systems::hunt_take` on a
-    /// private clone of the fixture herd, at the same floor and the same party, read at the take's
-    /// own expectation and averaged over [`LEDGER_TURNS`].
+    /// private clone of the fixture herd, at the same floor and the same party, **drawn live** — each
+    /// turn at its own per-event retreat seed, exactly as the Hunt arm draws it — and averaged over
+    /// [`SAMPLED_TURNS`]. Returns the mean and its standard error.
+    ///
+    /// # ⛔ It must DRAW, not read the draw's mean
+    ///
+    /// It used to resolve every turn at `HuntDraw::EXPECTED`, which hands the fight the retreat's
+    /// *mean* head count. The fight clamps each blow to the bodies actually standing, and that clamp
+    /// is concave, so the take at the mean head count is **not** the take's mean — a crew of one on
+    /// Red Deer is `0.70` a turn at the mean and `~0.44` drawn. The curve publishes the take's mean
+    /// (`fauna::expected_kill_over_retreat`), so the harness has to measure the thing the sim pays.
     ///
     /// It is the *whole* take (`AnimalTake::killed`), quantiser and all, so the comparison below is
     /// against the number the turn actually credits rather than against an intermediate the curve
@@ -1794,16 +1806,17 @@ mod tests {
         biomass: f32,
         workers: u32,
         floor: f32,
-    ) -> f32 {
+    ) -> SampledTake {
         let fauna = world.resource::<FaunaConfigHandle>().get();
         let party = fixture_party(world, body_mass, workers);
         let mut herd = herd_of_biomass(species, body_mass, biomass);
-        let mut killed = 0.0_f32;
-        for _ in 0..LEDGER_TURNS {
+        let mut turns = Vec::with_capacity(SAMPLED_TURNS as usize);
+        for tick in 0..u64::from(SAMPLED_TURNS) {
             // Logistics, then Population — the turn order the take actually runs in, so what is held
             // level between turns is the stock *before* the regrowth.
             crate::fauna::regrow_biomass(&mut herd, &fauna);
-            killed += crate::systems::hunt_take(
+            let seed = crate::fauna::retreat_seed(crate::HARNESS_MAP_SEED, tick, &herd.id, workers);
+            let killed = crate::systems::hunt_take(
                 &mut herd,
                 workers,
                 floor,
@@ -1813,14 +1826,36 @@ mod tests {
                 // A resident band banks its whole take — the same `f32::INFINITY` the Hunt arm
                 // passes.
                 f32::INFINITY,
-                HuntDraw::EXPECTED,
+                // The Hunt arm's own per-event seed, so the run samples the draw the sim makes.
+                HuntDraw::Seeded(seed),
             )
             .take
             .killed as f32;
+            turns.push(killed);
             herd.biomass = biomass;
         }
-        killed / LEDGER_TURNS as f32
+        let mean = turns.iter().sum::<f32>() / turns.len() as f32;
+        let variance =
+            turns.iter().map(|k| (k - mean).powi(2)).sum::<f32>() / (turns.len() - 1) as f32;
+        SampledTake {
+            mean,
+            standard_error: (variance / turns.len() as f32).sqrt(),
+        }
     }
+
+    /// A sampled take: its mean over the run and that mean's standard error.
+    struct SampledTake {
+        mean: f32,
+        standard_error: f32,
+    }
+
+    /// Turns [`sim_take`] draws. A drawn take varies turn to turn by whole animals, so the run has to
+    /// be long enough for its mean to resolve the retreat's concavity (~10–40% on these fixtures) to
+    /// a few percent.
+    const SAMPLED_TURNS: u32 = 2_000;
+
+    /// **The tolerance on a sampled mean: three standard errors**, computed from the run itself.
+    const SAMPLED_STANDARD_ERRORS: f32 = 3.0;
 
     /// A resident hunter's shipped haul tier, so `carryable` is a real bound rather than a
     /// convenient infinity — the curve has to survive the client's other two `min` arms being live.
@@ -1905,14 +1940,17 @@ mod tests {
                 .floor()
                 .max(1.0);
             let composed = sparable.min(carryable).min(row.animals_likely);
-            let paid = sim_take(&world, species, body_mass, biomass, workers, floor);
+            let sampled = sim_take(&world, species, body_mass, biomass, workers, floor);
+            let paid = sampled.mean;
+            let sampling = SAMPLED_STANDARD_ERRORS * sampled.standard_error;
             assert!(
-                paid <= composed + SUSTAINED_RATE_EPSILON
-                    && composed <= paid + discarded_by_the_frozen_stock + SUSTAINED_RATE_EPSILON,
+                paid <= composed + SUSTAINED_RATE_EPSILON + sampling
+                    && composed
+                        <= paid + discarded_by_the_frozen_stock + SUSTAINED_RATE_EPSILON + sampling,
                 "a crew of {workers} on {species}: the published curve, min'd against the two caps \
                  the client already derives, reads {composed}/turn where `hunt_take` sustains \
-                 {paid}/turn (a frozen stock may discard at most \
-                 {discarded_by_the_frozen_stock}/turn)"
+                 {paid}/turn drawn (a frozen stock may discard at most \
+                 {discarded_by_the_frozen_stock}/turn; the draw's own error {sampling})"
             );
             saw_a_kill |= composed > 0.0;
         }
@@ -2212,9 +2250,11 @@ mod tests {
             "a crew of one must bring an aurochs down eventually ({killed}/turn sustained); the \
              wound ledger is what carries its part body between turns"
         );
-        let paid = sim_take(&world, AUROCHS, AUROCHS_BODY, FAT_HERD, 1, STRIP_IT_BARE);
+        let sampled = sim_take(&world, AUROCHS, AUROCHS_BODY, FAT_HERD, 1, STRIP_IT_BARE);
+        let paid = sampled.mean;
         assert!(
-            (rows[0].animals_likely - paid).abs() <= SUSTAINED_RATE_EPSILON,
+            (rows[0].animals_likely - paid).abs()
+                <= SUSTAINED_RATE_EPSILON + SAMPLED_STANDARD_ERRORS * sampled.standard_error,
             "and the published crew-of-one row ({}) is still what the turn pays, sustained \
              ({paid}/turn) — the row is a RATE, so it says `one aurochs about every eleven turns` \
              rather than the `0` a single floored turn reports",
@@ -2527,7 +2567,18 @@ mod tests {
                     * party.tuning.lethality
             })
             .sum();
-        let continuous = (damage / quarry.profile.durability).min(engagement.stayed);
+        // **Capped by what stood, OUTCOME BY OUTCOME** — the blow is clamped to the bodies each draw
+        // of the retreat leaves standing, so the rate is the average of the capped blows over the
+        // retreat's distribution, not the blow capped at the retreat's mean.
+        let wariness =
+            crate::fauna::herd_wariness(&herd_of_biomass(AUROCHS, AUROCHS_BODY, FAT_HERD), &fauna);
+        let continuous: f32 = party
+            .stayer_outcomes(engagement.engaged, wariness)
+            .iter()
+            .map(|outcome| {
+                outcome.probability * (damage / quarry.profile.durability).min(outcome.stayed)
+            })
+            .sum();
         assert!(
             continuous > 0.0,
             "the fixture crew must actually be able to hurt the quarry, or `0 == 0` would pass"
@@ -2547,9 +2598,17 @@ mod tests {
     /// **THE PLATEAU, SWEPT** — the eleven adjacent stepper positions the floored curve read `0` at.
     ///
     /// Two claims over `1..=STEPPER_CREW`, and each catches a different way of getting this wrong:
-    /// **non-zero wherever the crew can damage the quarry at all** (the defect), and **monotone
-    /// non-decreasing** (a "fix" that divided by the crew, or one that let the engagement staircase
-    /// and the fight cross the wrong way, would break this and not the first).
+    /// **non-zero wherever the crew can damage the quarry at all** (the defect), and **the useful crew
+    /// is the curve's peak** — a row past the peak may be LOWER.
+    ///
+    /// # ⛔ The curve is NOT monotone in the crew, and that is the take's own shape
+    ///
+    /// The row is the take's mean over the retreat, and the retreat draws whole bodies while keeping
+    /// the part body at its expectation. A crew whose reach crosses a whole body turns a certain part
+    /// body into a lottery the fight then clamps: on this fixture five hunters take `0.467` aurochs a
+    /// turn and six take `0.451`. That dip is what the live take pays, so no clamp or smoothing may
+    /// hide it — and `fauna::hunt_useful_crew` reads the **last rise**, so the crew it publishes is
+    /// the peak, which is the right thing to tell a player.
     #[test]
     fn the_curve_is_non_zero_and_rises_across_the_whole_plateau() {
         /// The stepper the panel that reported this actually shows — a thirteen-worker band.
@@ -2588,16 +2647,76 @@ mod tests {
                 row.workers
             );
         }
-        for pair in rows.windows(2) {
-            assert!(
-                pair[1].animals_likely >= pair[0].animals_likely,
-                "adding a hunter must never lower the take ({} at {} vs {} at {})",
-                pair[1].animals_likely,
-                pair[1].workers,
-                pair[0].animals_likely,
-                pair[0].workers
-            );
+        let takes: Vec<crate::fauna::HuntCrewTake> = rows
+            .iter()
+            .map(|row| crate::fauna::HuntCrewTake {
+                workers: row.workers,
+                low: row.animals_low,
+                likely: row.animals_likely,
+                high: row.animals_high,
+            })
+            .collect();
+        let useful = crate::fauna::hunt_useful_crew(&takes);
+        let peak = rows
+            .iter()
+            .map(|row| row.animals_likely)
+            .fold(0.0_f32, f32::max);
+        let at_useful = rows[useful as usize - 1].animals_likely;
+        assert!(
+            at_useful >= peak / (1.0 + crate::fauna::CREW_TAKE_RISE_TOLERANCE),
+            "the useful crew ({useful}, taking {at_useful}) must be the curve's peak ({peak}) — a \
+             row past the peak may be lower, but the crew the board offers is the one that takes most"
+        );
+        assert!(
+            rows.iter()
+                .take(useful as usize)
+                .all(|row| row.animals_likely <= at_useful * (1.0 + LEDGER_AVERAGE_EPSILON)),
+            "no crew below the useful one may out-take it"
+        );
+    }
+
+    /// **THE BAND BRACKETS ITS MEAN, ON EVERY SPECIES AND EVERY CREW.**
+    ///
+    /// `likely` is the take's mean over the retreat's outcomes; `low` / `high` are the take at the
+    /// retreat's `∓sigmas` quantile draws. `high >= likely` follows from the take rising with the
+    /// stayers. `low <= likely` does **not** follow by construction — a mean can sit below a lower
+    /// quantile's take on a concave, skewed reading — so it is asserted here across the whole roster
+    /// rather than assumed, and it is **not** clamped anywhere: a failure here is a finding to report.
+    #[test]
+    fn the_curve_band_brackets_its_mean_across_the_roster() {
+        /// Slack for two independently-summed float readings of one take.
+        const ORDER_EPSILON: f32 = 1e-4;
+
+        let roster: Vec<(String, f32)> = FaunaConfig::builtin()
+            .species
+            .values()
+            .map(|def| (def.display_name.clone(), def.body_mass))
+            .collect();
+        let mut out_of_order = Vec::new();
+        let mut rows_checked = 0usize;
+        for (species, body_mass) in &roster {
+            let mut world = world_hunting(species, *body_mass);
+            for row in crew_curve(&mut world, &crew_ask(SWEEP_CREW, STRIP_IT_BARE)) {
+                rows_checked += 1;
+                let (low, likely, high) = (row.animals_low, row.animals_likely, row.animals_high);
+                let slack = ORDER_EPSILON * likely.max(1.0);
+                if low > likely + slack || likely > high + slack {
+                    out_of_order.push(format!(
+                        "{species} crew {}: low {low} likely {likely} high {high}",
+                        row.workers
+                    ));
+                }
+            }
         }
+        assert!(
+            rows_checked >= roster.len(),
+            "liveness: every species must publish a curve"
+        );
+        assert!(
+            out_of_order.is_empty(),
+            "the band must bracket its mean on every row — out of order:\n{}",
+            out_of_order.join("\n")
+        );
     }
 
     /// **THE CURVE AND `realized` ARE THE SAME TAKE, AND THE GAP BETWEEN THEM IS STATED.**
@@ -2609,11 +2728,15 @@ mod tests {
     /// `forecast_horizon_turns` turns of regrow → take — so they cannot be asserted equal, and this
     /// pins the relationship instead.
     ///
-    /// **`realized` runs at or below the curve**, by one unfinished body spread over the horizon
-    /// plus [`REALIZED_DRAWDOWN_SLACK`]: it sums the *quantised* kills, so up to one body's damage is
-    /// still on the wound ledger when the horizon ends and is never counted. The fixture is
-    /// deliberately a fat herd at a near-stable stock, so that residual body is the whole of the
-    /// difference — as shipped, `realized` trails by 1.8% against a 2.2% ledger bound.
+    /// **`realized` runs at or below the curve by one unfinished body** spread over the horizon, plus
+    /// [`REALIZED_DRAWDOWN_SLACK`]: it sums the *quantised* kills, so up to one body's damage is still
+    /// on the wound ledger when the horizon ends and is never counted. The fixture is deliberately a
+    /// fat herd at a near-stable stock, so that residual body is the whole of the difference.
+    ///
+    /// **Both sides are the take's mean over the retreat** (`fauna::expected_kill_over_retreat`) —
+    /// neither hands the fight the retreat's mean head count — which is what lets the bound stay one
+    /// body: before the curve averaged too, it sat ~14% above `realized` on this fixture, the retreat's
+    /// concavity rather than any ledger remainder.
     #[test]
     fn the_curve_and_realized_agree_on_a_stable_stock() {
         /// The crew the defect was reported at, and the one whose two surfaces disagreed.
@@ -2640,9 +2763,10 @@ mod tests {
             REPORTED_CREW,
             STRIP_IT_BARE,
             horizon,
+            crate::fauna::ProjectionStart::BeforeRegrowth,
         );
-        // The curve is in animals; `realized` is in food. One conversion, the species' own
-        // (`HuntYield::apply`), so the comparison is not two different readings of the roster.
+        // Animals to food. One conversion, the species' own (`HuntYield::apply`), so the comparison
+        // is not two different readings of the roster.
         let curve_food = crate::fauna::herd_hunt_yield(&herd, &fauna)
             .apply(published * AUROCHS_BODY, NEUTRAL_OUTPUT)
             .provisions;
@@ -3077,6 +3201,130 @@ mod tests {
         assert_eq!(
             useful_party_cap(A_FLOOR, 0, &resolved, &fauna, &expedition),
             NO_USEFUL_CAP
+        );
+    }
+
+    /// **THE SEEDED ROW'S BAND IS MADE OF OUTCOMES THE TAKE CAN PRODUCE** —
+    /// `fauna::forecast_take_range`, the band the assign-time row publishes, over the whole roster,
+    /// three wound levels and every crew up to [`SWEEP_CREW`]. What holds of a whole-body band:
+    ///
+    /// - `low <= high`;
+    /// - each edge **is** the take of some retreat outcome (`fauna::forecast_take_outcomes` at that
+    ///   edge's fight draw) — never a head count between two of them;
+    /// - the mean lies within the span of the outcomes' takes.
+    ///
+    /// **What does NOT hold is `low <= likely <= high`, and it must not be asserted.** An edge is a
+    /// quantile and `likely` is a mean, so where one outcome carries more than `Φ(sigmas)` of the
+    /// mass both edges sit on it and the mean, which still weighs in the rarer outcomes, sits outside
+    /// the band. On a fresh Wild Aurochs herd a crew of eighteen engages `3.06`; all three whole
+    /// bodies break off together with probability `0.2³ = 0.008`, and every other outcome — `0.992`
+    /// of the mass, above `Φ(2) ≈ 0.977` — brings down exactly one aurochs. The band is `7.2`–`7.2`
+    /// food and the mean `7.1424`: both edges correct quantiles, the mean correctly below them.
+    ///
+    /// The wound levels are there because the row reads next turn's take in whole bodies off the
+    /// herd's own wound ledger, so a herd already carrying part of a body is a different
+    /// distribution from a fresh one.
+    #[test]
+    fn the_seeded_band_edges_are_outcomes_and_its_mean_lies_within_them() {
+        /// Slack for two independently-summed float readings of one take.
+        const ORDER_EPSILON: f32 = 1e-4;
+        /// Damage already banked on the quarry, in bodies: an un-hunted herd, one half-way through
+        /// a body, and one a blow away from finishing it.
+        const WOUNDS_IN_BODIES: [f32; 3] = [0.0, 0.5, 0.9];
+
+        let roster: Vec<(String, f32)> = FaunaConfig::builtin()
+            .species
+            .values()
+            .map(|def| (def.display_name.clone(), def.body_mass))
+            .collect();
+        let mut violations = Vec::new();
+        let mut rows_checked = 0usize;
+        let mut rows_with_a_spread = 0usize;
+        for (species, body_mass) in &roster {
+            let world = world_hunting(species, *body_mass);
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let sigmas = world
+                .resource::<CombatConfigHandle>()
+                .get()
+                .forecast_range_sigmas;
+            let profile = fauna.quarry_fight_for(species).profile;
+            for wounds in WOUNDS_IN_BODIES {
+                let mut herd = herd_of_biomass(species, *body_mass, FAT_HERD);
+                herd.wounds.bank_units(wounds, &profile);
+                for crew in 1..=SWEEP_CREW {
+                    let party = fixture_party(&world, *body_mass, crew);
+                    let forecast = crate::fauna::hunt_forecast(
+                        &herd,
+                        &fauna,
+                        RESIDENT_CARRY_PER_WORKER,
+                        &party,
+                        NEUTRAL_OUTPUT,
+                    );
+                    let Some(axis) = forecast.ratio_axis() else {
+                        continue;
+                    };
+                    rows_checked += 1;
+                    let range =
+                        crate::fauna::forecast_take_range(&forecast, crew, STRIP_IT_BARE, sigmas);
+                    let (low, likely, high) = (
+                        range.low.component(axis),
+                        range.likely.component(axis),
+                        range.high.component(axis),
+                    );
+                    let takes_at = |draw_sigmas: f32| -> Vec<f32> {
+                        crate::fauna::forecast_take_outcomes(
+                            &forecast,
+                            crew,
+                            STRIP_IT_BARE,
+                            HuntDraw::Quantile {
+                                sigmas: draw_sigmas,
+                            },
+                        )
+                        .iter()
+                        .map(|outcome| outcome.actual.component(axis))
+                        .collect()
+                    };
+                    let slack = ORDER_EPSILON * likely.max(1.0);
+                    let is_an_outcome =
+                        |edge: f32, takes: &[f32]| takes.iter().any(|t| (t - edge).abs() <= slack);
+                    let row = format!(
+                        "{species} wounds {wounds} crew {crew}: low {low} likely {likely} high {high}"
+                    );
+                    if low > high + slack {
+                        violations.push(format!("{row} — low above high"));
+                    }
+                    if !is_an_outcome(low, &takes_at(-sigmas)) {
+                        violations.push(format!("{row} — low is no outcome's take"));
+                    }
+                    if !is_an_outcome(high, &takes_at(sigmas)) {
+                        violations.push(format!("{row} — high is no outcome's take"));
+                    }
+                    let expected = takes_at(crate::combat::EXPECTED_STRIKES);
+                    let least = expected.iter().copied().fold(f32::INFINITY, f32::min);
+                    let most = expected.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                    if likely < least - slack || likely > most + slack {
+                        violations.push(format!(
+                            "{row} — mean outside the outcomes' span [{least}, {most}]"
+                        ));
+                    }
+                    if high > low + slack {
+                        rows_with_a_spread += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            rows_checked >= roster.len(),
+            "liveness: every species must publish a range"
+        );
+        assert!(
+            rows_with_a_spread > 0,
+            "liveness: some row must carry a real band, or every assertion above is about points"
+        );
+        assert!(
+            violations.is_empty(),
+            "the seeded band must be made of outcomes:\n{}",
+            violations.join("\n")
         );
     }
 }
