@@ -715,18 +715,23 @@ func _shipments_only(list: Array) -> Array:
 func _has_heading(node: Node, label: String) -> bool:
 	return _text_of(node).contains(label.to_upper())
 
-## **THE SIM'S RUNWAY, TRANSCRIBED** (`snapshot::population::larder_runway_turns`): walk the larder
-## over the merged arrivals with `standing_net` on every step, the first turn at zero is the answer;
-## else the smooth `larder / (drain − (steady + standing_net))`, else not food-limited. The fixture's
-## own `food_consumption` stands for the sim's demand, and its steady income is the rows' realized sum.
+## **THE SIM'S RUNWAY, TRANSCRIBED** (`snapshot::population::larder_runway_turns`, `MealOrder::
+## BeforeIncome`): a larder below one meal answers the fraction of that meal it covers; else walk the
+## merged arrivals MEAL FIRST — pool, eat, then the take lands — and the first turn whose meal comes up
+## short is the answer; else the smooth `larder / (drain − (steady + standing_net))`, else not
+## food-limited. The drain is the fixture's `food_need`, the sim's demand.
 func _sim_runway(band: Dictionary, standing_net: float) -> float:
 	var larder := DetailFormat.band_provisions(band)
-	var drain := float(band.get("food_consumption", 0.0))
+	var drain := DetailFormat.band_food_need(band)
 	var arrivals := DetailFormat.merged_arrival_schedule(band)
 	var food := maxf(larder, 0.0)
+	if drain > 0.0 and food < drain:
+		return food / drain
 	for i in range(arrivals.size()):
-		food = maxf(food + arrivals[i] + standing_net - drain, 0.0)
-		if food <= 0.0:
+		food += standing_net
+		var short := food < drain
+		food = maxf(food - drain, 0.0) + arrivals[i]
+		if short:
 			return float(i + 1)
 	var net_drain := drain - (DetailFormat.band_food_income(band) + standing_net)
 	if net_drain <= 0.0:

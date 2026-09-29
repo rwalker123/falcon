@@ -436,7 +436,7 @@ func _crowded_bands_fixture() -> Array:
 			"current_x": 58, "current_y": 24, "working_age": 62, "idle_workers": 9,
 			"work_range": 2, "hunt_reach": 4, "turns_of_food": 15.0, "morale": 0.72,
 			"activity": "forage", "stores": {"provisions": 180.0},
-			"food_income": 3.2, "food_consumption": 2.4,
+			"food_income": 3.2, "food_consumption": 2.4, "food_need": 2.4,
 			"labor_assignments": [
 				{"kind": "forage", "workers": 5, "target_x": 58, "target_y": 24, "floor": 0.5,
 					"actual_yield": 0.96, "sustainable_yield": 0.96, "realized_yield": 0.96,

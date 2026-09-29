@@ -1060,6 +1060,48 @@ func run(harness) -> void:
 	# directly, over an events array in each of the two shapes the wire really delivers.
 	_assert_handoff_ingest_windows_on_one_turn()
 
+	# ---- THE HAND-TO-MOUTH BAND (the live-playtest bug) ---------------------------------------
+	# A band whose income beats its need on average and starves every turn anyway: the sim eats
+	# `min(need, larder)` BEFORE the take lands. Its runway sits ABOVE the critical line here on
+	# purpose, so the only thing that can raise `starving` is the SHORTFALL — the arm that was missing.
+	# The fed twin beside it (same band, no shortfall) must raise nothing, or the claim is about the
+	# band rather than the shortfall.
+	h._hud.turn_orb.set_attention([])
+	h._hud.update_band_alerts([_hand_to_mouth_band(HAND_TO_MOUTH_ENTITY, HAND_TO_MOUTH_SHORTFALL),
+		_hand_to_mouth_band(HAND_TO_MOUTH_FED_ENTITY, 0.0)])
+	h._hud.turn_orb.open_popover()
+	await h._settle()
+	await h._save("turn_orb_hand_to_mouth")
+	var hungry_rows := _orb_rows()
+	var short_detail := HudAttentionVocab.STARVING_SHORTFALL_DETAIL_FORMAT % \
+		SourceForecast.format_magnitude(HAND_TO_MOUTH_SHORTFALL)
+	var hungry: Variant = _orb_row_with(hungry_rows, HAND_TO_MOUTH_LABEL_FORMAT % HAND_TO_MOUTH_NAME)
+	var fed_starving := _orb_row_with(hungry_rows, HAND_TO_MOUTH_LABEL_FORMAT % HAND_TO_MOUTH_FED_NAME) != null
+	h._assert_hud("precondition: the hand-to-mouth band's runway is ABOVE the critical line",
+		not BandFoodStatus.is_critical(HAND_TO_MOUTH_TURNS))
+	h._assert_hud("a band that came short of its meal raises `starving`, naming the shortfall (%s)" % short_detail,
+		hungry != null and String(hungry.get("detail", "")) == short_detail)
+	h._assert_hud("…while its fed twin on the same runway raises nothing", not fed_starving)
+	h._hud.turn_orb.toggle_popover()
+	h._hud.turn_orb.set_attention([])
+
+## The hand-to-mouth pair for the orb: one band short `shortfall` food this turn, one fed. Their
+## runway is well clear of the critical line, so only the shortfall can raise `starving`.
+const HAND_TO_MOUTH_ENTITY := 821
+const HAND_TO_MOUTH_FED_ENTITY := 822
+const HAND_TO_MOUTH_SHORTFALL := 0.4
+const HAND_TO_MOUTH_TURNS := 20.0
+const HAND_TO_MOUTH_NAME := "Hollowmere"
+const HAND_TO_MOUTH_FED_NAME := "Fairbrook"
+## The starving row's label, as `AttentionController` composes it.
+const HAND_TO_MOUTH_LABEL_FORMAT := "%s starving"
+
+func _hand_to_mouth_band(entity: int, shortfall: float) -> Dictionary:
+	return {"faction": 0, "entity": entity, "band_id": entity, "name": HAND_TO_MOUTH_NAME if shortfall > 0.0 else HAND_TO_MOUTH_FED_NAME,
+		"size": 30, "turns_of_food": HAND_TO_MOUTH_TURNS, "activity": "forage",
+		"current_x": 60 + entity - HAND_TO_MOUTH_ENTITY, "current_y": 12, "idle_workers": 0,
+		"food_need": 3.6, "food_consumption": 3.6 - shortfall, "food_shortfall": shortfall}
+
 ## **THE KNOWLEDGE SCREEN'S ORB ROW** (`docs/plan_knowledge_screen.md` §5, slice C) — one row per
 ## discovery that finished this turn, **and nothing else at all**.
 ##

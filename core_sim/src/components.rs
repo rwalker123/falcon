@@ -1117,6 +1117,14 @@ pub struct PopulationCohort {
     /// construction whether the band is fully fed or starving. Recomputed each turn
     /// by `simulate_population`; on the client wire as `PopulationCohortState.food_consumption`.
     pub last_food_consumption: f32,
+    /// **What the band's people NEEDED to eat this turn** — the `food_demand` `advance_demographics`
+    /// computed on the opening brackets, the same number `last_food_consumption` is the `min` of
+    /// against the larder. `need − eaten` is this turn's **hunger** (published as
+    /// `PopulationCohortState.food_shortfall`), and it is non-zero exactly when the larder was short
+    /// at meal time — which, because the meal comes BEFORE the turn's take lands, a band living
+    /// hand-to-mouth hits every turn even when its income covers its need on average. Set each turn
+    /// by `simulate_population`; `0.0` before a band's first turn. On the wire as `foodNeed`.
+    pub last_food_need: f32,
     /// **THE FOOD THAT CROSSED BETWEEN THIS BAND AND ANOTHER, AS OF THIS TURN'S FRAME** — the
     /// per-turn twin of the accumulator [`LaborAllocation::last_food_transfers`], split by
     /// [`TransferLink`], and the reading a client renders.

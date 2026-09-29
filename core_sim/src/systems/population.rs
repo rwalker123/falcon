@@ -180,6 +180,10 @@ pub(crate) struct FoodFlow {
 /// re-derivation on the post-turn state would report numbers that never drove a birth.
 struct DemographicOutcome {
     pub state: DemographicState,
+    /// **What the people had to eat this turn** — the `food_demand` this call computed on the
+    /// opening brackets, published as `PopulationCohort::last_food_need`. Returned rather than
+    /// re-derived by the caller, so need and the meal it was measured against are one number.
+    pub need: Scalar,
     pub fertility: FertilityFactors,
     pub flows: DemographicFlows,
 }
@@ -419,6 +423,7 @@ fn advance_demographics(
     }
 
     DemographicOutcome {
+        need: demand,
         state: DemographicState {
             children,
             working,
@@ -984,6 +989,12 @@ pub fn simulate_population(
         // reconciles the larder exactly, unlike a `food_demand` re-derived at capture on the *post*
         // turn brackets (which the same turn's births would inflate). See `last_food_consumption`.
         cohort.last_food_consumption = (food_before - outcome.state.food_store).to_f32();
+        // **And what they NEEDED** — the same turn's `food_demand`, off the same call. Eaten is the
+        // ledger term; need is what hunger is measured against. The two differ exactly when the
+        // larder was short at meal time, which is the starving turn a band living hand-to-mouth has
+        // every turn its take lands after the meal: `need − eaten` is published as the band's
+        // shortfall, and the runway counts down need, never eaten.
+        cohort.last_food_need = outcome.need.to_f32();
         cohort.sync_size();
 
         // The flows the model just resolved become the player's world events, once each has
@@ -2501,6 +2512,7 @@ mod wellbeing_tests {
             stores: LocalStore::new(),
             morale: m,
             last_food_consumption: 0.0,
+            last_food_need: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),

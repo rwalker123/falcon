@@ -475,7 +475,10 @@ impl Food {
         Book {
             stock: raw as f32 / FIXED_POINT_SCALE as f32,
             income: band.food_income,
-            consumption: band.food_consumption,
+            // What the people MUST eat, never what they managed to: a band whose larder was short at
+            // meal time eats less than it needs, and a book built on that reads a starving band as
+            // breaking even.
+            consumption: band.food_need,
         }
     }
 
@@ -674,6 +677,7 @@ pub(crate) mod tests {
             turns_of_food: 14.0,
             food_income: 0.0,
             food_consumption: CONSUMPTION,
+            food_need: CONSUMPTION,
             stores: vec![CohortStoreState {
                 item: FOOD_CARGO_KEY.to_owned(),
                 quantity: (STOCK * FIXED_POINT_SCALE as f32) as i64,

@@ -283,14 +283,22 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
         var x := int(entry.get("current_x", -1))
         var y := int(entry.get("current_y", -1))
         var band_name := HudFormat.band_name(entry)
-        # Producer 1 — starving: larder below the critical threshold (red/critical).
-        if BandFoodStatus.is_critical(turns):
+        # Producer 1 — starving: larder below the critical threshold, OR the band came short of its
+        # meal this turn (red/critical). The second arm is the hand-to-mouth band: the meal is eaten
+        # before the take lands, so it goes hungry every turn on a positive average rate, and no
+        # runway threshold ever fired for it. Its detail names the shortfall — that is what is
+        # killing people — rather than the runway.
+        var shortfall := DetailFormat.band_food_shortfall(entry)
+        var short := DetailFormat.band_is_starving(entry)
+        if BandFoodStatus.is_critical(turns) or short:
             attention.append({
                 "kind": HudAttentionVocab.ATTENTION_KIND_STARVING,
                 "owner": entity,
                 "severity": HudAttentionVocab.ATTENTION_SEVERITY_CRITICAL,
                 "label": "%s starving" % band_name,
-                "detail": DetailFormat.food_turns_text(turns),
+                "detail": HudAttentionVocab.STARVING_SHORTFALL_DETAIL_FORMAT
+                    % SourceForecast.format_magnitude(shortfall) if short
+                    else DetailFormat.food_turns_text(turns),
                 "x": x, "y": y,
             })
         # Producer 2 — losing population: shrank vs the previous snapshot (amber/warn). Reads the
@@ -301,7 +309,7 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
                 "owner": entity,
                 "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
                 "label": "%s losing population" % band_name,
-                "detail": _decline_reason(turns, morale, morale_cause, last_emigrated, x, y),
+                "detail": _decline_reason(turns, morale, morale_cause, last_emigrated, x, y, short),
                 "x": x, "y": y,
             })
         # Producer 3 — idle labor: working-age workers unassigned (amber/warn). Supersedes
@@ -706,8 +714,14 @@ func _awaiting_expedition_at(x: int, y: int) -> Dictionary:
 ## authority the tile chip's ⚠ and the map overlay's hatch read, so the three surfaces cannot disagree
 ## about which ground kills. A tile the world has no reading for is NOT lethal: `temperature_at`
 ## answers `null` there, and a missing reading is unknown rather than deadly.
+##
+## **`starving` IS ASKED OF THE SHORTFALL FIRST.** A band that came short of its meal is shrinking of
+## hunger whatever its runway reads — the hand-to-mouth band's runway can sit above the threshold on a
+## positive average rate while people die of the meal they could not eat.
 func _decline_reason(turns: float, morale: float, morale_cause: int, last_emigrated: int,
-        x: int, y: int) -> String:
+        x: int, y: int, short_of_food: bool = false) -> String:
+    if short_of_food:
+        return HudAttentionVocab.DECLINE_REASON_STARVING
     if BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.critical_turns():
         return HudAttentionVocab.DECLINE_REASON_STARVING
     var temperature: Variant = _band_labor.temperature_at(x, y)

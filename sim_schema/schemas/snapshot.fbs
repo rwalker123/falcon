@@ -1570,6 +1570,15 @@ table PopulationCohortState {
   // links actually reached, free reach and road-held reach alike, and NOT the `reach_tiles` lever.
   // A network whose camps all share one tile also reads 0; `supplyNetworkId` tells the two apart.
   supplyNetworkSpanTiles:uint = 0;
+  // --- WHAT THE PEOPLE NEEDED, AND HOW SHORT THEY WENT (appended last) ---------------------------
+  // `foodConsumption` is what they ATE - min(need, larder) at meal time, the larder identity's term.
+  // The meal comes BEFORE the turn's take lands, so a band whose larder is below its need at meal
+  // time goes hungry even when its income beats its need on average; eaten then reads low and the
+  // income-minus-consumption rate reads falsely healthy. These two say what they needed and how much
+  // of it they went without - the hunger starvation deaths are made of. `foodShortfall` =
+  // foodNeed - foodConsumption, never negative; 0 on a fed turn.
+  foodNeed:float = 0;
+  foodShortfall:float = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which

@@ -1682,6 +1682,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "supply_network_span_tiles",
         cohort.supplyNetworkSpanTiles() as i64,
     );
+    // What the people NEEDED to eat this turn, and how much of it they went without. `food_consumption`
+    // is what they ATE — short of need when the larder was short at meal time, which is before the
+    // turn's take lands — so a Food line reading `income − consumption` alone looks healthy while
+    // the band starves. `food_shortfall > 0` is this turn's hunger.
+    let _ = dict.insert("food_need", cohort.foodNeed() as f64);
+    let _ = dict.insert("food_shortfall", cohort.foodShortfall() as f64);
 
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
     // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and

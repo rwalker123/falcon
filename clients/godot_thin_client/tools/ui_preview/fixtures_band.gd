@@ -137,7 +137,7 @@ static func band_fixture() -> Dictionary:
 		# line. Per-source actual/sustainable yields live on the assignments below.
 		# The Gathered/Hunted breakdown sums the assignment actual_yields (0.48 / 0.46) by kind.
 		"food_income": 0.94,
-		"food_consumption": 0.68,
+		"food_consumption": 0.68, "food_need": 0.68,
 		# `workers_needed` is the overstaffing axis, INDEPENDENT of the overdraw (⚠) axis — the two
 		# rows below deliberately cross them so one frame proves both, AND proves the ⚠ now keys off the
 		# sim-answered `overdraws` bool, not the client-derived `actual > sustainable`:

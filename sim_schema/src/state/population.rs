@@ -915,9 +915,9 @@ pub struct PopulationCohortState {
     /// footer without re-summing the assignment rows.
     #[serde(default)]
     pub food_income: f32,
-    /// Band-level per-turn food consumption = `food_demand(children, working, elders)` (the same
-    /// one-turn demand `turns_of_food` divides by) — **the PEOPLE's food only**. Derived per-turn at
-    /// capture. Appended last.
+    /// The food the band's people **actually ate** this turn — `min(need, larder)` at meal time, the
+    /// consumption term of the larder identity. **Not what they needed**: short of it exactly when
+    /// the larder was short at meal time — see [`Self::food_need`] / [`Self::food_shortfall`].
     #[serde(default)]
     pub food_consumption: f32,
     /// Hunt levers — global config echoed per-cohort (same idiom as
@@ -1661,6 +1661,15 @@ pub struct PopulationCohortState {
     /// `reach_tiles` lever. Appended last (append-only).
     #[serde(default)]
     pub supply_network_span_tiles: u32,
+    /// **What the people NEEDED to eat this turn** — the `food_demand` the meal was measured
+    /// against. Appended last (append-only).
+    #[serde(default)]
+    pub food_need: f32,
+    /// **This turn's hunger** — `food_need − food_consumption`, never negative; `0` on a fed turn.
+    /// The meal comes before the turn's take lands, so a band whose larder is below its need at meal
+    /// time goes short even when its income beats its need on average. Appended last.
+    #[serde(default)]
+    pub food_shortfall: f32,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of

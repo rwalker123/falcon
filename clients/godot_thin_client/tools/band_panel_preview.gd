@@ -74,7 +74,7 @@ const MAP_PATH_TERRAIN_ID := 11
 const OUT_DIR := "res://ui_preview_out"
 # A left inspector strip width to prove co-edge stacking (bug 1).
 const INSPECTOR_STRIP := 300.0
-# The sim turn the arrival-schedule states render on, so the strip tooltips + the outlook "empty ~turn
+# The sim turn the arrival-schedule states render on, so the strip tooltips + the outlook "hungry ~turn
 # N" marker read as absolute turns rather than the pre-first-overlay relative form.
 const ARRIVAL_PREVIEW_TURN := 40
 # The paged-board states work a row of this many forage patches from this origin — far past one
@@ -1265,7 +1265,7 @@ func _ready() -> void:
 	await _assert_a_crew_bigger_than_its_source_is_flagged()
 
 	# ARRIVAL SCHEDULE — the per-source tick strip + the merged Food-outlook chart. Seed a current turn
-	# so the strip's cell tooltips + the chart's "empty ~turn N" marker read as absolute turns.
+	# so the strip's cell tooltips + the chart's "hungry ~turn N" marker read as absolute turns.
 	_hud.update_overlay(ARRIVAL_PREVIEW_TURN, {})
 	_hud.show_tile_selection({})
 	_hud._band_labor._pending_labor.clear()
@@ -1300,11 +1300,22 @@ func _ready() -> void:
 		_report_zone_content_extent(state["name"])
 
 	# (b) A band whose larder EMPTIES inside the horizon: sparse lumpy hauls under a heavy drain, so the
-	# walk hits 0 and the chart draws the dashed DANGER "empty ~turn N" marker.
+	# walk hits 0 and the chart draws the dashed DANGER "hungry ~turn N" marker.
 	_push_bands([_arrivals_starving_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	await _save("band_panel_arrivals_empty")
+
+	# (c) THE HAND-TO-MOUTH BAND (the live-playtest bug): its income BEATS its need on average, and it
+	# starves every turn anyway, because the sim eats `min(need, larder)` BEFORE the turn's take lands.
+	# The Food rate is income − NEED (+0.60, still green — it IS feeding itself on average), and the
+	# band says it came short, in danger ink, with the remedy; the chart eats first and dips to zero;
+	# the turn orb fires `starving`. The FED control beside it is the same band with a full larder and
+	# no shortfall, which is what makes each claim a claim about the SHORTFALL rather than the band.
+	await _assert_hand_to_mouth_band()
+	# Put back the band the states below were written against.
+	_push_bands([_arrivals_starving_band_fixture()])
+	await _settle()
 
 	# ---- Zone content (docs/band_panel_ux_proposal.html) ----------------------
 	# PEOPLE + WORKFORCE bars and the two role CARDS, in the TALL (L dock) shell where the band zone
@@ -16599,6 +16610,8 @@ func _band_fixture() -> Dictionary:
 		# breakdown (summed from the assignment actual_yields by kind).
 		"food_income": 0.94,
 		"food_consumption": 0.68,
+		# A fed band ate exactly what it needed: `food_need` == `food_consumption`, no shortfall.
+		"food_need": 0.68,
 		# The hunt overdraws (actual 0.46 > sustainable 0.20) so the ⚠ overhunting flag renders on its
 		# allocation row; the forage is renewable (actual == sustainable) so it never flags. The forage
 		# is also OVERSTAFFED (5 assigned, 2 needed) → the "· only 2 of 5 working" note, and carries a
@@ -16630,6 +16643,7 @@ func _concerning_food_band_fixture() -> Dictionary:
 	band["turns_of_food"] = 4.0
 	band["food_income"] = 0.30
 	band["food_consumption"] = 0.95
+	band["food_need"] = 0.95
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15},
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20},
@@ -16795,6 +16809,7 @@ func _arrivals_band_fixture() -> Dictionary:
 	band["stores"] = {"provisions": 30.0}
 	band["food_income"] = 3.6
 	band["food_consumption"] = 2.0
+	band["food_need"] = 2.0
 	band["labor_assignments"] = [
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 2.7, "sustainable_yield": 2.7,
@@ -16858,6 +16873,7 @@ func _vitals_worst_case_band_fixture() -> Dictionary:
 	band["turns_of_fodder"] = WORST_CASE_TURNS_OF_FODDER
 	band["output_multiplier"] = WORST_CASE_OUTPUT_MULTIPLIER
 	band["food_consumption"] = WORST_CASE_FOOD_CONSUMPTION
+	band["food_need"] = WORST_CASE_FOOD_CONSUMPTION
 	# Falling morale with a named cause, so the Morale row renders its longest form beside the rest.
 	band["morale"] = 0.31
 	band["morale_delta"] = -0.040
@@ -16868,18 +16884,120 @@ func _vitals_worst_case_band_fixture() -> Dictionary:
 	return band
 
 ## A player band whose larder EMPTIES inside the horizon: a heavy drain over a sparse hunt + a thin
-## forage trickle, so the Food-outlook walk reaches 0 and the chart draws the dashed "empty ~turn N".
+## forage trickle, so the Food-outlook walk reaches 0 and the chart draws the dashed "hungry ~turn N".
+## THE HAND-TO-MOUTH BAND: larder 3, need 3.6, a steady income of 4.2 that arrives LUMPY (a haul of
+## 8.4 every other turn), and a shortfall of 0.4 this turn — the numbers from the live playtest. Its
+## `turns_of_food` is the sim's own answer for a larder below one meal: the fraction of that meal it
+## covers.
+const HAND_TO_MOUTH_LARDER := 3.0
+const HAND_TO_MOUTH_NEED := 3.6
+const HAND_TO_MOUTH_EATEN := 3.2
+const HAND_TO_MOUTH_SHORTFALL := 0.4
+const HAND_TO_MOUTH_HAUL := 8.4
+const HAND_TO_MOUTH_INCOME := 4.2
+## The FED control's larder — well above one meal, so the walk never comes up short.
+const FED_CONTROL_LARDER := 30.0
+
+func _hand_to_mouth_band_fixture(fed: bool = false) -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 924
+	band["id"] = "Band 12"
+	var larder := FED_CONTROL_LARDER if fed else HAND_TO_MOUTH_LARDER
+	band["stores"] = {"provisions": larder}
+	band["food_income"] = HAND_TO_MOUTH_INCOME
+	band["food_need"] = HAND_TO_MOUTH_NEED
+	band["food_consumption"] = HAND_TO_MOUTH_NEED if fed else HAND_TO_MOUTH_EATEN
+	band["food_shortfall"] = 0.0 if fed else HAND_TO_MOUTH_SHORTFALL
+	var haul: Array = []
+	for i in range(20):
+		haul.append(HAND_TO_MOUTH_HAUL if i % 2 == 1 else 0.0)
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5,
+			"target_x": 70, "target_y": 17, "actual_yield": HAND_TO_MOUTH_INCOME,
+			"sustainable_yield": HAND_TO_MOUTH_INCOME, "realized_yield": HAND_TO_MOUTH_INCOME,
+			"arrival_schedule": haul},
+		{"kind": "scout", "workers": 2},
+	]
+	band["turns_of_food"] = BandFoodStatus.UNLIMITED_TURNS if fed else larder / HAND_TO_MOUTH_NEED
+	return band
+
+## Every Label's and RichTextLabel's rendered text under `node`, joined — the band zone's vitals are a
+## RichTextLabel, so a Label-only walk would miss the Food line entirely.
+func _all_text_under(node: Node) -> String:
+	var out := ""
+	if node is RichTextLabel:
+		out += (node as RichTextLabel).get_parsed_text() + "\n"
+	elif node is Label:
+		out += (node as Label).text + "\n"
+	for child in node.get_children():
+		out += _all_text_under(child)
+	return out
+
+func _assert_hand_to_mouth_band() -> void:
+	var starving_line := DetailFormat.FOOD_STARVING_LINE_FORMAT % SourceForecast.format_magnitude(
+		HAND_TO_MOUTH_SHORTFALL)
+	for fed in [false, true]:
+		var tag := "fed control" if fed else "hand-to-mouth"
+		var band := _hand_to_mouth_band_fixture(fed)
+		_push_bands([band])
+		_panel.set_dock(SIDE_LEFT)
+		_panel.set_active_tab(&"band")
+		await _settle()
+		await _settle()
+		await _save("band_panel_food_fed_control" if fed else "band_panel_food_hand_to_mouth")
+		var zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+		var text := _all_text_under(zone) if zone != null else ""
+		# The rate is income − NEED, on both: +0.60, never the retired income − eaten (+1.00).
+		var rate := SourceForecast.format_yield(HAND_TO_MOUTH_INCOME - HAND_TO_MOUTH_NEED)
+		_assert_band_panel("%s: the Food rate is income − NEED (%s)" % [tag, rate], text.contains(rate))
+		if fed:
+			_assert_band_panel("fed control: no starving line", not text.contains(DetailFormat.FOOD_STARVING_LEAD))
+		else:
+			_assert_band_panel("hand-to-mouth: the band says it came short, with the remedy (%s)" % starving_line,
+				text.contains(starving_line))
+		# The chart eats first: a larder below one meal marks the very next turn.
+		var chart := _find_chart(zone) if zone != null else null
+		if fed:
+			_assert_band_panel("fed control: the chart never comes up short",
+				chart != null and chart.empty_turn() == FoodOutlookChart.NO_EMPTY_TURN)
+		else:
+			_assert_band_panel("hand-to-mouth: the chart marks the coming turn short (got %s)"
+					% (str(chart.empty_turn()) if chart != null else "no chart"),
+				chart != null and chart.empty_turn() == 1)
+			# …and it DIPS: the walk lands at zero on the hungry turn before the haul arrives.
+			_assert_band_panel("hand-to-mouth: the chart's walk dips to zero on the hungry turn",
+				chart != null and chart._series.size() > 1 and is_zero_approx(chart._series[1]))
+		# The turn orb: `starving` fires on the shortfall, naming it.
+		var attention: Array = _hud._attention.build_band_attention([band], [])
+		var starving := attention.filter(func(a): return String(a.get("kind", "")) \
+			== HudAttentionVocab.ATTENTION_KIND_STARVING)
+		if fed:
+			_assert_band_panel("fed control: no starving alert", starving.is_empty())
+		else:
+			var detail := String(starving[0].get("detail", "")) if not starving.is_empty() else ""
+			_assert_band_panel("hand-to-mouth: `starving` fires CRITICAL on the shortfall and names it (%s)" % detail,
+				starving.size() == 1
+				and String(starving[0].get("severity", "")) == HudAttentionVocab.ATTENTION_SEVERITY_CRITICAL
+				and detail == HudAttentionVocab.STARVING_SHORTFALL_DETAIL_FORMAT
+					% SourceForecast.format_magnitude(HAND_TO_MOUTH_SHORTFALL))
+			# A shrinking hand-to-mouth band is shrinking of hunger, whatever its runway reads.
+			_assert_band_panel("hand-to-mouth: a population loss reads `starving`",
+				_hud._attention._decline_reason(BandFoodStatus.UNLIMITED_TURNS, 1.0,
+					DetailFormat.MORALE_CAUSE_NONE, 0, -1, -1, true)
+					== HudAttentionVocab.DECLINE_REASON_STARVING)
+
 func _arrivals_starving_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 921
 	band["id"] = "Band 10"
 	# The runway is the HONEST one — larder walked with income counted (12 food, net drain ~1.6/turn),
-	# so it lands on the same turn the chart's dashed "empty ~turn N" marker does. The old
+	# so it lands on the same turn the chart's dashed "hungry ~turn N" marker does. The old
 	# larder/consumption reading would have said 4 here and visibly contradicted the chart below it.
 	band["turns_of_food"] = 9.0
 	band["stores"] = {"provisions": 12.0}
 	band["food_income"] = 0.9
 	band["food_consumption"] = 2.5
+	band["food_need"] = 2.5
 	band["labor_assignments"] = [
 		{"kind": "hunt", "workers": 3, "fauna_id": "game_deer_07", "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 0.5, "sustainable_yield": 0.5,

@@ -122,6 +122,7 @@ fn spawn_band_of(app: &mut App, x: u32, y: u32, food: i64, faction: FactionId) -
                 stores,
                 morale: scalar_zero(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),

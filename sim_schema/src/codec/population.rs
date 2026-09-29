@@ -1086,6 +1086,8 @@ fn create_populations<'a>(
                     transferCrossings: Some(transfer_crossings),
                     poolingLinks: Some(pooling_links),
                     supplyNetworkSpanTiles: cohort.supply_network_span_tiles,
+                    foodNeed: cohort.food_need,
+                    foodShortfall: cohort.food_shortfall,
                 },
             )
         })
@@ -1591,6 +1593,8 @@ fn decode_population(
             rung_id: text(link.rungId()),
         }),
         supply_network_span_tiles: cohort.supplyNetworkSpanTiles(),
+        food_need: cohort.foodNeed(),
+        food_shortfall: cohort.foodShortfall(),
     })
 }
 

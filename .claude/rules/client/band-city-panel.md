@@ -166,7 +166,7 @@ command center**: shown whenever ≥1 player band exists, always displaying a
     not a term** — a pen eats its fenced pasture and its keeper's hay, never the larder — and raids stay
     out for the reason they always did: an episodic past loss is not a steady drain.
     Draws a `SIGNAL` filled area + line, a `HEALTHY` dot on each haul turn, a faint `LINE_SOFT` baseline,
-    and a dashed `DANGER` vertical labelled `empty ~turn N` where the walk first hits 0. Same player +
+    and a dashed `DANGER` vertical labelled `hungry ~turn N` where the walk first hits 0. Same player +
     real-food-flow gate as the Food breakdown, plus at least one non-empty schedule; a
     `custom_minimum_size` (≤ `SECTION_COLUMN_WIDTH`) lets the wide-column packer measure it.
 - **Live + persistent.** `BandPanelController.refresh_snapshot()` (called each snapshot from
@@ -887,7 +887,7 @@ stretch, and widening it into that gap would put it over a live HUD column.
   `band_panel_arrivals_top` / **`band_panel_arrivals_bottom`** are the **arrival-schedule** frame (a
   lumpy hunt row with a gappy tick strip beside a continuous forage row that draws NONE, + the rising
   `FOOD OUTLOOK` sawtooth chart, tall and wide), and `band_panel_arrivals_empty` is the emptying-larder
-  case (the descending chart's dashed `empty ~turn N` marker). **The T/B (`_top`/`_bottom`) frames are
+  case (the descending chart's dashed `hungry ~turn N` marker). **The T/B (`_top`/`_bottom`) frames are
   the band-zone HEIGHT guard** — they render the chart-bearing `_arrivals_band_fixture` (NOT the
   chartless `_band_fixture`) through `_assert_zone_content_fits`, so the SHORT-tier chart drop
   (`BandPanelController.build_band_zone` gates `_build_food_outlook_block` behind `_band_zone_tier !=

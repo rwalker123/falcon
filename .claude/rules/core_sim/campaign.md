@@ -567,8 +567,13 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > above a FOOD OUTLOOK chart showing ~9. Do not special-case the two actors.
 >
 > It is resolved the way that chart resolves it (`snapshot::population::larder_runway_turns`), so
-> they cannot disagree by a turn or two on the same panel: (1) walk the larder forward over the
-> **merged per-source `arrivals` schedules**, debiting `consumption` per turn and clamping at 0 — the first turn to reach 0 is the answer; (2) it survives the horizon (or **no
+> they cannot disagree by a turn or two on the same panel: (0) **the meal comes before the take**
+> (`MealOrder::BeforeIncome`) — `simulate_population` eats `min(need, larder)` before
+> `advance_labor_allocation` credits the turn's income, so a larder already below one meal answers
+> `larder / need`, a fraction under one turn, whatever the income; (1) walk the larder forward over
+> the **merged per-source `arrivals` schedules** in the sim's own order — this turn's pooled net,
+> then the meal, then the arrival — and the first meal the larder cannot cover is the answer; (2)
+> it survives the horizon (or **no
 > source was projected at all** — an empty schedule is *no data*, never a famine): fall back to the
 > smooth `larder / net_drain` on the **steady** income (Σ per-source `realized`, computed locally at
 > capture — see the retirement note below), capped at the sentinel; (3)
@@ -589,11 +594,20 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > a_dowry_turn_does_not_move_the_runway}` and
 > `transfer_food_ledger::a_recapture_publishes_the_same_food_runway`.
 >
-> **Consumption here is the forward `food_demand`** (what the people will *want* to eat), not
-> `last_food_consumption`: `demand` is always resolvable, where the actual debit is `0` before a
-> band's first turn and falls short of demand in a famine. The client's chart drains by
-> `foodConsumption` instead, so the two differ **only for a band already eating short** — where the
-> sim is the pessimistic (correct) one.
+> **The drain is NEED — the forward `food_demand`** (what the people must eat), never
+> `last_food_consumption`: the actual debit is `0` before a band's first turn and falls short of
+> need exactly when the larder ran out at meal time, and a band cannot be "not draining" because it
+> had nothing left to draw.
+>
+> **⛔ THE MEAL-BEFORE-TAKE ORDER IS WHY A HAND-TO-MOUTH BAND READ `999`.** Found in a live
+> playtest's run record: a band holding ~3–6 food against a need of ~3.6, with a steady income
+> above its need, lost people every lumpy low-income turn while the runway read the sentinel. A walk
+> that let each turn's arrival land before the meal saw the larder refill in time; the sim feeds
+> the meal from what the store held when it began. Pinned on the encoded frame by
+> `food_shortfall::a_band_whose_larder_is_short_at_meal_time_publishes_its_hunger_and_a_real_runway`,
+> with `a_well_stocked_band_publishes_no_shortfall_and_eats_what_it_needs` as its control. The
+> **hay** runway keeps `MealOrder::WithIncome`: a pen's feed settles inside the labor pass beside
+> the Fields' harvest.
 >
 > **Consequence, intended:** a band with strong income now reads healthier and **stops tripping
 > starvation alerts it should never have tripped** (the map food dot, the turn-orb `starving`
@@ -658,7 +672,14 @@ turn — `PopulationCohort::last_food_consumption`, the real `stores` debit at t
 brackets, **not** a `food_demand` re-derived at capture on the post-turn brackets; the same turn's
 births would inflate that and break the larder ledger identity by exactly the growth. `turnsOfFood`
 drains by the post-turn `food_demand` instead — a forward "turns I can last", a different question;
-see the runway callout above).
+see the runway callout above). Beside it ride **`foodNeed`** (`PopulationCohort::last_food_need` —
+the `food_demand` the meal was measured against, returned by `advance_demographics` itself so need
+and meal are one number) and **`foodShortfall`** (`need − eaten`, never negative; `0` on a fed
+turn) — **this turn's hunger**, the thing starvation deaths are made of. The two differ from
+`foodConsumption` exactly when the larder was short at meal time, which a band living hand-to-mouth
+hits on every low-income turn because the meal comes before the take lands; `foodIncome −
+foodConsumption` alone reads such a band as healthy. `foodConsumption` itself stays **eaten**: it
+is the larder identity's term.
 All derived at capture (0 on a band no turn has resolved yet). **The client
 consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow-up PR): a per-turn
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,

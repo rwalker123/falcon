@@ -101,7 +101,7 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	# dead field looking alive.
 	"turns_of_food": 12.75,
 	"food_income": 0.8325,
-	"food_consumption": 0.6075,
+	"food_consumption": 0.6075, "food_need": 0.6075,
 	# Expedition + config levers that are `float` in the schema (carry caps, rates, move speed).
 	"expedition_carry_cap": 16.25,
 	# Next-delivery projected food — a `float` copied onto the marker, so it must survive un-truncated

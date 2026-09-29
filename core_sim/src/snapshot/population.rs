@@ -324,19 +324,43 @@ pub const NOT_FOOD_LIMITED_TURNS: f32 = 999.0;
 /// turn of the arrival walk, and to `steady_income` in the smooth arm. Nothing clamps it; the walk's
 /// own floor at zero is the larder's, not the rate's. The food runway passes its pooled net here; the
 /// fodder runway folds its local net into `steady_income` and passes `0.0`.
+///
+/// **`meal` says whether the store is drawn BEFORE the turn's income lands** — see [`MealOrder`].
+/// The people's meal is, and that is what makes a band living hand-to-mouth read honestly: income
+/// that beats need on average does not feed a meal it arrives after.
 pub(crate) fn larder_runway_turns(
     larder: f32,
     consumption: f32,
     steady_income: f32,
     standing_net: f32,
     arrivals: &[f32],
+    meal: MealOrder,
 ) -> f32 {
     let drain = consumption;
+    let larder = larder.max(0.0);
+    if meal == MealOrder::BeforeIncome && drain > 0.0 && larder < drain {
+        // The next meal is already short: the store cannot cover it, whatever lands after it. The
+        // answer is the fraction of that meal the store can feed — under one turn, which is the
+        // truth about a band that goes hungry this coming turn.
+        return larder / drain;
+    }
     if !arrivals.is_empty() {
-        let mut food = larder.max(0.0);
+        let mut food = larder;
         for (turn, arrival) in arrivals.iter().enumerate() {
-            food = (food + arrival + standing_net - drain).max(0.0);
-            if food <= 0.0 {
+            let short = match meal {
+                MealOrder::BeforeIncome => {
+                    // Pooling settles in Logistics, ahead of the meal; the take lands after it.
+                    food += standing_net;
+                    let short = food < drain;
+                    food = (food - drain).max(0.0) + arrival;
+                    short
+                }
+                MealOrder::WithIncome => {
+                    food = (food + arrival + standing_net - drain).max(0.0);
+                    food <= 0.0
+                }
+            };
+            if short {
                 // `turn` is 0-based over "turns from now", so the count is one more.
                 return (turn + 1) as f32;
             }
@@ -347,6 +371,20 @@ pub(crate) fn larder_runway_turns(
         return NOT_FOOD_LIMITED_TURNS;
     }
     (larder / net_drain).min(NOT_FOOD_LIMITED_TURNS)
+}
+
+/// **Whether a store is eaten from before or with the turn's income** — the one ordering fact
+/// [`larder_runway_turns`] needs, because the two stores it serves are drawn at different points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MealOrder {
+    /// The PEOPLE's larder. `simulate_population` eats `min(need, larder)` in the Population stage
+    /// **before** `advance_labor_allocation` credits the turn's take, so a meal is fed only by what
+    /// the store held when it began. A band whose larder is below its need at meal time goes hungry
+    /// that turn even if its income beats its need on average — the hand-to-mouth band.
+    BeforeIncome,
+    /// The hay store. A pen's feed is settled inside the labor pass beside the Fields' harvest, so
+    /// the turn's income and its draw meet in one step.
+    WithIncome,
 }
 
 /// A runway with no standing crossing of its own — the fodder runway, which folds its local net into
@@ -1259,6 +1297,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             steady_food_income,
             pooled_food_net(cohort),
             &merged_arrival_schedule(allocation),
+            MealOrder::BeforeIncome,
         )
     };
     // **THE HAY LEDGER, in fodder units** — the pens' unmet feed against the Fields' harvest, both
@@ -1333,6 +1372,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         fodder_income + fodder_transfers.local_net(),
         NO_STANDING_NET,
         &[],
+        MealOrder::WithIncome,
     );
     // Expedition discriminators + persistence fields (empty/false for a normal band).
     let (
@@ -1864,6 +1904,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             })
             .collect(),
         supply_network_span_tiles: supply_membership.span_tiles_of(entity),
+        food_need: cohort.last_food_need,
+        // Never negative: eaten is `min(need, larder)`, so this is the part of the meal the larder
+        // could not cover.
+        food_shortfall: (cohort.last_food_need - cohort.last_food_consumption).max(0.0),
     }
 }
 
@@ -2284,6 +2328,7 @@ mod tests {
             stores,
             morale: scalar_one(),
             last_food_consumption: 0.0,
+            last_food_need: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -2467,19 +2512,21 @@ mod tests {
             runway > pessimistic,
             "income must lengthen the runway: got {runway}, pessimistic {pessimistic}"
         );
-        // Walk it by hand — the client's chart arithmetic — and land on the same turn.
+        // Walk it by hand in the sim's own order — the meal is eaten BEFORE the turn's take lands —
+        // and land on the same turn: the first meal the larder cannot cover.
         let mut food = TEST_LARDER;
         let mut expected = 0;
         for turn in 1..=20 {
-            food = (food + per_turn - demand).max(0.0);
-            if food <= 0.0 {
+            let short = food < demand;
+            food = (food - demand).max(0.0) + per_turn;
+            if short {
                 expected = turn;
                 break;
             }
         }
         assert_eq!(
             runway as u32, expected,
-            "the reported runway must be the turn the walked larder empties"
+            "the reported runway must be the first meal the walked larder cannot cover"
         );
     }
 

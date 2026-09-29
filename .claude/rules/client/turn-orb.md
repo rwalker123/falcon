@@ -77,8 +77,8 @@ paths:
   producers** (all in `AttentionController.build_band_attention`, each pushed with the tile
   `current_x`/`current_y` so Jump locates it) — the folded-in Alerts panel, plus the expedition one. The
   first three run in one loop over the player faction's BANDS:
-  - **`starving`** (critical) — `BandFoodStatus.is_critical(turns)`; label `"<band> starving"`, detail = `_food_turns_text(turns)`.
-  - **`losing_population`** (warn) — shrank vs the previous snapshot (`_prev_band_sizes`); label `"<band> losing population"`, detail = `_decline_reason(days, morale, morale_cause, last_emigrated)` (`— starving` / `— people leaving` / `— harsh terrain|climate|unrest` / `— low morale`).
+  - **`starving`** (critical) — `BandFoodStatus.is_critical(turns)` **or the band came short of its meal this turn** (`food_shortfall > 0`, `DetailFormat.band_is_starving`); label `"<band> starving"`. On a shortfall the detail names it — `"short 0.40 food — more hands on food"` (`HudAttentionVocab.STARVING_SHORTFALL_DETAIL_FORMAT`) — else `_food_turns_text(turns)`. ⛔ **The shortfall arm is the hand-to-mouth fix**: the sim eats `min(need, larder)` BEFORE the turn's take lands, so a band whose income beats its need on average goes hungry every turn with a runway nowhere near the critical line, and the runway test alone never fired for it. `ui_preview`'s `turn_orb_hand_to_mouth` pins it against a fed twin on the same runway.
+  - **`losing_population`** (warn) — shrank vs the previous snapshot (`_prev_band_sizes`); label `"<band> losing population"`, detail = `_decline_reason(days, morale, morale_cause, last_emigrated, x, y, short_of_food)` (`— starving` / `— people leaving` / `— harsh terrain|climate|unrest` / `— low morale`). `starving` is answered by the SHORTFALL first, then by the runway threshold — a shrinking hand-to-mouth band is shrinking of hunger whatever its runway reads.
   - **`idle_workers`** (warn) — `idle_workers > 0`; label `"N idle workers"`, detail = band name. Supersedes the old `activity == idle` alert (a worker count is more actionable).
 
   - **`starving_pen`** (warn, `_starving_pen_attention`) — a pen this band keeps whose feed it could

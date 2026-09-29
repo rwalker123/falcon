@@ -216,8 +216,10 @@ static func _food_line(bands: Array, disclosures: DisclosureController) -> Strin
         # Summed from each band's own `band_net_food`, never recomposed — that identity carries the
         # episodic `raid_forfeit` and the pen feed, and a rebuilt net would drift from the band pages.
         net += DetailFormat.band_net_food(band)
+        # A band that came SHORT of its meal is starving whatever its runway says — the meal is
+        # eaten before the take lands, so a hand-to-mouth band goes hungry on a positive rate.
         var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
-        if BandFoodStatus.is_critical(turns):
+        if BandFoodStatus.is_critical(turns) or DetailFormat.band_is_starving(band):
             starving += 1
         rows.append(_band_row(band, "%s · %s" % [
             SourceForecast.format_stock(DetailFormat.band_provisions(band)),
