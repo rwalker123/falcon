@@ -38,6 +38,7 @@ mod espionage;
 mod expedition_config;
 pub mod extraction;
 mod extraction_config;
+mod faction_names;
 mod fauna;
 mod fauna_config;
 mod flora_config;
@@ -198,6 +199,11 @@ pub use expedition_config::{
     load_expedition_config_from_env, shipment_carry_cap, trade_per_worker_carry, DefectionConfig,
     ExpeditionConfig, ExpeditionConfigHandle, ExpeditionConfigMetadata, SettleConfig,
     TradeExpeditionConfig, BUILTIN_EXPEDITION_CONFIG,
+};
+pub use faction_names::{
+    load_faction_names_from_env, FactionNameCatalog, FactionNameCatalogHandle,
+    FactionNameCatalogMetadata, FactionNames, FactionNamesError, BUILTIN_FACTION_NAMES,
+    FACTION_NAME_SALT,
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, animals_affordable,
@@ -601,6 +607,9 @@ pub fn build_headless_app() -> App {
     // boot seam as everything else so an operator can point a campaign at a different name list.
     let (band_names_catalog, band_names_metadata) = band_names::load_band_names_from_env();
     let band_names_handle = band_names::BandNameCatalogHandle::new(band_names_catalog);
+    let (faction_names_catalog, faction_names_metadata) =
+        faction_names::load_faction_names_from_env();
+    let faction_names_handle = faction_names::FactionNameCatalogHandle::new(faction_names_catalog);
     // **The materials table loads FIRST of the three**, because both food webs' yield edges are
     // reconciled against it: a species (plant or animal) naming a material that does not exist, or
     // stating a reading on an axis that material does not declare, is a boot panic rather than a
@@ -753,6 +762,10 @@ pub fn build_headless_app() -> App {
         .insert_resource(BandNameAllocator::default())
         .insert_resource(band_names_handle)
         .insert_resource(band_names_metadata)
+        .insert_resource(faction_names_handle)
+        .insert_resource(faction_names_metadata)
+        // Empty until worldgen mints it from the roster and the final map seed (Startup).
+        .insert_resource(faction_names::FactionNames::default())
         .insert_resource(sim_state::Replaying::default())
         .insert_resource(CapabilityFlags::default())
         .insert_resource(SimulationMetrics::default())

@@ -6237,6 +6237,16 @@ table FactionPolicyState {
   openBorders:bool = true;
 }
 
+// A faction's NAME - what its people call themselves. WORLD-VISIBLE: every faction's row rides every
+// frame, since a name reveals nothing the roster count does not. Minted once per world by the sim
+// (one permutation of core_sim/src/data/faction_names.json per map seed, so two factions never
+// share one) and carried in the save. Event labels never bake it: they say "Faction N" and carry the
+// id as from=/to=, and a client substitutes this name by joining on that id.
+table FactionNameState {
+  faction:uint;
+  name:string;
+}
+
 table CampaignSection {
   campaignProfiles:[CampaignProfile];
   commandEvents:[CommandEventState];
@@ -6256,6 +6266,10 @@ table CampaignSection {
   // One row, the viewer's faction (another people's borders are theirs to know). Absent means
   // "unchanged" on a delta, as for every other whole-diffed table on this section.
   factionPolicies:[FactionPolicyState];
+  // --- EVERY FACTION'S NAME (appended last) -----------------------------------------------------
+  // World-visible, one row per faction in id order. A per-world constant, so it diffs out after the
+  // first frame; absent means "unchanged" on a delta.
+  factionNames:[FactionNameState];
 }
 
 // --- The opening loadout: what the turn-one picker draws ---------------------------------------

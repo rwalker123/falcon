@@ -667,27 +667,39 @@ const HANDOVER_BAND_ID := 4
 const HANDOVER_BAND_NAME := "Thornhollow"
 const HANDOVER_BAND_LABELS := {"4": HANDOVER_BAND_NAME}
 
-## The people on the other side of every cross-people row below: faction 1, which the map's faction
-## marks call `Obsidian` (`MapView.SEEDED_FACTION_NAMES`, read through `FactionMark.faction_name`). The
-## rows are asserted against THIS literal rather than against the resolver, so a resolver that stopped
-## answering the map's name fails here instead of agreeing with itself.
-const OTHER_PEOPLE_NAME := "Obsidian"
+## The people on the other side of every cross-people row below: faction 1, named by the staged
+## `faction_names` table (`FACTION_NAMES_FIXTURE`, ingested through `FactionNames.update` exactly as
+## `Main` ingests the wire's, and read back through `FactionMark.faction_name`). The rows are asserted
+## against THIS literal rather than against the resolver, so a resolver that stopped reading the store
+## fails here instead of agreeing with itself. The names are drawn from the sim's own pool
+## (`core_sim/src/data/faction_names.json`) and used exactly as published — no article.
+const OTHER_PEOPLE_NAME := "Ashkin"
 ## …and the viewer's own people, faction 0 — the same resolver, the same join.
-const OWN_PEOPLE_NAME := "Aurora"
+const OWN_PEOPLE_NAME := "Veldari"
+## A third people at a TWO-digit id, which is what makes the digit-boundary claim bite: `Faction 1`
+## must never rewrite the head of `Faction 12`.
+const TWELFTH_PEOPLE_NAME := "Tamuri"
+## An id the table has no row for — the resolver's fallback, which is the sim's own spelling.
+const UNNAMED_FACTION_ID := 7
+const FACTION_NAMES_FIXTURE := [
+	{"faction": 0, "name": OWN_PEOPLE_NAME},
+	{"faction": 1, "name": OTHER_PEOPLE_NAME},
+	{"faction": 12, "name": TWELFTH_PEOPLE_NAME},
+]
 
-## THE GAINING SIDE — the viewer is faction 0 and the band arrives from People 1, so `to` is the
+## THE GAINING SIDE — the viewer is faction 0 and the band arrives from Faction 1, so `to` is the
 ## viewer. Its roster now holds the band, so `band=` joins and the row says the client's own name —
 ## and `from=1` joins the people to its own name the same way.
-const HANDOVER_GAINED_SIM_LABEL := "Band 4 joined us from People 1"
+const HANDOVER_GAINED_SIM_LABEL := "Band 4 joined us from Faction 1"
 const HANDOVER_GAINED_LABEL := "Thornhollow joined us from " + OTHER_PEOPLE_NAME
 const HANDOVER_GAINED_DETAIL := "band=4 from=1 to=0 side=gained"
 
 ## THE LOSING SIDE — the same handover from the other seat, so `from` is the viewer and the band is
 ## gone from its roster. There is no name left to join, which is why this half keeps the sim's own
 ## `Band 4` and why that is the CORRECT reading rather than a missing substitution.
-const HANDOVER_LOST_SIM_LABEL := "Band 4 left us for People 1"
+const HANDOVER_LOST_SIM_LABEL := "Band 4 left us for Faction 1"
 ## …with the people it left for named by `to=1`. The `from=0` token is the viewer, said as "us", so it
-## has no `People 0` span to join and the label carries none.
+## has no `Faction 0` span to join and the label carries none.
 const HANDOVER_LOST_LABEL := "Band 4 left us for " + OTHER_PEOPLE_NAME
 const HANDOVER_LOST_DETAIL := "band=4 from=0 to=1 side=lost"
 
@@ -725,15 +737,15 @@ const DEFECTION_KIND := "party_defected"
 ## detail phrase: the party is out of contact and the notice says only that it is gone.
 const DEFECTION_LOST_LABEL := "Your scouting party has left your control."
 const DEFECTION_LOST_DETAIL := "side=lost expedition=4294967311"
-const MIGRATED_OUT_SIM_LABEL := "3 left Band 4 to join People 1"
+const MIGRATED_OUT_SIM_LABEL := "3 left Band 4 to join Faction 1"
 const MIGRATED_OUT_LABEL := "3 left Thornhollow to join " + OTHER_PEOPLE_NAME
 const MIGRATED_OUT_DETAIL := "band=4 count=3 direction=out to=1"
 
 ## THE GAINING SEAT: the same party arriving, and another people's leavers joining a band.
-const DEFECTION_GAINED_SIM_LABEL := "A party of 3 from People 1 joined Band 4"
+const DEFECTION_GAINED_SIM_LABEL := "A party of 3 from Faction 1 joined Band 4"
 const DEFECTION_GAINED_LABEL := "A party of 3 from " + OTHER_PEOPLE_NAME + " joined Thornhollow"
 const DEFECTION_GAINED_DETAIL := "band=4 count=3 from=1 side=gained"
-const MIGRATED_IN_SIM_LABEL := "2 from People 1 joined Band 4"
+const MIGRATED_IN_SIM_LABEL := "2 from Faction 1 joined Band 4"
 const MIGRATED_IN_LABEL := "2 from " + OTHER_PEOPLE_NAME + " joined Thornhollow"
 const MIGRATED_IN_DETAIL := "band=4 count=2 direction=in from=1"
 
@@ -741,23 +753,28 @@ const MIGRATED_IN_DETAIL := "band=4 count=2 direction=in from=1"
 ## dock's own `_row_label`, over rows the fixtures above do not stage:
 ##   • the viewer's OWN people reads its own name through the same resolver (no shipped label names
 ##     the viewer's people today — a synthetic row, marked as one);
-##   • the join is bounded at a digit, so `People 1` never rewrites the head of `People 12`;
-##   • an id with no seeded name takes the resolver's own fallback, never the sim's spelling;
+##   • the join is bounded at a digit, so `Faction 1` never rewrites the head of `Faction 12`;
+##   • an id with no row in the table keeps the resolver's fallback, which is the sim's own spelling;
 ##   • a row whose token names a people its label does not spell is untouched.
 func _people_join_assertions(dock: EventDockPanel) -> void:
-	var own := dock._row_label({"label": "2 from People 0 joined Band 4",
+	var own := dock._row_label({"label": "2 from Faction 0 joined Band 4",
 		"detail": "band=4 count=2 direction=in from=0"})
 	h._assert_hud("the viewer's own people reads its own name (\"%s\")" % own,
 		own == "2 from " + OWN_PEOPLE_NAME + " joined Band 4")
-	var twelve := dock._row_label({"label": "2 from People 12 joined Band 4",
+	var twelve := dock._row_label({"label": "2 from Faction 12 joined Band 4",
 		"detail": "band=4 count=2 direction=in from=12"})
-	h._assert_hud("the people join is bounded at a digit and resolves an unseeded id through the ONE resolver (\"%s\")" % twelve,
-		twelve == "2 from " + FactionMark.faction_name(12) + " joined Band 4"
-			and not twelve.contains("People"))
-	var wrong_id := dock._row_label({"label": "2 from People 12 joined Band 4",
+	h._assert_hud("a two-digit id resolves to its own name (\"%s\")" % twelve,
+		twelve == "2 from " + TWELFTH_PEOPLE_NAME + " joined Band 4")
+	var wrong_id := dock._row_label({"label": "2 from Faction 12 joined Band 4",
 		"detail": "band=4 count=2 direction=in from=1"})
-	h._assert_hud("a token naming a people the label does not spell leaves the label alone (\"%s\")" % wrong_id,
-		wrong_id == "2 from People 12 joined Band 4")
+	h._assert_hud("the join is bounded at a digit — `Faction 1` does not rewrite `Faction 12` (\"%s\")" % wrong_id,
+		wrong_id == "2 from Faction 12 joined Band 4")
+	var unnamed_label := "2 from Faction %d joined Band 4" % UNNAMED_FACTION_ID
+	var unnamed := dock._row_label({"label": unnamed_label,
+		"detail": "band=4 count=2 direction=in from=%d" % UNNAMED_FACTION_ID})
+	h._assert_hud("an id with no name row keeps the resolver's fallback (\"%s\")" % unnamed,
+		unnamed == unnamed_label
+			and FactionMark.faction_name(UNNAMED_FACTION_ID) == HudTradeVocab.FACTION_NAME_FALLBACK_FORMAT % UNNAMED_FACTION_ID)
 
 func _event_dock_defection_lost_fixture() -> Array:
 	return [
@@ -2603,6 +2620,9 @@ func run(harness) -> void:
 	event_dock.set_expanded(false)
 	event_dock.set_recent_count(EVENT_DOCK_MAX_ROWS)
 	event_dock.set_detail_level(HudEventVocab.RUNG_ALERT)
+	# The peoples' NAMES, staged the way `Main` ingests the wire's `faction_names` — and reset at the end
+	# of the block, so no later frame names a people off this chapter's table.
+	FactionNames.update(FACTION_NAMES_FIXTURE)
 	event_dock.set_band_labels(HANDOVER_BAND_LABELS)
 	event_dock.reset()
 	event_dock.ingest_events(_event_dock_handover_gained_fixture())
@@ -2693,6 +2713,7 @@ func run(harness) -> void:
 	h._assert_hud("a cross-people arrival reads with the roster's band name (\"%s\")" % MIGRATED_IN_LABEL,
 		_preview_event_label_count(event_dock, MIGRATED_IN_LABEL, true) == 1)
 	event_dock.set_band_labels({})
+	FactionNames.reset()
 
 	event_dock.queue_free()
 	await h.get_tree().process_frame

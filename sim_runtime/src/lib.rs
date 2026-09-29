@@ -442,6 +442,7 @@ pub mod knowledge {
                 equipment_config_json: String::new(),
                 opening_loadout: Default::default(),
                 faction_policies: Vec::new(),
+                faction_names: Vec::new(),
                 faction_inventory: Vec::new(),
                 sedentarization: Vec::new(),
                 discovered_sites: Vec::new(),

@@ -198,7 +198,7 @@ fn an_unhappy_band_trickles_to_a_happier_foreign_band_it_is_tied_to() {
         .find(|(faction, _, detail)| *faction == HOME && detail.contains("direction=out"))
         .expect("the source's people are told who left");
     assert!(
-        out.1.contains(&format!("to join People {}", RIVAL.0)) && out.2.contains("to=1"),
+        out.1.contains(&format!("to join Faction {}", RIVAL.0)) && out.2.contains("to=1"),
         "and whom they joined: {out:?}"
     );
     let arrived = migrated
@@ -206,7 +206,7 @@ fn an_unhappy_band_trickles_to_a_happier_foreign_band_it_is_tied_to() {
         .find(|(faction, _, detail)| *faction == RIVAL && detail.contains("direction=in"))
         .expect("the receiving people are told who arrived");
     assert!(
-        arrived.1.contains(&format!("from People {}", HOME.0)) && arrived.2.contains("from=0"),
+        arrived.1.contains(&format!("from Faction {}", HOME.0)) && arrived.2.contains("from=0"),
         "and where from: {arrived:?}"
     );
 }
@@ -561,7 +561,7 @@ fn a_party_accrues_pull_and_goes_whole_once_it_reaches_the_threshold() {
     assert!(
         gained[0].1
             == format!(
-                "A party of {} from People {} joined Band {}",
+                "A party of {} from Faction {} joined Band {}",
                 PARTY_WORKERS as u32, HOME.0, s.rival_id.0
             )
             && gained[0].2.contains("from=0"),

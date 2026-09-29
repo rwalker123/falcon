@@ -147,6 +147,7 @@ read, because the next person infers the short list is the whole list.
 | `CounterIntelBudgets` | re-seeded, through `CounterIntelBudgets::new` | restored — `SimState` |
 | `FactionSecurityPolicies` | re-seeded, through `FactionSecurityPolicies::new(.., Standard)` | restored — `SimState` |
 | `FactionBorderPolicies` | re-seeded, through `FactionBorderPolicies::new` (every faction open) | restored — `SimState` |
+| `FactionNames` | **minted by worldgen** (`spawn_initial_world`) from the roster and the final map seed; `build_headless_app` inserts it empty, and every `new_game` / `ResetMap` runs Startup after seeding the roster. See `band-names.md` → "Faction names" | restored — `SimState` (the save wins over a pool edit) |
 | `EspionageRoster` | **deliberately not** — `initialise_espionage_roster` is a `Startup` system that seeds from whatever registry it finds, and the caller runs Startup afterwards | restored — `SimState` |
 
 Every re-seed goes through the **boot path's own constructors**, so a fresh faction's starting state
@@ -932,6 +933,8 @@ apply only where the row describes something that can be *seen*.
 | `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `routeRungs`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
 | `victory.modes[].progress` | `snapshot/campaign.rs` | **Viewer** — progress is one people's, so the frame carries the viewer's mode rows and nobody else's (`VictoryState::modes_for`) |
 | `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition, and it names the faction that actually achieved it |
+| `factionPolicies` | `snapshot/campaign.rs` | **Viewer** — your own Open Borders row only |
+| `factionNames` | `snapshot/capture.rs` | **World** — every faction's name; a name reveals nothing the roster count does not (`band-names.md` → "Faction names") |
 
 ### ⛔ A DERIVED AGGREGATE IS FACTION-KEYED DATA, EVEN WITH NO FACTION FIELD
 

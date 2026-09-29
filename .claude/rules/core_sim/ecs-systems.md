@@ -249,8 +249,8 @@ all-or-nothing. Each credited fragment writes a `TradeDiffusionRecord` / `TradeD
 
 `CommandEventKind::BandChangedHands`, pushed by `systems::population::push_band_changed_hands_events`
 on the turn a cross-people move leaves its source below `settle.parent_min_workers` and the remnant
-goes over (`advance_population_migration`): *"Band 3 left us for People 1"* filed under the losing
-faction, *"Band 3 joined us from People 0"* under the gaining one, both carrying
+goes over (`advance_population_migration`): *"Band 3 left us for Faction 1"* filed under the losing
+faction, *"Band 3 joined us from Faction 0"* under the gaining one, both carrying
 `band=/from=/to=/side=lost|gained`.
 
 **Two rows, because the feed is per-faction on the wire.**
@@ -267,10 +267,10 @@ player can learn of it at all. ⛔ **`RUNG_BY_KIND` lives client-side**, and a k
 falls to `DEFAULT_RUNG` (Routine) — until the client adds the row this line sits below the default
 detail floor.
 
-**The band is named by its durable id** (`band_label`, *"Band 3"*) and the other people by theirs
-(`people_label`, *"People 1"*) — the sim authors no faction names, `FactionRegistry` holds ids and
-who controls them and nothing else. Both raw ids ride the detail so a client that later knows a
-name substitutes it the same way it substitutes a band's.
+**The band is named by its durable id** (`band_label`, *"Band 3"*) and the other faction by its
+(`faction_label`, *"Faction 1"*) — never by the name the sim mints for each
+(`band-names.md` → "Faction names"). Both raw ids ride the detail, and the client substitutes its
+real name for each rendering by joining on them.
 
 `core_sim/tests/band_changed_hands.rs` pins both halves off the **encoded envelope**, capturing the
 same turn's log under each `ViewerFaction` in turn, with a negative-control arm: a turn in which

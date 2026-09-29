@@ -953,6 +953,7 @@ fn seed_snapshot() -> WorldSnapshot {
     }
     s.voice_medium = rows();
     s.faction_policies = rows();
+    s.faction_names = rows();
     s.opening_loadout.pickable_materials = rows();
     s.opening_loadout.material_defaults = rows();
     s.opening_loadout.craftable_recipe_ids = rows();

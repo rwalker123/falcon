@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 44] = [
+const SIM_STATE_RESOURCES: [&str; 45] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
@@ -71,6 +71,8 @@ const SIM_STATE_RESOURCES: [&str; 44] = [
     "EspionageRoster",
     // Mutated only by `set_open_borders`, which is still state a rollback has to put back.
     "FactionBorderPolicies",
+    // Minted once by worldgen and carried: the save wins over a later pool edit.
+    "FactionNames",
     "FactionInventory",
     // Mutated only by command handlers, which is still state a rollback has to put back.
     "FactionSecurityPolicies",
@@ -253,9 +255,11 @@ const NOT_SIM_STATE_RESOURCES: [(&str, &str); 11] = [
 /// record beside each handle. `SimulationConfig` sits here because it is config the operator edits,
 /// not state the turn evolves — note the hot-reload path in `bin/server.rs` means a replay is only
 /// reproducible against the config it originally ran with.
-const CONFIG_RESOURCES: [&str; 44] = [
+const CONFIG_RESOURCES: [&str; 46] = [
     "BandNameCatalogHandle",
     "BandNameCatalogMetadata",
+    "FactionNameCatalogHandle",
+    "FactionNameCatalogMetadata",
     "BeatCatalogHandle",
     "BeatCatalogMetadata",
     "BeatConfigHandle",

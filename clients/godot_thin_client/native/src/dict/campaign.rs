@@ -162,6 +162,21 @@ pub(crate) fn faction_policies_to_array(
     array
 }
 
+/// Every faction's NAME — world-visible, one row per faction in id order. Event labels say
+/// `Faction N` and carry the id as `from=`/`to=`; the client substitutes this name by joining on it.
+pub(crate) fn faction_names_to_array(
+    states: Vector<'_, ForwardsUOffset<fb::FactionNameState<'_>>>,
+) -> VarArray {
+    let mut array = VarArray::new();
+    for state in states {
+        let mut dict = VarDictionary::new();
+        let _ = dict.insert("faction", state.faction() as i64);
+        let _ = dict.insert("name", state.name().unwrap_or_default());
+        array.push(&dict.to_variant());
+    }
+    array
+}
+
 /// The Telling (docs/plan_the_telling.md): one register's rendering of a player-visible line.
 /// `register` is a FREE-FORM string by design — a new voice register needs no schema change — so
 /// the decoder never enumerates them and the client builds its toggle from what is present.

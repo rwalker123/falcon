@@ -64,15 +64,19 @@ in the viewer's roster. On the losing side the band has left, `band_label_for_id
 `_swap_band_label`'s empty-name refusal leaves the sim's own spelling standing. That is the honest
 answer rather than a gap: there is no client-side name for a band this people no longer has.
 **`from=` / `to=` are FACTION ids and get the same kind of join.** The sim spells a people
-`People <id>` (`systems::population::people_label`, mirrored as `HudEventVocab.SIM_PEOPLE_LABEL_FORMAT`),
-and `EventDockPanel._swap_people_label` replaces that span with the name the map's faction marks carry
-— `FactionMark.faction_name`, the ONE people-name resolver in the client; do not add a second. The
+`Faction <id>` in a label (`systems::population::faction_label`, mirrored as
+`HudEventVocab.SIM_FACTION_LABEL_FORMAT`) and publishes every faction's NAME separately, world-visible,
+as the campaign section's `faction_names` (`[{faction, name}]`). `Main` ingests that table into the one
+static store `FactionNames`, and `EventDockPanel._swap_people_label` replaces the span with
+`FactionMark.faction_name` — the ONE people-name resolver in the client, reading that store; do not add
+a second. The name is used exactly as the sim publishes it (no article is added). The
 walk is `HudEventVocab.PEOPLE_ID_TOKEN_KEYS` (`from`, `to`), keyed on the token exactly as the `band=`
 walk is: the prose is searched only for the span the token names, bounded at a digit (`_swap_span`,
 shared with the band join), and never parsed for a number. The viewer's own people resolves the same
-way. A token whose `People <id>` the label does not spell is a no-op — `band_changed_hands`' viewer-side
-token is said as "us", so it has no span. An id with no seeded name takes the resolver's own fallback
-(`HudTradeVocab.FACTION_NAME_FALLBACK_FORMAT`), never the sim's spelling. The tokens themselves stay in
+way. A token whose `Faction <id>` the label does not spell is a no-op — `band_changed_hands`' viewer-side
+token is said as "us", so it has no span. An id the table has no row for keeps the resolver's fallback
+(`HudTradeVocab.FACTION_NAME_FALLBACK_FORMAT`, `Faction N` — the sim's own spelling, so the label is
+unchanged). `FactionNames` is PER WORLD: `Main._reset_per_world_state` clears it. The tokens themselves stay in
 `DETAIL_KEY_HIDDEN`: the label says the people, so the detail column never prints a raw id.
 
 **`party_defected` is ALERT on both sides — `band_changed_hands` one scale down** (issue #512,
@@ -83,14 +87,14 @@ only per-row override is `DETAIL_STATUS_STYLE`, which matches a `key=value` frag
 a `side=gained` entry there would demote `band_changed_hands`' gained half with it. **The lost row
 names no place by design** — its detail is `side=lost expedition=<bits>` alone, both keys hidden, so
 it renders an empty detail phrase and no `Work tab` link: the party is out of contact and the notice
-says only that it is gone. The gained row (`A party of N from People F joined Band Y`, `band=
+says only that it is gone. The gained row (`A party of N from Faction F joined Band Y`, `band=
 count= from= side=gained`) takes the ordinary `band=` join and the `from=` people join below.
 
 **A cross-people `migrated` line takes the handover's treatment exactly.** The source side reads
-`N left Band X to join People F` with `to=<faction>`, the destination side `N from People F joined
+`N left Band X to join Faction F` with `to=<faction>`, the destination side `N from Faction F joined
 Band Y` with `from=<faction>`; `DETAIL_KEY_HIDDEN` drops `to` / `from` for every kind, and the label's
-`People F` reads as that people's name through the same token join `band_changed_hands` takes. The
-gained `party_defected` line names its people the same way (`A party of N from People F joined Band
+`Faction F` reads as that people's name through the same token join `band_changed_hands` takes. The
+gained `party_defected` line names its people the same way (`A party of N from Faction F joined Band
 Y`, joined on `from=`).
 
 **`trade_delivered` is NOTABLE, and it is the one expedition event that happens where OTHER PEOPLE
@@ -380,9 +384,9 @@ Three details in the walk are not obvious:
   keeping.
 - **A handover renders an EMPTY detail column, and every one of its four tokens is hidden on the
   same test.** `band=` is substituted into the label as always; `from=` / `to=` are raw FACTION ids
-  the label already names in prose (*"left us for People 1"*), so rendering them would print
-  `From 0 · To 1` — exactly the identifier-on-a-player-bar the walk exists to prevent, and there is
-  no faction-naming rule to join them through. `side=lost|gained` is hidden rather than given
+  the label already names in prose (*"left us for Faction 1"*, which the people join renders as the
+  faction's published name), so rendering them would print `From 0 · To 1` — exactly the
+  identifier-on-a-player-bar the walk exists to prevent. `side=lost|gained` is hidden rather than given
   `DETAIL_VALUE_LABELS` rows because *left us* / *joined us* is the whole of what it means and the
   label says it in English; it stays a machine contract, the handle that matches the two halves of
   one handover. **`direction=out|in` on `migrated` is not the counter-example it looks like**: that

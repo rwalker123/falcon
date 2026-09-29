@@ -383,6 +383,7 @@ fn witness_snapshot_is_fully_decoded(snapshot: &WorldSnapshot) {
         victory: _,
         voice_medium: _,
         faction_policies: _,
+        faction_names: _,
         // `decode_connections_section`
         connections: _,
         // `decode_routes_section`
@@ -478,6 +479,7 @@ fn witness_delta_is_fully_decoded(delta: &WorldDelta) {
         victory: _,
         voice_medium: _,
         faction_policies: _,
+        faction_names: _,
         // `decode_connections_section_delta`
         connections: _,
         // `decode_routes_section_delta`
@@ -1091,6 +1093,7 @@ mod round_trip_tests {
             voice_medium: Some(world.voice_medium.clone()),
             opening_loadout: Some(world.opening_loadout.clone()),
             faction_policies: Some(world.faction_policies.clone()),
+            faction_names: Some(world.faction_names.clone()),
             knowledge_timeline: Some(world.knowledge_timeline.clone()),
             crisis_telemetry: Some(world.crisis_telemetry.clone()),
             crisis_overlay: Some(world.crisis_overlay.clone()),
@@ -1165,6 +1168,7 @@ mod round_trip_tests {
             voice_medium: Some(Vec::new()),
             opening_loadout: Some(Default::default()),
             faction_policies: Some(Vec::new()),
+            faction_names: Some(Vec::new()),
             knowledge_timeline: Some(Vec::new()),
             crisis_telemetry: Some(Default::default()),
             crisis_overlay: Some(Default::default()),

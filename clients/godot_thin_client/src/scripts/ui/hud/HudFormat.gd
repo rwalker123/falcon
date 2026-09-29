@@ -98,6 +98,26 @@ const FACTION_BANDS_LABEL_ONE := "1 band"
 static func faction_bands_label(count: int) -> String:
     return FACTION_BANDS_LABEL_ONE if count == 1 else FACTION_BANDS_LABEL_FORMAT % count
 
+## `Your people · 2 bands` — the header's second line once the faction has a NAME to lead with. The
+## "your" moves down here rather than being lost: the title is the people's own name now, and without
+## this a player reading `Veldari` over a band count could not tell whose rollup it is.
+const FACTION_PAGE_OWNED_FORMAT := "%s · %s"
+
+## THE FACTION PAGE'S TITLE — the player's people by the name the sim minted for them
+## (`FactionNames`), or `Your people` before the table has arrived. Read through the store rather than
+## through `FactionMark.faction_name`, whose fallback is `Faction 0`: a database row is the wrong thing
+## to title the player's own page with.
+static func faction_page_title() -> String:
+    var name := FactionNames.name_of(HudConst.PLAYER_FACTION_ID)
+    return name if name != "" else FACTION_PAGE_NAME
+
+## …and its second line: the band count, prefixed `Your people ·` exactly when the title is a name.
+static func faction_page_subtitle(count: int) -> String:
+    var bands := faction_bands_label(count)
+    if FactionNames.name_of(HudConst.PLAYER_FACTION_ID) == "":
+        return bands
+    return FACTION_PAGE_OWNED_FORMAT % [FACTION_PAGE_NAME, bands]
+
 ## The food-module display names. This table came here WITH `food_module_label`, its only reader —
 ## the words belong to the vocabulary layer, not to the compose builders that print them.
 const FOOD_MODULE_LABELS := {

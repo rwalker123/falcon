@@ -394,7 +394,7 @@ pub fn advance_party_defection(
             defection.destination_people,
             format!(
                 "A party of {head_count} from {} joined {}",
-                crate::systems::population::people_label(lost_people),
+                crate::systems::population::faction_label(lost_people),
                 crate::systems::population::band_label(defection.destination_band)
             ),
             Some(format!(

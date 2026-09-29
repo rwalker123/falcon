@@ -555,9 +555,9 @@ const SIM_DESTINATION_LABEL_FORMAT := "band %d"
 ## **THE TOKENS THAT NAME A PEOPLE, and the sim's spelling of one** (`core_sim`
 ## `systems::population::people_label`, byte-identical or the swap silently no-ops). `from=` / `to=`
 ## on `migrated`, `band_changed_hands` and `party_defected` are FACTION ids; `EventDockPanel` swaps the
-## sim's `People <id>` for the name the map's faction marks carry (`FactionMark.faction_name`).
+## sim's `Faction <id>` for the faction's published name (`FactionMark.faction_name`).
 const PEOPLE_ID_TOKEN_KEYS: Array[String] = ["from", "to"]
-const SIM_PEOPLE_LABEL_FORMAT := "People %d"
+const SIM_FACTION_LABEL_FORMAT := "Faction %d"
 
 const BAND_ID_TOKEN_LABELS := {
 	DETAIL_BAND_KEY: SIM_BAND_LABEL_FORMAT,
@@ -590,7 +590,7 @@ const DETAIL_KEY_HIDDEN := {
 	# two peoples are already named in the prose, so rendering them would print `From 0 · To 1` — a
 	# pair of RAW FACTION IDS on a player-facing bar, which is the defect `detail_phrase` exists to
 	# make impossible. The LABEL carries the people by name instead: `EventDockPanel` joins these two
-	# tokens to `FactionMark.faction_name` and swaps it for the sim's `People <id>` spelling
+	# tokens to `FactionMark.faction_name` and swaps it for the sim's `Faction <id>` spelling
 	# (`PEOPLE_ID_TOKEN_KEYS`), the way `band=` swaps `Band <id>`.
 	#
 	# `side` is hidden on the same test rather than given `DETAIL_VALUE_LABELS` rows: *left us* and

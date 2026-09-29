@@ -572,14 +572,15 @@ pub(crate) fn band_label(band: BandId) -> String {
     format!("Band {}", band.0)
 }
 
-/// How the OTHER people are named in a world event's label.
+/// How the OTHER faction is named in a world event's label.
 ///
-/// The sim authors no faction names — `FactionRegistry` holds ids and who controls them, nothing
-/// else — so the id is all there is to say, and it is said in [`band_label`]'s register. The
-/// `from=`/`to=` detail tokens carry the raw ids, so a client that later knows a people's name
-/// substitutes it the same way it substitutes a band's.
-pub(crate) fn people_label(faction: FactionId) -> String {
-    format!("People {}", faction.0)
+/// **The durable id, not the faction's name** — even though the sim mints one
+/// ([`crate::faction_names::FactionNames`], published as `CampaignSection.factionNames`), for
+/// [`band_label`]'s reason exactly: every event repeats the id as a `from=`/`to=` detail token, and
+/// the client substitutes its own name for this rendering by joining on that token. A label baked
+/// from the name would be a second copy of it that the join could not find.
+pub(crate) fn faction_label(faction: FactionId) -> String {
+    format!("Faction {}", faction.0)
 }
 
 /// Tell **both** peoples that a band changed hands: one entry filed under the faction that lost it,
@@ -608,14 +609,14 @@ pub(crate) fn push_band_changed_hands_events(
         tick,
         CommandEventKind::BandChangedHands,
         from,
-        format!("{name} left us for {}", people_label(to)),
+        format!("{name} left us for {}", faction_label(to)),
         detail("lost"),
     ));
     event_log.push(CommandEventEntry::new(
         tick,
         CommandEventKind::BandChangedHands,
         to,
-        format!("{name} joined us from {}", people_label(from)),
+        format!("{name} joined us from {}", faction_label(from)),
         detail("gained"),
     ));
 }
@@ -809,8 +810,8 @@ fn push_demographic_events(
 /// *previous* turn's moves under the current tick.
 ///
 /// **A move to another people names that people** (`docs/plan_band_fission.md` §Defection). The
-/// source's line reads *"N left Band X to join People F"* with `to=<faction>`, and each other
-/// people's arrivals are their own line, *"N from People F joined Band Y"* with `from=<faction>` —
+/// source's line reads *"N left Band X to join Faction F"* with `to=<faction>`, and each other
+/// people's arrivals are their own line, *"N from Faction F joined Band Y"* with `from=<faction>` —
 /// each filed under the faction whose band it describes, since the feed is per-faction on the wire.
 /// A move among one people's own bands reads exactly as it always did.
 pub(crate) fn push_migration_events(
@@ -829,7 +830,7 @@ pub(crate) fn push_migration_events(
                 format!("band={} count={} direction=out", band.0, emigrated),
             ),
             Some(people) => (
-                format!("{emigrated} left {name} to join {}", people_label(people)),
+                format!("{emigrated} left {name} to join {}", faction_label(people)),
                 format!(
                     "band={} count={} direction=out to={}",
                     band.0, emigrated, people.0
@@ -859,7 +860,7 @@ pub(crate) fn push_migration_events(
             tick,
             CommandEventKind::Migrated,
             faction,
-            format!("{count} from {} joined {name}", people_label(*people)),
+            format!("{count} from {} joined {name}", faction_label(*people)),
             Some(format!(
                 "band={} count={} direction=in from={}",
                 band.0, count, people.0

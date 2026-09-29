@@ -341,15 +341,15 @@ side a row describes rides its detail:
   `band=/from=/to=` and `side=lost|gained`, so the two halves can be matched up. The mechanism and the
   rung are `.claude/rules/core_sim/ecs-systems.md` → "THE HANDOVER IS TOLD TO BOTH PEOPLES".
 - **`Migrated` across peoples** — one line per band, each filed under the band's own people: the
-  source's *"N left Band X to join People F"* carries `direction=out to=<faction>`, and the
-  destination's *"N from People F joined Band Y"* carries `direction=in from=<faction>`
+  source's *"N left Band X to join Faction F"* carries `direction=out to=<faction>`, and the
+  destination's *"N from Faction F joined Band Y"* carries `direction=in from=<faction>`
   (`population::push_migration_events`). A move among one people's own bands has neither token.
 - **`PartyDefected`** — **deliberately NOT symmetric.** The losing people is told one generic line,
   *"Your scouting party has left your control."* (the mission's noun — scouting / hunting / raiding /
   trading), whose detail is `side=lost expedition=<entity bits>` and nothing else: no reason, no
   place, no band, no destination — out of communication range they have no way to know why their
-  people did not come back. The receiving people's line, *"A party of N from People F joined Band
-  Y"*, names the other people in `migrated`'s `direction=in` register (`people_label`) so a client
+  people did not come back. The receiving people's line, *"A party of N from Faction F joined Band
+  Y"*, names the other faction in `migrated`'s `direction=in` register (`faction_label`) so a client
   can substitute its real name, and carries `band=/count=/from=<faction>/side=gained`. Pinned by
   `defection::a_party_accrues_pull_and_goes_whole_once_it_reaches_the_threshold`, which asserts the
   losing line carries none of `band= to= from= x= y=`.

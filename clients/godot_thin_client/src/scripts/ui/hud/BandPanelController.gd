@@ -10325,8 +10325,8 @@ func render_faction() -> void:
     _push_faction_zone_badges()
     # No stage id ⇒ no bundled art resolves and the emoji stands; the band count takes the stage word's
     # slot, and the empty position label hides the coordinate slot outright.
-    _panel.set_header("", HudFormat.FACTION_PAGE_GLYPH, HudFormat.FACTION_PAGE_NAME,
-        HudFormat.faction_bands_label(_band_labor.player_bands().size()), "")
+    _panel.set_header("", HudFormat.FACTION_PAGE_GLYPH, HudFormat.faction_page_title(),
+        HudFormat.faction_page_subtitle(_band_labor.player_bands().size()), "")
     _panel.set_cycler(FACTION_CYCLER_INDEX, _cycler_count())
     # A faction has no tile to jump to. (The narrow shell's first tab reads `Faction` rather than
     # `Band` because `FACTION_ZONE_LAYOUT` says so — a subject names its own zone labels.)

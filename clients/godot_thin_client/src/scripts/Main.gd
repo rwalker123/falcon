@@ -922,6 +922,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # The player faction's POLICY row (Open Borders, issue #512) — a campaign-section table that moves
     # on a `set_open_borders` command rather than on a turn. Before `populations` below, like the
     # sedentarization it sits beside, so a frame carrying both renders the faction page once current.
+    # Every faction's sim-minted NAME — world-visible, per world. Ingested into the one static store
+    # the people-name resolver reads (`FactionNames` / `FactionMark.faction_name`), BEFORE the event
+    # dock and the faction page render this frame so both name peoples off the fresh table.
+    if snapshot.has("faction_names") and SnapshotSections.changed(snapshot, "faction_names"):
+        FactionNames.update(snapshot["faction_names"])
     if snapshot.has("faction_policies") and SnapshotSections.changed(snapshot, "faction_policies"):
         _hud_invoke("update_faction_policies", [snapshot["faction_policies"]])
     # **`demographics` IS DISPATCHED NOWHERE — the wire field has no client reader at all** since the
@@ -1145,6 +1150,8 @@ func _record_hud_calls(profile: TurnProfile) -> void:
 ## Main uses, so a surface without one simply skips (it merges nothing worth clearing).
 func _reset_per_world_state() -> void:
     _hud_invoke("reset_world_state")
+    # The peoples' names belong to ONE world; the new world's full snapshot restates its own table.
+    FactionNames.reset()
     # The event dock needs no clear here: a world change always arrives on a FULL snapshot, and the
     # `command_events` dispatch below clears it on every one of those (see the note there — a
     # rollback reuses `seq`, so the full-frame clear is a correctness requirement in its own right).

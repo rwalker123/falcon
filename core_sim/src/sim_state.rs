@@ -201,6 +201,9 @@ pub struct SimState {
     /// Each people's Open Borders setting. Mutated only by `set_open_borders`, which is still state
     /// a rollback has to put back — the same reason `security_policies` rides here.
     pub border_policies: FactionBorderPolicies,
+    /// Every faction's name. **The save wins**: minted once by worldgen, then carried, so a pool
+    /// edit never renames a saved world's factions.
+    pub faction_names: crate::faction_names::FactionNames,
     /// **THE LIVE WORKINGS ON THE TWO DEPOSIT BRANCHES.**
     ///
     /// ⛔ **THE STOCK IS THE ONLY THING HERE THAT IS NOT DERIVABLE, and it is why this is state at
@@ -415,6 +418,10 @@ pub fn capture_sim_state(world: &World) -> SimState {
         faction_inventory: world.resource::<FactionInventory>().clone(),
         security_policies: world.resource::<FactionSecurityPolicies>().clone(),
         border_policies: world.resource::<FactionBorderPolicies>().clone(),
+        faction_names: world
+            .get_resource::<crate::faction_names::FactionNames>()
+            .cloned()
+            .unwrap_or_default(),
         deposits: world.resource::<DepositRegistry>().clone(),
         forage: world.resource::<ForageRegistry>().clone(),
         graze: world.resource::<GrazeRegistry>().clone(),
@@ -603,6 +610,7 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
     world.insert_resource(state.faction_inventory.clone());
     world.insert_resource(state.security_policies.clone());
     world.insert_resource(state.border_policies.clone());
+    world.insert_resource(state.faction_names.clone());
     world.insert_resource(state.deposits.clone());
     world.insert_resource(state.forage.clone());
     world.insert_resource(state.graze.clone());

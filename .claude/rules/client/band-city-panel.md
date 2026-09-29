@@ -1296,6 +1296,15 @@ recapture after the command may carry no `populations` change. An absent policy 
 toggle rather than a guessed default. `FACTION_BAND_FULL_MIN_HEIGHT` moved 480 → 550 with it
 (`knowledge-panel.md`).
 
+**THE HEADER NAMES THE PEOPLE.** Factions carry sim-minted names (`faction_names`, stored in
+`FactionNames`), so the faction page's title is the player's people by that name
+(`HudFormat.faction_page_title`) and its second line keeps the ownership beside the band count —
+`Your people · 2 bands` (`faction_page_subtitle`, `FACTION_PAGE_OWNED_FORMAT`). Before the table has
+arrived the title falls back to `Your people` and the second line to the bare count, so the "your" is
+never said twice. The title reads the store directly rather than through `FactionMark.faction_name`,
+whose fallback (`Faction 0`) is a database row and the wrong thing to title the player's own page
+with.
+
 **THE CYCLER READS ONE HIGHER ON EVERY BAND NOW**, and that is the change's one visible effect on
 every surface it did not add: a lone band went from `1 / 1` to `2 / 2`, because the page is entry one.
 The `◀`/`▶` are consequently LIVE on a single-band faction, where they used to be dead —

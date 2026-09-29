@@ -814,6 +814,20 @@
       ]
     }
   ],
+  "faction_names": [
+    {
+      "faction": 137,
+      "name": "faction_names[0].name"
+    },
+    {
+      "faction": 122,
+      "name": "faction_names[1].name"
+    },
+    {
+      "faction": 71,
+      "name": "faction_names[2].name"
+    }
+  ],
   "faction_policies": [
     {
       "faction": 15,

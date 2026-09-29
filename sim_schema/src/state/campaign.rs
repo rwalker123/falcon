@@ -187,6 +187,15 @@ pub struct FactionPolicyState {
     pub open_borders: bool,
 }
 
+/// **A faction's name** on the client stream — what its people call themselves. World-visible:
+/// every faction's row rides every frame. Event labels say `Faction N` and carry the id as
+/// `from=`/`to=`; a client substitutes this name by joining on that id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct FactionNameState {
+    pub faction: u32,
+    pub name: String,
+}
+
 /// One register's rendering of a player-visible narrative string.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct BeatVoiceLineState {

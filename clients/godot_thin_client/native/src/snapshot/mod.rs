@@ -12,8 +12,8 @@ use std::collections::BTreeSet;
 
 use crate::dict::campaign::{
     campaign_label_to_dict, campaign_profiles_to_array, command_events_to_array,
-    faction_policies_to_array, opening_loadout_to_dict, pending_forks_to_array,
-    stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
+    faction_names_to_array, faction_policies_to_array, opening_loadout_to_dict,
+    pending_forks_to_array, stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
 };
 use crate::dict::connections::connections_to_array;
 use crate::dict::culture::{
@@ -1374,6 +1374,11 @@ pub(crate) fn snapshot_to_dict(
     // The viewer's own faction policies (Open Borders) — one row, the viewer's faction.
     if let Some(policies) = snapshot.campaign().and_then(|s| s.factionPolicies()) {
         let _ = dict.insert("faction_policies", &faction_policies_to_array(policies));
+    }
+
+    // Every faction's name — world-visible, one row per faction.
+    if let Some(names) = snapshot.campaign().and_then(|s| s.factionNames()) {
+        let _ = dict.insert("faction_names", &faction_names_to_array(names));
     }
 
     // **THE TURN-ONE OUTFITTING WINDOW** (issue #629). A whole-diffed table on the campaign section,

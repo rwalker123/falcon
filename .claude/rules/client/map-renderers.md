@@ -494,3 +494,16 @@ in `_unhandled_input` (which a focused `LineEdit` does not starve either — it 
 USES and lets the rest fall through). The registry, the three-owner policy, exact matching and the
 focus release they depend on are `.claude/rules/client/keyboard-arbiter.md`. **The targeting Escape
 is the one deliberately unarbitrated key here** — `ESCAPE` acts under every owner.
+
+## A faction's COLOUR is a function of its ID; its NAME is the sim's
+
+`MapView.faction_color(faction, fallback)` is the one colour lookup, and it is keyed by the faction
+**id** alone: `SEEDED_FACTION_COLORS` is an id-indexed list (0 cyan, 1 orange, 2 green, unchanged from
+every committed frame), and ids past it take the golden-angle run. It accepts an int, a float or a
+numeric string; anything else — including a faction NAME — answers the caller's `fallback`.
+
+**`SEEDED_FACTION_NAMES` is deleted.** Factions carry sim-minted names now (the campaign section's
+`faction_names`, ingested into `FactionNames` and read through `FactionMark.faction_name`), so a
+client-side name→id table was a second, wrong answer to "what is this people called". A name is not an
+id and never reaches the colour lookup. `map_preview._assert_seeded_faction_colors_are_unchanged` pins
+all three halves: ids 0–2 keep their colours, `"1"` resolves to faction 1's, `"Obsidian"` falls back.

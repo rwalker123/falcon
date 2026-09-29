@@ -42,6 +42,14 @@ const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
 ## restated the rule instead would keep passing after the rule moved. That is not hypothetical: this
 ## file carried `edge != SIDE_TOP` until the BOTTOM edge stopped being unconditional.
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
+## The player's people by the name the sim minted (drawn from `core_sim/src/data/faction_names.json`,
+## used exactly as published), and one rival — the faction page header's title is asserted against
+## this literal, not against the resolver.
+const PLAYER_FACTION_NAME := "Veldari"
+const FACTION_NAMES_FIXTURE := [
+	{"faction": 0, "name": PLAYER_FACTION_NAME},
+	{"faction": 1, "name": "Ashkin"},
+]
 ## **THE KIT ROSTER IS SHARED WITH `ui_preview`, and deliberately so.** It is world config the sim
 ## publishes once (`SubsistenceSection.kits`), not a per-harness prop: two copies could quote
 ## different tiers or a different job default, and the `kit <id>` command token asserted here is the
@@ -2401,6 +2409,10 @@ func _ready() -> void:
 	# before the page is reached so every faction frame carries the row it now always has, and the
 	# band zone's extent below is measured with it in.
 	_hud.update_faction_policies([_faction_policy_fixture(true)])
+	# **THE PEOPLE'S NAME** — the sim-minted `faction_names` table, ingested the way `Main` ingests it,
+	# so the page header leads with the player's people by name. It stays staged for the rest of the
+	# run: a real game carries the table on every frame, and the band pages below do not read it.
+	FactionNames.update(FACTION_NAMES_FIXTURE)
 	_push_bands(_faction_roster())
 	_hud.cycle_panel_band(BandCityPanel.CYCLE_PREV)
 	_panel.set_dock(SIDE_LEFT)
@@ -10572,10 +10584,14 @@ func _assert_faction_page() -> void:
 
 	# THE HEADER. A faction has no settlement stage and no tile, so the stage slot carries the band
 	# COUNT — the identity fact at this scale — and the coordinate slot hides itself outright.
-	_assert_band_panel("faction page: header names the faction",
-		_panel._name_label.text == HudFormat.FACTION_PAGE_NAME)
-	_assert_band_panel("faction page: header states the band count where a band states its stage",
-		_panel._stage_label.text == HudFormat.faction_bands_label(bands.size()))
+	# The title is the people's sim-minted NAME (the harness stages `FACTION_NAMES_FIXTURE`), and the
+	# second line keeps the "your" beside the band count — asserted against the fixture's literal, not
+	# the resolver, so a title that stopped reading the store fails rather than agreeing with itself.
+	_assert_band_panel("faction page: header names the faction by its published name (%s)" % _panel._name_label.text,
+		_panel._name_label.text == PLAYER_FACTION_NAME)
+	_assert_band_panel("faction page: header states 'your people' and the band count (%s)" % _panel._stage_label.text,
+		_panel._stage_label.text == HudFormat.FACTION_PAGE_OWNED_FORMAT % [HudFormat.FACTION_PAGE_NAME,
+			HudFormat.faction_bands_label(bands.size())])
 	_assert_band_panel("faction page: header states NO coordinates", not _panel._position_label.visible)
 	_assert_band_panel("faction page: the cycler reads 1 / %d (pinned FIRST)" % (bands.size() + 1),
 		_panel._count_label.text == "1 / %d" % (bands.size() + 1))
