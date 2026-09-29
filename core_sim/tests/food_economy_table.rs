@@ -62,6 +62,7 @@
 //!   path**: the harness drives `systems::hunt_take` forward over the same horizon on a private
 //!   clone — Logistics regrowth then Population take, the shipped order — and reads
 //!   `HuntOutcome::bound` off each turn. The sim produces the bound; the harness only tallies it.
+//!   **It draws each turn at the live take's own seed**, averaged over many runs (see [`Drive`]).
 //!   The plant web has no such enum (it has no engagement, no retreat and no fight), so its rows
 //!   print `n/a` there and answer with carry utilisation alone.
 //!
@@ -75,17 +76,18 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use core_sim::{
-    animals_engaged, crop_field_cost_multiplier, forage_provisions, forage_source_yield_preview,
-    herd_capacity, herd_default_hunt_kit, herd_density_gain, herd_ecology, herd_engage_rate,
-    herd_hunt_yield, herd_space_capacity, herd_take_room, herd_upkeep_demand,
-    hunt_source_yield_preview, hunt_take, material_yield_totals, patch_carrying_capacity,
-    patch_composition, patch_ecology, patch_field_cost_multiplier, patch_material_yields_taking,
-    patch_provisions_per_biomass_taking, patch_upkeep_demand, plant_rung_span, regrow_biomass,
+    animals_engaged, crop_field_cost_multiplier, expected_stayers, forage_provisions,
+    forage_source_yield_preview, herd_capacity, herd_default_hunt_kit, herd_density_gain,
+    herd_ecology, herd_engage_rate, herd_fight_stage, herd_hunt_yield, herd_space_capacity,
+    herd_take_room, herd_upkeep_demand, herd_wariness, hunt_source_yield_preview, hunt_take,
+    material_yield_totals, patch_carrying_capacity, patch_composition, patch_ecology,
+    patch_field_cost_multiplier, patch_material_yields_taking, patch_provisions_per_biomass_taking,
+    patch_upkeep_demand, plant_rung_span, regrow_biomass, retreat_mean, retreat_seed,
     selected_biomass_share, sustainable_yield, BandEquipment, CombatConfig, CreaturesConfig,
     EquipmentConfig, FactionId, FaunaConfig, FloraConfig, ForagePatch, Herd, HuntDraw,
     HuntTakeBound, HuntingParty, HusbandryCeiling, KitChoice, KitCoverage, KitJob, LaborConfig,
-    LadderConfig, MaterialPayoff, PartyResolution, Quarry, RungKey, SourceYield, SpeciesDef,
-    TakeSelection, DEFAULT_ESCAPEMENT_FLOOR,
+    LadderConfig, MaterialPayoff, OutcomeKills, PartyResolution, Quarry, RungKey, SourceYield,
+    SpeciesDef, TakeSelection, DEFAULT_ESCAPEMENT_FLOOR,
 };
 use sim_runtime::TerrainType;
 
@@ -724,24 +726,43 @@ fn hunt_food_per_worker(
     hunt_preview(herd, party, workers, carry, shipped).realized / workers as f32
 }
 
-/// **WHAT THE LIVE TAKE PATH ACTUALLY DID, turn by turn.**
+/// **WHAT THE LIVE TAKE PATH ACTUALLY DOES, turn by turn, averaged over many runs.**
 ///
 /// The preview's `realized` is the unquantised projection and never reaches `hunt_take_bound`, so
 /// this drives `systems::hunt_take` forward over the same horizon on a private clone — Logistics
 /// regrowth, then the Population take, the shipped order — and records what the sim reports.
 /// Nothing is re-derived: the sim resolves the take and hands back its own bound.
+///
+/// **It is a live-take measurement, so it DRAWS** — each turn at the live take's own per-event seed
+/// ([`retreat_seed`]), over [`DRIVE_RUNS`] independent runs, and every figure is the per-run mean.
+/// Driving the take at `HuntDraw::EXPECTED` instead handed the fight the retreat's mean head count,
+/// which is not a turn the take ever plays and over-reads it wherever the fight and the retreat both
+/// bind. [`DRIVE_RESOLUTION`] holds the carried mean to its own sampling error.
 struct Drive {
-    /// `HuntOutcome::bound` tallied, in descending count order, so the head is the modal bound.
+    /// `HuntOutcome::bound` tallied over every run, in descending count order, so the head is the
+    /// modal bound. Rendered per run.
     tally: Vec<(HuntTakeBound, u32)>,
-    /// Whole animals put on the ground over the whole drive — the number that says whether a
-    /// sub-threshold party ever lands one at all (`docs/plan_hunt_through_combat.md` §4.2).
-    kills: u32,
-    /// Biomass brought home over the whole drive.
+    /// Whole animals put on the ground per run — the number that says whether a sub-threshold
+    /// party ever lands one at all (`docs/plan_hunt_through_combat.md` §4.2).
+    kills: f32,
+    /// Biomass brought home per run.
     carried: f32,
-    /// Biomass KILLED and left standing — an animal the pack could not seat. On a big-bodied quarry
-    /// this dwarfs `carried`, which is the whole reason it is a column.
+    /// Biomass KILLED and left standing per run — an animal the pack could not seat. On a
+    /// big-bodied quarry this dwarfs `carried`, which is the whole reason it is a column.
     wasted: f32,
+    /// Three standard errors of `carried` across the runs.
+    carried_three_se: f32,
 }
+
+/// Independent live runs a [`Drive`] averages.
+const DRIVE_RUNS: u64 = 200;
+/// The map seed a drive's first run draws from; run `n` draws from `DRIVE_MAP_SEED + n`.
+const DRIVE_MAP_SEED: u64 = 7;
+/// **Three standard errors of a drive's carried mean must sit inside this share of it** — the
+/// resolution the table's biomass columns are read at.
+const DRIVE_RESOLUTION: f32 = 0.05;
+/// Standard errors the resolution is stated in.
+const DRIVE_STANDARD_ERRORS: f32 = 3.0;
 
 impl Drive {
     fn modal(&self) -> Option<HuntTakeBound> {
@@ -754,9 +775,20 @@ impl Drive {
         }
         self.tally
             .iter()
-            .map(|(bound, count)| format!("{} {count}", bound.as_str()))
+            .map(|(bound, count)| {
+                format!(
+                    "{} {:.1}",
+                    bound.as_str(),
+                    *count as f32 / DRIVE_RUNS as f32
+                )
+            })
             .collect::<Vec<_>>()
             .join("   ")
+    }
+
+    /// Whether the carried mean is resolved to [`DRIVE_RESOLUTION`].
+    fn resolved(&self) -> bool {
+        self.carried <= 0.0 || self.carried_three_se <= DRIVE_RESOLUTION * self.carried
     }
 }
 
@@ -767,43 +799,55 @@ fn drive_take(
     carry: f32,
     shipped: &Shipped,
 ) -> Drive {
-    let mut quarry = herd.clone();
-    let ecology = herd_ecology(&quarry, &shipped.fauna);
-    let capacity = quarry.carrying_capacity;
+    let ecology = herd_ecology(herd, &shipped.fauna);
+    let capacity = herd.carrying_capacity;
     let mut tally: BTreeMap<&'static str, (HuntTakeBound, u32)> = BTreeMap::new();
-    let mut kills = 0u32;
-    let mut carried = 0.0_f32;
-    let mut wasted = 0.0_f32;
-    for _ in 0..shipped.labor.yield_average_horizon_turns {
-        regrow_biomass(&mut quarry, &shipped.fauna);
-        if quarry.biomass <= ecology.extinction_floor * capacity {
-            break; // `advance_herds` would despawn it here — the herd is gone.
+    let (mut kills, mut wasted) = (0u32, 0.0_f32);
+    let mut carried_per_run = Vec::with_capacity(DRIVE_RUNS as usize);
+    for run in 0..DRIVE_RUNS {
+        let mut quarry = herd.clone();
+        let mut carried = 0.0_f32;
+        for turn in 0..shipped.labor.yield_average_horizon_turns {
+            regrow_biomass(&mut quarry, &shipped.fauna);
+            if quarry.biomass <= ecology.extinction_floor * capacity {
+                break; // `advance_herds` would despawn it here — the herd is gone.
+            }
+            let seed = retreat_seed(DRIVE_MAP_SEED + run, u64::from(turn), &quarry.id, workers);
+            let outcome = hunt_take(
+                &mut quarry,
+                workers,
+                DEFAULT_ESCAPEMENT_FLOOR,
+                carry,
+                party,
+                &shipped.fauna,
+                NO_CARRY_LIMIT,
+                HuntDraw::Seeded(seed),
+            );
+            let entry = tally
+                .entry(outcome.bound.as_str())
+                .or_insert((outcome.bound, 0));
+            entry.1 += 1;
+            kills += outcome.take.killed;
+            carried += outcome.take.carried;
+            wasted += outcome.take.wasted;
         }
-        let outcome = hunt_take(
-            &mut quarry,
-            workers,
-            DEFAULT_ESCAPEMENT_FLOOR,
-            carry,
-            party,
-            &shipped.fauna,
-            NO_CARRY_LIMIT,
-            HuntDraw::EXPECTED,
-        );
-        let entry = tally
-            .entry(outcome.bound.as_str())
-            .or_insert((outcome.bound, 0));
-        entry.1 += 1;
-        kills += outcome.take.killed;
-        carried += outcome.take.carried;
-        wasted += outcome.take.wasted;
+        carried_per_run.push(carried);
     }
+    let runs = DRIVE_RUNS as f32;
+    let carried = carried_per_run.iter().sum::<f32>() / runs;
+    let variance = carried_per_run
+        .iter()
+        .map(|c| (c - carried).powi(2))
+        .sum::<f32>()
+        / (runs - 1.0);
     let mut rows: Vec<(HuntTakeBound, u32)> = tally.into_values().collect();
     rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.as_str().cmp(b.0.as_str())));
     Drive {
         tally: rows,
-        kills,
+        kills: kills as f32 / runs,
         carried,
-        wasted,
+        wasted: wasted / runs,
+        carried_three_se: DRIVE_STANDARD_ERRORS * (variance / runs).sqrt(),
     }
 }
 
@@ -2050,8 +2094,15 @@ fn forage_measured(
 /// Turn one of a source seated at `floor · K` has only one turn's growth above the floor, so on a
 /// big-bodied quarry the escapement room is under one body and it zeroes the engagement before reach
 /// is ever tested. Reading only that turn would report the floor and hide the reach failure behind
-/// it. This walks the live path forward until the room clears one body, then resolves one more turn
-/// and hands back that turn's terms — which is the picture that repeats for the rest of the run.
+/// it. This walks the live path forward (at the live take's own per-event seed) until the room
+/// clears one body, then reads that turn's terms — which is the picture that repeats for the rest
+/// of the run.
+///
+/// **The terms are the turn's EXPECTATIONS over the retreat's outcomes**, through the seam the
+/// shipped forecasts read: `stayed` is the retreat's mean head count ([`expected_stayers`]) and
+/// `brought_down` the mean of the whole bodies each outcome's fight finishes ([`OutcomeKills`]),
+/// never the fight resolved at the mean head count. The bound is the live take's own, modal over
+/// [`STEADY_BOUND_DRAWS`] draws of that turn.
 ///
 /// `None` if the room never clears a body inside the horizon.
 struct SteadyTerms {
@@ -2063,6 +2114,9 @@ struct SteadyTerms {
     bound: HuntTakeBound,
 }
 
+/// Live draws of the steady turn its modal bound is read over.
+const STEADY_BOUND_DRAWS: u64 = 200;
+
 fn steady_terms(
     herd: &Herd,
     party: &HuntingParty,
@@ -2070,29 +2124,63 @@ fn steady_terms(
     carry: f32,
     shipped: &Shipped,
 ) -> Option<SteadyTerms> {
+    let fauna = &shipped.fauna;
+    let wariness = herd_wariness(herd, fauna);
     let mut quarry = herd.clone();
     for turn in 1..=shipped.labor.yield_average_horizon_turns {
-        regrow_biomass(&mut quarry, &shipped.fauna);
-        let room = herd_take_room(&quarry, DEFAULT_ESCAPEMENT_FLOOR, &shipped.fauna);
-        let reach = animals_engaged(workers, herd_engage_rate(&quarry, &shipped.fauna));
-        let outcome = hunt_take(
+        regrow_biomass(&mut quarry, fauna);
+        let room = herd_take_room(&quarry, DEFAULT_ESCAPEMENT_FLOOR, fauna);
+        let reach = animals_engaged(workers, herd_engage_rate(&quarry, fauna));
+        let before = quarry.clone();
+        let take_at = |herd: &mut Herd, seed: u64| {
+            hunt_take(
+                herd,
+                workers,
+                DEFAULT_ESCAPEMENT_FLOOR,
+                carry,
+                party,
+                fauna,
+                NO_CARRY_LIMIT,
+                HuntDraw::Seeded(seed),
+            )
+        };
+        let outcome = take_at(
             &mut quarry,
-            workers,
-            DEFAULT_ESCAPEMENT_FLOOR,
-            carry,
-            party,
-            &shipped.fauna,
-            NO_CARRY_LIMIT,
-            HuntDraw::EXPECTED,
+            retreat_seed(DRIVE_MAP_SEED, u64::from(turn), &before.id, workers),
         );
         if room >= quarry.body_mass {
+            let outcomes = party.stayer_outcomes(outcome.engaged, wariness);
+            let fight = herd_fight_stage(&before, fauna);
+            let kills = OutcomeKills::resolve(
+                &outcomes,
+                workers,
+                party,
+                fight.as_ref(),
+                before.wounds,
+                HuntDraw::EXPECTED,
+            );
+            let mut bounds: BTreeMap<&'static str, (HuntTakeBound, u32)> = BTreeMap::new();
+            for draw in 0..STEADY_BOUND_DRAWS {
+                let mut sample = before.clone();
+                let bound = take_at(
+                    &mut sample,
+                    retreat_seed(DRIVE_MAP_SEED + draw, u64::from(turn), &before.id, workers),
+                )
+                .bound;
+                bounds.entry(bound.as_str()).or_insert((bound, 0)).1 += 1;
+            }
+            let bound = bounds
+                .into_values()
+                .max_by(|a, b| a.1.cmp(&b.1).then(b.0.as_str().cmp(a.0.as_str())))
+                .map(|(bound, _)| bound)
+                .unwrap_or(outcome.bound);
             return Some(SteadyTerms {
                 turn,
                 room_bodies: room / quarry.body_mass,
                 reach,
-                stayed: outcome.engaged - outcome.fled,
-                brought_down: outcome.fight.brought_down,
-                bound: outcome.bound,
+                stayed: expected_stayers(&outcomes),
+                brought_down: retreat_mean(&outcomes, |stayed| kills.whole(stayed)),
+                bound,
             });
         }
     }
@@ -2176,7 +2264,7 @@ fn print_mammoth(shipped: &Shipped) {
         let drive = drive_take(&herd, &party, crew, carry, shipped);
         let steady = steady_terms(&herd, &party, crew, carry, shipped);
         println!(
-            "  {:>7} {:<9} {:>7.3} {:>7.3} | {:>5} {:>7.3} {:>7.3} {:>9.3} {:<12} | {:>5} {:>8.0} {:>8.0} {:>8.4} {:<12}  {}",
+            "  {:>7} {:<9} {:>7.3} {:>7.3} | {:>5} {:>7.3} {:>7.3} {:>9.3} {:<12} | {:>5.1} {:>8.0} {:>8.0} {:>8.4} {:<12}  {}",
             crew,
             gear.id(),
             crew as f32 * carry / def.body_mass,
@@ -2371,6 +2459,19 @@ fn the_food_economy_table() {
             row.source,
             row.rung
         );
+        // **The drive's carried figure is a sampled mean**, so it is only a reading once its own
+        // sampling error sits inside the resolution the column is read at.
+        if let Some(drive) = row.drive.as_ref() {
+            assert!(
+                drive.resolved(),
+                "{} {}: the live drive's carried mean {} is not resolved — three standard errors \
+                 {} exceed {DRIVE_RESOLUTION} of it; raise DRIVE_RUNS",
+                row.source,
+                row.rung,
+                drive.carried,
+                drive.carried_three_se
+            );
+        }
     }
     // **The gear PATH is wired, which is not the same claim as the band OWNING gear.** This used to
     // assert that some row out-earns its bare-carry control — true only while `start_stock_fraction`

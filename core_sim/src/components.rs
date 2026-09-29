@@ -2734,6 +2734,28 @@ impl LaborAssignment {
             .clone()
             .unwrap_or_else(|| config.default_kit(self.target.kit_job()))
     }
+
+    /// **THE KIT THIS ROW'S CREW IS ACTUALLY WORKING WITH** — [`Self::kit_choice`], narrowed on an
+    /// `extract` row to the items that serve the rung its working **holds** (#663,
+    /// [`crate::equipment_config::EquipmentConfig::deposit_rung_kit`]). A `woodcutting` row on
+    /// deadfall is working its sleds and on felling its axes; the other item in the stored kit is not
+    /// in anyone's hands this turn, so it arms nobody, claims no share of the band's stock and is
+    /// counted in no "complete kit". Every other row, and a caller with no working to read
+    /// (`held: None`), gets the stored kit unchanged. The id is kept.
+    pub fn take_kit(
+        &self,
+        config: &crate::equipment_config::EquipmentConfig,
+        held: Option<&crate::extraction::HeldRungs<'_>>,
+    ) -> crate::equipment_config::KitChoice {
+        let kit = self.kit_choice(config);
+        let (LaborTarget::Extract { tile, material, .. }, Some(held)) = (&self.target, held) else {
+            return kit;
+        };
+        match held.held(*tile, material) {
+            Some(rung) => config.deposit_rung_kit(&kit, rung.branch(), &rung.wire_key()),
+            None => kit,
+        }
+    }
 }
 
 /// **WHAT A SHED TOOK HANDS OFF** — a labor row, or the band's crafting bench.
@@ -4979,13 +5001,31 @@ impl LaborAllocation {
     pub fn item_budget(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
+        // **The rung each `extract` row's working holds** — so an extract row claims only the items
+        // serving that rung ([`LaborAssignment::take_kit`]). `None` from a caller that reads no
+        // extract gear (the warrior line), where it moves no item that caller asks about.
+        held: Option<&crate::extraction::HeldRungs<'_>>,
     ) -> crate::equipment_config::BandItemBudget {
         // The kits have to outlive the borrow the budget builds from, so they are resolved into a
         // vector first — `kit_choice` mints a fresh `KitChoice` per call.
-        let kits = self.kitted_rows(config, |_| true);
+        let kits = self.kitted_rows(config, |_| true, held);
+        // ⛔ **LESS WHAT THE POOLS WERE ISSUED** — one unit arms one person per turn across both
+        // accounts, and the pools settle first (`BandItemBudget::reserving`). Read off
+        // [`Self::last_pool_toe`], which the turn parks right after the settlement and above every
+        // take row, so the turn, the assign-time seed and the capture all divide one remainder.
         crate::equipment_config::BandItemBudget::of_rows(
             kits.iter().map(|(kit, workers)| (kit, *workers)),
         )
+        .reserving(self.pool_issued())
+    }
+
+    /// **The units the standing pools were issued this turn, per item** — `last_pool_toe`'s
+    /// `filled`, the reservation every take-row budget is struck less
+    /// ([`crate::equipment_config::BandItemBudget::reserving`]).
+    pub fn pool_issued(&self) -> impl Iterator<Item = (&str, f32)> {
+        self.last_pool_toe
+            .iter()
+            .map(|line| (line.item.as_str(), line.filled))
     }
 
     /// **THE BAND'S ROWS OTHER THAN THE ONE STANDING ON `source`** — the competing demand a
@@ -5011,8 +5051,9 @@ impl LaborAllocation {
         &self,
         config: &crate::equipment_config::EquipmentConfig,
         source: &LaborTarget,
+        held: Option<&crate::extraction::HeldRungs<'_>>,
     ) -> Vec<(crate::equipment_config::KitChoice, f32)> {
-        self.kitted_rows(config, |target| !target.same_source(source))
+        self.kitted_rows(config, |target| !target.same_source(source), held)
     }
 
     /// The rows `keep` accepts, each as its **resolved** kit and head count — the pairs both
@@ -5038,11 +5079,12 @@ impl LaborAllocation {
         &self,
         config: &crate::equipment_config::EquipmentConfig,
         keep: impl Fn(&LaborTarget) -> bool,
+        held: Option<&crate::extraction::HeldRungs<'_>>,
     ) -> Vec<(crate::equipment_config::KitChoice, f32)> {
         self.assignments
             .iter()
             .filter(|assignment| !assignment.target.is_standing_pool() && keep(&assignment.target))
-            .map(|assignment| (assignment.kit_choice(config), assignment.workers as f32))
+            .map(|assignment| (assignment.take_kit(config, held), assignment.workers as f32))
             .collect()
     }
 

@@ -812,6 +812,37 @@ pub fn carry_runtime_owned_fields(config: &mut SimulationConfig, outgoing: &Simu
     config.log_bind = outgoing.log_bind;
 }
 
+/// **Copy the RUNNING WORLD's identity from `outgoing` onto a hot-reloaded `config`** — for
+/// `reload_config` (simulation) only, never for a world build.
+///
+/// A hot reload retunes the world that exists; it does not replace it. These fields do not tune
+/// that world, they *describe* it — they were chosen by the `new_game` / `load_game` that built it,
+/// and the tiles, the power topology, every seeded derivation and the next save's header all
+/// assume them. The file names the world a fresh boot would build, which is a different question.
+///
+/// | Carried field | Why the file must not win |
+/// |---|---|
+/// | `grid_size` | The tiles exist at this size. A save written after a reload recorded the file's grid over this world's tiles, and its load indexed `PowerTopology::from_grid` past the tile count |
+/// | `map_topology` | Every hex distance on the live map is measured under this wrap |
+/// | `map_preset_id` | Written into the save header; the load re-derives the biome palette from it |
+/// | `map_seed` | Worldgen writes the resolved seed back here, and it is then the seed's source of truth — flora realization, band-name minting, `export_map`. The shipped file's `0` means "random", which is no seed at all |
+/// | `start_profile_id` / `start_profile_overrides` | The campaign this world was started on (`apply_start_profile`), not the file's default |
+/// | `fog_enabled` | The player's preference, the same row [`carry_runtime_owned_fields`] carries |
+///
+/// **Deliberately NOT [`carry_runtime_owned_fields`]' list**, which is shared with the world-build
+/// paths: a New Game takes its grid, preset and seed from the command, so carrying the old world's
+/// there would be wrong. And the four binds are left to the reload's own `apply_port_base`, so a file
+/// that moves a socket's host still trips `socket_changed=restart_required`.
+pub fn carry_world_identity(config: &mut SimulationConfig, outgoing: &SimulationConfig) {
+    config.grid_size = outgoing.grid_size;
+    config.map_topology = outgoing.map_topology;
+    config.map_preset_id = outgoing.map_preset_id.clone();
+    config.map_seed = outgoing.map_seed;
+    config.start_profile_id = outgoing.start_profile_id.clone();
+    config.start_profile_overrides = outgoing.start_profile_overrides.clone();
+    config.fog_enabled = outgoing.fog_enabled;
+}
+
 /// Tracks total simulation ticks elapsed.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimulationTick(pub u64);

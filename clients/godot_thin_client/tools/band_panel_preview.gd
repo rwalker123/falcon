@@ -19938,10 +19938,15 @@ func _workings_band_fixture(demand: float) -> Dictionary:
 ## ---- THE CREW THAT OUTGREW ITS GROUND, ON THE GROUNDWORK ROSTER --------------------------------
 ##
 ## ⛔ **THE GROUND IS SHRUNK UNDER A STANDING CREW, NEVER OVER-ASSIGNED.** The working's own compose
-## sheet caps its stepper at exactly `HudDepositVocab.max_useful_cutters` — the same quotient the
-## clause is measured against — so a player cannot put five cutters on ground that can use one. What
-## they CAN do is go on cutting a seam until it is worked down to nothing, and that is what this
-## stages: Ray's five woodcutters, reached the only way the game allows.
+## sheet caps its stepper at the crew curve's plateau — the rule the sim publishes per row as
+## `useful_cutters`, which the clause is measured against — so a player cannot put five cutters on
+## ground that can use three. What they CAN do is go on cutting a seam until it is worked down, and
+## that is what this stages: Ray's five woodcutters, reached the only way the game allows.
+##
+## ⛔ **AND THE CAP IS THE GEARED ONE, BELOW THE BARE QUOTIENT** (issue #663). The room over the bare
+## `perWorkerBiomass` would let five cutters work this stand; the band's kit lets three take all of it.
+## The five sit between the two, so a roster row measuring the bare quotient says nothing and the one
+## measuring the published cap says `overstaffed`.
 
 ## What one cutter moves in a turn on the cut-back pair (`DepositState.perWorkerBiomass`). The
 ## baseline `_workings_row` states none, which is a working the client was never sent a rate for —
@@ -19949,10 +19954,15 @@ func _workings_band_fixture(demand: float) -> Dictionary:
 const WORKINGS_WORN_PER_WORKER := 2.2
 
 ## …and what is left STANDING above this band's composed floor once the ground is worked down: about
-## one cutter's worth. Composed INTO the stock through `HudDepositVocab.composed_floor` rather than
+## five bare cutters' worth, which geared hands take with three. Composed INTO the stock through `HudDepositVocab.composed_floor` rather than
 ## typed as a stock, so a re-dial of the branch's floor moves the fixture with it instead of quietly
 ## emptying the seam or leaving a room a hundred hands could work.
-const WORKINGS_WORN_ROOM := 2.0
+const WORKINGS_WORN_ROOM := 11.0
+
+## **THE SIM'S GEARED CAP ON EACH ROW** (`LaborAssignment.usefulCutters`) — the smallest crew whose
+## geared take reaches the curve's best. Both sit BELOW the bare quotient of the room above, which is
+## the shape that tells the two ceilings apart; asserted as a premise rather than trusted.
+const WORKINGS_WORN_USEFUL := {WORKINGS_WOOD: 3, WORKINGS_STONE: 2}
 
 ## The hands beyond what that ground can use. Added to the SHIPPED cap rather than typed as a crew,
 ## for `CAP_DEMO_WASTED_EXTRA`'s reason.
@@ -19974,12 +19984,18 @@ func _worn_workings_row(material: String) -> Dictionary:
 	row["reachable"] = WORKINGS_WORN_ROOM
 	return row
 
-## **THE SHIPPED CEILING FOR ONE OF THEM**, asked of the producer the roster row itself asks. The
-## floor is the one an `extract` row with no dial resolves to (`HudBandLaborState.floor_for_extract`),
-## so the fixture and the row price the ground at one point on the dial.
+## **THE PUBLISHED CEILING FOR ONE OF THEM** — what the band's `extract` row carries on the wire.
 func _worn_workings_cap(material: String) -> int:
-	return HudDepositVocab.max_useful_cutters(_worn_workings_row(material),
-		SourceForecast.DEFAULT_HARVEST_FLOOR)
+	return int(WORKINGS_WORN_USEFUL[material])
+
+## **THE BARE QUOTIENT THE ROSTER USED TO MEASURE AGAINST** — the room above the floor an `extract`
+## row with no dial resolves to, over the bare `perWorkerBiomass`, rounded up. The oracle the premise
+## below checks the published cap against: a fixture where the two agreed could not say which one the
+## row read.
+func _worn_workings_bare_cap(material: String) -> int:
+	var row := _worn_workings_row(material)
+	return ceili(HudDepositVocab.room_next_turn(row, SourceForecast.DEFAULT_HARVEST_FLOOR)
+		/ HudDepositVocab.per_worker_biomass_of(row))
 
 ## The wire's `deposits` section for that state — the cut-back pair on the near hex, the FAR working
 ## untouched, and the roster's own three negatives unchanged, so nothing about MEMBERSHIP moves.
@@ -20005,6 +20021,7 @@ func _worn_workings_band_fixture() -> Dictionary:
 		var material := String(row["material"])
 		row["workers"] = _worn_workings_cap(material) \
 			+ (WORKINGS_WASTED_HANDS if material == WORKINGS_WOOD else 0)
+		row[HudDepositVocab.ASSIGNMENT_USEFUL_CUTTERS_KEY] = _worn_workings_cap(material)
 	return band
 
 ## The workings roster block and its rows, off the live panel.
@@ -20280,6 +20297,15 @@ func _assert_a_working_flags_the_crew_that_outgrew_it() -> void:
 			% [wood_cap + WORKINGS_WASTED_HANDS, wood_cap, stone_cap, stone_cap],
 		wood_cap != HudDepositVocab.CUTTERS_UNCAPPED and wood_cap > 0
 		and stone_cap != HudDepositVocab.CUTTERS_UNCAPPED and stone_cap > 0)
+	# ⛔ **AND THE GEARED CAP SITS BELOW THE BARE QUOTIENT, with the wood crew between them** — the
+	# shape in which the two ceilings answer differently. Without it the flag below passes on a roster
+	# still measuring `room ÷ perWorkerBiomass`.
+	var wood_bare := _worn_workings_bare_cap(WORKINGS_WOOD)
+	var stone_bare := _worn_workings_bare_cap(WORKINGS_STONE)
+	_assert_band_panel(("wasted cutters — premise: gear lowers the cap, and the bare quotient would "
+			+ "NOT flag the wood crew (wood %d published < %d cutters <= %d bare; stone %d < %d bare)")
+			% [wood_cap, wood_cap + WORKINGS_WASTED_HANDS, wood_bare, stone_cap, stone_bare],
+		wood_cap + WORKINGS_WASTED_HANDS <= wood_bare and stone_cap < stone_bare)
 	# The near hex's two rows sort STONE before WOOD (the roster's own material tie-break), which the
 	# standing state above asserts — so index 0 is the fully-crewed stone and index 1 the over-crewed
 	# wood. Both values are printed, so a sort that moved would be readable in the failure.

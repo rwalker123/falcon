@@ -107,8 +107,6 @@ and wrong **across** worlds, and several surfaces merge rather than replace:
 - **`TellingPanel`** is deliberately never reset on a full snapshot (its de-dup makes re-ingesting
   the `commandEvents` ring harmless, and resetting would drop scrolled-off history). Right within a
   world; wrong across one — a world change is not a new snapshot of the same story.
-- **`MapView.herd_trails`** is keyed by herd id and only erases ids absent from the current
-  snapshot, so a repeated id in the new world appends to the old world's path.
 
 **`map_size`/ResetMap rebuilds the world with no scene reload**, so this half is not merely
 belt-and-braces for the launch case — it is the only thing making an in-session world change
@@ -131,7 +129,7 @@ also clears `_campaign_label_signature` / `_victory_analytics_signature`, which 
 
 **The test for a cache is the shape, not a list**: it needs clearing iff it does *not* rebuild wholesale
 from each snapshot. Three shapes qualify — it **merges** (the knowledge strip above); it is **keyed by
-an id and erases only on ABSENCE** (`herd_trails`, `culture_layer_map`); or it was **pushed IN from
+an id and erases only on ABSENCE** (`culture_layer_map`); or it was **pushed IN from
 another surface** keyed by an id the new world reuses (`BandOverlayRenderer._labor_pending` from the
 HUD, `AnnotationRenderer._selected_trade_entity` (pushed by the Trade tab until issue #381 retired it; the overlay toggle moved to `MapPanel` and no longer pushes a selection), MapView's culture highlight from
 the Culture tab, the selection triplet `selected_unit_id` / `selected_herd_id` / `selected_tile` +

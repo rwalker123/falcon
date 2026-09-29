@@ -405,10 +405,6 @@ const FOOD_HARVEST_RING_WIDTH := 2.0
 # Migration arrow: thinner, and only on the hovered/selected herd tile to cut clutter.
 const HERD_MIGRATION_ARROW_COLOR := Color(0.98, 0.58, 0.18, 0.8)
 const HERD_MIGRATION_ARROW_WIDTH := 1.6
-# Migration TRAIL: the same amber, dimmer than the arrow — where the herd has BEEN reads under
-# where it is going.
-const HERD_TRAIL_COLOR := Color(0.97, 0.69, 0.25, 0.6)
-const HERD_TRAIL_WIDTH := 2.0
 
 # Count / overflow badge (shared dark pill: primary `×N`, secondary `+N`).
 const MARKER_BADGE_BG := Color(0.05, 0.06, 0.08, 0.9)
@@ -914,7 +910,6 @@ var terrain_tags_overlay: PackedInt32Array = PackedInt32Array()
 var terrain_tag_labels: Dictionary = {}
 var units: Array = []
 var herds: Array = []
-var herd_trails: Dictionary = {}
 var food_sites: Array = []
 var food_site_lookup: Dictionary = {}
 # Wondrous Sites the player faction has discovered (per-faction snapshot field). Each entry:
@@ -2514,9 +2509,6 @@ func set_labor_pending(pending: Dictionary) -> void:
 ## reload. Everything `display_snapshot` clears-and-refills per snapshot heals itself and is
 ## deliberately absent here; what is listed below is the remainder, audited case by case:
 ##
-##   • `herd_trails` — APPENDED per herd id and pruned only when an id is ABSENT from the snapshot,
-##     so a herd id the new world happens to reuse inherits the old world's path and its trail leaps
-##     across the map. This is the cache that made the bug visible.
 ##   • `culture_layer_map` — MERGED by layer id, erased only on an explicit `culture_layer_removed`,
 ##     so a layer id the new world reuses shows the old world's layer.
 ##   • the selection triplet + `cycle_index` — entity ids / a herd id / a tile belonging to the old
@@ -2547,7 +2539,6 @@ func reset_world_state() -> void:
 	_ready_for_improvement = {}
 	_ready_for_improvement_knowledge = {}
 	_reset_deferred_overlays()
-	herd_trails.clear()
 	# The roads of a world we are about to stop showing. Both halves, together: the lookup holds the
 	# same road dicts the array does, so clearing one alone would leave a hover answering off a world
 	# that is gone.
@@ -2610,15 +2601,15 @@ func _wrapped_col_delta(from_col: int, to_col: int) -> int:
 			d += grid_width
 	return d
 
-## A connected tile path (a herd's migration trail, an order route) unwrapped into ONE continuous
+## A connected tile path (an order route, a crisis annotation) unwrapped into ONE continuous
 ## column frame, so a polyline through it follows the seam-crossing path that was actually walked
 ## instead of shooting the long way back across the whole map. `tiles` holds DATA columns — what a
-## snapshot publishes, so a herd stepping over the seam records `95` then `0`, and a raw
+## snapshot publishes, so a path stepping over the seam records `95` then `0`, and a raw
 ## `_hex_center` per point draws a segment the full width of the map at nearly constant row.
 ##
 ## The frame is anchored on the LAST tile via
-## `_band_effective_col` (the copy `_hex_center_wrapped` puts a MARKER on, so a trail's head lands
-## on its herd) and every earlier step is placed by the SHORTEST wrapped delta, which is at most
+## `_band_effective_col` (the copy `_hex_center_wrapped` puts a MARKER on, so a path's last tile lands
+## where a marker on that tile would) and every earlier step is placed by the SHORTEST wrapped delta, which is at most
 ## half a map width — so no segment CAN span the map and this needs none of the
 ## `0.4 * last_map_size.x` skip that the DISCONNECTED links use (supply links, the migration arrow,
 ## the band task arrow). A path that genuinely circles the world draws longer than one map width,
@@ -3090,21 +3081,10 @@ func _rebuild_herd_markers(snapshot: Dictionary) -> void:
 	herds = []
 	var herd_variant: Variant = snapshot.get("herds", [])
 	if not (herd_variant is Array):
-		herd_trails.clear()
 		return
-	var active_ids := {}
 	for entry in herd_variant:
 		if entry is Dictionary:
-			var herd_dict: Dictionary = (entry as Dictionary).duplicate(true)
-			herds.append(herd_dict)
-			var herd_id := String(herd_dict.get("id", ""))
-			if herd_id != "":
-				active_ids[herd_id] = true
-				_update_herd_trail(herd_id, herd_dict)
-	var stale_ids := herd_trails.keys()
-	for herd_id in stale_ids:
-		if not active_ids.has(herd_id):
-			herd_trails.erase(herd_id)
+			herds.append((entry as Dictionary).duplicate(true))
 
 ## Select a subject chosen from the HUD selection list (no hex click). `kind` is
 ## "unit" (id = entity_id int), "herd" (id = herd_id String) or **"land"** (no id — the tile
@@ -3294,41 +3274,6 @@ func _handle_entity_selection(col: int, row: int, occupants: Array, occupant_ind
 		# _emit_tile_selection one call earlier and selected this hex, and the land card is what the hex
 		# falls back to (refresh_selection_payload → {"kind": "tile"}, Hud.clear_selection → select_land).
 		queue_redraw()
-
-func _update_herd_trail(herd_id: String, herd: Dictionary) -> void:
-	if herd_id == "":
-		return
-	var x := int(herd.get("x", -1))
-	var y := int(herd.get("y", -1))
-	if x < 0 or y < 0:
-		return
-	var current := Vector2i(x, y)
-	var trail: Array = herd_trails.get(herd_id, [])
-	if trail.is_empty() or trail[trail.size() - 1] != current:
-		trail.append(current)
-	var max_len := int(herd.get("route_length", trail.size()))
-	if max_len > 0:
-		while trail.size() > max_len:
-			trail.remove_at(0)
-	herd_trails[herd_id] = trail
-
-func _draw_herd_trail(herd_id: String, radius: float, origin: Vector2) -> void:
-	if herd_id == "":
-		return
-	if not herd_trails.has(herd_id):
-		return
-	var trail: Array = herd_trails[herd_id]
-	if trail.size() < 2:
-		return
-	var tiles: Array = []
-	for tile in trail:
-		if tile is Vector2i:
-			tiles.append(tile)
-	if tiles.size() < 2:
-		return
-	# The trail holds DATA columns, so it MUST be unwrapped into one frame before it is connected —
-	# see `_unwrapped_path_points`.
-	draw_polyline(_unwrapped_path_points(tiles, radius, origin), HERD_TRAIL_COLOR, HERD_TRAIL_WIDTH)
 
 func _draw_arrowhead(start: Vector2, end: Vector2, color: Color, size: float = 8.0) -> void:
 	var direction := end - start

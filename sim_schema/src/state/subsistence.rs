@@ -1952,6 +1952,12 @@ pub struct DepositState {
     /// picked — which is why it rides the wire beside it. See
     /// [`ForagePatchState::upkeep_kit_named`].
     pub upkeep_kit_named: bool,
+    /// **The `extract` kit a crew on this working is sent with when nobody names one** — derived
+    /// from the roster per branch (`extraction::working_default_kit`), the same id `assign_labor`
+    /// stores on a row that named no kit: the kit whose items serve the most rungs of the branch
+    /// (`EquipmentConfig::deposit_kit_for`). `"woodcutting"` on a wood, `"stonework"` on stone; the
+    /// job default (`"none"`) only where no single kit holds that top count.
+    pub default_kit_id: String,
 }
 
 impl Default for DepositState {
@@ -1989,6 +1995,7 @@ impl Default for DepositState {
             build_kit_id: String::new(),
             upkeep_kit_id: String::new(),
             upkeep_kit_named: false,
+            default_kit_id: String::new(),
         }
     }
 }

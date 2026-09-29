@@ -81,6 +81,32 @@ anything outside `bin/server.rs`, a loader has drifted back off the seam.
 So the two paths answer opposite questions and correctly reach opposite conclusions. **Do not
 "unify" them.**
 
+### ⛔ A simulation-config reload retunes the world; it never re-describes it
+
+`handle_reload_simulation_config` takes every **tunable** off the file, and carries the running
+world's **identity** across from the config it replaces (`carry_world_identity`, `resources.rs`):
+`grid_size`, `map_topology`, `map_preset_id`, `map_seed`, `start_profile_id` /
+`start_profile_overrides`, and `fog_enabled`. Those fields were chosen by the `new_game` or
+`load_game` that built the world — the tiles exist at that grid, worldgen wrote the resolved seed
+back into `map_seed` as its source of truth, and the next save's header records grid and preset
+straight off this config. The file names the world a *fresh* boot would build, which is a different
+question. The binds stay with the reload's own `apply_port_base`, so a file that moves a socket's
+host still warns `socket_changed=restart_required`; a file whose grid differs from the live world's
+still warns `grid_size_changed=map_reset_recommended`, compared against the file's value before the
+carry.
+
+**The defect it closed:** a reload replaced the config wholesale, so a `new_game` at 24×16 followed
+by any reload left the config saying the file's 80×52. `save_game` then wrote 80×52 over 384 tiles,
+and the load built `PowerTopology::from_grid` for 4160 nodes against 384 — `index out of bounds` at
+`power.rs`. In play the config watcher can deliver a write late, which is how
+`save_load_over_the_socket` hit it only under a heavily loaded machine. Pinned by
+`server::tests::a_config_reload_keeps_the_worlds_grid_preset_and_seed_so_its_save_still_loads`;
+`from_grid` now `debug_assert`s its node count against `width × height`.
+
+**It is a separate list from `carry_runtime_owned_fields`, and must stay one.** That list is shared
+with the world-*build* paths, where a New Game takes its grid, preset and seed from the command —
+carrying the old world's there would be exactly wrong.
+
 ## Staged overrides — the client's tuning panel, and the third path
 
 The Config Tuning panel edits numbers in the client and starts a run on them without restarting the

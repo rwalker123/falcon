@@ -71,7 +71,7 @@
 //! *"what does it cost to raise this"* has one answer in one unit whichever branch is asked.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use bevy::prelude::*;
 use sim_runtime::TerrainType;
@@ -125,6 +125,10 @@ pub const FIRST_BUILT_RUNG: RungKey = RungKey::RouteDirtRoad;
 
 /// **No traffic this turn** — the neutral [`Road::traffic_work`] accumulates from.
 pub const NO_TRAFFIC: f32 = 0.0;
+
+/// **NO MIGRATORY HERD HAS EVER CROSSED THIS TILE** — the neutral of [`Road::herd_idle_turns`], and
+/// the reading that leaves a people-only road's disuse exactly as it was before herds wore trails.
+pub const NO_HERD_HAS_CROSSED: Option<u16> = None;
 
 /// **A ROAD TILE COSTS WHAT THE RUNG SAYS** — the remoteness multiplier inside
 /// [`road_keeping_range`], and the value a road with no keeper carries.
@@ -215,6 +219,18 @@ pub struct Road {
     /// into the free floor arrives there with an honest reading rather than a zero that would buy it
     /// a second grace it has not earned.
     pub idle_turns: u16,
+    /// **Consecutive turns since a migratory HERD last crossed this tile** — the game trail's own
+    /// disuse clock, beside [`Self::idle_turns`] (issue #215).
+    ///
+    /// ⛔ **`None` MEANS NO HERD HAS EVER CROSSED IT**, and that is what keeps a people-only road
+    /// byte-identical to one before herds wore trails: the disuse pass reads `None` as the herd
+    /// condition already met, so only [`Self::idle_turns`] against `disuse_grace_turns` decides.
+    ///
+    /// **Reset by herd journeys only** ([`TrafficSource::Herd`]) and advanced every other turn, so a
+    /// tile a herd still comes back to holds its wear through the long gap between passes — whoever
+    /// else walks it — and once the herd stops coming the ordinary flat loss takes it after
+    /// `route_traffic.herd_disuse_grace_turns`.
+    pub herd_idle_turns: Option<u16>,
     /// **WHY THE POOL IS STUCK ON THIS TILE** — [`crate::intensification::BuildGate::Open`] when it
     /// is not stuck, which is also what a tile nobody has queued reads.
     ///
@@ -292,6 +308,7 @@ impl Road {
             neglect_turns: NEGLECT_NONE,
             traffic_work: NO_TRAFFIC,
             idle_turns: NEGLECT_NONE,
+            herd_idle_turns: NO_HERD_HAS_CROSSED,
             build_blocked_reason: crate::intensification::BuildGate::Open,
             build_material_demanded: NO_MATERIAL_DRAWN,
             build_material_supplied: NO_MATERIAL_DRAWN,
@@ -490,16 +507,18 @@ impl RoadRegistry {
 
 /// **THIS TURN'S TRAFFIC, recorded where it happens and spent where roads are worn.**
 ///
-/// `balance_supply_networks` knows which pairs pooled and `crate::systems::advance_band_movement`
-/// knows who marched; neither may also be the thing that lays roads. The pooling pass runs **before**
+/// `balance_supply_networks` knows which pairs pooled, `crate::systems::advance_band_movement`
+/// knows who marched and `crate::fauna::advance_herds` knows which migratory herds walked their
+/// corridor; none of them may also be the thing that lays roads. The pooling pass runs **before**
 /// the accrual, and laying a road mid-pass would let this turn's pooling read a road this turn's
-/// pooling created. So both write here and [`advance_roads`] spends it — the same producer/consumer
-/// split `upkeep_supplied` uses across the Population→Logistics carry.
+/// pooling created. So all three write here and [`advance_roads`] spends it — the same
+/// producer/consumer split `upkeep_supplied` uses across the Population→Logistics carry.
 ///
 /// **Cleared by the accrual, every turn**, so a turn with no traffic wears nothing rather than
 /// re-wearing last turn's journeys. A **march** therefore lands in the *next* turn's Logistics, being
-/// recorded a stage later than a pooling link — banked exactly once either way, since this log has
-/// one drain.
+/// recorded a stage later than a pooling link; a **herd** step is recorded earlier in the same
+/// Logistics stage (`advance_herds` runs before `balance_supply_networks`) and lands the same turn.
+/// Each is banked exactly once, since this log has one drain.
 #[derive(Resource, Default, Debug, Clone)]
 pub struct RouteTrafficLog {
     /// The journeys that carried traffic this turn. Unordered within a pair — a road has no
@@ -509,10 +528,10 @@ pub struct RouteTrafficLog {
 
 /// **ONE JOURNEY, AND WHAT EACH TILE OF IT EARNS.**
 ///
-/// ⛔ **THE WEIGHT RIDES THE ENTRY SO THERE IS STILL EXACTLY ONE DRAIN AND ONE ACCRUAL LOOP.** Two
-/// kinds of traffic bank at two rates — a standing pooling link per turn, a march per worker — and
-/// the alternative to a weight here is two logs, two drains and two chances for one of them to be
-/// forgotten by a third kind of traffic.
+/// ⛔ **THE WEIGHT RIDES THE ENTRY SO THERE IS STILL EXACTLY ONE DRAIN AND ONE ACCRUAL LOOP.** Three
+/// kinds of traffic bank at three rates — a standing pooling link per turn, a march per worker, a
+/// migrating herd per herd — and the alternative to a weight here is three logs, three drains and
+/// three chances for one of them to be forgotten.
 #[derive(Debug, Clone, Copy)]
 pub struct RouteJourney {
     pub from: UVec2,
@@ -520,6 +539,23 @@ pub struct RouteJourney {
     /// **What EACH TILE of this journey banks**, in the work units `RungBuild::work_cost` is quoted
     /// in — already resolved against the ladder at the moment the journey was recorded.
     pub work_per_tile: f32,
+    /// **Who made this journey.** The weight above is all the accrual needs; the source is read for
+    /// one thing only — a [`TrafficSource::Herd`] journey resets [`Road::herd_idle_turns`] on the
+    /// tiles it crossed, which is what gives a game trail its longer disuse grace.
+    pub source: TrafficSource,
+}
+
+/// **WHICH OF THE THREE THINGS THAT MOVE MADE A JOURNEY** — one per recorder on
+/// [`RouteTrafficLog`], so the one log and its one drain can still tell a herd's corridor from
+/// people's feet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrafficSource {
+    /// A live pooling link between two camps — [`RouteTrafficLog::walked`].
+    Link,
+    /// A party on the move — [`RouteTrafficLog::marched`].
+    March,
+    /// A migratory herd on a `Migrate` leg — [`RouteTrafficLog::herd_passed`].
+    Herd,
 }
 
 impl RouteTrafficLog {
@@ -532,7 +568,12 @@ impl RouteTrafficLog {
     /// balanced network ships nothing at all. A mass term here is the error §4.13a ① already
     /// corrected.
     pub fn walked(&mut self, from: UVec2, to: UVec2, ladder: &LadderConfig) {
-        self.record(from, to, ladder.route_traffic.work_per_link_tile_per_turn);
+        self.record(
+            from,
+            to,
+            ladder.route_traffic.work_per_link_tile_per_turn,
+            TrafficSource::Link,
+        );
     }
 
     /// **Record a party MARCHING between two tiles** — `work_per_worker_tile × workers` on each tile
@@ -548,17 +589,45 @@ impl RouteTrafficLog {
             from,
             to,
             ladder.route_traffic.work_per_worker_tile * workers as f32,
+            TrafficSource::March,
         );
     }
 
-    /// The one place a journey is appended — the `from != to` guard both recorders share, because a
+    /// **Record a migratory HERD stepping along a `Migrate` leg** — `work_per_herd_tile` on each tile
+    /// it crossed, the third source of route traffic and the oldest: the first roads were the traces
+    /// mass herds wore walking the same corridor between their grounds year after year.
+    ///
+    /// ⛔ **A HERD IS NOT A HEADCOUNT**, so this rate is per herd, never per unit of biomass: a herd's
+    /// biomass is a food stock, not a number of hooves, and a mass term here is the error §4.13a ①
+    /// already corrected for the link lever.
+    ///
+    /// **Only the corridor wears in, and only a wild herd walks one.** `fauna::advance_herds` calls
+    /// this for a step an **ownerless** herd takes on a `RoamState::Migrate` leg and for nothing else
+    /// — a grazing-wander game group and a loitering herd mill about their ground rather than walking
+    /// a line, and a tamed or penned herd follows its people rather than a migration corridor, so
+    /// none of them bank anything. The traffic it
+    /// records is ordinary traffic from here on: capped at [`traffic_ceiling`] like every other
+    /// journey, and it resets [`Road::idle_turns`] and [`Road::herd_idle_turns`] — the second is what
+    /// holds a game trail through the long gap before the herd comes back
+    /// (`route_traffic.herd_disuse_grace_turns`).
+    pub fn herd_passed(&mut self, from: UVec2, to: UVec2, ladder: &LadderConfig) {
+        self.record(
+            from,
+            to,
+            ladder.route_traffic.work_per_herd_tile,
+            TrafficSource::Herd,
+        );
+    }
+
+    /// The one place a journey is appended — the `from != to` guard every recorder shares, because a
     /// party that stood still walked nothing.
-    fn record(&mut self, from: UVec2, to: UVec2, work_per_tile: f32) {
+    fn record(&mut self, from: UVec2, to: UVec2, work_per_tile: f32, source: TrafficSource) {
         if from != to {
             self.journeys.push(RouteJourney {
                 from,
                 to,
                 work_per_tile,
+                source,
             });
         }
     }
@@ -1066,7 +1135,11 @@ const NO_ROAD_HERE: u32 = 0;
 
 /// The rank of whatever this tile is **holding** — never the rung being raised on it, which is work
 /// in progress and not something a traveller can walk on.
-fn tile_rank(registry: &RoadRegistry, tile: UVec2) -> u32 {
+///
+/// **The one road test every traveller's tie-break reads** — [`trace_path`] for a journey, and a
+/// migratory herd's `Migrate` step (`fauna::best_land_neighbor_toward`) — so *"prefer the road"*
+/// means one thing whoever is walking.
+pub(crate) fn tile_rank(registry: &RoadRegistry, tile: UVec2) -> u32 {
     registry
         .road(tile)
         .map_or(NO_ROAD_HERE, |road| rung_rank(road.held_rung()))
@@ -1160,7 +1233,8 @@ pub fn trace_path(
 /// 3. **Clear the bill** for the coming turn's stamp.
 /// 4. **Bank this turn's traffic** on **every tile each journey crossed**, capped at
 ///    [`traffic_ceiling`] — the top of the free floor, and no further.
-/// 5. **Bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns`.
+/// 5. **Bleed a free road nobody walked**, past `route_traffic.disuse_grace_turns` — and, on a tile
+///    a herd has crossed, past `route_traffic.herd_disuse_grace_turns` since the herd last did.
 ///
 /// Then the registry is **pruned** of every road back at [`RUNG_UNSTARTED`] — after the banking,
 /// because a tile first walked this turn is at the floor until its first traffic lands.
@@ -1268,24 +1342,31 @@ pub fn advance_roads(
     // which is what makes *"one band keeps half the tiles and another the other half"* a state the
     // traffic can actually produce. **The weight is the entry's**, resolved where the journey was
     // recorded: a pooling link's is `work_per_link_tile_per_turn`, a march's is
-    // `work_per_worker_tile × workers`.
+    // `work_per_worker_tile × workers`, a migrating herd's is `work_per_herd_tile`.
     //
     // ⛔ **EVERY PATH IS TRACED BEFORE ANY IS BANKED.** The trace reads the registry (it prefers an
     // existing road among equally good steps) and the banking writes it, so the two cannot be
     // interleaved — and doing so would also let the first journey of a turn lay the road the second
     // one then follows, which is a second producer of this turn's traffic.
-    let journeys: Vec<(Vec<UVec2>, f32)> = std::mem::take(&mut traffic.journeys)
+    let journeys: Vec<(Vec<UVec2>, f32, TrafficSource)> = std::mem::take(&mut traffic.journeys)
         .into_iter()
         .map(|journey| {
             (
                 trace_path(journey.from, journey.to, width, height, wrap, &registry),
                 journey.work_per_tile,
+                journey.source,
             )
         })
         .collect();
-    for (path, work_per_tile) in journeys {
+    // **The tiles a herd crossed this turn** — the only thing the source is read for. A local set
+    // rather than a flag on the road, so there is no second piece of per-turn scratch to clear.
+    let mut herd_crossed: HashSet<UVec2> = HashSet::new();
+    for (path, work_per_tile, source) in journeys {
         for tile in path {
             registry.road_or_trail(tile, &ladder).traffic_work += work_per_tile;
+            if source == TrafficSource::Herd {
+                herd_crossed.insert(tile);
+            }
         }
     }
 
@@ -1299,6 +1380,13 @@ pub fn advance_roads(
     // runs over it, which would be a second producer of a position the builders' pool owns.
     let ceiling = traffic_ceiling(&ladder);
     for road in registry.iter_mut() {
+        // **The game trail's own clock** — reset only by a herd, advanced every other turn, and left
+        // at `NO_HERD_HAS_CROSSED` on a tile no herd has ever walked.
+        if herd_crossed.contains(&road.tile) {
+            road.herd_idle_turns = Some(NEGLECT_NONE);
+        } else if let Some(turns) = road.herd_idle_turns.as_mut() {
+            *turns = turns.saturating_add(1);
+        }
         if road.traffic_work <= NO_TRAFFIC {
             // **Nothing walked here.** Consecutive idle turns, so a road that carried a journey last
             // turn and none this one starts its count from one.
@@ -1319,13 +1407,27 @@ pub fn advance_roads(
     //
     // It runs **after** the banking, because whether a road was idle is only known once this turn's
     // journeys have been drained onto it.
+    //
+    // ⛔ **A GAME TRAIL HOLDS UNTIL THE HERD STOPS COMING** (issue #215). A migratory herd returns to
+    // a corridor tile a median ~160 turns later — far past the ~44 turns a worn trail survives
+    // people's disuse — so the loss waits on **both** clocks: the people grace on `idle_turns` and
+    // the herd grace on `herd_idle_turns`. A tile the herd still walks holds its wear, people's
+    // included; a tile no herd has ever crossed reads the herd condition as met and bleeds exactly
+    // as it always did.
     let grace = ladder.route_traffic.disuse_grace_turns;
+    let herd_grace = ladder.route_traffic.herd_disuse_grace_turns;
     let loss = ladder.route_traffic.disuse_loss_per_turn;
     for road in registry.iter_mut() {
         if road.position() > ceiling {
             continue;
         }
         if u32::from(road.idle_turns) <= grace {
+            continue;
+        }
+        if road
+            .herd_idle_turns
+            .is_some_and(|turns| u32::from(turns) <= herd_grace)
+        {
             continue;
         }
         let bled = road.position() - loss;
@@ -1341,7 +1443,9 @@ pub fn advance_roads(
     // **After the banking, because a tile first crossed THIS turn is at `RUNG_UNSTARTED` until its
     // traffic lands.** Pruning before phase 4 would delete every road on the turn it formed.
     //
-    // Remembering that animals once walked there is **issue #215's concern, not this registry's**.
+    // **A herd's corridor is no exception**: a game trail survives because the herd keeps walking it
+    // (`RouteTrafficLog::herd_passed` resets the idle count like any traffic), never because the
+    // registry remembers that animals once walked there.
     let reverted: Vec<UVec2> = registry
         .iter()
         .filter(|(_, road)| road.position() <= RUNG_UNSTARTED)

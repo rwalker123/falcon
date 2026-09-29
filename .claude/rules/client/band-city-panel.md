@@ -5695,9 +5695,10 @@ one, so without the clause the flag would have no sentence anywhere on the row.
 
 **THE GROUNDWORK ROSTER ROW CARRIES IT AS A CLAUSE**, through `deposit_row_value`'s fourth argument.
 `_workings_roster_cutters` was already the crew; `_workings_roster_max_useful` is the ceiling beside
-it, `HudDepositVocab.max_useful_cutters` struck at `HudBandLaborState.floor_for_extract` — **this
-band's own floor, never `DepositState.floor`**, which is the deepest floor any band cutting the
-working named and would measure this crew against another band's order.
+it, `HudDepositVocab.published_useful_cutters` over this band's own `extract` row — the sim's geared
+cap (`usefulCutters`) at **this band's own kit and floor, never `DepositState.floor`**, which is the
+deepest floor any band cutting the working named and would measure this crew against another band's
+order.
 
 ⛔ **THE PAIRED NEGATIVE IS WHAT THE HARNESS CLAIM IS MADE OF.** `crew_is_wasted` is `workers >
 useful` STRICTLY — `workers == useful` is FULLY STAFFED, the good state — so

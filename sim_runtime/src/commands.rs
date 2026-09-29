@@ -707,6 +707,61 @@ pub enum QueryPayload {
     /// *"What does this crew bring home per turn off this source, and how far do they walk?"* — the
     /// work row's compose sheet, on both webs. See [`WorkPartyForecastQuery`].
     WorkPartyForecast(WorkPartyForecastQuery),
+    /// *"What does each crew size cut off this working with this kit?"* — the deposit compose
+    /// sheet, before the commit. See [`DepositCrewTakeQuery`].
+    DepositCrewTake(DepositCrewTakeQuery),
+}
+
+/// **THE DEPOSIT COMPOSE SHEET'S QUESTION** (#663) — what a crew of each size, off this band,
+/// carrying this kit, cuts off this working this turn, how many of them hold the held rung's tool,
+/// and what they would cut once the working is raised one rung. Priced as a **prospective row**
+/// through the turn's own functions, so committing crew `n` with this kit makes the turn pay row
+/// `n`'s [`DepositCrewTakeRow::take`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct DepositCrewTakeQuery {
+    pub faction_id: u32,
+    /// The asking band's durable `BandId`.
+    pub band_id: u64,
+    /// The working's tile — with [`Self::material`], its key, because one tile can hold two.
+    pub x: u32,
+    pub y: u32,
+    pub material: String,
+    /// An `equipment.json` roster id, **required** (`none` is a real answer); unknown or not listing
+    /// `extract` is refused.
+    pub kit_id: String,
+    /// The composed escapement floor, a fraction of the deposit's capacity — a term in the reach.
+    pub floor: f32,
+    /// The stepper's cap: one row per crew size `1..=max_workers`.
+    pub max_workers: u32,
+}
+
+/// **ONE CREW SIZE ON THE DEPOSIT COMPOSE SHEET** — see [`DepositCrewTakeQuery`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DepositCrewTakeRow {
+    /// Echoed so the row is self-describing. Rows ascend from `1`.
+    pub workers: u32,
+    /// **This turn's cut at the rung the working holds** — bare rate × crew plus the held rung's
+    /// tool, capped by the reach at the floor, off the stock renewed first. The sheet's NEXT TURN.
+    pub take: f32,
+    /// **Workers holding the held rung's tool** — the *N* of *"N of `workers` kits available"*. `0`
+    /// when the kit carries no tool for the held rung.
+    pub armed_workers: f32,
+    /// **The crew's cut once the working is raised one rung**, before the reach caps it — the
+    /// sheet's *"once felled"* figure. `0` at the top of a branch.
+    pub next_rung_take: f32,
+}
+
+/// The answer to [`DepositCrewTakeQuery`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DepositCrewTakeReply {
+    /// One row per crew size, ascending, `1..=max_workers`.
+    pub per_crew: Vec<DepositCrewTakeRow>,
+    /// The rung the working holds, `"<branch>:<id>"` — an unopened working reads its free floor.
+    pub held_rung: String,
+    /// The rung above it, `""` at the top of the branch.
+    pub next_rung: String,
+    /// `false` past the band's work range, where the turn abandons the row: every take reads `0`.
+    pub in_range: bool,
 }
 
 /// **WHICH SOURCE A WORK-PARTY QUESTION IS ABOUT** — a herd or a patch, the two webs a party works.
@@ -877,6 +932,8 @@ pub enum QueryReply {
     SeatClaim(SeatClaimReply),
     /// The work row's caravan forecast.
     WorkPartyForecast(WorkPartyForecastReply),
+    /// The deposit compose sheet's crew curve.
+    DepositCrewTake(DepositCrewTakeReply),
 }
 
 /// **Whether this connection now drives that faction.**
@@ -1030,6 +1087,8 @@ pub mod query_error {
     pub const UNKNOWN_HERD: &str = "unknown_herd";
     /// A work-party question named a tile carrying no forage patch.
     pub const UNKNOWN_PATCH: &str = "unknown_patch";
+    /// A deposit question naming ground that holds none of the material (or a tile off the map).
+    pub const UNKNOWN_DEPOSIT: &str = "unknown_deposit";
     /// No band of the queried faction carries the queried `BandId`.
     pub const UNKNOWN_BAND: &str = "unknown_band";
     /// The queried `kit_id` names no `equipment.json` roster entry.
@@ -2175,6 +2234,18 @@ impl CommandEnvelope {
                                 height: ask.height,
                             })
                         }
+                        QueryPayload::DepositCrewTake(ask) => {
+                            pb::query_command::Query::DepositCrewTake(pb::DepositCrewTakeQuery {
+                                faction_id: ask.faction_id,
+                                band_id: ask.band_id,
+                                x: ask.x,
+                                y: ask.y,
+                                material: ask.material.clone(),
+                                kit_id: ask.kit_id.clone(),
+                                floor: ask.floor,
+                                max_workers: ask.max_workers,
+                            })
+                        }
                     }),
                 })
             }
@@ -2668,6 +2739,18 @@ impl CommandEnvelope {
                     pb::query_command::Query::WorkPartyForecast(ask) => {
                         QueryPayload::WorkPartyForecast(work_party_query_from_proto(ask)?)
                     }
+                    pb::query_command::Query::DepositCrewTake(ask) => {
+                        QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
+                            faction_id: ask.faction_id,
+                            band_id: ask.band_id,
+                            x: ask.x,
+                            y: ask.y,
+                            material: ask.material,
+                            kit_id: ask.kit_id,
+                            floor: ask.floor,
+                            max_workers: ask.max_workers,
+                        })
+                    }
                 };
                 CommandPayload::Query {
                     request_id: cmd.request_id,
@@ -2823,6 +2906,23 @@ impl QueryReplyEnvelope {
                     slots: slots.iter().map(save_slot_info_to_proto).collect(),
                 })
             }
+            QueryReply::DepositCrewTake(answer) => {
+                pb::query_reply_envelope::Reply::DepositCrewTake(pb::DepositCrewTakeReply {
+                    per_crew: answer
+                        .per_crew
+                        .iter()
+                        .map(|row| pb::DepositCrewTakeRow {
+                            workers: row.workers,
+                            take: row.take,
+                            armed_workers: row.armed_workers,
+                            next_rung_take: row.next_rung_take,
+                        })
+                        .collect(),
+                    held_rung: answer.held_rung.clone(),
+                    next_rung: answer.next_rung.clone(),
+                    in_range: answer.in_range,
+                })
+            }
             QueryReply::WorkPartyForecast(answer) => {
                 pb::query_reply_envelope::Reply::WorkPartyForecast(pb::WorkPartyForecastReply {
                     posts_a_party: answer.posts_a_party,
@@ -2901,6 +3001,23 @@ impl QueryReplyEnvelope {
                         .collect(),
                     armed_crew: answer.armed_crew,
                     weapon_item_id: answer.weapon_item_id,
+                })
+            }
+            pb::query_reply_envelope::Reply::DepositCrewTake(answer) => {
+                QueryReply::DepositCrewTake(DepositCrewTakeReply {
+                    per_crew: answer
+                        .per_crew
+                        .into_iter()
+                        .map(|row| DepositCrewTakeRow {
+                            workers: row.workers,
+                            take: row.take,
+                            armed_workers: row.armed_workers,
+                            next_rung_take: row.next_rung_take,
+                        })
+                        .collect(),
+                    held_rung: answer.held_rung,
+                    next_rung: answer.next_rung,
+                    in_range: answer.in_range,
                 })
             }
             pb::query_reply_envelope::Reply::WorkPartyForecast(answer) => {
@@ -3303,6 +3420,52 @@ mod tests {
                 // together with the rows.
                 armed_crew: 2,
                 weapon_item_id: "spears".to_string(),
+            }),
+        };
+        let bytes = reply.encode_to_vec().expect("encode");
+        assert_eq!(QueryReplyEnvelope::decode(&bytes).expect("decode"), reply);
+    }
+
+    /// **THE DEPOSIT CREW CURVE ROUND-TRIPS** (#663) — every field distinct and non-round, so a
+    /// transposition between the hand-written proto and the Rust mirror is caught.
+    #[test]
+    fn the_deposit_crew_curve_round_trips_through_the_wire() {
+        let payload = CommandPayload::Query {
+            request_id: 77,
+            query: QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
+                faction_id: 2,
+                band_id: 4_321,
+                x: 17,
+                y: 23,
+                material: "wood".to_string(),
+                kit_id: "woodcutting".to_string(),
+                floor: 0.625,
+                max_workers: 9,
+            }),
+        };
+        let envelope = CommandEnvelope {
+            payload: payload.clone(),
+            correlation_id: None,
+        };
+        let bytes = envelope.encode_to_vec().expect("encode");
+        assert_eq!(
+            CommandEnvelope::decode(&bytes).expect("decode").payload,
+            payload
+        );
+        let reply = QueryReplyEnvelope {
+            request_id: 77,
+            reply: QueryReply::DepositCrewTake(DepositCrewTakeReply {
+                per_crew: (1..=3)
+                    .map(|workers| DepositCrewTakeRow {
+                        workers,
+                        take: workers as f32 * 0.6,
+                        armed_workers: workers as f32 * 0.5,
+                        next_rung_take: workers as f32 * 2.25,
+                    })
+                    .collect(),
+                held_rung: "forestry:deadfall".to_string(),
+                next_rung: "forestry:felling".to_string(),
+                in_range: true,
             }),
         };
         let bytes = reply.encode_to_vec().expect("encode");

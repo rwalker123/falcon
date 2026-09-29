@@ -356,36 +356,25 @@ radius the ring is split and the "inks nothing else" half fails on the outline's
 **It saves no PNG and moves none** — the frame set was byte-identical across the fix, the outline
 being unwrapped and wrapped to the same place on every non-wrapping fixture here.
 
-### `_assert_herd_trail_unwraps` — the seam guard for a CONNECTED path
+### `_assert_herd_draws_no_trail` — a herd is drawn from the CURRENT snapshot alone
 
-The second PNG-less seam block, on its own wrapping fixture (`_snapshot_herd_trail_seam`: one herd,
-no band, parked one hex east of the seam). It pans half a map west so the seam sits mid-frame,
-captures, seeds `herd_trails` with a trail crossing it — the map's last two columns then its first
-two, head on the herd's own tile — captures again, and makes two claims about the ink: that there IS
-some, and that it spans no more than `HERD_TRAIL_SEAM_MAX_SPAN_COLS` hex columns.
+Issue #215 deleted the client-side herd breadcrumb (`MapView.herd_trails`); a herd's trail is now the
+road rows its Migrate legs wear in (`roads.md`, frame `map_herd_corridor_trail`). This PNG-less
+block, run right after that frame, guards the deletion: it walks one herd down the corridor column
+one `display_snapshot` per step, captures, then shows the same FINAL snapshot to a map just put
+through `reset_world_state` and captures again. Any differing pixel is ink the walk left behind —
+exactly what the breadcrumb drew — so the claim is **0 px differ**.
 
-**THE HARNESS COULD NEVER HAVE CAUGHT THIS ON A PNG, AND THAT IS THE GENERAL LESSON HERE**: a trail
-needs TWO successive snapshots to reach a second point, and every fixture in this file is ONE
-snapshot, so `_draw_herd_trail` had no coverage of any kind — not a weak frame, no frame. A draw fed
-by ACCUMULATED state is invisible to a single-snapshot harness whatever else it renders, and the
-seeded-state probe is how it gets covered. `map_preview`'s other accumulator (`culture_layer_map`)
-is in the same position.
+**A diff of zero also passes when the herd draws nothing**, so a liveness half comes first: the
+fresh frame must differ from the same snapshot with its `herds` emptied (the marker's own ink, 170 px
+at the cover fit). The fixture carries no `routes`, so no road ink can mask or fake either half.
 
-**The bound is set from the two MEASURED spans, not from the map's width**, which is the part worth
-copying. The arithmetic says the unwrapped defect draws a 15-column segment; measured, it inks
-**6.1 columns (456px)**, because the line runs off-frame west and is CLIPPED. The honest drawing inks
-**3.0 columns (224px)** — its four hexes are three steps apart. A bound reasoned from 15 would sit
-above BOTH and pass the bug; 4.0 splits what was actually rendered.
+A draw fed by ACCUMULATED state is invisible to a single-snapshot PNG whatever else it renders — the
+breadcrumb had no frame at all until a seeded probe covered it — and this multi-snapshot walk is how
+the absence of such state is covered. `map_preview`'s other accumulator (`culture_layer_map`) is in
+the position the breadcrumb was.
 
-**The liveness half is not decoration.** A span bound alone is satisfied by a trail that draws
-NOTHING — the tightest span is the empty one — which is the shape of every "a dead field cannot
-diverge" trap. Sabotage-verified in both directions, and they fail independently: restoring the
-per-point `_hex_center` fails the span alone (`456px, within 299`), and stubbing the draw out fails
-the liveness alone (`0 px changed`).
-
-**It saves no PNG and moves none** — 72/72 byte-identical across the fix, since it clears
-`herd_trails` behind it and the next state re-fits the camera, and since the unwrapping is an
-identity on the non-wrapping fixtures the trail and the routes actually appear on.
+**It saves no PNG**; it ends on the herd-less snapshot and the next state re-fits the camera.
 
 ### `map_deny_highlight` / `map_trade_highlight` — the verb sheets' PASSIVE highlight (issue #529)
 
@@ -1457,3 +1446,12 @@ assertion for an unrelated reason.
 > and the probe window moved below the glyph besides (`_frame_inks_red_below_hex`, against the ⚠'s
 > `_frame_inks_red_near_hex`, which must contain its token). See `map-markers.md` for the
 > measurements and for `FACTION_BAR_INK_RED_MARGIN`'s re-derivation to 0.12.
+
+## The overlay's overstaffed flag measures the GEARED cap (issue #663)
+
+`map_source_list`'s worn pair publishes `useful_cutters` (`SOURCE_LIST_WORN_USEFUL`, 3) on both
+`extract` rows, over a stand whose room is worth about five BARE cutters (`SOURCE_LIST_WORN_STOCK`
+311). The overstaffed crew is the published cap plus two, so it sits inside the bare quotient: an
+overlay still measuring `room ÷ perWorkerBiomass` would not flag it. A premise asserts exactly that
+against a local bare quotient (`_worn_bare_cap`), beside the existing *prices a real ceiling* premise,
+and the fully-staffed twin on the published cap still carries nothing.

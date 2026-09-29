@@ -174,11 +174,11 @@ That two-sided movement is the whole point. The ladder is *not* a straight upgra
 where the traffic pays for the upkeep, and everywhere else a trail is the right answer forever. It is
 the same economy as the pen — a rung you climb only where the land justifies it.
 
-**#215** — *"herd/game trails follow hex centers and become the basis of roads."* — remains open,
-and the bottom rung is **not** it. The rung is `path`, because nothing in the sim lets an animal wear
-a road in: route work is banked in exactly one place, `route_traffic.walked` in `supply.rs`'s
-pooling-link pass, which is the player's own trade-pooling bands. A ladder whose floor an animal
-could reach is still the origin #215 wants.
+**#215** — *"herd/game trails follow hex centers and become the basis of roads."* — is the origin
+the ladder's floor now has: migratory herds bank route work on their `Migrate` legs, so a migration
+corridor wears into a trail the way the Buffalo Trace was worn by bison, and a band that camps on it
+inherits a road the animals made. The bottom rung stays spelled `path` — it names what reaches it,
+traffic of any kind, not an origin. See `.claude/rules/core_sim/routes.md` → "Game trails".
 
 ### It is the intensification ladder's shape
 

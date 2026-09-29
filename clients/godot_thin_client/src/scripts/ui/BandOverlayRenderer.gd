@@ -975,7 +975,8 @@ func source_total_text() -> String:
 ## shipped predicate; this one has, and it is `SourceForecast.crew_is_wasted`.**
 const ATTENTION_NONE := 0
 ## A crew bigger than its source can use, on ALL THREE WEBS — `SourceForecast.crew_is_wasted` against
-## `max_useful_workers` for a patch or a herd and `HudDepositVocab.max_useful_cutters` for a working.
+## `max_useful_workers` for a patch or a herd and `HudDepositVocab.published_useful_cutters` for a
+## working.
 ##
 ## ⛔ **IT RANKS BELOW THE THREE ABOVE IT, WHICH IS WHY THEY EACH MOVED UP ONE.** Idle hands are a
 ## WASTE — the work goes on, at the rate the ground allows — where the three above are each a LOSS: a
@@ -1144,11 +1145,12 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# what ranks them, so each class is handed the clause it is the class for and the
 				# waste arm arrives below as its own argument.
 				HudDepositVocab.hazard_clause(deposit),
-				# **AND THE WASTE QUESTION, AT THIS BAND'S OWN FLOOR** — `max_useful_cutters` is the
-				# same quotient the working's compose sheet caps its stepper at, so a `+` the sheet
-				# refused and a row that flags the hands already standing there are one ceiling.
+				# **AND THE WASTE QUESTION, AT THIS ROW'S OWN KIT AND FLOOR** — the sim's published
+				# `useful_cutters`, the same rule the working's compose sheet caps its stepper at, so a
+				# `+` the sheet refused and a row that flags the hands already standing there are one
+				# ceiling, gear included.
 				HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
-					HudDepositVocab.max_useful_cutters(deposit, _entry_floor(entry))),
+					HudDepositVocab.published_useful_cutters(entry)),
 				# **THE WORKING'S OWN MATERIAL RATE, which is what this row HEADLINES** — `food` is
 				# a structural zero here (see the sort key's own note on `_source_row`).
 				_entry_material_rate(entry, material))

@@ -70,6 +70,7 @@ use thiserror::Error;
 
 use crate::combat::CombatStats;
 use crate::config_load::{load_config_from_env, ConfigLoadError};
+use crate::extraction::NO_DEPOSIT_GEAR;
 use crate::intensification::NO_BUILD_GEAR;
 
 pub const BUILTIN_EQUIPMENT_CONFIG: &str = include_str!("data/equipment.json");
@@ -204,6 +205,41 @@ pub enum EquipmentStat {
     /// `branch: plant`, so which web a tool serves is *content* rather than a property of the stat.
     /// See [`EquipmentEffect::branch`] for why an unqualified build tool is refused at load.
     BuildWork,
+    /// **THE EXTRA DEPOSIT UNITS ONE EQUIPPED WORKER TAKES PER TURN** — added to the rung's bare
+    /// `yield_per_worker_turn` ([`crate::extraction::deposit_take`]), never replacing it. Neutral
+    /// at **`0.0`** ([`crate::extraction::NO_DEPOSIT_GEAR`]); the knapped axe ships `+1.0` on
+    /// `forestry:felling` and `forestry:coppice`, and the wedges `+1.0` on `extraction:quarry`
+    /// (`equipment.json`), so an equipped feller cuts `2.0 + 1.0 = 3.0` wood a turn where a bare
+    /// one cuts `2.0`.
+    ///
+    /// # ⛔ ADDITIVE, NOT AN ABSOLUTE RATE — [`Self::BuildWork`]'s shape exactly
+    ///
+    /// The carries ([`Self::ForageCarry`], [`Self::HuntCarry`]) name the **whole** rate a tool buys
+    /// and fall back to a flat bare-handed baseline. A deposit has no flat baseline: the bare rate
+    /// is **interpolated per rung** (`deadfall`, `felling`, `coppice` and `quarry` each carry their
+    /// own), so an absolute gear rate would erase the very climb the ladder prices — a felling crew
+    /// and a coppice crew holding the same axe would cut the same amount. An addition keeps the
+    /// rung's rate as the floor the tool lifts from, and the tool never touches the deposit's own
+    /// reach or floor: `min(labor, reachable)` binds exactly where it bound bare.
+    ///
+    /// # PER EQUIPPED WORKER, on the coverage seam
+    ///
+    /// Summed over the crew through [`KitCoverage::weighted_rate`] × head count, the partly-equipped
+    /// party's own seam — five fellers holding two axes cut `5 × 2.0 + 2 × 1.0`.
+    ///
+    /// # SCOPED BY BRANCH AND RUNG, exactly as [`Self::BuildWork`] is
+    ///
+    /// `validate` **requires** a `branch` and allows a `rung`
+    /// ([`EquipmentEffect::serves_build`] is the one filter both stats read), so an axe cannot
+    /// reach a stone scatter and one kit can carry both the axe and the wedges without either
+    /// adding to the other's work: outside its bound an effect contributes exactly the neutral.
+    ///
+    /// ⛔ **THE FLOOR RUNGS STAY BARE-WORKABLE** (`docs/plan_extraction.md` §4d): a felling kit
+    /// wants a haft, a haft is wood, and wood comes from the floor. Gear is only ever an addition
+    /// **above** a rate the bare hand already has, and the one tool bound to the floors —
+    /// `forestry:deadfall` and `extraction:gathering` — is the **sled**, which costs hide and fibre
+    /// and no wood, so no tool is a prerequisite for the wood the rest of the chain needs.
+    DepositTake,
     /// **The rate a bench works at with this tool in hand** — the value
     /// `workers × progress_per_worker_turn ×` is multiplied by. Declared **equipped only**; the
     /// unequipped side is the MATERIAL's own [`crate::materials_config::HandWorking::rate`], which
@@ -234,6 +270,7 @@ impl EquipmentStat {
             Self::HuntCarry => "haul",
             Self::ForageCarry => "carry",
             Self::BuildWork => "build work",
+            Self::DepositTake => "take",
             Self::ScoutVantageRange => "tile vantage",
             Self::ExpeditionSightRange => "tile sight",
             Self::Dispersion => "dispersion",
@@ -245,11 +282,21 @@ impl EquipmentStat {
     }
 
     /// **Whether a readout states this stat as an ADDITION** — `+0.7 build work` rather than
-    /// `0.7 build work`. True exactly for [`Self::BuildWork`], the one stat that is added to what a
-    /// worker already does rather than naming the value the stat takes (see its neutral of `0.0` in
-    /// [`Self::neutral`]); every other value is the whole number the stat reads.
+    /// `0.7 build work`. True exactly for the two [`Self::is_rung_scoped`] stats, the ones added to
+    /// what a worker already does rather than naming the value the stat takes (see their neutral of
+    /// `0.0` in [`Self::neutral`]); every other value is the whole number the stat reads.
     pub fn reads_as_addition(self) -> bool {
-        matches!(self, Self::BuildWork)
+        self.is_rung_scoped()
+    }
+
+    /// **The stats bound to a ladder branch and, optionally, one rung on it** —
+    /// [`Self::BuildWork`] and [`Self::DepositTake`]. `validate` requires an
+    /// [`EquipmentEffect::branch`] on these and refuses one (and a `rung`) everywhere else, and
+    /// every consumer filters them through [`EquipmentEffect::serves_build`]. Both are per-worker
+    /// **additions**, so an item may declare either more than once in one layer provided each entry
+    /// names a different rung ([`LiveItem::scoped_entries`]).
+    pub fn is_rung_scoped(self) -> bool {
+        matches!(self, Self::BuildWork | Self::DepositTake)
     }
 
     /// The neutral value — what the stat reads when **no** item declares it. Only the stats resolved
@@ -266,6 +313,7 @@ impl EquipmentStat {
         match self {
             EquipmentStat::Dispersion | EquipmentStat::Exposure => Some(1.0),
             EquipmentStat::BuildWork => Some(NO_BUILD_GEAR),
+            EquipmentStat::DepositTake => Some(NO_DEPOSIT_GEAR),
             EquipmentStat::Attack
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
@@ -378,8 +426,10 @@ pub struct EquipmentEffect {
     /// `3.3`, so any ceiling in that gap behaves identically and `1.0` is the round number in it.
     #[serde(default)]
     pub max_body_mass: Option<f32>,
-    /// **WHICH FOOD WEB'S BUILDS THIS EFFECT SERVES** — required on
-    /// [`EquipmentStat::BuildWork`] and rejected on every other stat.
+    /// **WHICH FOOD WEB'S BUILDS THIS EFFECT SERVES** — required on the two
+    /// [`EquipmentStat::is_rung_scoped`] stats ([`EquipmentStat::BuildWork`] and
+    /// [`EquipmentStat::DepositTake`]) and rejected on every other stat. On `deposit_take` it is the
+    /// deposit branch the take is cut on, which is what keeps an axe off a stone scatter.
     ///
     /// **It is [`Self::max_body_mass`]'s idiom, one stat over**: an effect carrying a bound on *when
     /// it applies*, resolved where the effect is read rather than by a second table. A snare states
@@ -399,7 +449,7 @@ pub struct EquipmentEffect {
     #[serde(default)]
     pub branch: Option<crate::intensification::RungBranch>,
     /// **WHICH RUNG OF THAT BRANCH THIS EFFECT SERVES** — [`Self::branch`]'s bound one notch finer,
-    /// allowed only on [`EquipmentStat::BuildWork`] and spelled as a
+    /// allowed only on the [`EquipmentStat::is_rung_scoped`] stats and spelled as a
     /// [`crate::intensification::RungKey::wire_key`] (`"route:paved_road"`).
     ///
     /// **ABSENT MEANS EVERY RUNG ON THE BRANCH**, which is what keeps `hoes` and the crook
@@ -440,10 +490,11 @@ impl EquipmentEffect {
     /// **Does this effect serve THIS build?** [`Self::reaches`]'s shape, two axes over — the branch
     /// and, within it, the rung.
     ///
-    /// An effect that names neither serves whatever asks, which is every stat but
-    /// [`EquipmentStat::BuildWork`]: `validate` requires a branch there and rejects one everywhere
-    /// else. So this reads `true` for the carries, the attacks and the multipliers, and only a build
-    /// tool is ever narrowed by it.
+    /// An effect that names neither serves whatever asks, which is every stat but the two
+    /// [`EquipmentStat::is_rung_scoped`] ones: `validate` requires a branch there and rejects one
+    /// everywhere else. So this reads `true` for the carries, the attacks and the multipliers, and
+    /// only a build tool or a deposit-take tool is ever narrowed by it. **The name predates
+    /// [`EquipmentStat::DepositTake`]**; for a take the "build" is the working's held rung.
     ///
     /// `rung` is the rung **being worked this turn**, `None` where the caller does not know one.
     ///
@@ -589,6 +640,17 @@ pub enum WearQuantum {
     /// life is one number in work whether it is spent raising ground or holding it. That is the
     /// conversion the amount is picked by — see `_comment_durability` in `equipment.json`.
     UpkeepWork,
+    /// Per **deposit unit taken BY THE WORKERS HOLDING THE TOOL** — the axe on a felling or coppice
+    /// take, the wedges on a quarry's. Charged at the take site
+    /// ([`crate::extraction::deposit_geared_units`]) against the row's kit narrowed to the items
+    /// that served the working's rung, so a woodcutter's wedges wear nothing.
+    ///
+    /// **The biomass quanta's shape, attributed to the holders the way [`Self::Strike`] is.** A
+    /// take is continuous, so the quantum is the AMOUNT; and a partly-equipped crew's bare hands
+    /// cut part of it, so only the units the equipped workers took are billed — `taken ×` the
+    /// equipped workers' share of the crew's throughput. A crew that took nothing (an emptied
+    /// working, a floor above the stand) wears nothing: a use count, not a clock.
+    DepositTaken,
 }
 
 impl WearQuantum {
@@ -631,6 +693,9 @@ impl WearQuantum {
             // `biomass_hauled`), so
             // it is the reading the first item to headline keeping would get.
             Self::UpkeepWork => "gardens' worth kept",
+            // **A deposit unit is the material's own unit** — wood and stone are both counted in
+            // what the take pays, so the noun names the act rather than the material.
+            Self::DepositTaken => "units cut",
         }
     }
 
@@ -647,6 +712,7 @@ impl WearQuantum {
             Self::ItemCrafted => "craft",
             Self::BuildProgress => "garden's worth",
             Self::UpkeepWork => "garden's worth kept",
+            Self::DepositTaken => "unit cut",
         }
     }
 }
@@ -897,6 +963,29 @@ impl ItemDefinition {
         self.build_work_serving(branch, rung).next().is_some()
     }
 
+    /// **Does this item lift a deposit take on this branch — on `rung`, or on ANY rung of the branch
+    /// when `rung` is `None`?** The roster question [`EquipmentConfig::deposit_kit_for`] derives a
+    /// working's default kit from, scanned across the item's shared effects and **every tier**
+    /// ([`Self::build_work_serving`]'s reason: which work a tool is for is a property of the roster,
+    /// not of how worn one band's is).
+    ///
+    /// ⛔ **`None` is "anywhere on the branch", not [`EquipmentEffect::serves_build`]'s
+    /// "unqualified caller"** — that predicate refuses a rung-bound tool where no rung was named,
+    /// which is right for pricing a take and wrong for asking which kit a branch's workings want.
+    pub fn declares_deposit_take_on(
+        &self,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&str>,
+    ) -> bool {
+        self.effects
+            .iter()
+            .chain(self.tiers.iter().flat_map(|tier| tier.effects.iter()))
+            .filter(|effect| {
+                effect.stat == EquipmentStat::DepositTake && effect.branch == Some(branch)
+            })
+            .any(|effect| rung.is_none_or(|asked| effect.serves_build(branch, Some(asked))))
+    }
+
     /// The tier with this id, or `None`.
     pub fn tier(&self, id: &str) -> Option<&EquipmentTier> {
         self.tiers.iter().find(|tier| tier.id == id)
@@ -1026,21 +1115,24 @@ impl<'a> LiveItem<'a> {
     /// entry: every consumer filters on [`EquipmentEffect::serves_build`], and an effect outside its
     /// bound contributes exactly [`NO_BUILD_GEAR`].
     pub fn build_work_entries(&self) -> impl Iterator<Item = &'a EquipmentEffect> {
+        self.scoped_entries(EquipmentStat::BuildWork)
+    }
+
+    /// **EVERY ENTRY FOR ONE [`EquipmentStat::is_rung_scoped`] STAT IN THE WINNING LAYER** —
+    /// [`Self::build_work_entries`] generalised over the two rung-scoped stats, because
+    /// [`EquipmentStat::DepositTake`] carries the same `branch`/`rung` bound and the same reason a
+    /// second entry means something: the axe serves `forestry:felling` **and**
+    /// `forestry:coppice`, two rungs one physical tool works.
+    pub fn scoped_entries(&self, stat: EquipmentStat) -> impl Iterator<Item = &'a EquipmentEffect> {
         let layer = [
             self.grade.unwrap_or(&[]),
             &self.tier.effects,
             &self.item.effects,
         ]
         .into_iter()
-        .find(|effects| {
-            effects
-                .iter()
-                .any(|effect| effect.stat == EquipmentStat::BuildWork)
-        })
+        .find(|effects| effects.iter().any(|effect| effect.stat == stat))
         .unwrap_or(&[]);
-        layer
-            .iter()
-            .filter(|effect| effect.stat == EquipmentStat::BuildWork)
+        layer.iter().filter(move |effect| effect.stat == stat)
     }
 
     /// **The equipped value this unit declares for a craft stat.** `None` when it says nothing
@@ -1135,11 +1227,9 @@ pub enum KitJob {
     /// pool raises a working and this branch's keeping is [`KitJob::Builders`]'s twin over on the
     /// keeping side, both of which already exist. What this job names is the *take*.
     ///
-    /// **The shipped roster declares no take gear, so `default_kits.extract` is the empty `none`
-    /// kit** — the same opening [`KitJob::Roadwork`] has. Forestry's natural tool is an axe and it
-    /// would be bone-hafted while stone tools are out of scope (§9); the two quarry tools that do
-    /// ship declare `build_work`, which is the pool that *raises* a working. The day a felling axe
-    /// declares a take stat, this job is what it names.
+    /// **Its kits are `woodcutting` (sled + axe) and `stonework` (sled + wedges)**, one per branch,
+    /// and a working's default is DERIVED from them ([`EquipmentConfig::deposit_kit_for`]) rather than
+    /// authored, so `default_kits.extract` is only the `none` fall-back (#663).
     ///
     /// **Its token is `extract`, not `extraction`** — the same string
     /// [`crate::components::LaborTarget::kind`] publishes for the row
@@ -1154,11 +1244,11 @@ pub enum KitJob {
     /// **One job for both branches**, matching the one role: holding a face open and clearing what
     /// has fallen is one job, and which ladder the deposit is on is the deposit's.
     ///
-    /// ⛔ **IT IS SPLIT FROM [`KitJob::Extraction`] EVEN THOUGH BOTH SHIP BARE**, on
-    /// [`KitJob::Agriculture`]'s stated reason: **gear covers people**, so sharing a job with the
-    /// take row would divide whatever a future felling axe arms among hands that are not cutting.
-    /// The split is free to make while both defaults are the empty `none` kit and would be a
-    /// migration afterwards.
+    /// ⛔ **IT IS SPLIT FROM [`KitJob::Extraction`]**, on [`KitJob::Agriculture`]'s stated reason:
+    /// **gear covers people**, so sharing a job with the take row would divide the take kit's axes
+    /// among hands that are not cutting. Its keepers are geared through the rung requirement
+    /// ([`EquipmentConfig::pool_toe`]), not through a default kit, so `default_kits.quarrywork`
+    /// stays `none`.
     Quarrywork,
 }
 
@@ -1405,6 +1495,29 @@ impl KitCoverage {
     }
 }
 
+/// **A working's default kit is derived only when exactly one kit answers** —
+/// [`EquipmentConfig::deposit_kit_for`].
+const ONE_SERVING_KIT: usize = 1;
+
+/// **A kit whose items serve no rung of the branch** — [`EquipmentConfig::deposit_kit_for`]'s
+/// "no take tool here" answer.
+const NO_RUNG_SERVED: usize = 0;
+
+/// **ONE EXTRACT ROW'S TAKE GEAR, RESOLVED** — [`EquipmentConfig::deposit_gear`]'s answer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DepositGear {
+    /// **The extra units the row's equipped workers take this turn**, summed over the crew — the
+    /// `gear_take` term [`crate::extraction::deposit_take`] adds to the bare
+    /// `workers × yield_per_worker_turn`. [`NO_DEPOSIT_GEAR`] for a bare row.
+    pub take: f32,
+    /// **How many of the row's workers hold a tool that serves this rung** — the head count the
+    /// gear's share of the take is attributed to ([`crate::extraction::deposit_geared_units`]).
+    pub equipped_workers: f32,
+    /// **The row's kit narrowed to the items that served this rung** — what
+    /// [`WearQuantum::DepositTaken`] is charged against, so an axe carried to a quarry is not worn.
+    pub wear_kit: KitChoice,
+}
+
 /// **WHAT ONE BAND'S GEAR IS BEING ASKED FOR, ITEM BY ITEM** — the denominator every row's share of
 /// the ledger is struck against ([`EquipmentConfig::coverage_from_units`]).
 ///
@@ -1446,6 +1559,10 @@ pub struct BandItemBudget {
     /// rather than a map: a roster is a handful of items and a band a handful of rows, so the probe
     /// is cheaper than hashing.
     demand: Vec<(Arc<str>, f32)>,
+    /// **Units the standing pools were already ISSUED this turn**, per item — taken off the live
+    /// stock before any row's share is struck ([`Self::reserving`]). Empty unless a pool settled
+    /// the item, which on the shipped roster means the `axe` alone.
+    reserved: Vec<(Arc<str>, f32)>,
 }
 
 /// No row has asked for this item — see [`BandItemBudget`]'s third rule.
@@ -1470,7 +1587,33 @@ impl BandItemBudget {
                 }
             }
         }
-        Self { demand }
+        Self {
+            demand,
+            reserved: Vec::new(),
+        }
+    }
+
+    /// **ONE UNIT ARMS ONE PERSON PER TURN, ACROSS BOTH ACCOUNTS** — take the units the standing
+    /// pools were issued off the stock this budget divides.
+    ///
+    /// The pools settle **first** (`systems::labor::plan_pool_tools` runs above every take row in
+    /// `advance_labor_allocation`), so the take rows are rationed out of what the settlement left.
+    /// Without it an item carried both in a take kit and in a pool's rung requirement — the `axe`,
+    /// on the `woodcutting` kit and on `forestry`'s `build_work` — armed a feller and a keeper off the same
+    /// unit, because the two allocations never saw each other.
+    ///
+    /// `issued` is in whole units per item (`PoolToeLine::filled`); a repeated id is summed.
+    pub fn reserving<'a>(mut self, issued: impl IntoIterator<Item = (&'a str, f32)>) -> Self {
+        for (item, units) in issued {
+            if units <= NO_UNITS_IN_HAND {
+                continue;
+            }
+            match self.reserved.iter_mut().find(|(id, _)| id.as_ref() == item) {
+                Some((_, held)) => *held += units,
+                None => self.reserved.push((Arc::from(item), units)),
+            }
+        }
+        self
     }
 
     /// **THE BUDGET A ROW NOBODY HAS COMMITTED YET COMPETES UNDER** — the band's *other* rows,
@@ -1506,7 +1649,13 @@ impl BandItemBudget {
         wear: &crate::components::BandEquipment,
         config: &EquipmentConfig,
     ) -> f32 {
-        let live = wear.live_units(item, config) as f32;
+        // **What the pools did not take** — [`Self::reserving`].
+        let issued = self
+            .reserved
+            .iter()
+            .find(|(id, _)| id.as_ref() == item)
+            .map_or(NO_UNITS_IN_HAND, |(_, units)| *units);
+        let live = (wear.live_units(item, config) as f32 - issued).max(NO_UNITS_IN_HAND);
         let wanted = self
             .demand
             .iter()
@@ -1691,14 +1840,28 @@ impl KitChoice {
         branch: crate::intensification::RungBranch,
         rung: Option<&str>,
     ) -> Option<(f32, crate::intensification::RungBranch)> {
+        self.best_scoped(EquipmentStat::BuildWork, wear, config, branch, rung)
+            .map(|worth| (worth, branch))
+    }
+
+    /// **The best value this kit's live items declare for a rung-scoped stat, ON THIS RUNG** —
+    /// [`Self::best_build_work`]'s fold, over either [`EquipmentStat::is_rung_scoped`] stat. `None`
+    /// when nothing live in the kit serves the pair.
+    fn best_scoped(
+        &self,
+        stat: EquipmentStat,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&str>,
+    ) -> Option<f32> {
         self.live_items(wear, config)
-            .flat_map(|item| item.build_work_entries())
+            .flat_map(|item| item.scoped_entries(stat))
             .filter(|effect| effect.serves_build(branch, rung))
             .map(|effect| effect.tier.value())
             .fold(None::<f32>, |best, value| {
                 Some(best.map_or(value, |best| best.max(value)))
             })
-            .map(|worth| (worth, branch))
     }
 
     /// **Is any live item in this kit declaring an EQUIPPED tier for `stat`?** — the predicate the
@@ -2130,18 +2293,167 @@ impl EquipmentConfig {
         branch: crate::intensification::RungBranch,
         rung: Option<&str>,
     ) -> KitChoice {
+        self.scoped_gear_kit(EquipmentStat::BuildWork, kit, wear, branch, rung)
+    }
+
+    /// **The kit narrowed to the items whose rung-scoped `stat` served this branch and rung** —
+    /// [`Self::build_gear_kit`]'s narrowing over either [`EquipmentStat::is_rung_scoped`] stat. It is
+    /// what keeps a tool that rode along from wearing on a take it did not serve — the wear
+    /// follows the work actually done.
+    fn scoped_gear_kit(
+        &self,
+        stat: EquipmentStat,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&str>,
+    ) -> KitChoice {
         let serving: Vec<Arc<str>> = kit
             .uses
             .iter()
             .filter(|item| {
                 self.live_item(item, wear).is_some_and(|live| {
-                    live.build_work_entries()
+                    live.scoped_entries(stat)
                         .any(|effect| effect.serves_build(branch, rung))
                 })
             })
             .cloned()
             .collect();
         kit.restricted_to(serving)
+    }
+
+    /// **THE `extract` KIT THIS WORKING WANTS, DERIVED FROM THE ROSTER** — the working's default,
+    /// and what an `extract` row is assigned with when the command names no kit (#663). The one
+    /// seam the turn (through the kit the row stores), the assign-time seed and the published
+    /// `DepositState.defaultKitId` all resolve through, via
+    /// [`crate::extraction::working_default_kit`].
+    ///
+    /// **The kit whose items serve the MOST RUNGS OF THE WORKING'S BRANCH** with
+    /// [`EquipmentStat::DepositTake`], scanned off the roster at every tier. A kit is stored on the
+    /// row and a working climbs, so the answer is a property of the **branch**, not of the rung the
+    /// working happens to hold: `woodcutting` (sled on deadfall, axe on felling and coppice) serves
+    /// all three forestry rungs and wins every one of them, though `stonework`'s sled serves
+    /// `forestry:deadfall` too. That shared floor tool is exactly why the rule counts rungs rather
+    /// than asking "does any item serve" — two kits would answer that on every floor.
+    ///
+    /// **`None` unless exactly one kit holds the top count**, so the caller falls back to
+    /// `default_kits.extract`: a tie is a roster the derivation cannot pick between without an
+    /// alphabetical accident, and a count of zero is a branch with no take tool at all.
+    pub fn deposit_kit_for(&self, branch: crate::intensification::RungBranch) -> Option<KitChoice> {
+        let rungs_served = |kit: &KitChoice| -> usize {
+            crate::intensification::RungKey::ALL
+                .iter()
+                .filter(|rung| rung.branch() == branch)
+                .filter(|rung| {
+                    let key = rung.wire_key();
+                    kit.uses().any(|item| {
+                        self.item(item)
+                            .is_some_and(|def| def.declares_deposit_take_on(branch, Some(&key)))
+                    })
+                })
+                .count()
+        };
+        let scored: Vec<(usize, KitChoice)> = self
+            .kits_for_job(KitJob::Extraction)
+            .map(|kit| (rungs_served(&kit), kit))
+            .collect();
+        let best = scored.iter().map(|(count, _)| *count).max()?;
+        if best == NO_RUNG_SERVED {
+            return None;
+        }
+        let mut winners: Vec<KitChoice> = scored
+            .into_iter()
+            .filter(|(count, _)| *count == best)
+            .map(|(_, kit)| kit)
+            .collect();
+        (winners.len() == ONE_SERVING_KIT).then(|| winners.remove(0))
+    }
+
+    /// **THE KIT NARROWED TO THE ITEMS THAT SERVE THIS RUNG** — what a crew on an `extract` row is
+    /// actually working with at the rung its working holds (#663). A `woodcutting` kit on deadfall is
+    /// its sled; on felling, its axe. Read off the **roster** (every tier), so which items count is a
+    /// property of the kit and the rung, and whether the band owns them is the coverage's question.
+    ///
+    /// Every surface that counts or rations an `extract` row's gear reads it —
+    /// the take's coverage, the item budget's demand, and the published `kitWorkersHolding` — so a
+    /// deadfall crew holding sleds reads fully outfitted without an axe, and a felling crew is short
+    /// exactly the axes it lacks whatever sleds exist. The id is kept: the player chose the kit.
+    pub fn deposit_rung_kit(
+        &self,
+        kit: &KitChoice,
+        branch: crate::intensification::RungBranch,
+        rung: &str,
+    ) -> KitChoice {
+        let serving: Vec<Arc<str>> = kit
+            .uses
+            .iter()
+            .filter(|item| {
+                self.item(item)
+                    .is_some_and(|def| def.declares_deposit_take_on(branch, Some(rung)))
+            })
+            .cloned()
+            .collect();
+        kit.restricted_to(serving)
+    }
+
+    /// [`Self::deposit_kit_for`], falling back to `default_kits.extract` where the roster names no
+    /// single kit for the working.
+    pub fn extract_default_kit(&self, branch: crate::intensification::RungBranch) -> KitChoice {
+        self.deposit_kit_for(branch)
+            .unwrap_or_else(|| self.default_kit(KitJob::Extraction))
+    }
+
+    /// **THE EXTRA DEPOSIT UNITS ONE WORKER CARRYING THIS KIT TAKES PER TURN ON THIS RUNG** —
+    /// [`EquipmentStat::DepositTake`], [`NO_DEPOSIT_GEAR`] for a kit carrying nothing that serves
+    /// the working. [`Self::build_work_per_worker`]'s twin one stat over: the maximum of what the
+    /// live items declare, filtered on [`EquipmentEffect::serves_build`], and **per worker** so a
+    /// caller sums it over the crew through [`KitCoverage::weighted_rate`] × head count.
+    ///
+    /// `rung` is the rung the working **holds** this turn — the rate the take is struck at is that
+    /// rung's, so the tool that lifts it must be the one bound to it.
+    pub fn deposit_take_per_worker(
+        &self,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&str>,
+    ) -> f32 {
+        kit.best_scoped(EquipmentStat::DepositTake, wear, self, branch, rung)
+            .unwrap_or(NO_DEPOSIT_GEAR)
+    }
+
+    /// **WHAT ONE EXTRACT ROW'S GEAR ADDS TO ITS TAKE, and what that gear wears** — resolved once
+    /// from the row's own [`KitCoverage`], so the turn and the assign-time seed read one answer.
+    ///
+    /// The row's coverage partitions its crew by the items they hold; each crew adds
+    /// [`Self::deposit_take_per_worker`] per head, and the sum is the crew-weighted rate × the head
+    /// count — five fellers holding two axes add exactly `2 × 1.0`.
+    pub fn deposit_gear(
+        &self,
+        coverage: &KitCoverage,
+        wear: &crate::components::BandEquipment,
+        branch: crate::intensification::RungBranch,
+        rung: Option<&str>,
+    ) -> DepositGear {
+        let per_crew = |kit: &KitChoice| self.deposit_take_per_worker(kit, wear, branch, rung);
+        let take = coverage.weighted_rate(per_crew) * coverage.workers();
+        let equipped_workers = coverage
+            .crews()
+            .iter()
+            .filter(|crew| per_crew(&crew.kit) > NO_DEPOSIT_GEAR)
+            .map(|crew| crew.workers)
+            .sum();
+        DepositGear {
+            take: take.max(NO_DEPOSIT_GEAR),
+            equipped_workers,
+            wear_kit: self.scoped_gear_kit(
+                EquipmentStat::DepositTake,
+                coverage.kit(),
+                wear,
+                branch,
+                rung,
+            ),
+        }
     }
 
     /// The roster entry with this id, or `None`.
@@ -3387,18 +3699,18 @@ impl EquipmentConfig {
                     value: value.to_string(),
                 });
             }
-            // ⛔ **A SECOND `build_work` IS LEGAL IF IT NAMES A DIFFERENT RUNG, AND NOTHING ELSE
-            // IS.** The rule this narrows is *"a stat declared twice in one layer is a silently
-            // dead line"*, which holds for every stat resolved through
-            // [`LiveItem::effect_entry`] — first match wins. `build_work` is not one of them:
-            // [`LiveItem::build_work_entries`] sweeps the whole layer and every consumer then
+            // ⛔ **A SECOND `build_work` (OR `deposit_take`) IS LEGAL IF IT NAMES A DIFFERENT RUNG,
+            // AND NOTHING ELSE IS.** The rule this narrows is *"a stat declared twice in one layer
+            // is a silently dead line"*, which holds for every stat resolved through
+            // [`LiveItem::effect_entry`] — first match wins. The two rung-scoped stats are not:
+            // [`LiveItem::scoped_entries`] sweeps the whole layer and every consumer then
             // filters on [`EquipmentEffect::serves_build`], so two entries bound to **different**
             // rungs are two different jobs one physical tool does. Two entries that could both
             // serve the same build are still a dead line and are still refused, which is what keeps
             // the per-worker SUM the `rung` bound exists to protect.
             let shadowed = effects[..index].iter().any(|prior| {
                 prior.stat == effect.stat
-                    && (effect.stat != EquipmentStat::BuildWork
+                    && (!effect.stat.is_rung_scoped()
                         || prior.rung.is_none()
                         || effect.rung.is_none()
                         || prior.rung == effect.rung)
@@ -3817,7 +4129,8 @@ impl EquipmentConfig {
     }
 
     /// ⛔ **A `build_work` EFFECT MUST NAME ITS BRANCH, AND NOTHING ELSE MAY NAME ONE — AND THE SAME
-    /// GOES FOR THE OPTIONAL RUNG BESIDE IT.**
+    /// GOES FOR THE OPTIONAL RUNG BESIDE IT.** `deposit_take` is held to the identical rule
+    /// ([`EquipmentStat::is_rung_scoped`]): it is the other per-worker addition bound to a rung.
     ///
     /// Every clause is one door, and all of them are
     /// `.claude/rules/core_sim/config-loading.md`'s *"looks live but isn't"*:
@@ -3854,12 +4167,21 @@ impl EquipmentConfig {
                      Tame; name \"plant\" or \"animal\""
                 ),
             }),
-            (stat, Some(branch)) if stat != EquipmentStat::BuildWork => {
+            // **The take's twin of the arm above**: an unqualified take tool would lift every
+            // deposit branch at once, so an axe would reach a stone scatter.
+            (EquipmentStat::DepositTake, None) => Err(EquipmentConfigError::InvalidRoster {
+                reason: format!(
+                    "item '{id}' declares effect[{index}] `deposit_take` with no `branch` - an \
+                     unqualified take tool would serve BOTH deposit branches, so an axe would cut \
+                     stone; name \"forestry\" or \"extraction\""
+                ),
+            }),
+            (stat, Some(branch)) if !stat.is_rung_scoped() => {
                 Err(EquipmentConfigError::InvalidRoster {
                     reason: format!(
                         "item '{id}' gives effect[{index}] ({stat:?}) a `branch` of \"{}\", but only \
-                         `build_work` is resolved against a food web - the qualifier would be \
-                         silently ignored",
+                         `build_work` and `deposit_take` are resolved against a food web - the \
+                         qualifier would be silently ignored",
                         branch.as_str()
                     ),
                 })
@@ -3878,12 +4200,12 @@ impl EquipmentConfig {
         let Some(declared) = effect.rung.as_deref() else {
             return Ok(());
         };
-        if effect.stat != EquipmentStat::BuildWork {
+        if !effect.stat.is_rung_scoped() {
             return Err(EquipmentConfigError::InvalidRoster {
                 reason: format!(
                     "item '{id}' gives effect[{index}] ({:?}) a `rung` of {declared:?}, but only \
-                     `build_work` is resolved against a rung - the qualifier would be silently \
-                     ignored",
+                     `build_work` and `deposit_take` are resolved against a rung - the qualifier \
+                     would be silently ignored",
                     effect.stat
                 ),
             });
@@ -4811,6 +5133,217 @@ mod tests {
         );
     }
 
+    /// **A `deposit_take` EFFECT MUST NAME ITS BRANCH TOO** (#663) — an unqualified take tool would
+    /// lift both deposit branches at once, so an axe would cut stone.
+    #[test]
+    fn validate_rejects_a_deposit_take_effect_with_no_branch() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
+        let effect = &mut json["items"]["axe"]["tiers"][0]["effects"][0];
+        assert_eq!(
+            effect["stat"], "deposit_take",
+            "fixture: the axe's first effect must be the take tool this test unqualifies"
+        );
+        let effect = effect.as_object_mut().expect("an effect is an object");
+        effect.remove("branch");
+        effect.remove("rung");
+        let err = EquipmentConfig::from_json_str(&json.to_string())
+            .expect_err("an unqualified take tool is invalid");
+        assert!(
+            matches!(&err, EquipmentConfigError::InvalidRoster { reason }
+                if reason.contains("axe") && reason.contains("branch")),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// **A WORKING'S DEFAULT KIT IS THE KIT OF ITS BRANCH, ON EVERY RUNG** (#663). The sled sits in
+    /// both extract kits and serves both floors, so "any kit serving the rung" would tie on every
+    /// floor; the rule counts the rungs of the branch each kit serves, and `woodcutting` (sled + axe:
+    /// all three forestry rungs) and `stonework` (sled + wedges: both extraction rungs) each win
+    /// their own branch outright. `default_kits.extract` is only the `none` fall-back.
+    #[test]
+    fn a_workings_default_kit_is_the_kit_of_its_branch_on_every_rung() {
+        use crate::intensification::RungKey;
+        let config = EquipmentConfig::builtin();
+        for (rung, expected) in [
+            (RungKey::ForestryDeadfall, "woodcutting"),
+            (RungKey::ForestryFelling, "woodcutting"),
+            (RungKey::ForestryCoppice, "woodcutting"),
+            (RungKey::ExtractionGathering, "stonework"),
+            (RungKey::ExtractionQuarry, "stonework"),
+        ] {
+            assert_eq!(
+                config.extract_default_kit(rung.branch()).id(),
+                expected,
+                "{} must default to {expected}",
+                rung.wire_key()
+            );
+        }
+        assert_eq!(
+            config.default_kit(KitJob::Extraction).id(),
+            "none",
+            "the job default is the fall-back, not a branch's kit"
+        );
+        assert_eq!(
+            config.default_kit(KitJob::Quarrywork).id(),
+            "none",
+            "the keepers are geared through the rung requirement, not a default kit"
+        );
+    }
+
+    /// **A KIT IS NARROWED TO THE TOOL SERVING THE HELD RUNG** (#663) — `woodcutting` is its sled on
+    /// deadfall and its axe on felling and coppice; `stonework` its sled on gathering and its wedges
+    /// on the quarry. One tool per rung, so a complete-kit count over the narrowed kit is the count of
+    /// that one tool.
+    #[test]
+    fn a_branch_kit_is_one_tool_at_each_rung() {
+        use crate::intensification::RungKey;
+        let config = EquipmentConfig::builtin();
+        for (kit_id, rung, tool) in [
+            ("woodcutting", RungKey::ForestryDeadfall, "sled"),
+            ("woodcutting", RungKey::ForestryFelling, "axe"),
+            ("woodcutting", RungKey::ForestryCoppice, "axe"),
+            ("stonework", RungKey::ExtractionGathering, "sled"),
+            ("stonework", RungKey::ExtractionQuarry, "wedges"),
+        ] {
+            let kit = config.kit(kit_id).expect("shipped kit");
+            let narrowed = config.deposit_rung_kit(&kit, rung.branch(), &rung.wire_key());
+            assert_eq!(
+                narrowed.uses().collect::<Vec<_>>(),
+                vec![tool],
+                "{kit_id} on {}",
+                rung.wire_key()
+            );
+            assert_eq!(narrowed.id(), kit_id, "the player's kit id is kept");
+        }
+    }
+
+    /// **TWO KITS SERVING ONE BRANCH EQUALLY IS NO ANSWER**, and the fall-back takes over rather than
+    /// the roster order picking one — the derivation has no score beyond the rung count to break it.
+    #[test]
+    fn two_kits_serving_one_branch_fall_back_to_the_job_default() {
+        let mut json: serde_json::Value =
+            serde_json::from_str(BUILTIN_EQUIPMENT_CONFIG).expect("the builtin parses");
+        json["kits"]
+            .as_array_mut()
+            .expect("kits is a list")
+            .push(serde_json::json!({
+                "id": "second_woodcutting",
+                "display_name": "Second woodcutting kit",
+                "jobs": ["extract"],
+                "uses": ["sled", "axe"]
+            }));
+        let config = EquipmentConfig::from_json_str(&json.to_string()).expect("still valid");
+        let forestry = crate::intensification::RungBranch::Forestry;
+        assert!(config.deposit_kit_for(forestry).is_none());
+        assert_eq!(config.extract_default_kit(forestry).id(), "none");
+    }
+
+    /// A fixture kit carrying BOTH take tools — the harshest bundle for the scoping claims below,
+    /// since each tool must still serve only its own rungs with the other in the same hands.
+    fn both_take_tools() -> KitChoice {
+        KitChoice {
+            id: Arc::from("fixture_both_take_tools"),
+            uses: Arc::from(vec![Arc::<str>::from("axe"), Arc::<str>::from("wedges")]),
+        }
+    }
+
+    /// **EACH TAKE TOOL SERVES ONLY ITS OWN BRANCH AND RUNG** (#663) — a kit carrying both tools
+    /// resolved against every deposit rung, fully stocked. The axe lifts felling and coppice and
+    /// nothing else; the wedges lift the quarry and nothing else; and **both floor rungs stay
+    /// bare** (`docs/plan_extraction.md` §4d), which is what keeps the material economy startable
+    /// with nothing in hand.
+    #[test]
+    fn each_take_tool_serves_only_its_own_rung_and_the_floors_stay_bare() {
+        use crate::intensification::RungKey;
+        let config = EquipmentConfig::builtin();
+        let mut ledger = crate::components::BandEquipment::default();
+        ledger.stock("axe", 1, "flint", None);
+        ledger.stock("wedges", 1, "flint", None);
+        let kit = both_take_tools();
+        let take = |rung: RungKey| {
+            config.deposit_take_per_worker(&kit, &ledger, rung.branch(), Some(&rung.wire_key()))
+        };
+        assert_eq!(take(RungKey::ForestryFelling), 1.0, "the axe on felling");
+        assert_eq!(take(RungKey::ForestryCoppice), 1.0, "the axe on coppice");
+        assert_eq!(
+            take(RungKey::ExtractionQuarry),
+            1.0,
+            "the wedges on the quarry"
+        );
+        assert_eq!(
+            take(RungKey::ForestryDeadfall),
+            crate::extraction::NO_DEPOSIT_GEAR,
+            "fallen wood is not axe work: the forestry floor stays bare"
+        );
+        assert_eq!(
+            take(RungKey::ExtractionGathering),
+            crate::extraction::NO_DEPOSIT_GEAR,
+            "loose stone is picked by hand: the extraction floor stays bare"
+        );
+
+        // **Neither tool reaches the other branch**, asserted per item so the pair cannot hide a
+        // leak behind the other's legitimate value.
+        let only = |item: &str| {
+            let mut one = crate::components::BandEquipment::default();
+            one.stock(item, 1, "flint", None);
+            one
+        };
+        let axe_only = only("axe");
+        let wedges_only = only("wedges");
+        let quarry = RungKey::ExtractionQuarry.wire_key();
+        let felling = RungKey::ForestryFelling.wire_key();
+        assert_eq!(
+            config.deposit_take_per_worker(
+                &kit,
+                &axe_only,
+                crate::intensification::RungBranch::Extraction,
+                Some(&quarry)
+            ),
+            crate::extraction::NO_DEPOSIT_GEAR,
+            "an axe must not reach a stone deposit"
+        );
+        assert_eq!(
+            config.deposit_take_per_worker(
+                &kit,
+                &wedges_only,
+                crate::intensification::RungBranch::Forestry,
+                Some(&felling)
+            ),
+            crate::extraction::NO_DEPOSIT_GEAR,
+            "a woodcutter's wedges add nothing"
+        );
+    }
+
+    /// **WHAT A TAKE WEARS IS NARROWED TO THE TOOL THAT SERVED** — `deposit_gear`'s wear kit on a
+    /// felling row carries the axe and not the wedges, and a partly-equipped crew's gear is the
+    /// equipped workers' sum, not the whole crew's.
+    #[test]
+    fn deposit_gear_sums_the_equipped_crew_and_wears_only_the_serving_tool() {
+        use crate::intensification::RungKey;
+        let config = EquipmentConfig::builtin();
+        let mut ledger = crate::components::BandEquipment::default();
+        ledger.stock("axe", 2, "flint", None);
+        ledger.stock("wedges", 5, "flint", None);
+        let kit = both_take_tools();
+        let coverage = config.coverage(&kit, 5.0, &ledger);
+        let felling = RungKey::ForestryFelling;
+        let gear = config.deposit_gear(
+            &coverage,
+            &ledger,
+            felling.branch(),
+            Some(&felling.wire_key()),
+        );
+        assert!(
+            (gear.take - 2.0).abs() < 1e-5,
+            "two axes among five fellers add two tools' worth: {}",
+            gear.take
+        );
+        assert!((gear.equipped_workers - 2.0).abs() < 1e-5);
+        let worn: Vec<&str> = gear.wear_kit.uses().collect();
+        assert_eq!(worn, vec!["axe"], "only the axe served a felling take");
+    }
+
     /// **AND A BRANCH ON ANY OTHER STAT IS REJECTED TOO** - the twin of the mass-bound rule, since
     /// only `build_work` is resolved against a food web, so the qualifier would parse, validate and
     /// then be read by nothing.
@@ -5007,10 +5540,10 @@ mod tests {
     /// exclusivity is
     /// [`each_route_rung_derives_its_own_kit_and_the_other_rungs_tool_is_worth_nothing`].
     ///
-    /// ⛔ **AND A BRANCH MAY SHIP WHOLLY KITLESS, WHICH IS WHY THE MISSING-KIT ARM IS A FORK.**
-    /// `forestry` does: its natural tool is an axe, a bone-hafted axe while stone tools are out of
-    /// scope sits oddly, and shipping the branch bare is the recorded decision
-    /// (`docs/plan_extraction.md` §9). The failure this test exists to catch is a **partial**
+    /// ⛔ **AND A BRANCH MAY SHIP WITH NO BUILDERS KIT, WHICH IS WHY THE MISSING-KIT ARM IS A FORK.**
+    /// `forestry` does: its build tool, the axe, rides `woodcutting` — an `extract` kit — and
+    /// reaches the builders through the rung requirement ([`EquipmentConfig::pool_toe`]), which
+    /// asks items rather than kits. The failure this test exists to catch is a **partial**
     /// roster — one rung's kit gone missing while its siblings keep theirs, after which every build
     /// there silently falls back to `default_kits.builders` (`none`) for the rest of the game. So a
     /// rung with no kit is only legal where **nothing at all** serves its branch, which is a fact
