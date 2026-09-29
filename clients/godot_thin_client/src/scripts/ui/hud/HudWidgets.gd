@@ -714,10 +714,6 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     fill_menu_popup(button.get_popup(), entries)
     return button
 
-## **A COMPOSE-SHEET FIELD ROW'S KEY LABEL** — `Band:`, `Kit`. Its whole job is the ONE declared width
-## (`HudComposeVocab.COMPOSE_FIELD_KEY_WIDTH`) that makes rows built by different modules line their
-## value controls up; the reasoning is on that constant. `SIZE_FILL`, not `EXPAND` — the key takes
-## exactly its declared width and the CONTROL is the row's only expanding child.
 ## **A FIELD THE SHEET STATES RATHER THAN ASKS** — the field-stack's key label (`build_field_key`, so
 ## it lines up with the rows that ARE controls) and the value as plain INK text, optionally led by
 ## `icon` at `icon_px`. It carries `READ_ONLY_FIELD_META` = the key. The value expands and clips, so a
@@ -738,6 +734,10 @@ static func build_read_only_field(key: String, text: String, icon: Texture2D = n
     row.add_child(value)
     return row
 
+## **A COMPOSE-SHEET FIELD ROW'S KEY LABEL** — `Band:`, `Kit`. Its whole job is the ONE declared width
+## (`HudComposeVocab.COMPOSE_FIELD_KEY_WIDTH`) that makes rows built by different modules line their
+## value controls up; the reasoning is on that constant. `SIZE_FILL`, not `EXPAND` — the key takes
+## exactly its declared width and the CONTROL is the row's only expanding child.
 static func build_field_key(text: String) -> Label:
     var key := Label.new()
     key.text = text

@@ -787,10 +787,9 @@ stretch, and widening it into that gap would put it over a live HUD column.
   open, the board shrunk to 31 rows and a pager appearing to pay for it) ·
   `band_panel_compose_scout` (the Scout verb's sheet on the band's drawer — party and kit, no target
   field — with its send armed and the SCOUT banner up). A BEHAVIOURAL assertion rides beside it:
-  `_assert_quarry_eligibility` drives the real `_try_pick_quarry` on a hunt-mission pick with a herd
-  INSIDE the fixture band's `hunt_reach` (refused, stays armed) and one beyond it (taken). The GLOW is
-  MapView's, so its frame is `map_preview`'s `map_quarry_targeting` (two huntable herds straddling the
-  reach; only the far one may wear the ring) · `band_panel_no_idle` (Scout, Deny and Trade disabled on
+  `_assert_quarry_eligibility` drives the real `_try_pick_quarry` with a herd near the fixture band
+  (committed to the pick) and one at an UNKNOWN distance (refused, the pick stays armed). The GLOW is
+  MapView's, so its frame is `map_preview`'s `map_quarry_targeting` · `band_panel_no_idle` (Scout, Deny and Trade disabled on
   the bar with Move and Split live) · `band_panel_clear_confirm` · the **work-inspector policy-picker**
   PAIR, which is the only coverage that control has ever had (`_work_policy_open` was never set true in
   either harness): **`band_panel_work_policy_investment`** (a Hunt row that is BUILDING a pen —
@@ -6134,23 +6133,20 @@ carries TWO reason strings and `denial_refusal_reason` picks between them on the
 `denial_party_needed`, never on the wording: `reason_counted` takes `[quarry, needed]` and states the
 count, and where the sim quotes none the numberless `reason` stands verbatim.
 
-### The BEYOND-REACH rule is the hunt's, and denial does not inherit it
+### Every herd at a known distance is a quarry
 
 Reported from play: deer and rabbit a few tiles from camp were not offered as denial targets while
-herds further out were. The quarry question goes through the hunt's own `TargetingController` seams —
-**the eligibility rule does not**. A hunting party exists for game the band cannot work from
-home, so a nearer herd is a local hunt and that split is correct for it. Denial is not a way of
-GETTING food: it is a way of ERASING a herd, and hunting the warren next door at `floor 0` cannot
-express that, a hunt being carry-bounded and stopping at the pack. So **a denial raid may name any
-herd the band can see and reach, in reach or not, and the hunt's rule is untouched.**
+herds further out were. Denial is not a way of GETTING food: it is a way of ERASING a herd, so **a
+denial raid may name any herd the band can see and reach, in reach or not.** With expedition hunting
+retired, that is the ONE quarry rule.
 
 - It stays an **EXPEDITION** and is deliberately not a labor assignment: the party detaches, spends
   turns killing and comes home. That is a real cost in hunter-turns even at zero distance, and denial
   has no floor and no rate to put on the assign dialog.
-- The mechanism is a per-mission parameter on the ONE rule, never a second rule —
-  `TargetingController.quarry_min_distance(band, mission)`, spec in `targeting.md` → "Command
-  Targeting". Every quarry question (the map pick, the chooser, the hover banner, MapView's glow) passes
-  the armed pick's mission through it.
+- The rule has no mission parameter. `TargetingController.is_expedition_quarry(band, herd)` is its
+  one definition, bounded by `QUARRY_NO_REACH_BOUND`; spec in `targeting.md` → "Command Targeting".
+  Every quarry question (the map pick, the chooser, the hover banner, the passive highlight,
+  MapView's glow) goes through it.
 - **The verdict already reads correctly at zero travel** and nothing had to change for it:
   `_denial_turns_from_launch` leaves both ends unshifted at `travel <= 0`, and `denial_turns_clause`
   appends `DENIAL_TRAVEL_SPLIT_FORMAT` only where there IS travel to split off — so a quarry on the

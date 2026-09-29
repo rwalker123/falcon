@@ -277,8 +277,8 @@ func _ready() -> void:
 # the REAL button is pressed, found by its meta — a face is live copy, so text is the one thing that
 # cannot identify it.
 #
-# **THE BAND VERBS ARE DRIVEN TARGET-FIRST** (issue #529): the verb, then the map click that picks its
-# target, and the sheet is pressed where it then renders — the target's drawer, `_hud.allocation_panel`.
+# **THE BAND VERBS ARE DRIVEN FORM-FIRST** (issue #529): the verb opens its sheet in the band's own
+# drawer (`_hud.allocation_panel`), its Send arms the map pick, and the click on the target commits.
 
 ## ⛔ **`set_starting_loadout` NAMES A BAND NOW, WHICH IS WHY IT IS HERE AT ALL.** It used to address a
 ## faction and default to its band; every band has an outfitting window of its own since the per-band

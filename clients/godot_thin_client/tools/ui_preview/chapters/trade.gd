@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 120
+const EXPECTED_CHECKPOINTS := 122
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -86,6 +86,9 @@ const TIE_STRENGTH_PARKED := 0.0
 ## `Discovered` and never `Seen`, so these are remembered positions and the sheet must word them so.
 const NEIGHBOUR_LAST_SEEN := Vector2i(63, 21)
 const NEIGHBOUR_LAST_SEEN_TURN := 38
+## Where the neighbour stands after it walks, for the ring-follows-the-band state — off every other
+## fixture tile.
+const NEIGHBOUR_MOVED_TO := Vector2i(60, 24)
 const PARKED_LAST_SEEN := Vector2i(44, 9)
 const PARKED_LAST_SEEN_TURN := 12
 
@@ -356,6 +359,35 @@ func run(harness) -> void:
 			== int(_neighbour_band().get("band_id", -1)))
 	h._assert_hud("…arming no pick and closing the sheet",
 		not h._hud.is_targeting_active() and _verb_form() == null)
+
+	# **THE RING FOLLOWS THE TIED BAND.** The highlight set is recomputed whenever a snapshot re-ingests
+	# the roster (`TargetingController.refresh_live_targets`), so a tied band that walks is ringed —
+	# and its click captured and resolved — where it stands NOW. Judged on what MapView is HANDED (the
+	# last `targeting_changed`), since that is the set its click capture reads.
+	var handed: Array[Dictionary] = []
+	var record_handed := func(info: Dictionary) -> void: handed.append(info)
+	h._hud._targeting.targeting_changed.connect(record_handed)
+	var reopen_for_move := _verb_button(HudComposeVocab.VERB_TRADE)
+	if reopen_for_move != null:
+		reopen_for_move.emit_signal("pressed")
+	await h._settle()
+	var moved := _neighbour_band()
+	moved["pos"] = [NEIGHBOUR_MOVED_TO.x, NEIGHBOUR_MOVED_TO.y]
+	h._hud.update_band_alerts([_shipper_band(), moved])
+	await h._settle()
+	h._hud._targeting.targeting_changed.disconnect(record_handed)
+	var moved_ring: Array = handed.back().get(TargetingController.TARGETING_HIGHLIGHT_TILES_KEY, []) \
+		if not handed.is_empty() else []
+	h._assert_hud("the tied band walked, and the ring MapView is handed follows it (%s)" % str(moved_ring),
+		moved_ring.has(NEIGHBOUR_MOVED_TO) and not moved_ring.has(NEIGHBOUR_LAST_SEEN))
+	h._hud.notify_targeting_click(_tile_info(NEIGHBOUR_MOVED_TO))
+	await h._settle()
+	var moved_to_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("…and a click on its NEW hex pre-selects it",
+		moved_to_row != null and _collect_text(moved_to_row).contains(NEIGHBOUR_DISPLAY_NAME))
+	h._hud.close_verb_form()
+	h._hud.update_band_alerts([_shipper_band(), _neighbour_band()])
+	await h._settle()
 
 	# The cargo states below compose on an open sheet: re-open it and load the same manifest.
 	var reopen := _verb_button(HudComposeVocab.VERB_TRADE)

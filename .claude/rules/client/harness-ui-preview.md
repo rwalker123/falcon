@@ -1251,8 +1251,16 @@ the live tie's hex and never the parked one (`TARGETING_HIGHLIGHT_TILES_KEY` rea
 and is not targeting; a click on the ringed band sets the destination — `trade_sheet_destination`: the
 `To` row naming it, the REMEMBERED sighting under it — sending nothing and moving neither the
 selection nor the panel's subject. The row's `✕` (`HudWidgets.FIELD_CLEAR_META`) clears it, a second
-click sets it again, and the Send then sends ONE shipment to it with no pick and closes the sheet. The
-sheet is then re-opened and re-loaded for the cargo states that follow.
+click sets it again, and the Send then sends ONE shipment to it with no pick and closes the sheet.
+
+**THE RING FOLLOWS THE TIED BAND.** The sheet is re-opened, and a new roster moves the neighbour to
+`NEIGHBOUR_MOVED_TO`: the last descriptor `targeting_changed` handed MapView must ring the NEW hex and
+not the old one, and a click on the new hex must pre-select it. Judged on the emitted descriptor
+because that is the set MapView's click capture reads. **Sabotage-verified** by making
+`TargetingController.refresh_live_targets` a no-op and dropping `set_preselect`'s changed-set check:
+EXIT=1, exactly the ring claim fails (it still rings the old hex); the click claim stays green,
+because the harness hands the click straight to `_try_preselect`, which resolves live. The sheet is
+closed and the roster restored, then re-opened and re-loaded for the cargo states that follow.
 
 **A lambda captures a local by VALUE**, so a witness assigning to a `var` outside it reports nothing
 ever happened; the chapter's witnesses are containers.
@@ -3301,7 +3309,6 @@ subtracted.
   `herd_hunt_far_party_small`; every section-equality claim stays green, which is why the claim reads
   every label rather than the section.
 
-**A clean run is 443 frames / 2300 `PASS`, exit 0 — RE-MEASURED windowed on the merge of the
-work-party branch with `main`**, not summed from either side; it read 439 / 2257 on the work-party
-branch alone.
+**A clean run is 445 frames / 2324 `PASS`, exit 0 — RE-MEASURED windowed** on the band-verbs branch
+merged with the work party, not summed from either side.
 

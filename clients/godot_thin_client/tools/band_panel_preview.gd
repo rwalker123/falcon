@@ -2014,6 +2014,14 @@ func _ready() -> void:
 	await _settle()
 	await _assert_denial_click_commits()
 
+	# **ONE PICK IS ARMED AT A TIME** (PR #749 review): a click reaching two armed picks sent two
+	# orders. Both orders of arming, judged on what one click emits and what the banner says.
+	await _assert_verb_pick_replaces_move()
+	await _assert_move_replaces_verb_pick()
+	# **A HIDDEN SHEET DOES NOT STAY LIVE**: the selection cycling off the verb's band on its own hex
+	# (to the land, to a herd) closes the verb, its highlight and its Esc claim with it.
+	await _assert_occupant_change_closes_the_verb()
+
 	# ---- THE PREY, PRE-SELECTED ON THE MAP ------------------------------------------------------
 	# **AN OPEN DENY SHEET HIGHLIGHTS EVERY ELIGIBLE HERD**, armed or not, and the highlight goes when
 	# the sheet does. It is the PASSIVE glow: drawn, but not targeting — no banner, and Esc and every
@@ -8648,6 +8656,112 @@ func _assert_scout_click_commits() -> void:
 		not _hud.is_targeting_active() and not _hud._compose.has_verb() and _verb_sheet() == null)
 	_assert_band_panel("…while the selection is still the band (a targeting click selects nothing)",
 		int(_hud._selection.unit().get("entity", -1)) == band_entity)
+
+## Every order one targeting click emits, by command — what the one-pick-at-a-time guards count.
+func _record_orders(orders: Dictionary) -> Array[Callable]:
+	var on_move := func(_payload: Dictionary) -> void:
+		orders["move_band"] = int(orders.get("move_band", 0)) + 1
+	var on_deny := func(_payload: Dictionary) -> void:
+		orders["send_denial_raid"] = int(orders.get("send_denial_raid", 0)) + 1
+	_hud.move_band_requested.connect(on_move)
+	_hud.send_denial_raid_requested.connect(on_deny)
+	return [on_move, on_deny]
+
+func _stop_recording_orders(recorders: Array[Callable]) -> void:
+	_hud.move_band_requested.disconnect(recorders[0])
+	_hud.send_denial_raid_requested.disconnect(recorders[1])
+
+## **MOVE ARMED, THEN THE DENY SHEET'S SEND: THE DENY PICK REPLACES IT.** Move is armed straight through
+## `TargetingController.begin_move_band` — the action bar's Move closes the sheet first, so only the
+## entry point itself can put the two side by side — and the Send then arms the herd pick. One click
+## on the herd sends the raid and nothing else, and the banner says DENY.
+func _assert_verb_pick_replaces_move() -> void:
+	await _open_verb_sheet(HudComposeVocab.VERB_DENY)
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	_hud._targeting.begin_move_band(_hud._band_labor.panel_band())
+	await _settle()
+	_assert_band_panel("precondition: Move is armed under the open Deny sheet (\"%s\")"
+			% _hud._targeting.banner_text(),
+		_hud._targeting.banner_text().begins_with(TargetingController.MOVE_COMMAND.to_upper())
+			and _verb_sheet() != null)
+	_press_verb_send(HudWidgets.SEND_DENIAL_CONFIRM_META)
+	await _settle()
+	_assert_band_panel("the Deny send takes the banner off MOVE (\"%s\")" % _hud._targeting.banner_text(),
+		_hud._targeting.banner_text().begins_with(
+			TargetingController.DENY_PICK_COMMAND.to_upper()))
+	var orders := {}
+	var recorders := _record_orders(orders)
+	_hud.notify_targeting_click(_quarry_tile_info(_quarry_herd_fixtures()[0]))
+	_stop_recording_orders(recorders)
+	await _settle()
+	_assert_band_panel("…and the click sends the raid ALONE (%s)" % str(orders),
+		int(orders.get("send_denial_raid", 0)) == 1 and int(orders.get("move_band", 0)) == 0)
+	_assert_band_panel("…leaving nothing armed", not _hud.is_targeting_active())
+
+## **THE DENY PICK ARMED, THEN MOVE: MOVE REPLACES IT.** The displaced pick is announced
+## (`verb_pick_cancelled`), so the sheet re-renders with its send un-armed. One click sends the move and
+## nothing else, and the banner says MOVE. The optimistic move it records is dropped again after.
+func _assert_move_replaces_verb_pick() -> void:
+	await _open_verb_sheet(HudComposeVocab.VERB_DENY)
+	_hud._bandpanel._send_expedition_count = DENIAL_PARTY
+	_hud._bandpanel.rerender()
+	await _settle()
+	_press_verb_send(HudWidgets.SEND_DENIAL_CONFIRM_META)
+	await _settle()
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud._targeting.begin_move_band(band)
+	await _settle()
+	var send := _find_meta_control(_sheet_root(), HudWidgets.SEND_DENIAL_CONFIRM_META) as Button
+	_assert_band_panel("Move over an armed Deny pick takes the banner to MOVE (\"%s\")"
+			% _hud._targeting.banner_text(),
+		_hud._targeting.banner_text().begins_with(TargetingController.MOVE_COMMAND.to_upper())
+			and not _hud._targeting.is_verb_pick_armed(HudComposeVocab.COMPOSE_MISSION_DENY))
+	_assert_band_panel("…and the sheet's send is no longer drawn armed",
+		send != null and not send.button_pressed)
+	var orders := {}
+	var recorders := _record_orders(orders)
+	var herd_tile := _quarry_tile_info(_quarry_herd_fixtures()[0])
+	_hud.notify_targeting_click(herd_tile)
+	_stop_recording_orders(recorders)
+	await _settle()
+	_assert_band_panel("…and the click sends the move ALONE (%s)" % str(orders),
+		int(orders.get("move_band", 0)) == 1 and int(orders.get("send_denial_raid", 0)) == 0)
+	_hud.drop_pending_move({"pending_entity": int(band.get("entity", -1))})
+	_hud._bandpanel.close_verb_form()
+	await _settle()
+
+## **CYCLING OFF THE VERB'S BAND ON ITS OWN HEX ENDS THE VERB.** The sheet mounts only while the band
+## is the selection, so a verb kept past that would be a hidden form whose herd highlight, click capture
+## and Esc claim all stayed live. Both stops a hex cycle offers besides the band — the land and a herd.
+func _assert_occupant_change_closes_the_verb() -> void:
+	var main_script: Script = load("res://src/scripts/Main.gd")
+	var band: Dictionary = _hud._band_labor.panel_band()
+	var tile := SourceForecast.band_tile(band)
+	var herd_here: Dictionary = (_quarry_herd_fixtures()[0] as Dictionary).duplicate(true)
+	herd_here["x"] = tile.x
+	herd_here["y"] = tile.y
+	herd_here["tile_info"] = {"x": tile.x, "y": tile.y, "visibility_state": "active"}
+	for stop in ["land", "herd"]:
+		await _open_verb_sheet(HudComposeVocab.VERB_DENY)
+		_assert_band_panel("precondition (%s): the Deny sheet is open and its herds glow" % stop,
+			_hud.is_verb_form_open() and _hud._targeting.is_preselect_on())
+		if stop == "land":
+			_hud.show_land_selection()
+		else:
+			_hud.show_herd_selection(herd_here)
+		await _settle()
+		_assert_band_panel("cycling to the hex's %s closes the verb" % stop,
+			not _hud.is_verb_form_open() and not _hud._compose.has_verb())
+		_assert_band_panel("…drops the highlight", not _hud._targeting.is_preselect_on()
+			and not _hud.is_targeting_active())
+		_assert_band_panel("…and Esc goes to the next claimant, not the sheet",
+			main_script.escape_claimant(false, _hud.is_compose_sheet_open(),
+				_hud.is_targeting_active(), false, false, _hud.is_verb_form_open())
+				!= main_script.ESC_VERB_FORM)
+	_select_panel_band_on_its_hex()
+	await _settle()
 
 ## Where the scout click lands — an open tile away from the band and its herds.
 const SCOUT_TARGET_TILE := Vector2i(66, 14)

@@ -1135,7 +1135,8 @@ const SPLIT_AGE_ELDERS_KEY := "elders"
 const PARTIES_INSPECTOR_LINE_SEPARATION := 2
 
 ## The compose sheet's MISSION — which of the band verbs opened it. The sheet is always already on
-## one: a verb names its mission, and the sheet opens only once the verb's target is chosen.
+## one: a verb names its mission, and the sheet opens on the band's own tile. The target is its last
+## step — Send arms the map pick, unless Deny or Trade already has one pre-selected.
 ##
 ## ⛔ **THERE IS NO HUNT MISSION.** It was the answer to game past `hunt_reach`; the work party is the
 ## answer now, composed on the herd's own sheet as an ordinary hunt (`docs/plan_civilization_steps.md`

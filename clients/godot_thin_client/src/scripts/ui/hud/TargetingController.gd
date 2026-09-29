@@ -80,6 +80,11 @@ const QUARRY_NO_REACH_BOUND := -1
 ## old spelling put the same banner word on hunting a herd and on digging a pit.
 const PICK_PREY_COMMAND := "prey"
 
+## The three pick kinds `_disarm_other_picks` keeps apart.
+const PICK_KIND_MOVE := &"move"
+const PICK_KIND_VERB := &"verb"
+const PICK_KIND_QUARRY := &"quarry"
+
 # --- The verb picks' banners (issue #529) ---------------------------------------------------------
 ## Each banner's lead word is the verb, and every banner names the band by its NAME
 ## (`HudFormat.band_name`) — never `Band <id>`, which is a handle, not something a player calls a band.
@@ -159,6 +164,9 @@ var _quarry_chooser: PopupMenu = null
 # while the sheet is open, {} otherwise. `choose` is the sheet's `func(target: Dictionary)` taking the
 # same target dictionary a commit does (`PICK_HERD_KEY` / `PICK_DESTINATION_KEY`).
 var _preselect: Dictionary = {}
+# The descriptor last handed to MapView (`targeting_changed`) — what `refresh_live_targets` compares a
+# recomputed one against, so a snapshot that moved nothing re-emits nothing.
+var _last_targeting_info: Dictionary = {}
 
 func _init(band_labor: HudBandLaborState,
 		drawercompose: DrawerComposeController, note_sink: Callable, host: Node,
@@ -248,7 +256,33 @@ func _refresh_targeting() -> void:
 		_targeting_banner.visible = true
 		_targeting_banner_label.text = _targeting_banner_bbcode(info)
 		_targeting_banner.tooltip_text = _hover_tooltip()
+	_last_targeting_info = info
 	targeting_changed.emit(info)
+
+## **THE HIGHLIGHT AND THE PICK FOLLOW THE WORLD, NOT THE MOMENT THE FORM OPENED.** Called by HudLayer
+## whenever a snapshot re-ingests the bands, the herds or the ties. The Trade rings are an explicit
+## tile set (`live_tie_tiles`) and the herd glow is measured from the band's tile, so both go stale
+## the turn a tied band or the sender moves — and `MapView.highlighted_at` captures clicks off that
+## set while `_try_preselect` resolves live, so a stale set is a click the map captures and the sheet
+## then ignores. Each armed or passive flow's band is re-read from the live roster, the descriptor is
+## recomputed, and MapView is told only when it CHANGED (a re-emit restarts the reticle pulse).
+func refresh_live_targets() -> void:
+	if _pending_verb_pick.is_empty() and _pending_pick_quarry.is_empty() and _preselect.is_empty():
+		return
+	_refresh_live_band(_pending_verb_pick, VERB_PICK_BAND_KEY)
+	_refresh_live_band(_pending_pick_quarry, "band")
+	_refresh_live_band(_preselect, "band")
+	if _current_targeting_info() != _last_targeting_info:
+		_refresh_targeting()
+
+## Swap `pending[key]`'s band for the roster's current copy of it (same `entity`), when it is there.
+func _refresh_live_band(pending: Dictionary, key: String) -> void:
+	if pending.is_empty():
+		return
+	var band: Dictionary = pending.get(key, {})
+	var live := _band_labor.player_band_by_entity(int(band.get("entity", -1)))
+	if not live.is_empty():
+		pending[key] = live.duplicate(true)
 
 ## The banner's TEXT alone — a hover or a forecast answer changes what it says, never what MapView
 ## draws, so this does not re-emit `targeting_changed`.
@@ -323,7 +357,9 @@ func set_preselect(band: Dictionary, mission: String, choose: Callable) -> void:
 		and String(_preselect.get(PRESELECT_MISSION_KEY, "")) == mission
 	_preselect = {"band": band.duplicate(true), PRESELECT_MISSION_KEY: mission,
 		PICK_COMMIT_KEY: choose}
-	if not same:
+	# A re-registration for the same band and mission still re-states the highlight when the set it
+	# derives has moved (a tied band walked) — compared, so an unchanged render re-emits nothing.
+	if not same or _current_targeting_info() != _last_targeting_info:
 		_refresh_targeting()
 
 ## The sheet closed: the highlight and its pre-selection go with it.
@@ -478,6 +514,27 @@ func is_verb_pick_armed(mission: String) -> bool:
 		return mission == HudComposeVocab.COMPOSE_MISSION_DENY
 	return false
 
+## **ONE PICK IS ARMED AT A TIME, AND THIS IS THE ONLY PLACE THAT SAYS SO.** Every arming entry point
+## (`begin_move_band`, `begin_verb_pick`, `begin_pick_quarry`) calls it with its own kind before it
+## arms, so the other two pending picks come down first. Without it one click reached every armed
+## `_try_*` in `try_dispatch` and sent two orders. The passive highlight (`_preselect`) is not a pick
+## and is left alone. A verb pick taken down by a Move is announced as `verb_pick_cancelled`, so the
+## sheet that armed it re-renders with its send un-armed. The caller's own `_refresh_targeting`
+## re-states the banner and the map once.
+func _disarm_other_picks(keep: StringName) -> void:
+	var displaced_verb := false
+	if keep != PICK_KIND_MOVE:
+		_pending_move_band = {}
+	if keep != PICK_KIND_VERB and not _pending_verb_pick.is_empty():
+		_pending_verb_pick = {}
+		displaced_verb = true
+	if keep != PICK_KIND_QUARRY and not _pending_pick_quarry.is_empty():
+		_close_quarry_chooser()
+		_pending_pick_quarry = {}
+		displaced_verb = true
+	if displaced_verb and keep == PICK_KIND_MOVE:
+		verb_pick_cancelled.emit()
+
 # ---- Move-band -----------------------------------------------------------------------------------
 
 ## Move-band: enter tile-targeting; the destination click emits move_band_requested. `band` is the
@@ -490,6 +547,7 @@ func begin_move_band(band: Dictionary = {}) -> void:
 		band = _resolve_assign_band()
 	if band.is_empty():
 		return
+	_disarm_other_picks(PICK_KIND_MOVE)
 	_pending_move_band = band.duplicate(true)
 	_refresh_targeting()
 
@@ -549,7 +607,7 @@ func begin_verb_pick(band: Dictionary, mission: String, commit: Callable,
 		return
 	# Targeting asks the player to click the map — a sheet floating over it is a trap (§15).
 	_drawercompose.close_compose_sheet()
-	cancel_pick_quarry()
+	_disarm_other_picks(PICK_KIND_VERB)
 	_pending_verb_pick = {VERB_PICK_BAND_KEY: band.duplicate(true), VERB_PICK_MISSION_KEY: mission,
 		PICK_COMMIT_KEY: commit, PICK_HOVER_KEY: hover}
 	_refresh_targeting()
@@ -668,7 +726,7 @@ func begin_pick_quarry(band: Dictionary, commit: Callable = Callable(),
 	# Targeting asks the player to click the map — the tile panel's FLOATING sheet over it is a trap
 	# (§15).
 	_drawercompose.close_compose_sheet()
-	_cancel_pending_verb_pick()
+	_disarm_other_picks(PICK_KIND_QUARRY)
 	_pending_pick_quarry = {"band": band.duplicate(true), PICK_COMMIT_KEY: commit, PICK_HOVER_KEY: hover}
 	_refresh_targeting()
 

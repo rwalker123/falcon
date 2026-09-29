@@ -8370,9 +8370,10 @@ func _on_recall_all_parties_pressed(parties: Array) -> void:
             for exp in parties:
                 _on_recall_expedition_pressed(exp))
 
-## The pending verb's sheet. The mission is settled by the verb that opened it and the target by the
-## map pick that followed, so the sheet titles itself by mission and asks only what is left. `✕` is the
-## only way back.
+## The pending verb's sheet, opened on the band's own tile. The mission is settled by the verb that
+## opened it, so the sheet titles itself by mission and asks for the party; the TARGET is its last step
+## — Send arms the map pick, unless Deny or Trade already has one pre-selected, in which case Send is
+## the order. `✕` is the only way back.
 func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     var mission := _compose.verb_mission()
     var is_deny := mission == HudComposeVocab.COMPOSE_MISSION_DENY
@@ -8407,8 +8408,8 @@ func _build_compose_sheet(band: Dictionary, idle: int) -> VBoxContainer:
     if mission == HudComposeVocab.COMPOSE_MISSION_SPLIT:
         _fill_split_compose_sheet(sheet, band)
         return sheet
-    # SCOUT — TWO inputs: how many go, and what they carry. The destination is the tile this sheet is
-    # drawn on: it was picked on the map before the sheet opened, so the send needs no second pick.
+    # SCOUT — TWO inputs: how many go, and what they carry. The destination is not on the sheet: Send
+    # arms the tile pick, and the map click on the destination commits.
     #
     # **THE KIT IS A REAL QUESTION HERE, and until the ranging kit existed it was not asked at all** —
     # the launch stamped the hunt job's default on the party and the player never saw it. A
@@ -9888,6 +9889,21 @@ func note_selection_tile(tile_info: Dictionary) -> void:
         return
     # No re-render: every caller renders the drawer for the new selection straight after, and that
     # render takes the sheet down (`SubjectDrawerController.render_subject_drawer`).
+    _reset_verb_state()
+    _targeting.disarm_verb_picks()
+
+## **THE SELECTION MOVED OFF THE VERB'S BAND — even on its own hex.** Called by every player-made
+## OCCUPANT selection (`HudLayer`'s unit / herd / land picks and `clear_selection`) with the unit now
+## selected, `{}` for none. The sheet mounts only while the selected unit IS the verb's band
+## (`SubjectDrawerController._verb_form_matches`), so a verb kept alive past that point would be a
+## hidden form whose highlight, click capture and Esc claim all stayed live. Cycling to the hex's land
+## or a herd therefore ends the verb by the same path leaving the hex does. The TILE-level half is
+## `note_selection_tile`, which cannot decide this: a map click selects the hex before its occupant.
+func note_selection_occupant(unit: Dictionary) -> void:
+    if not _compose.has_verb():
+        return
+    if int(unit.get("entity", -1)) == _compose.verb_band_entity():
+        return
     _reset_verb_state()
     _targeting.disarm_verb_picks()
 

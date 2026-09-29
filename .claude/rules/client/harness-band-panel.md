@@ -172,7 +172,7 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 221 frames / 1648 `PASS` / 553 `assert OK`, exit 0 — RE-MEASURED, and this line is
+**A clean run is 221 frames / 1663 `PASS` / 553 `assert OK`, exit 0 — RE-MEASURED, and this line is
 the harness's ONLY tally.**
 
 **THE EAT-FIRST RULE'S RETIREMENT MOVED IT 193 / 1456 / 557 → 193 / 1453 / 557** on the work-party
@@ -2770,6 +2770,25 @@ out — while every presence claim stays green. Restored: green.
 exactly 5 failures** — the no-ate/deficit claim (it names the line on all three postings), the three
 postings' line counts, and the PNG-less forage walk's count; the local row's identity stays green, and
 nothing else in the run moves. Restored: green.
+
+## One pick armed at a time, and a hidden sheet does not stay live
+
+Three PNG-less guards run straight after `_assert_denial_click_commits`, each judged on what ONE
+targeting click emits and what the banner says:
+
+- **`_assert_verb_pick_replaces_move`** — Move armed through `TargetingController.begin_move_band`
+  under an open Deny sheet (the action bar's Move closes the sheet first, so only the entry point can
+  put the two side by side), then the sheet's real Send: the banner reads DENY, and one click on the
+  herd emits one `send_denial_raid` and no `move_band`.
+- **`_assert_move_replaces_verb_pick`** — the Deny pick armed, then `begin_move_band`: the banner reads
+  MOVE, the sheet's send is drawn un-armed, and one click emits one `move_band` and no raid. The
+  optimistic move it records is dropped again (`drop_pending_move`).
+- **`_assert_occupant_change_closes_the_verb`** — the Deny sheet open, the selection cycled to the
+  band's own hex's LAND, then to a HERD on it: each time the verb is cleared, the herd highlight is
+  gone, and `Main.escape_claimant` no longer answers `ESC_VERB_FORM`.
+
+**Sabotage-verified** by making `_disarm_other_picks` and `note_selection_occupant` no-ops: EXIT=1,
+exactly 11 failures, all of them these claims (both clicks emit two orders), and nothing else moves.
 
 ## The quarry-eligibility guards (the Hunt verb is retired)
 

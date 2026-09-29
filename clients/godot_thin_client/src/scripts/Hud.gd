@@ -22,7 +22,8 @@ signal answer_fork_requested(payload: Dictionary)
 ## Payload keys: { faction, band, x, y }. Main formats the `move_band …` command.
 signal move_band_requested(payload: Dictionary)
 ## Scouting expedition (docs/plan_exploration_and_sites.md §2). Sent from the Scout verb's sheet, which
-## opens on the tile the player picked FIRST (issue #529) — party size and kit, then Send. Payload keys:
+## opens on the band's own tile (issue #529) — party size and kit, then Send, which arms the tile pick;
+## the map click on the destination commits. Payload keys:
 ## { faction, band, party_workers, x, y }. Main formats the `send_expedition …` command.
 signal send_expedition_requested(payload: Dictionary)
 ## ⛔ RETIRED — **`send_hunt_expedition_requested`** (`docs/plan_civilization_steps.md` §One work
@@ -1233,12 +1234,14 @@ func update_herds(herds_variant: Variant) -> void:
     if not (herds_variant is Array):
         return
     _band_labor.set_world_herds(herds_variant)
+    _targeting.refresh_live_targets()
 
 ## Ingests the viewer's CONTACT TIES (arc #527) — one directed row per edge, already filtered
 ## sim-side to this faction's observing bands. The trade compose sheet's destination picker is their
 ## one consumer: a tie is what gates a shipment, so the picker lists a band's ties and nothing else.
 func update_connections(connections_variant: Variant) -> void:
     _band_labor.set_connections(connections_variant)
+    _targeting.refresh_live_targets()
 
 ## Ingests MapView's terrain-stamped food sites (x/y/module/kind + terrain_id) into the per-tile map
 ## the Forage row reads, so its glyph matches the map marker (riverine split included). The per-tile
@@ -2025,6 +2028,7 @@ func show_unit_selection(unit_data: Dictionary) -> void:
     else:
         tile_info = _selection.tile_info()
     _bandpanel.note_selection_tile(tile_info)
+    _bandpanel.note_selection_occupant(unit_data)
     _selection.set_tile_info(tile_info)
     _selection.select_unit(unit_data.duplicate(true))
     # **THE ONE `from_selection` CALLER.** This is the player picking an occupant — a map-marker click,
@@ -2046,6 +2050,7 @@ func show_herd_selection(herd_data: Dictionary) -> void:
         # selected) falls through to herd-only so Harvest can't mis-target.
         tile_info = _selection.tile_info()
     _bandpanel.note_selection_tile(tile_info)
+    _bandpanel.note_selection_occupant({})
     _selection.set_tile_info(tile_info)
     _selection.select_herd(herd_data.duplicate(true))
     _render_selection_panel(tile_info, {}, _selection.herd())
@@ -2063,6 +2068,7 @@ func show_herd_selection(herd_data: Dictionary) -> void:
 func show_land_selection() -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
+    _bandpanel.note_selection_occupant({})
     _selectioncard.select_land_subject()
     _render_selection_panel(_selection.tile_info(), {}, {})
 
@@ -2245,9 +2251,10 @@ func clear_selection() -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()
     _selection.select_land()
-    # The occupant cleared; the TILE may still be selected, and a verb whose target it is keeps its
-    # sheet. No tile at all closes the card, which is closing the selection.
+    # The occupant cleared, so the verb's band is no longer the selection and its sheet goes. No tile
+    # at all closes the card, which is closing the selection.
     _bandpanel.note_selection_tile(_selection.tile_info())
+    _bandpanel.note_selection_occupant({})
     # Keep pending move-band so the user can still choose a destination after deselecting.
     if _selection.tile_info().is_empty():
         _hide_selection_card()
@@ -2358,6 +2365,9 @@ func update_band_alerts(populations_variant: Variant) -> void:
     _loadout.set_bands(player_bands)
     # 3. Ingest (overwrites prev_band_sizes) — unchanged.
     _band_labor.ingest_snapshot_bands(new_sizes, player_band, player_bands, player_expeditions)
+    # An open Deny / Trade sheet's highlight and an armed pick are derived from where the bands
+    # stand, so they follow this roster (`TargetingController.refresh_live_targets`).
+    _targeting.refresh_live_targets()
     # 3a. Publish this roster's band NAMES for the event dock (see `band_labels_changed`). Keyed by
     # the durable `band_id` the sim puts in an event's `band=` token, valued with the same
     # `HudFormat.band_name` the cycler, the picker and the orb's rows all use — so one band has one
@@ -2775,9 +2785,8 @@ func _suppress_tooltip_over_ui() -> void:
     if viewport != null and viewport.gui_get_hovered_control() != null:
         tooltip_panel.visible = false
 
-## MapView.tile_hovered lands here — the hex tooltip. The hovered hex is no longer recorded: its only
-## reader was the targeting banner's pre-launch raid forecast, which moved INTO the compose sheet once
-## the quarry is picked first (the sheet has the real party size and policy; a hover never did).
+## MapView.tile_hovered lands here — the hex tooltip. The hovered hex is not recorded here: an armed
+## pick's banner reads it through `notify_hex_hovered` → `TargetingController.note_hover`.
 func show_tooltip(info: Dictionary) -> void:
     if tooltip_panel == null:
         return
