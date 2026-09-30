@@ -30,17 +30,19 @@ extends Node
 ##
 ##   1. **The seat handshake.** The claim is granted, it carries a token, and per-seat frames addressed
 ##      by that token arrive — which is what `_world_revealed` means.
-##   2. **One faction-bearing command.** `split_band` is sent through `Main._on_hud_split_band`, the
-##      same handler the HUD's signal reaches, and the world comes back holding one more band. The
-##      server takes the acting faction from the seat the *connection* holds, so an unseated link
+##   2. **One faction-bearing command, through the UI.** The band's hex is clicked
+##      (`MapView.handle_hex_click`), Split is pressed in its card through the viewport, the sheet is
+##      composed to the founding floor and confirmed, and the world comes back holding one more band.
+##      The server takes the acting faction from the seat the *connection* holds, so an unseated link
 ##      answers this with `command.rejected=not_this_connections_seat` and no new band.
 ##   3. **One turn submission.** `order <faction> ready` through `Main._on_hud_next_turn`, and the turn
 ##      number advances.
 ##
 ## **This path broke twice on one branch** — a per-command connection that killed the seat, and then a
 ## missing stream greeting — and each time the only thing that caught it was a real client against a
-## real server. `ui_preview` cannot: it feeds canned fixtures to the HUD and opens no socket. macOS
-## blocks synthetic clicks, so driving `Main`'s handlers by name is the only route to this path at all.
+## real server. `ui_preview` cannot: it feeds canned fixtures to the HUD and opens no socket. The
+## command is driven through the HUD rather than `Main`'s handler because a HUD-side defect — every
+## band verb closing as it opened — passed the handler path green.
 ##
 ## **It is deliberately three assertions wide.** The seat, one command that names a faction, one turn.
 ## Anything else about gameplay belongs in `core_sim`'s tests, where it costs no window.
@@ -87,6 +89,17 @@ const SPLIT_MIN_WORKERS_KEY := "founding_min_workers"
 const SPLIT_PARENT_MIN_WORKERS_KEY := "founding_parent_min_workers"
 const TURN_KEY := "turn"
 const NO_TURN := -1
+const ENTITY_KEY := "entity"
+const CURRENT_X_KEY := "current_x"
+const CURRENT_Y_KEY := "current_y"
+const NO_ENTITY := -1
+const NO_TILE := -1
+## How long a UI press gets to settle into the panel before its effect is read — a render, not a
+## round trip, so a handful of frames.
+const UI_SETTLE_FRAMES := 5
+## The most `+` presses the split sheet's stepper may take to reach the sim's founding floor, so a
+## stepper that never moves fails rather than spinning.
+const SPLIT_STEPPER_MAX_PRESSES := 32
 
 var _main: Node = null
 var _failures: int = 0
@@ -219,11 +232,12 @@ func _run() -> void:
 	print("%s: split_band band=%d workers=%d (of %d working-age, parent floor %d)" % [
 		TAG, band_id, workers, working_age, parent_floor])
 	var bands_before := bands.size()
-	_main.call("_on_hud_split_band", {
-		BAND_ID_KEY: band_id,
-		"workers": workers,
-		FACTION_KEY: HudConst.PLAYER_FACTION_ID,
-	})
+	# **THROUGH THE UI THE PLAYER USES, NOT `Main`'s HANDLER.** The player selects the band by clicking
+	# its hex and presses Split in that hex's card; a regression that closed the verb the instant the
+	# press opened it (the jump back to the band's hex re-clicked the SELECTED hex and cycled the
+	# selection onto the land) left the handler path green while every band verb did nothing.
+	if not await _split_through_the_ui(band, workers):
+		return
 	var split_landed: bool = await _await_until("split_band to reach the world",
 		COMMAND_EFFECT_TIMEOUT_MSEC,
 		func() -> bool: return _player_bands(_snapshot()).size() > bands_before)
@@ -248,3 +262,119 @@ func _run() -> void:
 			turn_before, HudConst.PLAYER_FACTION_ID])
 		return
 	print("%s: turn %d -> %d" % [TAG, turn_before, int(_snapshot().get(TURN_KEY, NO_TURN))])
+
+
+## **SELECT THE BAND BY ITS HEX, PRESS SPLIT IN ITS CARD, AND COMPOSE THE SHEET** — the player's path
+## end to end. `false` (with a named failure) where any step does not happen.
+##
+## The hex click is `MapView.handle_hex_click`, the function a real left click on the map calls. The
+## verb press goes through the viewport (`Viewport.push_input`), so the button is reached by hit test
+## as a player's click would be. The sheet's stepper and confirm are pressed by signal: the opening
+## outfit card floats over the sheet's right-hand column on a fresh game, and whether a pointer
+## reaches them there is a layout question this probe does not own.
+func _split_through_the_ui(band: Dictionary, workers: int) -> bool:
+	var hud: Node = _main.get("hud")
+	var map_view: Node = _main.get("map_view")
+	var entity := int(band.get(ENTITY_KEY, NO_ENTITY))
+	map_view.call("handle_hex_click", int(band.get(CURRENT_X_KEY, NO_TILE)),
+		int(band.get(CURRENT_Y_KEY, NO_TILE)), MOUSE_BUTTON_LEFT)
+	await _frames(UI_SETTLE_FRAMES)
+	var verb := _verb_button(hud, HudComposeVocab.VERB_SPLIT)
+	if verb == null:
+		_fail("clicking band %d's hex drew no Split verb in its card" % entity)
+		return false
+	_press_through_viewport(verb)
+	await _frames(UI_SETTLE_FRAMES)
+	var panel: Object = hud.get("_bandpanel")
+	if not bool(panel.call("verb_is_open")):
+		_fail(("pressing Split in the band's card opened no sheet — the verb closed as it opened. "
+			+ "The jump back to the band's hex must not move the selection off the band"))
+		return false
+	for _i in range(SPLIT_STEPPER_MAX_PRESSES):
+		if _stepper_count(hud) >= workers:
+			break
+		var plus := _stepper_plus(hud)
+		if plus == null:
+			break
+		plus.pressed.emit()
+		await _frames(UI_SETTLE_FRAMES)
+	var confirm := _split_confirm(hud)
+	if confirm == null or confirm.disabled:
+		_fail("the split sheet never offered an enabled `%s` at %d workers (stepper reads %d)" % [
+			HudComposeVocab.SPLIT_BAND_BUTTON, workers, _stepper_count(hud)])
+		return false
+	confirm.pressed.emit()
+	return true
+
+
+func _frames(count: int) -> void:
+	for _i in range(count):
+		await get_tree().process_frame
+
+
+## Every node under `root`, depth first — the probe finds controls by META, never by face.
+func _descendants(root: Node, out: Array[Node]) -> Array[Node]:
+	out.append(root)
+	for child in root.get_children():
+		_descendants(child, out)
+	return out
+
+
+func _verb_button(hud: Node, id: StringName) -> Button:
+	for node in _descendants(hud, []):
+		if node is Button and node.has_meta(HudWidgets.VERB_BUTTON_META) \
+				and node.is_visible_in_tree() and node.get_meta(HudWidgets.VERB_BUTTON_META) == id:
+			return node
+	return null
+
+
+func _stepper(hud: Node) -> HBoxContainer:
+	for node in _descendants(hud, []):
+		if node is HBoxContainer and node.has_meta(HudWidgets.PARTY_STEPPER_COUNT_META) \
+				and node.is_visible_in_tree():
+			return node
+	return null
+
+
+func _stepper_count(hud: Node) -> int:
+	var row := _stepper(hud)
+	return int(row.get_meta(HudWidgets.PARTY_STEPPER_COUNT_META)) if row != null else 0
+
+
+## The stepper's `+` — its LAST button (`HudWidgets.add_stepper_controls` lays out `−`, value, `+`).
+func _stepper_plus(hud: Node) -> Button:
+	var row := _stepper(hud)
+	if row == null:
+		return null
+	var plus: Button = null
+	for child in row.get_children():
+		if child is Button:
+			plus = child
+	return plus
+
+
+func _split_confirm(hud: Node) -> Button:
+	for node in _descendants(hud, []):
+		if node is Button and node.is_visible_in_tree() \
+				and (node as Button).text == HudComposeVocab.SPLIT_BAND_BUTTON:
+			return node
+	return null
+
+
+## A left click at the control's centre, pushed into its viewport — press and release in one call
+## stack, so nothing can land between them (`test-harnesses.md` → "A SIMULATED GESTURE IS NOT
+## HERMETIC").
+func _press_through_viewport(control: Control) -> void:
+	var viewport: Viewport = control.get_viewport()
+	var at: Vector2 = viewport.get_final_transform() * control.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = at
+	motion.global_position = at
+	viewport.push_input(motion)
+	for pressed in [true, false]:
+		var click := InputEventMouseButton.new()
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.pressed = pressed
+		click.position = at
+		click.global_position = at
+		viewport.push_input(click)

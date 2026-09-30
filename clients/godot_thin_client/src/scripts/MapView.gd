@@ -5976,8 +5976,17 @@ func focus_on_tile(col: int, row: int) -> void:
 ## Centre the view on a tile AND select it (as if the hex were clicked), so a jump
 ## from the turn-orb attention popover lands on a *selected* tile — the Tile card +
 ## Occupants roster populate, not just a recentre. Select first, then centre.
+##
+## ⛔ **A JUMP TO THE TILE ALREADY SELECTED IS NOT A RE-CLICK.** `handle_hex_click` on the selected
+## hex ADVANCES the select-then-cycle (band → next occupant → the land), which is a player's re-click
+## and never what a jump means. Every band verb reaches here through
+## `BandPanelController._select_band_on_map`, on the band's own hex — the hex the player selected to
+## see the band at all — so the cycle moved the selection to the LAND, and
+## `note_selection_occupant` then closed the verb the press had just opened: Split, Scout, Deny and
+## Trade all did nothing. The hex is already selected, so there is nothing to select; only centre it.
 func focus_and_select_tile(col: int, row: int) -> void:
-	handle_hex_click(col, row, MOUSE_BUTTON_LEFT)
+	if Vector2i(col, row) != selected_tile:
+		handle_hex_click(col, row, MOUSE_BUTTON_LEFT)
 	focus_on_tile(col, row)
 
 # --- End 2D Minimap System ---
