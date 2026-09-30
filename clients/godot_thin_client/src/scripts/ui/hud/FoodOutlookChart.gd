@@ -9,14 +9,20 @@ class_name FoodOutlookChart
 ## it is presentation arithmetic over sim-supplied numbers (arrivals, consumption, pen feed) and
 ## re-derives no yield and no ecology.
 ##
-## The walk, per turn i of the horizon:
-##     food = max(0, food + Σ arrival_schedule[i] over the band's sources + standing_net − drain)
-## with `drain` (the people's consumption) and `standing_net` (this turn's POOLED food net, signed —
+## The walk, per turn i of the horizon — **MEAL BEFORE INCOME**, the sim's order:
+##     food += standing_net                       (pooling settles in Logistics, ahead of the meal)
+##     short = food < drain                        (the meal cannot be covered: the band goes hungry)
+##     food = max(0, food − drain) + Σ arrival_schedule[i] over the band's sources
+## with `drain` (the people's NEED, `food_need` — not what they ate) and `standing_net` (this turn's POOLED food net, signed —
 ## `DetailFormat.band_pooled_food_net`) held FLAT across the projection — this is a "if nothing
 ## changes" readout, not a forecast of the player's future decisions.
 ##
-## **IT IS THE SIM'S RUNWAY WALK, TERM FOR TERM** (`snapshot::population::larder_runway_turns`'s first
-## arm), so the empty marker lands on the turn `turnsOfFood` beside it names. The sim's second arm —
+## **IT IS THE SIM'S RUNWAY WALK, TERM FOR TERM** (`snapshot::population::larder_runway_turns`,
+## `MealOrder::BeforeIncome`), so the marker lands on the turn `turnsOfFood` beside it names: the FIRST
+## turn whose meal comes up short, which on a hand-to-mouth band is this coming one. The order is
+## POOL → check the meal → eat → the arrival lands, on EVERY turn including the first: pooled food
+## settles ahead of the meal, so a larder below one meal that pooling tops up is fed. ⛔ It walked income-before-meal and drained by what was EATEN until the
+## hand-to-mouth fix, which drew a comfortable rising line over a band that starved every turn. The sim's second arm —
 ## the smooth `larder / net_drain` when the walk never empties within the horizon — has no mark here:
 ## a chart whose larder does not empty draws no marker at all.
 
@@ -46,8 +52,8 @@ const EMPTY_GAP_LENGTH := 3.0
 const EMPTY_MARKER_WIDTH := 1.0
 const EMPTY_LABEL_FONT_SIZE := 9
 const EMPTY_LABEL_OFFSET := Vector2(3.0, -1.0)
-const EMPTY_LABEL_FORMAT := "empty ~turn %d"
-const EMPTY_LABEL_RELATIVE_FORMAT := "empty in %d turns"
+const EMPTY_LABEL_FORMAT := "hungry ~turn %d"
+const EMPTY_LABEL_RELATIVE_FORMAT := "hungry in %d turns"
 ## `current_turn` sentinel — see `ArrivalStrip.UNKNOWN_TURN`.
 const UNKNOWN_TURN := -1
 ## No turn in the horizon empties the larder.
@@ -64,8 +70,8 @@ func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 ## Compose + store the projection. `start_food` is the band's current larder (provisions),
-## `arrivals[i]` the merged food landing i+1 turns from now, `drain` the flat per-turn cost
-## (consumption), `standing_net` the flat per-turn pooled food net (signed; the sim's `standing_net`).
+## `arrivals[i]` the merged food landing i+1 turns from now, `drain` the flat per-turn NEED
+## (`food_need`), `standing_net` the flat per-turn pooled food net (signed; the sim's `standing_net`).
 ## `current_turn` labels the empty marker (`UNKNOWN_TURN` → relative).
 func set_projection(start_food: float, arrivals: PackedFloat32Array, drain: float, current_turn: int,
 		standing_net: float = 0.0) -> void:
@@ -76,10 +82,16 @@ func set_projection(start_food: float, arrivals: PackedFloat32Array, drain: floa
 	# Point 0 is NOW (before any arrival), so point i+1 is the larder after turn i resolves.
 	var food: float = maxf(start_food, 0.0)
 	_series.push_back(food)
+	# ⛔ **NO EARLY EXIT AHEAD OF POOLING.** Pooled food settles BEFORE the meal, so a receiver whose
+	# own larder is below one meal (larder 3, need 5, pooled +4) is FED next turn. The first iteration
+	# below already asks the question in the right order — pool, then check the meal — so the retired
+	# "larder below one meal marks turn 1" shortcut, which ran ahead of pooling, is simply gone.
 	for i in range(arrivals.size()):
-		food = maxf(food + arrivals[i] + standing_net - drain, 0.0)
+		food += standing_net
+		var short := food < drain
+		food = maxf(food - drain, 0.0) + arrivals[i]
 		_series.push_back(food)
-		if _empty_index == NO_EMPTY_TURN and food <= 0.0:
+		if _empty_index == NO_EMPTY_TURN and short:
 			_empty_index = i
 	queue_redraw()
 

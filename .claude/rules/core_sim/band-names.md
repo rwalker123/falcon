@@ -2,6 +2,9 @@
 paths:
   - "core_sim/src/band_names.rs"
   - "core_sim/src/data/band_names.json"
+  - "core_sim/src/faction_names.rs"
+  - "core_sim/src/data/faction_names.json"
+  - "core_sim/tests/faction_names.rs"
   - "core_sim/src/components.rs"
   - "core_sim/tests/band_names.rs"
   # The four founding sites below. The mint/inherit split is this rule's centrepiece and these are
@@ -12,7 +15,7 @@ paths:
   - "core_sim/src/bin/server.rs"
 ---
 
-# A band's name: the sim owns it, and it is identity
+# Band and faction names: the sim owns them, and they are identity
 
 A band used to have no name. The Godot client fabricated one from a **row number**, in two places
 that counted differently — `HudFormat.band_display_name` numbered the expedition-filtered roster
@@ -47,7 +50,7 @@ game, and a cache would be extra checkpoint state earning nothing.
 `hydrology.rs` and `flora_config.rs`; a mixer is a contract about bits, and three worlds that must
 reproduce from a seed cannot each own a copy that could drift by one shift.
 
-## Four founding sites: mint at two, INHERIT at two
+## Four founding sites: mint at two, INHERIT at two — and a re-mint on a clash
 
 | Site | What it does |
 |---|---|
@@ -55,6 +58,7 @@ reproduce from a seed cannot each own a copy that could drift by one shift.
 | `systems/fission.rs` — a splinter | **Mints a fresh name.** A splinter walks out with the parent's food, kit and culture, but the parent is still standing and two living bands may not answer to one name. It is a new band. |
 | `bin/server.rs` — a scout party | **Inherits the home band's `BandName`.** |
 | `bin/server.rs` — a hunt / trade / raid party | **Inherits the home band's `BandName`.** |
+| `systems/labor.rs` — a band that goes over to another people | **Keeps its name, re-mints only on a clash.** A remnant flip (`factions.md` → "A band that changes people takes what is its own") keeps the name it had unless a band of the new people already answers to it; then it mints on the **new** people's permutation, drawing until a slot is free, and its parties out carry the new name |
 
 > **A detached party must NOT mint.** A party is the home band's people walking somewhere, not a
 > second identity. Minting there would consume a name slot the faction never founded a band for, and
@@ -108,11 +112,54 @@ blank.
 
 | File | Key | Purpose |
 |---|---|---|
+| `src/data/faction_names.json` | `names` (**40 entries**) | The pool a faction's name is drawn from. **Content, not tuning**, on the band pool's rules: distinct (`FactionNamesError::Duplicate` / `Empty`), digit- and space-free so a cycle suffix never collides with a bare name, and file order is an index space — editing it renames factions in a NEW world only, since a save carries its names. `FACTION_NAMES_PATH` override on the shared boot seam |
 | `src/data/band_names.json` | `names` (**193 entries**) | The pool a band's name is drawn from. **Content, not tuning** — curated words evoking a stone-age people and the land they live on, not a syllable-masher. Loads on the shared boot seam (`config-loading.md`) with a `BAND_NAMES_PATH` override. **Entries must be distinct**: the uniqueness guarantee is a property of this list having no repeats, so `BandNameCatalog::from_json_str` returns `BandNamesError::Duplicate` rather than silently deduplicating, and an empty list is `BandNamesError::Empty`. Entries carry no digits — a decimal cycle suffix must not be confusable with a name |
 
 **Editing the list renumbers the world.** File order is the index space the permutation shuffles, so
 adding or removing an entry changes which name a given slot resolves to, and a world generated before
 the edit reads differently after it.
+
+## Faction names — the same rule, one permutation per WORLD
+
+A faction was an id and nothing else, and the client faked three names for it. It now has a name on
+exactly the band rule — minted by the sim, published, carried by the checkpoint — with one
+difference that follows from what a faction is.
+
+| | Band | Faction |
+|---|---|---|
+| Pool | `data/band_names.json` — compounds of the land a band lives on | `data/faction_names.json` — one invented collective noun a people calls itself (*the Veldari*) |
+| Permutation | **one per faction**: `splitmix64(map_seed ^ BAND_NAME_SALT ^ faction)` | **one per world**: `splitmix64(map_seed ^ FACTION_NAME_SALT)` |
+| Index | the faction's next name slot | the faction id |
+| Unique within | a faction (two peoples' bands may share a name) | the world (two factions never share one) |
+| Minted | at each founding site | once, by worldgen, for the whole roster |
+
+**The shuffle and the cycle suffix are ONE implementation** — `band_names::permuted_name`, called by
+both catalogs with their own salted seed — and so is the pool validation
+(`band_names::validate_name_pool`: empty or repeating pools are refused). A roster past the pool's
+end takes the roman cycle suffix exactly as bands do, so it stays distinct at any size.
+
+**Minted in `spawn_initial_world`**, beside the band counters, from the roster worldgen is placing and
+the seed it generates from: that is the one place both are final. `build_headless_app` inserts an
+empty `FactionNames` so the resource always exists; `new_game` and `ResetMap` rebuild through Startup
+and so re-mint. **A re-rolled seed renames both factions and bands; a pinned seed renames neither** —
+the two follow the same rule on a `ResetMap`.
+
+**The save wins.** `FactionNames` rides `SimState::faction_names`, so a load restores the strings it
+carried rather than re-deriving them: editing the pool after a game was saved never renames that
+game's factions. `faction_names::a_save_keeps_its_names_even_when_the_pool_would_now_say_otherwise`
+pins it by saving a name the current pool would not mint.
+
+**Event labels never bake the name.** `population::faction_label` renders `Faction {id}` and every
+line carries the id as `from=`/`to=` — `band_label`'s rule, for its reason: the client substitutes
+its own name for the rendering by joining on the token, and a baked name is a second copy the join
+cannot find.
+
+**On the wire:** `CampaignSection.factionNames:[FactionNameState{faction, name}]`, appended last,
+whole-diffed (a per-world constant, so it diffs out after the first frame). **World-visible** — every
+faction's row rides every seat's frame, because a name reveals nothing the roster count does not.
+The native decoder publishes it as the dict key `faction_names` = `[{faction, name}]`.
+`faction_names::every_factions_name_is_on_the_encoded_snapshot` reads it off the encoded envelope for
+a four-faction roster.
 
 ## See also
 

@@ -444,11 +444,12 @@ const TERRAIN_HIGHLIGHT_TARGET_ID := 11   # prairie_steppe — BIOME_BAND_IDS[1]
 const TERRAIN_HIGHLIGHT_OFF := -1         # MapView's "no highlight" sentinel
 
 # State "routes". Order paths, drawn as per-faction polylines. Faction lookup is by the raw `faction`
-# value, so the three routes cover `MapView.faction_color`'s ID form, its legacy NAME form, and an
-# unknown faction (the amber default). Multi-hop with turns, because a straight two-point line would not
+# value, so the three routes cover `MapView.faction_color`'s ID form, its NUMERIC-STRING form, and an
+# unknown faction (the amber default). The legacy NAME form is retired — names are sim-minted per world
+# now (`FactionNames`) and a colour is a function of the id alone. Multi-hop with turns, because a straight two-point line would not
 # exercise the segment loop.
 const ROUTE_PLAYER_FACTION := 0             # int key → the player cyan
-const ROUTE_RIVAL_FACTION := "Obsidian"     # string key → orange
+const ROUTE_RIVAL_FACTION := "1"            # numeric string key → faction 1's orange
 const ROUTE_UNKNOWN_FACTION := "Wayfarers"  # no such people → the caller's fallback, the amber
 const ROUTE_PLAYER_PATH := [[1, 2], [3, 3], [5, 3], [7, 4], [9, 4], [11, 5]]
 const ROUTE_RIVAL_PATH := [[2, 10], [4, 9], [6, 9], [8, 8], [10, 8]]
@@ -2082,9 +2083,14 @@ func _assert_seeded_faction_colors_are_unchanged() -> void:
 	for index in seeded.size():
 		_assert_map("faction %d keeps its own colour (%s)" % [index, str(seeded[index])],
 			MAP_VIEW.faction_color(index, MAP_VIEW.BAND_FACTION_FALLBACK_COLOR) == seeded[index])
-	# …and the legacy NAME spelling still resolves to the same people.
-	_assert_map("the legacy name Obsidian still resolves to faction 1's colour",
-		MAP_VIEW.faction_color("Obsidian", MAP_VIEW.BAND_FACTION_FALLBACK_COLOR) == seeded[1])
+	# …a numeric string resolves to the same id's colour…
+	_assert_map("the numeric string \"1\" resolves to faction 1's colour",
+		MAP_VIEW.faction_color("1", MAP_VIEW.BAND_FACTION_FALLBACK_COLOR) == seeded[1])
+	# …and a NAME is not an id: the retired name→id table is gone, so a former seeded name is the
+	# caller's fallback rather than a people's colour.
+	_assert_map("a faction NAME is not an id — \"Obsidian\" answers the fallback",
+		MAP_VIEW.faction_color("Obsidian", MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
+			== MAP_VIEW.BAND_FACTION_FALLBACK_COLOR)
 	# A people that is not there is still the caller's fallback — the one thing that must NOT be a
 	# generated colour.
 	_assert_map("an absent faction is still the caller's fallback",

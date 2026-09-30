@@ -270,12 +270,11 @@ pub fn split_band_from_parent(
     child.stores = child_stores;
 
     // ---- What this band's own life starts as ----
-    // `age_turns` gates `migration_min_settled_turns`; inheriting the parent's settled duration would
-    // let a band formed this turn bleed people out on its first.
+    // `age_turns` is how many turns THIS band has been simulated; a band formed this turn is new,
+    // whatever age the parent it came out of had reached.
     child.age_turns = 0;
     child.home = site_tile;
     child.current_tile = site_tile;
-    child.migration = None;
     // **Grievance is INHERITED, not zeroed.** These are the same people who were unhappy a moment
     // ago, and a split that reset it would make forming a band a way to launder discontent — the
     // same class of move the proportional share exists to close.

@@ -379,13 +379,14 @@ impl Land {
     /// the cluster the band's crew would work from where it stands.
     ///
     /// ⛔ **A rate against a rate.** What the band takes here is provisions *per turn* and
-    /// `food_consumption` is what it eats *per turn*; the stock this used to read —
+    /// `food_need` is what it must eat *per turn* (never `food_consumption`, what it managed to eat,
+    /// which a starving band under-reports); the stock this used to read —
     /// `carrying_capacity`, the standing biomass — is neither, and being two orders of magnitude
     /// larger than a band's appetite it meant the alarm could essentially never fire.
     pub fn alarm(&self, view: &SeatView, memory: &SeatMemory) -> Option<Alarm> {
         let short = view.own_bands(self.faction).any(|band| {
             let own = Self::cluster_at(view, memory, band, band_tile(band)).total;
-            own < band.food_consumption && self.better_cluster(view, memory, band, own).is_none()
+            own < band.food_need && self.better_cluster(view, memory, band, own).is_none()
         });
         short.then_some(Alarm {
             specialist: SPECIALIST_LAND,
@@ -835,7 +836,7 @@ mod tests {
             band.size,
             band.working_age,
             (band.founding_min_workers, band.founding_parent_min_workers),
-            band.food_consumption / band.size.max(1) as f32,
+            band.food_need / band.size.max(1) as f32,
             Vec::new(),
             Vec::new(),
         );
@@ -966,12 +967,12 @@ mod tests {
             .forage_patches
             .retain(|patch| Tile::new(patch.x, patch.y) != FAR_PATCH);
         let memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
-        view.snapshot.populations[0].food_consumption = 30.0;
+        view.snapshot.populations[0].food_need = 30.0;
         assert!(
             land("forager").alarm(&view, &memory).is_none(),
             "34 a turn from where it stands covers 30"
         );
-        view.snapshot.populations[0].food_consumption = 100.0;
+        view.snapshot.populations[0].food_need = 100.0;
         assert_eq!(
             land("forager")
                 .alarm(&view, &memory)
@@ -980,7 +981,7 @@ mod tests {
             "nothing in view feeds a hundred"
         );
         // A rival standing on the rich patch takes it off the table: 17 on the near patch is 17.
-        view.snapshot.populations[0].food_consumption = 30.0;
+        view.snapshot.populations[0].food_need = 30.0;
         view.snapshot.populations.push(PopulationCohortState {
             faction: FACTION + 1,
             band_id: BAND + 1,
@@ -994,7 +995,7 @@ mod tests {
                 .map(|alarm| alarm.kind),
             Some(AlarmKind::LandShort)
         );
-        view.snapshot.populations[0].food_consumption = 17.0;
+        view.snapshot.populations[0].food_need = 17.0;
         assert!(
             land("forager").alarm(&view, &memory).is_none(),
             "the near patch (1.0 a worker) still feeds seventeen"
@@ -1031,7 +1032,7 @@ mod tests {
             provisions_per_biomass: 1.0,
             ..Default::default()
         }];
-        view.snapshot.populations[0].food_consumption = 4.0;
+        view.snapshot.populations[0].food_need = 4.0;
 
         let specialist = land("forager");
         let mut memory = SeatMemory::new(NO_MEMORY_DECAY, SETTLE, PATCH_WINDOW);
@@ -1084,7 +1085,7 @@ mod tests {
         make_a_gathering_site(&mut view, HERE);
         let band = &mut view.snapshot.populations[0];
         band.working_age = 17;
-        band.food_consumption = 4.0;
+        band.food_need = 4.0;
         assert_eq!(
             land("forager")
                 .alarm(&view, &memory)

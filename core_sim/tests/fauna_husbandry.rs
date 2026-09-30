@@ -1059,6 +1059,7 @@ fn spawn_crew_of(
                 stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -1074,7 +1075,6 @@ fn spawn_crew_of(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),
@@ -5143,6 +5143,7 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -5158,7 +5159,6 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),

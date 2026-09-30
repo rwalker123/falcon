@@ -83,8 +83,9 @@ impl Default for ProductivityConfig {
 /// 0.15 at 0). Leavers are composed mostly of working-age: the total is split across brackets
 /// proportional to `bracket_size × weight` (working = 1.0, dependents = `dependent_weight` 0.4), so
 /// the headline fraction stays exact while workers dominate. They seek the highest-morale eligible
-/// same-faction band within `base_reach × movement_tech_factor` hexes (Phase 1 factor = 1.0, see the
-/// migration system's `TODO(phase2)`). Eligible = `morale ≥ attractive_morale` AND
+/// band within reach — their own people's first — where reach is `base_reach` hex steps less the road
+/// bonus between the two camps (`advance_population_migration`; the work party's walk seam). Eligible
+/// = `morale ≥ attractive_morale` AND
 /// `morale > source_morale + min_morale_gap`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]

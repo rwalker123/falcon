@@ -76,6 +76,16 @@ pub struct StartKitHandles<'w> {
     pub demographics: Option<Res<'w, crate::demographics_config::DemographicsConfigHandle>>,
 }
 
+/// **The two name pools worldgen opens a world's name spaces from** — the band pool (per-faction
+/// permutations, minted as bands are founded) and the faction pool (one permutation per world).
+/// Both `Option` for the reason [`StartKitHandles`]' are: a hand-rolled test `World` that never
+/// installs one reads the builtin pool, the very list `include_str!` baked in.
+#[derive(SystemParam)]
+pub struct NamePools<'w> {
+    pub bands: Option<Res<'w, crate::band_names::BandNameCatalogHandle>>,
+    pub factions: Option<Res<'w, crate::faction_names::FactionNameCatalogHandle>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_initial_world(
     mut commands: Commands,
@@ -90,10 +100,8 @@ pub fn spawn_initial_world(
     snapshot_overlays: Res<SnapshotOverlaysConfigHandle>,
     // The four config handles the opening kit is resolved from — see [`StartKitHandles`].
     start_kit_handles: StartKitHandles,
-    // The pool a founded band's name is drawn from. `Option` for the same reason the start-kit
-    // handles above are: a hand-rolled test `World` that never installs it must not panic worldgen,
-    // and absent reads as the builtin pool - the very list `include_str!` baked in.
-    band_names: Option<Res<crate::band_names::BandNameCatalogHandle>>,
+    // The pools a founded band's name and every faction's name are drawn from — see [`NamePools`].
+    name_pools: NamePools,
     // **Who this world is being generated for.** Every registered faction is placed, stocked and
     // seeded with knowledge, so the roster decides how many starts are picked. `Option` for the same
     // reason the start-kit handles above are: `build_headless_app` inserts the registry before
@@ -843,7 +851,8 @@ pub fn spawn_initial_world(
     // ...and the name space with it, for the same reason: worldgen founds the first bands, so it
     // opens the per-faction name counters and inserts them below beside the id counter.
     let mut band_names_alloc = BandNameAllocator::default();
-    let band_name_catalog = band_names
+    let band_name_catalog = name_pools
+        .bands
         .as_ref()
         .map(|handle| handle.get())
         .unwrap_or_else(crate::band_names::BandNameCatalog::builtin);
@@ -936,6 +945,19 @@ pub fn spawn_initial_world(
     let BandIdentitySource { .. } = identity;
     commands.insert_resource(band_ids);
     commands.insert_resource(band_names_alloc);
+    // **Every faction's name, from the roster this world was generated for** — minted here, with
+    // the band counters, because worldgen is what opens a world's name spaces and holds its final
+    // seed. One permutation per world, so two factions never share a name (`faction_names.rs`).
+    let faction_name_catalog = name_pools
+        .factions
+        .as_ref()
+        .map(|handle| handle.get())
+        .unwrap_or_else(crate::faction_names::FactionNameCatalog::builtin);
+    commands.insert_resource(crate::faction_names::FactionNames::mint(
+        &faction_roster,
+        config.map_seed,
+        faction_name_catalog.as_ref(),
+    ));
     commands.insert_resource(StartLocation::new(
         faction_starts
             .iter()
@@ -3438,6 +3460,7 @@ fn spawn_population_entity(
         stores: LocalStore::new(),
         morale: scalar_from_f32(0.6),
         last_food_consumption: 0.0,
+        last_food_need: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),
@@ -3453,7 +3476,6 @@ fn spawn_population_entity(
         generation,
         faction,
         knowledge: knowledge.to_vec(),
-        migration: None,
     });
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.

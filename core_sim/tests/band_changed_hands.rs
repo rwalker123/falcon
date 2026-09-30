@@ -1,22 +1,24 @@
 //! **A whole band changing faction is told to BOTH peoples.**
 //!
-//! The knowledge-migration branch in `systems::population` used to flip `cohort.faction` in
-//! silence: the two events it sends (`TradeDiffusionEvent`, `MigrationKnowledgeEvent`) have no
-//! `EventReader` anywhere in the crate, and the branch pushed nothing to the event log. So a player
-//! gained — or lost — an entire band with no line on any surface, which is how the handover came to
-//! be mistaken for a bug.
+//! A band changes people only in the extreme: a cross-people move under the wellbeing trickle leaves
+//! the source below `settle.parent_min_workers`, and the remnant goes over with its leavers
+//! (`advance_population_migration`, `docs/plan_band_fission.md` §Defection). A player gains — or
+//! loses — an entire band there, so both sides need a line.
 //!
 //! Asserted on the **published** `command_events`, per viewer, off the encoded envelope: the feed is
 //! filtered by `entry.faction == viewer` (`snapshot::campaign::command_events_to_state`), so an
 //! in-process log check cannot tell "both sides were told" from "one row exists".
 
+use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 
 mod faction_support;
 
 use core_sim::{
-    publish_baseline_snapshot, run_turn, BandId, FactionId, PendingMigration, PopulationCohort,
-    ResidentBand, SnapshotHistory, ViewerFaction,
+    advance_population_migration, publish_baseline_snapshot, run_turn, scalar_from_f32, BandId,
+    ConnectionKey, ConnectionLedger, ConnectionsConfigHandle, ExpeditionConfigHandle, FactionId,
+    PopulationCohort, ResidentBand, Scalar, SimulationConfig, SnapshotHistory, Tile, TileRegistry,
+    ViewerFaction,
 };
 use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -24,9 +26,12 @@ use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 /// The wire spelling of `CommandEventKind::BandChangedHands`.
 const KIND: &str = "band_changed_hands";
 
-/// One turn is all the branch needs once the payload is queued: the eta is decremented and then
-/// tested against zero in the same pass, so `1` completes on the very next Population stage.
-const ETA_COMPLETING_THIS_TURN: u16 = 1;
+/// Rock-bottom morale: the source wants out at the trickle's full rate.
+const MISERABLE: f32 = 0.0;
+/// Comfortably above `attractive_morale` and any source + `min_morale_gap`.
+const THRIVING: f32 = 0.9;
+/// The turn a staged contact is stamped with.
+const SIGHTING_TURN: u64 = 1;
 
 /// Every published `band_changed_hands` row this viewer's frame carries, as `(label, detail)`.
 fn published_handovers(app: &App) -> Vec<(String, String)> {
@@ -66,38 +71,80 @@ fn handovers_seen_by(app: &mut App, viewer: FactionId) -> Vec<(String, String)> 
     published_handovers(app)
 }
 
-/// The home faction's first resident band, and its durable id.
-fn home_band(app: &mut App) -> (Entity, BandId) {
+/// A faction's first resident band, and its durable id.
+fn opening_band(app: &mut App, faction: FactionId) -> (Entity, BandId) {
     let mut query = app
         .world
         .query_filtered::<(Entity, &PopulationCohort, &BandId), With<ResidentBand>>();
     query
         .iter(&app.world)
-        .find(|(_, cohort, _)| cohort.faction == HOME)
+        .filter(|(_, cohort, _)| cohort.faction == faction)
         .map(|(entity, _, band)| (entity, *band))
-        .expect("the home faction opens with a resident band")
+        .min_by_key(|(_, band)| *band)
+        .expect("the faction opens with a resident band")
+}
+
+/// Stage the one situation in which a band changes people: a miserable home band exactly at the
+/// parent floor, a thriving rival camp on the next tile, and a live tie between them. Every other
+/// band is made miserable too, so none of them is a destination.
+fn stage_a_remnant_handover(app: &mut App) -> (Entity, BandId) {
+    let (home, home_id) = opening_band(app, HOME);
+    let (rival, rival_id) = opening_band(app, RIVAL);
+    let floor = app
+        .world
+        .resource::<ExpeditionConfigHandle>()
+        .get()
+        .settle
+        .parent_min_workers;
+    let at = {
+        let tile = app.world.get::<PopulationCohort>(home).unwrap().home;
+        app.world.get::<Tile>(tile).unwrap().position
+    };
+    let width = app.world.resource::<SimulationConfig>().grid_size.x;
+    let beside = app
+        .world
+        .resource::<TileRegistry>()
+        .index((at.x + 1) % width, at.y)
+        .expect("the staged tile is on the map");
+    let bands: Vec<Entity> = app
+        .world
+        .query_filtered::<Entity, With<ResidentBand>>()
+        .iter(&app.world)
+        .collect();
+    for band in bands {
+        app.world.get_mut::<PopulationCohort>(band).unwrap().morale = scalar_from_f32(MISERABLE);
+    }
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(rival).unwrap();
+        cohort.home = beside;
+        cohort.current_tile = beside;
+        cohort.morale = scalar_from_f32(THRIVING);
+    }
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(home).unwrap();
+        cohort.working = Scalar::from_u32(floor);
+        cohort.children = Scalar::zero();
+        cohort.elders = Scalar::zero();
+        cohort.sync_size();
+    }
+    let config = app.world.resource::<ConnectionsConfigHandle>().get();
+    let mut ledger = app.world.resource_mut::<ConnectionLedger>();
+    for key in [
+        ConnectionKey::new(home_id, rival_id),
+        ConnectionKey::new(rival_id, home_id),
+    ] {
+        ledger.record_contact(key, UVec2::ZERO, SIGHTING_TURN, SIGHTING_TURN, &config);
+    }
+    (home, home_id)
 }
 
 #[test]
-fn a_completed_migration_tells_the_people_who_lost_the_band_and_the_people_who_gained_it() {
+fn a_remnant_that_goes_over_tells_the_people_who_lost_the_band_and_the_people_who_gained_it() {
     let mut app = world_with(ONE_RIVAL, |_| {});
-    let (entity, band) = home_band(&mut app);
+    let (entity, band) = stage_a_remnant_handover(&mut app);
 
-    // **The payload is queued directly rather than earned.** What is under test is the handover's
-    // announcement, not the morale/contact/settled-turns gate that decides to queue one — driving
-    // that gate would make this a test of the gate's tuning. An empty fragment list is a real
-    // payload: the diffusion loop simply moves nothing, and the faction still changes hands.
-    app.world
-        .entity_mut(entity)
-        .get_mut::<PopulationCohort>()
-        .expect("the band carries a cohort")
-        .migration = Some(PendingMigration {
-        destination: RIVAL,
-        eta: ETA_COMPLETING_THIS_TURN,
-        fragments: Vec::new(),
-    });
-
-    run_turn(&mut app);
+    // The trickle alone, once: a full turn would re-resolve morale off the staging.
+    app.world.run_system_once(advance_population_migration);
 
     assert_eq!(
         app.world
@@ -106,7 +153,7 @@ fn a_completed_migration_tells_the_people_who_lost_the_band_and_the_people_who_g
             .expect("the band survived the turn")
             .faction,
         RIVAL,
-        "the migration must have completed, or there is no handover to announce"
+        "the remnant must have gone over, or there is no handover to announce"
     );
 
     let lost = handovers_seen_by(&mut app, HOME);

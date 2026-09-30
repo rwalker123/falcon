@@ -187,6 +187,7 @@ func _pen_keeper_band_fixture() -> Dictionary:
 	band["turns_of_food"] = 22.0
 	band["food_income"] = 5.88          # forage 0.48 + the pen's gross 5.40
 	band["food_consumption"] = 1.15     # the PEOPLE's meals — the ONLY standing debit
+	band["food_need"] = 1.15
 	band["fodder_store"] = 12.4         # the band's HAY larder (Flora roster F3) — what feeds the pen
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "floor": 0.5, "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
@@ -255,6 +256,7 @@ func _concerning_food_band_fixture() -> Dictionary:
 	band["turns_of_food"] = 4.0
 	band["food_income"] = 0.30
 	band["food_consumption"] = 0.95
+	band["food_need"] = 0.95
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15, "overdraws": false},
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20, "overdraws": false},

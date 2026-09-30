@@ -329,7 +329,7 @@ func _gather_band(take_species: Array, workers: int) -> Dictionary:
 		"scout_reveal_radius": 2,
 		"activity": "forage",
 		"food_income": 0.4,
-		"food_consumption": 0.3,
+		"food_consumption": 0.3, "food_need": 0.3,
 		"labor_assignments": [{
 			"kind": "forage",
 			"workers": workers,

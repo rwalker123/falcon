@@ -17,7 +17,8 @@ paths:
   - "core_sim/src/starting_loadout.rs"
   - "core_sim/tests/faction_support/mod.rs"
   - "core_sim/tests/multi_faction_start.rs"
-  - "core_sim/tests/defection_contact_gate.rs"
+  - "core_sim/tests/defection.rs"
+  - "core_sim/tests/band_changed_hands.rs"
   - "core_sim/src/snapshot/capture.rs"
   - "core_sim/src/snapshot/population.rs"
   - "core_sim/tests/foreign_band_redaction.rs"
@@ -133,9 +134,9 @@ id after it is `Ai`, by construction.
   `Default` gave `factions` an *empty* `Vec` regardless of the serde attribute — and with the roster
   gone every field's default is the empty one.
 
-### ⛔ THE ROSTER-DERIVED SET IS FIVE RESOURCES, AND A RUNTIME PATH OWES ALL OF THEM
+### ⛔ THE ROSTER-DERIVED SET IS SIX RESOURCES, AND A RUNTIME PATH OWES ALL OF THEM
 
-`build_headless_app` builds five things from `faction_registry.factions()`. Re-seeding some of them
+`build_headless_app` builds six things from `faction_registry.factions()`. Re-seeding some of them
 on a roster change is the *same defect* as re-seeding none, one resource further along — and worse to
 read, because the next person infers the short list is the whole list.
 
@@ -145,17 +146,20 @@ read, because the next person infers the short list is the whole list.
 | `TurnQueue` | rebuilt from that registry | **rebuilt in `apply_save`** — server-side order intake, so no payload carries it |
 | `CounterIntelBudgets` | re-seeded, through `CounterIntelBudgets::new` | restored — `SimState` |
 | `FactionSecurityPolicies` | re-seeded, through `FactionSecurityPolicies::new(.., Standard)` | restored — `SimState` |
+| `FactionBorderPolicies` | re-seeded, through `FactionBorderPolicies::new` (every faction open) | restored — `SimState` |
+| `FactionNames` | **minted by worldgen** (`spawn_initial_world`) from the roster and the final map seed; `build_headless_app` inserts it empty, and every `new_game` / `ResetMap` runs Startup after seeding the roster. See `band-names.md` → "Faction names" | restored — `SimState` (the save wins over a pool edit) |
 | `EspionageRoster` | **deliberately not** — `initialise_espionage_roster` is a `Startup` system that seeds from whatever registry it finds, and the caller runs Startup afterwards | restored — `SimState` |
 
-Both re-seeds go through the **boot path's own constructors**, so a fresh faction's starting state
+Every re-seed goes through the **boot path's own constructors**, so a fresh faction's starting state
 has one definition rather than two.
 
-**Neither of the two espionage resources can report its own omission.**
+**None of `CounterIntelBudgets`, `FactionSecurityPolicies` or `FactionBorderPolicies` can report its
+own omission.**
 `CounterIntelBudgets::available` answers `scalar_zero` for a faction with no row and
-`FactionSecurityPolicies::policy` answers its `default_policy` — which *is* the seeded value — so a
-forgotten faction is silently indistinguishable from a seeded one at every reader. That is why
-`FactionSecurityPolicies::contains` exists: the row's presence is the only thing a test can assert
-on.
+`FactionSecurityPolicies::policy` answers its `default_policy` and `FactionBorderPolicies::is_open`
+answers open — each of which *is* the seeded value — so a forgotten faction is silently
+indistinguishable from a seeded one at every reader. That is why both policy resources carry a
+`contains`: the row's presence is the only thing a test can assert on.
 ## THE MAP DECIDES THE CEILING, AND THE SIM IS THE AUTHORITY
 
 **How many peoples a map can seat is stated once**, in `systems/worldgen.rs` beside the placement it
@@ -723,29 +727,104 @@ worldgen hard-coding every cohort to `FactionId(0)`; that premise is gone. A glo
 would hand the whole opening allocation to whichever faction happened to be placed first and leave
 every other people unoutfitted — no kits, no material, and nothing on screen to say why.
 
-## A band defects only to a people it has MET
+## Defection is the unhappy trickle with the same-people filter lifted
 
-The knowledge migration's trigger is unchanged — a settled band (`age_turns >=
-migration_min_settled_turns`), with knowledge, and **HIGH** morale (`> migration_morale_threshold`).
-What changed is the destination: it is now the first registered faction that is not the cohort's own
-**and that the cohort's own faction has actually made contact with**. No contact, no destination, no
-defection.
+Design of record: `docs/plan_band_fission.md` §Defection (#512). **One rule**: the wellbeing trickle
+that moves people between a faction's own bands (`advance_population_migration`, `campaign.md` →
+Layer 3b) also moves them to **another people's** band — nothing else about its shape changes.
 
-Contact is `ConnectionLedger::factions_in_contact(band_factions, a, b)`: does any live tie
-(`strength > NO_TIE`), in either direction, join a band of `a` to a band of `b`. **Faction stays a
-property of the ENDPOINT** — the caller supplies the `BandId -> FactionId` map, resolved in
-`simulate_population` from the same query it then mutates and taken *before* the loop, so a band that
-changes sides part-way through a turn cannot make the answer depend on iteration order. The edge
-itself carries no faction, which is `connections.md`'s rule.
+- **Push.** Only a band below `migration.morale_threshold` sheds anyone, at
+  `total × migration_move_fraction(morale)`. A well-fed band never loses a person.
+- **Pull.** The destination's morale is `≥ attractive_morale` and `> source + min_morale_gap`, within
+  reach of the source's home tile: `hex_distance − road_bonus <= base_reach`, a road between the two
+  camps bringing a farther band in (`campaign.md` → Layer 3b has the seam).
+- **Own people first.** The search keeps two bests — own people's and other peoples' — and takes the
+  foreign one only when the own one is `None`. A foreign band that is happier than every own band
+  still loses to any qualifying own band.
+- **Perception is band-to-band.** A foreign destination must be tied to the SOURCE BAND by a live
+  tie (`ConnectionLedger::tie_is_live(src, dst)`). A band with no `BandId` cannot be tie-checked and is
+  never a cross-people source or destination. There is no faction-level contact question
+  (`connections.md` → "The question a rider asks the ledger").
+- **Consent is the receiver's.** `FactionBorderPolicies::is_open(dst_faction)` (below). A closed
+  border leaves the leavers with no destination, and the existing *trapped* rule multiplies their
+  grievance — so a closed border costs the people it shuts out, never the one that closed it.
+- **Knowledge travels in proportion.** A cross-people move credits the destination people's
+  `DiscoveryProgressLedger` with `scale_migration_fragments(source knowledge)` × `moved / total`
+  (the source's pre-move total), and merges the same payload into the destination band's own
+  `knowledge`. See `ecs-systems.md` → "Migration is the live path".
+- **A remnant too small to staff itself goes over.** After a cross-people move, if the source's
+  `available_workers(working)` is below `expedition_config.json` → `settle.parent_min_workers`, its
+  `cohort.faction` becomes the destination's and `push_band_changed_hands_events` tells both peoples.
+  The band keeps its entity, id, stores and kit, and takes its roads, its parties and (unless it
+  clashes) its name — see below. A same-people move never triggers it.
 
-`ConnectionLedger::tie_is_live` moved onto the ledger for this: `supply.rs` had the only copy, and
-two riders asking *"what counts as a live tie"* must not each own an answer free to drift. Supply's
-private `tie_is_live` survives as a one-line delegation, because its doc comment is where the
-logistics link rule is stated.
+**Order-independence.** Every destination is chosen from one entity-sorted pre-move snapshot, every
+move is tallied before any is applied, and a band's faction changes only in the apply pass, after
+every destination has been chosen — so which band flips and where people went never depends on
+query order.
 
-**Distance and prosperity are not asked.** The designed end state is scouts defecting to a
-*better-off* faction; contact is the half this arc landed, and it is the half that stops a band
-walking to strangers on the far side of the world.
+**The feed.** A cross-people move names the other people on both sides — `to=` on the source's
+`migrated` line, `from=` on the destination's — each filed under its own faction; see
+`event-feed.md` → "One EVENT, two ROWS".
+
+### A band that changes people takes what is its own
+
+`systems::labor::follow_the_band_to_its_new_people` runs once at the end of
+`advance_population_migration`, after every band's faction is final, over that turn's flips in
+`BandId` order:
+
+| State | What it does on a flip |
+|---|---|
+| `routes::RoadKeeper.faction` | every road the band keeps is re-pointed at the new people, so it lights *their* fog. `RoadKeeper` carries the faction beside the band because the fog grant reads a faction; it must never disagree with the keeper band's own `cohort.faction` |
+| `BandName` | **kept**, unless a band of the new people already answers to it — then re-minted on the **new** people's permutation through `BandNameAllocator::mint` (`band-names.md`), drawing slots until one no other band of theirs uses. Slots are injective per faction, so the draw ends. The collision set is read after the earlier flips of the same turn, so two bands going over together cannot land on one name |
+| `ForagePatch::owner` / `Herd::owner` — the people who raised an improvement | every patch or herd the band has a labor row on (staffed or held at zero hands) and the **old** people own passes to the new people — **unless another band still of the old people works it too**, in which case the old people keep it. Only the owner moves; the rung and its build progress stay as they are. The shared-source test reads factions after every earlier flip this turn, so two bands of one people going over together take a patch they both worked |
+| a party already out (`Expedition.home_band` → this band) | its `cohort.faction` follows (the party's families went over), and it carries the re-minted name if there was one. It folds back into its band through the ordinary `Returning` arm, which never asks a faction. The losing people hears nothing beyond the band's own `band_changed_hands` pair |
+| the band's entity, `BandId`, stores, kit, bench, labor rows, build queue, `StartingLoadout` window | keyed to the band itself, not to a people — nothing to move |
+
+**What is deliberately NOT moved:** `ExpeditionMission::Trade::destination_faction` and every
+`TransferCounterparty` — facts fixed at booking about whose band a shipment was addressed to, never
+branched on.
+
+Guards: `defection::{a_band_that_goes_over_takes_the_roads_it_keeps,
+a_band_that_goes_over_takes_the_improvements_only_it_works,
+a_band_that_goes_over_keeps_its_name_unless_its_new_people_already_use_it,
+a_party_out_from_a_band_that_goes_over_goes_with_it_and_still_comes_home}` — each paired with its
+control (a road another band keeps stays put; a patch a sibling of the old people still works stays
+theirs; no clash, no rename).
+
+### A detached party goes whole
+
+`advance_party_defection` (Population chain, after `advance_population_migration`). A party carries
+its **home band's** morale. Each turn the home band is below `migration.morale_threshold` **and** the
+party saw — on its own sweep **this turn** — a foreign band within `base_reach` hex steps of the
+party's tile (no road bonus — a party in the field is off the road) that passes the pull test against the home band's morale and belongs to an open people, the party
+accrues `migration_move_fraction(home morale)` onto `Expedition::defection_pull`; any other turn
+resets it to `0`. At `defection.party_pull_threshold` the whole party joins the best such band
+(highest morale, ties to the lowest `BandId`).
+
+- **"Saw this turn" is `PartySightings`**, a derived resource `advance_expeditions` fills from its own
+  observe loop and `advance_party_defection` drains — not `Expedition::pending_contacts`, which is a
+  report buffer that the comm flush empties, so it can say neither "this turn" nor survive the turn a
+  party walks home past a camp.
+- **The join is `fold_party_into_band`**, the homecoming's own routine: people, pack and any cargo
+  land in the receiving band, which books them under `TransferCause::PartyDefected` (wire code `8`),
+  naming the band the party was sent out from, so its food ledger identity still closes. The party's
+  kit does not transfer — a homecoming does not return it either.
+- **The losing people is told one generic line and nothing else** — *"Your scouting party has left
+  your control."* See `event-feed.md` for what its detail may and may not carry.
+- `defection_pull` rides `ExpeditionRecord` with the rest of the party, so a rollback or a load
+  keeps a defection that was already under way.
+
+### Open Borders — `FactionBorderPolicies`
+
+One faction-wide bool per people, **default open for every faction**, seeded from the roster (the
+roster-derived set above) and checkpointed in `SimState`. `set_open_borders <faction> <open|closed>`
+(`SetOpenBordersCommand`, proto field **76**) sets it, gated like every faction-bearing order
+(`commanding_faction` → the seat gate and the membership check). Nothing drives it for an AI faction.
+The frame publishes the **viewer's own** row only — `CampaignSection.factionPolicies`
+(`FactionPolicyState { faction, openBorders }`), another people's borders being theirs to know.
+
+A people's own bands never ask it: moving between your own camps is not crossing a border.
 
 ## What a foreign band publishes — THREE TIERS, by what the viewer can see
 
@@ -855,6 +934,8 @@ apply only where the row describes something that can be *seen*.
 | `tiles`, the rasters, `foodModules`, `climateBands`, the catalogues (`kits`, `materials`, `recipes`, `ladderKnowledge`, `routeRungs`, `campaignProfiles`) | various | **World** — terrain and per-world constants, carrying no faction. The client fogs the map from `visibilityRaster` |
 | `victory.modes[].progress` | `snapshot/campaign.rs` | **Viewer** — progress is one people's, so the frame carries the viewer's mode rows and nobody else's (`VictoryState::modes_for`) |
 | `victory.winner` | `snapshot/campaign.rs` | **World** — a winner is public by definition, and it names the faction that actually achieved it |
+| `factionPolicies` | `snapshot/campaign.rs` | **Viewer** — your own Open Borders row only |
+| `factionNames` | `snapshot/capture.rs` | **World** — every faction's name; a name reveals nothing the roster count does not (`band-names.md` → "Faction names") |
 
 ### ⛔ A DERIVED AGGREGATE IS FACTION-KEYED DATA, EVEN WITH NO FACTION FIELD
 
@@ -1069,6 +1150,7 @@ The control arm is not optional: it is what distinguishes *"the second faction g
 |---|---|---|---|
 | `src/data/simulation_config.json` | `default_ai_faction_count` | **`null`** | **The pin on the AI count, or `null` for "derive it".** `null` is not `0` — the same distinction the optional `new_game` wire field draws. Unpinned (shipped): the New Game screen pre-selects a share of what the chosen grid seats, and an **unattended** boot takes **no rivals**, because the AI that would drive one does not exist yet and a faction nobody asked for would sit and pass. Pinned to `n`: **both** become `n` — the escape hatch a headless run, a test or a designer uses to boot with rivals without touching the UI. Counts **rivals, not the roster**: 0 is the single-faction world, 2 is three peoples. Clamped by the ceiling above, never refused |
 | `src/data/simulation_config.json` | `seat_turn_timeout_seconds` | **120.0** s | **How long an open turn waits for an OCCUPIED seat that has gone silent** before the server submits `end_turn` for it and resolves. A wedge-breaker, not a chess clock: a turn is legitimately minutes of a human's thinking, so a snug value would end turns players were still taking, and the cost of being generous is that one genuinely dead process holds the others up once, for this long. A **vacant** seat is never waited for, so this has no effect on a single-human game. Read from the live config on every decision, so a hot reload moves it; validated positive and finite at parse (`NonPositiveSeatTurnTimeout`), because 0 would auto-submit for a live player the instant anyone else was ready — not a short wait but no waiting at all |
+| `src/data/expedition_config.json` | `defection.party_pull_threshold` | **0.3** | **The pull a detached party must accrue before it joins another people** (see "A detached party goes whole"). At rock-bottom home morale (rate `max_rate` 0.15) it is 2 turns in sight; at morale 0.2 (rate 0.03), 10. Too low and a party defects the turn it glimpses a camp; too high and it never sits near one long enough. `0` is legal (defect on the first qualifying turn); validated finite and `>= 0` at parse. Every other defection number is the trickle's own `wellbeing_config.json` → `migration.*` — one rule, one set of dials. Ships in the Workbench as an `expedition` row |
 | `src/data/simulation_config.json` | `faction_start_min_separation` | **20** tiles | How far apart worldgen tries to put two factions' start tiles — a quarter of the shipped map's width, far enough that two peoples do not open sharing one food shed. Euclidean, compared squared. A **target**: on a map with no land pair that far apart, worldgen relaxes and warns rather than failing to place a faction. Validated `> 0` at parse (`ZeroFactionStartMinSeparation`), because zero would let two peoples open on the same hex |
 
 ## Saves win over profile edits

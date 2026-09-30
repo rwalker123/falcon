@@ -100,16 +100,10 @@ impl BandNameCatalog {
     }
 
     fn validate(&self) -> Result<(), BandNamesError> {
-        if self.names.is_empty() {
-            return Err(BandNamesError::Empty);
-        }
-        let mut seen: HashSet<&str> = HashSet::with_capacity(self.names.len());
-        for name in &self.names {
-            if !seen.insert(name.as_str()) {
-                return Err(BandNamesError::Duplicate(name.clone()));
-            }
-        }
-        Ok(())
+        validate_name_pool(&self.names).map_err(|fault| match fault {
+            NamePoolFault::Empty => BandNamesError::Empty,
+            NamePoolFault::Duplicate(name) => BandNamesError::Duplicate(name),
+        })
     }
 
     pub fn names(&self) -> &[String] {
@@ -138,23 +132,60 @@ impl BandNameCatalog {
     /// The permutation is rebuilt per call rather than cached: minting happens a handful of times
     /// per game, and a cache would be checkpoint state earning nothing.
     pub fn name_for_slot(&self, faction: FactionId, map_seed: u64, slot: u32) -> String {
-        // Only reachable from a hand-built catalog: the loader refuses an empty list. An empty name
-        // is what the client renders as its `Band #<id>` fallback, which beats dividing by zero.
-        if self.names.is_empty() {
-            return String::new();
-        }
-        let len = self.names.len();
-        let mut order: Vec<usize> = (0..len).collect();
         let seed = splitmix64(map_seed ^ BAND_NAME_SALT ^ u64::from(faction.0));
-        order.shuffle(&mut SmallRng::seed_from_u64(seed));
+        permuted_name(&self.names, seed, slot as usize)
+    }
+}
 
-        let slot = slot as usize;
-        let cycle = slot / len;
-        let name = &self.names[order[slot % len]];
-        match cycle_suffix(cycle) {
-            Some(suffix) => format!("{name} {suffix}"),
-            None => name.clone(),
+/// **Why a name pool refused to load** — the two structural faults every pool is checked for. Each
+/// catalog maps these onto its own error type, so a message names the pool it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NamePoolFault {
+    Empty,
+    Duplicate(String),
+}
+
+/// **The one validation every name pool shares** — the band pool and the faction pool alike. A
+/// pool that is empty, or that repeats a name, is refused: uniqueness is a property of the list
+/// having no repeats, so silently deduplicating would make a list that looks like it holds N names
+/// hand out N − 1, with the collision invisible until two holders shared one.
+pub(crate) fn validate_name_pool(names: &[String]) -> Result<(), NamePoolFault> {
+    if names.is_empty() {
+        return Err(NamePoolFault::Empty);
+    }
+    let mut seen: HashSet<&str> = HashSet::with_capacity(names.len());
+    for name in names {
+        if !seen.insert(name.as_str()) {
+            return Err(NamePoolFault::Duplicate(name.clone()));
         }
+    }
+    Ok(())
+}
+
+/// ⛔ **THE ONE PERMUTATION — a pool's `index`th name under `seed`.** The band catalog and the
+/// faction catalog both resolve through here, each with its own salted seed, so there is one
+/// implementation of the shuffle and the cycle suffix rather than two that could drift.
+///
+/// `SmallRng::seed_from_u64(seed)` shuffles `0..len`; the name is `pool[order[index % len]]`, with
+/// the cycle suffix of `index / len` past the end of the pool (`Ashfell II`). **Injective in
+/// `index`**: the cycle and the permuted position together recover it, so two indices never spell
+/// the same string and no probing or collision check is needed anywhere.
+///
+/// Rebuilt per call rather than cached: a name is resolved a handful of times per game, and a
+/// cache would be checkpoint state earning nothing. An empty pool — reachable only from a
+/// hand-built catalog, since the loaders refuse one — answers the empty string, which a client
+/// renders as its id fallback, rather than dividing by zero.
+pub(crate) fn permuted_name(pool: &[String], seed: u64, index: usize) -> String {
+    if pool.is_empty() {
+        return String::new();
+    }
+    let len = pool.len();
+    let mut order: Vec<usize> = (0..len).collect();
+    order.shuffle(&mut SmallRng::seed_from_u64(seed));
+    let name = &pool[order[index % len]];
+    match cycle_suffix(index / len) {
+        Some(suffix) => format!("{name} {suffix}"),
+        None => name.clone(),
     }
 }
 

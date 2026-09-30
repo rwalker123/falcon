@@ -528,7 +528,14 @@ set, the band's move) do not collide, and the `reason` is
 `"<rule>: <subject> [ledger: trough X at tN, positive again tM]"` so the viewer shows which rule
 fired and what the ledger said. The rules, in `propose` order:
 
-- **negative income** (`food:assign:<band>`) — fires on `food_income < food_consumption` **or**
+> **Every decision reads `food_need`, never `food_consumption`.** `food_consumption` is what the
+> people managed to eat — `min(need, larder)` at meal time, and the meal comes before the turn's
+> take lands — so a band whose larder is short at meal time reads as eating less than it does and
+> breaking even while it starves. `food_need` is what they must eat, the same number the sim's own
+> runway drains by. The instruments (`scoreboard.jsonl`, `observations.jsonl`, the bench measures)
+> still record `food_consumption`: a record of what was eaten is a fact, not a decision.
+
+- **negative income** (`food:assign:<band>`) — fires on `food_income < food_need` **or**
   `idle_workers > 0` **or** a row with surplus (idle and surplus hands alike are negative income
   against what they could earn). Weighs three reassignments within budget — (a) the free hands,
   idle plus every row's surplus with each donor row cut to its `workers_needed`, **dealt across
@@ -768,7 +775,7 @@ fired and what the ledger said. The rules, in `propose` order:
 
 A pure function of numbers, tested alone. `Book { stock, income, consumption }` is a band's food
 book off the frame (`stores[FOOD_CARGO_KEY]` with the fixed-point divided out as the scoreboard
-does, `food_income`, `food_consumption`); `Reassignment { income_lost, income_gained, payoff_turn }`
+does, `food_income`, and `food_need` as the consumption term); `Reassignment { income_lost, income_gained, payoff_turn }`
 is a change; `project_all(book, changes, horizon)` walks `stock_t+1 = stock_t + income − Σ lost +
 Σ gained(t ≥ its payoff) − consumption` for `food.projection_horizon_turns` and answers
 `Projection { stock, trough: (min, turn), positive_again: first turn net ≥ 0, net_after,
@@ -855,7 +862,7 @@ the published per-worker rate alone.** Three facts of the frame forced this:
 
 Owns `patches_owned`; alarms `land_short` when what the band's crew would take per turn from the
 cluster it stands in (`cluster_take(here, working_age).total`, the `Food` section's shared
-reading) is below its `food_consumption`, and no tile in view reads a better cluster — the same
+reading) is below its `food_need`, and no tile in view reads a better cluster — the same
 comparison *better ground* moves on.
 
 - *blind* — fewer than `land.known_tiles_floor` known tiles within `land.horizon_tiles` of a band
@@ -926,14 +933,16 @@ then excluded on arrival, and a non-site patch counted as "something better in v
 `land_short` from the other direction. The alarm above is the same
 correction: it once compared a *stock* to a *rate* (`195.0 < 4.09`) and so could never fire.
 
-⛔ **Contact hands a band over.** The sim's knowledge migration (`advance_population_migration`,
-`core_sim/src/systems/population.rs`) rewrites the faction of a band that is settled
-`migration_min_settled_turns`, above `migration_morale_threshold` morale, carries knowledge, and is
-in **contact** with another people — in either direction. On the bench's seed 11 the rival's band
-joined the utility seat at tick 6 and the seat's own band left at tick 18, which is why its row at
-turn 30 reads `population_working 0` with `hunger_deaths_total 0`. *Better ground* excludes ground a
-visible foreign band stands on; it cannot see a rival the fog hides, and it does not model sight
-range, so the exposure remains.
+⛔ **Misery, not contact, hands people over.** The sim's defection is the wellbeing trickle with the
+same-people filter lifted (`advance_population_migration`, `.claude/rules/core_sim/factions.md` →
+"Defection is the unhappy trickle with the same-people filter lifted"): a band below
+`migration.morale_threshold` sheds people toward a happier band within `migration.base_reach`, a
+foreign one only when no band of its own people qualifies, it is tied to that band by a live contact
+and its people keep Open Borders — and a whole band goes over only when a cross-people move leaves it
+below `settle.parent_min_workers`. A well-fed band never loses anyone, so an AI seat that keeps its
+bands fed keeps them; one that lets morale collapse beside a thriving rival camp bleeds people to it.
+A detached party goes whole under the same test (`advance_party_defection`). *Better ground*
+excludes ground a visible foreign band stands on, which also keeps an AI band out of a rival's reach.
 
 ### The land reading (`ground.rs`)
 
@@ -985,7 +994,7 @@ at tick 2 under the new key and read their crew take from then on — which is w
 captures its `ground.*` measures at tick 2, "The land reading" below). The **hex layer** (`Hex`): every discovered, walkable,
 unoccupied hex within some site's reach, with the patches within `work_range` and the herds
 within `hunt_reach` of it (both read off the band) — the site layer convolved with the two ranges.
-`people_fed = food / (food_consumption / size)`, the band's own per-person consumption.
+`people_fed = food / (food_need / size)`, what one of the band's people must eat.
 
 **The shape** (`Reading::plan(levers, anchor, bound)`): standing hexes for up to `k_max = 1 +
 floor((working_age − founding_parent_min_workers) / founding_min_workers)` bands (the sim's two
@@ -1174,7 +1183,8 @@ reads all three.
 **`scoreboard.jsonl`** — one `ScoreRow` per **acted** tick, written before `decide` runs, off the
 `SeatView` (`plan_ai_driver.md` §8.1). `tick`, `faction`, `population_children/working/elders`
 (this faction's `demographics` row), `food_stock` (Σ own bands' `stores[FOOD_CARGO_KEY]`, the wire's
-fixed-point divided out by `FIXED_POINT_SCALE`), `food_income`, `food_consumption`,
+fixed-point divided out by `FIXED_POINT_SCALE`), `food_income`, `food_consumption` (what was
+eaten — a record, not what any rule decides on),
 `sustainable_yield`, `actual_yield` (Σ own labor rows), `runway_turns` (min `turns_of_food`;
 `NOT_FOOD_LIMITED_TURNS` = 999.0 when no band is limited, restated from
 `core_sim::snapshot::population`), `idle_workers`, `patches_owned` / `patches_improved`

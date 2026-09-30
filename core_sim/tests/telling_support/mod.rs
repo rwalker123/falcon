@@ -110,6 +110,7 @@ pub fn spawn_band(app: &mut App, faction: FactionId, size: u32) {
             stores: LocalStore::new(),
             morale: scalar_one(),
             last_food_consumption: 0.0,
+            last_food_need: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -125,7 +126,6 @@ pub fn spawn_band(app: &mut App, faction: FactionId, size: u32) {
             generation: 0 as GenerationId,
             faction,
             knowledge: Vec::new(),
-            migration: None,
         },
         // Every band carries a durable id (see `BandId`); a cohort without one is invisible to the
         // band queries that require it, which is how this helper's omission surfaced.

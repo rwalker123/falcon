@@ -175,6 +175,11 @@ signal work_priority_requested(payload: Dictionary)
 ## carries the one decision the roles cannot express. RELAYED from `BandPanelController`, its only
 ## emitter.
 signal upkeep_mode_requested(payload: Dictionary)
+## Emitted when the player flips the faction page's OPEN BORDERS toggle (issue #512,
+## `docs/plan_band_fission.md` §Defection). Payload keys: { faction, open }. Main formats
+## `set_open_borders <faction> open|closed`. A FACTION policy — whether another people's leavers and
+## defecting parties may join this people's bands. RELAYED from `BandPanelController`, its only emitter.
+signal open_borders_requested(payload: Dictionary)
 ## Emitted when the player presses **Make** in Materials & Crafting — the recipe is STAGED on the
 ## band's bench and nobody is recruited onto it. **The player staffs the bench and the sim never
 ## does**, so there is no crew argument here: the `− n +` stepper is the one thing that picks the
@@ -746,6 +751,8 @@ func _ready() -> void:
         func(band: Dictionary, scope: String) -> void: cancel_order_requested.emit(band, scope))
     _bandpanel.upkeep_mode_requested.connect(
         func(payload: Dictionary) -> void: upkeep_mode_requested.emit(payload))
+    _bandpanel.open_borders_requested.connect(
+        func(payload: Dictionary) -> void: open_borders_requested.emit(payload))
     # The BUILD QUEUE block's row `✕` (`docs/plan_standing_upkeep.md` §4.6b) joins the compose
     # sheet's uncheck on the ONE `unqueue_requested` edge — the payloads are identical, so
     # `Main.format_unqueue` serves both without knowing which control withdrew the entry.
@@ -1034,6 +1041,18 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
 
 func update_sedentarization(sedentarization_variant: Variant) -> void:
     _topbar.update_sedentarization(sedentarization_variant)
+
+## **THE PLAYER FACTION'S POLICY ROW** (`faction_policies`, issue #512) — Open Borders. A thin
+## delegator because `Main` reaches it BY NAME through `_hud_invoke`.
+##
+## **IT RE-RENDERS THE FACTION PAGE when that page is up**, because the section moves on a COMMAND,
+## not a turn: the recapture after `set_open_borders` may carry no `populations` change at all, and
+## that section is the page's only other re-render trigger — so without this the toggle would sit on
+## the state the player clicked rather than the state the sim confirmed.
+func update_faction_policies(policies_variant: Variant) -> void:
+    _topbar.update_faction_policies(policies_variant)
+    if _bandpanel != null and _bandpanel.is_faction_page():
+        _bandpanel.rerender()
 
 ## **THE LADDER'S KNOWLEDGE ROSTER** (arc #532 / `docs/plan_knowledge_screen.md`) — what there IS to
 ## learn, per world. A thin delegator because `Main` reaches it BY NAME through `_hud_invoke`, whose

@@ -55,6 +55,11 @@ pub struct SnapshotContext<'w> {
     pub active_profile: Option<Res<'w, crate::start_profile::ActiveStartProfile>>,
     /// The opening outfitting window's live state. `Option` for the same reason.
     pub starting_loadout: Option<Res<'w, crate::starting_loadout::StartingLoadout>>,
+    /// Each people's Open Borders setting — published as the viewer's own row only. `Option` for the
+    /// same reason as the two above.
+    pub border_policies: Option<Res<'w, crate::resources::FactionBorderPolicies>>,
+    /// Every faction's name — published world-visible. `Option` for the reason the two above are.
+    pub faction_names: Option<Res<'w, crate::faction_names::FactionNames>>,
     pub victory: Res<'w, VictoryState>,
     pub faction_inventory: Res<'w, FactionInventory>,
     pub sedentarization: Res<'w, SedentarizationScore>,
@@ -292,6 +297,11 @@ pub(crate) struct SeatPublishState {
     /// the loadout is applied and when the first turn shuts it — so it diffs out on every other
     /// frame exactly as the kit roster does.
     opening_loadout: Whole<OpeningLoadoutState>,
+    /// The viewer's own faction policies (Open Borders). Moves only on a `set_open_borders`, so it
+    /// diffs out on almost every frame.
+    faction_policies: Whole<Vec<FactionPolicyState>>,
+    /// Every faction's name. A per-world constant, so it diffs out after the first frame.
+    faction_names: Whole<Vec<FactionNameState>>,
     herds: Whole<Vec<HerdTelemetryState>>,
     food_modules: Whole<Vec<FoodModuleState>>,
     /// The kit roster and the two per-job defaults — per-world constants, so in practice they diff
@@ -619,6 +629,8 @@ struct CampaignParts {
     stance_axes: Option<Vec<StanceState>>,
     voice_medium: Option<Vec<VoiceMediumState>>,
     opening_loadout: Option<OpeningLoadoutState>,
+    faction_policies: Option<Vec<FactionPolicyState>>,
+    faction_names: Option<Vec<FactionNameState>>,
     faction_inventory: Option<Vec<SchemaFactionInventoryState>>,
     sedentarization: Option<Vec<SchemaSedentarizationState>>,
     discovered_sites: Option<Vec<SchemaDiscoveredSitesState>>,
@@ -640,6 +652,8 @@ struct CampaignBaselines<'a> {
     stance_axes: &'a mut Whole<Vec<StanceState>>,
     voice_medium: &'a mut Whole<Vec<VoiceMediumState>>,
     opening_loadout: &'a mut Whole<OpeningLoadoutState>,
+    faction_policies: &'a mut Whole<Vec<FactionPolicyState>>,
+    faction_names: &'a mut Whole<Vec<FactionNameState>>,
     faction_inventory: &'a mut Whole<Vec<SchemaFactionInventoryState>>,
     sedentarization: &'a mut Whole<Vec<SchemaSedentarizationState>>,
     discovered_sites: &'a mut Whole<Vec<SchemaDiscoveredSitesState>>,
@@ -672,6 +686,8 @@ fn diff_campaign(
         stance_axes: diff_whole(baseline.stance_axes, &snapshot.stance_axes, write),
         voice_medium: diff_whole(baseline.voice_medium, &snapshot.voice_medium, write),
         opening_loadout: diff_whole(baseline.opening_loadout, &snapshot.opening_loadout, write),
+        faction_policies: diff_whole(baseline.faction_policies, &snapshot.faction_policies, write),
+        faction_names: diff_whole(baseline.faction_names, &snapshot.faction_names, write),
         faction_inventory: diff_whole(
             baseline.faction_inventory,
             &snapshot.faction_inventory,
@@ -919,6 +935,8 @@ impl SeatPublishState {
             stance_axes: Whole::default(),
             voice_medium: Whole::default(),
             opening_loadout: Whole::default(),
+            faction_policies: Whole::default(),
+            faction_names: Whole::default(),
             herds: Whole::default(),
             food_modules: Whole::default(),
             kits: Whole::default(),
@@ -1061,6 +1079,8 @@ impl SeatPublishState {
             stance_axes,
             voice_medium,
             opening_loadout,
+            faction_policies,
+            faction_names,
             faction_inventory,
             sedentarization,
             discovered_sites,
@@ -1177,6 +1197,8 @@ impl SeatPublishState {
                             stance_axes,
                             voice_medium,
                             opening_loadout,
+                            faction_policies,
+                            faction_names,
                             faction_inventory,
                             sedentarization,
                             discovered_sites,
@@ -1282,6 +1304,8 @@ impl SeatPublishState {
             stance_axes: campaign_parts.stance_axes,
             voice_medium: campaign_parts.voice_medium,
             opening_loadout: campaign_parts.opening_loadout,
+            faction_policies: campaign_parts.faction_policies,
+            faction_names: campaign_parts.faction_names,
             faction_inventory: campaign_parts.faction_inventory,
             sedentarization: campaign_parts.sedentarization,
             discovered_sites: campaign_parts.discovered_sites,
@@ -1517,6 +1541,10 @@ impl SeatPublishState {
         self.voice_medium.reset(entry.snapshot.voice_medium.clone());
         self.opening_loadout
             .reset(entry.snapshot.opening_loadout.clone());
+        self.faction_policies
+            .reset(entry.snapshot.faction_policies.clone());
+        self.faction_names
+            .reset(entry.snapshot.faction_names.clone());
         self.herds.reset(entry.snapshot.herds.clone());
         self.food_modules.reset(entry.snapshot.food_modules.clone());
         self.kits.reset(entry.snapshot.kits.clone());
@@ -1691,6 +1719,8 @@ impl SeatPublishState {
             stance_axes: None,
             voice_medium: None,
             opening_loadout: None,
+            faction_policies: None,
+            faction_names: None,
             herds: None,
             food_modules: None,
             kits: None,
@@ -1836,6 +1866,8 @@ impl SeatPublishState {
             stance_axes: None,
             voice_medium: None,
             opening_loadout: None,
+            faction_policies: None,
+            faction_names: None,
             herds: None,
             food_modules: None,
             kits: None,
@@ -1965,6 +1997,8 @@ impl SeatPublishState {
             stance_axes: None,
             voice_medium: None,
             opening_loadout: None,
+            faction_policies: None,
+            faction_names: None,
             herds: None,
             food_modules: None,
             kits: None,
@@ -2538,6 +2572,8 @@ pub fn capture_snapshot(
         start_profiles,
         active_profile,
         starting_loadout,
+        border_policies,
+        faction_names,
         victory,
         faction_inventory,
         sedentarization,
@@ -3676,6 +3712,27 @@ pub fn capture_snapshot(
         let pending_forks_state = snapshot_pending_forks(&beat_ledger, viewer);
         let stance_axes_state = snapshot_stance_axes(&beat_ledger, viewer);
         let voice_medium_state = snapshot_voice_medium(&beat_ledger, viewer);
+        // The viewer's own Open Borders row — another people's borders are theirs to know.
+        let faction_policies_state: Vec<FactionPolicyState> = vec![FactionPolicyState {
+            faction: viewer.0,
+            open_borders: border_policies
+                .as_deref()
+                .map(|policies| policies.is_open(viewer))
+                .unwrap_or(true),
+        }];
+        // Every faction's name, world-visible, in id order.
+        let faction_names_state: Vec<FactionNameState> = faction_names
+            .as_deref()
+            .map(|names| {
+                names
+                    .iter()
+                    .map(|(faction, name)| FactionNameState {
+                        faction: faction.0,
+                        name: name.to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let victory_snapshot_state = victory_snapshot_from_resource(&victory, viewer);
         let capability_bits = capability_flags.bits();
         drop(readouts_scope);
@@ -3796,6 +3853,8 @@ pub fn capture_snapshot(
             stance_axes: stance_axes_state.clone(),
             voice_medium: voice_medium_state.clone(),
             opening_loadout: opening_loadout_state.clone(),
+            faction_policies: faction_policies_state.clone(),
+            faction_names: faction_names_state.clone(),
             capability_flags: capability_bits,
             axis_bias: axis_bias_state,
             sentiment: sentiment_state,

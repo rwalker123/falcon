@@ -108,7 +108,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 11 | `BandBench` gained `last_started` — which recipe the band last started for each thing it makes, the fact the crafting ledger suggests from when an item has several recipes. The whole bench rides `BandRecord::bench`, so a version-10 blob has no such field |
 /// | 12 | `LaborAllocation` gained `last_transfer_crossings` and `PopulationCohort` its per-turn twin `last_turn_transfer_crossings` — the cause-keyed crossings list beneath the transfer ledgers (issue #731), which the wire publishes as `PopulationCohortState.transferCrossings`. Both ride `BandRecord`, so a version-11 blob has no such field. In the same version `ExpeditionMission::Trade` gained `destination_faction` (it rides `ExpeditionRecord`), which a returned shipment's `TransferCause::ShipmentReturned` row names |
 /// | 13 | `BandRecord` gained `supply` — the band's supply-network id, its own pooling links and its network's span, which the capture publishes as `PopulationCohortState.supplyNetworkId` / `poolingLinks` / `supplyNetworkSpanTiles`. The live resource is keyed by `Entity`, so it rides each band's record; a version-12 blob has no such field |
-pub const SAVE_FORMAT_VERSION: u32 = 13;
+/// | 14 | Defection (#512): `SimState` gained `border_policies` (`FactionBorderPolicies`, each people's Open Borders setting) and `faction_names` (`FactionNames`, every faction's minted name — the save wins, so a pool edit never renames a saved world's factions), `Expedition` gained `defection_pull` (it rides `ExpeditionRecord`), and `PopulationCohort` lost `migration` with the whole-band knowledge migration it queued and gained `last_food_need` (what the meal was measured against, beside what was eaten). All three move `BandRecord`/`ExpeditionRecord`/`SimState`, so a version-13 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 14;
 
 /// gzip level for the payload document.
 ///

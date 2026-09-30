@@ -1302,6 +1302,50 @@ pub struct TradeDiffusionRecord {
     pub herd_density: f32,
 }
 
+/// **Open Borders — each people's one faction-wide say over who may join it**
+/// (`docs/plan_band_fission.md` §Defection).
+///
+/// Open (the default for every faction), another people's leavers may settle into this people's
+/// bands — the wellbeing trickle's cross-people move (`advance_population_migration`) and a
+/// defecting party (`advance_party_defection`). Closed, none of this people's bands is ever a
+/// destination for another people; leavers with nowhere open to go stay, and the trickle's
+/// *trapped* rule makes their grievance grow faster. A people's OWN bands never ask this — moving
+/// between your own camps is not crossing a border.
+///
+/// Seeded from the roster beside the other per-faction resources (`FactionSecurityPolicies`'s
+/// seat) and checkpointed in `SimState`; the player sets it with `set_open_borders`. AI factions
+/// keep the default — nothing drives it for them.
+#[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FactionBorderPolicies {
+    open: BTreeMap<FactionId, bool>,
+}
+
+impl FactionBorderPolicies {
+    /// Every faction on the roster, open.
+    pub fn new(factions: &[FactionId]) -> Self {
+        Self {
+            open: factions.iter().map(|faction| (*faction, true)).collect(),
+        }
+    }
+
+    /// Whether `faction` accepts another people's leavers. A faction with no row reads **open**,
+    /// which is the seeded value — see [`Self::contains`] for telling the two apart.
+    pub fn is_open(&self, faction: FactionId) -> bool {
+        self.open.get(&faction).copied().unwrap_or(true)
+    }
+
+    pub fn set_open(&mut self, faction: FactionId, open: bool) {
+        self.open.insert(faction, open);
+    }
+
+    /// Whether this faction was **seeded a row of its own**. [`Self::is_open`]'s fallback *is* the
+    /// seeded value, so a forgotten faction reads exactly like a seeded one there; the seeding paths
+    /// are asserted through this instead (`FactionSecurityPolicies::contains`'s reason).
+    pub fn contains(&self, faction: FactionId) -> bool {
+        self.open.contains_key(&faction)
+    }
+}
+
 #[derive(Resource, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TradeTelemetry {
     pub tech_diffusion_applied: u32,
@@ -1650,8 +1694,9 @@ pub enum CommandEventKind {
     /// out of the band, but it is a pair of hands the player no longer has, which is why the
     /// workforce shrinking is announced rather than merely happening.
     Aged,
-    /// **A WHOLE BAND CHANGED FACTION** — a knowledge migration completed and the band now belongs
-    /// to the people it defected to (`systems::population`, the `PendingMigration` branch).
+    /// **A WHOLE BAND CHANGED FACTION** — a cross-people move left the remnant too small to staff
+    /// itself and it went over with its leavers (`advance_population_migration`,
+    /// `docs/plan_band_fission.md` §"A whole band goes over only in the extreme").
     ///
     /// **One kind, pushed TWICE — once under the faction that lost the band, once under the faction
     /// that gained it** — because `snapshot::campaign::command_events_to_state` files a frame's feed
@@ -1660,14 +1705,23 @@ pub enum CommandEventKind {
     /// (`side=lost|gained`), on [`Self::Road`]'s reading: the player is looking at *one band
     /// changing hands*, not at two unrelated events.
     ///
-    /// It shipped silent: the migration branch sent `TradeDiffusionEvent` and
-    /// `MigrationKnowledgeEvent` (neither of which has an `EventReader` anywhere — they are
-    /// telemetry/diffusion plumbing) and pushed nothing to the event log at all, so a player gained
-    /// or lost twenty-nine people with no line anywhere.
-    ///
     /// **Appended last, on the rule stated at the top of this enum**: it arrived after [`Self::Aged`]
     /// and sits after it, so no shipped variant's bincode index moved.
     BandChangedHands,
+    /// **A detached party left its people and joined another's band**
+    /// (`systems::advance_party_defection`, `docs/plan_band_fission.md` §"Scouts: a party goes
+    /// whole").
+    ///
+    /// **Pushed twice, and deliberately NOT symmetric.** The losing people is told one generic line
+    /// — *"Your scouting party has left your control."* — whose detail carries only `side=lost` and
+    /// the `expedition=` handle of the marker that vanished: no reason, no place, no destination,
+    /// because out of communication range they have no way to know why their people did not come
+    /// back. The receiving people's line names the band the party joined (`band=`, `count=`,
+    /// `from=<faction>`, `side=gained`), the same tokens a migration arrival carries.
+    ///
+    /// **Appended last**, after [`Self::BandChangedHands`], so no shipped variant's bincode index
+    /// moved.
+    PartyDefected,
 }
 
 impl CommandEventKind {
@@ -1710,6 +1764,7 @@ impl CommandEventKind {
             CommandEventKind::CameOfAge => "came_of_age",
             CommandEventKind::Migrated => "migrated",
             CommandEventKind::BandChangedHands => "band_changed_hands",
+            CommandEventKind::PartyDefected => "party_defected",
             CommandEventKind::Aged => "aged",
         }
     }

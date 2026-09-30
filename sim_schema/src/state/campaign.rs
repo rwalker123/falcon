@@ -177,6 +177,25 @@ pub struct VoiceMediumState {
     pub medium_index: u32,
 }
 
+/// A faction's **policy settings** on the client stream — one row per faction, and a frame carries
+/// the viewer's own row only. Today it holds **Open Borders** (`docs/plan_band_fission.md`
+/// §Defection): whether another people's leavers, and defecting parties, may join this faction's
+/// bands. Every faction starts open.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct FactionPolicyState {
+    pub faction: u32,
+    pub open_borders: bool,
+}
+
+/// **A faction's name** on the client stream — what its people call themselves. World-visible:
+/// every faction's row rides every frame. Event labels say `Faction N` and carry the id as
+/// `from=`/`to=`; a client substitutes this name by joining on that id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct FactionNameState {
+    pub faction: u32,
+    pub name: String,
+}
+
 /// One register's rendering of a player-visible narrative string.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct BeatVoiceLineState {

@@ -277,6 +277,7 @@ fn spawn_keepers_of(
                 stores: pen_materials_support::stocked_with_pen_materials(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -291,7 +292,6 @@ fn spawn_keepers_of(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             match gear {
@@ -1251,6 +1251,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 stores: LocalStore::new(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -1266,7 +1267,6 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             // **THE LEDGER IS STATED, NOT LEFT ABSENT.** An absent component resolves to one reference

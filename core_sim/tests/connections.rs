@@ -501,6 +501,7 @@ fn an_expedition_reports_a_people_only_when_it_comes_within_comm_range() {
                     pending_contacts: Default::default(),
                     kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Scout),
                     cargo: core_sim::LocalStore::new(),
+                    defection_pull: core_sim::Scalar::zero(),
                 },
             ))
             .id()
@@ -644,6 +645,7 @@ fn an_older_report_refreshes_the_tie_without_rewriting_where_they_were() {
                 pending_contacts,
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Scout),
                 cargo: core_sim::LocalStore::new(),
+                defection_pull: core_sim::Scalar::zero(),
             },
         ));
     }

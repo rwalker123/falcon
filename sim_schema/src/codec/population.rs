@@ -11,10 +11,9 @@ use crate::state::population::{
     BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchState, BuildQueueEntryState,
     CharacteristicReadingState, CohortStoreState, CraftOfferState, DrawnInputState,
     EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState,
-    LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PendingMigrationState,
-    PoolCrewLineState, PoolToeLineState, PoolingLinkState, PopulationCohortState,
-    PopulationDemographicsState, ScoutTaskState, SettlementStageViewState, SourcePriorityState,
-    TransferCrossingState,
+    LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PoolCrewLineState,
+    PoolToeLineState, PoolingLinkState, PopulationCohortState, PopulationDemographicsState,
+    ScoutTaskState, SettlementStageViewState, SourcePriorityState, TransferCrossingState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -128,21 +127,6 @@ fn create_populations<'a>(
                     },
                 )
             };
-            let migration = cohort.migration.as_ref().map(|pending| {
-                let fragments = if pending.fragments.is_empty() {
-                    None
-                } else {
-                    Some(create_known_fragments(builder, &pending.fragments))
-                };
-                fb::PendingMigration::create(
-                    builder,
-                    &fb::PendingMigrationArgs {
-                        destination: pending.destination,
-                        eta: pending.eta,
-                        fragments,
-                    },
-                )
-            });
             let harvest = cohort.harvest_task.as_ref().map(|task| {
                 let module = builder.create_string(&task.module);
                 let band_label = builder.create_string(&task.band_label);
@@ -909,7 +893,6 @@ fn create_populations<'a>(
                     generation: cohort.generation,
                     faction: cohort.faction,
                     knowledgeFragments: knowledge,
-                    migration,
                     harvestTask: harvest,
                     scoutTask: scout,
                     accessibleStockpile: accessible_stockpile_fb,
@@ -1106,6 +1089,8 @@ fn create_populations<'a>(
                     transferCrossings: Some(transfer_crossings),
                     poolingLinks: Some(pooling_links),
                     supplyNetworkSpanTiles: cohort.supply_network_span_tiles,
+                    foodNeed: cohort.food_need,
+                    foodShortfall: cohort.food_shortfall,
                 },
             )
         })
@@ -1385,11 +1370,6 @@ fn decode_population(
         generation: cohort.generation(),
         faction: cohort.faction(),
         knowledge_fragments: decode_known_fragments(cohort.knowledgeFragments()),
-        migration: cohort.migration().map(|pending| PendingMigrationState {
-            destination: pending.destination(),
-            eta: pending.eta(),
-            fragments: decode_known_fragments(pending.fragments()),
-        }),
         harvest_task: cohort.harvestTask().map(|task| HarvestTaskState {
             kind: text(task.kind()),
             module: text(task.module()),
@@ -1617,6 +1597,8 @@ fn decode_population(
             rung_id: text(link.rungId()),
         }),
         supply_network_span_tiles: cohort.supplyNetworkSpanTiles(),
+        food_need: cohort.foodNeed(),
+        food_shortfall: cohort.foodShortfall(),
     })
 }
 

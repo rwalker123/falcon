@@ -2,8 +2,9 @@ class_name FactionReadouts
 extends RefCounted
 
 ## Owns the PLAYER FACTION's per-faction snapshot readouts (docs/plan_hud_decomposition.md): its
-## sedentarization, its discovered Wondrous Sites and its intensification-ladder knowledge. HudLayer
-## holds one as `_topbar` and delegates the snapshot `update_*` handlers to it.
+## sedentarization, its discovered Wondrous Sites, its intensification-ladder knowledge and its
+## Open Borders policy. HudLayer holds one as `_topbar` and delegates the snapshot `update_*`
+## handlers to it.
 ##
 ## **IT OWNS NO NODES — it is a pure MODEL, and it was `TopBarReadouts` until it stopped being one.**
 ## It rendered eight Labels in the HUD's top-right block: the Sedentarization meter, the `Pop …`
@@ -136,6 +137,12 @@ var _intensification_knowledge: Dictionary = {}
 ## snapshot said.
 var _sedentarization: Dictionary = {}
 var _discovered_sites: Array = []
+## The player faction's own POLICY row (`{faction, open_borders}`) from the campaign section's
+## `faction_policies` (issue #512). Retained for the faction page's Open Borders toggle, which reads
+## its state here and NOWHERE else — no optimistic copy on the page, so what the checkbox shows is what
+## the sim last said. The wire already carries only the viewer's row; the player filter is applied
+## anyway, for the same one-place reason as the two caches above. `{}` until a snapshot carries one.
+var _faction_policy: Dictionary = {}
 
 ## WORLD BOUNDARY (`Main._reset_per_world_state` → `HudLayer.reset_world_state`): drop every top-bar
 ## cache that belongs to ONE world, then re-render each strip off the now-empty caches.
@@ -172,6 +179,7 @@ func reset_world_state() -> void:
 	update_intensification([])
 	update_discoveries([])
 	update_sedentarization([])
+	update_faction_policies([])
 
 ## INGEST the player faction's Sedentarization entry. **It renders nothing** — this was a compact
 ## top-bar text meter until the top-right block was retired (issue #450), and the faction page's
@@ -186,6 +194,18 @@ func update_sedentarization(sedentarization_variant: Variant) -> void:
 		for entry in sedentarization_variant:
 			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
 				_sedentarization = entry
+				break
+
+## INGEST the player faction's POLICY row (Open Borders, issue #512). **It renders nothing** — the
+## faction page's band zone draws the toggle off `faction_policy()`. Rebuilt wholesale like
+## `update_sedentarization`: the campaign section whole-diffs this table, so its presence on a frame
+## IS the current answer.
+func update_faction_policies(policies_variant: Variant) -> void:
+	_faction_policy = {}
+	if policies_variant is Array:
+		for entry in policies_variant:
+			if entry is Dictionary and int(entry.get("faction", -1)) == HudConst.PLAYER_FACTION_ID:
+				_faction_policy = entry
 				break
 
 ## INGEST the player faction's discovered Wondrous Sites. **It renders nothing** — this was a
@@ -378,6 +398,12 @@ func faction_tracks(faction: int) -> Dictionary:
 ## different answer available to it. The caller decides what an unsettled faction reads as.
 func faction_sedentarization() -> Dictionary:
 	return _sedentarization
+
+## The PLAYER faction's policy row (`{faction, open_borders}`) as the snapshot sent it, or `{}` when it
+## has sent none — in which case the faction page renders no toggle rather than guessing a default.
+## Returned BY REFERENCE, this HUD's accessor convention; every reader is read-only.
+func faction_policy() -> Dictionary:
+	return _faction_policy
 
 ## The PLAYER faction's discovered Wondrous Sites as the snapshot sent them (`[]` when none). Public
 ## for the same reason and with the same reference semantics as `faction_sedentarization`.

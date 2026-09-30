@@ -1043,7 +1043,7 @@ impl Food {
         let Some(goals) = plan.food_goals() else {
             return (None, Reassignment::NONE);
         };
-        let fires = band.food_income < band.food_consumption
+        let fires = band.food_income < band.food_need
             || band.idle_workers > 0
             || !Self::surplus_rows(memory, band).is_empty()
             || !self.pool_releases(view, band).is_empty();
@@ -1418,7 +1418,7 @@ impl Food {
         // What the parent keeps: the rows drawn are lost, the mouths that leave are gained.
         let change = Reassignment {
             income_lost: drawn.income_lost,
-            income_gained: Self::crew_share(band, crew) * band.food_consumption,
+            income_gained: Self::crew_share(band, crew) * band.food_need,
             payoff_turn: 0,
         };
         let after_split = project_all(&book, &[*carried, change], horizon);
@@ -3049,7 +3049,7 @@ mod tests {
             band.size,
             band.working_age,
             (band.founding_min_workers, band.founding_parent_min_workers),
-            band.food_consumption / band.size.max(1) as f32,
+            band.food_need / band.size.max(1) as f32,
             sites,
             candidates,
         );
@@ -3178,7 +3178,7 @@ mod tests {
             a_view_with(|view| {
                 let band = &mut view.snapshot.populations[0];
                 band.idle_workers = 0;
-                band.food_income = band.food_consumption;
+                band.food_income = band.food_need;
                 band.labor_assignments = vec![LaborAssignmentState {
                     workers_needed: 8,
                     ..forage_row(RICH_PATCH, 17, 26.0)
@@ -3328,7 +3328,7 @@ mod tests {
         let mut view = a_view_with(|view| {
             let band = &mut view.snapshot.populations[0];
             band.idle_workers = 0;
-            band.food_income = band.food_consumption;
+            band.food_income = band.food_need;
             band.labor_assignments = vec![
                 LaborAssignmentState {
                     workers_needed: 8,
@@ -3493,7 +3493,7 @@ mod tests {
             let band = &mut view.snapshot.populations[0];
             band.idle_workers = 0;
             band.food_income = 6.0;
-            band.food_consumption = 6.0;
+            band.food_need = 6.0;
             band.stores = vec![CohortStoreState {
                 item: FOOD_CARGO_KEY.to_owned(),
                 quantity: (stock * FIXED_POINT_SCALE as f32) as i64,
@@ -3673,7 +3673,7 @@ mod tests {
         let view = a_view_with(|view| {
             let band = &mut view.snapshot.populations[0];
             band.idle_workers = 0;
-            band.food_income = band.food_consumption;
+            band.food_income = band.food_need;
             band.labor_assignments = vec![LaborAssignmentState {
                 workers_needed: 8,
                 floor: 0.2,
@@ -3799,7 +3799,7 @@ mod tests {
             knowledge(view, 1.0, 0.0);
             let band = &mut view.snapshot.populations[0];
             band.idle_workers = 0;
-            band.food_income = band.food_consumption;
+            band.food_income = band.food_need;
             band.labor_assignments = vec![LaborAssignmentState {
                 workers_needed: 8,
                 ..forage_row(RICH_PATCH, 17, 26.0)
@@ -4024,7 +4024,7 @@ mod tests {
                 view.snapshot.herds.clear();
                 let band = &mut view.snapshot.populations[0];
                 band.idle_workers = 0;
-                band.food_income = band.food_consumption;
+                band.food_income = band.food_need;
                 band.labor_assignments = vec![
                     LaborAssignmentState {
                         workers_needed: 8,
@@ -4188,7 +4188,7 @@ mod tests {
         let mut view = a_view();
         let band = &mut view.snapshot.populations[0];
         band.idle_workers = 0;
-        band.food_income = band.food_consumption + 1.0;
+        band.food_income = band.food_need + 1.0;
         band.labor_assignments = vec![forage_row(NEAR_PATCH, 17, 7.0)];
         assert!(food()
             .negative_income(
@@ -4783,7 +4783,7 @@ mod tests {
             band.working_age = 12;
             band.idle_workers = 0;
             band.food_income = 12.0;
-            band.food_consumption = 16.0;
+            band.food_need = 16.0;
             band.stores = vec![CohortStoreState {
                 item: FOOD_CARGO_KEY.to_owned(),
                 quantity: (40.0 * FIXED_POINT_SCALE as f32) as i64,
@@ -4910,7 +4910,7 @@ mod tests {
                 band.working_age = working_age;
                 band.idle_workers = 0;
                 band.food_income = 12.0;
-                band.food_consumption = 16.0;
+                band.food_need = 16.0;
                 band.stores = vec![CohortStoreState {
                     item: FOOD_CARGO_KEY.to_owned(),
                     quantity: (40.0 * FIXED_POINT_SCALE as f32) as i64,
@@ -5142,6 +5142,7 @@ mod tests {
             work_range: 2,
             hunt_reach: 5,
             food_consumption: 6.7,
+            food_need: 6.7,
             stores: vec![CohortStoreState {
                 item: FOOD_CARGO_KEY.to_owned(),
                 quantity: (16.0 * FIXED_POINT_SCALE as f32) as i64,
@@ -5476,7 +5477,7 @@ mod tests {
                 }
                 let band = &mut view.snapshot.populations[0];
                 band.idle_workers = 0;
-                band.food_income = band.food_consumption;
+                band.food_income = band.food_need;
                 band.labor_assignments = [NEAR_PATCH, RICH_PATCH]
                     .into_iter()
                     .map(|tile| {
@@ -5513,7 +5514,7 @@ mod tests {
             view.snapshot.herds.clear();
             let band = &mut view.snapshot.populations[0];
             band.idle_workers = 0;
-            band.food_income = band.food_consumption;
+            band.food_income = band.food_need;
             band.labor_assignments = vec![
                 LaborAssignmentState {
                     workers_needed: 8,
@@ -5762,7 +5763,7 @@ mod tests {
                 view.snapshot.herds.clear();
                 let band = &mut view.snapshot.populations[0];
                 band.idle_workers = 0;
-                band.food_income = band.food_consumption;
+                band.food_income = band.food_need;
                 band.labor_assignments = vec![LaborAssignmentState {
                     workers_needed: 3,
                     ..forage_row(RICH_PATCH, 3, 6.0)
@@ -5899,7 +5900,7 @@ mod tests {
             view.snapshot.herds[0].biomass = 0.5;
             let band = &mut view.snapshot.populations[0];
             band.idle_workers = 0;
-            band.food_income = band.food_consumption + net;
+            band.food_income = band.food_need + net;
             band.labor_assignments = vec![
                 forage_row(NEAR_PATCH, 4, 4.0),
                 forage_row(RICH_PATCH, 13, 26.0),
@@ -5995,7 +5996,7 @@ mod tests {
             knowledge(view, 1.0, 0.0);
             let band = &mut view.snapshot.populations[0];
             band.idle_workers = 0;
-            band.food_income = band.food_consumption;
+            band.food_income = band.food_need;
             band.stores = vec![CohortStoreState {
                 item: FOOD_CARGO_KEY.to_owned(),
                 quantity: (stock * FIXED_POINT_SCALE as f32) as i64,

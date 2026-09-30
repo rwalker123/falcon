@@ -5,9 +5,9 @@ use crate::codec::{
 };
 use crate::state::campaign::{
     CampaignInventoryEntryState, CampaignLabel, CampaignProfileState, CampaignStartingUnitState,
-    CommandEventState, ForkChoiceState, GlossEntryState, OpeningKitDefaultState,
-    OpeningLoadoutState, OpeningMaterialDefaultState, PendingForkState, PendingForksState,
-    StanceAxisState, StanceState, VictoryModeSnapshotState, VictoryResultState,
+    CommandEventState, FactionNameState, FactionPolicyState, ForkChoiceState, GlossEntryState,
+    OpeningKitDefaultState, OpeningLoadoutState, OpeningMaterialDefaultState, PendingForkState,
+    PendingForksState, StanceAxisState, StanceState, VictoryModeSnapshotState, VictoryResultState,
     VictorySnapshotState, VoiceLineState, VoiceMediumState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -25,6 +25,8 @@ pub(crate) fn serialize_campaign_section<'a>(
     let stance_axes = create_stance_axes(builder, &snapshot.stance_axes);
     let voice_medium = create_voice_medium(builder, &snapshot.voice_medium);
     let opening_loadout = create_opening_loadout(builder, &snapshot.opening_loadout);
+    let faction_policies = create_faction_policies(builder, &snapshot.faction_policies);
+    let faction_names = create_faction_names(builder, &snapshot.faction_names);
     fb::CampaignSection::create(
         builder,
         &fb::CampaignSectionArgs {
@@ -36,6 +38,8 @@ pub(crate) fn serialize_campaign_section<'a>(
             voiceMedium: Some(voice_medium),
             commandEventsRetentionTurns: snapshot.command_events_retention_turns,
             openingLoadout: Some(opening_loadout),
+            factionPolicies: Some(faction_policies),
+            factionNames: Some(faction_names),
         },
     )
 }
@@ -69,6 +73,14 @@ pub(crate) fn serialize_campaign_section_delta<'a>(
         .opening_loadout
         .as_ref()
         .map(|state| create_opening_loadout(builder, state));
+    let faction_policies = delta
+        .faction_policies
+        .as_ref()
+        .map(|entries| create_faction_policies(builder, entries));
+    let faction_names = delta
+        .faction_names
+        .as_ref()
+        .map(|entries| create_faction_names(builder, entries));
     fb::CampaignSection::create(
         builder,
         &fb::CampaignSectionArgs {
@@ -79,6 +91,8 @@ pub(crate) fn serialize_campaign_section_delta<'a>(
             stanceAxes: stance_axes,
             voiceMedium: voice_medium,
             openingLoadout: opening_loadout,
+            factionPolicies: faction_policies,
+            factionNames: faction_names,
             // `0` IS the absent encoding — FlatBuffers omits a default-valued scalar, and a
             // zero-turn retention window is not a legal value, so the client reads 0 as "unchanged"
             // and keeps what it holds. The same shape `capabilityFlags` uses.
@@ -372,6 +386,45 @@ fn create_voice_medium<'a>(
     builder.create_vector(&entries)
 }
 
+/// The viewer's own faction policies (Open Borders).
+fn create_faction_policies<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[FactionPolicyState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::FactionPolicyState<'a>>>> {
+    let entries: Vec<_> = states
+        .iter()
+        .map(|state| {
+            fb::FactionPolicyState::create(
+                builder,
+                &fb::FactionPolicyStateArgs {
+                    faction: state.faction,
+                    openBorders: state.open_borders,
+                },
+            )
+        })
+        .collect();
+    builder.create_vector(&entries)
+}
+
+/// Every faction's name, in id order.
+fn create_faction_names<'a>(
+    builder: &mut FbBuilder<'a>,
+    states: &[FactionNameState],
+) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::FactionNameState<'a>>>> {
+    let mut entries = Vec::with_capacity(states.len());
+    for state in states {
+        let name = builder.create_string(state.name.as_str());
+        entries.push(fb::FactionNameState::create(
+            builder,
+            &fb::FactionNameStateArgs {
+                faction: state.faction,
+                name: Some(name),
+            },
+        ));
+    }
+    builder.create_vector(&entries)
+}
+
 fn create_opening_loadout<'a>(
     builder: &mut FbBuilder<'a>,
     state: &OpeningLoadoutState,
@@ -518,6 +571,8 @@ pub(crate) fn decode_campaign_section(
         .openingLoadout()
         .map(decode_opening_loadout)
         .unwrap_or_default();
+    snapshot.faction_policies = map_rows(section.factionPolicies(), decode_faction_policy);
+    snapshot.faction_names = map_rows(section.factionNames(), decode_faction_name);
 }
 
 pub(crate) fn decode_campaign_section_delta(
@@ -532,6 +587,8 @@ pub(crate) fn decode_campaign_section_delta(
     delta.stance_axes = map_rows_if_present(section.stanceAxes(), decode_stance);
     delta.voice_medium = map_rows_if_present(section.voiceMedium(), decode_voice_medium);
     delta.opening_loadout = section.openingLoadout().map(decode_opening_loadout);
+    delta.faction_policies = map_rows_if_present(section.factionPolicies(), decode_faction_policy);
+    delta.faction_names = map_rows_if_present(section.factionNames(), decode_faction_name);
     // `0` IS the absent encoding — see `serialize_campaign_section_delta`.
     delta.command_events_retention_turns = changed_scalar(section.commandEventsRetentionTurns());
 }
@@ -616,6 +673,20 @@ fn decode_voice_medium(state: fb::VoiceMediumState<'_>) -> VoiceMediumState {
         faction: state.faction(),
         medium_id: text(state.mediumId()),
         medium_index: state.mediumIndex(),
+    }
+}
+
+fn decode_faction_policy(state: fb::FactionPolicyState<'_>) -> FactionPolicyState {
+    FactionPolicyState {
+        faction: state.faction(),
+        open_borders: state.openBorders(),
+    }
+}
+
+fn decode_faction_name(state: fb::FactionNameState<'_>) -> FactionNameState {
+    FactionNameState {
+        faction: state.faction(),
+        name: text(state.name()),
     }
 }
 

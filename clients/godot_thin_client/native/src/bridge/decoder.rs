@@ -6,8 +6,9 @@ use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
 use crate::dict::campaign::{
-    campaign_profiles_to_array, command_events_to_array, opening_loadout_to_dict,
-    pending_forks_to_array, stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
+    campaign_profiles_to_array, command_events_to_array, faction_names_to_array,
+    faction_policies_to_array, opening_loadout_to_dict, pending_forks_to_array,
+    stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
 };
 use crate::dict::connections::connections_to_array;
 use crate::dict::culture::{
@@ -638,6 +639,14 @@ fn decode_delta_against(
 
     if let Some(voice_medium) = delta.campaign().and_then(|s| s.voiceMedium()) {
         frame.insert_changed("voice_medium", &voice_medium_to_array(voice_medium));
+    }
+
+    if let Some(policies) = delta.campaign().and_then(|s| s.factionPolicies()) {
+        frame.insert_changed("faction_policies", &faction_policies_to_array(policies));
+    }
+
+    if let Some(names) = delta.campaign().and_then(|s| s.factionNames()) {
+        frame.insert_changed("faction_names", &faction_names_to_array(names));
     }
 
     // The OPENING LOADOUT window, decoded here as well as on the full path. `insert_changed`: the

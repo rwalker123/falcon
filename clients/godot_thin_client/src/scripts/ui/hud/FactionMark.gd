@@ -33,11 +33,13 @@ static func make(faction: int, own_faction: int) -> FactionMark:
 		HudTradeVocab.FACTION_OURS if faction == own_faction else HudTradeVocab.FACTION_THEIRS]
 	return mark
 
-## A faction's name as this client can state it: the seeded peoples by their names, any other by id.
+## **THE ONE PEOPLE-NAME RESOLVER** — the name the sim minted for `faction`, read off the
+## `faction_names` store (`FactionNames`), exactly as published. `Faction N` only when the store has
+## no row for that id (a frame before the table, or a fixture that stages none).
 static func faction_name(faction: int) -> String:
-	for name in MapView.SEEDED_FACTION_NAMES:
-		if int(MapView.SEEDED_FACTION_NAMES[name]) == faction:
-			return String(name)
+	var name := FactionNames.name_of(faction)
+	if name != "":
+		return name
 	return HudTradeVocab.FACTION_NAME_FALLBACK_FORMAT % faction
 
 ## The colour the mark is drawn in — the map's, through its one lookup.

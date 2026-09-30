@@ -241,6 +241,7 @@ fn world_with_a_queue_knowing(
                 stores: LocalStore::new(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -256,7 +257,6 @@ fn world_with_a_queue_knowing(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             // **A durable id, because a checkpoint keys bands by it** — a band without one is not
@@ -923,6 +923,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
                 stores: well_fed(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -938,7 +939,6 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             core_sim::BandId(FIXTURE_BAND),
@@ -1867,6 +1867,7 @@ fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
         },
         morale: scalar_one(),
         last_food_consumption: 0.0,
+        last_food_need: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),
@@ -1882,7 +1883,6 @@ fn fixture_cohort(tile: Entity, staffed: u32) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FactionId(0),
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 

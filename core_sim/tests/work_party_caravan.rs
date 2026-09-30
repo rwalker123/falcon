@@ -119,6 +119,7 @@ fn spawn_camp_band(app: &mut App, target: LaborTarget, kit: Option<KitChoice>) -
                 stores,
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -134,7 +135,6 @@ fn spawn_camp_band(app: &mut App, target: LaborTarget, kit: Option<KitChoice>) -
                 generation: 0 as GenerationId,
                 faction: FACTION,
                 knowledge: Vec::new(),
-                migration: None,
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {

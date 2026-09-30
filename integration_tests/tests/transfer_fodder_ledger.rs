@@ -299,6 +299,7 @@ fn spawn_hay_shipment(
                 pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
                 cargo,
+                defection_pull: core_sim::Scalar::zero(),
             },
             BandTravel {
                 target: destination_pos,

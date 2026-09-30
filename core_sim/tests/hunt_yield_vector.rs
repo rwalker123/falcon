@@ -232,6 +232,7 @@ fn spawn_hunters(
                 stores: LocalStore::new(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -246,7 +247,6 @@ fn spawn_hunters(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
@@ -696,6 +696,7 @@ fn spawn_resident_crew(
                 stores: LocalStore::new(),
                 morale: scalar_one(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -710,7 +711,6 @@ fn spawn_resident_crew(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             ResidentBand,
             LaborAllocation {
@@ -1493,6 +1493,7 @@ fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
         stores: LocalStore::new(),
         morale: scalar_one(),
         last_food_consumption: 0.0,
+        last_food_need: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),
@@ -1507,7 +1508,6 @@ fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FactionId(0),
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 
@@ -1667,6 +1667,7 @@ fn spawn_raid_party(
                 pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(core_sim::KitJob::Hunt),
                 cargo: core_sim::LocalStore::new(),
+                defection_pull: core_sim::Scalar::zero(),
             },
         ))
         .id()

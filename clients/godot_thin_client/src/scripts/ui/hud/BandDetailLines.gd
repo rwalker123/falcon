@@ -344,6 +344,13 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
     # how many (its roster row's size).
     if HudConst.is_player_unit(unit_data):
         lines.append(_band_food_line(unit_data, context, compact))
+        # The band came short of its meal: said on its own line, in DANGER, with the remedy — the
+        # rate beside the larder is income against NEED now, but a band can beat its need on average
+        # and still go hungry every turn when the meal is eaten before the take lands.
+        if HudConst.is_player_unit(unit_data):
+            var starving := DetailFormat.food_starving_line(unit_data)
+            if starving != "":
+                lines.append(starving)
         # Category-aggregated food breakdown under Food: a click-to-open disclosure. `_band_food_line`
         # set `_food_flow_present` (a PRIVATE handshake between the two — the formatter never reads
         # it); `DisclosureController.register` stashes the rows for the popover and records the row so

@@ -269,6 +269,7 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         stores: LocalStore::new(),
         morale: scalar_one(),
         last_food_consumption: 0.0,
+        last_food_need: 0.0,
         last_turn_food_transfers: Default::default(),
         last_turn_fodder_transfers: Default::default(),
         last_turn_transfer_crossings: Vec::new(),
@@ -284,7 +285,6 @@ fn cohort(tile: bevy::prelude::Entity, working: u32) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FactionId(0),
         knowledge: Vec::new(),
-        migration: None,
     }
 }
 
@@ -352,6 +352,7 @@ fn spawn_party(
                 cargo: core_sim::LocalStore::new(),
                 // Derived per-turn telemetry; a raid never reaches `AwaitingOrders`, so it stays
                 // empty for the party's whole life.
+                defection_pull: core_sim::Scalar::zero(),
             },
         ))
         .id()

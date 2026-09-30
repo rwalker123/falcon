@@ -192,6 +192,20 @@ const RUNG_BY_KIND := {
 	# `side=lost|gained` names which. It takes the Alert rung on BOTH sides: a band arriving is as
 	# irreversible as a band leaving, and the gaining player has no other surface that reports it.
 	"band_changed_hands": RUNG_ALERT,
+	# **A WHOLE PARTY WALKING OFF TO ANOTHER PEOPLE** (issue #512, `docs/plan_band_fission.md`
+	# §Defection) — `band_changed_hands`' twin one scale down, and Alert on the same argument: it is
+	# irreversible, not player-initiated, and the dock is the only surface that reports it. Also one
+	# event as two rows, `side=lost|gained`.
+	#
+	# **BOTH SIDES ARE ALERT, and the gained side would have been Notable if it could be.** The only
+	# per-row override this vocabulary has is `DETAIL_STATUS_STYLE`, which matches a `key=value`
+	# fragment on ANY kind — so a `side=gained` row there would demote `band_changed_hands`' gained
+	# half too. One rung per kind, and the louder one is right for the side that lost people.
+	#
+	# The lost row names NO place by design (*"Your scouting party has left your control."*, detail
+	# `side=lost expedition=<bits>`): no `band=` and no coordinate, so it renders no jump and an empty
+	# detail phrase — the party is out of contact and the notice says only that it is gone.
+	"party_defected": RUNG_ALERT,
 	# **A MATERIAL THE STANDING BILLS EAT FASTER THAN IT ARRIVES** (`docs/plan_standing_upkeep.md`
 	# §4.9 item 12). Alert, and it NAMES THE BAND — this line is what replaced the faction `Gear`
 	# row's `⚠ 1 band` → *which band* drill-down, and a faction-level warning that says something is
@@ -538,6 +552,13 @@ const SIM_DESTINATION_LABEL_FORMAT := "band %d"
 ## this rather than carrying one hand-written swap per producer — the sim spells a band out from its
 ## id and the client says its name, so every place the sim writes a band into a sentence needs the
 ## same join, and a table is what stops the next producer growing a fifth copy of it.
+## **THE TOKENS THAT NAME A PEOPLE, and the sim's spelling of one** (`core_sim`
+## `systems::population::faction_label`, output `Faction N` — byte-identical or the swap silently no-ops). `from=` / `to=`
+## on `migrated`, `band_changed_hands` and `party_defected` are FACTION ids; `EventDockPanel` swaps the
+## sim's `Faction <id>` for the faction's published name (`FactionMark.faction_name`).
+const PEOPLE_ID_TOKEN_KEYS: Array[String] = ["from", "to"]
+const SIM_FACTION_LABEL_FORMAT := "Faction %d"
+
 const BAND_ID_TOKEN_LABELS := {
 	DETAIL_BAND_KEY: SIM_BAND_LABEL_FORMAT,
 	DETAIL_DESTINATION_KEY: SIM_DESTINATION_LABEL_FORMAT,
@@ -568,9 +589,9 @@ const DETAIL_KEY_HIDDEN := {
 	# us from People 0"*: `band` is substituted INTO the label like every other kind's, and the other
 	# two peoples are already named in the prose, so rendering them would print `From 0 · To 1` — a
 	# pair of RAW FACTION IDS on a player-facing bar, which is the defect `detail_phrase` exists to
-	# make impossible. They are ids rather than words for a reason the client cannot fix: the sim
-	# authors no faction names, so there is nothing here to join them to, and inventing a naming rule
-	# for a people is a decision this table is not the place to take.
+	# make impossible. The LABEL carries the people by name instead: `EventDockPanel` joins these two
+	# tokens to `FactionMark.faction_name` and swaps it for the sim's `Faction <id>` spelling
+	# (`PEOPLE_ID_TOKEN_KEYS`), the way `band=` swaps `Band <id>`.
 	#
 	# `side` is hidden on the same test rather than given `DETAIL_VALUE_LABELS` rows: *left us* and
 	# *joined us* is the whole of what `lost` / `gained` mean, and the label says it in English. It

@@ -144,7 +144,9 @@ pub struct Reading {
     /// The sim's two split floors, off the cohort row.
     pub founding_min_workers: u32,
     pub founding_parent_min_workers: u32,
-    /// `food_consumption / size`, what one person eats a turn.
+    /// `food_need / size`, what one person must eat a turn. **Need, not eaten**: a band short of food
+    /// eats less than it needs, and reading that as its appetite would shrink the gap it is failing
+    /// to close.
     pub per_person_consumption: f32,
     pub sites: Vec<Site>,
     /// Every candidate standing hex that covers at least one site, sorted `(y, x)`.
@@ -337,7 +339,7 @@ impl Reading {
         let grid = view.grid();
         let faction = band.faction;
         let per_person_consumption = if band.size > 0 {
-            band.food_consumption / band.size as f32
+            band.food_need / band.size as f32
         } else {
             0.0
         };

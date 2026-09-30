@@ -443,6 +443,8 @@ pub mod knowledge {
                 default_extract_kit_id: String::new(),
                 equipment_config_json: String::new(),
                 opening_loadout: Default::default(),
+                faction_policies: Vec::new(),
+                faction_names: Vec::new(),
                 faction_inventory: Vec::new(),
                 sedentarization: Vec::new(),
                 discovered_sites: Vec::new(),

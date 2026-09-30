@@ -54,15 +54,15 @@ use core_sim::{
     CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
     EquipmentConfigHandle, EspionageAgentHandle, EspionageCatalog, EspionageMissionId,
     EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate, EspionageRoster,
-    FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle,
-    FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement, LaborConfigHandle,
-    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
-    Scalar, SecurityPolicy, Settlement, SimulationConfig, SimulationConfigMetadata, SimulationTick,
-    SnapshotAudiences, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    SnapshotOverlaysConfigMetadata, StartLocation, StartProfileLookup, StartProfilesHandle,
-    StartingUnit, SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter,
-    TradeExpeditionConfig, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
+    FactionBorderPolicies, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
+    FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement,
+    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
+    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotAudiences, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, SubmitError,
+    SubmitOutcome, Tile, TileRegistry, TownCenter, TradeExpeditionConfig, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FODDER, FOOD,
 };
 use core_sim::{
     ConnectionId, ConnectionIdAllocator, SeatRegistry, SeatTurnGate, SeatTurnLimits, TurnWait,
@@ -1284,6 +1284,10 @@ enum Command {
     UpdateCounterIntelPolicy {
         faction: FactionId,
         policy: SecurityPolicy,
+    },
+    SetOpenBorders {
+        faction: FactionId,
+        open: bool,
     },
     AdjustCounterIntelBudget {
         faction: FactionId,
@@ -3057,9 +3061,9 @@ fn apply_start_profile(app: &mut bevy::prelude::App, profile: &StartProfile) {
 /// which grid the world is being built on.
 ///
 /// ⛔ **EVERY resource `build_headless_app` seeds from the roster is re-seeded here.** The list is
-/// `FactionRegistry`, `TurnQueue`, `EspionageRoster`, `CounterIntelBudgets` and
-/// `FactionSecurityPolicies` — the five constructions taken from `faction_registry.factions()` in
-/// `lib.rs`, and re-seeding only some of them is the same defect one resource further along. They
+/// `FactionRegistry`, `TurnQueue`, `EspionageRoster`, `CounterIntelBudgets`,
+/// `FactionSecurityPolicies` and `FactionBorderPolicies` — the six constructions taken from
+/// `faction_registry.factions()` in `lib.rs`, and re-seeding only some of them is the same defect one resource further along. They
 /// are built through the boot path's own constructors so a fresh faction's starting state has one
 /// definition rather than two.
 ///
@@ -3084,6 +3088,8 @@ fn seed_faction_roster(app: &mut bevy::prelude::App, ai_faction_count: u32) {
         &factions,
         SecurityPolicy::Standard,
     ));
+    app.world
+        .insert_resource(FactionBorderPolicies::new(&factions));
 }
 
 fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
@@ -5409,7 +5415,6 @@ fn handle_send_expedition(
         expedition_cohort.stores.add(FOOD, drawn);
     }
     expedition_cohort.age_turns = 0;
-    expedition_cohort.migration = None;
     expedition_cohort.grievance = Scalar::from_i64(0);
     expedition_cohort.sync_size();
 
@@ -5471,6 +5476,7 @@ fn handle_send_expedition(
                 kit: kit.clone(),
                 // A scout carries no shipment — the cargo store is the trade verb's.
                 cargo: LocalStore::new(),
+                defection_pull: Scalar::zero(),
             },
             BandTravel { target },
         ))
@@ -5974,7 +5980,6 @@ fn launch_party_from_band(
         cohort.stores.add(FOOD, orders.provisions);
     }
     cohort.age_turns = 0;
-    cohort.migration = None;
     cohort.grievance = Scalar::from_i64(0);
     cohort.sync_size();
 
@@ -6008,6 +6013,7 @@ fn launch_party_from_band(
                 pending_contacts: Default::default(),
                 kit,
                 cargo: orders.cargo,
+                defection_pull: Scalar::zero(),
             },
             BandTravel {
                 target: orders.target,
@@ -10484,6 +10490,10 @@ fn command_from_payload(
                 }
             }
         }
+        ProtoCommandPayload::SetOpenBorders { faction, open } => Some(Command::SetOpenBorders {
+            faction: FactionId(faction),
+            open,
+        }),
         ProtoCommandPayload::AdjustCounterIntelBudget {
             faction,
             reserve,
@@ -11335,6 +11345,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Aged => "Joined the elders",
         CommandEventKind::Migrated => "Migration",
         CommandEventKind::BandChangedHands => "Band changed hands",
+        CommandEventKind::PartyDefected => "Party defected",
     }
 }
 
@@ -11564,6 +11575,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::AdjustCounterIntelBudget { faction, .. } => {
             Some((*faction, "counter_intel_budget"))
         }
+        Command::SetOpenBorders { faction, .. } => Some((*faction, "set_open_borders")),
         Command::SpawnCrisis { faction, .. } => Some((*faction, "spawn_crisis")),
         Command::AssignLabor { faction, .. } => Some((*faction, "assign_labor")),
         Command::MoveBand { faction, .. } => Some((*faction, "move_band")),
@@ -11793,6 +11805,9 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         }
         Command::UpdateCounterIntelPolicy { faction, policy } => {
             handle_update_counter_intel_policy(app, faction, policy);
+        }
+        Command::SetOpenBorders { faction, open } => {
+            handle_set_open_borders(app, faction, open);
         }
         Command::AdjustCounterIntelBudget {
             faction,
@@ -12348,6 +12363,22 @@ fn handle_update_counter_intel_policy(
         %faction,
         ?policy,
         "counter_intel.policy.updated"
+    );
+}
+
+/// **Open or close a people's borders** (`docs/plan_band_fission.md` §Defection). Membership is
+/// already checked in `apply_command`, and the seat gate has already refused a connection that does
+/// not drive `faction`, so this only records the setting; the next turn's trickle and party
+/// defection read it.
+fn handle_set_open_borders(app: &mut bevy::prelude::App, faction: FactionId, open: bool) {
+    app.world
+        .resource_mut::<FactionBorderPolicies>()
+        .set_open(faction, open);
+    info!(
+        target: "shadow_scale::server",
+        %faction,
+        open,
+        "open_borders.updated"
     );
 }
 
@@ -12912,6 +12943,7 @@ mod tests {
                     stores: LocalStore::new(),
                     morale: core_sim::scalar_one(),
                     last_food_consumption: 0.0,
+                    last_food_need: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
                     last_turn_transfer_crossings: Vec::new(),
@@ -12927,7 +12959,6 @@ mod tests {
                     generation: 0,
                     faction,
                     knowledge: Vec::new(),
-                    migration: None,
                 },
                 LaborAllocation {
                     assignments: vec![core_sim::LaborAssignment {
@@ -14047,6 +14078,12 @@ mod tests {
                 .resource::<FactionSecurityPolicies>()
                 .contains(FactionId(1)),
             "and a security policy row of its own, not `policy`'s fallback"
+        );
+        assert!(
+            app.world
+                .resource::<FactionBorderPolicies>()
+                .contains(FactionId(1)),
+            "and an Open Borders row of its own, not `is_open`'s fallback"
         );
     }
 
@@ -16008,6 +16045,7 @@ mod tests {
                 pending_contacts: Default::default(),
                 kit: core_sim::EquipmentConfig::builtin().default_kit(KitJob::Hunt),
                 cargo: LocalStore::new(),
+                defection_pull: Scalar::zero(),
             },
         ));
 

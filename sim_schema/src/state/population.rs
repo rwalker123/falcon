@@ -906,8 +906,6 @@ pub struct PopulationCohortState {
     pub faction: u32,
     pub knowledge_fragments: Vec<KnownTechFragment>,
     #[serde(default)]
-    pub migration: Option<PendingMigrationState>,
-    #[serde(default)]
     pub harvest_task: Option<HarvestTaskState>,
     #[serde(default)]
     pub scout_task: Option<ScoutTaskState>,
@@ -925,9 +923,9 @@ pub struct PopulationCohortState {
     /// footer without re-summing the assignment rows.
     #[serde(default)]
     pub food_income: f32,
-    /// Band-level per-turn food consumption = `food_demand(children, working, elders)` (the same
-    /// one-turn demand `turns_of_food` divides by) — **the PEOPLE's food only**. Derived per-turn at
-    /// capture. Appended last.
+    /// The food the band's people **actually ate** this turn — `min(need, larder)` at meal time, the
+    /// consumption term of the larder identity. **Not what they needed**: short of it exactly when
+    /// the larder was short at meal time — see [`Self::food_need`] / [`Self::food_shortfall`].
     #[serde(default)]
     pub food_consumption: f32,
     /// Hunt levers — global config echoed per-cohort (same idiom as
@@ -1671,6 +1669,15 @@ pub struct PopulationCohortState {
     /// `reach_tiles` lever. Appended last (append-only).
     #[serde(default)]
     pub supply_network_span_tiles: u32,
+    /// **What the people NEEDED to eat this turn** — the `food_demand` the meal was measured
+    /// against. Appended last (append-only).
+    #[serde(default)]
+    pub food_need: f32,
+    /// **This turn's hunger** — `food_need − food_consumption`, never negative; `0` on a fed turn.
+    /// The meal comes before the turn's take lands, so a band whose larder is below its need at meal
+    /// time goes short even when its income beats its need on average. Appended last.
+    #[serde(default)]
+    pub food_shortfall: f32,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of
@@ -1689,7 +1696,9 @@ pub struct TransferCrossingState {
     pub link: u8,
     /// `0` pooled, `1` dowry_out, `2` dowry_in, `3` shipment_out, `4` shipment_in, `5` party_home,
     /// `6` party_provisions, `7` shipment_returned (a shipment's undelivered cargo coming home,
-    /// naming the destination its `shipment_out` named). ⛔ A pooled row never names a counterparty.
+    /// naming the destination its `shipment_out` named), `8` party_defected (another people's party
+    /// joined this band with what it carried, naming the band it was sent out from). ⛔ A pooled row
+    /// never names a counterparty.
     pub cause: u8,
     /// The other band's `band_id`, `0` = none.
     pub counterparty_band_id: u64,
@@ -2118,14 +2127,6 @@ pub struct SettlementStageViewState {
     pub label: String,
     #[serde(default)]
     pub icon: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct PendingMigrationState {
-    pub destination: u32,
-    pub eta: u16,
-    #[serde(default)]
-    pub fragments: Vec<KnownTechFragment>,
 }
 
 fn default_harvest_task_kind() -> String {

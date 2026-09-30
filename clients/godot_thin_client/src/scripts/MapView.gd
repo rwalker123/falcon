@@ -1061,23 +1061,15 @@ var mouse_pan_button: int = -1
 ## Mirror of `Main`'s pause overlay, pushed in by `set_modal_menu_open`. See `_keyboard_owner`.
 var _modal_menu_open: bool = false
 
-## **THE THREE SEEDED PEOPLES, UNCHANGED.** Ids 0, 1 and 2 are literal because they are what every
-## game and every committed preview frame already shows; the generated hues below start after them
-## and never overwrite them.
+## **THE THREE SEEDED COLOURS, INDEXED BY FACTION ID.** Ids 0, 1 and 2 are literal because they are
+## what every game and every committed preview frame already shows; the generated hues below start
+## after them and never overwrite them. A faction's NAME has nothing to do with its colour — names are
+## sim-minted per world (`FactionNames`), colours are a function of the id alone.
 const SEEDED_FACTION_COLORS := [
 	Color(0.55, 0.85, 1.0, 1.0),   # 0 — the player's own, cyan
 	Color(0.95, 0.62, 0.2, 1.0),   # 1 — orange
 	Color(0.4, 0.9, 0.55, 1.0),    # 2 — green
 ]
-
-## The three faction NAMES the snapshot used to carry in the same field an id rides in now. Kept
-## because the field is read raw (`unit.get("faction")`) and either spelling still resolves to the
-## same people's colour.
-const SEEDED_FACTION_NAMES := {
-	"Aurora": 0,
-	"Obsidian": 1,
-	"Verdant": 2,
-}
 
 ## **HOW A FOURTH PEOPLE GETS A COLOUR.** The rival count the New Game screen offers runs to 6 on a
 ## Standard map and 17 on a Huge one (`.claude/rules/client/new-game-setup.md`), so a hand-written
@@ -1100,7 +1092,9 @@ const FACTION_GENERATED_VALUE := 0.95
 ## **THE ONE FACTION-COLOUR LOOKUP.** Every reader goes through it — a band token, a name pill, an
 ## order path — so "which colour is this people" has a single answer for a roster of any size.
 ##
-## `faction` is the RAW wire value: an id, one of the legacy names, or nothing at all. `fallback` is
+## `faction` is the RAW wire value: an id (an int, a float, or a numeric string), or nothing at all.
+## A non-numeric string answers `fallback` — the retired name→id table is gone, and a name is not an
+## id. `fallback` is
 ## what an ABSENT faction gets and is the caller's to choose (a band and a route disagree about it),
 ## which is why it is a parameter rather than a constant read in here. A real id never reaches it.
 ##
@@ -1113,8 +1107,8 @@ static func faction_color(faction, fallback: Color) -> Color:
 		index = faction
 	elif faction is float:
 		index = int(faction)
-	elif faction is String:
-		index = int(SEEDED_FACTION_NAMES.get(faction, -1))
+	elif faction is String and (faction as String).is_valid_int():
+		index = int(faction)
 	if index < 0:
 		return fallback
 	if index < SEEDED_FACTION_COLORS.size():

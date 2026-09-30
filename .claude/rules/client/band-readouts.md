@@ -1217,6 +1217,40 @@ number; an unbounded `past_recovery` still names its outcome; and the two degene
 is sabotage-verified against a different mutation. The launch half and the vocabulary live in
 `band-city-panel.md` → "DENIAL is a third MISSION".
 
+## The Food rate is income against NEED, and a band that came short says so (the hand-to-mouth fix)
+
+**The sim eats `min(need, larder)` BEFORE the turn's take lands.** A band whose larder is below one
+meal therefore goes hungry that turn even when its income beats its need on average — the
+hand-to-mouth band, reported from a live playtest reading `+0.64/turn` in green while people died.
+The cohort carries the two terms the old rate could not see: `food_need` (what the band needed to
+eat) and `food_shortfall` (need − eaten, never negative). `food_consumption` is still what was EATEN.
+
+- **The headline rate is `income − need − raid_forfeit`** (`DetailFormat.band_net_food`, read by the
+  band page, the faction page's summed row and its per-band drill rows alike). Against need it says
+  whether the band is feeding itself on average; `food_consumption` stays the larder identity's term.
+- **A shortfall is its own line, in DANGER, with the remedy** —
+  `⚠ Short 0.40 food last turn — people are starving. Put more hands on food.`
+  (`DetailFormat.food_starving_line`, keyed by `FOOD_STARVING_LEAD` in `detail_bbcode`, so the
+  sentence carries no markup). It renders under the Food line on a player band with a shortfall and
+  nowhere else. The faction page's Food row counts such a band in its `⚠ N bands` clause.
+- **The popover keeps `Consumed` (what was eaten) and adds `Went hungry — needed 3.60`** (a ▼ row
+  for the shortfall, `FOOD_LABEL_WENT_HUNGRY_FORMAT`), so the rows still sum to the headline and the
+  need is visible; the starving sentence rides under it. A fed band shows `Consumed` alone.
+- **`food_is_concerning` is true on a shortfall**, so the caret tints WARN on a hand-to-mouth band.
+- **The FOOD OUTLOOK chart walks MEAL FIRST** (`FoodOutlookChart.set_projection`, drained by
+  `food_need`): every turn — the first included — pools, checks the meal against the POOLED larder,
+  eats, then lands the arrival — `snapshot::population::larder_runway_turns`' `MealOrder::BeforeIncome`,
+  term for term, so its marker is the first meal that comes up short. The sim's `meal_first_runway`
+  answers `k + max(available_k, 0) / need` for that meal `k` (0-based), so `turns_of_food`'s whole part
+  is the chart's marker index (`empty_turn()` = `k + 1`, counted from now). ⛔ There is no "larder below one meal" shortcut ahead of pooling: pooled food
+  settles before the meal, so a receiver whose own larder is short (larder 3, need 5, pooled +4) is
+  fed. `band_panel_food_pooled_receiver` pins it (no turn-1 marker, no `starving` alert).
+  A hand-to-mouth band's line dips to zero on its hungry turns. `band_panel_trade_tab`'s `_sim_runway`
+  transcription walks the same order.
+- **Frames**: `band_panel_preview`'s `band_panel_food_hand_to_mouth` (larder 3, need 3.6, income 4.2 in
+  lumpy hauls, shortfall 0.4) beside `band_panel_food_fed_control` (the same band with a full larder),
+  asserting the rate, the starving line, the chart's marker and dip, and the orb's `starving` row.
+
 ## The Food line's TRANSFERS are breakdown rows, and the headline adds the POOLED net
 
 Arc #527, issue #517, issue #731. The larder identity the sim pins is
@@ -1521,11 +1555,12 @@ So both popovers read the per-cause `transfer_crossings` list (`TradeLedger.caus
 | `⇄ Trade route` | `shipment_in` + `shipment_returned` − `shipment_out` | the transfer rows, as before — a shipment cancelled in camp nets to nothing here |
 | `Brought home` | `party_home` (▲) — the party's own pack, never a trade party's cargo (that is `shipment_returned`) | beside Hunted / Gathered (Grown, on the fodder account) |
 | `Party rations` | `party_provisions` (▼) | beside them too |
+| `Joined from another people` | `party_defected` (▲) — another people's defecting party folding its pack into this band (issue #512) | beside them too |
 
 `⇄ Local exchange` still reads the whole Local arm off the four link terms — pooling AND a split's
 dowry — unchanged. **The popover still accounts for the whole larder change**: the crossings summed
 per `(link, direction)` equal the arms by construction (`LaborAllocation::book_crossing`,
-`.claude/rules/core_sim/campaign.md` → "The cause key and the crossings list"), so the three route
+`.claude/rules/core_sim/campaign.md` → "The cause key and the crossings list"), so the four route
 rows sum to the retired whole-arm row. `tools/ui_preview/chapters/supply_network.gd`'s
 `supply_food_party_rows` asserts all three rows and that sum. Each is omitted under the account's
 floor like every other row; the labels are `DetailFormat.TRANSFER_LABEL_BROUGHT_HOME` /

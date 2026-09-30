@@ -6,8 +6,8 @@
 //! nothing hashes a snapshot per frame any more. See [`SnapshotHeader::hash`].
 
 use crate::state::campaign::{
-    CampaignLabel, CampaignProfileState, CommandEventState, OpeningLoadoutState, PendingForksState,
-    StanceState, VictorySnapshotState, VoiceMediumState,
+    CampaignLabel, CampaignProfileState, CommandEventState, FactionNameState, FactionPolicyState,
+    OpeningLoadoutState, PendingForksState, StanceState, VictorySnapshotState, VoiceMediumState,
 };
 use crate::state::connections::ConnectionState;
 use crate::state::culture::{
@@ -172,6 +172,12 @@ pub struct WorldSnapshot {
     /// The turn-one outfitting window, as the picker draws it — see [`OpeningLoadoutState`].
     #[serde(default)]
     pub opening_loadout: OpeningLoadoutState,
+    /// The viewer's own faction policies (Open Borders) — see [`FactionPolicyState`].
+    #[serde(default)]
+    pub faction_policies: Vec<FactionPolicyState>,
+    /// Every faction's name — world-visible, see [`FactionNameState`].
+    #[serde(default)]
+    pub faction_names: Vec<FactionNameState>,
     #[serde(default)]
     pub herds: Vec<HerdTelemetryState>,
     #[serde(default)]
@@ -355,6 +361,10 @@ pub struct WorldDelta {
     /// The opening outfitting window. `None` means unchanged — an ordinary whole-section diff, so a
     /// steady-state delta re-sends it only when the window's budgets or its `open` flag move.
     pub opening_loadout: Option<OpeningLoadoutState>,
+    /// The viewer's own faction policies. `None` means unchanged — a whole-section diff.
+    pub faction_policies: Option<Vec<FactionPolicyState>>,
+    /// Every faction's name. `None` means unchanged — a whole-section diff.
+    pub faction_names: Option<Vec<FactionNameState>>,
     /// The knowledge timeline, sent as a whole section. `None` means unchanged.
     ///
     /// Not a diff list: it carries no `removed_*` counterpart and the capture path replaces it

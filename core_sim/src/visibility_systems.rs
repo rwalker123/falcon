@@ -1275,6 +1275,7 @@ mod tests {
                     stores: LocalStore::new(),
                     morale: scalar_zero(),
                     last_food_consumption: 0.0,
+                    last_food_need: 0.0,
                     last_turn_food_transfers: Default::default(),
                     last_turn_fodder_transfers: Default::default(),
                     last_turn_transfer_crossings: Vec::new(),
@@ -1290,7 +1291,6 @@ mod tests {
                     generation: 0,
                     faction: FactionId(0),
                     knowledge: Vec::new(),
-                    migration: None,
                 },
                 StartingUnit::new("BandScout".to_string(), vec![]),
                 allocation,
@@ -1376,6 +1376,7 @@ mod tests {
                 stores: LocalStore::new(),
                 morale: scalar_zero(),
                 last_food_consumption: 0.0,
+                last_food_need: 0.0,
                 last_turn_food_transfers: Default::default(),
                 last_turn_fodder_transfers: Default::default(),
                 last_turn_transfer_crossings: Vec::new(),
@@ -1391,7 +1392,6 @@ mod tests {
                 generation: 0,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
-                migration: None,
             },
             // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
             StartingUnit::new("BandCrafter".to_string(), vec![]),
@@ -1879,6 +1879,7 @@ mod hex_sight_range_tests {
             stores: LocalStore::new(),
             morale: scalar_zero(),
             last_food_consumption: 0.0,
+            last_food_need: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -1894,7 +1895,6 @@ mod hex_sight_range_tests {
             generation: 0,
             faction,
             knowledge: Vec::new(),
-            migration: None,
         }
     }
 

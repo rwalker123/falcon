@@ -541,6 +541,7 @@ fn spawn_camp(world: &mut World, at: UVec2, faction: FactionId) {
             stores: LocalStore::new(),
             morale: scalar_zero(),
             last_food_consumption: 0.0,
+            last_food_need: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -556,7 +557,6 @@ fn spawn_camp(world: &mut World, at: UVec2, faction: FactionId) {
             generation: 0 as GenerationId,
             faction,
             knowledge: Vec::new(),
-            migration: None,
         },
         ResidentBand,
     ));

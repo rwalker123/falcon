@@ -821,6 +821,34 @@
       ]
     }
   ],
+  "faction_names": [
+    {
+      "faction": 137,
+      "name": "faction_names[0].name"
+    },
+    {
+      "faction": 122,
+      "name": "faction_names[1].name"
+    },
+    {
+      "faction": 71,
+      "name": "faction_names[2].name"
+    }
+  ],
+  "faction_policies": [
+    {
+      "faction": 15,
+      "open_borders": true
+    },
+    {
+      "faction": 120,
+      "open_borders": false
+    },
+    {
+      "faction": 49,
+      "open_borders": false
+    }
+  ],
   "fog_enabled": true,
   "food_modules": [
     {
@@ -4525,6 +4553,8 @@
       "fodder_transfer_route_sent_turn": 43.43,
       "food_consumption": 106.57,
       "food_income": 88.889999,
+      "food_need": 22.969999,
+      "food_shortfall": 99.949997,
       "forage_carry_per_worker_biomass": 80.459999,
       "founding_min_workers": 13,
       "founding_parent_min_workers": 132,
@@ -5078,30 +5108,6 @@
           "material_id": "populations[0].material_upkeep_need[2].material_id"
         }
       ],
-      "migration": {
-        "destination": 76,
-        "eta": 148,
-        "fragments": [
-          {
-            "discovery": 109,
-            "fidelity": 0.000029,
-            "progress": 0.000126,
-            "progress_raw": 126
-          },
-          {
-            "discovery": 40,
-            "fidelity": 0.0002,
-            "progress": 0.000003,
-            "progress_raw": 3
-          },
-          {
-            "discovery": 195,
-            "fidelity": 0.000111,
-            "progress": 0.000052,
-            "progress_raw": 52
-          }
-        ]
-      },
       "morale": 0.000022,
       "morale_cause": 86,
       "morale_climate": 0.00015,
@@ -5610,6 +5616,8 @@
       "fodder_transfer_route_sent_turn": 82.57,
       "food_consumption": 0.92,
       "food_income": 52.610001,
+      "food_need": 62.349998,
+      "food_shortfall": 104.449997,
       "forage_carry_per_worker_biomass": 90.010002,
       "founding_min_workers": 168,
       "founding_parent_min_workers": 115,
@@ -6634,6 +6642,8 @@
       "fodder_transfer_route_sent_turn": 56.830002,
       "food_consumption": 30.870001,
       "food_income": 11.58,
+      "food_need": 0.05,
+      "food_shortfall": 97.199997,
       "forage_carry_per_worker_biomass": 56.990002,
       "founding_min_workers": 87,
       "founding_parent_min_workers": 118,
@@ -7187,30 +7197,6 @@
           "material_id": "populations[2].material_upkeep_need[2].material_id"
         }
       ],
-      "migration": {
-        "destination": 102,
-        "eta": 126,
-        "fragments": [
-          {
-            "discovery": 43,
-            "fidelity": 0.000135,
-            "progress": 0.000196,
-            "progress_raw": 196
-          },
-          {
-            "discovery": 166,
-            "fidelity": 0.000066,
-            "progress": 0.000193,
-            "progress_raw": 193
-          },
-          {
-            "discovery": 197,
-            "fidelity": 0.000005,
-            "progress": 0.000182,
-            "progress_raw": 182
-          }
-        ]
-      },
       "morale": 0.000096,
       "morale_cause": 196,
       "morale_climate": 0.000176,

@@ -27,7 +27,9 @@ use crate::orchestrator::FoodGoals;
 pub const BEST_FLOOR: f32 = 0.5;
 
 /// One band's food book, read off the frame: `stores[FOOD_CARGO_KEY]` (fixed-point divided out),
-/// `food_income`, `food_consumption` on `PopulationCohortState`.
+/// `food_income`, and `food_need` on `PopulationCohortState` as the consumption term — what the
+/// people MUST eat, never `food_consumption` (what they managed to eat, short of need when the
+/// larder ran out at meal time).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Book {
     pub stock: f32,

@@ -280,6 +280,7 @@ fn spawn_the_farming_band(
             stores: LocalStore::new(),
             morale: scalar_one(),
             last_food_consumption: 0.0,
+            last_food_need: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -295,7 +296,6 @@ fn spawn_the_farming_band(
             generation: 0 as GenerationId,
             faction: FactionId(0),
             knowledge: Vec::new(),
-            migration: None,
         },
         StartingUnit {
             kind: "BandForager".to_string(),
@@ -670,6 +670,7 @@ fn spawn_the_herding_band(
             stores: pen_materials_support::stocked_with_pen_materials(),
             morale: scalar_one(),
             last_food_consumption: 0.0,
+            last_food_need: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -685,7 +686,6 @@ fn spawn_the_herding_band(
             generation: 0 as GenerationId,
             faction: FactionId(0),
             knowledge: Vec::new(),
-            migration: None,
         },
         StartingUnit {
             kind: "BandHunter".to_string(),

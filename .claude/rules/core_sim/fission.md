@@ -305,9 +305,9 @@ demographics, startup seeding, herd drift and the default-band command pickers a
 `age_turns` at 0, stores that are a fraction of its parent's, and a position **identical** to its
 parent's.
 
-- `age_turns = 0` is asserted at the split rather than inherited: `migration_min_settled_turns` reads
-  it, and a band formed this turn carrying the parent's settled duration would bleed people out on its
-  first.
+- `age_turns = 0` is asserted at the split rather than inherited: it counts the turns THIS band has
+  been simulated (it rides the wire as `PopulationCohortState.age_turns`), and a band formed this turn
+  is new whatever age its parent had reached.
 - The derived per-turn readings (`last_morale_*`, `last_food_consumption`, `discontent_fraction`, the
   migration counters) are **cleared**. They are recomputed next turn, but a split publishes a frame
   before then, and the new band would open by narrating somebody else's morale swing and meal.

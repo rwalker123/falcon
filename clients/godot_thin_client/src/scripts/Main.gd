@@ -405,6 +405,8 @@ func _ready() -> void:
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
         if hud.has_signal("upkeep_mode_requested") and not hud.is_connected("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode")):
             hud.connect("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode"))
+        if hud.has_signal("open_borders_requested") and not hud.is_connected("open_borders_requested", Callable(self, "_on_hud_open_borders")):
+            hud.connect("open_borders_requested", Callable(self, "_on_hud_open_borders"))
         if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
             hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
         if hud.has_signal("unqueue_requested") and not hud.is_connected("unqueue_requested", Callable(self, "_on_hud_unqueue")):
@@ -924,6 +926,16 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
         _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
+    # The player faction's POLICY row (Open Borders, issue #512) — a campaign-section table that moves
+    # on a `set_open_borders` command rather than on a turn. Before `populations` below, like the
+    # sedentarization it sits beside, so a frame carrying both renders the faction page once current.
+    # Every faction's sim-minted NAME — world-visible, per world. Ingested into the one static store
+    # the people-name resolver reads (`FactionNames` / `FactionMark.faction_name`), BEFORE the event
+    # dock and the faction page render this frame so both name peoples off the fresh table.
+    if snapshot.has("faction_names") and SnapshotSections.changed(snapshot, "faction_names"):
+        FactionNames.update(snapshot["faction_names"])
+    if snapshot.has("faction_policies") and SnapshotSections.changed(snapshot, "faction_policies"):
+        _hud_invoke("update_faction_policies", [snapshot["faction_policies"]])
     # **`demographics` IS DISPATCHED NOWHERE — the wire field has no client reader at all** since the
     # top bar's `Pop 100 👶34 🛠16 🧓5` line was retired (issue #450). The faction page's PEOPLE bar
     # answers the same question and answers it from the BANDS, apportioned once across the roster, so
@@ -1146,6 +1158,8 @@ func _record_hud_calls(profile: TurnProfile) -> void:
 ## Main uses, so a surface without one simply skips (it merges nothing worth clearing).
 func _reset_per_world_state() -> void:
     _hud_invoke("reset_world_state")
+    # The peoples' names belong to ONE world; the new world's full snapshot restates its own table.
+    FactionNames.reset()
     # The event dock needs no clear here: a world change always arrives on a FULL snapshot, and the
     # `command_events` dispatch below clears it on every one of those (see the note there — a
     # rollback reuses `seq`, so the full-frame clear is a correctness requirement in its own right).
@@ -2217,6 +2231,23 @@ static func format_upkeep_mode(payload: Dictionary) -> Dictionary:
             HudWorkVocab.UPKEEP_MODE_COMMAND_MESSAGE_FALLBACK % mode),
     }
 
+## **`set_open_borders <faction> open|closed`** — the player people's Open Borders policy (issue #512,
+## `docs/plan_band_fission.md` §Defection): whether another people's leavers and defecting parties may
+## join its bands. A faction-wide setting, so it names no band. The state is REQUIRED in the payload —
+## a missing `open` declines rather than defaulting, for `format_upkeep_mode`'s reason: sending a
+## guessed state would silently flip a policy the player set the other way.
+static func format_open_borders(payload: Dictionary) -> Dictionary:
+    if not payload.has("open"):
+        return {}
+    var open := bool(payload["open"])
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    return {
+        "line": "set_open_borders %d %s" % [faction,
+            HudWorkVocab.OPEN_BORDERS_TOKEN_OPEN if open else HudWorkVocab.OPEN_BORDERS_TOKEN_CLOSED],
+        "message": HudWorkVocab.FACTION_OPEN_BORDERS_COMMAND_MESSAGE_OPEN if open \
+            else HudWorkVocab.FACTION_OPEN_BORDERS_COMMAND_MESSAGE_CLOSED,
+    }
+
 ## Send whatever a `format_*` builder produced, or nothing at all when it declined.
 ##
 ## **`false` MEANS THE SERVER DID NOT GET IT — declined by the builder or refused by the transport,
@@ -2345,6 +2376,11 @@ func _on_hud_work_priority(payload: Dictionary) -> void:
 ## standing policy on the band's allocation, not part of any source's commit.
 func _on_hud_upkeep_mode(payload: Dictionary) -> void:
     _send_formatted_command(format_upkeep_mode(payload))
+
+## Set the player people's Open Borders policy. No optimistic write: the faction page reads the state
+## off `faction_policies`, which the server's recapture after this command carries back.
+func _on_hud_open_borders(payload: Dictionary) -> void:
+    _send_formatted_command(format_open_borders(payload))
 
 ## Stage a recipe on the band's bench (Materials & Crafting). The player staffs the bench, so this
 ## sends the recipe alone and the crew stays where it was until the stepper moves it.

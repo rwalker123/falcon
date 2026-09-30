@@ -184,9 +184,19 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     for row in _party_transfer_rows(band, HudTradeVocab.COMMODITY_FOOD):
         if absf(float(row[1])) >= SourceForecast.FOOD_FLOW_MIN:
             lines.append(DetailFormat.food_breakdown_row(float(row[1]), String(row[0])))
+    # **CONSUMED IS WHAT WAS EATEN, and it stays the larder identity's term.** The meal is eaten
+    # before the turn's take lands, so a hand-to-mouth band eats `min(need, larder)` — less than it
+    # needed. The gap is its own ▼ row naming the NEED (`Went hungry — needed 3.60`), so the rows
+    # still sum to the headline (income − need), and the starving sentence rides under it. A fed band
+    # ate exactly its need and shows `Consumed` alone, as before.
     var eaten := float(band.get("food_consumption", 0.0))
     if eaten >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-eaten, DetailFormat.FOOD_LABEL_CONSUMED))
+    if DetailFormat.band_is_starving(band):
+        lines.append(DetailFormat.food_breakdown_row(-DetailFormat.band_food_shortfall(band),
+            DetailFormat.FOOD_LABEL_WENT_HUNGRY_FORMAT % SourceForecast.format_magnitude(
+                DetailFormat.band_food_need(band))))
+        lines.append(DetailFormat.MORALE_BREAKDOWN_INDENT + DetailFormat.food_starving_line(band))
     # The raid debit (Predators Phase 3): food a predator took off the larder this turn. A THIRD kind
     # of row beside Consumed — same larder, a different story (guard the camp vs feed the people) — so it
     # gets its own line, and only when a raid actually landed (0 → omitted).
@@ -258,15 +268,16 @@ func _link_transfer_lines(band: Dictionary) -> Array[String]:
 ##
 ## **THE POPOVER STILL ACCOUNTS FOR THE WHOLE LARDER CHANGE.** The crossings summed per link equal the
 ## arm by construction (`LaborAllocation::book_crossing`), and the Route arm is exactly shipments
-## (out, in and returned) + party home + party rations — so this row plus `_party_transfer_rows`' two is the retired
-## whole-arm row, split three ways. `⇄ Local exchange` keeps the whole Local arm (pooling and a
+## (out, in and returned) + party home + party rations + a defected party's pack — so this row plus
+## `_party_transfer_rows`' three is the retired whole-arm row, split four ways. `⇄ Local exchange` keeps the whole Local arm (pooling and a
 ## split's dowry), unchanged.
 func _shipment_net(band: Dictionary, commodity: String) -> float:
     return TradeLedger.cause_net(band, commodity, HudTradeVocab.SHIPMENT_CAUSES)
 
 ## **WHAT THE BAND'S OWN PARTIES MOVED THIS TURN** — `[label, signed net]` pairs for `▲ Brought home`
 ## (a hunt's drop-off, a party folding home) and `▼ Party rations` (the larder a party took when it
-## launched). Neither is trade and neither is in the hunting income (the sim books a homecoming as
+## launched), plus `▲ Joined from another people` (a defecting party's pack, issue #512). None is
+## trade. The first two are not in the hunting income either (the sim books a homecoming as
 ## "neither income nor consumption"), so they are stated beside Hunted / Gathered, where the player
 ## looks for the band's own gathering. The caller omits each under its account's floor.
 func _party_transfer_rows(band: Dictionary, commodity: String) -> Array:
@@ -275,6 +286,10 @@ func _party_transfer_rows(band: Dictionary, commodity: String) -> Array:
             TradeLedger.cause_net(band, commodity, [HudTradeVocab.CAUSE_PARTY_HOME])],
         [DetailFormat.TRANSFER_LABEL_PARTY_RATIONS,
             TradeLedger.cause_net(band, commodity, [HudTradeVocab.CAUSE_PARTY_PROVISIONS])],
+        # **ANOTHER PEOPLE'S PARTY JOINING, with its pack** (issue #512). Route/In like `party_home`,
+        # so leaving it out would break the popover's accounting of the whole Route arm.
+        [DetailFormat.TRANSFER_LABEL_PARTY_DEFECTED,
+            TradeLedger.cause_net(band, commodity, [HudTradeVocab.CAUSE_PARTY_DEFECTED])],
     ]
 
 ## The FODDER larder's two flows, the rows under the `Fodder:` summary: what the band's fodder Fields

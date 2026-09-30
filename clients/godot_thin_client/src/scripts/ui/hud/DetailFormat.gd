@@ -133,6 +133,12 @@ const FOOD_LABEL_HUNTED := "Hunted"
 # unambiguous again; the "(people)" qualifier only ever existed to contrast with the animals' row.
 const FOOD_LABEL_CONSUMED := "Consumed"
 
+# THE HUNGER ROW — the part of the people's NEED the larder could not cover this turn, because the
+# meal is eaten before the take lands. It sits under `Consumed` (what was eaten, the larder identity's
+# term) and names the need itself, so `Consumed` + this row = what the band needed, and the rows sum
+# to the headline rate (income − need).
+const FOOD_LABEL_WENT_HUNGRY_FORMAT := "Went hungry — needed %s"
+
 # The RAID debit (Predators Phase 3): food this band lost to predator raids this turn — the ledger's
 # only debit beyond consumption. The sim answers it as `PopulationCohortState.raidForfeit` (the
 # client never re-derives it), and it is the third term of the larder identity
@@ -199,6 +205,10 @@ const TRANSFER_LABEL_ROUTE := "%s Trade route" % TRANSFER_GLYPH
 # Direction is the sign's job here as on every other row, so each is one phrase.
 const TRANSFER_LABEL_BROUGHT_HOME := "Brought home"
 const TRANSFER_LABEL_PARTY_RATIONS := "Party rations"
+## What ANOTHER people's party brought when it joined this band (cause `party_defected`, issue #512).
+## Beside the band's own party rows because it books on the same Route arm and for the same reason —
+## a party carried it — but it is neither this band's haul nor trade.
+const TRANSFER_LABEL_PARTY_DEFECTED := "Joined from another people"
 
 # ---- THE FODDER LEDGER'S TWO FLOWS, the labels of the `Fodder:` row's own breakdown. The larder has
 # exactly two: what the band's fodder Fields GREW this turn (`fodder_income`) and what its pens ATE
@@ -585,6 +595,9 @@ const BREAKDOWN_CARET_CLOSED := "▸"
 # bare literal, which is how the guard silently went dead once when the unit changed from days.
 const FOOD_UNLIMITED_GLYPH := "∞"
 const FOOD_RUNWAY_UNIT := "turn"
+## A runway under one meal — the band goes hungry on the coming turn. Carries the unit word, so the
+## runway tint (which keys on `FOOD_RUNWAY_UNIT`) still recognises the row.
+const FOOD_RUNWAY_UNDER_ONE_FORMAT := "<1 %s"
 
 ## **THE SAME GLYPH ON A BUILD ESTIMATE, AND ITS MEANING IS INVERTED.** On the Food line `∞` is good
 ## news — the larder never empties; on a build it is the worst news the sheet can carry — this crew
@@ -977,6 +990,9 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
             elif line.strip_edges().begins_with(
                     HudSelectionVocab.BUILD_BLOCKED_MATERIAL_SHORT_LEAD):
                 row_hex = HudStyle.DANGER_HEX
+            # …and the food popover's starving sentence, which rides under its hunger row.
+            elif line.strip_edges().begins_with(FOOD_STARVING_LEAD):
+                row_hex = HudStyle.DANGER_HEX
             out += "[color=#%s]%s[/color]\n" % [row_hex, line]
             continue
         # **A FULL-WIDTH SENTENCE THAT LEADS WITH THE HAZARD MARK IS A WARNING, and that is now the
@@ -985,6 +1001,14 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
         # descriptive line gets — including the under-herded shed, which is the one line in the client
         # that says animals are drifting off. `HudSelectionVocab.RUNG_HAZARD_GLYPH` is the same mark
         # the rung rows carry, so one needle covers both shapes.
+        # **A BAND THAT CAME SHORT OF ITS MEAL IS DANGER, not the hazard sentences' amber** — people
+        # are dying of it. Tested before the hazard mark it also leads with.
+        if line.begins_with(FOOD_STARVING_LEAD):
+            if table_open:
+                out += "[/table]\n"
+                table_open = false
+            out += "[color=#%s]%s[/color]\n" % [HudStyle.DANGER_HEX, line]
+            continue
         if line.begins_with(HudSelectionVocab.RUNG_HAZARD_GLYPH):
             if table_open:
                 out += "[/table]\n"
@@ -2554,6 +2578,11 @@ static func morale_cause_label(cause: int) -> String:
 static func food_turns_text(runway: float) -> String:
     if not BandFoodStatus.is_limited(runway):
         return FOOD_UNLIMITED_GLYPH
+    # **UNDER ONE MEAL IS ITS OWN READING.** The sim's runway eats before the take lands, so a larder
+    # below one meal answers the fraction of it the store covers (`0.83`) — the band goes hungry THIS
+    # coming turn. Rounded, that read `1 turn`, which is a promise of a meal the band will not get.
+    if runway < 1.0:
+        return FOOD_RUNWAY_UNDER_ONE_FORMAT % FOOD_RUNWAY_UNIT
     var turns := int(round(runway))
     if turns == 1:
         return "%d %s" % [turns, FOOD_RUNWAY_UNIT]
@@ -2601,10 +2630,43 @@ static func morale_is_concerning(unit_data: Dictionary) -> bool:
 ## BREAKDOWN is what states it in full, this headline being the steady rate rather than the ledger.
 ## Raids are EPISODIC, so this net can swing the turn one lands — the forward food-outlook chart
 ## deliberately does NOT project raid_forfeit forward (a past loss is not a steady drain).
+##
+## ⛔ **THE DEBIT IS WHAT THE BAND NEEDED, NOT WHAT IT ATE** (the hand-to-mouth fix). The sim eats
+## `min(need, larder)` BEFORE the turn's take lands, so a band whose larder is below its need goes
+## hungry every turn while its income beats its need on average — and `income − eaten` then read
+## `+0.64/turn` over a band that was starving. `food_consumption` is still what was EATEN and is still
+## the larder identity's term (the breakdown's `Eaten` row); the RATE is income against the band's
+## need, which is what says whether the band is feeding itself.
 static func band_net_food(band: Dictionary) -> float:
     return band_food_income(band) \
-        - float(band.get("food_consumption", 0.0)) \
+        - band_food_need(band) \
         - band_raid_forfeit(band)
+
+## What the band NEEDED to eat this turn (`food_need`). Its `food_consumption` is what it ATE —
+## `min(need, larder)` — and the gap between them is `band_food_shortfall`.
+static func band_food_need(band: Dictionary) -> float:
+    return float(band.get("food_need", 0.0))
+
+## How far short of its need the band came this turn (`food_shortfall` = need − eaten, never
+## negative). People die of it. The sim's answer, read — never recomposed from need and consumption.
+static func band_food_shortfall(band: Dictionary) -> float:
+    return maxf(float(band.get("food_shortfall", 0.0)), 0.0)
+
+## Is the band going hungry? A shortfall the display can state (above the food-flow floor).
+static func band_is_starving(band: Dictionary) -> bool:
+    return band_food_shortfall(band) >= SourceForecast.FOOD_FLOW_MIN
+
+## ⛔ **THE STARVING LINE — the band came short of its meal, said plainly, with the remedy.** It is the
+## one food line in this client drawn in DANGER, keyed by `FOOD_STARVING_LEAD` in `detail_bbcode`
+## (the sentence carries no markup, because the same string reads in a plain-text hover).
+const FOOD_STARVING_LEAD := "⚠ Short "
+const FOOD_STARVING_LINE_FORMAT := FOOD_STARVING_LEAD + "%s food last turn — people are starving. Put more hands on food."
+
+## The starving sentence for a band, or `""` when it ate its fill.
+static func food_starving_line(band: Dictionary) -> String:
+    if not band_is_starving(band):
+        return ""
+    return FOOD_STARVING_LINE_FORMAT % SourceForecast.format_magnitude(band_food_shortfall(band))
 
 ## **THE BAND PANEL'S FOOD HEADLINE RATE** — `band_net_food` plus this turn's POOLED food net, so the
 ## Food popover's rows (Gathered, Hunted, Consumed, Lost to raids, `⇄ Local exchange`) sum to the
@@ -2779,6 +2841,7 @@ static func merged_arrival_schedule(band: Dictionary) -> PackedFloat32Array:
 static func band_has_food_flow(band: Dictionary) -> bool:
     return band_food_income(band) >= SourceForecast.FOOD_FLOW_MIN \
         or float(band.get("food_consumption", 0.0)) >= SourceForecast.FOOD_FLOW_MIN \
+        or band_food_need(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_raid_forfeit(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_transfer_received_turn(band) >= SourceForecast.FOOD_FLOW_MIN \
         or band_transfer_sent_turn(band) >= SourceForecast.FOOD_FLOW_MIN
@@ -2867,6 +2930,7 @@ static func shipment_cargo_fodder(unit_data: Dictionary) -> float:
 static func food_is_concerning(band: Dictionary) -> bool:
     var turns := float(band.get("turns_of_food", BandFoodStatus.UNLIMITED_TURNS))
     return band_net_food(band) < 0.0 \
+        or band_is_starving(band) \
         or (BandFoodStatus.is_limited(turns) and turns < BandFoodStatus.warn_turns())
 
 ## Is the band's FODDER larder worth opening right now — **the food test, on the fodder account**.

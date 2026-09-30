@@ -275,6 +275,17 @@
           "default": 6,
           "unit": "workers",
           "hint": "Workers the home band must keep after a split. 0 turns the floor off for a playtest run."
+        },
+        {
+          "pointer": "/defection/party_pull_threshold",
+          "label": "Party defection pull",
+          "type": "float",
+          "min": 0,
+          "max": 2,
+          "step": 0.05,
+          "default": 0.3,
+          "unit": "pull",
+          "hint": "Pull a scouting party from an unhappy band must build up, watching a better-off people, before it joins them. Low: parties defect at first sight. High: they rarely do."
         }
       ]
     },

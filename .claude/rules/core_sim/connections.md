@@ -234,22 +234,21 @@ This module's discipline is about the *edge*: no faction field on `ConnectionKey
 in `connections.rs`. A rider's policy is the rider's.
 `.claude/rules/core_sim/campaign.md` → "Supply Network" has the as-built detail.
 
-## The two questions a rider may ask the ledger
+## The question a rider asks the ledger
 
-Both live on `ConnectionLedger` rather than in a rider, because a second copy of *"what counts as a
+It lives on `ConnectionLedger` rather than in a rider, because a second copy of *"what counts as a
 live tie"* is a second answer free to drift.
 
 - **`tie_is_live(a, b)`** — is there a live tie (`strength > NO_TIE`) between two bands, in **either**
-  direction. `supply.rs` owned the only copy until the knowledge migration needed the same question;
-  its private `tie_is_live` survives as a one-line delegation, because that is where the logistics
-  link rule is written down.
-- **`factions_in_contact(band_factions, a, b)`** — does any live tie join a band of `a` to a band of
-  `b`. **The caller supplies the `BandId -> FactionId` map**, so the edge stays faction-free and the
-  module keeps the discipline above: resolution is the *reader's* business, the same way
-  `snapshot/capture.rs` resolves it for the wire. An edge whose endpoint is not in the map belongs to
-  a band that is gone and joins nobody, rather than being guessed at. Its first reader is the
-  knowledge migration's defection gate — see `factions.md` → "A band defects only to a people it has
-  MET".
+  direction. `supply.rs` owned the only copy until defection needed the same question; its private
+  `tie_is_live` survives as a one-line delegation, because that is where the logistics link rule is
+  written down. **Defection asks it of the two BANDS** — a cross-people destination must be tied to
+  the source band itself, because contact is band-to-band and one scout meeting one rival camp does
+  not make every band of both peoples eligible (`factions.md` → "Defection is the unhappy trickle
+  with the same-people filter lifted").
+
+There is deliberately **no faction-level contact question** (*"has any band of ours met any band of
+theirs"*): a people-to-people contact test is exactly the widening defection must not make.
 
 ## Metrics
 

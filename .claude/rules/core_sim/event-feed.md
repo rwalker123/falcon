@@ -330,14 +330,29 @@ real band both, and `demographic_events::every_resident_band_carries_a_flow_accu
 spawn seam forgets — a band that silently never narrates is the failure mode that would otherwise
 ship unnoticed.
 
-## One EVENT, two ROWS — the only kind pushed twice
+## One EVENT, two ROWS — the kinds pushed twice
 
-`CommandEventKind::BandChangedHands` is filed under **both** factions of a knowledge migration's
-handover, because `snapshot::campaign::command_events_to_state` keeps only `entry.faction == viewer`
-and a single entry would reach exactly one of the two players it happened to. Which side a row
-describes rides the detail (`side=lost|gained`), and both halves carry the same `band=/from=/to=`
-so they can be matched up. The mechanism, the rung and the dead diffusion events it replaced are
-`.claude/rules/core_sim/ecs-systems.md` → "THE HANDOVER IS TOLD TO BOTH PEOPLES".
+The feed is per-faction on the wire — `snapshot::campaign::command_events_to_state` keeps only
+`entry.faction == viewer` — so an event that happens to TWO peoples is pushed twice, once under each,
+or it reaches exactly one of the players it happened to. Three things are told that way, and which
+side a row describes rides its detail:
+
+- **`BandChangedHands`** — a remnant went over with its leavers. Both rows carry the same
+  `band=/from=/to=` and `side=lost|gained`, so the two halves can be matched up. The mechanism and the
+  rung are `.claude/rules/core_sim/ecs-systems.md` → "THE HANDOVER IS TOLD TO BOTH PEOPLES".
+- **`Migrated` across peoples** — one line per band, each filed under the band's own people: the
+  source's *"N left Band X to join Faction F"* carries `direction=out to=<faction>`, and the
+  destination's *"N from Faction F joined Band Y"* carries `direction=in from=<faction>`
+  (`population::push_migration_events`). A move among one people's own bands has neither token.
+- **`PartyDefected`** — **deliberately NOT symmetric.** The losing people is told one generic line,
+  *"Your scouting party has left your control."* (the mission's noun — scouting / hunting / raiding /
+  trading), whose detail is `side=lost expedition=<entity bits>` and nothing else: no reason, no
+  place, no band, no destination — out of communication range they have no way to know why their
+  people did not come back. The receiving people's line, *"A party of N from Faction F joined Band
+  Y"*, names the other faction in `migrated`'s `direction=in` register (`faction_label`) so a client
+  can substitute its real name, and carries `band=/count=/from=<faction>/side=gained`. Pinned by
+  `defection::a_party_accrues_pull_and_goes_whole_once_it_reaches_the_threshold`, which asserts the
+  losing line carries none of `band= to= from= x= y=`.
 
 ## What is NOT here
 

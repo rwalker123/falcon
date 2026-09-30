@@ -247,6 +247,24 @@ const FACTION_SETTLING_VALUE_FORMAT := "%s  %d/%d"
 
 const FACTION_SETTLING_SCALE := 100
 
+## **OPEN BORDERS — the faction page's one control** (issue #512, `docs/plan_band_fission.md`
+## §Defection). A faction-wide policy with no other home: whether another people's unhappy leavers,
+## and their defecting parties, may join this people's bands. The checkbox's face is the policy's
+## name; the dim value beside it states what the current setting DOES, so the row reads as an answer
+## rather than as a switch whose meaning has to be looked up.
+const FACTION_OPEN_BORDERS_LABEL := "Open Borders"
+const FACTION_OPEN_BORDERS_OPEN_VALUE := "outsiders may join"
+const FACTION_OPEN_BORDERS_CLOSED_VALUE := "outsiders turned away"
+## The hover says the consequence in both directions — what opening lets in, and what closing costs
+## the people shut out — because the row itself has room for only one of them.
+const FACTION_OPEN_BORDERS_HINT := "Let other peoples' leavers join your bands. Closed, they stay home and grow angrier."
+## The command's receipt, keyed by the state it asks for.
+const FACTION_OPEN_BORDERS_COMMAND_MESSAGE_OPEN := "Borders opened — other peoples' leavers may join your bands."
+const FACTION_OPEN_BORDERS_COMMAND_MESSAGE_CLOSED := "Borders closed — other peoples' leavers will be turned away."
+## The `set_open_borders` grammar's two state tokens (`sim_runtime::command_text`).
+const OPEN_BORDERS_TOKEN_OPEN := "open"
+const OPEN_BORDERS_TOKEN_CLOSED := "closed"
+
 ## **THE FACTION PAGE'S ROW SIZE — the `band` zone's vitals rows, which every other zone matches.**
 ## Those rows are a bare `RichTextLabel` carrying no size override, so this is Godot's stock default
 ## written down; the harness asserts the two are equal at render time rather than trusting the
@@ -279,7 +297,11 @@ const FACTION_DISCOVERY_COUNT_FORMAT := "%d"
 ## **Re-measure before adding a row to this zone**; `band_panel_preview._report_zone_content_extent`
 ## prints the full block's extent on `band_panel_faction` and the tiered one on
 ## `band_panel_faction_wide`, and this threshold must stay above the first.
-const FACTION_BAND_FULL_MIN_HEIGHT := 480.0
+##
+## **RE-MEASURED AT 531 WHEN THE OPEN BORDERS ROW LANDED (issue #512)**, over the 480 this sat at — so
+## it moved to 550, the same ~19px margin over the block. The wide dock's tiered block reads 305px of
+## a 358px box with the row in, and the tall side box is still 941, so the gap it bisects is intact.
+const FACTION_BAND_FULL_MIN_HEIGHT := 550.0
 
 ## A discovered site whose catalog row carries no display name — the site_id is a worse name than
 ## none at all is a lie, so the id stands.

@@ -289,6 +289,10 @@ const ATTENTION_TILE_FORMAT := "(%d, %d)"
 
 # Why a band is losing population — appended to the losing_population alert label.
 const DECLINE_REASON_STARVING := "starving"
+## The starving row's detail when the band came SHORT of its meal — the shortfall is what is killing
+## people, so it is named ahead of any runway figure, with the remedy.
+## Kept to the orb row's detail width (it clips with an ellipsis past ~40 characters at 1500px).
+const STARVING_SHORTFALL_DETAIL_FORMAT := "short %s food — more hands on food"
 
 const DECLINE_REASON_LOW_MORALE := "low morale"
 

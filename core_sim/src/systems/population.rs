@@ -4,15 +4,6 @@ use crate::demographics_config::{
     DemographicsBirths, DemographicsTemperatureTail, DemographicsTrend,
 };
 
-#[derive(Event, Debug, Clone)]
-pub struct MigrationKnowledgeEvent {
-    pub tick: u64,
-    pub from: FactionId,
-    pub to: FactionId,
-    pub discovery_id: u32,
-    pub delta: Scalar,
-}
-
 /// A cohort's age brackets + food larder at the start of a demographic turn.
 #[derive(Debug, Clone, Copy)]
 struct DemographicState {
@@ -189,6 +180,10 @@ pub(crate) struct FoodFlow {
 /// re-derivation on the post-turn state would report numbers that never drove a birth.
 struct DemographicOutcome {
     pub state: DemographicState,
+    /// **What the people had to eat this turn** — the `food_demand` this call computed on the
+    /// opening brackets, published as `PopulationCohort::last_food_need`. Returned rather than
+    /// re-derived by the caller, so need and the meal it was measured against are one number.
+    pub need: Scalar,
     pub fertility: FertilityFactors,
     pub flows: DemographicFlows,
 }
@@ -428,6 +423,7 @@ fn advance_demographics(
     }
 
     DemographicOutcome {
+        need: demand,
         state: DemographicState {
             children,
             working,
@@ -577,18 +573,19 @@ pub fn migration_move_fraction(
 /// token, and the client substitutes what IT calls that band over this rendering; that join is what
 /// keeps a row's name current, and it needs a spelling it can find. A label baked from the name
 /// would freeze the name the band had when the event fired.
-fn band_label(band: BandId) -> String {
+pub(crate) fn band_label(band: BandId) -> String {
     format!("Band {}", band.0)
 }
 
-/// How the OTHER people are named in a world event's label.
+/// How the OTHER faction is named in a world event's label.
 ///
-/// The sim authors no faction names — `FactionRegistry` holds ids and who controls them, nothing
-/// else — so the id is all there is to say, and it is said in [`band_label`]'s register. The
-/// `from=`/`to=` detail tokens carry the raw ids, so a client that later knows a people's name
-/// substitutes it the same way it substitutes a band's.
-fn people_label(faction: FactionId) -> String {
-    format!("People {}", faction.0)
+/// **The durable id, not the faction's name** — even though the sim mints one
+/// ([`crate::faction_names::FactionNames`], published as `CampaignSection.factionNames`), for
+/// [`band_label`]'s reason exactly: every event repeats the id as a `from=`/`to=` detail token, and
+/// the client substitutes its own name for this rendering by joining on that token. A label baked
+/// from the name would be a second copy of it that the join could not find.
+pub(crate) fn faction_label(faction: FactionId) -> String {
+    format!("Faction {}", faction.0)
 }
 
 /// Tell **both** peoples that a band changed hands: one entry filed under the faction that lost it,
@@ -599,7 +596,7 @@ fn people_label(faction: FactionId) -> String {
 /// row would reach exactly one of the two players the handover happened to. Which side a row
 /// describes rides `side=lost|gained`, and both carry the same `band=`/`from=`/`to=` tokens so the
 /// two halves of one handover can be matched up.
-fn push_band_changed_hands_events(
+pub(crate) fn push_band_changed_hands_events(
     event_log: &mut CommandEventLog,
     tick: u64,
     band: BandId,
@@ -617,14 +614,14 @@ fn push_band_changed_hands_events(
         tick,
         CommandEventKind::BandChangedHands,
         from,
-        format!("{name} left us for {}", people_label(to)),
+        format!("{name} left us for {}", faction_label(to)),
         detail("lost"),
     ));
     event_log.push(CommandEventEntry::new(
         tick,
         CommandEventKind::BandChangedHands,
         to,
-        format!("{name} joined us from {}", people_label(from)),
+        format!("{name} joined us from {}", faction_label(from)),
         detail("gained"),
     ));
 }
@@ -810,30 +807,50 @@ fn push_demographic_events(
     ));
 }
 
-/// The migration half of the demographic feed: `last_emigrated` / `last_immigrated` are already
-/// whole people, so this needs no accumulator — a band either lost people this turn or it did not.
+/// The migration half of the demographic feed: the tally's counts are already whole people, so this
+/// needs no accumulator — a band either lost people this turn or it did not.
 ///
 /// Lives beside its siblings above but is called from `advance_population_migration`, which is
 /// where those counts are resolved; reporting them from `simulate_population` would announce the
 /// *previous* turn's moves under the current tick.
+///
+/// **A move to another people names that people** (`docs/plan_band_fission.md` §Defection). The
+/// source's line reads *"N left Band X to join Faction F"* with `to=<faction>`, and each other
+/// people's arrivals are their own line, *"N from Faction F joined Band Y"* with `from=<faction>` —
+/// each filed under the faction whose band it describes, since the feed is per-faction on the wire.
+/// A move among one people's own bands reads exactly as it always did.
 pub(crate) fn push_migration_events(
     event_log: &mut CommandEventLog,
     tick: u64,
     faction: FactionId,
     band: BandId,
-    emigrated: u32,
-    immigrated: u32,
+    tally: &crate::systems::labor::MigrationTally,
 ) {
     let name = band_label(band);
+    let emigrated = tally.emigrated;
     if emigrated > 0 {
+        let (label, detail) = match tally.joined_people {
+            None => (
+                format!("{emigrated} left {name}"),
+                format!("band={} count={} direction=out", band.0, emigrated),
+            ),
+            Some(people) => (
+                format!("{emigrated} left {name} to join {}", faction_label(people)),
+                format!(
+                    "band={} count={} direction=out to={}",
+                    band.0, emigrated, people.0
+                ),
+            ),
+        };
         event_log.push(CommandEventEntry::new(
             tick,
             CommandEventKind::Migrated,
             faction,
-            format!("{emigrated} left {name}"),
-            Some(format!("band={} count={} direction=out", band.0, emigrated)),
+            label,
+            Some(detail),
         ));
     }
+    let immigrated = tally.immigrated_own;
     if immigrated > 0 {
         event_log.push(CommandEventEntry::new(
             tick,
@@ -841,6 +858,18 @@ pub(crate) fn push_migration_events(
             faction,
             format!("{immigrated} joined {name}"),
             Some(format!("band={} count={} direction=in", band.0, immigrated)),
+        ));
+    }
+    for (people, count) in &tally.immigrated_foreign {
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::Migrated,
+            faction,
+            format!("{count} from {} joined {name}", faction_label(*people)),
+            Some(format!(
+                "band={} count={} direction=in from={}",
+                band.0, count, people.0
+            )),
         ));
     }
 }
@@ -870,7 +899,6 @@ type DemographicBands<'w, 's> = Query<
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn simulate_population(
     config: Res<SimulationConfig>,
-    registry: Res<FactionRegistry>,
     impacts: Res<InfluencerImpacts>,
     effects: Res<CultureEffectsCache>,
     pipeline_config: Res<TurnPipelineConfigHandle>,
@@ -878,29 +906,9 @@ pub fn simulate_population(
     wellbeing_config: Res<WellbeingConfigHandle>,
     tiles: Query<&Tile>,
     mut cohorts: DemographicBands,
-    mut discovery: ResMut<DiscoveryProgressLedger>,
-    mut telemetry: ResMut<TradeTelemetry>,
     mut event_log: ResMut<CommandEventLog>,
-    mut trade_events: EventWriter<TradeDiffusionEvent>,
-    mut migration_events: EventWriter<MigrationKnowledgeEvent>,
-    connections: Res<ConnectionLedger>,
     tick: Res<SimulationTick>,
 ) {
-    // `TradeTelemetry` is a PER-TURN accumulator, so someone has to clear it before the turn's
-    // records go in. That used to be `trade_knowledge_diffusion`, which ran a stage earlier and
-    // died with the rest of the link-driven trade slice
-    // (`docs/plan_contact_and_logistics.md` §As-built). The migration path below is now its only
-    // writer, so the reset moves here — still ahead of every write, and still ahead of
-    // `publish_trade_telemetry`, which is ordered after this system.
-    telemetry.reset_turn();
-    // **Faction is a property of the ENDPOINT** — resolved once, from the same query the loop below
-    // mutates, so the connection ledger itself never carries a faction (`connections.rs`). Taken
-    // BEFORE the loop, so a band that changes sides part-way through this turn cannot make the
-    // contact answer depend on iteration order.
-    let band_factions: BTreeMap<BandId, FactionId> = cohorts
-        .iter()
-        .filter_map(|(cohort, _, band_id, _)| band_id.map(|band| (*band, cohort.faction)))
-        .collect();
     let population_cfg = pipeline_config.config().population();
     let demo = demographics.get();
     let wellbeing = wellbeing_config.get();
@@ -913,8 +921,8 @@ pub fn simulate_population(
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
     for (mut cohort, labor, band_id, mut accumulator) in cohorts.iter_mut() {
-        // Age the band every turn (before any early-out) so the migration gate below sees an
-        // accurate settled duration even for cohorts whose home tile briefly can't be resolved.
+        // Age the band every turn, before any early-out, so a band whose home tile briefly can't be
+        // resolved still reports how long it has been simulated.
         cohort.age_turns = cohort.age_turns.saturating_add(1);
         let Ok(tile) = tiles.get(cohort.home) else {
             cohort.morale = scalar_zero();
@@ -981,6 +989,12 @@ pub fn simulate_population(
         // reconciles the larder exactly, unlike a `food_demand` re-derived at capture on the *post*
         // turn brackets (which the same turn's births would inflate). See `last_food_consumption`.
         cohort.last_food_consumption = (food_before - outcome.state.food_store).to_f32();
+        // **And what they NEEDED** — the same turn's `food_demand`, off the same call. Eaten is the
+        // ledger term; need is what hunger is measured against. The two differ exactly when the
+        // larder was short at meal time, which is the starving turn a band living hand-to-mouth has
+        // every turn its take lands after the meal: `need − eaten` is published as the band's
+        // shortfall, and the runway counts down need, never eaten.
+        cohort.last_food_need = outcome.need.to_f32();
         cohort.sync_size();
 
         // The flows the model just resolved become the player's world events, once each has
@@ -995,111 +1009,6 @@ pub fn simulate_population(
                 accumulator,
                 &outcome.flows,
             );
-        }
-
-        // A band's population only emigrates once it has settled for a while — this gates the
-        // high-morale knowledge-migration so a freshly-spawned (e.g. well-fed starting) band can't
-        // defect to a neighbor on turn one.
-        if cohort.migration.is_none()
-            && cohort.age_turns >= population_cfg.migration_min_settled_turns() as u32
-            && cohort.morale > population_cfg.migration_morale_threshold()
-            && !cohort.knowledge.is_empty()
-        {
-            // **A band may only defect to a people its own people has actually MET.** The
-            // destination used to be the first id that was not the cohort's own, which on a
-            // two-faction map hands a player's strongest, happiest, most knowledgeable band to
-            // strangers on the far side of the world. Contact is the connection ledger's to answer:
-            // a live tie, in either direction, between a band of ours and a band of theirs
-            // (`ConnectionLedger::factions_in_contact`). No contact, no destination, no defection —
-            // the band simply stays. Whether the destination is *better off* is a separate design
-            // and is deliberately not asked here.
-            if let Some(&destination) = registry.factions().iter().find(|&&faction| {
-                faction != cohort.faction
-                    && connections.factions_in_contact(&band_factions, cohort.faction, faction)
-            }) {
-                let migration_eta = population_cfg.migration_eta_ticks();
-                let source_contract = fragments_to_contract(&cohort.knowledge);
-                let scaled = scale_migration_fragments(
-                    &source_contract,
-                    config.migration_fragment_scaling.raw(),
-                    config.migration_fidelity_floor.raw(),
-                );
-                if !scaled.is_empty() {
-                    cohort.migration = Some(PendingMigration {
-                        destination,
-                        eta: migration_eta,
-                        fragments: fragments_from_contract(&scaled),
-                    });
-                }
-            }
-        }
-
-        if let Some(mut migration) = cohort.migration.take() {
-            if migration.eta > 0 {
-                migration.eta -= 1;
-            }
-
-            if migration.eta == 0 {
-                let source_faction = cohort.faction;
-                for fragment in &migration.fragments {
-                    if fragment.progress <= scalar_zero() {
-                        continue;
-                    }
-                    let delta = fragment.progress;
-                    discovery.add_progress(migration.destination, fragment.discovery_id, delta);
-                    telemetry.tech_diffusion_applied =
-                        telemetry.tech_diffusion_applied.saturating_add(1);
-                    telemetry.migration_transfers = telemetry.migration_transfers.saturating_add(1);
-                    telemetry.push_record(TradeDiffusionRecord {
-                        tick: tick.0,
-                        from: source_faction,
-                        to: migration.destination,
-                        discovery_id: fragment.discovery_id,
-                        delta,
-                        via_migration: true,
-                        herd_density: 0.0,
-                    });
-                    trade_events.send(TradeDiffusionEvent {
-                        tick: tick.0,
-                        from: source_faction,
-                        to: migration.destination,
-                        discovery_id: fragment.discovery_id,
-                        delta,
-                        via_migration: true,
-                    });
-                    migration_events.send(MigrationKnowledgeEvent {
-                        tick: tick.0,
-                        from: source_faction,
-                        to: migration.destination,
-                        discovery_id: fragment.discovery_id,
-                        delta,
-                    });
-                }
-
-                let payload_contract = fragments_to_contract(&migration.fragments);
-                let mut knowledge_contract = fragments_to_contract(&cohort.knowledge);
-                merge_fragment_payload(
-                    &mut knowledge_contract,
-                    &payload_contract,
-                    Scalar::one().raw(),
-                );
-                cohort.knowledge = fragments_from_contract(&knowledge_contract);
-                cohort.faction = migration.destination;
-                // **The handover is told to BOTH peoples.** This branch used to change the band's
-                // faction in silence — the two events it sends are diffusion telemetry that nothing
-                // reads — so a player lost, or gained, a whole band with no line anywhere.
-                if let Some(band_id) = band_id {
-                    push_band_changed_hands_events(
-                        &mut event_log,
-                        tick.0,
-                        *band_id,
-                        source_faction,
-                        migration.destination,
-                    );
-                }
-            } else {
-                cohort.migration = Some(migration);
-            }
         }
     }
 }
@@ -2603,6 +2512,7 @@ mod wellbeing_tests {
             stores: LocalStore::new(),
             morale: m,
             last_food_consumption: 0.0,
+            last_food_need: 0.0,
             last_turn_food_transfers: Default::default(),
             last_turn_fodder_transfers: Default::default(),
             last_turn_transfer_crossings: Vec::new(),
@@ -2618,7 +2528,6 @@ mod wellbeing_tests {
             generation: 0,
             faction: FactionId(faction),
             knowledge: Vec::new(),
-            migration: None,
         };
         cohort.sync_size();
         cohort
@@ -2633,6 +2542,20 @@ mod wellbeing_tests {
         // Migration now narrates itself into the feed, so it needs the tick + the log.
         world.insert_resource(SimulationTick::default());
         world.insert_resource(CommandEventLog::default());
+        // The cross-people half's gates and sinks — inert here, where every band is one people.
+        world.insert_resource(crate::connections::ConnectionLedger::default());
+        world.insert_resource(crate::resources::FactionBorderPolicies::default());
+        world.insert_resource(crate::expedition_config::ExpeditionConfigHandle::default());
+        world.insert_resource(crate::resources::DiscoveryProgressLedger::default());
+        world.insert_resource(crate::resources::TradeTelemetry::default());
+        world.init_resource::<bevy::ecs::event::Events<crate::systems::TradeDiffusionEvent>>();
+        world.insert_resource(crate::routes::RoadRegistry::default());
+        world.insert_resource(crate::resources::BandNameAllocator::default());
+        world.insert_resource(crate::band_names::BandNameCatalogHandle::default());
+        world.insert_resource(crate::forage::ForageRegistry::default());
+        world.insert_resource(crate::fauna::HerdRegistry::default());
+        world.insert_resource(crate::intensification::LadderConfigHandle::default());
+        world.insert_resource(crate::supply_network_config::SupplyNetworkConfigHandle::default());
         let tiles: Vec<Entity> = positions
             .iter()
             .map(|&(x, y)| {

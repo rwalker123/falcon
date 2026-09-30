@@ -60,7 +60,6 @@ struct PublishedRow {
     /// idle one — empty recipe, no crew, no progress. That says nothing about the band.
     bench_recipe: String,
     bench_workers: u32,
-    has_migration: bool,
     has_accessible_stockpile: bool,
     has_loadout_window: bool,
 }
@@ -124,7 +123,6 @@ fn published_rows(app: &App) -> Vec<PublishedRow> {
                 .unwrap_or_default()
                 .to_string(),
             bench_workers: row.bench().map(|bench| bench.workers()).unwrap_or(0),
-            has_migration: row.migration().is_some(),
             has_accessible_stockpile: row.accessibleStockpile().is_some(),
             has_loadout_window: row.loadoutWindow().is_some(),
         })

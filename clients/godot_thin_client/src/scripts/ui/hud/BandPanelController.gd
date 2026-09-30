@@ -56,6 +56,11 @@ signal cancel_order_requested(band: Dictionary, scope: String)
 # controller is its only emitter. It is deliberately NOT routed through `_emit_assign_labor`, which
 # staffs a role; this states a policy and carries no worker count at all.
 signal upkeep_mode_requested(payload: Dictionary)
+# The faction page's OPEN BORDERS toggle was pressed (issue #512) — relayed to
+# HudLayer.open_borders_requested and formatted by `Main.format_open_borders`. `{ faction, open }`.
+# `FactionRollup` is static and declares no signal, so the toggle reaches this through the Callable
+# `render_faction` threads in, and this controller is the signal's only emitter.
+signal open_borders_requested(payload: Dictionary)
 # A build was WITHDRAWN from the band's queue (`docs/plan_standing_upkeep.md` §4.6b) — the BUILD
 # QUEUE block's row `✕`, relayed to HudLayer.unqueue_requested and formatted by `Main.format_unqueue`.
 # **The payload is byte-identical to `DrawerComposeController`'s** ({ faction, x, y, herd_id }), which
@@ -638,6 +643,19 @@ func _player_knowledge() -> Dictionary:
 func _faction_settling() -> Dictionary:
     return _topbar.faction_sedentarization() if _topbar != null else {}
 
+## The player faction's policy row (`{faction, open_borders}`), for the band zone's OPEN BORDERS toggle.
+## `{}` before the snapshot has carried one — the toggle renders nothing rather than a guessed default.
+func _faction_policy() -> Dictionary:
+    return _topbar.faction_policy() if _topbar != null else {}
+
+## Emit the player's Open Borders pick. Named by the PLAYER faction, the only people this page speaks
+## for; the checkbox's own state is the requested one.
+func _emit_open_borders(open: bool) -> void:
+    emit_signal("open_borders_requested", {
+        "faction": HudConst.PLAYER_FACTION_ID,
+        "open": open,
+    })
+
 ## The player faction's discovered Wondrous Sites, for the band zone's DISCOVERIES block. The raw site
 ## array `FactionReadouts` filters to the player faction, so the two surfaces reading it cannot
 ## disagree about what has been found.
@@ -778,7 +796,7 @@ func _build_food_outlook_block(band: Dictionary, compact: bool = false) -> VBoxC
     # (`larder_runway_turns`' `standing_net`), so the empty marker and the `(N turns)` agree.
     chart.set_projection(
         DetailFormat.band_provisions(band), arrivals,
-        float(band.get("food_consumption", 0.0)), _band_labor.current_turn(),
+        DetailFormat.band_food_need(band), _band_labor.current_turn(),
         DetailFormat.band_pooled_food_net(band))
     # A short zone gets a COMPACT chart — same series, same empty marker, less height. This is the
     # whole of what the band zone's tier now buys: the chart is built either way, and drawing it
@@ -10146,7 +10164,8 @@ func render_faction() -> void:
         # of its blocks at the page's row size, so DISCOVERIES yields there.
         BandCityPanel.ZONE_BAND:
             HudWidgets.wrap_zone(FactionRollup.build_band_zone(_band_labor, _disclosures,
-                _faction_settling(), _faction_discoveries(), _faction_band_zone_is_full())),
+                _faction_settling(), _faction_discoveries(), _faction_policy(),
+                _emit_open_borders, _faction_band_zone_is_full())),
         BandCityPanel.ZONE_WORK:
             HudWidgets.wrap_zone(FactionRollup.build_work_zone(_band_labor,
                 attention, _faction_open_row, _toggle_faction_row, jump_to_band_entity)),
@@ -10161,8 +10180,8 @@ func render_faction() -> void:
     _push_faction_zone_badges()
     # No stage id ⇒ no bundled art resolves and the emoji stands; the band count takes the stage word's
     # slot, and the empty position label hides the coordinate slot outright.
-    _panel.set_header("", HudFormat.FACTION_PAGE_GLYPH, HudFormat.FACTION_PAGE_NAME,
-        HudFormat.faction_bands_label(_band_labor.player_bands().size()), "")
+    _panel.set_header("", HudFormat.FACTION_PAGE_GLYPH, HudFormat.faction_page_title(),
+        HudFormat.faction_page_subtitle(_band_labor.player_bands().size()), "")
     _panel.set_cycler(FACTION_CYCLER_INDEX, _cycler_count())
     # A faction has no tile to jump to. (The narrow shell's first tab reads `Faction` rather than
     # `Band` because `FACTION_ZONE_LAYOUT` says so — a subject names its own zone labels.)

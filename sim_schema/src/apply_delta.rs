@@ -86,6 +86,8 @@ impl WorldSnapshot {
             stance_axes,
             voice_medium,
             opening_loadout,
+            faction_policies,
+            faction_names,
             knowledge_timeline,
             crisis_telemetry,
             crisis_overlay,
@@ -219,6 +221,8 @@ impl WorldSnapshot {
         replace_if_some(&mut self.stance_axes, stance_axes);
         replace_if_some(&mut self.voice_medium, voice_medium);
         replace_if_some(&mut self.opening_loadout, opening_loadout);
+        replace_if_some(&mut self.faction_policies, faction_policies);
+        replace_if_some(&mut self.faction_names, faction_names);
         replace_if_some(&mut self.crisis_telemetry, crisis_telemetry);
         replace_if_some(&mut self.crisis_overlay, crisis_overlay);
         replace_if_some(&mut self.herds, herds);
@@ -541,6 +545,8 @@ mod tests {
         delta.stance_axes = Some(Vec::new());
         delta.voice_medium = Some(Vec::new());
         delta.opening_loadout = Some(Default::default());
+        delta.faction_policies = Some(Vec::new());
+        delta.faction_names = Some(Vec::new());
         delta.crisis_telemetry = Some(Default::default());
         delta.crisis_overlay = Some(Default::default());
         delta.herds = Some(Vec::new());
