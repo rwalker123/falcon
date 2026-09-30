@@ -802,8 +802,8 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 
 > **AND THE POOLS LEFT THE PRO-RATA ITEM BUDGET.** `LaborAllocation::kitted_rows` filters every
 > `LaborTarget::is_standing_pool` row out, so `BandItemBudget` sees take crews and the two band-wide
-> roles only. The two rules must not both ration one stock: the budget splits **pro rata by head
-> count** and the settlement splits **by priority**.
+> roles only. The two settlements must not both ration one stock: the budget settles **take gear**
+> and the pool settlement **pool and keeping tools**, each by priority.
 >
 > ⛔ **ONE UNIT ARMS ONE PERSON PER TURN, ACROSS BOTH ACCOUNTS — AND THE POOLS SETTLE FIRST.** An item
 > can sit in a take kit *and* in a keeping or build requirement (the `axe`: `woodcutting` on the
@@ -811,7 +811,8 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > allocations that never saw each other armed a feller and a keeper off one axe. So
 > `LaborAllocation::item_budget` is struck **less the units the pools and the site keeping were
 > issued** (`BandItemBudget::reserving`, read off `LaborAllocation::last_pool_toe`'s `filled` and
-> `last_keeping_issued`), and the take rows split only the remainder, pro rata as before.
+> `last_keeping_issued`), and the take rows are settled out of the remainder, by Priority (see
+> "ONE BAND, ONE SET OF GEAR").
 >
 > **The pools win, because that is the order the turn already runs in**: `plan_pool_tools` settles
 > every pool's tools above the take-row loop in `advance_labor_allocation`, and the turn parks the
@@ -1675,22 +1676,36 @@ kits on one web share an item. The hunt roster is not so lucky: `big_game` and `
 **sled**, so a kit-id grouping would still sled a full crew on each of two rows off one stock.
 
 ```text
-demand[item] = Σ assignment.workers over the rows whose RESOLVED kit uses that item
-units(row, item) = live_units(item) × min(row.workers ÷ demand[item], 1)
+need(row, item)  = row.workers ÷ workers_per_unit(item)     over the rows whose RESOLVED kit uses it
+left             = floor(live_units(item) − reserved(item))
+for tier in High, Normal, Low:
+    if left >= Σ need over the tier: each row takes its need; left −= that sum
+    else: quota = left × need ÷ Σ need; each row takes floor(quota), the units left go one each
+          to the largest remainders (ties to the earlier row); left = 0
 ```
 
-- **Pro-rata, not priority — for TAKE and ROLE rows, which is all this budget now holds.**
-  `SourcePriority` decides who sheds a worker; making it decide who gets the spears as well would be
-  a design lever nobody has asked for.
+- **BY PRIORITY, then whole units by largest remainder** (`docs/plan_site_crews.md` §2.3,
+  `BandItemBudget::settle`). A take kit's items settle **High rows in full first, then Normal, then
+  Low** — the row's own `SourcePriority`, the mark its keeping claims and a pool's tools already
+  settle at, so *"when something runs short, the band spends it on high priority first"* is one rule
+  across every tool a band holds. Within a tier the stock cannot cover, whole units go by largest
+  remainder on head count — the pro-rata rule, now in whole items and per tier.
 
-  ⛔ **The POOL settlement goes the other way, deliberately, and this bullet no longer speaks for
-  it.** It used to read *"matching `keeping_rates`"*; `settle_pool_tools` serves **High in full,
-  then Normal, then Low** (`docs/plan_pool_toe.md` §2.2) because a pool's tools are exactly what the
-  on-screen promise *"when something runs short, the band spends it on high priority first"* is
-  about. The two allocations answer differently on purpose — take gear is split between crews doing
-  the same kind of work, pool gear between holdings the player has ranked.
-- **Fractional units are fine** — `Crew::workers` is fractional by design, and the cut clamps the
-  share against the people on the row anyway.
+  ⛔ **It was pro-rata by head count across every row, and the playtest is why it is not.** A High
+  boar hunt of 4 and a Normal sheep hunt of 2 on the stalking kit, over five kits, read *"3 of 4"*
+  on the boar and a fully kitted sheep hunt — the player's mark bought nothing. Settled by rank it
+  reads **4 of 4** and **1 of 2**. The old argument — *"`SourcePriority` decides who sheds a worker;
+  making it decide who gets the spears as well would be a lever nobody has asked for"* — was
+  answered by the player asking for it. Pinned by
+  `equipment_config::tests::a_take_kits_items_settle_high_first_whichever_row_comes_first` (both row
+  orders), `::a_short_tier_splits_whole_units_by_largest_remainder` (the in-tier rule and its tie),
+  and `kit_selection::a_high_row_is_armed_in_full_before_a_normal_row_whichever_comes_first` (the
+  turn and the encoded `kitWorkersHolding`, both row orders).
+- **Whole units, because a tool is carried by a person.** The live stock less what the pools were
+  issued is floored before it is settled; the reservation is whole on the shipped settlement.
+- **Each row is found by its SOURCE**, not by the head count it is asked with
+  (`BandItemBudget::share_for_source` / `row_of`): a far row asked at the hunters present still reads
+  the units its staffed crew was settled, and coverage clamps them against the people there.
 - **Every row counts, the band-wide roles included — and the STANDING POOLS deliberately do
   NOT.** A Scout or Warrior row is an ordinary assignment holding ordinary head count, and its gear
   is as much the band's as the hunters' spears. A `builders` / `roadwork` row is filtered out
@@ -1738,10 +1753,15 @@ quoted before that. Every surface quoting a crew therefore cuts from the same sh
 two hunt rows reach for one stock of traps is promised a crew the turn cannot arm:
 
 ```text
-other_demand[item] = Σ workers over the band's assignments that use `item`,
-                     EXCLUDING any existing assignment on THIS source
-units(w, item)     = live_units(item) × w ÷ (other_demand[item] + w)
+rows(w) = the band's assignments EXCLUDING any existing one on THIS source,
+          then the asked-about crew of `w` appended last at the source row's own Priority
+units(w, item) = the appended row's settlement of `item` over rows(w)      (the rule above)
 ```
+
+**The prospective row's rank is its source row's** (`LaborAllocation::priority_on`, the default
+where the band works no row there), so the compose sheet quotes a High row armed ahead of the
+Normal rows beside it. **A detached party's forecast** (the trip and denial sheets) carries no mark
+and is settled at the default.
 
 **The exclusion is the whole of it.** A forecast, a seed and a take all describe one crew on one
 source, so leaving that source's own row in would count its head twice — once as itself, once as the
@@ -1759,8 +1779,8 @@ resolved kit and its head count"* both budgets are built from.
 | `fauna::hunt_crew_take_curve` / `hunt_armed_crew` | one row **per crew size** | `HuntCrewCurveInputs::other_rows` carries the rows and `curve_coverage` strikes the budget per crew |
 
 **A CURVE RECOMPUTES THE SHARE PER CREW SIZE, AND THAT IS WHY IT TAKES ROWS RATHER THAN A BUDGET.**
-At crew `w` the denominator is `other_demand + w`, and `w` moves on every row of the curve — a budget
-struck once at one crew would misprice every other. `hunt_armed_crew` goes through the same
+At crew `w` the appended row's settlement depends on `w` beside the other rows' claims, and `w`
+moves on every row of the curve — a budget struck once at one crew would misprice every other. `hunt_armed_crew` goes through the same
 `curve_coverage`, because the plateau and the count that explains it are read at the same crew size
 off the same share and a second spelling there is how *"max N workers useful"* comes to name a number
 no row of the curve was built from. `snapshot::population`'s `assigned_hunt_useful_crew` is that same

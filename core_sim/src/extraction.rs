@@ -846,9 +846,10 @@ pub fn prospective_deposit_gear(
         None => allocation.pool_issued().collect(),
     };
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        other_rows.iter().map(|(kit, held)| (kit, *held)),
+        other_rows,
         kit,
         crew,
+        allocation.priority_on(target),
     )
     .reserving(issued)
     .reserving(keeping.iter().map(|(item, units)| (item.as_str(), *units)));
@@ -856,7 +857,7 @@ pub fn prospective_deposit_gear(
         kit,
         crew,
         band_kit,
-        budget.share_for(crew, band_kit, equipment),
+        budget.share_for_prospective(band_kit, equipment),
     );
     let gear = equipment.deposit_gear(&coverage, band_kit, rung.branch(), Some(&key));
     ProspectiveCrew {

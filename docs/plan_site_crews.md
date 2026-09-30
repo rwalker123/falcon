@@ -96,8 +96,13 @@ So a site's requirement is **two independent lines**:
 
 | Line | Who carries it | How it is filled |
 |---|---|---|
-| **take kit** | the take hands | the player's pick, through the existing per-head item budget — unchanged |
+| **take kit** | the take hands | the player's pick of kit; its items settled by Priority |
 | **keeping tools** | the keep hands | the tools serving the site's own branch at its own rung, settled by Priority |
+
+**Both lines settle by the row's Priority.** A take kit's items are the site crew's tools as much
+as its keeping tools are, so when a band owns fewer spears than its hunt rows want, the `High` row is
+armed in full before a `Normal` one gets any — not split in proportion to head count. Inside one
+tier, whole items go by largest remainder on the head count, as before.
 
 **The order, which has no loop:**
 

@@ -538,7 +538,7 @@ reach bills the smaller number, and the wedges wear nothing on a felling take.
 > KEEPING**, and one axe arms one person per turn across all three. The builders and each working's
 > keeping are issued theirs first (`settle_scarce_tools`, by priority — the keeping at its row's,
 > the builders at the head entry's mark), and the `extract` rows split what is left
-> (`BandItemBudget::reserving`, pro rata, less `LaborAllocation::last_keeping_issued`) —
+> (`BandItemBudget::reserving`, by row Priority, less `LaborAllocation::last_keeping_issued`) —
 > `equipment.md` → "AND THE POOLS LEFT THE PRO-RATA ITEM BUDGET" owns the rule and why the claims
 > win. `extraction::prospective_deposit_gear` reserves the keeping's issue the same way, so the seed
 > quotes the cut the turn pays

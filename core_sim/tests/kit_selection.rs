@@ -2472,6 +2472,69 @@ fn two_hunt_rows_naming_one_kit_cannot_arm_more_hunters_than_the_band_owns() {
     }
 }
 
+/// **⛔ A HIGH ROW IS ARMED IN FULL BEFORE A NORMAL ONE** (`docs/plan_site_crews.md` §2.3) — the
+/// playtest band, end to end: a High boar hunt of 4 and a Normal sheep hunt of 2, both on the
+/// stalking kit, over five of each item. The turn arms and the wire publishes **4 of 4** and **1 of
+/// 2**, where the head-count split read "3 of 4" on the High row. **Both row orders**, so the rank
+/// decides and not the position.
+#[test]
+fn a_high_row_is_armed_in_full_before_a_normal_row_whichever_comes_first() {
+    /// The High row's crew and the Normal row's.
+    const HIGH_CREW: u32 = 4;
+    const NORMAL_CREW: u32 = 2;
+    /// Five of each stalking item — one short of the six hunters.
+    const FIVE_KITS: u32 = 5;
+    const SPEARS: &str = "spears";
+
+    for high_first in [true, false] {
+        let mut app = placid_world();
+        let (first, pos) = pin_herd(&mut app);
+        let second = pin_second_herd(&mut app, pos, SECOND_HERD_ID);
+        let high = (first.as_str(), HIGH_CREW, SourcePriority::High);
+        let normal = (second.as_str(), NORMAL_CREW, SourcePriority::Normal);
+        let rows = if high_first {
+            [high, normal]
+        } else {
+            [normal, high]
+        };
+        let band = spawn_band_hunting(
+            &mut app,
+            pos,
+            &[(rows[0].0, SLED_KIT), (rows[1].0, SLED_KIT)],
+            &[(SPEARS, FIVE_KITS), (SLED, FIVE_KITS)],
+        );
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture spawned an allocation");
+            for (assignment, (_, crew, rank)) in allocation.assignments.iter_mut().zip(rows) {
+                assignment.workers = crew;
+                assignment.priority = rank;
+            }
+        }
+        drive_local_turn(&mut app);
+        recapture_snapshot_in_place(&mut app.world);
+
+        let published = published_row_coverage(&app, band);
+        let expected: Vec<(u32, f32)> = rows
+            .iter()
+            .map(|(_, crew, rank)| {
+                let armed = if *rank == SourcePriority::High {
+                    HIGH_CREW
+                } else {
+                    FIVE_KITS - HIGH_CREW
+                };
+                (*crew, armed as f32)
+            })
+            .collect();
+        assert_eq!(
+            published, expected,
+            "the High row reads 4 of 4 and the Normal row 1 of 2 (High listed first: {high_first})"
+        );
+    }
+}
+
 /// **⛔ AND THE BUDGET IS PER ITEM, so two DIFFERENT kits sharing one cannot each carry a full set.**
 ///
 /// The upkeep side groups its claims by **kit id** (`systems::labor::keeping_rates`), which is

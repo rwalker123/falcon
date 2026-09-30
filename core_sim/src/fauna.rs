@@ -9894,13 +9894,18 @@ pub struct HuntCrewCurveInputs<'a> {
     /// [`crate::components::LaborAllocation::rows_excluding_source`]).
     ///
     /// ⛔ **The rows travel here rather than a ready-made budget, because the budget is a function
-    /// of the crew size.** At crew `w` this row's share of an item is
-    /// `live × w ÷ (other demand + w)`, and `w` moves on every row of the curve — a budget struck
-    /// once at one crew would misprice every other.
+    /// of the crew size.** At crew `w` this row's settlement depends on `w` beside the other rows'
+    /// claims, and `w` moves on every row of the curve — a budget struck once at one crew would
+    /// misprice every other.
     ///
     /// **Empty is the ordinary case**: a band with nothing else reaching for the kit's items falls
     /// through to the whole live stock, which is what a ledger-wide coverage always gave it.
-    pub other_rows: &'a [(crate::equipment_config::KitChoice, f32)],
+    pub other_rows: &'a [crate::equipment_config::KittedRow],
+    /// **The rank this row claims the band's take gear at** — its own `SourcePriority`
+    /// ([`crate::components::LaborAllocation::priority_on`]): the band's items are settled High,
+    /// then Normal, then Low (`docs/plan_site_crews.md` §2.3), so a High row's curve is armed ahead
+    /// of the Normal rows beside it.
+    pub priority: crate::components::SourcePriority,
     /// The `person` roster row — what a hunter is before any gear.
     pub intrinsic: CombatStats,
     /// The severity dials the fight resolves at. **A resident band hunting its own range passes the
@@ -9977,15 +9982,16 @@ fn curve_coverage(
     workers: f32,
 ) -> crate::equipment_config::KitCoverage {
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        inputs.other_rows.iter().map(|(kit, held)| (kit, *held)),
+        inputs.other_rows.iter().cloned(),
         inputs.kit,
         workers,
+        inputs.priority,
     );
     inputs.equipment.coverage_from_units(
         inputs.kit,
         workers,
         inputs.wear,
-        budget.share_for(workers, inputs.wear, inputs.equipment),
+        budget.share_for_prospective(inputs.wear, inputs.equipment),
     )
 }
 

@@ -210,8 +210,9 @@ entry's own Build mark (`docs/plan_site_crews.md` §2.4). Entries behind the hea
 
 ### 2.5 What does not change
 
-- **Take crews** (hunt, forage, extract) keep the kit the player picks and the pro-rata item budget
-  from PR #665.
+- **Take crews** (hunt, forage, extract) keep the kit the player picks. Its items no longer split
+  pro-rata across rows: they settle by the row's Priority, High first (`docs/plan_site_crews.md`
+  §2.3).
 - **Scout and Warrior** keep their picked kits.
 - **Detached expeditions** carry their own ledger and are rationed against nobody.
 - **Wear** still draws on the most-worn batch with condition left.

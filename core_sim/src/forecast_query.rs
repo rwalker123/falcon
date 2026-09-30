@@ -120,6 +120,7 @@ fn resolve_ask(
         wear,
         kit,
         other_rows,
+        ..
     } = resolve_quarry_and_kit(world, faction_id, band_id, herd_id, kit_id)?;
     let equipment = world.resource::<EquipmentConfigHandle>().get();
 
@@ -131,16 +132,20 @@ fn resolve_ask(
     // "ONE BAND, ONE SET OF GEAR"): a prospective party competes with the rows already staffed
     // exactly as a committed one does, so a band whose two trapping rows share four traps is quoted
     // the half-armed party the turn will actually pay.
+    //
+    // **A detached party carries no mark** — it is not a row — so it is settled at the default rank
+    // beside the band's rows (`docs/plan_site_crews.md` §2.3).
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        other_rows.iter().map(|(kit, workers)| (kit, *workers)),
+        other_rows,
         &kit,
         party_workers as f32,
+        crate::components::SourcePriority::default(),
     );
     let coverage = equipment.coverage_from_units(
         &kit,
         party_workers as f32,
         &wear,
-        budget.share_for(party_workers as f32, &wear, &equipment),
+        budget.share_for_prospective(&wear, &equipment),
     );
     let party = query_hunting_party(world, &equipment, &coverage, &wear, herd.body_mass);
     let per_worker_haul = query_per_worker_haul(world, &equipment, &coverage, &wear);
@@ -161,7 +166,10 @@ struct AskedQuarry {
     /// dropped — the denominator a prospective crew's share of the band's gear is struck against
     /// ([`crate::components::LaborAllocation::rows_excluding_source`]). Empty for a band with no
     /// allocation, which is the whole-ledger reading a detached party has always had.
-    other_rows: Vec<(crate::equipment_config::KitChoice, f32)>,
+    other_rows: Vec<crate::equipment_config::KittedRow>,
+    /// **The rank the band's row on this herd claims its take gear at**, or the default where the
+    /// band works no row there ([`crate::components::LaborAllocation::priority_on`]).
+    priority: crate::components::SourcePriority,
 }
 
 /// `LaborTarget::same_source` keys a Hunt row on its `fauna_id` alone, so the floor a query names
@@ -213,22 +221,25 @@ fn resolve_quarry_and_kit(
     };
     // **The competing claims on that ledger**, with this herd's own row excluded — see
     // [`AskedQuarry::other_rows`].
+    let herd_row = crate::components::LaborTarget::Hunt {
+        fauna_id: herd_id.to_string(),
+        floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
+    };
     let other_rows = allocation
-        .map(|allocation| {
-            allocation.rows_excluding_source(
-                &equipment,
-                &crate::components::LaborTarget::Hunt {
-                    fauna_id: herd_id.to_string(),
-                    floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
-                },
-            )
-        })
+        .as_ref()
+        .map(|allocation| allocation.rows_excluding_source(&equipment, &herd_row))
         .unwrap_or_default();
+    let priority = allocation
+        .as_ref()
+        .map_or_else(crate::components::SourcePriority::default, |allocation| {
+            allocation.priority_on(&herd_row)
+        });
     Ok(AskedQuarry {
         herd,
         wear,
         kit,
         other_rows,
+        priority,
     })
 }
 
@@ -674,6 +685,7 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         wear,
         kit,
         other_rows,
+        priority,
     } = match resolve_quarry_and_kit(
         world,
         ask.faction_id,
@@ -701,6 +713,8 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
         // from its own share of it — the share moves with the crew size, which is why the rows
         // travel rather than a budget (`fauna::HuntCrewCurveInputs::other_rows`).
         other_rows: &other_rows,
+        // **Settled at the row's own rank** — the band's items go High, then Normal, then Low.
+        priority,
         intrinsic,
         // **BASE, not `expedition_tuning`** — see this function's doc.
         tuning: combat.tuning(),
@@ -1122,6 +1136,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
         &equipment,
         &kit,
         ask.workers,
+        allocation.priority_on(&target),
         &wear,
         &allocation.rows_excluding_source(&equipment, &target),
         &labor,

@@ -547,7 +547,7 @@ fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
             .assignments
             .iter()
             .filter(|row| matches!(row.target, LaborTarget::Extract { .. }))
-            .map(|row| budget.share_for(row.workers as f32, wear, &equipment)(AXE))
+            .map(|row| budget.share_for_source(&row.target, wear, &equipment)(AXE))
             .sum();
         (keeping, take)
     };
@@ -698,7 +698,7 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
             .assignments
             .iter()
             .filter(|row| matches!(row.target, LaborTarget::Extract { .. }))
-            .map(|row| budget.share_for(row.workers as f32, wear, &equipment)("axe"))
+            .map(|row| budget.share_for_source(&row.target, wear, &equipment)("axe"))
             .sum();
         (
             issued,

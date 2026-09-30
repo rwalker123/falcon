@@ -418,23 +418,30 @@ pub struct CaravanPricing {
 }
 
 impl CaravanPricing {
-    /// Price a caravan of `workers` carrying `kit`, against `wear`, beside `other_rows`.
+    /// Price a caravan of `workers` carrying `kit` at the row's `priority`, against `wear`, beside
+    /// `other_rows`.
     pub fn resolve(
         equipment: &crate::equipment_config::EquipmentConfig,
         kit: &crate::equipment_config::KitChoice,
         workers: u32,
+        priority: crate::components::SourcePriority,
         wear: &crate::components::BandEquipment,
-        other_rows: &[(crate::equipment_config::KitChoice, f32)],
+        other_rows: &[crate::equipment_config::KittedRow],
         labor: &LaborConfig,
     ) -> Self {
         let crew = workers as f32;
         let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-            other_rows.iter().map(|(kit, held)| (kit, *held)),
+            other_rows.iter().cloned(),
             kit,
             crew,
+            priority,
         );
-        let coverage =
-            equipment.coverage_from_units(kit, crew, wear, budget.share_for(crew, wear, equipment));
+        let coverage = equipment.coverage_from_units(
+            kit,
+            crew,
+            wear,
+            budget.share_for_prospective(wear, equipment),
+        );
         let haul_carry = coverage.weighted_rate(|kit| {
             equipment.hunt_per_worker_biomass_capacity(
                 labor.hunt.per_worker_biomass_capacity,

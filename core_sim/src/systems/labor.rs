@@ -5514,7 +5514,7 @@ pub fn advance_labor_allocation(
                 &crew_kit,
                 workers as f32,
                 &band_kit,
-                item_budget.share_for(workers as f32, &band_kit, &equipment_cfg),
+                item_budget.share_for_source(&assignment.target, &band_kit, &equipment_cfg),
             );
             // This crew's HUNT haul tier — the **sled**, if its kit carries one and the band still
             // has condition in it — **averaged over the crews**, because a party short of sleds
@@ -5578,6 +5578,7 @@ pub fn advance_labor_allocation(
                     &equipment_cfg,
                     &crew_kit,
                     assignment.workers,
+                    assignment.priority,
                     &band_kit,
                     &allocation.rows_excluding_source(&equipment_cfg, &assignment.target),
                     &labor,
@@ -11732,7 +11733,7 @@ pub fn advance_predator_raids(
                 &warrior_kit,
                 warrior_count,
                 wear,
-                warrior_budget.share_for(warrior_count, wear, &equipment_cfg),
+                warrior_budget.share_for_source(&LaborTarget::Warrior, wear, &equipment_cfg),
             )
         });
         // One contingent per crew, best-armed first — the resolver gates each attacker/target pair

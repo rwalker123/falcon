@@ -868,8 +868,15 @@ fn priced_pack(app: &App, band: Entity, kit: &KitChoice) -> f32 {
         .get::<BandEquipment>(band)
         .cloned()
         .unwrap_or_default();
-    let pricing =
-        core_sim::work_party::CaravanPricing::resolve(&equipment, kit, CREW, &wear, &[], &labor);
+    let pricing = core_sim::work_party::CaravanPricing::resolve(
+        &equipment,
+        kit,
+        CREW,
+        core_sim::SourcePriority::default(),
+        &wear,
+        &[],
+        &labor,
+    );
     let weight = app
         .world
         .resource::<core_sim::MaterialsConfigHandle>()

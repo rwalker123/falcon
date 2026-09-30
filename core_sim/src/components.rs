@@ -2489,11 +2489,11 @@ impl LaborTarget {
     /// **Is this row one of the two STANDING POOLS — Roadwork and Builders?** — the rows whose tools
     /// are derived per site from the rung each site stands on and settled band-wide by priority
     /// (`docs/plan_pool_toe.md`, narrowed by `docs/plan_site_crews.md`), rather than chosen off the
-    /// roster and rationed pro-rata. A site crew's **keeping** tools are settled the same way, but
-    /// the crew is a take row and its take kit stays on the budget.
+    /// roster and rationed on the take-gear budget. A site crew's **keeping** tools are settled the
+    /// same way, but the crew is a take row and its take kit stays on the budget.
     ///
     /// It is **not** `!is_source()`: Scout and Warrior are band-wide roles too, and they keep the
-    /// kit the player picks and the pro-rata item budget that goes with it. What separates a pool is
+    /// kit the player picks and the item budget that goes with it. What separates a pool is
     /// that it works **many sites out of one stock of tools**, which is the thing one kit cannot
     /// describe.
     ///
@@ -4949,7 +4949,7 @@ impl LaborAllocation {
     /// arms its own crew off it, so N rows naming one item each get a full copy of it — four traps
     /// arming four hunters on one herd and four more on the next. See
     /// [`crate::equipment_config::BandItemBudget`] for why the key is the item rather than the kit
-    /// id, and why the split is pro-rata.
+    /// id, and why the split is by the row's Priority first (`docs/plan_site_crews.md` §2.3).
     ///
     /// **Every row counts, band-wide roles included**: a Scout or a Warrior row is an ordinary
     /// assignment holding ordinary head count, and its wayfinding gear is as much the band's as the
@@ -4961,15 +4961,12 @@ impl LaborAllocation {
     ) -> crate::equipment_config::BandItemBudget {
         // The kits have to outlive the borrow the budget builds from, so they are resolved into a
         // vector first — `kit_choice` mints a fresh `KitChoice` per call.
-        let kits = self.kitted_rows(config, |_| true);
         // ⛔ **LESS WHAT THE POOLS WERE ISSUED** — one unit arms one person per turn across both
         // accounts, and the pools settle first (`BandItemBudget::reserving`). Read off
         // [`Self::last_pool_toe`], which the turn parks right after the settlement and above every
         // take row, so the turn, the assign-time seed and the capture all divide one remainder.
-        crate::equipment_config::BandItemBudget::of_rows(
-            kits.iter().map(|(kit, workers)| (kit, *workers)),
-        )
-        .reserving(self.pool_issued())
+        crate::equipment_config::BandItemBudget::of_rows(self.kitted_rows(config, |_| true))
+            .reserving(self.pool_issued())
     }
 
     /// **The units the band-wide settlement issued this turn, per item** — the standing pools'
@@ -5029,8 +5026,19 @@ impl LaborAllocation {
         &self,
         config: &crate::equipment_config::EquipmentConfig,
         source: &LaborTarget,
-    ) -> Vec<(crate::equipment_config::KitChoice, f32)> {
+    ) -> Vec<crate::equipment_config::KittedRow> {
         self.kitted_rows(config, |target| !target.same_source(source))
+    }
+
+    /// **The rank a crew on `source` claims the band's take gear at** — the row's own
+    /// `SourcePriority` where the band already works it, else the default a fresh row is given
+    /// (`docs/plan_site_crews.md` §2.3). What a prospective crew is settled at
+    /// ([`crate::equipment_config::BandItemBudget::with_prospective_row`]).
+    pub fn priority_on(&self, source: &LaborTarget) -> SourcePriority {
+        self.assignments
+            .iter()
+            .find(|assignment| assignment.target.same_source(source))
+            .map_or_else(SourcePriority::default, |assignment| assignment.priority)
     }
 
     /// The rows `keep` accepts, each as its **resolved** kit and head count — the pairs both
@@ -5045,8 +5053,8 @@ impl LaborAllocation {
     ///
     /// A pool's tools are settled by `SourcePriority` in
     /// `systems::labor::settle_pool_tools`, band-wide and per tool
-    /// (`docs/plan_pool_toe.md` §2.2) — a genuinely different rule from the pro-rata-by-head-count
-    /// split this budget makes, and the pools are in one or the other and never both. Leaving them
+    /// (`docs/plan_pool_toe.md` §2.2) — the same High → Normal → Low order this budget settles take
+    /// gear in, but a separate settlement, and the pools are in one or the other and never both. Leaving them
     /// here would ration the same stock twice: once here and once in the settlement.
     ///
     /// **The take crews' budget is untouched.** Pool tools and take/role tools are disjoint on the
@@ -5056,11 +5064,16 @@ impl LaborAllocation {
         &self,
         config: &crate::equipment_config::EquipmentConfig,
         keep: impl Fn(&LaborTarget) -> bool,
-    ) -> Vec<(crate::equipment_config::KitChoice, f32)> {
+    ) -> Vec<crate::equipment_config::KittedRow> {
         self.assignments
             .iter()
             .filter(|assignment| !assignment.target.is_standing_pool() && keep(&assignment.target))
-            .map(|assignment| (assignment.kit_choice(config), assignment.workers as f32))
+            .map(|assignment| crate::equipment_config::KittedRow {
+                kit: assignment.kit_choice(config),
+                workers: assignment.workers as f32,
+                priority: assignment.priority,
+                source: Some(assignment.target.clone()),
+            })
             .collect()
     }
 

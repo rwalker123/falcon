@@ -3347,6 +3347,7 @@ fn seed_source_yield(
                     .map(|assignment| {
                         (
                             assignment.kit_choice(&equipment_cfg),
+                            assignment.priority,
                             allocation.item_budget(&equipment_cfg),
                             // **The rows this one competes with for the band's gear** — what a far
                             // row's caravan forecast is priced beside
@@ -3356,7 +3357,7 @@ fn seed_source_yield(
                     })
             })
     };
-    let Some((crew_kit, item_budget, other_rows)) = crew_gear else {
+    let Some((crew_kit, crew_priority, item_budget, other_rows)) = crew_gear else {
         return;
     };
     let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
@@ -3442,7 +3443,7 @@ fn seed_source_yield(
                 &crew_kit,
                 workers as f32,
                 &band_wear,
-                item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
+                item_budget.share_for_source(target, &band_wear, &equipment_cfg),
             );
             let per_worker_biomass = crew_coverage.weighted_rate(|kit| {
                 equipment_cfg.forage_per_worker_biomass_capacity(
@@ -3494,6 +3495,7 @@ fn seed_source_yield(
                     &equipment_cfg,
                     &crew_kit,
                     workers,
+                    crew_priority,
                     &band_wear,
                     &other_rows,
                     &labor,
@@ -3550,7 +3552,7 @@ fn seed_source_yield(
                 &crew_kit,
                 workers as f32,
                 &band_wear,
-                item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
+                item_budget.share_for_source(target, &band_wear, &equipment_cfg),
             );
             let per_worker_biomass = hunt_coverage.weighted_rate(|kit| {
                 equipment_cfg.hunt_per_worker_biomass_capacity(
@@ -3604,6 +3606,7 @@ fn seed_source_yield(
                     &equipment_cfg,
                     &crew_kit,
                     workers,
+                    crew_priority,
                     &band_wear,
                     &other_rows,
                     &labor,
@@ -3711,6 +3714,7 @@ fn seed_source_yield(
                         &equipment_cfg,
                         &crew_kit,
                         workers,
+                        crew_priority,
                         &band_wear,
                         &other_rows,
                         &labor,
@@ -19550,7 +19554,7 @@ mod tests {
 
     // --- ONE BAND, ONE SET OF GEAR — one share, read by three surfaces ---------------------------
     //
-    // `advance_labor_allocation` arms each work row from its **pro-rata share** of the band's gear
+    // `advance_labor_allocation` arms each work row from its **settled share** of the band's gear
     // (`equipment.md` → "ONE BAND, ONE SET OF GEAR"). Two surfaces quote a row before the turn pays
     // it — the assign-time seed below (`seed_source_yield`) and the compose sheet's crew-take curve
     // (`forecast_query::answer_hunt_crew_take`) — and both must be cut from that same share, or a

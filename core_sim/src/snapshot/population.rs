@@ -256,6 +256,7 @@ fn assigned_hunt_useful_crew(
             kit: gear.kit,
             wear: gear.wear,
             other_rows: &other_rows,
+            priority: gear.allocation.priority_on(target),
             intrinsic: kit_levers.person_intrinsic,
             // **BASE, not `expedition_tuning`** — this is a band hunting its own range.
             tuning: hunt_crew_levers.combat.tuning(),
@@ -1026,7 +1027,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         &row_kit,
                         workers,
                         &kit,
-                        budget.share_for(workers, &kit, kit_levers.config),
+                        budget.share_for_source(&assignment.target, &kit, kit_levers.config),
                     );
                     (row_kit, coverage)
                 })
