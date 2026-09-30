@@ -3568,6 +3568,15 @@ table BuildQueueEntryState {
   // borrows it. The builders' tool claim and the build's pile rank at the HEAD entry's mark. The
   // queue shows it read-only; it is set from the site's row.
   buildPriority:string;
+  // --- WHICH SITE ON THE TILE (appended last, docs/plan_site_crews.md section 2.4) ---------------
+  // The entry states its own site in the command grammar's terms, so a client addresses it back
+  // with no join: `<x> <y> <material>` for a working, `road <x> <y>` for a road.
+  // material = the deposit's material key on a WORKING's entry (`extraction.json` -> `deposits`) -
+  //            one hex can hold two workings, so the tile alone names neither. "" on a patch, herd
+  //            or road entry.
+  // road     = true on a ROAD's entry, whose tile may also carry a patch.
+  material:string;
+  road:bool = false;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant

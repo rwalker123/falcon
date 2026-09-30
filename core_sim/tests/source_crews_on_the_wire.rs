@@ -425,6 +425,79 @@ fn a_queued_builds_mark_reaches_the_client() {
     );
 }
 
+/// ⛔ **EACH QUEUED BUILD STATES ITS OWN SITE, IN THE COMMAND GRAMMAR'S TERMS**
+/// (`docs/plan_site_crews.md` §2.4). Two workings queued on one hex publish two entries that differ
+/// by their `material`, a road queued on the same hex says `road`, and the patch entry says
+/// neither — so a client can address each back as `<x> <y> <material>`, `road <x> <y>` or
+/// `<x> <y>` with no join, and two workings on one tile cannot be read as one.
+#[test]
+fn two_workings_and_a_road_on_one_tile_publish_distinguishable_entries() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    const WOOD: &str = "wood";
+    const STONE: &str = "stone";
+
+    let (mut app, source) = world_with_a_keeping_band();
+    {
+        let mut allocation = app
+            .world
+            .query::<&mut LaborAllocation>()
+            .iter_mut(&mut app.world)
+            .find(|allocation| !allocation.build_queue.is_empty())
+            .expect("the fixture band has a build queued on its patch");
+        // Pushed straight onto the queue: the capture is under test, not the declaration gates.
+        for site in [
+            BuildSource::Deposit {
+                tile: source,
+                material: WOOD.to_string(),
+            },
+            BuildSource::Deposit {
+                tile: source,
+                material: STONE.to_string(),
+            },
+            BuildSource::Road(source),
+        ] {
+            allocation.build_queue.push(BuildQueueEntry {
+                source: site,
+                declared: BuildJob::Rung(Improvement::Fell),
+                priority: SourcePriority::default(),
+            });
+        }
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    let bytes = encoded_snapshot(&app);
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let sites: Vec<(u32, u32, String, bool)> = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.buildQueue().into_iter().flatten())
+        .map(|entry| {
+            (
+                entry.targetX(),
+                entry.targetY(),
+                entry.material().unwrap_or_default().to_string(),
+                entry.road(),
+            )
+        })
+        .collect();
+    let at = |material: &str, road: bool| (source.x, source.y, material.to_string(), road);
+    assert_eq!(
+        sites,
+        vec![
+            at("", false),
+            at(WOOD, false),
+            at(STONE, false),
+            at("", true)
+        ],
+        "the patch, each working and the road on one tile are four distinguishable entries"
+    );
+}
+
 #[test]
 fn the_crop_a_crew_asked_for_reaches_the_client() {
     let (app, _source) = world_with_a_keeping_band();

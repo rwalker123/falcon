@@ -447,6 +447,13 @@ fn create_populations<'a>(
                         };
                         // **THE ENTRY'S BUILD MARK** (`docs/plan_site_crews.md` §2.4).
                         let build_priority = builder.create_string(&entry.build_priority);
+                        // **WHICH SITE ON THE TILE** — a working's material, absent off a working,
+                        // `faunaId`'s reading.
+                        let material = if entry.material.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&entry.material))
+                        };
                         fb::BuildQueueEntryState::create(
                             builder,
                             &fb::BuildQueueEntryStateArgs {
@@ -455,6 +462,8 @@ fn create_populations<'a>(
                                 targetY: entry.target_y,
                                 faunaId: fauna_id,
                                 buildPriority: Some(build_priority),
+                                material,
+                                road: entry.road,
                             },
                         )
                     })
@@ -1539,6 +1548,8 @@ fn decode_population(
             target_y: entry.targetY(),
             fauna_id: text(entry.faunaId()),
             build_priority: text(entry.buildPriority()),
+            material: text(entry.material()),
+            road: entry.road(),
         }),
         fodder_need: cohort.fodderNeed(),
         fodder_income: cohort.fodderIncome(),

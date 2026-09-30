@@ -1212,6 +1212,11 @@ across bands) and **`upkeepToolsShort`** (`bool`, the keeping held fewer tools t
   *this* turn's keepers.
 - **`BuildQueueEntryState.buildPriority`** (`"high"` / `"normal"` / `"low"`) is the queued build's
   own mark — see "THE BUILD'S MARK" under the builders pool above.
+- **`BuildQueueEntryState.material` / `.road`** (appended) state which site on the tile an entry is,
+  in the command grammar's terms: a working's entry carries its deposit's `material` (`""`
+  elsewhere), a road's carries `road = true`. Two workings queued on one hex are two
+  distinguishable entries (`source_crews_on_the_wire::
+  two_workings_and_a_road_on_one_tile_publish_distinguishable_entries`).
 - **`poolCrew` / `poolToe` state `roadwork` and `builders` only**, and the `quarrywork*` triple on
   `PopulationCohortState` is `(deprecated)` and publishes `0`.
 - **The four `*BuildFraction` slots and the two `*CrewNeeded` slots are `(deprecated)`** and no

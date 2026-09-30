@@ -1812,6 +1812,15 @@ pub struct BuildQueueEntryState {
     /// row's `priority` ranks the site's crew.
     #[serde(default)]
     pub build_priority: String,
+    /// **The deposit's material on a working's entry** — one hex can hold two workings, so the tile
+    /// alone names neither. Empty on a patch, herd or road entry. The command grammar's
+    /// `<x> <y> <material>` (`docs/plan_site_crews.md` §2.4).
+    #[serde(default)]
+    pub material: String,
+    /// **`true` on a road's entry** — the command grammar's `road <x> <y>`, since a road's tile may
+    /// also carry a patch.
+    #[serde(default)]
+    pub road: bool,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of

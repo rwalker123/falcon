@@ -2072,7 +2072,8 @@ fn material_payoffs(ledger: &BTreeMap<String, f32>) -> Vec<sim_runtime::Material
 ///
 /// The declared job, the kit, the destination rung and the estimate are all published on the
 /// **source** row and agree across every band holding the source by construction, so an entry that
-/// repeated them would be a second copy of a fact that already has a home.
+/// repeated them would be a second copy of a fact that already has a home. What it does state is
+/// **which site** it is — tile, herd, working material or road — in the command grammar's terms.
 fn build_queue_entry_to_state(
     entry: &crate::components::BuildQueueEntry,
 ) -> SchemaBuildQueueEntryState {
@@ -2092,17 +2093,18 @@ fn build_queue_entry_to_state(
             state.target_y = tile.y;
         }
         BuildSource::Herd(fauna_id) => fauna_id.clone_into(&mut state.fauna_id),
-        // A road tile is addressed exactly as a patch is — the `kind` token above is what tells the
-        // two apart on the wire (`roadwork` against `forage`).
+        // **Each entry states its own site in the command grammar's terms**
+        // (`docs/plan_site_crews.md` §2.4) — `road <x> <y>` for a road, whose tile may also carry a
+        // patch, and `<x> <y> <material>` for a working, since one hex can hold two.
         BuildSource::Road(tile) => {
             state.target_x = tile.x;
             state.target_y = tile.y;
+            state.road = true;
         }
-        // The tile only — see `labor_assignment_state`: the material half of a deposit's key has no
-        // wire field yet, and adding one belongs with the readouts.
-        BuildSource::Deposit { tile, .. } => {
+        BuildSource::Deposit { tile, material } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
+            material.clone_into(&mut state.material);
         }
     }
     state
