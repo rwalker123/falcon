@@ -237,8 +237,9 @@ pace in the game is tuned in ONE file"* — so a route branch is paced against t
 >
 > **`docs/plan_standing_upkeep.md` §2.4–§2.8 built it, for both webs.** A rung declares an `upkeep`
 > block — `work_per_turn`, a `scaled_by` measure, a material rate, `meter_decay` and its own
-> `grace_turns` — funded from **band-level keeping pools** (`LaborTarget::Agriculture` /
-> `Husbandry`), with the fund-mode split and the shortfall/shed paths. **Routes inherit a
+> `grace_turns` — funded by each site's own crew, which keeps before it collects
+> (`docs/plan_site_crews.md`), with the shortfall/shed paths. Roads, which collect nothing, keep a
+> band-level Roadwork pool and its fund-mode split. **Routes inherit a
 > standing-cost model; the slice's job is to give it a route-shaped scale term, not to invent the
 > model.** Herding is no longer the "closest precedent" — it is one of two shipped instances.
 

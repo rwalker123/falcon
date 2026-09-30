@@ -4,6 +4,14 @@
 Normal / Low priority**, and **pools only** — hunters, gatherers, cutters, scouts and warriors keep
 the kits they are sent out with.
 
+> **NARROWED BY `docs/plan_site_crews.md` (#751).** The Agriculture, Husbandry and Quarrywork keeping
+> pools retired: each site's own crew now keeps it, claiming the keeping tools its rung needs for the
+> hands it spends keeping. So the pools this plan settles are **Roadwork and Builders**; a site crew's
+> keeping claim settles in the same per-tool, priority-ordered pass, and the pool-only steps (the
+> fund-mode split and step 5's bare top-up) apply to Roadwork alone. **A build's claim ranks at its
+> own Build mark**, not at its queue head row's Priority. The rest of this document is the record of
+> how the five-pool settlement shipped.
+
 ## 0. The gap, in one line
 
 **A standing pool is handed one kit, but its sites can need different tools — so "which tool does
@@ -74,8 +82,8 @@ The `settle_scarce_store` beside it keeps splitting the *continuous* stores (pen
 upkeep, build materials) pro-rata.
 
 - A site's claim ranks at **that site row's** `SourcePriority`.
-- A build's claim ranks at **its queue head row's** priority — the rule a build's materials follow
-  today.
+- A build's claim ranks at **its queue entry's own Build mark** (`docs/plan_site_crews.md` §2.4),
+  for its tools and its materials alike.
 - **Within one tier, keeping is served before building.** Every keeping pool's claims in the tier
   settle first — in full if the stock covers them, by largest remainder among themselves if not —
   and the builders' claim in that tier takes what is left. Across tiers nothing moves: a `High`
@@ -198,7 +206,7 @@ planned onto a site — has nothing spare and the deficit stands.
 ### 2.4 Builders fund one entry
 
 The builders' claim is **the head entry's tool lines × the builders' head count**, ranked at the head
-row's priority. Entries behind the head are dated, not worked, and claim nothing — as today.
+entry's own Build mark (`docs/plan_site_crews.md` §2.4). Entries behind the head are dated, not worked, and claim nothing — as today.
 
 ### 2.5 What does not change
 

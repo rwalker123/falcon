@@ -455,9 +455,9 @@ a branch key its standing to a tile. Then:
 | Defense | walls (arc #693, later) | — | — |
 | Dwellings | settlement arc | — | occupancy |
 
-**Whoever gets the yield keeps the rung (decided).** Keeping is a band-level pool per activity today,
-never a worker pinned to a tile. For a tile branch the rule is: **the band that draws the rung's yield
-contributes its keeping workers** — the band drawing food from a field, drawing from a store, standing
+**Whoever gets the yield keeps the rung (decided).** A food or extraction site is kept by its own
+crew before that crew collects (`docs/plan_site_crews.md`); a road by the band's Roadwork pool. For a
+tile branch the rule is: **the band that draws the rung's yield contributes its keeping workers** — the band drawing food from a field, drawing from a store, standing
 on a monument's belief. A store within reach of two bands is kept by the one drawing on it; a rung
 nobody draws from decays after its grace. Drawing on a store already means being within
 `reach_tiles` of it, so this is the network-node rule stated as who pays.

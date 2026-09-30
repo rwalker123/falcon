@@ -313,7 +313,8 @@ hauls on every rung — and nothing about the rule knows wood from stone (`.clau
 web: the cargo is the material").
 
 **Holding it costs upkeep like everything else** — work per turn, interpolating on position
-(`plan_standing_upkeep.md` §2.7), drawn from a keeping pool the two branches share. Without it a
+(`plan_standing_upkeep.md` §2.7), paid by the working's own `extract` crew before it cuts
+(`docs/plan_site_crews.md` §2.5). Without it a
 working's position never falls and **a quarry is free to hold for ever**, which is the one thing an
 improvement may not be if it is to weigh on move-or-stay.
 
@@ -427,7 +428,7 @@ not a blocker: the deposit works whatever the metal is for.
   applies on the rungs it names, and the crew's haul carry over the material's weight caps the cut,
   as a hunter's haul bounds a kill. Each tool is scoped by branch and rung so it adds
   nothing — and wears nothing — off its own rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
-  working and the keepers holding one are geared by it through the rung requirement.
+  working and the hands keeping one are geared by it through the rung requirement.
 - **The road tools' pacing moved a long way and nobody has played it.** `earthmoving` and
   `stone_dressing` cost 2 **stone** instead of 2 bone since §8's change: about 5 worker-turns on a
   scatter against about 22 turns of a whole band's hunting. `recipes.json`'s `_comment_road_tools`
