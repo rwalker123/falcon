@@ -17167,12 +17167,12 @@ func _road_queue_row() -> Dictionary:
 		"build_turns_remaining": SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED,
 	}
 
-## …and the queue entry the sim publishes for it: `kind: "roadwork"` carrying the road's TILE.
+## …and the queue entry the sim publishes for it: `kind: "roadwork"`, `road: true`, the road's TILE.
 ## `BuildSource::kind()` is the same token the band-wide roadwork ROLE uses, which is exactly why
 ## `HudBandLaborState.pending_key` gates its road arm on a real tile.
 static func _queue_road_entry(tile: Vector2i) -> Dictionary:
 	return {"kind": HudConst.LABOR_KIND_ROADWORK,
-		"target_x": tile.x, "target_y": tile.y, "fauna_id": ""}
+		"target_x": tile.x, "target_y": tile.y, "fauna_id": "", "road": true}
 
 ## The band whose queue is `[Tame <herd>, grade <road>]` — Ray's own shape, with the road behind the
 ## Tame that is taking every builder.
@@ -19070,14 +19070,13 @@ func _assert_a_working_and_a_road_carry_their_marks() -> void:
 		"kind": HudConst.LABOR_KIND_ROADWORK, "workers": ROSTER_ROADWORK_WORKERS,
 		"target_x": -1, "target_y": -1, "fauna_id": "",
 	})
-	# The wire's entry names a working by its TILE alone (`BuildQueueEntryState` has no material), so
-	# the client resolves it off the deposit flagged `is_queued` above.
+	# Each entry names its own site, as the wire does: the working its `material`, the road `road`.
 	band["build_queue"] = [
 		{"kind": HudConst.LABOR_KIND_EXTRACT, "target_x": ROSTER_NEAR_TILE.x,
-			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
+			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "", "material": WORKINGS_STONE,
 			"build_priority": MARKS_WORKING_BUILD_LEVEL},
 		{"kind": HudConst.LABOR_KIND_ROADWORK, "target_x": ROSTER_NEAR_TILE.x,
-			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
+			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "", "road": true,
 			"build_priority": MARKS_ROAD_BUILD_LEVEL},
 	]
 	_push_bands([band])

@@ -567,7 +567,7 @@ func _drive_build_order() -> void:
 	}, BUILD_ORDER_POSITION)
 	await _settle()
 	_hud._bandpanel._emit_build_order(band, {
-		"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+		"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true,
 	}, BUILD_ORDER_POSITION)
 	await _settle()
 	_hud._bandpanel._emit_build_order(band, {
@@ -601,7 +601,7 @@ func _drive_build_priority() -> void:
 	}, HudWorkVocab.WORK_PRIORITY_HIGH)
 	await _settle()
 	_hud._bandpanel._commit_build_priority(band, {
-		"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+		"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true,
 	}, HudWorkVocab.WORK_PRIORITY_LOW)
 	await _settle()
 
@@ -631,7 +631,7 @@ func _drive_unqueue() -> void:
 			{"kind": SourceForecast.LABOR_KIND_HUNT, "x": -1, "y": -1, "herd_id": NEAR_HERD_ID},
 			{"kind": HudConst.LABOR_KIND_EXTRACT, "x": TARGET_X, "y": TARGET_Y, "herd_id": "",
 				"material": DEPOSIT_MATERIAL},
-			{"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": ""}]:
+			{"kind": HudConst.LABOR_KIND_ROADWORK, "x": TARGET_X, "y": TARGET_Y, "herd_id": "", "road": true}]:
 		_hud._bandpanel._emit_unqueue(band, model)
 		await _settle()
 	_hud._band_labor._pending_labor.clear()

@@ -2445,7 +2445,7 @@ func _build_roadwork_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     if _band_labor.build_queue_keys(band).has(key):
         _add_priority_pills(line, band, {
             "kind": HudConst.LABOR_KIND_ROADWORK, "x": tile.x, "y": tile.y, "herd_id": "",
-            "build_queued": true,
+            "road": true, "build_queued": true,
             "build_priority": _band_labor.build_priority_for_key(band, key),
         }, false)
     line.add_child(_build_roadwork_roster_abandon_button(band, tile))
@@ -2768,7 +2768,7 @@ func _commit_build_priority(band: Dictionary, model: Dictionary, level: String) 
         # **THE SITE'S ADDRESS HALVES** (`Main.site_address`): a working carries its material and a road
         # says it is a road, or the server reads the bare tile as the PATCH on that hex.
         "material": String(model.get("material", "")),
-        "road": String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK,
+        "road": bool(model.get("road", false)),
         "level": HudWorkVocab.work_priority_of(level),
     })
 
@@ -3485,8 +3485,9 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
 ## which is `_build_queue_models`' unresolvable-source case arriving honestly, rank spent and no row.
 ## **THIS BAND'S QUEUED WORKING BUILDS, AS QUEUE MODELS** keyed like `build_queue_keys` — the deposit
 ## twin of `_road_queue_models`. A working has no forage or hunt model, so without this its queued rung
-## had no row and could be neither reordered nor withdrawn from the block. The model carries its
-## `material`, which is what addresses it (`Main.site_address`): the bare tile is the patch.
+## had no row and could be neither reordered nor withdrawn from the block. The entry names its own
+## `material` (`BuildQueueEntryState.material`), and the model carries it, which is what addresses it
+## (`Main.site_address`): the bare tile is the patch.
 func _deposit_queue_models(band: Dictionary) -> Dictionary:
     var models: Dictionary = {}
     var entries: Variant = band.get("build_queue", [])
@@ -3501,7 +3502,7 @@ func _deposit_queue_models(band: Dictionary) -> Dictionary:
             continue
         var x := int(wire.get("target_x", -1))
         var y := int(wire.get("target_y", -1))
-        var material := _band_labor.queued_extract_material(band, x, y)
+        var material := String(wire.get("material", ""))
         if material == "":
             continue
         var deposit := _deposit_at(x, y, material)
@@ -3569,8 +3570,7 @@ func _road_queue_models(band: Dictionary) -> Dictionary:
         if not (entry_variant is Dictionary):
             continue
         var wire: Dictionary = entry_variant
-        if String(wire.get("kind", "")).strip_edges().to_lower() \
-                != HudConst.LABOR_KIND_ROADWORK:
+        if not bool(wire.get("road", false)):
             continue
         var x := int(wire.get("target_x", -1))
         var y := int(wire.get("target_y", -1))
@@ -3639,6 +3639,8 @@ func _road_queue_model(road: Dictionary, ladder: Array[Dictionary], x: int, y: i
         "key": _band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK, x, y, ""),
         "kind": HudConst.LABOR_KIND_ROADWORK,
         "x": x, "y": y, "herd_id": "",
+        # The site half `Main.site_address` spells a road with — the entry's own `road` flag.
+        "road": true,
         # The VERB that raises the destination rung, `""` on a rung nobody declares. It is read for
         # the ring test alone (a road is never one), and it is the catalog's rather than a guess.
         "improvement": HudRouteVocab.catalog_verb(rung_entry),
@@ -5056,7 +5058,7 @@ func _emit_build_order(band: Dictionary, model: Dictionary, position: int) -> vo
         # **THE SITE'S ADDRESS HALVES** (`Main.site_address`): a working carries its material and a road
         # says it is a road, or the server reads the bare tile as the PATCH on that hex.
         "material": String(model.get("material", "")),
-        "road": String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK,
+        "road": bool(model.get("road", false)),
         "position": position,
     })
 
@@ -5464,7 +5466,7 @@ func _emit_unqueue(band: Dictionary, model: Dictionary) -> void:
         # **THE SITE'S ADDRESS HALVES** (`Main.site_address`): a working carries its material and a road
         # says it is a road, or the server reads the bare tile as the PATCH on that hex.
         "material": String(model.get("material", "")),
-        "road": String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK,
+        "road": bool(model.get("road", false)),
         # **THE OPTIMISTIC HALF'S TWO KEYS, AND NEITHER IS A COMMAND TOKEN**
         # (`docs/plan_standing_upkeep.md` §4.7b ④). `kind` keys the withdrawal in the overlay
         # (`pending_key`'s own shape) and `pending_entity` is the client-local handle a FAILED send

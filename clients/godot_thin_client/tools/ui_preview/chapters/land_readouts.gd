@@ -1569,7 +1569,7 @@ func _assert_a_declared_road_says_it_is_climbing() -> void:
 ## the queue is captured by value first and restored verbatim, this chapter's own rule for the roster
 ## it stages.
 ##
-## The entry is shaped exactly as the sim publishes one: `kind: "roadwork"` carrying the road's TILE,
+## The entry is shaped exactly as the sim publishes one: `kind: "roadwork"`, `road: true`, the TILE,
 ## which is what the road row's own `tile_x` / `tile_y` join on.
 func _with_a_road_queued(tile: Vector2i) -> Array:
 	var bands: Array = h._hud._band_labor.player_bands()
@@ -1580,7 +1580,7 @@ func _with_a_road_queued(tile: Vector2i) -> Array:
 		var band: Dictionary = band_variant
 		inherited.append((band.get("build_queue", []) as Array).duplicate(true))
 		band["build_queue"] = [{"kind": HudConst.LABOR_KIND_ROADWORK,
-			"target_x": tile.x, "target_y": tile.y, "fauna_id": ""}]
+			"target_x": tile.x, "target_y": tile.y, "fauna_id": "", "road": true}]
 	return inherited
 
 ## ⛔ **A BAND WITH TWO JOBS ALREADY IN FRONT OF THE PRESS** — a patch at the head and a second behind
@@ -1623,7 +1623,8 @@ func _with_a_queued_road() -> void:
 			continue
 		var queue: Array = (band_variant as Dictionary).get("build_queue", []) as Array
 		queue.append({"kind": HudConst.LABOR_KIND_ROADWORK,
-			"target_x": ROAD_FIXTURE_TILE.x, "target_y": ROAD_FIXTURE_TILE.y, "fauna_id": ""})
+			"target_x": ROAD_FIXTURE_TILE.x, "target_y": ROAD_FIXTURE_TILE.y, "fauna_id": "",
+			"road": true})
 
 ## The tile every road fixture in this chapter stands on, so a queue entry naming it and the road row
 ## itself cannot drift apart.

@@ -2409,10 +2409,11 @@ source through the one static:
 ⛔ **A WORKING OR A ROAD SENT AS THE BARE TILE LANDS ON THE PATCH ON THAT HEX**, which is why the
 emitters (`_emit_build_order`, `_emit_unqueue`, `_commit_build_priority`, `_commit_work_priority`, both
 road `✕`s) state `material` and `road` on every payload. `work_priority` passes `allow_road = false`
-and builds no line for a road. A working's queue entry names only its tile on the wire
-(`BuildQueueEntryState` has no material field), so `HudBandLaborState.queued_extract_material`
-resolves it off the deposits this band works there (the one `is_queued`, else the only one held);
-`_deposit_queue_models` gives a queued working build its queue row, face `Quarry · Stone (70, 17)`.
+and builds no line for a road. Each wire queue entry states its own site
+(`BuildQueueEntryState.material` / `.road`), and `HudBandLaborState.queue_entry_key` keys it off
+those alone — a working by its material, a road by `road`, never by inferring from the deposit rows.
+`_deposit_queue_models` gives a queued working build its queue row, face `Quarry · Stone (70, 17)`;
+`_road_queue_models` and `road_queue_tiles` select road entries on `road`, not on `kind`.
 
 The sections below describe the retired paged board, the POOLS block and its cards wherever they
 speak of chips, a pager, board capacity, a row of pool cards, or `agriculture` / `husbandry` /

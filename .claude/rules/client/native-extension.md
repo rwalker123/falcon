@@ -649,7 +649,10 @@ three source dicts (`dict/subsistence.rs` for patches and herds, `dict/deposits.
 (redacted with the rest of the live patch payload), and `SourceForecast.upkeep_hands` /
 `upkeep_tools_short` are the one reader of each. Each build-queue entry carries **`build_priority`**
 (`BuildQueueEntryState.buildPriority`, `high` | `normal` | `low`), read through
-`HudBandLaborState.build_priority_for_key`, which normalises an unwritten value to `normal`.
+`HudBandLaborState.build_priority_for_key`, which normalises an unwritten value to `normal`. It also
+carries its site halves, **`material`** (`BuildQueueEntryState.material`, `""` unless the entry is a
+working) and **`road`** (`.road`, true for a road build), which `HudBandLaborState.queue_entry_key`
+keys on — the tile alone cannot tell two workings, or a road and a patch, on one hex apart.
 
 ## The `connections` section, and the cohort fields the shipment arc appended
 

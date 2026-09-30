@@ -965,7 +965,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("labor_assignments", &array);
     // **THE BUILDS THIS BAND HAS DECLARED, IN THE ORDER IT WILL RAISE THEM**
     // (`docs/plan_standing_upkeep.md` §4.9 item 9a). An Array of `{kind, target_x, target_y,
-    // fauna_id, build_priority}` Dictionaries — the first four are the SAME keys a
+    // fauna_id, build_priority, material, road}` Dictionaries — the first four are the SAME keys a
     // `labor_assignments` entry spells its source with, deliberately, so a client keys both lists
     // with one call and cannot join them on two spellings that merely happen to match.
     //
@@ -998,6 +998,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "build_priority",
                 wire_entry.buildPriority().unwrap_or_default(),
             );
+            // **THE SITE'S OWN ADDRESS HALVES** (`docs/plan_site_crews.md` §2.4) — `material` names
+            // a working (`""` for every other kind) and `road` a road build. The tile alone cannot
+            // say either: one hex can hold two workings, or a road and a patch.
+            let _ = entry.insert("material", wire_entry.material().unwrap_or_default());
+            let _ = entry.insert("road", wire_entry.road());
             build_queue.push(&entry.to_variant());
         }
     }
