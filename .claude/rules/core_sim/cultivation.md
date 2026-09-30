@@ -232,11 +232,11 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   - **Accrues AFTER the turn's take**, so the turn pays exactly what the pre-commit forecast promised
     (forecast == actual). The turn progress reaches the job's cost is the last preparing take; the full tended
     yield starts the next turn.
-  - **THE KEEPING POOL PAYS THE RATE, AND THE BUILDERS PAY NONE OF IT**
-    (`docs/plan_standing_upkeep.md` §4.6a). The meter under a running `Cultivate` is at risk like any
-    other and is owed the same rate — to the band's `agriculture` pool, at any fullness — so the
-    pace is `work_cost / crew` and staffing the pool is what stops the ground rotting under the
-    builders. Pinned by
+  - **THE PATCH'S OWN CREW PAYS THE RATE, AND THE BUILDERS PAY NONE OF IT**
+    (`docs/plan_standing_upkeep.md` §4.6a, `docs/plan_site_crews.md` §2.1). The meter under a
+    running `Cultivate` is at risk like any other and is owed the same rate — by the crew on the
+    patch's own row, at any fullness — so the pace is `work_cost / crew` and staffing that row is
+    what stops the ground rotting under the builders. Pinned by
     `forage_cultivation::a_kept_cultivate_finishes_in_its_stated_turns_and_an_unkept_one_is_slower`
     and `every_staffed_build_crew_climbs_when_the_keeping_is_met`.
   - **Break-even, and it is now a CROP choice** (`work_cost` 50). The figures below were measured
@@ -281,9 +281,10 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   > MSY 12.19 biomass/turn. Best staple `wild_emmer`, marginal member `wild_rice`. **Quote the basket
   > whenever you quote a number** — since #433 a per-tile figure means nothing without the
   > realization it came from.
-  Working a completed improvement is **just a harvest** — it does not hold the rung. What the decay
-  pass reads is `ForagePatch::upkeep_supplied`, this patch's **share of the band's `agriculture`
-  pool** (§2.5), carried across the turn boundary by the Population→Logistics lag. The old
+  **The crew on a completed improvement keeps it first and harvests with the rest**
+  (`docs/plan_site_crews.md` §2.1). What the decay pass reads is `ForagePatch::upkeep_supplied`, the
+  work the patch's crews' keeping hands put on it (summed across bands), carried across the turn
+  boundary by the Population→Logistics lag. The old
   even-split-across-all-the-owner's-bands payment in `advance_cultivation` is **retired**, as is the
   flat `tended_provisions_per_biomass` managed rate.
   - **Completion RETIRES THE QUEUE ENTRY — a completed patch is never left building.** A queued
@@ -325,26 +326,26 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   used to *be* the decay, which welded them: raising a demand made the improvement rot faster in
   exact proportion, so neither could be retuned. Splitting them is what let the plant demands become
   whole numbers a player can staff exactly while the rot rates stayed precisely where they were.
-  - **THE BAND'S KEEPING POOL OWES IT, AT ANY METER FULLNESS** (`forage::patch_upkeep_supply`,
-    `docs/plan_standing_upkeep.md` §4.6a) — from the **first work banked** until the last. A
+  - **THE PATCH'S OWN CREW OWES IT, AT ANY METER FULLNESS** (`forage::patch_upkeep_supply`,
+    `docs/plan_standing_upkeep.md` §4.6a, `docs/plan_site_crews.md` §2.1) — from the **first work
+    banked** until the last. A
     mid-`Cultivate` patch is billed exactly as a finished one is, and to the same hands.
 
-    **The meter's FULLNESS used to decide who paid** — the build crew below its cost, the pool at it
-    (`forage::patch_is_maintaining`, deleted). Two states reported from ordinary play were wrong under
-    it: a **half-built** meter whose builders had left could not be held at all, bleeding its full
-    rate with keepers idle in the `agriculture` role and no command that could aim them at it; and a
-    completed rung eroded to 99% flipped into *building*, so it stopped being the pool's business at
-    the moment it began needing it. *"You cannot be billed to hold something you have not finished
-    building"* is deleted with it: **you can** — what you cannot be billed for is ground with nothing
-    on it at all.
+    **The meter's FULLNESS used to decide who paid** — the build crew below its cost, the keepers at
+    it (`forage::patch_is_maintaining`, deleted). Two states reported from ordinary play were wrong
+    under it: a **half-built** meter whose builders had left could not be held at all, bleeding its
+    full rate with no command that could aim keepers at it; and a completed rung eroded to 99%
+    flipped into *building*, so it stopped being the keepers' business at the moment it began
+    needing it. *"You cannot be billed to hold something you have not finished building"* is deleted
+    with it: **you can** — what you cannot be billed for is ground with nothing on it at all.
   - **AND THE RATE IS NOT A TAX ON BUILDING, so a Cultivate's pace is `work_cost / crew`.** A build
     crew supplies none of the rate, so its whole output is progress and **a lone builder banks a whole
     worker-turn** on a rung that costs two hands to hold. What can still eat a build is the **rot** —
     the ground going backwards while the keeping is short — which is a *countdown* term
     (`RungDef::build_balance`, published as `meterRotPerTurn`) and never an accrual one.
   - **The builders' identity no longer changes the supply, but the meter's still does.** A crew
-    mid-`Cultivate` on a patch whose half-sown Field is the at-risk meter is not sowing — and the pool
-    holds the Field anyway, because holding is not building.
+    mid-`Cultivate` on a patch whose half-sown Field is the at-risk meter is not sowing — and the
+    patch's crew holds the Field anyway, because holding is not building.
   - **THE VERB NAMES THE METER, AND THAT IS WHAT SURVIVES THE ONE-TURN CARRY.** The supply is stamped
     in Population and read by the *next* Logistics pass, so it has to describe the meter that pass
     will judge — not the one that was at risk when it was written. `patch_upkeep_supply` therefore
@@ -357,28 +358,24 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
     top of each turn). The demand is per-**source**, so two bands each put a fraction of it on the
     ground; assigning would let whichever band the loop visited last speak for all of them — a crew
     *gathering* a patch a second crew is sowing would overwrite the sowers' supply with its own zero.
-  - **The completion hand-off is RETIRED** (§2.3). It moved a finished build's crew onto the band's
-    `agriculture` role so a brand-new rung did not decay before anybody noticed it cost something —
-    which cannot happen now that the bill starts at the first work banked. Staffing keepers *during* a
+  - **The completion hand-off is RETIRED** (§2.3). It moved a finished build's crew onto a keeping
+    role so a brand-new rung did not decay before anybody noticed it cost something — which cannot
+    happen now that the bill starts at the first work banked. Staffing the patch's row *during* a
     build is no longer merely harmless: it is what stops the meter rotting under its own builders.
-  > #### GATHERING A PATCH NO LONGER HOLDS IT — the behavioural headline
+  > #### A PATCH'S OWN CREW HOLDS IT — the behavioural headline (`docs/plan_site_crews.md`)
   >
-  > The retired `ForagePatch::tended_this_turn` was set by **any** crew on the tile, so a patch
-  > somebody was *harvesting* never decayed: holding an improvement was free for exactly as long as
-  > you were taking from it. Holding and taking are separate allocations
-  > (`docs/plan_standing_upkeep.md` §2.2), so a band that gathers and staffs no keeper watches the
-  > ground it improved revert underneath it. **The cost is TWO hands per tended patch and FOUR per
-  > Field**, forever — whole numbers a player can staff exactly, where the retired sub-worker demands
-  > rounded up to one hand and threw the rest of that hand away. They are staffed from the band's
-  > `agriculture` pool rather than per tile (§2.5), so a band holding several patches pays the sum and
-  > wastes nothing. Pinned by
-  > `forage_cultivation::gathering_a_patch_does_not_hold_it_but_one_keeper_does`.
+  > The crew on a patch's row keeps it **first** — `keep_hands = min(crew, bill ÷ keep_rate)`,
+  > fractional — and gathers with the rest, so a band gathering a tended patch holds it and a row
+  > with nobody on it rots. **The cost is TWO bare hands per tended patch and FOUR per Field**
+  > (per tender-load), forever; a hoe on the keeping lowers the hands, never the bill. A crew of
+  > exactly the bill keeps and gathers nothing; each hand past it gathers one hand's worth. Pinned
+  > by `forage_cultivation::a_patchs_own_crew_holds_it_and_an_empty_row_does_not` and
+  > `forage_field::a_fields_crew_of_its_bill_in_bare_hands_keeps_it_and_one_more_hand_harvests`.
   >
-  > **AND THE MIRROR HOLDS: keeping a patch does not require gathering it.** A band that finishes a
-  > Cultivate and moves its foragers to a richer stand still *holds* that ground, so its row survives
-  > at zero gatherers and goes on drawing from the pool — `assign_labor forage <x> <y> 0` is *"stop
-  > gathering"*, not *"this band has nothing here"*. Pinned by
-  > `forage_cultivation::a_patch_with_no_gatherers_is_still_kept_by_the_bands_pool`;
+  > **AND A CREW CAN KEEP WITHOUT GATHERING.** A band that finishes a Cultivate and moves its
+  > foragers to a richer stand still *holds* that ground, so its row survives at zero — and a crew
+  > set to the bill keeps it while taking nothing. Pinned by
+  > `forage_cultivation::a_crew_sized_to_the_bill_keeps_a_patch_while_gathering_nothing`;
   > `intensification.md` → "A SOURCE ROW IS THE BAND'S HOLDING" owns the seam and the retirement rule
   > that bounds it.
   - **The grace.** `ForagePatch::neglect_turns` counts **consecutive turns of shortfall** (a single
@@ -391,11 +388,11 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
     counts *un-worked* turns until its own slice lands.
   - **IT IS CONTINUOUS IN THE SHORTFALL, AT ANY METER FULLNESS.** Half the hands a meter needs is
     half a shortfall and bleeds at half the rung's rate, on a meter being raised exactly as on a held
-    one — one pool, one arithmetic. The binary flag made a crew of one and a crew of ten equally
+    one — one arithmetic. The binary flag made a crew of one and a crew of ten equally
     sufficient, so under-crewing cost exactly nothing until it reached zero. **A half is reachable on
     the SHIPPED ladder now**, which is most of what the whole-number retune bought: pinned by
-    `forage_cultivation::a_half_staffed_keeping_bleeds_at_half_the_rungs_rate` on the shipped
-    demands, and at the seam by
+    `forage_cultivation::a_half_staffed_keeping_bleeds_in_proportion_to_the_supply_it_is_short`
+    on the shipped demands, and at the seam by
     `forage::tests::a_half_staffed_keeping_is_half_short_on_the_meter_it_is_raising`.
   - **The bleed is in absolute WORK UNITS** — the rung's `upkeep.meter_decay.per_turn`, `0.5` on
     `plant:tended` and `0.75` on `plant:field`. Both are **the pacing-neutral inversion of the
@@ -496,9 +493,9 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
   - **⛔ BUT NOTHING RE-ADOPTS IT** (`docs/plan_standing_upkeep.md` §2.4). Deriving the verb says
     *what* a repair would be; it does not put the source back in the band's **build queue**.
     Repairing an eroded rung is a **fresh decision**, made by re-queueing — which is what keeps a
-    one-percent-eroded Field from displacing the build the player actually ordered off the head of a
-    pool funded all-hands-on-one, being topped up, slipping again, and oscillating there while the
-    real build stands still. Pinned by
+    one-percent-eroded Field from displacing the build the player actually ordered off the head of
+    the builders' queue, being topped up, slipping again, and oscillating there while the real build
+    stands still. Pinned by
     `forage_cultivation::a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it`.
   - **`abandon_improvement` is RETIRED** with the stored authority it used to clear (proto field 46
     reserved, never reused), because a command that cleared a *derived* value would either do nothing
@@ -536,7 +533,7 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
 - **Config.** The plant rung-2 **build dials moved to `intensification_ladder.json`**'s `plant:tended`
   rung (`build`: **`work_cost` 50** work units → 25 turns to prepare **at the rung's crew of 2, at the
   food peak, with no gear**, `upkeep.work_per_turn` **2.0** what holding the rung costs per turn
-  **per tender-load**, out of the band's `agriculture` pool — a whole number on the reference tile
+  **per tender-load**, kept by the patch's own crew — a whole number on the reference tile
   and only there, since the load scales it with the ground (2.0 on `AlluvialPlain`, 0.718 on
   `PrairieSteppe`, 2.154 on `RiverDelta`) —
   `upkeep.meter_decay` **`{ per_turn 0.5 }`**, what an *unkept* patch loses per turn (its

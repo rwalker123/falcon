@@ -1564,7 +1564,7 @@ fn a_tamed_herd_below_its_collapse_fraction_is_not_overdrawn_by_a_crew_it_out_gr
         herd.biomass,
         regrowth * UNDER_WHAT_IT_REGROWS,
         &core_sim::HuntingParty::builtin_equipped(),
-        A_LONE_HUNTER,
+        A_LONE_HUNTER as f32,
         floor,
     );
     assert!(
@@ -1944,7 +1944,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         per_worker,
         &core_sim::HuntingParty::builtin_equipped(),
         1.0,
-        4,
+        4.0,
         0.5,
         horizon,
         // The arrivals schedule regrows first, so the realized twin must too for the two to
@@ -1957,7 +1957,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         per_worker,
         &core_sim::HuntingParty::builtin_equipped(),
         1.0,
-        4,
+        4.0,
         0.5,
         horizon,
     );
@@ -1993,7 +1993,7 @@ fn a_spent_source_schedules_nothing() {
         equipped_haul_rate(),
         &core_sim::HuntingParty::builtin_equipped(),
         1.0,
-        4,
+        4.0,
         0.5,
         labor.arrivals_horizon_turns,
     );

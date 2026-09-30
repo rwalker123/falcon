@@ -24,7 +24,7 @@
 //! ground, not gathering"*, which is true of a **shared** crew and of nothing else.
 //!
 //! **The build's own output is net of nothing.** The rung's standing [`RungUpkeep`] is owed every
-//! turn, while building and while holding alike — but it is owed by the band's **keeping pool**, for
+//! turn, while building and while holding alike — but it is owed by the site's **own crew**, for
 //! every meter carrying work at any fullness (`docs/plan_standing_upkeep.md` §4.6a), so a build
 //! crew's whole output is progress and the pace is `work_cost / crew`. What can still eat a build is
 //! the **rot**: what the keeping failed to cover, bleeding off the very meter the builders are
@@ -382,10 +382,10 @@ pub fn build_turns_remaining(cost: f32, done: f32, work_this_turn: f32) -> Optio
 /// # WHY THE TWO NON-FINISHING STATES ARE NOT ONE
 ///
 /// **THE ROT IS THE DENOMINATOR** (`docs/plan_standing_upkeep.md` §4.6a). A build crew supplies
-/// nothing toward the maintenance rate — the keeping pool owes that for every meter carrying work,
-/// at any fullness — so what eats a build is the **rot**: what the keeping failed to cover, bleeding
-/// off the very meter the builders are raising ([`RungDef::meter_rot`]). Builders raising a meter
-/// more slowly than it bleeds are losing work already bought.
+/// nothing toward the maintenance rate — the site's own crew owes that for every meter carrying
+/// work, at any fullness — so what eats a build is the **rot**: what the keeping failed to cover,
+/// bleeding off the very meter the builders are raising ([`RungDef::meter_rot`]). Builders raising
+/// a meter more slowly than it bleeds are losing work already bought.
 ///
 /// That the two non-finishing states are **actionable and permanent** — standing facts about a
 /// staffing the player has already committed — is what separates them from the no-answer state,
@@ -430,7 +430,7 @@ pub enum BuildTurns {
     /// than merely waiting its turn.
     ///
     /// **The remedy is off the build line entirely.** The measured case is a half-tamed herd with an
-    /// empty `husbandry` role: the hunters draw the flock to their floor, the unmet keeping
+    /// empty keeping: the flock stands on its floor, the unmet keeping
     /// suppresses its regrowth, and the `Tame`'s own escapement gate never reopens. What fixes it is
     /// `assign_labor <faction> <band> husbandry <n>`.
     Blocked,
@@ -512,7 +512,7 @@ pub enum BuildGate {
     /// plant `Cultivate` and animal `Tame` — and never by rung 3, where bare ground stands below
     /// every floor by construction.
     ///
-    /// **This is the animal web's escapement stall**, whose remedy is the `husbandry` pool rather
+    /// **This is the animal web's escapement stall**, whose remedy is the herd's own crew rather
     /// than anything on the build line (`.claude/rules/core_sim/husbandry.md` → "THE REGROWTH
     /// SUPPRESSION CLOSES A LOOP").
     Escapement,
@@ -932,7 +932,7 @@ pub fn activity_work(workers: u32) -> f32 {
 // maintenance rate netted off a build crew's output (`docs/plan_standing_upkeep.md` §4.6a).
 //
 // **A BUILD CREW SUPPLIES NOTHING TOWARD THE RATE; ITS WHOLE OUTPUT IS PROGRESS.** The rate is owed
-// by the band's keeping pool for **every** meter carrying work, at any fullness (§2.4), so there is
+// by the site's own crew for **every** meter carrying work, at any fullness (§2.4), so there is
 // nothing left for a build's accrual to subtract. What eats a build now is the **rot** — what the
 // keeping failed to cover, bleeding off the same meter the builders are raising — and that is a
 // signed term on [`RungDef::build_balance`] rather than a floor on the accrual.
@@ -3172,7 +3172,7 @@ impl RungDef {
     //
     // **There was never a second demand.** The maintenance rate is owed *always*, while building and
     // while held alike (`docs/plan_standing_upkeep.md` §2.4); what the meter decides is only **who
-    // supplies it** — the build crew below its cost, the band's keeping pool at it. A second concept
+    // supplies it** — the build crew below its cost, the site's own crew at it. A second concept
     // for the same rate could only ever drift from the first, and the per-web split it carried (a
     // plant meter owed its rot rate, an animal one owed its whole keeping) was an exception with no
     // fact under it: *you cannot be billed to hold something you have not finished building* is
@@ -3682,7 +3682,7 @@ impl LadderConfig {
         // (`docs/plan_standing_upkeep.md` §4.8).
         let cost = rung.build_cost(cost_multiplier)?;
         // **Quoted NET OF THE ROT, exactly as the live stamp is** — never net of the maintenance
-        // rate, which the keeping pool owes whatever this crew does. `rot_this_turn` is the
+        // rate, which the site's own crew owes whatever this crew does. `rot_this_turn` is the
         // **source's** live bleed ([`RungDef::meter_rot`] on the meter at risk), so a quote and the
         // card beside it describe one number. On ground nobody has started there is nothing banked
         // and therefore nothing to rot, so the answer is `work_cost / the pool's supply`.
@@ -4832,7 +4832,7 @@ fn validate_upkeep(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError
     }
     // ⛔ **NO DEPOSIT RUNG MAY DECLARE A STANDING MATERIAL RATE, AND THE REFUSAL IS THE POINT.**
     // The two deposit branches settle the **work** half of their keeping
-    // (`systems::settle_bands_extraction`) and have no settle pass for a material one — so a rate
+    // (the `Extract` arm's keeping) and have no settle pass for a material one — so a rate
     // here would parse, validate, publish a demand, and be paid by nobody: the *"looks live but
     // isn't"* failure this whole file is written against, and exactly what
     // `routes::road_meter_rot` reports having shipped for one slice when `route:paved_road`
@@ -5114,7 +5114,7 @@ mod tests {
     }
 
     /// **WHAT A CREW OF `workers` ACTUALLY BANKS ON THIS RUNG** — its whole output, which is what
-    /// `build_accrual` answers now that the rate is nobody's tax but the keeping pool's
+    /// `build_accrual` answers now that the rate is nobody's tax but the site crew's
     /// (`docs/plan_standing_upkeep.md` §4.6a). Stated once here so every assertion below reads the
     /// model rather than restating the arithmetic.
     fn expected_net(_rung: &RungDef, workers: u32) -> f32 {
@@ -5444,7 +5444,7 @@ mod tests {
         let build = tended.build.as_ref().expect("tended rung builds");
 
         // The crew IS the throughput, with nothing netted off it: the maintenance rate is the
-        // keeping pool's whatever the builders do (`docs/plan_standing_upkeep.md` §4.6a).
+        // site crew's whatever the builders do (`docs/plan_standing_upkeep.md` §4.6a).
         let crew = A_CREW_OF_TWO;
         assert_eq!(
             tended.build_accrual(Some(Improvement::Cultivate), true, crew, NO_BUILD_GEAR),
@@ -5493,8 +5493,8 @@ mod tests {
             assert_eq!(work(0), 0.0, "{key:?}: nobody working, nothing built");
             // **THERE IS NO MINIMUM VIABLE CREW ANY MORE** (`docs/plan_standing_upkeep.md` §4.6a).
             // The maintenance rate used to be netted off here, so a crew at or below it banked
-            // nothing; the keeping pool owes that rate whatever the builders do, so **one hand banks
-            // one worker-turn on every rung**, however dear the rung is to hold.
+            // nothing; the site's own crew owes that rate whatever the builders do, so **one hand
+            // banks one worker-turn on every rung**, however dear the rung is to hold.
             assert_eq!(
                 work(SOLE_BUILDER),
                 PER_WORKER_OUTPUT,
@@ -7278,7 +7278,7 @@ mod tests {
             assert_eq!(
                 banked,
                 expected_net(rung, crew),
-                "{key:?}: the builders bank their whole head count — the keeping pool owes the \
+                "{key:?}: the builders bank their whole head count — the site's own crew owes the \
                  rate, and a build supplies none of it (§4.6a)"
             );
             // **The floor cannot reach it: `build_accrual` does not take one.** What a *gatherer*

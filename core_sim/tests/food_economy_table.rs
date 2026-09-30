@@ -465,6 +465,7 @@ fn forage_preview(
         FULL_SEASONAL_WEIGHT,
         UNIT_OUTPUT_MULTIPLIER,
         workers,
+        core_sim::NO_HANDS,
         DEFAULT_ESCAPEMENT_FLOOR,
         take,
         shipped.labor.yield_average_horizon_turns,
@@ -709,6 +710,7 @@ fn hunt_preview(
         party,
         UNIT_OUTPUT_MULTIPLIER,
         workers,
+        core_sim::NO_HANDS,
         DEFAULT_ESCAPEMENT_FLOOR,
         shipped.labor.yield_average_horizon_turns,
         shipped.labor.arrivals_horizon_turns,
@@ -815,7 +817,7 @@ fn drive_take(
             let seed = retreat_seed(DRIVE_MAP_SEED + run, u64::from(turn), &quarry.id, workers);
             let outcome = hunt_take(
                 &mut quarry,
-                workers,
+                workers as f32,
                 DEFAULT_ESCAPEMENT_FLOOR,
                 carry,
                 party,
@@ -2130,12 +2132,12 @@ fn steady_terms(
     for turn in 1..=shipped.labor.yield_average_horizon_turns {
         regrow_biomass(&mut quarry, fauna);
         let room = herd_take_room(&quarry, DEFAULT_ESCAPEMENT_FLOOR, fauna);
-        let reach = animals_engaged(workers, herd_engage_rate(&quarry, fauna));
+        let reach = animals_engaged(workers as f32, herd_engage_rate(&quarry, fauna));
         let before = quarry.clone();
         let take_at = |herd: &mut Herd, seed: u64| {
             hunt_take(
                 herd,
-                workers,
+                workers as f32,
                 DEFAULT_ESCAPEMENT_FLOOR,
                 carry,
                 party,
@@ -2153,7 +2155,7 @@ fn steady_terms(
             let fight = herd_fight_stage(&before, fauna);
             let kills = OutcomeKills::resolve(
                 &outcomes,
-                workers,
+                workers as f32,
                 party,
                 fight.as_ref(),
                 before.wounds,

@@ -172,6 +172,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "work_priority <faction_id> <band_id> <x> <y> high|normal|low | work_priority <faction_id> <band_id> <herd_id> high|normal|low",
     },
     CommandVerbHelp {
+        verb: "build_priority",
+        aliases: &[],
+        summary: "MARK ONE QUEUED BUILD WITH YOUR OWN BUILD MARK, on one band: 'high', 'normal' (the default) or 'low'. It is the ENTRY'S rank, not its site row's: when tools or materials run short, the builders' claim and the build's pile rank at the HEAD entry's mark - High first, then Normal, then Low, and inside one tier a site crew keeping what it holds is served before the build. The site row's own `work_priority` ranks that site's crew, so marking a Field's crew 'high' no longer pushes its queued Sow ahead of other builds. Only a queued build can be marked. Two integer tokens name a TILE; one token names a HERD id; the trailing token is the level.",
+        usage: "build_priority <faction_id> <band_id> <x> <y> high|normal|low | build_priority <faction_id> <band_id> <herd_id> high|normal|low",
+    },
+    CommandVerbHelp {
         verb: "build_kit",
         aliases: &[],
         summary: "NAME THE KIT ONE QUEUED BUILD IS RAISED WITH, on every band of the faction that has the source queued. THE BUILDERS' KIT IS PER QUEUE ENTRY, NOT PER BAND: a build's default kit is derived from that entry's own food web - the `tillage` kit's hoes for a Cultivate or Sow, the `hurdling` kit's crook for a Tame or Corral - so `assign_labor <faction> <band> builders <n>` takes NO `kit` token at all, and this is the only place the derivation is overridden. OMIT the `kit` token to CLEAR the override back to that derivation; name `none` to send the pool out bare-handed on this job alone, which is a real selection and not the same statement. A kit the roster does not carry, or one whose `jobs` does not list `builders`, is refused by name. Two integer tokens name a TILE; one token names a HERD id.",
@@ -180,13 +186,13 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "upkeep_kit",
         aliases: &[],
-        summary: "NAME THE KIT ONE WORK SITE IS KEPT WITH, on every band of the faction that works the source. THE KEEPING KIT IS PER WORK SITE, NOT PER BAND: the band is only the pool of workers and goods to draw from, so `assign_labor <faction> <band> agriculture <n>` says how MANY keepers a patch's web gets and this says what the keepers on THIS patch carry. Its default is derived from the site's own food web - the `tillage` kit's hoes for a patch, the `hurdling` kit's crook for a herd - so OMIT the `kit` token to CLEAR the override back to that derivation; name `none` to keep this one site bare-handed while its neighbour keeps the tool, which is a real selection and not the same statement. A kit the roster does not carry, or one that does not serve this site's web (a plant keeping kit on a herd), is refused by name. Two integer tokens name a TILE; one token names a HERD id.",
+        summary: "NAME THE KIT ONE WORK SITE IS KEPT WITH, on every band of the faction that works the source. THE KEEPING KIT IS PER WORK SITE, NOT PER BAND: the band is only the pool of workers and goods to draw from, so the site's own crew stepper says how MANY hands work it and this says what its keepers carry. Its default is derived from the site's own food web - the `tillage` kit's hoes for a patch, the `hurdling` kit's crook for a herd - so OMIT the `kit` token to CLEAR the override back to that derivation; name `none` to keep this one site bare-handed while its neighbour keeps the tool, which is a real selection and not the same statement. A kit the roster does not carry, or one that does not serve this site's web (a plant keeping kit on a herd), is refused by name. Two integer tokens name a TILE; one token names a HERD id.",
         usage: "upkeep_kit <faction_id> <x> <y> [kit <kit_id>] | upkeep_kit <faction_id> <herd_id> [kit <kit_id>]",
     },
     CommandVerbHelp {
         verb: "upkeep_mode",
         aliases: &[],
-        summary: "Say how one band splits its MAINTENANCE POOL when it cannot cover everything it holds. Maintenance is a band-level standing role, not a per-source crew: staff it with `assign_labor <faction> <band> agriculture <n>` for the plant web and `husbandry <n>` for the animal one, and the band's demand is the SUM over every tended patch, Field, tamed herd and pen it works. When the pool falls short, 'spread' funds every source in proportion to its demand so EVERYTHING degrades a little, and 'priority' funds sources COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the biggest investments stay whole and the marginal ones rot. Defaults to spread. An unknown mode is refused by name.",
+        summary: "Say how one band splits its ROADWORK POOL when it cannot cover every road it keeps. Road-keeping is a band-level standing role (`assign_labor <faction> <band> roadwork <n>`), and the band's demand is the SUM over every road it keeps; a patch, herd or working is kept by its own crew instead, which keeps it first and collects with the rest. When the pool falls short, 'spread' funds every road in proportion to its demand so EVERYTHING degrades a little, and 'priority' funds roads COMPLETELY until the pool runs out, MOST-INVESTED FIRST, so the biggest investments stay whole and the marginal ones rot. Defaults to spread. An unknown mode is refused by name.",
         usage: "upkeep_mode <faction_id> <band_id> spread|priority",
     },
     CommandVerbHelp {
@@ -258,7 +264,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "abandon_working",
         aliases: &[],
-        summary: "PUT A WORKING DOWN: drop your bands' holding of the deposit at a tile - the `extract` row AND its build-queue entry - on every band of the faction working it. THE WORKING'S METER IS UNTOUCHED: the face keeps whatever rung it stands on and, with nobody holding it, slides back down at the rung's own rate over the following turns exactly as an unkept working does. Nothing is destroyed on the spot, so it needs no confirmation. IT NAMES A MATERIAL as well as a tile, exactly as `fell`/`coppice`/`quarry` do: one hex can hold two workings, so a line naming only the tile names neither of them. IT IS ITS OWN VERB AND NOT A TOKEN ON `abandon` - `abandon <faction> <x> <y>` names a PLACE and puts down every holding on it, a forage row included, so widening it would make a destructive verb quietly more destructive. WHY YOU NEED IT: a working raised above its free floor is a HOLDING, so `assign_labor <f> <b> extract <x> <y> <material> 0` means 'stop cutting' and keeps the row - and the row goes on drawing your band's `quarrywork` keepers for the hundred-odd turns the meter takes to slide back to the free floor, competing with the workings you still want. This is how you stop paying for a face you have walked away from.",
+        summary: "PUT A WORKING DOWN: drop your bands' holding of the deposit at a tile - the `extract` row AND its build-queue entry - on every band of the faction working it. THE WORKING'S METER IS UNTOUCHED: the face keeps whatever rung it stands on and, with nobody holding it, slides back down at the rung's own rate over the following turns exactly as an unkept working does. Nothing is destroyed on the spot, so it needs no confirmation. IT NAMES A MATERIAL as well as a tile, exactly as `fell`/`coppice`/`quarry` do: one hex can hold two workings, so a line naming only the tile names neither of them. IT IS ITS OWN VERB AND NOT A TOKEN ON `abandon` - `abandon <faction> <x> <y>` names a PLACE and puts down every holding on it, a forage row included, so widening it would make a destructive verb quietly more destructive. WHY YOU NEED IT: a working raised above its free floor is a HOLDING, so `assign_labor <f> <b> extract <x> <y> <material> 0` means 'stop cutting' and keeps the row and its build-queue entry, unkept, for the hundred-odd turns the meter takes to slide back to the free floor. This is how you put down a face you have walked away from.",
         usage: "abandon_working <faction_id> <x> <y> <material>",
     },
     CommandVerbHelp {
@@ -288,8 +294,8 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "assign_labor",
         aliases: &[],
-        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). Besides the worked sources and scout/warrior there are four KEEPING roles, one per ladder a band holds sites on: 'agriculture' keeps every tended patch and Field this band works, 'husbandry' every tamed herd and pen, 'roadwork' every road it keeps, 'quarrywork' every working on a wood or a rock body. Each is a POOL measured against the SUM of what the band holds on that web, so nothing is wasted on a demand that does not divide into whole workers; short of the sum, the split follows the band's upkeep_mode. Zero is how you stop maintaining a whole web. 'builders' is the fifth band-wide pool: it serves every web and its whole output goes on the head of the band's build queue, so zero stops building altogether. A `kit` token may sit anywhere after the role, and it is REFUSED on 'builders', 'agriculture', 'husbandry' and 'roadwork' — a pool is HOW MANY hands, never what they carry: what a build is raised with is set per queue entry with `build_kit`, and what a site's keepers carry is set per work site with `upkeep_kit`. The worked sources (forage/hunt/extract), the two standing roles (scout/warrior) and 'quarrywork' do take one, and an absent token means the job's default.",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | extract <x> <y> <material> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | agriculture <workers> | husbandry <workers> | roadwork <workers> | quarrywork <workers> | builders <workers>",
+        summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle). A worked source's crew (forage/hunt/extract) KEEPS ITS SITE FIRST and collects with what is left: a tended patch, Field, tamed herd, pen or raised working owes work every turn, the crew pays it before it takes, and a crew short of it keeps what it can and collects nothing. A site with 0 crew is not kept at all. 'roadwork' is the one keeping POOL: it keeps every road the band keeps, measured against their SUM, and short of the sum the split follows the band's upkeep_mode; zero stops keeping roads. 'builders' is the other band-wide pool: its whole output goes on the head of the band's build queue, so zero stops building altogether. A `kit` token may sit anywhere after the role, and it is REFUSED on 'builders' and 'roadwork' — a pool is HOW MANY hands, never what they carry: what a build is raised with is set per queue entry with `build_kit`. The worked sources (forage/hunt/extract) and the two standing roles (scout/warrior) do take one, and an absent token means the job's default. The retired 'agriculture', 'husbandry' and 'quarrywork' pools are refused.",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] [take:<a>,<b>] <workers> [kit <id>] | hunt <herd_id> [floor] <workers> [kit <id>] | extract <x> <y> <material> [floor] <workers> [kit <id>] | scout <workers> | warrior <workers> | roadwork <workers> | builders <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -1026,6 +1032,31 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 level: level_str.to_ascii_lowercase(),
             })
         }
+        // **THE QUEUED BUILD'S MARK** (`docs/plan_site_crews.md` §2.4), in `work_priority`'s exact
+        // shape — a band handle, a source, one trailing level token — because it addresses the same
+        // band-and-source pair and a second shape for one family of verbs is how a client sends the
+        // wrong one. The level is the sim's to refuse by name.
+        "build_priority" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let tail: Vec<&str> = parts.collect();
+            let Some((level_str, source)) = tail.split_last() else {
+                return Err(CommandParseError::MissingArgument("level"));
+            };
+            let source = parse_build_source(source)?;
+            Ok(CommandPayload::BuildPriority {
+                faction_id: parse_u32(faction_str, "build_priority faction")?,
+                band_id: parse_u64(band_str, "build_priority band")?,
+                target_x: source.target_x,
+                target_y: source.target_y,
+                herd_id: source.herd_id,
+                level: level_str.to_ascii_lowercase(),
+            })
+        }
         "upkeep_mode" => {
             let faction_str = parts
                 .next()
@@ -1550,8 +1581,11 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 // the one that gave it a card, and this list is the gate that card's stepper has to
                 // pass — so the role was added here alongside the `extract` arm above it rather than
                 // after a play report.
-                "scout" | "warrior" | "agriculture" | "husbandry" | "roadwork" | "quarrywork"
-                | "builders" => {
+                //
+                // ⛔ **`agriculture`, `husbandry` AND `quarrywork` ARE RETIRED** with the keeping
+                // pools they staffed (`docs/plan_site_crews.md` §4): a site's own crew keeps it, so
+                // the tokens are refused here exactly as the sim refuses them.
+                "scout" | "warrior" | "roadwork" | "builders" => {
                     let w = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("workers"))?;
@@ -3265,7 +3299,7 @@ mod tests {
             }
         );
         // And on a role that never reads a species at all — the scan is upstream of the dispatch.
-        assert!(parse_command_line("assign_labor 0 904 agriculture wildé").is_err());
+        assert!(parse_command_line("assign_labor 0 904 roadwork wildé").is_err());
     }
 
     /// **Hunt's floor is OPTIONAL**, where the stance it replaced was required — symmetric with
@@ -3753,8 +3787,7 @@ mod tests {
 
     /// **`upkeep_mode` names a BAND and a MODE, and nothing else** — maintenance is a band-level
     /// standing role (`docs/plan_standing_upkeep.md` §2.5), so there is no source in this grammar at
-    /// all. It is the successor to the retired `maintain`, whose per-source crew is now staffed
-    /// through `assign_labor … agriculture|husbandry <workers>`.
+    /// all. It governs the one keeping pool left, `roadwork` (`docs/plan_site_crews.md` §1).
     #[test]
     fn parse_upkeep_mode_reads_the_band_and_the_mode() {
         assert_eq!(

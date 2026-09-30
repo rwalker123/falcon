@@ -691,15 +691,7 @@ fn is_untargeted_role(row: &LaborAssignmentState) -> bool {
 /// snapshot row** is `LaborTarget::kind`'s band-wide arm (`core_sim/src/snapshot/population.rs`),
 /// which leaves `target_x` / `target_y` at the wire default `0, 0` for every one of them — a row
 /// whose kind is missing here is recorded as a crew working tile `0, 0`.
-const UNTARGETED_ROLES: [&str; 7] = [
-    "scout",
-    "warrior",
-    "agriculture",
-    "husbandry",
-    "roadwork",
-    "quarrywork",
-    "builders",
-];
+const UNTARGETED_ROLES: [&str; 4] = ["scout", "warrior", "roadwork", "builders"];
 
 #[cfg(test)]
 mod tests {
@@ -763,6 +755,7 @@ mod tests {
             target_x: 4,
             target_y: 2,
             fauna_id: String::new(),
+            ..Default::default()
         }];
         if let Some(patch) = view
             .snapshot

@@ -1246,13 +1246,13 @@ is positional.
 |---|---|---|
 | 1 | a **scout** | *Nothing is lost* |
 | 2 | a **warrior**, if nothing threatens the band | |
-| 3 | a **keeper above the keeping demand** — Agriculture first, then Husbandry | |
+| 3 | a **Roadwork keeper above the roads' demand** — the one band-level keeping pool left | |
 | 4 | a **builder**, while more than one remains and something is queued | |
-| 5 | **thin the least-productive worked source that has two or more hands — and the crafting BENCH, ranked beside them** — "least productive" is the four-level test below, whose second level passes over a source still accruing knowledge | *Output falls, nothing ends* |
+| 5 | **thin the least-productive worked source that has two or more hands and a hand ABOVE its keeping line — and the crafting BENCH, ranked beside them** — "least productive" is the four-level test below, whose second level passes over a source still accruing knowledge; a site row gives a hand only while `workers − 1 ≥ keeping_need` (`docs/plan_site_crews.md` §2.6) | *Output falls, nothing ends* |
 | 5b | **the crafting bench's LAST hand** — the job stalls, keeping its recipe, its progress and the pile it drew | |
 | 6 | **empty the least-productive source carrying no improvement and no queued build** | *Something ends* |
 | 7 | a **warrior**, unconditionally | |
-| 8 | a **keeper below the demand** — improvements begin to rot | |
+| 8 | a **keeper below the demand** — a Roadwork keeper first, then a keeping hand off the least-productive improved site row with two or more hands; improvements begin to rot | |
 | 9 | **empty the least-productive improved source with no queued build** | |
 | 10 | **empty a source carrying a queued build** — the row drops and the declaration goes with it | |
 | 11 | **the last builder** — every queued build stalls | |
@@ -1282,7 +1282,8 @@ hand is shed:
 | Fact | Resolved from |
 |---|---|
 | `threatened` | the **same trigger** `advance_predator_raids` fires on — a carnivore with `aggression > 0` inside `predators.raid_radius`. That pass runs straight after this one off the same herd positions, so a band the pack reaches this turn keeps its guard. A band whose tile will not resolve reads **threatened**: the guard is the reading that costs people when it is wrong |
-| `spare_*_keepers` | `keeping_claims` — the **one** definition of the band's keeping bill, which `maintenance_shares` also splits its pools against — summed per web and divided by `build_work_per_worker_turn`, so the surplus is struck against the supply the split will actually make, **behind the tool gate below** |
+| `spare_roadwork_keepers` | `route_keeping_claims` — the **one** definition of the roads' keeping bill, the same claims the roadwork pool is paid against — divided by the keeper rate, so the surplus is struck against the supply the split will actually make, **behind the tool gate below** |
+| `keeping_need` (per site row) | `site_keeping_needs` — the site's own claim (`site_keeping_claims`, its pro-rata share of the bill) in hands at the rate the band can arm (`keeping_need_the_band_can_arm`: the as-if-equipped rate if the band's stock covers the planned claim, bare otherwise) — the line steps 5 and 8 read |
 | `accruing_knowledge` | the source's rung names a lesson, the faction has not completed it, and the floor leaves practice to be had. It deliberately does **not** ask the escapement room the live credit is also gated on: that room comes from this turn's take, which has not happened yet, so this is *"is there a lesson here to lose"* — the conservative direction, which protects a row from being thinned and never exposes one. **Step 5 alone reads it, and reads it as a LEVEL** (below) |
 | `improved` | `patch_at_risk_cost` / `herd_at_risk_cost` above `RUNG_UNSTARTED` — work on the ladder, finished or in flight |
 
@@ -1302,10 +1303,13 @@ longer has the hands to bank.
 >
 > `systems::labor::spare_keepers_the_band_can_arm` puts one question in front of the answer: **per
 > tool this pool's sites require, does the band hold at least that many live units?** If not, the pool
-> reports `0`. The requirement is `pool_toe_claims`' own — the same seam the settlement's stage-1 bid
-> is summed from — so *"what this pool requires"* keeps one definition, and `keeping_worker_need`,
-> `fully_equipped_keeper_rate` and the four-step order are all untouched: this is a **gate in front of
-> the answer**, never a second rate.
+> reports `0`. A **site row's** line is gated the same way from the other side:
+> `keeping_need_the_band_can_arm` prices its keeping need at the bare rate when the band cannot arm
+> the planned keeping hands, so the line sits **higher** and the shed keeps the hand. The
+> requirement is `pool_toe_claims`' own — the same seam the settlement's stage-1 bid is summed from
+> — so *"what this pool requires"* keeps one definition, and `keeping_worker_need`,
+> `fully_equipped_keeper_rate` and the four-step order are all untouched: this is a **gate in front
+> of the answer**, never a second rate.
 >
 > **It answers `0`, never a smaller number.** Sizing the real surplus needs the rate the pool will be
 > *delivered*, and there is none to read — see the ordering fact below.
@@ -1324,16 +1328,16 @@ longer has the hands to bank.
 >
 > **It asks about this pool's OWN requirement alone.** A pool can hold enough for itself and still lose
 > the band-wide settlement to another pool bidding on the same tool; that is unknowable before the
-> settlement and the gate does not pretend otherwise. **All four keeping pools go through it** —
-> Roadwork and Quarrywork as much as the two food webs — because the defect was in the shared helper.
+> settlement and the gate does not pretend otherwise. **The Roadwork pool goes through it**, and
+> each site row's keeping line through its twin.
 > A pool whose rungs want no tool requires nothing and is never gated
 > (`::a_pool_that_requires_no_tool_keeps_its_spare_keepers`).
 >
-> `shedding_order::a_pool_short_of_its_tool_keeps_the_keeper_the_bill_still_needs` drives it through a
-> real turn — the keeper stays and step 5 thins the worked row instead — against the control
-> `::the_same_band_with_a_hoe_per_working_hand_sheds_its_spare_keeper`, which is half the claim: without
-> it, *"a short pool never sheds a keeper"* would pass on a gate that fired unconditionally and step 3
-> would be dead for every band in the game.
+> `shedding_order::a_crew_short_of_its_tool_keeps_the_hand_its_keeping_still_needs` drives the site
+> half through a real turn against the control
+> `::the_same_band_with_a_hoe_per_keeping_hand_thins_above_the_line`, which is half the claim:
+> without it, *"a short crew never gives a keeping hand"* would pass on a gate that fired
+> unconditionally and step 5 would never thin a kept site in the game.
 
 **"Least productive" is FOUR levels at step 5 and THREE everywhere else, and the top one is the
 player's own.**

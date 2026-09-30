@@ -1059,12 +1059,13 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     crate::fauna::herd_upkeep_shortfall(herd, fauna, ladder)
                 }),
                 // **HANDS TO MEET THE DEMAND** — and published while the rung is still being
-                // **built** too, where it means exactly the same thing: the keeping pool owes the
-                // rate from the first work banked, so these are the hands that hold a half-tamed herd
-                // as much as a finished one (`docs/plan_standing_upkeep.md` §4.6a). It is **not** a
-                // minimum viable build crew — a build crew supplies nothing toward the rate — and it
-                // read `0` mid-build on the older premise that an unfinished meter owed no keeping.
-                // The take activity's answer rides `SourceYield::workers_needed`.
+                // **built** too, where it means exactly the same thing: the site's own crew owes
+                // the rate from the first work banked, so these are the hands that hold a
+                // half-tamed herd as much as a finished one (`docs/plan_standing_upkeep.md` §4.6a).
+                // It is **not** a minimum viable build crew — a build crew supplies nothing toward
+                // the rate — and it read `0` mid-build on the older premise that an unfinished
+                // meter owed no keeping. The take activity's answer rides
+                // `SourceYield::workers_needed`.
                 //
                 // **⛔ IT IS THE `ceil` OF THE BILL DIRECTLY ABOVE, NOT OF `herders_needed`.** The wire
                 // states the identity `upkeepWorkersNeeded == ceil(upkeepDemand / PER_WORKER_OUTPUT)`
@@ -1316,11 +1317,16 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // that, and lost it silently on the one crew a compose sheet is *for*: a proposed
                 // one, of a size the sim never resolved.
                 build_work_per_worker_turn: build_work_per_worker_turn(NO_BUILD_GEAR),
-                // **A herd names no kit** — see [`NO_SITE_KIT_ID`]. Its keepers' and its builders'
-                // tools are the pool's, derived from the rung and published as `poolToe`.
+                // **A herd names no kit** — see [`NO_SITE_KIT_ID`]. Its builders' tools are the
+                // builders pool's (`poolToe`); its keeping tools are its own crew's, derived from
+                // the rung and stated below as `upkeep_tools_short`.
                 build_kit_id: NO_SITE_KIT_ID.to_string(),
                 upkeep_kit_id: NO_SITE_KIT_ID.to_string(),
                 upkeep_kit_named: NO_SITE_KIT_NAMED,
+                // **WHAT THE HERD'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
+                // §2.2) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.
+                upkeep_hands: herd.map_or(crate::fauna::NO_HANDS, |herd| herd.upkeep_hands),
+                upkeep_tools_short: herd.is_some_and(|herd| herd.upkeep_tools_short),
             }
         })
         .collect()
@@ -1513,7 +1519,7 @@ pub(crate) fn snapshot_forage_patches(
         // figure on this row is quoted per tender-load of. Through
         // `forage::patch_land_capacity`, so a patch whose coord is **not on the map** publishes
         // the bill struck against its seeded capacity — the same reading `advance_cultivation`
-        // bleeds against and `maintenance_shares` claims against, which is what keeps the row's
+        // bleeds against and `site_keeping_claims` claims against, which is what keeps the row's
         // `demand − supplied == shortfall` a statement about one number.
         let tile_capacity =
             crate::forage::patch_land_capacity(patch, tile_capacities.get(&patch.tile).copied());
@@ -1834,7 +1840,7 @@ pub(crate) fn snapshot_forage_patches(
             // decay pass will bleed off the at-risk meter, and the term a build's closed form
             // nets (`docs/plan_standing_upkeep.md` §4.6a). See `RungDef::meter_rot` for why the
             // forecast is exact rather than an estimate. It is emphatically not
-            // the two demands above: the keeping pool owes those whatever a build crew does, so
+            // the two demands above: the site's own crew owes those whatever a build crew does, so
             // netting a rate off a build would re-price the wrong thing.
             //
             // **DERIVED here rather than stamped by the labor arm**, unlike
@@ -1895,11 +1901,16 @@ pub(crate) fn snapshot_forage_patches(
                 patch,
                 forage,
             ),
-            // **A patch names no kit** — see [`NO_SITE_KIT_ID`]. Its tenders' and its builders'
-            // tools are the pool's, derived from the rung and published as `poolToe`.
+            // **A patch names no kit** — see [`NO_SITE_KIT_ID`]. Its builders' tools are the
+            // builders pool's (`poolToe`); its keeping tools are its own crew's, derived from the
+            // rung and stated below as `upkeep_tools_short`.
             build_kit_id: NO_SITE_KIT_ID.to_string(),
             upkeep_kit_id: NO_SITE_KIT_ID.to_string(),
             upkeep_kit_named: NO_SITE_KIT_NAMED,
+            // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
+            // §2.1) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.
+            upkeep_hands: patch.upkeep_hands,
+            upkeep_tools_short: patch.upkeep_tools_short,
             // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
             // ungained twin of `carrying_capacity` above and the denominator every upkeep figure
             // on this row is quoted per. **The reading already resolved once above**, never a

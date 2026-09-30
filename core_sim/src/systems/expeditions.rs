@@ -925,7 +925,7 @@ pub fn advance_expeditions(
                     let gathered = forage_take(
                         patch,
                         &composition,
-                        workers,
+                        workers as f32,
                         // **The restrained floor**, the same one the roadside kill takes at: a
                         // party replenishing on the march can never be the thing that ruins a
                         // stand.
@@ -1014,7 +1014,7 @@ pub fn advance_expeditions(
                     );
                     let outcome = hunt_take(
                         &mut herds.herds[idx],
-                        workers,
+                        workers as f32,
                         // A scout's roadside kill is a **restrained** one: it stops at the food peak,
                         // the same floor a fresh assignment gets, so replenishing on the march can
                         // never be the thing that ruins a herd.
@@ -2264,7 +2264,7 @@ fn expedition_take_biomass(
     // `docs/plan_hunt_through_combat.md` §1, in the same order `systems::hunt_take` runs them.
     // Wariness `0` makes the retreat an exact identity that consumes no randomness, so a raid is
     // byte-identical until values are authored.
-    let engaged = fauna::animals_engaged(workers, engage_rate)
+    let engaged = fauna::animals_engaged(workers as f32, engage_rate)
         // **Restraint is free** — the mission's floor bounds what the party goes after, so a raid at
         // its floor takes no casualties for animals it was never going to kill (§1).
         .min(fauna::animals_affordable(ceiling, body_mass));
@@ -2293,7 +2293,7 @@ fn expedition_take_biomass(
             let bodies = fauna::kill_over_retreat(
                 engaged,
                 wariness,
-                workers,
+                workers as f32,
                 party,
                 Some(&quarry),
                 quarry.wounds,
@@ -2548,7 +2548,7 @@ hunters_killed={:.3} hunters_wounded={:.3} bound={} species={}",
 #[allow(clippy::too_many_arguments)] // the ecology, the ladder and the caller's caps are all levers
 pub fn hunt_take(
     herd: &mut Herd,
-    workers: u32,
+    workers: f32,
     floor: f32,
     per_worker_biomass_capacity: f32,
     // The hunters' own strength — kit composed in — and the tuning they fight at. The take's kill

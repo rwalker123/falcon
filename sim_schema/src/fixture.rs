@@ -530,7 +530,7 @@ fn seed_snapshot() -> WorldSnapshot {
         cohort.material_upkeep_need = rows();
         cohort.material_upkeep_income = rows();
         cohort.material_store = rows();
-        // **THE FIVE STANDING POOLS' TABLES OF EQUIPMENT** (`docs/plan_pool_toe.md` §4) — spelled
+        // **THE STANDING POOLS' TABLES OF EQUIPMENT** (`docs/plan_pool_toe.md` §4) — spelled
         // out rather than `rows()`, on `kit_item_conditions`' rule: the list is keyed by
         // `(pool, item)` and a duplicate key is not something the server can emit.
         //
@@ -547,12 +547,12 @@ fn seed_snapshot() -> WorldSnapshot {
         // (see `PoolToeLineState::filled`).
         //
         // What the pairs still carry is the KEYING, which saturation does not touch: two pools
-        // sharing `stone_dressing` is the band-wide settlement's own case.
+        // sharing `stone_dressing` is the band-wide settlement's own case. Only `roadwork` and
+        // `builders` publish a line (`docs/plan_site_crews.md` §4).
         cohort.pool_toe = [
-            ("agriculture", "hoes", 6.0, 6.0),
             ("roadwork", "earthmoving", 4.0, 1.5),
             ("roadwork", "stone_dressing", 2.0, 0.0),
-            ("quarrywork", "stone_dressing", 3.0, 3.0),
+            ("builders", "stone_dressing", 3.0, 3.0),
             ("builders", "hoes", 2.0, 0.5),
         ]
         .iter()
@@ -563,13 +563,14 @@ fn seed_snapshot() -> WorldSnapshot {
             filled: *filled,
         })
         .collect();
-        // **THE FOUR KEEPING POOLS' CREW ACCOUNTS** (issue #715) — spelled out rather than `rows()`
-        // for `pool_toe`'s reason: the list is keyed by pool and a duplicate key is not something
-        // the server can emit. `builders` is deliberately absent — it is not a keeping pool.
+        // **THE KEEPING POOL'S CREW ACCOUNT** (issue #715) — spelled out rather than `rows()` for
+        // `pool_toe`'s reason: the list is keyed by pool and a duplicate key is not something the
+        // server can emit. `roadwork` is the one keeping pool (`docs/plan_site_crews.md` §4);
+        // `builders` is deliberately absent — it is not a keeping pool.
         //
         // The saturation pass rewrites the floats, so the counts below do not reach the artifact;
         // what survives is the KEYING, which is what a decode has to carry.
-        cohort.pool_crew = ["agriculture", "husbandry", "roadwork", "quarrywork"]
+        cohort.pool_crew = ["roadwork"]
             .iter()
             .enumerate()
             .map(|(rank, pool)| PoolCrewLineState {

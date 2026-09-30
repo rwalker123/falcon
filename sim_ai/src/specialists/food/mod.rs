@@ -14,8 +14,9 @@
 //!   site just out of reach: split toward it, and walk the child there when it appears.
 //! - *spare hands into hunts* — income at or near the goal puts the surplus onto a herd, which is
 //!   what opens penning.
-//! - *hold the ground* — an owned patch whose standing upkeep reads short gets the band's
-//!   `agriculture` pool sized to the summed plant bill; on a completed rung it is a standing bill.
+//! - *hold the ground* — an owned patch whose standing upkeep reads short has its own forage row
+//!   raised by the hands its keeping is missing (`upkeepWorkersNeeded − upkeepHands`): a site's crew
+//!   keeps it first and gathers with the rest. On a completed rung it is a standing bill.
 //! - *upgrade the ground* — the rung known and a worked patch below it: declare the climb and
 //!   staff the builders, priced by the projection ledger ([`ledger`]).
 //! - *draw down to survive* — the plan in force troughs at or below zero: lower a worked forage
@@ -78,10 +79,6 @@ pub const ROLE_HUNT: &str = "hunt";
 /// The band-wide build pool: `assign_labor <faction> <band> builders <n>`, whose whole output goes
 /// on the head of the band's build queue (`command_text.rs` → `assign_labor`).
 pub const ROLE_BUILDERS: &str = "builders";
-/// **The role that pays a tended patch's standing upkeep** — the job the upkeep row's kit
-/// (`tillage`, jobs `builders` + `agriculture`) serves; `assign_labor … agriculture <n>`, a
-/// band-wide pool like `builders`.
-pub const ROLE_AGRICULTURE: &str = "agriculture";
 /// The intent kinds, one per rule (*split to feed* has two: the split, then the child's settle).
 pub const INTENT_ASSIGN: &str = "assign";
 pub const INTENT_FEED_MOVE: &str = "feed_move";

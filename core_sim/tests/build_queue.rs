@@ -162,7 +162,6 @@ fn world_with_a_queue_knowing(
         count,
         "the fixture map must carry {count} sites"
     );
-    let keepers = keeping_for(count);
     let anchor = sources[0];
     let tile = app
         .world
@@ -189,7 +188,9 @@ fn world_with_a_queue_knowing(
                 species: None,
                 take_species: TakeSelection::EVERYTHING,
             },
-            workers: GATHERERS,
+            // **Each row keeps its own patch first** (`docs/plan_site_crews.md` §2.1), so it is
+            // staffed for the keeping on top of the gathering.
+            workers: GATHERERS + keeping_for(ONE_SOURCE),
             kit: None,
             priority: SourcePriority::default(),
             upkeep_kit: None,
@@ -205,16 +206,6 @@ fn world_with_a_queue_knowing(
         priority: SourcePriority::default(),
         upkeep_kit: None,
     });
-    if keepers > 0 {
-        assignments.push(LaborAssignment {
-            party: None,
-            target: LaborTarget::Agriculture,
-            workers: keepers,
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        });
-    }
     let staffed: u32 = assignments.iter().map(|row| row.workers).sum();
     let build_queue = sources
         .iter()
@@ -224,6 +215,7 @@ fn world_with_a_queue_knowing(
             // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a pool's tools
             // follow from the rung. The gear axis is held on the LEDGER below.
             kit: None,
+            priority: core_sim::SourcePriority::default(),
         })
         .collect();
 
@@ -634,10 +626,11 @@ fn a_blocked_head_publishes_minus_four_and_every_entry_behind_it_says_the_same()
 /// The plant arm above closes the gate with an unlearned knowledge, which exercises the mint and the
 /// carry. **This is the case the ruling is about**, and it is a loop no single seam contains:
 ///
-/// 1. the band's `husbandry` role is empty, so the herd's keeping is unmet;
+/// 1. the herd's own hunt row is empty, and a site's crew is its keeping
+///    (`docs/plan_site_crews.md` §2.1), so the herd's keeping is unmet;
 /// 2. `regrow_biomass` suppresses the flock's growth entirely at `upkeep_supplied <= 0`;
-/// 3. the hunters beside the build draw the flock down to their assignment's escapement floor, and
-///    with no growth it never comes back above it;
+/// 3. the flock stands on its assignment's escapement floor, and with no growth it never comes back
+///    above it;
 /// 4. `crew_is_working_the_source` reads that room as `0`, so the `Tame`'s own gate goes false;
 /// 5. nothing banks, **and nothing ever will** — it is an *eligibility* stall, not a balance one, so
 ///    no term the countdown is struck from can see it.
@@ -646,11 +639,11 @@ fn a_blocked_head_publishes_minus_four_and_every_entry_behind_it_says_the_same()
 /// than `-1`: `-1` renders as no line at all, and adding builders, re-ordering the queue and
 /// re-issuing the verb all leave the room at zero. So this asserts the **pairing** a client renders
 /// the remedy from — the blocked count beside a non-zero `upkeepShortfall` with the grace spent —
-/// and then staffs `husbandry` and requires the queue to recover.
+/// and then staffs the herd's own row and requires the queue to recover.
 #[test]
 fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() {
-    /// A **shallow** floor the hunters reach quickly: they draw the flock down to it, and with the
-    /// keeping unmet nothing grows back above it, so the escapement room stays at zero.
+    /// A **shallow** floor the flock is seated on: with the keeping unmet nothing grows back above
+    /// it, so the escapement room stays at zero.
     const STRIP_TO: f32 = 0.9;
     /// A bound on the walk to the stall, not a prediction of it. Deliberately tight: the same unmet
     /// keeping that shuts the gate is **shedding** the flock underneath it, so a long run measures a
@@ -659,7 +652,19 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
     /// And a generous one on the walk back: the flock has to regrow past its hunters' old floor.
     const RECOVERY_LIMIT: u32 = 120;
 
-    let (mut app, band, herd_id) = world_with_a_half_tamed_herd(NOBODY_KEEPING, STRIP_TO);
+    let (mut app, band, herd_id) = world_with_a_half_tamed_herd(NOBODY_ON_THE_HERD, STRIP_TO);
+    // **Seated ON its floor**, which is where a crew that drew it down and then left it would leave
+    // it: the site's own crew is its keeping (`docs/plan_site_crews.md` §2.1), so with nobody on the
+    // row the flock neither regrows nor is drawn further, and the room stays at zero.
+    {
+        let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == herd_id)
+            .expect("the fixture herd survives");
+        herd.biomass = herd.carrying_capacity * STRIP_TO;
+    }
 
     // **Walk to the stall rather than predicting it** — and to the *whole* reported state, which is
     // the blocked countdown **with the grace spent**. A shortfall still being forgiven is not yet
@@ -738,29 +743,27 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
          (has_grace {has_grace}, remaining {grace_left})"
     );
 
-    // **THE REMEDY, AND ONLY IT.** `assign_labor <faction> <band> husbandry <n>` — nothing on the
-    // build line reaches this, which is exactly why the sentinel has to say so out loud.
+    // **THE REMEDY, AND ONLY IT.** More hands on the herd's own hunt row, which keeps it first
+    // (`docs/plan_site_crews.md` §2.2) — nothing on the build line reaches this, which is exactly
+    // why the sentinel has to say so out loud.
     //
-    // ⛔ **The hunters stay exactly where they are, at full strength.** Their draw is the *other*
-    // half of what pins the flock, so it is tempting to lift it here too — but the sentinel's copy
-    // names the keeping alone as the remedy, and a fixture that also stopped the hunting would pass
-    // with that copy wrong. Restoring the keeping restores `regrow_biomass`, and the regrowth
-    // outruns a floor-respecting take on its own: the flock climbs back above `floor · K`, the
-    // escapement room returns, and the gate opens with the same crew still hunting.
-    let keepers = keeping_a_herd_needs(&app, &herd_id).max(1);
+    // ⛔ **The row is staffed past its keeping, so it hunts too.** A crew sized to the keeping alone
+    // would pass with the take seam broken; this one keeps first and draws the rest down to the
+    // same floor. Restoring the keeping restores `regrow_biomass`, and the regrowth outruns a
+    // floor-respecting take on its own: the flock climbs back above `floor · K`, the escapement
+    // room returns, and the gate opens with the crew still hunting.
+    let crew = HUNTERS + keeping_a_herd_needs(&app, &herd_id).max(1);
     {
         let mut allocation = app
             .world
             .get_mut::<LaborAllocation>(band)
             .expect("the band keeps its allocation");
-        allocation.assignments.push(LaborAssignment {
-            party: None,
-            target: LaborTarget::Husbandry,
-            workers: keepers,
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        });
+        let row = allocation
+            .assignments
+            .iter_mut()
+            .find(|row| matches!(row.target, LaborTarget::Hunt { .. }))
+            .expect("the band works the herd");
+        row.workers = crew;
     }
 
     // **Generously bounded.** The flock has to grow back above its hunters' floor before the room
@@ -797,16 +800,17 @@ fn the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall() 
     );
 }
 
-/// **Nobody on the `husbandry` role** — the staffing that closes the loop.
-const NOBODY_KEEPING: u32 = 0;
+/// **Nobody on the herd's own row** — the staffing that closes the loop: a site's crew keeps it
+/// first (`docs/plan_site_crews.md` §2.1), so an empty row is an unkept herd.
+const NOBODY_ON_THE_HERD: u32 = 0;
 
 /// The grace this fixture requires to be spent: a shortfall that is still being forgiven is not yet
 /// the state the remedy is for.
 const GRACE_SPENT: u32 = 0;
 
 /// A world with one band **mid-`Tame`** on a domesticable herd it also hunts, its `builders` pool
-/// staffed and its `husbandry` role at `keepers`. Returns the app, the band and the herd id.
-fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, String) {
+/// staffed and `crew` hands on its hunt row. Returns the app, the band and the herd id.
+fn world_with_a_half_tamed_herd(crew: u32, floor: f32) -> (App, Entity, String) {
     let mut app = build_test_app();
     app.update();
     app.world
@@ -874,14 +878,14 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
         .resource::<TileRegistry>()
         .index(position.x, position.y)
         .expect("the herd's tile resolves");
-    let mut assignments = vec![
+    let assignments = vec![
         LaborAssignment {
             party: None,
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor,
             },
-            workers: HUNTERS,
+            workers: crew,
             kit: None,
             priority: SourcePriority::default(),
             upkeep_kit: None,
@@ -895,16 +899,6 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
             upkeep_kit: None,
         },
     ];
-    if keepers > 0 {
-        assignments.push(LaborAssignment {
-            party: None,
-            target: LaborTarget::Husbandry,
-            workers: keepers,
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        });
-    }
     let staffed: u32 = assignments.iter().map(|row| row.workers).sum();
     let band = app
         .world
@@ -948,6 +942,7 @@ fn world_with_a_half_tamed_herd(keepers: u32, floor: f32) -> (App, Entity, Strin
                     source: BuildSource::Herd(herd_id.clone()),
                     declared: BuildJob::Rung(Improvement::Tame),
                     kit: None,
+                    priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()
             },
@@ -1197,7 +1192,7 @@ fn a_herds_build_queued_since_the_last_turn_publishes_not_yet_estimated_too() {
     /// count rather than the stall this file's other animal test walks to.
     const LEAVE_IT_STANDING: f32 = 0.5;
 
-    let (mut app, _band, herd_id) = world_with_a_half_tamed_herd(NOBODY_KEEPING, LEAVE_IT_STANDING);
+    let (mut app, _band, herd_id) = world_with_a_half_tamed_herd(HUNTERS, LEAVE_IT_STANDING);
     recapture_snapshot_in_place(&mut app.world);
     let (turns, _, _, _, _) = published_herd(&app, &herd_id);
     assert_eq!(
@@ -1656,8 +1651,7 @@ fn every_build_job_and_source_kind_is_stated() {
     for role in [
         LaborTarget::Scout,
         LaborTarget::Warrior,
-        LaborTarget::Agriculture,
-        LaborTarget::Husbandry,
+        LaborTarget::Roadwork,
         LaborTarget::Builders,
     ] {
         assert_eq!(BuildSource::of(&role), None, "{role:?} works no source");
@@ -1737,7 +1731,9 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
                 fauna_id: RING_HERD.to_string(),
                 floor: FOOD_PEAK,
             },
-            workers: RING_KEEPERS,
+            // **The hunters, and on top of them the hands that keep the pen** — the hunt row is
+            // the herd's crew and keeps it first (`docs/plan_site_crews.md` §2.2).
+            workers: RING_KEEPERS + RING_KEEPERS,
             kit: None,
             priority: SourcePriority::default(),
             upkeep_kit: None,
@@ -1750,7 +1746,7 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
                 species: None,
                 take_species: TakeSelection::EVERYTHING,
             },
-            workers: GATHERERS,
+            workers: GATHERERS + keeping_for(ONE_SOURCE),
             kit: None,
             priority: SourcePriority::default(),
             upkeep_kit: None,
@@ -1759,22 +1755,6 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
             party: None,
             target: LaborTarget::Builders,
             workers: builders,
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        },
-        LaborAssignment {
-            party: None,
-            target: LaborTarget::Agriculture,
-            workers: keeping_for(ONE_SOURCE),
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        },
-        LaborAssignment {
-            party: None,
-            target: LaborTarget::Husbandry,
-            workers: RING_KEEPERS,
             kit: None,
             priority: SourcePriority::default(),
             upkeep_kit: None,
@@ -1794,11 +1774,13 @@ fn world_with_a_ring_at_the_head(builders: u32) -> (App, Entity, String, UVec2) 
                         source: BuildSource::Herd(RING_HERD.to_string()),
                         declared: BuildJob::ExtendPen,
                         kit: None,
+                        priority: core_sim::SourcePriority::default(),
                     },
                     core_sim::BuildQueueEntry {
                         source: BuildSource::Patch(source),
                         declared: BuildJob::Rung(Improvement::Cultivate),
                         kit: None,
+                        priority: core_sim::SourcePriority::default(),
                     },
                 ],
                 ..Default::default()
@@ -2107,7 +2089,8 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             species: None,
             take_species: TakeSelection::EVERYTHING,
         },
-        workers: GATHERERS,
+        // **Each band's row keeps its share of the patch first** (`docs/plan_site_crews.md` §2.1).
+        workers: GATHERERS + keeping_for(ONE_SOURCE),
         kit: None,
         priority: SourcePriority::default(),
         upkeep_kit: None,
@@ -2116,6 +2099,7 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
         source: BuildSource::Patch(source),
         declared: BuildJob::Rung(Improvement::Cultivate),
         kit: None,
+        priority: core_sim::SourcePriority::default(),
     };
 
     let finisher = vec![
@@ -2128,14 +2112,6 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             priority: SourcePriority::default(),
             upkeep_kit: None,
         },
-        LaborAssignment {
-            party: None,
-            target: LaborTarget::Agriculture,
-            workers: keeping_for(ONE_SOURCE),
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        },
     ];
     let survivor = vec![
         gather(sources[0]),
@@ -2144,14 +2120,6 @@ fn world_with_two_bands_on_one_source() -> (App, Entity, Vec<UVec2>) {
             party: None,
             target: LaborTarget::Builders,
             workers: BUILDERS,
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        },
-        LaborAssignment {
-            party: None,
-            target: LaborTarget::Agriculture,
-            workers: keeping_for(2),
             kit: None,
             priority: SourcePriority::default(),
             upkeep_kit: None,
@@ -3044,6 +3012,7 @@ fn queue_a_pave(app: &mut App, band: Entity, tile: UVec2) {
                 source: BuildSource::Road(tile),
                 declared: BuildJob::Rung(Improvement::Pave),
                 kit: Some(bare_builders()),
+                priority: core_sim::SourcePriority::default(),
             },
         );
 }
@@ -3184,6 +3153,7 @@ fn a_road_entry_dies_with_its_keeper_and_frees_the_pool_behind_it() {
                 source: BuildSource::Road(road_tile),
                 declared: BuildJob::Rung(Improvement::Grade),
                 kit: Some(bare_builders()),
+                priority: core_sim::SourcePriority::default(),
             },
         );
     }
@@ -3303,6 +3273,17 @@ fn a_band_whose_pool_and_keepers_share_the_tillage(
     hoes: u32,
     keepers: u32,
 ) -> (App, Entity, UVec2) {
+    a_marked_build_sharing_the_tillage(hoes, keepers, SourcePriority::Normal)
+}
+
+/// [`a_band_whose_pool_and_keepers_share_the_tillage`] with the build's own **mark** stated — the
+/// rank its builders claim their tools at (`docs/plan_site_crews.md` §2.4), against the keeping
+/// row's `Normal`.
+fn a_marked_build_sharing_the_tillage(
+    hoes: u32,
+    keepers: u32,
+    build_mark: SourcePriority,
+) -> (App, Entity, UVec2) {
     let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
     let staffed: u32 = {
         let mut allocation = app
@@ -3314,11 +3295,17 @@ fn a_band_whose_pool_and_keepers_share_the_tillage(
                 .set_build_entry_kit(&BuildSource::Patch(sources[0]), Some(plant_build_kit())),
             "fixture: the head entry must carry the tillage kit, or the pool reaches for nothing"
         );
+        assert!(
+            allocation.set_build_priority(&BuildSource::Patch(sources[0]), build_mark),
+            "fixture: the head entry takes the build's mark"
+        );
+        // **The site's own crew IS its keeping** (`docs/plan_site_crews.md` §2.1): staffed short of
+        // the bill, every hand on the row keeps and none gathers.
         let row = allocation
             .assignments
             .iter_mut()
-            .find(|row| matches!(row.target, LaborTarget::Agriculture))
-            .expect("the fixture staffs a keeping row");
+            .find(|row| matches!(row.target, LaborTarget::Forage { .. }))
+            .expect("the fixture staffs the site row");
         row.workers = keepers;
         allocation.assignments.iter().map(|row| row.workers).sum()
     };
@@ -3533,6 +3520,67 @@ fn a_builders_pool_and_a_keeping_row_cannot_arm_more_hands_than_the_band_owns() 
     );
 }
 
+/// **⛔ THE BUILD'S MARK DECIDES THE ONE HOE AGAINST A `Normal` KEEPING SITE**
+/// (`docs/plan_site_crews.md` §2.4). A `Low` build loses it to the site, which keeps armed; a
+/// `High` build wins it, and the site keeps bare — **tool-short**, with every hand still on the
+/// keeping, which the wire says through `upkeepToolsShort` beside `upkeepHands`.
+#[test]
+fn a_low_build_loses_the_hoe_to_a_normal_site_and_a_high_build_wins_it() {
+    /// The single hoe the two claimants contend for.
+    const ONE_HOE: u32 = 1;
+    /// What one hoe arms — one hand, since a hoe crews one worker.
+    const ONE_ARMED_HAND: f32 = 1.0;
+    /// Nobody armed.
+    const NOBODY_ARMED: f32 = 0.0;
+    /// Float slack on the inverted take.
+    const TOLERANCE: f32 = 1e-4;
+
+    let (low, _, patch) =
+        a_marked_build_sharing_the_tillage(ONE_HOE, KEEPERS_SHORT_OF_THE_BILL, SourcePriority::Low);
+    assert!(
+        the_keepers_are_short_of_their_bill(&low, patch),
+        "fixture: the site's crew must fall short of its bill, or the supply saturates and says \
+         nothing about the tool"
+    );
+    assert!(
+        (keepers_the_turn_armed(&low, patch, KEEPERS_SHORT_OF_THE_BILL) - ONE_ARMED_HAND).abs()
+            < TOLERANCE
+            && (builders_the_turn_armed(&low, patch) - NOBODY_ARMED).abs() < TOLERANCE,
+        "a Low build loses the hoe to the Normal site: keepers {}, builders {}",
+        keepers_the_turn_armed(&low, patch, KEEPERS_SHORT_OF_THE_BILL),
+        builders_the_turn_armed(&low, patch)
+    );
+    assert!(
+        !published(&low, patch, |row| row.upkeepToolsShort()),
+        "…and the site, armed, is not tool-short"
+    );
+
+    let (high, _, patch) = a_marked_build_sharing_the_tillage(
+        ONE_HOE,
+        KEEPERS_SHORT_OF_THE_BILL,
+        SourcePriority::High,
+    );
+    assert!(
+        (builders_the_turn_armed(&high, patch) - ONE_ARMED_HAND).abs() < TOLERANCE
+            && (keepers_the_turn_armed(&high, patch, KEEPERS_SHORT_OF_THE_BILL) - NOBODY_ARMED)
+                .abs()
+                < TOLERANCE,
+        "a High build wins the hoe from the Normal site: builders {}, keepers {}",
+        builders_the_turn_armed(&high, patch),
+        keepers_the_turn_armed(&high, patch, KEEPERS_SHORT_OF_THE_BILL)
+    );
+    assert!(
+        published(&high, patch, |row| row.upkeepToolsShort()),
+        "…and the site keeps bare, which the wire names as tool-short"
+    );
+    assert!(
+        (published(&high, patch, |row| row.upkeepHands()) - KEEPERS_SHORT_OF_THE_BILL as f32).abs()
+            < TOLERANCE,
+        "…with its whole crew still on the keeping: {}",
+        published(&high, patch, |row| row.upkeepHands())
+    );
+}
+
 /// **⛔ ONE HOE, A BUILD AND A KEEPING SITE AT ONE PRIORITY — THE KEEPING SITE IS ARMED.**
 ///
 /// Within one `SourcePriority` tier every keeping pool's claim settles before the builders'
@@ -3653,11 +3701,12 @@ fn a_band_that_is_not_short_arms_both_pools_in_full() {
         "…and every keeper beside them"
     );
 
-    // **AND THE WIRE SAYS SO, THROUGH `poolToe`** (`docs/plan_pool_toe.md` §4). The conservation
-    // claim used to be read off `kitItemConditions`' per-row pair; a pool row carries no kit any
-    // more, so no row quotes the hoes there and the pair reads `0 of 0` — *not applicable*, with the
-    // band's `count` beside it saying the stock is real. What states a pool's gear now is its TOE,
-    // and the two pools' filled lines are exactly the band's stock.
+    // **AND THE ALLOCATION SAYS SO** — the builders' `poolToe` line on the wire
+    // (`docs/plan_pool_toe.md` §4) and the site crew's keeping issue beside it
+    // (`LaborAllocation::last_keeping_issued`, `docs/plan_site_crews.md` §2.3). A pool row carries
+    // no kit, so no row quotes the hoes on `kitItemConditions` and the pair reads `0 of 0` — *not
+    // applicable*, with the band's `count` beside it saying the stock is real. The builders' filled
+    // line and the site's issue are exactly the band's stock.
     let (holding, owned) = published_holding_and_stock(&unshort, unshort_band, SHARED_TOOL);
     assert_eq!(
         (holding, owned),
@@ -3671,8 +3720,9 @@ fn a_band_that_is_not_short_arms_both_pools_in_full() {
         hoes.iter()
             .map(|line| line.pool.as_str())
             .collect::<Vec<_>>(),
-        vec!["agriculture", "builders"],
-        "both pools reach for the hoes, so both state a line: got {toe:?}"
+        vec!["builders"],
+        "the builders are the one pool reaching for the hoes, so theirs is the one line: got \
+         {toe:?}"
     );
     for line in &hoes {
         assert!(
@@ -3680,10 +3730,19 @@ fn a_band_that_is_not_short_arms_both_pools_in_full() {
             "a band that is not short fills every line it states: {line:?}"
         );
     }
-    let filled: f32 = hoes.iter().map(|line| line.filled).sum();
+    let keeping: f32 = unshort
+        .world
+        .get::<LaborAllocation>(unshort_band)
+        .expect("the band keeps its allocation")
+        .last_keeping_issued
+        .iter()
+        .filter(|issue| issue.item == SHARED_TOOL)
+        .map(|issue| issue.units)
+        .sum();
+    let filled: f32 = hoes.iter().map(|line| line.filled).sum::<f32>() + keeping;
     assert!(
         (filled - HOES_FOR_EVERY_HAND as f32).abs() < 1e-4,
-        "the pool and the keepers together are issued exactly the band's stock of hoes: got \
-         {filled} against {HOES_FOR_EVERY_HAND}"
+        "the pool and the site's keeping together are issued exactly the band's stock of hoes: \
+         got {filled} against {HOES_FOR_EVERY_HAND}"
     );
 }

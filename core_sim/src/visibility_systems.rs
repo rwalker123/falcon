@@ -372,13 +372,9 @@ pub fn calculate_visibility(
                         LaborTarget::Extract { tile, .. } => Some(*tile),
                         LaborTarget::Scout
                         | LaborTarget::Warrior
-                        | LaborTarget::Agriculture
-                        | LaborTarget::Husbandry
+                        // **A band-wide role stands on no tile of its own**: the road keepers hold
+                        // what the band keeps, and the builders work the queue head.
                         | LaborTarget::Roadwork
-                        // **A band-wide keeping role stands on no tile of its own**, the working
-                        // keepers included: what they hold is resolved from the band's rows, and
-                        // each of those rows lights its own deposit above.
-                        | LaborTarget::Quarrywork
                         | LaborTarget::Builders => None,
                     };
                     // A Forage assignment carries raw command-supplied coords (see

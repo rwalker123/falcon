@@ -1536,6 +1536,15 @@ enum Command {
         source: BuildSourceRef,
         level: String,
     },
+    /// **Mark one queued build with the player's Build mark** — `high`, `normal` or `low`, on the
+    /// named band's queue entry for this source (`docs/plan_site_crews.md` §2.4). The builders' tool
+    /// claim and the build's pile rank at the head entry's mark. See `handle_build_priority`.
+    BuildPriority {
+        faction: FactionId,
+        band_id: u64,
+        source: BuildSourceRef,
+        level: String,
+    },
     /// **Mark one band's crafting bench with the player's own rank** — `high`, `normal` or `low`,
     /// the same mark a worked row carries and read by the same shedding order. See
     /// `handle_bench_priority`.
@@ -3280,7 +3289,7 @@ fn seed_source_yield(
     app: &mut bevy::prelude::App,
     band: Entity,
     target: &LaborTarget,
-    _improvement: Option<Improvement>,
+    improvement: Option<Improvement>,
     workers: u32,
 ) {
     // Unassigned (`workers == 0`): `set_assignment` already dropped the source's row with its
@@ -3420,6 +3429,30 @@ fn seed_source_yield(
                     &band_wear,
                 )
             });
+            // **THE CREW KEEPS THE PATCH FIRST** (`docs/plan_site_crews.md` §2.1), so the seed quotes
+            // the take on the hands its keeping leaves — the turn's own split, priced before the
+            // band's tools are settled.
+            let keep_hands = {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                let verb = core_sim::patch_build_verb(patch, improvement);
+                if core_sim::patch_claims_keeping(patch, verb) {
+                    let land = core_sim::patch_land_capacity(
+                        patch,
+                        app.world
+                            .get::<Tile>(tile_entity)
+                            .map(|ground| core_sim::tile_forage_capacity(&labor.forage, ground)),
+                    );
+                    core_sim::prospective_keep_hands(
+                        &equipment_cfg,
+                        &band_wear,
+                        patch.standing().held,
+                        core_sim::patch_keeping_basis(patch, &ladder, land, &labor.forage),
+                        workers,
+                    )
+                } else {
+                    core_sim::NO_HANDS
+                }
+            };
             let mut seeded = forage_source_yield_preview(
                 patch,
                 &tile_composition,
@@ -3429,6 +3462,7 @@ fn seed_source_yield(
                 seasonal,
                 output_mult,
                 workers,
+                keep_hands,
                 *floor,
                 // **The crew's own take selection** — a seed priced on the whole basket would
                 // promise a narrowed crew a stand it will not touch, which is exactly the
@@ -3523,6 +3557,23 @@ fn seed_source_yield(
                 hunt_injury_damage_per_animal: combat_cfg.hunt_injury_damage_per_animal,
             }
             .party_against(core_sim::Quarry::Mass(herd.body_mass));
+            // **THE HUNT ROW IS THE HERD'S CREW AND KEEPS IT FIRST** (`docs/plan_site_crews.md`
+            // §2.2) — the seed quotes the cull on the hands its keeping leaves.
+            let keep_hands = {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                let verb = herd_build_verb(herd, improvement);
+                if core_sim::herd_claims_keeping(herd, verb) {
+                    core_sim::prospective_keep_hands(
+                        &equipment_cfg,
+                        &band_wear,
+                        herd.standing().held,
+                        core_sim::herd_keeping_basis(herd, &fauna, &ladder),
+                        workers,
+                    )
+                } else {
+                    core_sim::NO_HANDS
+                }
+            };
             let mut seeded = hunt_source_yield_preview(
                 herd,
                 &fauna,
@@ -3530,6 +3581,7 @@ fn seed_source_yield(
                 &hunting_party,
                 output_mult,
                 workers,
+                keep_hands,
                 *floor,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
@@ -3677,21 +3729,52 @@ fn seed_source_yield(
                 // (`core_sim::extraction::DepositCarry`). A seed priced bare would promise an
                 // axe-carrying crew the bare-handed cut and jump the moment the turn landed.
                 None => {
-                    let crew_coverage = equipment_cfg.coverage_from_units(
+                    // **THE CREW KEEPS THE WORKING FIRST** (`docs/plan_site_crews.md` §2.5), so the
+                    // seed quotes the cut on the hands its keeping leaves, with the cutters' share
+                    // of the crew's lift — the turn's own split — and its take kit is budgeted less
+                    // the keeping tools this crew's keeping is issued first
+                    // (`extraction::prospective_deposit_gear`, the quote's own ration).
+                    let allocation = app
+                        .world
+                        .get::<LaborAllocation>(band)
+                        .cloned()
+                        .unwrap_or_default();
+                    let keeping = core_sim::extraction::crew_keeping_issue(
+                        &equipment_cfg,
+                        &band_wear,
+                        &working,
+                        &ground,
+                        &extraction,
+                        &ladder,
+                        workers,
+                    );
+                    let crew = core_sim::extraction::prospective_deposit_gear(
+                        &equipment_cfg,
+                        &allocation,
+                        target,
                         &crew_kit,
-                        workers as f32,
+                        workers,
                         &band_wear,
-                        item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
+                        held_rung,
+                        &carry,
+                        &keeping,
                     );
-                    let gear = equipment_cfg.deposit_gear(
-                        &crew_coverage,
+                    let keep_hands = core_sim::extraction::crew_keep_hands(
+                        &equipment_cfg,
                         &band_wear,
-                        held_rung.branch(),
-                        Some(&held_key),
+                        &working,
+                        &ground,
+                        &extraction,
+                        &ladder,
+                        workers,
                     );
-                    let lift = carry.lift(&equipment_cfg, &crew_coverage, &band_wear, gear.take);
+                    let take_hands = (workers as f32 - keep_hands)
+                        .max(core_sim::extraction::NO_HANDS_ON_THE_DEPOSIT);
+                    let lift = crew
+                        .lift
+                        .of_the_cutters(core_sim::extraction::cutting_share(take_hands, workers));
                     core_sim::extraction::DepositProjection::new(&working)
-                        .step(workers, lift, *floor, &ground, &extraction, &ladder)
+                        .step(take_hands, lift, *floor, &ground, &extraction, &ladder)
                         .unwrap_or(core_sim::extraction::DEPOSIT_EMPTY)
                 }
             };
@@ -3713,10 +3796,7 @@ fn seed_source_yield(
         // A band-wide role produces no per-source yield, so there is no row to seed.
         LaborTarget::Scout
         | LaborTarget::Warrior
-        | LaborTarget::Agriculture
-        | LaborTarget::Husbandry
         | LaborTarget::Roadwork
-        | LaborTarget::Quarrywork
         | LaborTarget::Builders => return,
     };
     band_allocation_mut(app, band).set_source_yield(target, seeded);
@@ -3921,10 +4001,7 @@ fn validate_labor_policy(
         }
         LaborTarget::Scout
         | LaborTarget::Warrior
-        | LaborTarget::Agriculture
-        | LaborTarget::Husbandry
         | LaborTarget::Roadwork
-        | LaborTarget::Quarrywork
         | LaborTarget::Builders => Ok(()),
     }
 }
@@ -3983,10 +4060,7 @@ fn validate_improvement(
         }
         LaborTarget::Scout
         | LaborTarget::Warrior
-        | LaborTarget::Agriculture
-        | LaborTarget::Husbandry
         | LaborTarget::Roadwork
-        | LaborTarget::Quarrywork
         | LaborTarget::Builders => Err(format!(
             "There is nothing to {} on a standing role.",
             improvement.as_str()
@@ -4705,7 +4779,7 @@ fn labor_event_kind(role: &str) -> CommandEventKind {
         "forage" => CommandEventKind::Forage,
         "hunt" => CommandEventKind::Hunt,
         "scout" => CommandEventKind::Scout,
-        "extract" | "quarrywork" => CommandEventKind::Extraction,
+        "extract" => CommandEventKind::Extraction,
         _ => CommandEventKind::CancelOrder,
     }
 }
@@ -4882,22 +4956,12 @@ fn handle_assign_labor(
         },
         "scout" => LaborTarget::Scout,
         "warrior" => LaborTarget::Warrior,
-        // **The two keeping roles** (`docs/plan_standing_upkeep.md` §2.5) — staffed like any other
-        // band-wide role, because that is what they are: their hands are a pool against the summed
-        // upkeep of everything this band holds on that web, and `0` stops maintaining the whole web.
-        "agriculture" => LaborTarget::Agriculture,
-        "husbandry" => LaborTarget::Husbandry,
-        // **The third keeping role** (`docs/plan_standing_upkeep.md` §4.13) — the route branch's,
-        // staffed exactly like the two above it. What its hands hold is not a source row but the road
-        // TILES THIS BAND IS THE KEEPER OF — the ones it graded or paved, wherever the band has since
-        // walked (`routes` rule 2; the catchment is the keeper, never the band's own position) — and
-        // `0` stops keeping roads at all.
+        // **The road-keeping role** (`docs/plan_standing_upkeep.md` §4.13) — the one keeping POOL
+        // left (`docs/plan_site_crews.md` §1: a site's own crew keeps it). What its hands hold is not
+        // a source row but the road TILES THIS BAND IS THE KEEPER OF — the ones it graded or paved,
+        // wherever the band has since walked (`routes` rule 2; the catchment is the keeper, never the
+        // band's own position) — and `0` stops keeping roads at all.
         "roadwork" => LaborTarget::Roadwork,
-        // **The fourth keeping role** (`docs/plan_extraction.md` §6) — staffed exactly like the
-        // three above it. What its hands hold is every WORKING this band has an `extract` row on,
-        // across both deposit branches, worked or idle; `0` stops holding them at all, after which
-        // each slides back down its ladder.
-        "quarrywork" => LaborTarget::Quarrywork,
         // **The builders** (`docs/plan_standing_upkeep.md` §2.5) — one pool for both webs, whose
         // whole output goes on the head of this band's build queue. A verb declares what to raise;
         // this is what raises it, and `0` stops building altogether.
@@ -4951,17 +5015,10 @@ fn handle_assign_labor(
         LaborTarget::Hunt { .. } => CommandEventKind::Hunt,
         LaborTarget::Scout => CommandEventKind::Scout,
         LaborTarget::Warrior => CommandEventKind::CancelOrder,
-        // The two keeping roles ride their web's own verb channel, so a player watching a rung's
-        // line sees the hands that hold it move.
-        LaborTarget::Agriculture => CommandEventKind::Cultivate,
-        LaborTarget::Husbandry => CommandEventKind::Corral,
         // **The road keepers have no web's channel to ride**, because the route branch declares no
         // verb at all — traffic is the crew — so they report on the generic one, as the builders and
         // the warriors do.
         LaborTarget::Roadwork => CommandEventKind::CancelOrder,
-        // **The working keepers ride their branches' own channel**, as the two food webs' keeping
-        // roles ride theirs: one channel serves both deposit ladders, exactly as one role does.
-        LaborTarget::Quarrywork => CommandEventKind::Extraction,
         // The builders serve both webs, so they have no web's channel to ride and report on the
         // generic one, as the warriors do.
         LaborTarget::Builders => CommandEventKind::CancelOrder,
@@ -5061,13 +5118,7 @@ fn handle_assign_labor(
     // rather than written as two arms of one `if` — which is the same block twice, and reads as an
     // accident.
     let unstaffing = workers == 0;
-    let staffing_a_standing_pool = matches!(
-        target,
-        LaborTarget::Builders
-            | LaborTarget::Agriculture
-            | LaborTarget::Husbandry
-            | LaborTarget::Roadwork
-    );
+    let staffing_a_standing_pool = matches!(target, LaborTarget::Builders | LaborTarget::Roadwork);
     if staffing_a_standing_pool && kit_id.is_some() {
         // **AND THE ROAD KEEPERS ARE THE SAME RULE WITH NO OVERRIDE TO POINT AT.** A road is not a
         // work site the player holds — it is owned by nobody — so there is no `upkeep_kit <source…>`
@@ -5118,7 +5169,7 @@ fn handle_assign_labor(
 
     // **"IS THERE STILL ANYTHING OF OURS HERE?"**, asked before the allocation is borrowed
     // (`docs/plan_standing_upkeep.md` §2.2). A source row survives losing its take crew — it is the
-    // band's *holding*, and the keeping pool funds what a band holds, not what it happens to be
+    // band's *holding*, and the site's crew keeps what a band holds, not what it happens to be
     // gathering — but a wild stand nobody has built anything on is not a holding, so unstaffing one
     // clears its row here rather than leaving a `+0.00` row for the turn to sweep up. The same
     // predicate retires a holding whose meter has finally rotted away, inside `advance_labor_allocation`.
@@ -7317,11 +7368,7 @@ fn cancel_scope_clears(scope: CancelScope, target: &LaborTarget) -> bool {
         ),
         CancelScope::Roles => matches!(
             target,
-            LaborTarget::Scout
-                | LaborTarget::Warrior
-                | LaborTarget::Agriculture
-                | LaborTarget::Husbandry
-                | LaborTarget::Builders
+            LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Builders
         ),
     }
 }
@@ -9470,6 +9517,107 @@ fn handle_build_order(
     );
 }
 
+/// **MARK ONE QUEUED BUILD WITH THE PLAYER'S BUILD MARK** — `build_priority <faction> <band> <x> <y>
+/// <level>` / `build_priority <faction> <band> <herd_id> <level>` (`docs/plan_site_crews.md` §2.4).
+///
+/// Sets [`core_sim::BuildQueueEntry::priority`] on the named band's queue entry for that source. The
+/// entry's place, its kit and the site row are untouched: the row's own `work_priority` ranks the
+/// site's crew, and this ranks the build — the two used to be one mark, and a crew marked `High` to
+/// keep its hoes pushed its own queued build ahead of every other pile (#719).
+///
+/// **One band's statement**, for `work_priority`'s reason: the settlement it feeds is that band's
+/// own tools and stores. **An unqueued source is refused, never enrolled** — the mark is a property
+/// of a declared job. An unknown level is refused by name, `upkeep_mode`'s rule.
+fn handle_build_priority(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    band_id: u64,
+    source: BuildSourceRef,
+    level: String,
+) {
+    let label = source.label();
+    let Some(build_source) = source.target().as_ref().and_then(BuildSource::of) else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            "build_priority needs a source: two numbers name a tile, one token names a herd."
+                .to_string(),
+        );
+        return;
+    };
+    let Some(priority) = SourcePriority::from_token(level.trim().to_ascii_lowercase().as_str())
+    else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!(
+                "Unknown build priority '{}' — expected {}, {} or {}.",
+                level.trim(),
+                SourcePriority::High.as_str(),
+                SourcePriority::Normal.as_str(),
+                SourcePriority::Low.as_str()
+            ),
+        );
+        return;
+    };
+    let Some(band) = select_starting_band(
+        app,
+        faction,
+        Some(band_id),
+        "build_priority",
+        CommandEventKind::CancelOrder,
+    ) else {
+        return;
+    };
+    let marked = band_allocation_mut(app, band.entity).set_build_priority(&build_source, priority);
+    if !marked {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("{} has nothing queued at {label} to rank.", band.label),
+        );
+        return;
+    }
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "build_priority",
+        faction = %faction.0,
+        band = band_id,
+        source = %label,
+        level = priority.as_str(),
+        "command.build_priority.applied"
+    );
+    let sentence = match priority {
+        SourcePriority::High => format!(
+            "{}: the build at {label} gets tools and materials first",
+            band.label
+        ),
+        SourcePriority::Normal => format!(
+            "{}: the build at {label} takes its turn like the rest",
+            band.label
+        ),
+        SourcePriority::Low => format!(
+            "{}: the build at {label} waits for what is left",
+            band.label
+        ),
+    };
+    push_command_event(
+        app,
+        tick,
+        CommandEventKind::CancelOrder,
+        faction,
+        sentence,
+        Some(format!(
+            "status=applied action=build_priority source={label} level={} band={band_id}",
+            priority.as_str()
+        )),
+    );
+}
+
 /// **MARK ONE WORKED ROW WITH THE PLAYER'S OWN RANK** — `work_priority <faction> <band> <x> <y>
 /// <level>` / `work_priority <faction> <band> <herd_id> <level>` (`docs/plan_standing_upkeep.md`
 /// §4.9 item 9b).
@@ -10865,6 +11013,23 @@ fn command_from_payload(
             },
             level,
         }),
+        ProtoCommandPayload::BuildPriority {
+            faction_id,
+            band_id,
+            target_x,
+            target_y,
+            herd_id,
+            level,
+        } => Some(Command::BuildPriority {
+            faction: FactionId(faction_id),
+            band_id,
+            source: BuildSourceRef {
+                target_x,
+                target_y,
+                herd_id,
+            },
+            level,
+        }),
         ProtoCommandPayload::BenchPriority {
             faction_id,
             band_id,
@@ -11603,6 +11768,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::BuildKit { faction, .. } => Some((*faction, "build_kit")),
         Command::UpkeepKit { faction, .. } => Some((*faction, "upkeep_kit")),
         Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
+        Command::BuildPriority { faction, .. } => Some((*faction, "build_priority")),
         Command::BenchPriority { faction, .. } => Some((*faction, "bench_priority")),
         Command::UpkeepMode { faction, .. } => Some((*faction, "upkeep_mode")),
         Command::ExtendPen { faction, .. } => Some((*faction, "extend_pen")),
@@ -12130,6 +12296,14 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             level,
         } => {
             handle_work_priority(app, faction, band_id, source, level);
+        }
+        Command::BuildPriority {
+            faction,
+            band_id,
+            source,
+            level,
+        } => {
+            handle_build_priority(app, faction, band_id, source, level);
         }
         Command::ExtendPen {
             faction,
@@ -14657,22 +14831,54 @@ mod tests {
         );
     }
 
-    /// **The keeping is staffed like any other band-wide role**, through `assign_labor` — which is
-    /// the whole of what "maintenance left the tile" means at the command boundary. `0` stops
-    /// maintaining that web, exactly as `0` unassigns any other row.
+    /// **The road-keeping pool is staffed like any other band-wide role**, and **the three retired
+    /// keeping pools are refused** (`docs/plan_site_crews.md` §4): a patch, herd or working is kept
+    /// by its own crew, so `agriculture`, `husbandry` and `quarrywork` name nothing to staff and the
+    /// band's allocation is untouched.
     #[test]
-    fn assign_labor_staffs_the_two_keeping_roles() {
+    fn assign_labor_staffs_roadwork_and_refuses_the_retired_keeping_pools() {
         let mut app = build_test_app();
         app.update();
         let faction = FactionId(0);
         let band = starting_band_id(&mut app, faction);
         const KEEPERS: u32 = 3;
+        let staffed = |app: &mut bevy::prelude::App| {
+            app.world
+                .query::<&LaborAllocation>()
+                .iter(&app.world)
+                .map(LaborAllocation::assigned_total)
+                .sum::<u32>()
+        };
+
+        for retired in ["agriculture", "husbandry", "quarrywork"] {
+            let before = staffed(&mut app);
+            handle_assign_labor(
+                &mut app,
+                faction,
+                Some(band),
+                retired.to_string(),
+                KEEPERS,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+            );
+            assert_eq!(
+                staffed(&mut app),
+                before,
+                "`assign_labor … {retired}` is refused: that pool retired, and its sites are kept by \
+                 their own crews"
+            );
+        }
 
         handle_assign_labor(
             &mut app,
             faction,
             Some(band),
-            "agriculture".to_string(),
+            "roadwork".to_string(),
             KEEPERS,
             None,
             None,
@@ -14683,20 +14889,14 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(
-            role_crew(&mut app, faction, &LaborTarget::Agriculture),
+            role_crew(&mut app, faction, &LaborTarget::Roadwork),
             KEEPERS
         );
-        assert_eq!(
-            role_crew(&mut app, faction, &LaborTarget::Husbandry),
-            NO_CREW_ON_THIS_ACTIVITY,
-            "the two webs are separate pools — staffing one never staffs the other"
-        );
-
         handle_assign_labor(
             &mut app,
             faction,
             Some(band),
-            "agriculture".to_string(),
+            "roadwork".to_string(),
             NO_CREW_ON_THIS_ACTIVITY,
             None,
             None,
@@ -14707,9 +14907,9 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(
-            role_crew(&mut app, faction, &LaborTarget::Agriculture),
+            role_crew(&mut app, faction, &LaborTarget::Roadwork),
             NO_CREW_ON_THIS_ACTIVITY,
-            "…and zero takes them off again — that is the whole of 'stop maintaining this web'"
+            "…and zero takes them off again — that is the whole of 'stop keeping roads'"
         );
     }
 
@@ -17357,10 +17557,10 @@ mod tests {
              say nothing is wrong on a patch the sim is reverting"
         );
         // **And what it would take to stop that — the rate in whole hands, published on BOTH sides
-        // of completion.** The keeping pool owes the rate for a meter carrying work at any fullness
-        // (`docs/plan_standing_upkeep.md` §4.6a), so over a part-sown Field this number means what it
-        // means over a finished one: the hands that hold the ground. It is **not** a minimum viable
-        // build crew — a build crew supplies none of the rate.
+        // of completion.** The site's own crew owes the rate for a meter carrying work at any
+        // fullness (`docs/plan_standing_upkeep.md` §4.6a), so over a part-sown Field this number
+        // means what it means over a finished one: the hands that hold the ground. It is **not** a
+        // minimum viable build crew — a build crew supplies none of the rate.
         assert_eq!(
             patch.upkeep_workers_needed,
             expected.ceil() as u32,
@@ -18562,7 +18762,7 @@ mod tests {
         assert_eq!(
             row(&app).0,
             Some(PLANT_KEEPING_KIT.to_string()),
-            "a named kit is stored on the SITE's row — the band's `agriculture` role carries none"
+            "a named kit is stored on the SITE's row"
         );
         assert_eq!(
             row(&app).1,
@@ -18714,23 +18914,22 @@ mod tests {
         (app, band, patch)
     }
 
-    /// **A KEEPING ROLE TAKES NO KIT EITHER, AND THE TOKEN IS REFUSED BY NAME**
-    /// (`docs/plan_standing_upkeep.md` §2.7) — the `builders` row's rule one account over.
+    /// **A STANDING POOL TAKES NO KIT, AND THE TOKEN IS REFUSED BY NAME**
+    /// (`docs/plan_standing_upkeep.md` §2.7, `docs/plan_pool_toe.md` §3).
     ///
-    /// The `agriculture` / `husbandry` rows say **how many** keepers a web gets; what the keepers of
-    /// one site carry is that site's own statement (`upkeep_kit`). A kit stored here reached the
-    /// split through `LaborAllocation::named_kit_on` until §2.7 and reaches nothing now, so
-    /// swallowing the token would be the worst version of the defect the builders row had: the
-    /// player names a tool, the sim stores it, and no keeper anywhere picks it up.
+    /// The `roadwork` and `builders` rows say **how many** hands a pool gets; the tools they carry
+    /// follow from the sites the pool works. A kit stored on the row would reach nothing, so
+    /// swallowing the token would be the worst version of the defect: the player names a tool, the
+    /// sim stores it, and nobody anywhere picks it up.
     ///
-    /// **The pair is the test.** The token is refused, *and* a keeper count with no token still
-    /// staffs the role — a fix that refused everything would satisfy the first half alone.
+    /// **The pair is the test.** The token is refused, *and* a count with no token still staffs the
+    /// pool — a fix that refused everything would satisfy the first half alone.
     #[test]
-    fn a_keeping_role_takes_no_kit_and_the_token_is_refused_rather_than_swallowed() {
-        /// The plant keeping kit — a perfectly valid `agriculture` kit, which is the point: it is
+    fn a_standing_pool_takes_no_kit_and_the_token_is_refused_rather_than_swallowed() {
+        /// The plant builders kit — a perfectly valid `builders` kit, which is the point: it is
         /// refused for being on the wrong *seam*, not for being the wrong tool.
         const PLANT_KEEPING_KIT: &str = "tillage";
-        /// Hands on the keeping role — any positive count.
+        /// Hands on the pool — any positive count.
         const KEEPERS: u32 = 2;
 
         let staffed_with = |role: &str, named: Option<&str>| -> u32 {
@@ -18762,10 +18961,10 @@ mod tests {
                 named.map(str::to_string),
                 Vec::new(),
             );
-            let target = if role == "agriculture" {
-                LaborTarget::Agriculture
+            let target = if role == "roadwork" {
+                LaborTarget::Roadwork
             } else {
-                LaborTarget::Husbandry
+                LaborTarget::Builders
             };
             app.world
                 .get::<LaborAllocation>(band)
@@ -18773,7 +18972,7 @@ mod tests {
                 .workers_on(&target)
         };
 
-        for role in ["agriculture", "husbandry"] {
+        for role in ["roadwork", "builders"] {
             assert_eq!(
                 staffed_with(role, None),
                 KEEPERS,
@@ -18785,8 +18984,8 @@ mod tests {
             assert_eq!(
                 staffed_with(role, Some(PLANT_KEEPING_KIT)),
                 0,
-                "naming a kit on the `{role}` row must be refused by name: the keeping kit is per \
-                 WORK SITE, and a token stored here would be picked up by nobody"
+                "naming a kit on the `{role}` row must be refused by name: a pool's tools follow \
+                 from the sites it works, and a token stored here would be picked up by nobody"
             );
         }
     }
@@ -18843,6 +19042,7 @@ mod tests {
                         source: BuildSource::Herd(herd_id.clone()),
                         declared: BuildJob::Rung(Improvement::Tame),
                         kit: None,
+                        priority: core_sim::SourcePriority::default(),
                     },
                 )
             } else {
@@ -18857,6 +19057,7 @@ mod tests {
                         source: BuildSource::Patch(patch),
                         declared: BuildJob::Rung(Improvement::Cultivate),
                         kit: None,
+                        priority: core_sim::SourcePriority::default(),
                     },
                 )
             };
@@ -19541,6 +19742,8 @@ mod tests {
             1.0,
             1.0,
             BAND_WORKERS,
+            // A wild patch owes no keeping, so the whole crew gathers.
+            core_sim::NO_HANDS,
             0.5,
             &TakeSelection::EVERYTHING,
             labor.yield_average_horizon_turns,
@@ -19610,6 +19813,8 @@ mod tests {
             &HuntingParty::builtin_equipped(),
             1.0,
             BAND_WORKERS,
+            // A wild herd owes no keeping, so the whole crew hunts.
+            core_sim::NO_HANDS,
             0.5,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
@@ -23235,13 +23440,15 @@ mod tests {
         resolve_labor(app);
     }
 
-    /// **THE SEED IS RATIONED LIKE THE TURN WHEN A POOL SHARES THE AXES** (#663). Two axes, a
-    /// felling crew, and two quarrywork keepers holding the same working: the pools settle first and
-    /// take the axe the keepers' bill needs, so the fellers are armed out of what is left — and the
-    /// seed, which reads the same `LaborAllocation::item_budget` (less the pools' issued units the
-    /// turn parked on `last_pool_toe`), must quote exactly the cut the next turn pays.
+    /// **THE SEED IS RATIONED AND KEPT LIKE THE TURN WHEN THE KEEPING SHARES THE AXES** (#663,
+    /// `docs/plan_site_crews.md` §2.3). Two axes and a felling crew with hands to spare for its
+    /// keeping: the settlement issues the keeping hands their axe first, so the cutters are armed out
+    /// of what is left — and the seed, which reads the same `LaborAllocation::item_budget` (less the
+    /// keeping issues the turn parked on `last_keeping_issued`) and quotes the cut on the hands the
+    /// keeping leaves (`systems::prospective_keep_hands`), must quote exactly the cut the next turn
+    /// pays.
     #[test]
-    fn a_seed_beside_a_pool_holding_axes_quotes_the_cut_the_turn_pays() {
+    fn a_seed_beside_a_kept_working_holding_axes_quotes_the_cut_the_turn_pays() {
         const AXES: u32 = 2;
         const KEEPERS: u32 = 2;
 
@@ -23253,34 +23460,29 @@ mod tests {
         let mut ledger = BandEquipment::default();
         ledger.stock("axe", AXES, "flint", None);
         app.world.entity_mut(band).insert(ledger);
-        assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
-        app.world
-            .get_mut::<LaborAllocation>(band)
-            .expect("band has an allocation")
-            .assignments
-            .push(core_sim::LaborAssignment {
-                party: None,
-                target: LaborTarget::Quarrywork,
-                workers: KEEPERS,
-                kit: None,
-                priority: core_sim::SourcePriority::default(),
-                upkeep_kit: None,
-            });
-        // One turn so the settlement has parked what the pools were issued.
+        assign_extract(
+            &mut app,
+            faction,
+            WORKING,
+            "wood",
+            None,
+            BAND_WORKERS + KEEPERS,
+        );
+        // One turn so the settlement has parked what the keeping was issued.
         resolve_deposit_turn(&mut app);
-        let pool_axes: f32 = app
+        let keeping_axes: f32 = app
             .world
             .get::<LaborAllocation>(band)
             .expect("band has an allocation")
-            .last_pool_toe
+            .last_keeping_issued
             .iter()
-            .filter(|line| line.item == "axe")
-            .map(|line| line.filled)
+            .filter(|issue| issue.item == "axe")
+            .map(|issue| issue.units)
             .sum();
         assert!(
-            pool_axes >= 1.0,
-            "fixture: the keepers must hold an axe, or the seed has nothing to be rationed by — \
-             {pool_axes}"
+            keeping_axes >= 1.0,
+            "fixture: the keeping must hold an axe, or the seed has nothing to be rationed by — \
+             {keeping_axes}"
         );
 
         // Re-seed the row through the seam the assign command calls, then resolve the turn it
@@ -23294,7 +23496,7 @@ mod tests {
                 floor: DEFAULT_ESCAPEMENT_FLOOR,
             },
             None,
-            BAND_WORKERS,
+            BAND_WORKERS + KEEPERS,
         );
         let seeded = source_materials(&app, band)
             .first()
@@ -23537,8 +23739,9 @@ mod tests {
     /// before the commit, then committing `n` with `k` and resolving, pays row `n`'s `take`. Three
     /// arms so the agreement is not a coincidence of one rung or one kit:
     ///
-    /// - a seated **felling** wood, Woodcutting kit, two axes and three sleds among four fellers —
-    ///   the axes lift the cut, and two complete kits (the axes are the scarcer item);
+    /// - a seated **felling** wood, Woodcutting kit, two axes and three sleds among four hands —
+    ///   the working's own keeping is issued an axe first (`docs/plan_site_crews.md` §2.3), so the
+    ///   other lifts the cut, and one complete kit (the axes are the scarcer item);
     /// - an **unopened** deadfall wood, Woodcutting kit, two sleds among three — the sleds lift the
     ///   floor's cut, and no complete kit (no axes);
     /// - the felling wood again on **`none`** — the bare cut, and the whole crew counted outfitted
@@ -23560,7 +23763,7 @@ mod tests {
                 sleds: 3,
                 axes: 2,
                 crew: 4,
-                armed: 2.0,
+                armed: 1.0,
             },
             Arm {
                 felling: false,
@@ -23630,8 +23833,10 @@ mod tests {
     }
 
     /// ⛔ **THE CURVE'S KIT COUNT AT CREW N IS THE ROW'S `kitWorkersHolding` AFTER COMMITTING N** —
-    /// the sheet's *"N of M kits available"* before the commit and the Work board's count after it
-    /// are one number, counted the one way every job's is (the scarcest of the kit's items). Arms
+    /// the sheet's *"N of M kits available"* and the Work board's count once the crew has worked a
+    /// turn are one number, counted the one way every job's is (the scarcest of the kit's items). On
+    /// a felling working the crew's keeping is issued an axe first (`docs/plan_site_crews.md` §2.3):
+    /// the sheet strikes it at the crew it quotes, and the row strikes the issue the turn parked. Arms
     /// spread over both rungs, a shortfall in either item, a covered crew and `none`, and each
     /// compares the curve's `armed_workers` at the crew committed with the published row's
     /// `kitWorkersHolding` — never with a literal alone, so the two surfaces are held to each other.
@@ -23644,7 +23849,7 @@ mod tests {
     fn the_deposit_curves_kit_count_is_the_committed_rows_kit_workers_holding() {
         // (felling, kit, sleds, axes, crew, expected whole-kit count)
         for (felling, kit, sleds, axes, crew, expected) in [
-            (true, "woodcutting", 5, 3, 4, 3.0),
+            (true, "woodcutting", 5, 3, 4, 2.0),
             (false, "woodcutting", 2, 0, 3, 0.0),
             (false, "woodcutting", 1, 4, 3, 1.0),
             (true, "woodcutting", 6, 6, 4, 4.0),
@@ -23669,6 +23874,8 @@ mod tests {
                 .expect("the curve carries the crew asked about")
                 .armed_workers;
             assign_extract_with_kit(&mut app, "wood", crew, kit);
+            // One turn, so the row's budget strikes the keeping issue the settlement parked.
+            resolve_deposit_turn(&mut app);
             let committed = published_wood_row(&mut app);
             assert_eq!(
                 committed.kit_workers_holding, expected,
@@ -23823,9 +24030,11 @@ mod tests {
     /// ⛔ **`usefulCutters` IS THE SHEET CURVE'S PLATEAU, AND GEAR LOWERS IT** (#663). A felling wood
     /// drawn down to a small room above the floor, five fellers committed, the band's thirty working
     /// hands the crew pool. The published `usefulCutters` must equal the plateau of the curve the
-    /// sheet asks for (same band, kit, floor and pool), read by the sheet's own rule — and with three
+    /// sheet asks for (same band, kit, floor and pool), read by the sheet's own rule — and with six
     /// axes it must stop strictly earlier than the same ground's bare curve (`none`), which is the
-    /// `room ÷ perWorkerBiomass` quotient the roster used to flag against.
+    /// `room ÷ perWorkerBiomass` quotient the roster used to flag against. (The working's own crew
+    /// keeps it first and its keeping is issued an axe before the take is budgeted,
+    /// `docs/plan_site_crews.md` §2.3, so the stock is sized for the cutters to hold the rest.)
     #[test]
     fn useful_cutters_is_the_sheet_curves_plateau_and_gear_lowers_it() {
         /// What the drawn-down wood leaves above the floor before renewal — small enough that the
@@ -23835,7 +24044,7 @@ mod tests {
         let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
         seat_a_felling_working(&mut app, tile);
         let mut ledger = BandEquipment::default();
-        ledger.stock("axe", 3, "flint", None);
+        ledger.stock("axe", 6, "flint", None);
         deposit_band_holding(&mut app, tile, ledger);
         assign_extract(&mut app, FactionId(0), WORKING, "wood", None, BAND_WORKERS);
         {
@@ -23871,24 +24080,25 @@ mod tests {
         );
         assert!(
             published < bare_plateau,
-            "three axes saturate the room sooner than bare hands: {published} against {bare_plateau}"
+            "axes saturate the room sooner than bare hands: {published} against {bare_plateau}"
         );
     }
 
     /// **A CREW HOLDING AXES IS SEEDED THE CUT THE TURN WILL PAY** (#663) — the seed strikes the
     /// take gear through `EquipmentConfig::deposit_gear` at the rung the working holds, the same seam
-    /// the turn's `Extract` arm reads, so the quoted figure does not jump when the turn lands.
+    /// the turn's `Extract` arm reads, and cuts on the hands the working's keeping leaves
+    /// (`docs/plan_site_crews.md` §2.5), so the quoted figure does not jump when the turn lands.
     ///
-    /// Two axes among five fellers on a seated `forestry:felling` working: the expectation is written
-    /// out from the rung's own rate plus the two axes' `deposit_take`, independently of the seam, and
-    /// the resolved turn is then required to pay exactly the seed. The stand is at capacity, where the
-    /// logistic term is zero, so the regrowth the seed projects and the one the turn applies agree.
+    /// Two axes among five hands on a seated `forestry:felling` working. The axe serves the
+    /// working's keeping as well as its take, so the crew's keeping hands are issued theirs first
+    /// and the take row is budgeted the rest — which the seed reads off the turn that parked it
+    /// (`LaborAllocation::last_keeping_issued`). So one turn resolves, the row is re-seeded, and the
+    /// next turn is required to pay exactly that seed. The stand is at capacity, where the logistic
+    /// term is zero, so the regrowth the seed projects and the one the turn applies agree.
     #[test]
     fn a_deposit_crew_with_axes_is_seeded_the_cut_the_turn_pays() {
-        /// Fewer axes than fellers, so the partly-equipped sum is what is priced.
+        /// Fewer axes than hands, so the partly-equipped sum is what is priced.
         const AXES: u32 = 2;
-        /// The shipped flint axe's `deposit_take` on felling (`equipment.json`).
-        const AXE_TAKE: f32 = 1.0;
 
         let mut app = build_test_app();
         let faction = FactionId(0);
@@ -23904,14 +24114,37 @@ mod tests {
 
         assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
         assert_eq!(stored_extract_kit(&app, band, "wood"), "woodcutting");
+        // One turn so the settlement has parked what the keeping was issued, then the seam the
+        // assign command calls.
+        resolve_deposit_turn(&mut app);
+        let keep_hands = app
+            .world
+            .resource::<core_sim::DepositRegistry>()
+            .source(WORKING, "wood")
+            .expect("the seated working survives the turn")
+            .upkeep_hands;
+        assert!(
+            keep_hands > 0.0 && keep_hands < BAND_WORKERS as f32,
+            "fixture: the felling working's keeping takes part of the crew — {keep_hands}"
+        );
+        seed_source_yield(
+            &mut app,
+            band,
+            &LaborTarget::Extract {
+                tile: WORKING,
+                material: "wood".to_string(),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+            },
+            None,
+            BAND_WORKERS,
+        );
         let seeded = source_materials(&app, band)
             .first()
             .expect("a staffed working publishes the material it will cut")
             .amount;
-        let expected = bare_rate * BAND_WORKERS as f32 + AXES as f32 * AXE_TAKE;
         assert!(
-            (seeded - expected).abs() < A_CLOSE_ENOUGH_AMOUNT,
-            "the seed is the crew's bare rate plus two axes' take: {seeded} against {expected}"
+            seeded > bare_rate * (BAND_WORKERS as f32 - keep_hands),
+            "the axes left to the cutters lift the seed above their bare rate: {seeded}"
         );
 
         resolve_deposit_turn(&mut app);

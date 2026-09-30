@@ -664,6 +664,9 @@ fn create_herds<'a>(
                 // **WHAT THIS SITE IS KEPT WITH** — the resolved kit, and whether a band stated it.
                 upkeepKitId: Some(upkeep_kit_id),
                 upkeepKitNamed: herd.upkeep_kit_named,
+                // **WHAT THE HERD'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.2).
+                upkeepHands: herd.upkeep_hands,
+                upkeepToolsShort: herd.upkeep_tools_short,
                 // **WHAT A PEN RING SWALLOWS TO RAISE** — appended last (append-only wire), and
                 // the material twin of `corralWorkCost`. It carries what `buildMaterialCost` above
                 // cannot on a CORRALLED herd, where the rung above the pen is none.
@@ -890,6 +893,9 @@ fn create_forage_patches<'a>(
                 // **WHAT THIS SITE IS KEPT WITH** — the resolved kit, and whether a band stated it.
                 upkeepKitId: Some(upkeep_kit_id),
                 upkeepKitNamed: patch.upkeep_kit_named,
+                // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.1).
+                upkeepHands: patch.upkeep_hands,
+                upkeepToolsShort: patch.upkeep_tools_short,
             },
         );
         entries.push(entry);
@@ -1226,6 +1232,10 @@ fn create_deposits<'a>(
                     upkeepKitNamed: deposit.upkeep_kit_named,
                     defaultKitId: Some(default_kit_id),
                     offeredKitIds: Some(offered_kit_ids),
+                    // **WHAT THE WORKING'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md`
+                    // §2.5).
+                    upkeepHands: deposit.upkeep_hands,
+                    upkeepToolsShort: deposit.upkeep_tools_short,
                 },
             )
         })
@@ -1269,6 +1279,8 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
         upkeep_kit_named: deposit.upkeepKitNamed(),
         default_kit_id: text(deposit.defaultKitId()),
         offered_kit_ids: decode_strings(deposit.offeredKitIds()),
+        upkeep_hands: deposit.upkeepHands(),
+        upkeep_tools_short: deposit.upkeepToolsShort(),
     }
 }
 
@@ -1560,6 +1572,8 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         corral_build_material_cost: decode_material_payoffs(herd.corralBuildMaterialCost()),
         upkeep_kit_id: text(herd.upkeepKitId()),
         upkeep_kit_named: herd.upkeepKitNamed(),
+        upkeep_hands: herd.upkeepHands(),
+        upkeep_tools_short: herd.upkeepToolsShort(),
     }
 }
 
@@ -1637,6 +1651,8 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         field_upkeep_material_demand: decode_material_payoffs(patch.fieldUpkeepMaterialDemand()),
         upkeep_kit_id: text(patch.upkeepKitId()),
         upkeep_kit_named: patch.upkeepKitNamed(),
+        upkeep_hands: patch.upkeepHands(),
+        upkeep_tools_short: patch.upkeepToolsShort(),
     }
 }
 

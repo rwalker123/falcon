@@ -335,7 +335,7 @@ fn take_and_reach(app: &App, workers: u32, wear: &BandEquipment) -> (f32, f32) {
         &herd,
         &fauna,
         &party,
-        workers,
+        workers as f32,
         FLOOR,
         HuntDraw::Quantile {
             sigmas: core_sim::EXPECTED_STRIKES,
@@ -499,7 +499,7 @@ fn the_cap_differs_from_the_fightless_quotient_on_a_fight_bound_quarry() {
     // the closed form rather than a strawman — it differs from the cap because it has no fight in
     // it, not because it was fed worse inputs.
     let (_, stayed_by_one) = take_and_reach(&app, 1, &stocked());
-    let stay = stayed_by_one / core_sim::animals_engaged(1, fauna.engage_rate_for(&herd.species));
+    let stay = stayed_by_one / core_sim::animals_engaged(1.0, fauna.engage_rate_for(&herd.species));
     let per_worker = EquipmentConfig::builtin().equipped_reference(
         core_sim::EquipmentStat::HuntCarry,
         core_sim::LaborConfig::builtin()
@@ -1263,6 +1263,28 @@ fn hunt_carry_per_worker(app: &App, workers: u32, wear: &BandEquipment) -> f32 {
         })
 }
 
+/// **The hands the row's keeping takes first** (`docs/plan_site_crews.md` §2.2) — the herd's own
+/// crew keeps it before it culls, so the quote is struck on what is left. Read through the seam the
+/// server's seed reads (`systems::prospective_keep_hands`), at the herd's own keeping basis.
+fn keep_hands_of(app: &App, crew: u32, wear: &BandEquipment) -> f32 {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry
+        .find(HERD_ID)
+        .expect("the fixture herd is in the registry");
+    if !core_sim::herd_claims_keeping(herd, core_sim::herd_build_verb(herd, None)) {
+        return core_sim::NO_HANDS;
+    }
+    core_sim::prospective_keep_hands(
+        &EquipmentConfig::builtin(),
+        wear,
+        herd.standing().held,
+        core_sim::herd_keeping_basis(herd, &fauna, &ladder),
+        crew,
+    )
+}
+
 /// **Put `keepers` on the row** — the fixture staffs [`CREW_ON_THE_ROW`], and the sweep needs the
 /// crew to be the variable.
 fn staff_the_row(app: &mut App, band: Entity, keepers: u32) {
@@ -1296,6 +1318,7 @@ fn the_band(app: &mut App) -> Entity {
 fn seed_the_row(app: &mut App, band: Entity, keepers: u32, wear: &BandEquipment, floor: f32) {
     let party = party_of(app, keepers, wear);
     let per_worker = hunt_carry_per_worker(app, keepers, wear);
+    let keep_hands = keep_hands_of(app, keepers, wear);
     let seeded = {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
@@ -1320,6 +1343,7 @@ fn seed_the_row(app: &mut App, band: Entity, keepers: u32, wear: &BandEquipment,
             &party,
             output_mult,
             keepers,
+            keep_hands,
             floor,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
@@ -1498,7 +1522,8 @@ fn a_pens_quote_is_its_payout_at_every_keeper_count() {
                 core_sim::herd_take_room(&herd, FLOOR, &fauna),
                 herd.body_mass,
             );
-            let carry = (keepers as f32 * hunt_carry_per_worker(&app, keepers, &stocked())
+            let take_hands = keepers as f32 - keep_hands_of(&app, keepers, &stocked());
+            let carry = (take_hands * hunt_carry_per_worker(&app, keepers, &stocked())
                 / herd.body_mass)
                 .max(ONE_WHOLE_ANIMAL);
             (room, carry)
@@ -1833,6 +1858,7 @@ fn seeded_workers_needed(app: &App, wear: &BandEquipment, carry_per_worker: f32)
         &party_of(app, CREW_ON_THE_ROW, wear),
         SEED_OUTPUT_MULTIPLIER,
         CREW_ON_THE_ROW,
+        core_sim::NO_HANDS,
         FLOOR,
         SEED_HORIZON_TURNS,
         SEED_HORIZON_TURNS,

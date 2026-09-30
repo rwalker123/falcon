@@ -338,6 +338,13 @@ fn spawn_keepers_of(
                         // **The kit rides the ENTRY**, which is where a build's gear offset is read
                         // from since §4.7a ②.
                         kit: Some(builders_kit),
+                        // **Marked above the hunt row**, because the herd's own crew keeps it first
+                        // and its keeping reaches for the same hurdles at the row's priority
+                        // (`docs/plan_site_crews.md` §2.3). A build whose mark wins the one set is
+                        // the regime the kit row's `min(crew, saturating) × worth` describes; at a
+                        // tie the keeping would hold it and the quote would be about a stock the
+                        // builders never saw.
+                        priority: core_sim::SourcePriority::High,
                     })
                     .into_iter()
                     .collect(),
@@ -1158,8 +1165,10 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
     /// Builders on the Cultivate. More than one, so the quote is a multi-turn count and `ceil` is
     /// exercised rather than saturating at one turn.
     const BUILDERS: u32 = 2;
-    /// A gathering crew beside them, so the rung's own work predicate holds.
-    const GATHERERS: u32 = 1;
+    /// **Nobody on the patch's own row.** The site's crew keeps it first
+    /// (`docs/plan_site_crews.md` §2.1), so an empty row is what leaves the keeping unmet and the
+    /// rot live; the rung's work predicate reads the standing crop, not a crew.
+    const GATHERERS: u32 = 0;
     /// How far the meter is into its job when the walk starts — room to move in either direction,
     /// and low enough that the job is still several turns off when the walk ends (the hoes raise
     /// what each builder banks by half again).
@@ -1237,7 +1246,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
         patch.biomass = patch.carrying_capacity * STOCKED;
     }
 
-    // The band: gatherers, builders, and **no `agriculture` role** — which is what makes the rot real.
+    // The band: builders, and **nobody on the patch's own row** — which is what makes the rot real.
     let band_entity = app
         .world
         .spawn((
@@ -1306,6 +1315,7 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                     source: core_sim::BuildSource::Patch(source),
                     declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
                     kit: None,
+                    priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()
             },

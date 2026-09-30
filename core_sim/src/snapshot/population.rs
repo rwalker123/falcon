@@ -184,10 +184,7 @@ pub(crate) fn labor_assignment_to_state(
         // count already on the row.
         LaborTarget::Scout
         | LaborTarget::Warrior
-        | LaborTarget::Agriculture
-        | LaborTarget::Husbandry
         | LaborTarget::Roadwork
-        | LaborTarget::Quarrywork
         | LaborTarget::Builders => {}
     }
     state
@@ -423,6 +420,11 @@ pub(crate) enum MealOrder {
 /// A runway with no standing crossing of its own — the fodder runway, which folds its local net into
 /// the income term instead.
 const NO_STANDING_NET: f32 = 0.0;
+
+/// **WHAT A RETIRED POOL'S BAND-LEVEL READING PUBLISHES** — the `quarrywork` triple's zero
+/// (`docs/plan_site_crews.md` §4). The pool is gone, and a positional FlatBuffers field cannot be, so
+/// it states nothing owed and nothing paid rather than disappearing.
+const RETIRED_POOL_READING: f32 = 0.0;
 
 /// ⛔ **THIS TURN'S POOLED FOOD, IN MINUS OUT** — the band's `Pooled` crossings on `FOOD`, off the
 /// per-turn twin [`PopulationCohort::last_turn_transfer_crossings`], so a recapture reads what the
@@ -1402,14 +1404,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // still owes.
     let roadwork_demand = allocation.map(|a| a.last_roadwork_demand).unwrap_or(0.0);
     let roadwork_supplied = allocation.map(|a| a.last_roadwork_supplied).unwrap_or(0.0);
-    // **The QUARRYWORK twin, one keeping pool over** — the summed stamped bill of the workings this
-    // band holds a row on, and what its `quarrywork` keepers paid in. Summed by the sim for the
-    // roadwork pair's reason: deposit rows are fog-filtered, so a working out of sight would drop
-    // out of any client-side total the band certainly still owes.
-    let quarrywork_demand = allocation.map(|a| a.last_quarrywork_demand).unwrap_or(0.0);
-    let quarrywork_supplied = allocation
-        .map(|a| a.last_quarrywork_supplied)
-        .unwrap_or(0.0);
     // **WHAT CROSSED BETWEEN THIS BAND AND ANOTHER THIS TURN, BOTH ACCOUNTS**, split by
     // `TransferLink` — the per-turn ledgers `systems::publish_turn_transfers` copied onto the cohort
     // immediately before this capture. Read here once, because three readings hang off them: the
@@ -1840,7 +1834,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 alloc
                     .build_queue
                     .iter()
-                    .map(|entry| build_queue_entry_to_state(&entry.source))
+                    .map(build_queue_entry_to_state)
                     .collect()
             })
             .unwrap_or_default(),
@@ -1911,17 +1905,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             roadwork_demand,
             roadwork_supplied,
         ),
-        // **THE BAND'S QUARRYWORK BILL** — the roadwork triple two lines above, one pool over and
-        // on every one of its rules: summed by the sim off the same stamped basis the per-working
-        // rows publish, and the shortfall derived here from the pair so
-        // `demand − supplied == shortfall` holds on this row exactly as it does on `DepositState`.
-        quarrywork_demand,
-        quarrywork_supplied,
-        quarrywork_shortfall: crate::intensification::upkeep_shortfall(
-            quarrywork_demand,
-            quarrywork_supplied,
-        ),
-        // **THE FIVE POOLS' TABLES OF EQUIPMENT** (`docs/plan_pool_toe.md` §4) — what each pool's
+        // **THE RETIRED QUARRYWORK TRIPLE PUBLISHES ZERO** (`docs/plan_site_crews.md` §4). The
+        // `quarrywork` pool retired: each working is kept by its own `extract` crew and states
+        // what it kept on its own `DepositState` row. The fields stay because the wire is
+        // positional.
+        quarrywork_demand: RETIRED_POOL_READING,
+        quarrywork_supplied: RETIRED_POOL_READING,
+        quarrywork_shortfall: RETIRED_POOL_READING,
+        // **THE TWO POOLS' TABLES OF EQUIPMENT** (`docs/plan_pool_toe.md` §4, narrowed by
+        // `docs/plan_site_crews.md` §4: Roadwork and Builders only) — what each pool's
         // own sites required this turn and what the band's settlement gave them, published **as the
         // turn settled it** off `LaborAllocation::last_pool_toe`.
         //
@@ -2070,11 +2062,17 @@ fn material_payoffs(ledger: &BTreeMap<String, f32>) -> Vec<sim_runtime::Material
 /// The declared job, the kit, the destination rung and the estimate are all published on the
 /// **source** row and agree across every band holding the source by construction, so an entry that
 /// repeated them would be a second copy of a fact that already has a home.
-fn build_queue_entry_to_state(source: &BuildSource) -> SchemaBuildQueueEntryState {
+fn build_queue_entry_to_state(
+    entry: &crate::components::BuildQueueEntry,
+) -> SchemaBuildQueueEntryState {
+    let source = &entry.source;
     let mut state = SchemaBuildQueueEntryState {
         // The same token the band's Forage/Hunt labor row publishes for this source
         // (`LaborTarget::kind`), so a client joins the two lists on one spelling.
         kind: source.kind().to_string(),
+        // **The entry's own Build mark** (`docs/plan_site_crews.md` §2.4) — the one per-entry fact
+        // the source row does not carry, because the row's `priority` is its crew's.
+        build_priority: entry.priority.as_str().to_string(),
         ..Default::default()
     };
     match source {
@@ -2952,6 +2950,7 @@ mod tests {
                         crate::components::Improvement::Cultivate,
                     ),
                     kit: None,
+                    priority: SourcePriority::default(),
                 })
                 .collect(),
             ..Default::default()

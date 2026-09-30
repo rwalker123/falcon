@@ -333,7 +333,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                             fauna_id: herd_id.to_string(),
                             floor: SUSTAIN_FLOOR,
                         },
-                        workers: KEEPER_WORKERS,
+                        workers: KEEPER_WORKERS + KEEPER_WORKERS,
                         kit: None,
                         priority: SourcePriority::default(),
                         upkeep_kit: None,
@@ -353,14 +353,6 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                     // herd, and an unstaffed `husbandry` pool reads as total neglect (see
                     // `grazing_2d_pen`'s own note): an accelerating shed would terminate the herd
                     // and there would be nothing left to milk.
-                    LaborAssignment {
-                        party: None,
-                        target: LaborTarget::Husbandry,
-                        workers: KEEPER_WORKERS,
-                        kit: None,
-                        priority: SourcePriority::default(),
-                        upkeep_kit: None,
-                    },
                 ],
                 ..Default::default()
             },
@@ -1129,6 +1121,7 @@ fn seed_the_hunt_row(app: &mut App, keeper: Entity, herd_id: &str) {
         &party,
         output_mult,
         workers,
+        core_sim::NO_HANDS,
         floor,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,

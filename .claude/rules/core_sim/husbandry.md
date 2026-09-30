@@ -470,10 +470,11 @@ exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_
 > animal web a **permanent** stall rather than a slow one, and the loop is worth stating whole because
 > no single seam contains it:
 >
-> 1. the band's `husbandry` role is empty, so the herd's keeping is unmet;
+> 1. nobody is on the herd's own hunt row — a site's crew is its keeping
+>    (`docs/plan_site_crews.md` §2.1) — so the herd's keeping is unmet;
 > 2. `regrow_biomass` suppresses the flock's growth entirely;
-> 3. the take crew beside the build draws the flock down to its assignment's escapement floor, and
->    with no growth it never comes back above it;
+> 3. a flock standing at its assignment's escapement floor (a crew drew it there and left) never
+>    comes back above it with no growth;
 > 4. `systems::labor::crew_is_working_the_source` reads that room — `max(0, B − floor·K)` — as `0`, so
 >    the `Tame`'s own `eligible` goes false;
 > 5. `RungDef::build_supply` answers `None`, and — with the band's `builders` pool **staffed and
@@ -488,13 +489,13 @@ exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_
 > cannot guess. A pool with nobody on it still reads `-1`: the blocked reading is about a
 > **committed** pool getting nowhere, and with no commitment there is nothing to report on.
 >
-> **THE REMEDY IS `assign_labor <faction> <band> husbandry <n>`, and nothing on the build reaches
-> it.** Adding builders, re-ordering the queue and re-issuing the verb all leave the room at zero.
-> Step 4 is why: it is an **eligibility** stall, not a balance one, so no term the countdown is
-> struck from — `build_work`, the rot, the keeping share — can see it. **`meterRotPerTurn` is `0`
-> here and honestly so**: neither animal rung declares a `meter_decay`, so nothing is eating the
-> meter; what is being lost is the *herd*. A surface showing `-4` must therefore pair it with this
-> herd's own `upkeepShortfall` / `neglectGraceRemaining`, which are where the sentence lives.
+> **THE REMEDY IS RAISING THE HERD'S OWN HUNT ROW, and nothing on the build reaches it.** Adding
+> builders, re-ordering the queue and re-issuing the verb all leave the room at zero. Step 4 is why:
+> it is an **eligibility** stall, not a balance one, so no term the countdown is struck from —
+> `build_work`, the rot, the keeping share — can see it. **`meterRotPerTurn` is `0` here and
+> honestly so**: neither animal rung declares a `meter_decay`, so nothing is eating the meter; what
+> is being lost is the *herd*. A surface showing `-4` must therefore pair it with this herd's own
+> `upkeepShortfall` / `neglectGraceRemaining`, which are where the sentence lives.
 >
 > **The plant web does not have this**, and the difference is not the predicate. A patch nobody
 > gathers regrows toward `K`, so its escapement room is large, its gate stays open, and an abandoned
@@ -504,21 +505,21 @@ exactly the keepers it always asked for (`every_species_asks_for_the_keepers_it_
 > nothing in the basket can climb — which `core_sim/tests/build_queue.rs`'s blocked-head arm stages
 > and then **un**-stages, because a test that only ever sees the failure passes with the remedy
 > broken.
-> It is the **hunters' draw plus the suppressed regrowth together** that pins an animal source at its
-> floor; neither alone would. **Escaping it is not symmetric** — lifting the suppression is enough on
-> its own. Restoring the keeping restores `regrow_biomass`, and the regrowth outruns a
-> floor-respecting take, so the flock climbs back above `floor · K`, the room returns and the gate
-> opens **with the hunt row still at full strength**. Measured on
-> `build_queue.rs::the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall`:
-> 7–14 turns to a real countdown with the hunters left in place, indistinguishable from the same arm
-> with the hunters taken off, which is why the surface can name the keeping as the whole remedy.
+> It is the **floor plus the suppressed regrowth together** that pins an animal source there;
+> neither alone would. **Escaping it is lifting the suppression**: a crew on the row keeps first,
+> which restores `regrow_biomass`, and the regrowth outruns a floor-respecting take by the rest of
+> the crew, so the flock climbs back above `floor · K`, the room returns and the gate opens **with
+> the row still hunting**. Pinned on
+> `build_queue.rs::the_animal_webs_escapement_stall_publishes_minus_four_beside_its_shortfall`,
+> which seats the flock on its floor with nobody on the row, walks to `-4` with the grace spent,
+> then raises the row past its keeping and requires the countdown to recover.
 
 > #### THE HERD'S UPKEEP DEMAND *FALLS* AS AN UNKEPT FLOCK BLEEDS — a readout hazard, not a bug
 >
 > `animal:pastoral` and `animal:pen` both quote their rate per **keeper-load**
 > (`scaled_by: source_load`, `head count / animals_per_herder`), so `upkeepDemand` is a reading of the
 > flock's *current* size. A shedding herd therefore publishes a **shrinking** bill: measured on a
-> half-tamed fixture with its `husbandry` role empty, `upkeepDemand` fell `6.08 → 5.43 → 4.13 → …
+> half-tamed fixture with nobody keeping it, `upkeepDemand` fell `6.08 → 5.43 → 4.13 → …
 > → 1.22` over eight turns while the herd went `4837 → 974` biomass and the build sat frozen.
 >
 > **A player reading that number alone sees the bill improving while the investment dies.** It is
@@ -570,14 +571,20 @@ there is any pen progress, `animal:pastoral` for any other managed herd.
   plant web's.** A plant meter is continuous, so any shortfall bleeds; a herd loses **whole animals**,
   so a shortfall of less than one animal is not under-containment at all — the same whole-animal
   discipline `quantise_animal_take` imposes on the take.
-- **EVERY METER CARRYING WORK IS OWED THE BAND'S KEEPING POOL, AT ANY FULLNESS**
+- **EVERY METER CARRYING WORK IS OWED BY THE HERD'S OWN CREW, AT ANY FULLNESS**
   (`fauna::herd_upkeep_supply`, the twin of `forage::patch_upkeep_supply`;
-  `docs/plan_standing_upkeep.md` §4.6a). A `Tame` in flight owes exactly what a tamed herd owes, to
-  the same hands.
+  `docs/plan_standing_upkeep.md` §4.6a, `docs/plan_site_crews.md` §2.2). The hunt row on a herd is
+  its crew: it keeps first — `keep_hands = min(crew, bill ÷ keep_rate)` — and culls with the rest,
+  so a crew short of the bill spends every hand keeping, takes nothing, and the flock sheds toward
+  what that crew can hold; a row at zero keeps nothing. A `Tame` in flight owes exactly what a
+  tamed herd owes, to the same hands. Pinned by
+  `fauna_husbandry::a_tamed_herds_crew_short_of_its_bill_sheds_and_a_kept_one_culls`, and the
+  multi-band split (each band's crew keeps its pro-rata share of the one bill) by
+  `two_bands_keeping_one_herd_sum_their_hands`.
   - **THE RATE AND THE PAYER ARE THE SAME EITHER WAY, and the two webs answer identically.** The
     meter's **fullness** used to move the supplier (`fauna::herd_is_maintaining`, deleted): a
-    half-tamed herd was billed to its build crew, so taking the taming crew off it left keepers idle
-    in the `husbandry` role with nothing they could be aimed at. Two earlier cuts are both gone — that
+    half-tamed herd was billed to its build crew, so taking the taming crew off it left nobody who
+    could be aimed at it. Two earlier cuts are both gone — that
     one, and *"the animals are standing there whether or not the fence is up"* before it.
   - **SO THE RATE DOES NOT TAX AN ANIMAL BUILD**: a `Tame` or `Corral` banks its crew's whole output,
     and what a short keeping costs is the **shed**, in proportion, exactly as it costs an abandoned

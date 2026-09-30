@@ -1481,27 +1481,12 @@ table PopulationCohortState {
   // openingLoadout` for the campaign-wide half (the profile's pick list and its pre-fills), which is
   // one per world and deliberately NOT duplicated per band.
   loadoutWindow:BandLoadoutWindowState;
-  // --- THE BAND'S QUARRYWORK BILL (appended last) -----------------------------------------------
-  // WHAT THE WORKINGS THIS BAND KEEPS COST IT THIS TURN, in work units per turn - the exact
-  // roadwork triple above, one pool over, so the Work board can show the `quarrywork` role's need
-  // the way it shows agriculture's and husbandry's.
-  //
-  // *** ONE POOL FOR BOTH DEPOSIT BRANCHES. *** Forestry and extraction split on KNOWLEDGE and on
-  // nothing a keeper does - hold the face open, clear what has fallen is one job - so a band
-  // keeping a coppice and a quarry pays both out of this one bill.
-  //
-  // *** THE SIM SUMS IT, AND A CLIENT MUST NOT *** - `roadworkDemand`'s rule and load-bearing for
-  // its reason: DEPOSIT ROWS ARE FOG-FILTERED, so a working out of sight would silently drop out of
-  // any client-side total while the band certainly still owes its keeping.
-  //
-  // quarryworkDemand    = the summed STAMPED bill of the workings this band holds a row on
-  //                       (`extraction::deposit_keeping_basis`, via
-  //                       `labor::extraction_keeping_claims`), summed BEFORE fog and published
-  //                       whether or not the band can pay it - `fodderNeed`'s own rule. It is the
-  //                       alarm.
-  // quarryworkSupplied  = what this band's `quarrywork` keepers paid into those workings this turn.
-  // quarryworkShortfall = demand - supplied, and that identity holds verbatim here as it does on
-  //                       the `DepositState` row.
+  // --- DEPRECATED: THE RETIRED QUARRYWORK BILL (appended last) ---------------------------------
+  // *** DEPRECATED - ALWAYS 0 (docs/plan_site_crews.md section 4). *** This was the `quarrywork`
+  // keeping pool's band-level bill, the roadwork triple one pool over. The pool retired: each
+  // working is kept FIRST by its own `extract` crew, and states what that crew kept on its own
+  // `DepositState` row (`upkeepSupplied`, `upkeepHands`, `upkeepToolsShort`). The three fields stay
+  // because FlatBuffers fields are positional; they publish 0 and nothing reads them.
   quarryworkDemand:float = 0;
   quarryworkSupplied:float = 0;
   quarryworkShortfall:float = 0;
@@ -1521,9 +1506,11 @@ table PopulationCohortState {
   // `filled == required`. That distinction is the readout: a surface shows no tool line when every
   // line is filled, and it cannot tell "satisfied" from "not applicable" off an absent row.
   //
-  // *** THE POOL TOKEN IS THE ROLE TOKEN *** - `agriculture` | `husbandry` | `roadwork` |
-  // `quarrywork` | `builders`, the same spelling `LaborAssignment.kind` publishes for the row, so a
-  // client joins a line to its pool card without a table of its own.
+  // *** THE POOL TOKEN IS THE ROLE TOKEN *** - `roadwork` | `builders`, the same spelling
+  // `LaborAssignment.kind` publishes for the row, so a client joins a line to its pool card without
+  // a table of its own. *** THOSE TWO ONLY *** (docs/plan_site_crews.md section 4): the
+  // `agriculture`, `husbandry` and `quarrywork` pools retired, and a site crew's keeping-tool claim
+  // is stated on its own source row (`upkeepToolsShort`) rather than here.
   poolToe:[PoolToeLine];
   // --- WHAT EACH KEEPING POOL DID NOT USE (appended last, issue #715) ---------------------------
   // HOW MANY OF EACH KEEPING POOL'S ASSIGNED KEEPERS THE TURN'S BILL DID NOT CONSUME. One row per
@@ -1535,22 +1522,16 @@ table PopulationCohortState {
   // `docs/plan_pool_toe.md` section 2.3 step 5). A client-side "this keeper is idle" is wrong in
   // exactly the cases the top-up exists for - the sim has that keeper working.
   //
-  // *** FOUR POOLS, AND `builders` IS NOT ONE OF THEM. *** `agriculture` | `husbandry` | `roadwork`
-  // | `quarrywork`. The builders are not a keeping pool: the WHOLE head count goes on the build
-  // queue's head (section 2.4), so no builder is ever left standing by a plan that wanted fewer. A
-  // builders pool with an EMPTY QUEUE is idle in a different sense and is deliberately not measured
-  // here.
+  // *** ONE POOL, `roadwork`, AND `builders` IS NOT ONE. *** Roadwork is the only keeping pool
+  // (docs/plan_site_crews.md section 1: a patch, herd or working is kept by its own crew, which
+  // publishes its keeping hands on its source row as `upkeepHands`). The builders are not a keeping
+  // pool: the WHOLE head count goes on the build queue's head (section 2.4), so no builder is ever
+  // left standing by a plan that wanted fewer.
   //
-  // *** A POOL WITH A HEAD COUNT AND NO SITES STATES ITS WHOLE HEAD COUNT *** - three keepers on
-  // `agriculture` with no tended ground are three idle keepers, and that is the commonest reading
-  // there is. A row therefore exists for every keeping pool THIS COHORT CAN HOLD, filled or not,
-  // unlike `poolToe`'s.
-  //
-  // *** WHICH IS FOUR ON A BAND AND THREE ON AN ANONYMOUS COHORT *** - one with no band id keeps no
-  // roads, because a road's keeper IS a band (`routes::road_keeping_basis`), so it publishes
-  // `agriculture`, `husbandry` and `quarrywork` and has no `roadwork` pool to report on. An ABSENT
-  // row therefore reads "this cohort has no such pool" - the same answer `builders`' absence
-  // already gives, needing no separate branch on the reading side.
+  // *** A POOL WITH A HEAD COUNT AND NO ROADS STATES ITS WHOLE HEAD COUNT *** - that is the
+  // commonest reading there is. A cohort with no band id keeps no roads, because a road's keeper IS
+  // a band (`routes::road_keeping_basis`), so it publishes no row; an ABSENT row reads "this cohort
+  // has no such pool", the same answer `builders`' absence gives.
   poolCrew:[PoolCrewLine];
   // --- WHAT CROSSED THIS BAND'S STORE, BY CAUSE (appended last, issue #731) ---------------------
   // The detail beneath the eight `transfer*Turn` / `fodderTransfer*Turn` arms above: one row per
@@ -3506,6 +3487,26 @@ table ForagePatchState {
   // would hide the pick entirely.
   upkeepKitId:string;
   upkeepKitNamed:bool = false;
+  // --- WHAT THIS SITE'S OWN CREW SPENT KEEPING IT (appended last, docs/plan_site_crews.md) -----
+  // A SITE'S CREW KEEPS IT FIRST AND COLLECTS WITH WHAT IS LEFT (section 2.1). `upkeepSupplied`
+  // above is what those keeping hands delivered; these two say how many hands that took and whether
+  // the site's keeping tools were short.
+  //
+  // upkeepHands      = THE CREW HANDS SPENT KEEPING THIS SOURCE THIS TURN, fractional and summed
+  //                    across every band whose crew keeps it (each keeps its pro-rata share of the
+  //                    bill). The row's second line reads it: `keeps <upkeepHands> of <crew>`, and
+  //                    `crew - upkeepHands` is what collected. `0` on a site that owes nothing - a
+  //                    wild patch, a free-floor working - and on a site nobody works.
+  //                    ⚠ is `upkeepSupplied < upkeepDemand` (`upkeepShortfall > 0`); a crew short
+  //                    of the demand spent every hand keeping and collected nothing.
+  //                    `workersNeeded` on the band's labor row counts the TAKE hands only; a client
+  //                    judging over-staffing adds `upkeepHands`.
+  // upkeepToolsShort = THE BAND-WIDE SETTLEMENT FILLED LESS THAN THIS SITE'S KEEPING-TOOL CLAIM
+  //                    (section 2.3), so its crew kept with more of its own hands and collected
+  //                    less. The row's ⓘ ("More tools would speed this up.") when the work is still
+  //                    covered. `false` where nothing was claimed.
+  upkeepHands:float = 0;
+  upkeepToolsShort:bool = false;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -3559,6 +3560,13 @@ table BuildQueueEntryState {
   targetY:uint = 0;
   // The herd's id. "" on a forage entry.
   faunaId:string;
+  // --- THIS BUILD'S MARK (appended last, docs/plan_site_crews.md section 2.4) --------------------
+  // "high" | "normal" | "low" - the entry's OWN rank for scarce tools and materials, set by
+  // `build_priority` and "normal" until the player sets it. It is the one per-entry fact that is NOT
+  // on the source row: the source row's `priority` is the SITE CREW'S rank, and a build no longer
+  // borrows it. The builders' tool claim and the build's pile rank at the HEAD entry's mark. The
+  // queue shows it read-only; it is set from the site's row.
+  buildPriority:string;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -5021,6 +5029,26 @@ table HerdTelemetryState {
   standingOutputTarget:float = -1;
   outputRecommitProgress:float = 0;
   outputRecommitCost:float = 0;
+  // --- WHAT THIS SITE'S OWN CREW SPENT KEEPING IT (appended last, docs/plan_site_crews.md section 2.2)
+  // A SITE'S CREW KEEPS IT FIRST AND COLLECTS WITH WHAT IS LEFT (section 2.1). `upkeepSupplied`
+  // above is what those keeping hands delivered; these two say how many hands that took and whether
+  // the site's keeping tools were short.
+  //
+  // upkeepHands      = THE CREW HANDS SPENT KEEPING THIS SOURCE THIS TURN, fractional and summed
+  //                    across every band whose crew keeps it (each keeps its pro-rata share of the
+  //                    bill). The row's second line reads it: `keeps <upkeepHands> of <crew>`, and
+  //                    `crew - upkeepHands` is what collected. `0` on a site that owes nothing - a
+  //                    wild patch, a free-floor working - and on a site nobody works.
+  //                    ⚠ is `upkeepSupplied < upkeepDemand` (`upkeepShortfall > 0`); a crew short
+  //                    of the demand spent every hand keeping and collected nothing.
+  //                    `workersNeeded` on the band's labor row counts the TAKE hands only; a client
+  //                    judging over-staffing adds `upkeepHands`.
+  // upkeepToolsShort = THE BAND-WIDE SETTLEMENT FILLED LESS THAN THIS SITE'S KEEPING-TOOL CLAIM
+  //                    (section 2.3), so its crew kept with more of its own hands and collected
+  //                    less. The row's ⓘ ("More tools would speed this up.") when the work is still
+  //                    covered. `false` where nothing was claimed.
+  upkeepHands:float = 0;
+  upkeepToolsShort:bool = false;
 }
 
 table CommandEventState {
@@ -6652,6 +6680,26 @@ table DepositState {
   // exactly these beside the job's itemless `none`; `defaultKitId` is always one of them or "none".
   // DERIVED from the roster, never authored - a new take kit appears here with no schema change.
   offeredKitIds:[string];
+  // --- WHAT THIS SITE'S OWN CREW SPENT KEEPING IT (appended last, docs/plan_site_crews.md section 2.5)
+  // A SITE'S CREW KEEPS IT FIRST AND COLLECTS WITH WHAT IS LEFT (section 2.1). `upkeepSupplied`
+  // above is what those keeping hands delivered; these two say how many hands that took and whether
+  // the site's keeping tools were short.
+  //
+  // upkeepHands      = THE CREW HANDS SPENT KEEPING THIS SOURCE THIS TURN, fractional and summed
+  //                    across every band whose crew keeps it (each keeps its pro-rata share of the
+  //                    bill). The row's second line reads it: `keeps <upkeepHands> of <crew>`, and
+  //                    `crew - upkeepHands` is what collected. `0` on a site that owes nothing - a
+  //                    wild patch, a free-floor working - and on a site nobody works.
+  //                    ⚠ is `upkeepSupplied < upkeepDemand` (`upkeepShortfall > 0`); a crew short
+  //                    of the demand spent every hand keeping and collected nothing.
+  //                    `workersNeeded` on the band's labor row counts the TAKE hands only; a client
+  //                    judging over-staffing adds `upkeepHands`.
+  // upkeepToolsShort = THE BAND-WIDE SETTLEMENT FILLED LESS THAN THIS SITE'S KEEPING-TOOL CLAIM
+  //                    (section 2.3), so its crew kept with more of its own hands and collected
+  //                    less. The row's ⓘ ("More tools would speed this up.") when the work is still
+  //                    covered. `false` where nothing was claimed.
+  upkeepHands:float = 0;
+  upkeepToolsShort:bool = false;
 }
 
 // --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------
@@ -6938,8 +6986,8 @@ table PoolToeLine {
 // ONE KEEPING POOL'S CREW ACCOUNT - a row of `PopulationCohortState.poolCrew`, where the rules that
 // govern the vector are stated. Appended last (append-only discipline).
 table PoolCrewLine {
-  // Which pool the line belongs to, in the labor-role vocabulary: `agriculture`, `husbandry`,
-  // `roadwork` or `quarrywork`. NEVER `builders` - see `PopulationCohortState.poolCrew`.
+  // Which pool the line belongs to, in the labor-role vocabulary: `roadwork`, the one keeping pool
+  // left. NEVER `builders` - see `PopulationCohortState.poolCrew`.
   pool:string;
   // Keepers this pool employed on nothing at all this turn.
   //

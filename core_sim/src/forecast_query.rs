@@ -1168,7 +1168,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     pricing.haul_carry,
                     &hunters,
                     output_multiplier,
-                    ask.workers,
+                    ask.workers as f32,
                     ask.floor,
                     horizon,
                     // A query answers between turns — the next thing that happens is a regrowth.
@@ -1186,7 +1186,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     pricing.forage_carry,
                     seasonal,
                     output_multiplier,
-                    ask.workers,
+                    ask.workers as f32,
                     ask.floor,
                     take,
                     horizon,
@@ -1202,7 +1202,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 weight,
             } => crate::extraction::project_realized_deposit(
                 working,
-                ask.workers,
+                ask.workers as f32,
                 crate::extraction::CrewLift {
                     tools: deposit_gear_per_worker(working) * ask.workers as f32,
                     carry: crate::work_party::material_pack(pricing.haul_carry, *weight)
@@ -2074,7 +2074,7 @@ mod tests {
             let seed = crate::fauna::retreat_seed(crate::HARNESS_MAP_SEED, tick, &herd.id, workers);
             let killed = crate::systems::hunt_take(
                 &mut herd,
-                workers,
+                workers as f32,
                 floor,
                 RESIDENT_CARRY_PER_WORKER,
                 &party,
@@ -2290,7 +2290,7 @@ mod tests {
             &fauna,
         );
         let affordable = crate::fauna::animals_affordable(room, DEER_BODY);
-        let reach = crate::fauna::animals_engaged(SWEEP_CREW, fauna.engage_rate_for(DEER));
+        let reach = crate::fauna::animals_engaged(SWEEP_CREW as f32, fauna.engage_rate_for(DEER));
         assert!(
             affordable > 0.0 && affordable < reach,
             "the thin fixture must let the ROOM bind at a crew of {SWEEP_CREW} ({affordable} \
@@ -2469,7 +2469,7 @@ mod tests {
              part body at all"
         );
         assert_eq!(
-            crate::fauna::animals_engaged(1, rate),
+            crate::fauna::animals_engaged(1.0, rate),
             rate,
             "one hunter reaches its own rate — a part body, neither rounded up to one nor down to \
              nothing"
@@ -2551,7 +2551,7 @@ mod tests {
                 &herd,
                 &fauna,
                 &party,
-                workers,
+                workers as f32,
                 STRIP_IT_BARE,
                 HuntDraw::EXPECTED,
                 crate::fauna::EngagementQuantum::WholeAnimals,
@@ -2790,7 +2790,7 @@ mod tests {
             &herd_of_biomass(AUROCHS, AUROCHS_BODY, FAT_HERD),
             &fauna,
             &party,
-            ZERO_READING_CREW,
+            ZERO_READING_CREW as f32,
             STRIP_IT_BARE,
             HuntDraw::EXPECTED,
             crate::fauna::EngagementQuantum::WholeAnimals,
@@ -3016,7 +3016,7 @@ mod tests {
             RESIDENT_CARRY_PER_WORKER,
             &party,
             NEUTRAL_OUTPUT,
-            REPORTED_CREW,
+            REPORTED_CREW as f32,
             STRIP_IT_BARE,
             horizon,
             crate::fauna::ProjectionStart::BeforeRegrowth,
@@ -3520,8 +3520,12 @@ mod tests {
                         continue;
                     };
                     rows_checked += 1;
-                    let range =
-                        crate::fauna::forecast_take_range(&forecast, crew, STRIP_IT_BARE, sigmas);
+                    let range = crate::fauna::forecast_take_range(
+                        &forecast,
+                        crew as f32,
+                        STRIP_IT_BARE,
+                        sigmas,
+                    );
                     let (low, likely, high) = (
                         range.low.component(axis),
                         range.likely.component(axis),
@@ -3530,7 +3534,7 @@ mod tests {
                     let takes_at = |draw_sigmas: f32| -> Vec<f32> {
                         crate::fauna::forecast_take_outcomes(
                             &forecast,
-                            crew,
+                            crew as f32,
                             STRIP_IT_BARE,
                             HuntDraw::Quantile {
                                 sigmas: draw_sigmas,

@@ -1592,30 +1592,22 @@ pub struct PopulationCohortState {
     /// beside it — [`Self::equipment_batches`] and [`Self::material_batches`] — are already here.
     #[serde(default)]
     pub loadout_window: Option<BandLoadoutWindowState>,
-    /// **WHAT THE WORKINGS THIS BAND KEEPS COST IT THIS TURN**, in work units per turn — the exact
-    /// [`Self::roadwork_demand`] triple, one pool over, so the Work board can show the `quarrywork`
-    /// role's need the way it shows agriculture's and husbandry's.
-    ///
-    /// **One pool for both deposit branches**: forestry and extraction split on *knowledge* and on
-    /// nothing a keeper does, so a band keeping a coppice and a quarry pays both out of this bill.
-    ///
-    /// ⛔ **THE SIM SUMS IT AND A CLIENT MUST NOT**, [`Self::roadwork_demand`]'s rule and
-    /// load-bearing for its reason: deposit rows are **fog-filtered**, so a working out of sight
-    /// would silently drop out of any client-side total the band certainly still owes. It is summed
-    /// *before* fog, and published whether or not the band can pay it — it is the alarm.
-    ///
-    /// `demand − supplied == shortfall` holds verbatim, as it does on the
-    /// [`crate::state::subsistence::DepositState`] row. Appended last (append-only).
+    /// ⛔ **DEPRECATED — ALWAYS `0`** (`docs/plan_site_crews.md` §4). The retired `quarrywork`
+    /// keeping pool's bill: each working is kept first by its own `extract` crew and states what it
+    /// kept on its own [`crate::state::subsistence::DepositState`] row. Kept because the wire is
+    /// positional; nothing reads it. Appended last (append-only).
     #[serde(default)]
     pub quarrywork_demand: f32,
-    /// See [`Self::quarrywork_demand`] — what this band's `quarrywork` keepers paid in this turn.
+    /// ⛔ **DEPRECATED — ALWAYS `0`.** See [`Self::quarrywork_demand`].
     #[serde(default)]
     pub quarrywork_supplied: f32,
-    /// See [`Self::quarrywork_demand`] — `demand − supplied`, verbatim.
+    /// ⛔ **DEPRECATED — ALWAYS `0`.** See [`Self::quarrywork_demand`].
     #[serde(default)]
     pub quarrywork_shortfall: f32,
     /// **WHAT EACH STANDING POOL'S OWN SITES REQUIRE THIS TURN, AND WHAT THE BAND GAVE THEM** —
-    /// one row per `(pool, item)` (`docs/plan_pool_toe.md` §4).
+    /// one row per `(pool, item)` (`docs/plan_pool_toe.md` §4), for **`roadwork` and `builders`
+    /// only** (`docs/plan_site_crews.md` §4): a site crew is not a pool, and its keeping-tool claim is
+    /// stated on its own source row as `upkeep_tools_short`.
     ///
     /// ⛔ **IT REPLACES A POOL ROW'S [`LaborAssignmentState::kit_id`]**, which had room for one tool
     /// where a pool needs as many as it has kinds of site: a Roadwork pool keeping a dirt road and a
@@ -1638,18 +1630,14 @@ pub struct PopulationCohortState {
     /// a deficit (`docs/plan_pool_toe.md` §2.3 step 5). A client-side *"this keeper is idle"* is
     /// wrong in exactly the cases that top-up exists for — the sim has that keeper working.
     ///
-    /// ⛔ **FOUR POOLS, AND `builders` IS NOT ONE OF THEM** — `agriculture`, `husbandry`,
-    /// `roadwork`, `quarrywork`. The builders are not a keeping pool: the whole head count goes on
-    /// the build queue's head (§2.4), so no builder is ever left standing by a plan that wanted
-    /// fewer. A builders pool with an empty *queue* is idle in a different sense and is not
-    /// measured here.
+    /// ⛔ **ONE POOL, `roadwork`, AND `builders` IS NOT ONE** (`docs/plan_site_crews.md` §1): a
+    /// patch, herd or working is kept by its own crew, whose keeping hands ride its source row as
+    /// `upkeep_hands`. The builders are not a keeping pool: the whole head count goes on the build
+    /// queue's head (§2.4), so no builder is ever left standing by a plan that wanted fewer.
     ///
-    /// **A row exists for every keeping pool this cohort can hold**, filled or not — unlike
-    /// [`Self::pool_toe`]'s. That is **four on a band and three on an anonymous cohort**: one with
-    /// no band id keeps no roads, because a road's keeper *is* a band, so it publishes
-    /// `agriculture`, `husbandry` and `quarrywork` and has no `roadwork` pool to report on. An
-    /// absent row therefore reads *"this cohort has no such pool"* — the same answer `builders`'
-    /// absence already gives, and it needs no separate branch on the reading side.
+    /// **A band states the line whether or not it keeps a road** — a pool with a head count and no
+    /// roads is all idle. A cohort with no band id keeps no roads, because a road's keeper *is* a
+    /// band, and states no line; an absent row reads *"this cohort has no such pool"*.
     /// Appended last (append-only).
     #[serde(default)]
     pub pool_crew: Vec<PoolCrewLineState>,
@@ -1728,8 +1716,7 @@ pub struct PoolingLinkState {
 /// [`PopulationCohortState::pool_toe`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PoolToeLineState {
-    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"agriculture"`,
-    /// `"husbandry"`, `"roadwork"`, `"quarrywork"` or `"builders"`.
+    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"roadwork"` or `"builders"`.
     pub pool: String,
     /// The `equipment.json` item id this line is about.
     pub item_id: String,
@@ -1760,8 +1747,8 @@ pub struct PoolToeLineState {
 /// rules that govern the vector are stated.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PoolCrewLineState {
-    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"agriculture"`,
-    /// `"husbandry"`, `"roadwork"` or `"quarrywork"`. ⛔ **Never `"builders"`.**
+    /// Which pool, in the [`LaborAssignmentState::kind`] vocabulary — `"roadwork"`, the one keeping
+    /// pool left. ⛔ **Never `"builders"`.**
     pub pool: String,
     /// **Keepers this pool employed on nothing at all this turn.**
     ///
@@ -1798,11 +1785,12 @@ pub struct PoolCrewLineState {
 /// **ONE ENTRY OF ONE BAND'S BUILD QUEUE** — a row of [`PopulationCohortState::build_queue`],
 /// naming only the **source** the entry is a build on.
 ///
-/// An entry names its source and nothing else, deliberately: the declared job, the kit, the
-/// destination rung, the legs, the chained date and the blocked cause are all published on the
+/// An entry names its source and its **Build mark**, and nothing else: the declared job, the kit,
+/// the destination rung, the legs, the chained date and the blocked cause are all published on the
 /// **source** row (`ForagePatchState` / the herd twin) and agree across every band holding the
 /// source by construction — `cultivate`/`sow`/`tame` enqueue the same declaration on every band
-/// working it, and `build_kit` is source-addressed and sets every holder's entry.
+/// working it, and `build_kit` is source-addressed and sets every holder's entry. The mark is the
+/// entry's own and per band (`build_priority` names one band), so it rides here.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BuildQueueEntryState {
     /// Which web the entry is on, in the [`LaborAssignmentState::kind`] vocabulary — `"forage"` for
@@ -1818,6 +1806,11 @@ pub struct BuildQueueEntryState {
     /// The herd's id. Empty on a forage entry.
     #[serde(default)]
     pub fauna_id: String,
+    /// **This build's own mark** — `"high"`, `"normal"` or `"low"` (`docs/plan_site_crews.md`
+    /// §2.4). The builders' tool claim and the build's pile rank at the head entry's mark; the site
+    /// row's `priority` ranks the site's crew.
+    #[serde(default)]
+    pub build_priority: String,
 }
 
 /// **One run of a band's hunt workers holding the same gear** — a row of

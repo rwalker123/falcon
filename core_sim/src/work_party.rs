@@ -618,7 +618,7 @@ pub fn forecast_hunt_caravan(
                 carry_per_worker,
                 hunters,
                 output_multiplier,
-                present,
+                present as f32,
                 floor,
                 // A party's load waits at the source for the next porter — it keeps every carcass.
                 crate::fauna::CarcassKept::Whole,
@@ -671,7 +671,7 @@ pub fn forecast_extract_caravan(
     forecast_caravan(party, horizon, pack, |present| {
         projection
             .step(
-                present,
+                present as f32,
                 crate::extraction::CrewLift {
                     tools: gear_per_worker * present as f32,
                     carry: pack * present as f32,
@@ -732,7 +732,7 @@ pub fn forecast_forage_caravan(
             carry_per_worker,
             seasonal,
             output_multiplier,
-            present,
+            present as f32,
             floor,
             take_species,
         ) {

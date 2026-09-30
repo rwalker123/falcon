@@ -747,6 +747,24 @@ message WorkPriorityCommand {
   string level = 6;     // "high" | "normal" | "low"
 }
 
+// Mark ONE QUEUED BUILD of one band with the player's own BUILD MARK - `high` | `normal` | `low`,
+// defaulting to normal (docs/plan_site_crews.md section 2.4).
+//
+// IT IS THE QUEUE ENTRY'S OWN, NOT ITS SITE ROW'S. The builders' claim on scarce tools and the
+// build's claim on scarce materials both rank at the HEAD entry's mark; the site row's
+// `work_priority` ranks that site's own crew. A mark is only settable on a declared build - an
+// unqueued source is refused rather than enrolled.
+//
+// SOURCE ADDRESSING is `work_priority`'s: two integer tokens name a TILE, one token names a HERD id.
+message BuildPriorityCommand {
+  uint32 faction_id = 1;
+  uint64 band_id = 2;
+  optional uint32 target_x = 3;
+  optional uint32 target_y = 4;
+  optional string herd_id = 5;
+  string level = 6;     // "high" | "normal" | "low"
+}
+
 message UpkeepModeCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
@@ -1645,5 +1663,8 @@ message CommandEnvelope {
     AbandonWorkingCommand abandon_working = 75;
     // 75 is held by `abandon_working`, so Open Borders takes 76 (append-only; never renumber).
     SetOpenBordersCommand set_open_borders = 76;
+    // 76 is held by `set_open_borders`, so the queued build's mark takes 77 (append-only; never
+    // renumber).
+    BuildPriorityCommand build_priority = 77;
   }
 }

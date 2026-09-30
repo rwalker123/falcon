@@ -445,6 +445,8 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&entry.fauna_id))
                         };
+                        // **THE ENTRY'S BUILD MARK** (`docs/plan_site_crews.md` §2.4).
+                        let build_priority = builder.create_string(&entry.build_priority);
                         fb::BuildQueueEntryState::create(
                             builder,
                             &fb::BuildQueueEntryStateArgs {
@@ -452,6 +454,7 @@ fn create_populations<'a>(
                                 targetX: entry.target_x,
                                 targetY: entry.target_y,
                                 faunaId: fauna_id,
+                                buildPriority: Some(build_priority),
                             },
                         )
                     })
@@ -1535,6 +1538,7 @@ fn decode_population(
             target_x: entry.targetX(),
             target_y: entry.targetY(),
             fauna_id: text(entry.faunaId()),
+            build_priority: text(entry.buildPriority()),
         }),
         fodder_need: cohort.fodderNeed(),
         fodder_income: cohort.fodderIncome(),
@@ -1545,7 +1549,8 @@ fn decode_population(
         roadwork_demand: cohort.roadworkDemand(),
         roadwork_supplied: cohort.roadworkSupplied(),
         roadwork_shortfall: cohort.roadworkShortfall(),
-        // The GROUNDWORK pool, the deposit branches' twin of the three above (arc #583).
+        // **DEPRECATED — always 0** (`docs/plan_site_crews.md` §4): the retired Groundwork pool's
+        // triple, decoded because the wire is positional.
         quarrywork_demand: cohort.quarryworkDemand(),
         quarrywork_supplied: cohort.quarryworkSupplied(),
         quarrywork_shortfall: cohort.quarryworkShortfall(),

@@ -1222,6 +1222,7 @@ fn spawn_band(
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),
                         kit: None,
+                        priority: core_sim::SourcePriority::default(),
                     }]
                 } else {
                     Vec::new()

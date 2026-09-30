@@ -322,6 +322,7 @@ fn seed_the_forecast(app: &mut App, band: bevy::prelude::Entity, fauna_id: &str,
             &party_at(&combat),
             CONTENT_BAND_OUTPUT_MULTIPLIER,
             CREW,
+            core_sim::NO_HANDS,
             floor,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
@@ -383,7 +384,7 @@ fn take_at(app: &App, herd: &Herd, seed: u64) -> core_sim::HuntOutcome {
     let mut quarry = core_sim::next_turns_quarry(herd, &fauna);
     hunt_take(
         &mut quarry,
-        CREW,
+        CREW as f32,
         FOOD_PEAK,
         equipped_haul_rate(),
         &party_at(&combat),
@@ -489,7 +490,7 @@ fn the_takes_retreat_is_scaled_by_the_rung_and_never_switched_off() {
             herd,
             &fauna,
             &party,
-            LADDER_CREW,
+            LADDER_CREW as f32,
             LADDER_FLOOR,
             HuntDraw::EXPECTED,
             core_sim::EngagementQuantum::Rate,
@@ -683,7 +684,7 @@ fn a_wary_herd_costs_hunter_turns_and_never_herd_biomass() {
         for tick in 1..=turns {
             let outcome = hunt_take(
                 &mut herd,
-                CREW,
+                CREW as f32,
                 FOOD_PEAK,
                 equipped_haul_rate(),
                 &party_at(&combat),
@@ -932,7 +933,7 @@ fn the_exported_forecast_is_the_take_when_the_escapement_floor_binds() {
         (
             animals_affordable(ceiling, herd.body_mass),
             // A pure hunt builds nothing and holds nothing, so its whole crew reaches.
-            animals_engaged(CREW, fauna.engage_rate_for(&herd.species)),
+            animals_engaged(CREW as f32, fauna.engage_rate_for(&herd.species)),
         )
     };
     assert!(

@@ -251,7 +251,7 @@ with that sentence rather than mutely breaking the arithmetic.
 | `died` | `band= count= bracket={child\|working\|elder} cause={hunger\|cold\|age}` |
 | `migrated` | `band= count= direction={out\|in}` |
 | `hunt_report` | `engaged= fled= killed= carried_biomass= wasted_biomass= hunters_killed= hunters_wounded= bound={engagement\|floor\|carry\|fight} species=` |
-| a shed crew | `status={trimmed\|lapsed} reason=too_few_workers kind={forage\|hunt\|scout\|warrior\|agriculture\|husbandry\|builders} [x= y=\|herd=] workers= lost= band=` |
+| a shed crew | `status={trimmed\|lapsed} reason=too_few_workers kind={forage\|hunt\|extract\|scout\|warrior\|builders\|roadwork} [x= y=\|herd=] workers= lost= band=` |
 | a lapsed source row | `status=lapsed reason=herd_gone …source terms… band=` — `out_of_range` is retired: a far deposit posts a work party like every other source (`work-party.md`), and `out_of_leash` went with the hunt leash |
 | a narrowed take | `status=pruned reason=not_here role= band= dropped=` |
 

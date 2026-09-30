@@ -215,8 +215,8 @@ a proposal walks (`move_band`), `Cost::splits` the bands it splits (`split_band`
 collides with a move of the band, a band walking does not split, and never with another split of
 it: the sim applies each `split_band` as it arrives against the floors as they then stand, so two
 splits of one band in a turn are two orders, not one claim), `Cost::rows` the labor rows it sets,
-keyed as `view::row_key` — every `assign_labor` it emits, donors and targets both, a `builders` /
-`agriculture` pool as much as a forage row, and the patch's forage row for a `cultivate` / `sow`.
+keyed as `view::row_key` — every `assign_labor` it emits, donors and targets both, a `builders`
+pool as much as a forage row, and the patch's forage row for a `cultivate` / `sow`.
 `Cost::claimed` reads them off the commands themselves, so a proposal cannot claim less than it
 sends. The sim takes several labor orders for one band in a turn, so two proposals on one band
 collide only where they set the same row or both walk it — the old one-order-per-band rule cost
@@ -461,7 +461,11 @@ next turn as *no useful crew*.
 would have produced this turn's take — the overstaffing signal. `workers > workers_needed` ⇒ the
 binding constraint was not labor, so the extra workers were idle"*, so a row's surplus is
 `workers − workers_needed` (`surplus_hands`, `sources.rs`; `0` on a row whose `workers_needed` is
-`0` — a fresh row and one that produced nothing alike, neither an overstaffing signal).
+`0` — a fresh row and one that produced nothing alike, neither an overstaffing signal). **Less the
+hands keeping the row's site** (`keeping_hands`: the source's `upkeepHands`, rounded up): a site's
+crew keeps before it takes (`docs/plan_site_crews.md` §2.1), so `workers_needed` counts none of
+them and a hand drawn off a kept row comes out of its take. `Food::draw` never takes a row below
+those keeping hands on either tier.
 `Food::draw` frees hands in four tiers — idle, then **the pools with hands to spare**
 (`Food::pool_releases`, below; at no cost, like the idle), then the surplus on the rows offered
 for it (each down to its `workers_needed`, at no cost), then the rows named until each is empty
@@ -469,30 +473,23 @@ for it (each down to its `workers_needed`, at no cost), then the rows named unti
 (*hold the ground*'s harvesters) — and every rule that moves hands draws through it, so every
 rule sees the released pool hands
 (*spare hands into hunts* excepted: it draws off the forage rows alone, the free hands being rule
-1's to place). A pool a draw cuts is reduced with the deal — `assign_labor … builders 0`,
-`agriculture 2` — beside the row reductions, and the reason names them (`3 off builders hands`).
+1's to place). A pool a draw cuts is reduced with the deal — `assign_labor … builders 0` — beside
+the row reductions, and the reason names them (`3 off builders hands`).
 Before this a band that had parked all seventeen hands on a patch needing eight read `idle 0`,
 so no rule could find a hand to move and the seat went silent for fifty turns.
 
-**The pools release their spare hands** (`Food::pool_releases`). No rule could reach into a
-band-wide pool: on seed 27 the parent ended at t29 with every hand on `builders` (3) and
-`agriculture` (3), income 0.00 for twenty turns and 17 hunger deaths, and rule 1 was silent for
-want of a row to draw from. Two readings free them. **Builders release** — the whole `builders`
-pool is free when the band's `build_queue` is empty (nothing to raise) or when its head's source
-row publishes a non-empty `build_blocked_reason` (*"WHY THE BAND'S BUILDERS ARE STUCK ON THIS
-SOURCE"*; the whole pool goes on the head, so a blocked head idles all of it); a head the frame
-does not carry is not read as blocked, and a live unblocked head keeps its builders. *Upgrade
-the ground* restaffs the pool itself, so it keeps a builders cut out of its reductions and sizes
-`builders` from what the cut left. **Keeper trim** — the `agriculture` pool is one pool against
-the band's plant bill (`Food::plant_bill`, the bill *hold the ground* sizes the pool up to, over
-the patches the band holds a row on, `Food::kept_patches`); above it the excess is free — four
-keepers against a two-hand bill free two, three free one. Nothing is trimmed while a held patch
-reads short (the pool is the hold's then). `husbandry` is not trimmed: no rule staffs it, so it
-never holds a spare hand. On seed 27's own income-zero turns the builders release did not fire —
-the queue head (36,33) was live and progressing — and the keepers read 3 against the wire's
-`workers_needed 3` while supplying 4.31 on a demand of 2.15, which is what the bill sized by
-supply (below) reads as two; what emptied the band's income was the hold at t28 drawing all
-three forage hands off 37,35, the very row that would harvest the premium it priced.
+**The builders pool releases its spare hands** (`Food::pool_releases`). No rule could reach into a
+band-wide pool: on seed 27 the parent ended at t29 with every hand on `builders` (3) and the
+since-retired `agriculture` pool (3), income 0.00 for twenty turns and 17 hunger deaths, and rule 1
+was silent for want of a row to draw from. The whole `builders` pool is free when the band's
+`build_queue` is empty (nothing to raise) or when its head's source row publishes a non-empty
+`build_blocked_reason` (*"WHY THE BAND'S BUILDERS ARE STUCK ON THIS SOURCE"*; the whole pool goes
+on the head, so a blocked head idles all of it); a head the frame does not carry is not read as
+blocked, and a live unblocked head keeps its builders. *Upgrade the ground* restaffs the pool
+itself, so it keeps a builders cut out of its reductions and sizes `builders` from what the cut
+left. **There is no keeping pool to trim**: a patch is kept by its own forage row, which keeps first
+and gathers with the rest (`docs/plan_site_crews.md` §2.1), so a keeping hand the bill does not need
+is already gathering.
 
 **The cluster is one reading, shared.** `cluster_take(view, memory, band, standing, hands,
 is_dead)` (`sources.rs`) is what a band of `hands` would take per turn from **every** workable site
@@ -648,69 +645,53 @@ fired and what the ledger said. The rules, in `propose` order:
   lowest-paying (never the idle hands — those are rule 1's, and a hunt drawn from them competed
   with the assignment for the same rows) — whose leaving keeps the projected net at the
   goal with the herd's take counted, and whose projection survives.
-- **hold the ground** (`food:hold:<band>`) — a patch the seat owns whose `upkeep` row reads
+- **hold the ground** (`food:hold:<band>`) — a patch the seat owns whose row reads
   `upkeep_shortfall > 0` (the standing-upkeep bill for holding its rung, unpaid —
-  `docs/plan_standing_upkeep.md`) gets `assign_labor … agriculture <n>` on the band that holds a
-  forage row on it — **with or without hands on the row**: the sim keeps by the row, not the
-  crew (`keeping_claims` walks the band's assignments whatever their `workers`), and the
-  `agriculture` pool is **one pool against the band's summed plant bill**
-  (`LaborTarget::Agriculture`, `maintenance_shares`). So `n` is **the band's plant bill**
-  (`Food::plant_bill` over every owned patch the band holds a row on, `Food::kept_patches`) less
-  the pool it has, and one more hand (`HOLD_MIN_HANDS`) when the pool already stands at the
-  bill and a patch still reads short. **The bill is sized by what a keeper of this pool
-  supplies**: until the pool has supplied anything it is the wire's Σ `upkeep_workers_needed` —
-  `ceil(demand / PER_WORKER_OUTPUT)`, a bare hand's output, which a bare keeper delivers under
-  (49,5 on seed 23: `need 1, supplied 0.98, short 0.92`) and a hoed one over (37,35 on seed 27:
-  three keepers supplied 4.31 on a demand of 2.15 and read `workers_needed 3`) — and once it
-  has, `ceil(Σ upkeep_demand / (Σ upkeep_supplied / pool))` off the patch rows and the pool's
-  count, which reads seed 27's three as two. The same bill is what the **keeper trim** ("The
-  pools release their spare hands", above) sizes the pool *down* to when nothing reads short:
-  hands above it are free hands for every rule that draws. Sized per patch less the whole
-  pool it read `want 0` for 49,5 while the pool's two hands kept 53,8, and skipping a row the
-  band had emptied it never proposed for 49,5 again; the patch unwound at t48 with two holds
-  accepted twenty turns earlier. One proposal per band naming every short patch; the kit left
-  `None` so the wire derives `tillage` (the hoes are the board's business later). The hands
-  come from the surplus first, then the lowest rows — **never the harvesters**: the forage row
-  of every patch the bill covers keeps its sustained crew (`sustained_hands` at the band's
-  rate, at least `HOLD_MIN_HANDS`; `Food::draw`'s `keep` floors), only what stands above it
-  being drawable, and short of the bill the hold pays the hands it can find, down to one,
-  rather than nothing. ⛔ On seed 27 the hold at t28 (`3 hands on agriculture for 37,35 short
-  0.02`) drew all three forage hands off 37,35 — the row at `3/1`, its bill three, nothing
-  else on the band but builders — priced the tended premium those hands would have gathered,
-  and the band's income read 0.00 from t29 until it starved (17 hunger deaths); nothing could
-  draw the pools back out. The
+  `docs/plan_standing_upkeep.md`) has **its own forage row raised** on the band that holds it —
+  **with or without hands on the row**, since a row with nobody on it keeps nothing
+  (`docs/plan_site_crews.md` §2.1: the row's crew keeps first and gathers with the rest). Each short
+  row is raised by the hands its keeping is missing, `ceil(upkeepWorkersNeeded − upkeepHands)`, at
+  least one (`HOLD_MIN_HANDS`, `Food::keeping_hands_missing`) — a patch still reading short with
+  the wire's count already keeping is kept by hands delivering under the `PER_WORKER_OUTPUT` the
+  count is `ceil`ed by (49,5 on seed 23: `need 1, supplied 0.98, short 0.92`), and one more hand is
+  what closes it. The reason reads `hold the ground: N hands keeping …`. One proposal per band
+  naming every short patch; the kit left `None` — the keeping's tools follow from the patch's rung.
+  The hands come from the idle first, then the builders pool with nothing to do, then the surplus,
+  then the lowest rows — **never from a short row itself** (raising a row by hands drawn off the
+  same row keeps nothing) and **never the harvesters**: every kept patch keeps its sustained crew on
+  its row (`sustained_hands` at the band's rate, at least `HOLD_MIN_HANDS`; `Food::draw`'s `keep`
+  floors), only what stands above it being drawable, and short of the missing hands the hold pays
+  what it can find, down to one, rather than nothing. ⛔ On seed 27 an earlier hold drew all three
+  forage hands off 37,35 for its own bill, priced the tended premium those hands would have
+  gathered, and the band's income read 0.00 from t29 until it starved (17 hunger deaths). The
   change is priced like any reassignment: what they earned where they stood against **the rung
   lost** — an unpaid bill costs the whole improvement, so the hold keeps, as a `Change::Series`
   over the horizon, the rung's premium per turn (`tended_yield`, `field_yield` on a field, less
-  the wild take **the hands left harvesting** make on that patch; nothing where nobody forages
-  it) **once the rung is complete** (`is_cultivated`
-  / `is_field`; the bill runs during the build too — 51,9 read `need 1` at progress 0.22 — but a
-  patch mid-build earns no premium yet) plus, **on the horizon's last turn**, the rebuild the
-  seat would otherwise declare again: the work already done (`cultivation_work_done`, the full
-  cost once complete) in builder-turns (`/ build_work_per_worker_turn`) at the row's rate. The
-  rebuild sits at the end because an avoided cost is never food in hand: it raises the runway
-  the goal is held against, never the trough. Put on the first turn it read as 76 food at t0,
-  the survival check lied, and band 4 on seed 23 gave its last forage hand to a hold at t25
-  (`builders 3, agriculture 2, forage 0`, income 0.00 from then on) and starved — its deaths took
-  the agriculture hands with them and 51,9 unwound anyway. Priced as the first turns' decay alone
-  (a hundredth a turn of the tended yield) it lost eight of eleven conflicts to a hand-shuffle.
-  `agriculture` hands pay a patch's bill whether or not the band still works it (band 4 supplied
-  51,9 at 1.88 with its forage row empty). **On a completed rung the proposal is `standing`** — a
-  bill the arbiter pays before weighing any bid (above); mid-build it is a bid like any other.
-  **A bill the band cannot pay without starving is defaulted on**: the projection with the bill
-  paid must `survives` (trough above zero), as every other rule's must, or nothing is proposed
-  and the rung unwinds. Paid unconditionally, band 2 on seed 24 held 7,18 three times at a
-  projected trough of −22, −40 and 2 with seven hands, and by t32 kept three, built with four
-  and fed nobody. Over the sixty-seed sweep the unconditional bill ends with 286 working, 1103
-  hunger deaths and 29 improved patches; gated on `survives`, 399, 951 and 15 — survival is the
-  purpose, so the gate stands and the patches it lets go are the price.
+  the wild take the row's crew makes on that patch; nothing where nobody forages it) **once the
+  rung is complete** (`is_cultivated` / `is_field`; the bill runs during the build too, but a patch
+  mid-build earns no premium yet) plus, **on the horizon's last turn**, the rebuild the seat would
+  otherwise declare again: the work already done (`cultivation_work_done`, the full cost once
+  complete) in builder-turns (`/ build_work_per_worker_turn`) at the row's rate. The rebuild sits at
+  the end because an avoided cost is never food in hand: it raises the runway the goal is held
+  against, never the trough. Put on the first turn it read as 76 food at t0, the survival check
+  lied, and band 4 on seed 23 gave its last forage hand to a hold at t25 and starved. **On a
+  completed rung the proposal is `standing`** — a bill the arbiter pays before weighing any bid
+  (above); mid-build it is a bid like any other. **A bill the band cannot pay without starving is
+  defaulted on**: the projection with the bill paid must `survives` (trough above zero), as every
+  other rule's must, or nothing is proposed and the rung unwinds. Paid unconditionally, band 2 on
+  seed 24 held 7,18 three times at a projected trough of −22, −40 and 2 with seven hands, and by
+  t32 kept three, built with four and fed nobody. Over the sixty-seed sweep the unconditional bill
+  ends with 286 working, 1103 hunger deaths and 29 improved patches; gated on `survives`, 399, 951
+  and 15 — survival is the purpose, so the gate stands and the patches it lets go are the price.
   Fires before *upgrade the ground*: holding what the band has beats declaring the next rung.
-  The fact that forced it:
-  seed 23's cultivate on 49,5 completed at t44 (`cultivated: true`, progress 1.0, queue empty)
-  and read `cultivated: false, 0.99` at t45, decaying a hundredth a turn to 0.84 at t60, the
-  tile's `upkeep` row at `demand 1.92, supplied 0.0, shortfall 1.92, workers_needed 2, kit_id
-  tillage` the whole way, two builders still on the `builders` role — the role the upkeep wants
-  is `agriculture`, and no rule staffed it.
+  **Herds are not held by this rule**: a herd's keeping is its hunt row's crew too, and no rule
+  raises a hunt row for its keeping.
+- **upgrade the ground prices the keeping it creates.** The row on the patch keeps the rung it
+  raises from the first work banked, so the change's `income_lost` carries the take the row stops
+  gathering: the rung's quoted bill (`cultivationUpkeepDemand` / `fieldUpkeepDemand`) above what
+  the patch already owes, over one bare hand's `buildWorkPerWorkerTurn`, priced whole from the
+  start. It prices each climb alone — a band declaring several builds in a row is charged each
+  one's keeping against the take as it stood.
 - **upgrade the ground** (`food:upgrade:<band>`) — `goals.ground_rung > wild`, the rung's gate
   knowledge known, and a worked forage patch below it with nothing queued (`build_destination_rung`
   is *"empty when no band has queued it"*, plus the band's own `build_queue`; not

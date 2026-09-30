@@ -355,6 +355,17 @@ pub struct ForagePatch {
     /// survives a rollback for the same reason (the checkpoint clones the whole `ForageRegistry`), so
     /// the first post-restore decay pass does not bleed a patch whose keepers are still on it.
     pub upkeep_supplied: f32,
+    /// **THE CREW HANDS SPENT KEEPING THIS SOURCE THIS TURN** — fractional, summed across the bands
+    /// whose crews keep it (`docs/plan_site_crews.md` §2.1): each crew keeps its share first and
+    /// collects with the rest, so this is what the row's `keeps N of M` reads and what the take was
+    /// struck less. Published as `upkeepHands`. Accumulates beside [`Self::upkeep_supplied`] and is
+    /// cleared on its cycle.
+    pub upkeep_hands: f32,
+    /// **SOME CREW KEEPING THIS SOURCE WAS SHORT OF ITS KEEPING TOOLS** — the band-wide settlement
+    /// filled less than the site's claim (`docs/plan_site_crews.md` §2.3), so its crew kept with
+    /// more of its own hands. The row's `ⓘ`, published as `upkeepToolsShort`; cleared on
+    /// [`Self::upkeep_supplied`]'s cycle.
+    pub upkeep_tools_short: bool,
     /// **WHAT THE STAND WAS BEFORE THIS TURN'S REGROWTH** — the plant twin of
     /// `Herd::biomass_before_regrowth`, re-stamped at the top of every `regrow_patch` so it is never
     /// more than one turn old. Sim-side only; the take's growth-share backstop is its one reader.
@@ -370,7 +381,7 @@ pub struct ForagePatch {
     /// the demand was the rung's flat rate that carry was exact. Interpolation makes it a moving
     /// target: a build banks work between the stamp and the judgement, so the demand the pass reads
     /// is always a little above the one the keepers were asked to cover. Measured on a three-entry
-    /// build queue with the `agriculture` role fully staffed, that gap bled **~0.03 work a turn**
+    /// build queue with its keeping fully staffed, that gap bled **~0.03 work a turn**
     /// off the very meter it was funding — a permanent shortfall on a correctly-played band, which
     /// also re-armed `neglect_turns` every turn and left the wire counting down a grace that could
     /// never reset.
@@ -572,6 +583,8 @@ impl ForagePatch {
             owner: None,
             neglect_turns: NEGLECT_NONE,
             upkeep_supplied: NO_UPKEEP_DEMAND,
+            upkeep_hands: crate::fauna::NO_HANDS,
+            upkeep_tools_short: false,
             upkeep_demanded: None,
             upkeep_materials_demanded: BTreeMap::new(),
             upkeep_materials_supplied: BTreeMap::new(),
@@ -3041,10 +3054,10 @@ pub const ONE_TENDER_LOAD: f32 = 1.0;
 ///
 /// # ⛔ THE VERB TERM IS THE ONE-TURN CARRY, AND DROPPING IT REOPENS A SHIPPED BUG
 ///
-/// `maintenance_shares` runs **before** the turn's build accrual and the capture reads the patch
+/// `site_keeping_claims` runs **before** the turn's build accrual and the capture reads the patch
 /// **after** it. On the turn a build banks its first work, a claim resolved on the position alone
 /// reads zero, the share comes back zero, and the capture then publishes `supplied 0` against a live
-/// demand on a **staffed** `agriculture` role. That is the defect `patch_keeping_meter`'s verb term
+/// demand on a **staffed** keeping. That is the defect `patch_keeping_meter`'s verb term
 /// was added for, and it survives here in the only form the interpolated demand still needs.
 ///
 /// **Exhaustive on the verb, on purpose** — a new plant verb falling through to `false` would leave
@@ -3068,16 +3081,16 @@ pub fn patch_claims_keeping(patch: &ForagePatch, improvement: Option<Improvement
 
 // **RETIRED: `patch_is_maintaining`** — *"is this patch building or maintaining"*, the meter's own
 // **fullness**, which used to decide who supplies the maintenance rate: the build crew below the
-// meter's cost, the band's keeping pool at it (`docs/plan_standing_upkeep.md` §4.6a).
+// meter's cost, the site's own crew at it (`docs/plan_standing_upkeep.md` §4.6a).
 //
-// **NOTHING ABOUT HOW FULL A METER IS DECIDES WHO PAYS.** The keeping pool owes the rate for every
-// meter carrying work, from the first work banked until the last, and a build crew supplies nothing
-// toward it. §2.4's autopsy names the two states the fullness test made unreachable, both reported
-// from ordinary play: a **half-built** meter whose builders left could not be held at all — it was
-// billed to a crew that was not there and bled its full rate with keepers idle in the role and no
-// command that could aim them at it — and a **held** rung eroding to 99% flipped into *building*,
-// where the next slice's queue would have had it displace the build the player actually ordered,
-// then dip again the moment it was topped up.
+// **NOTHING ABOUT HOW FULL A METER IS DECIDES WHO PAYS.** The site's own crew owes the rate for
+// every meter carrying work, from the first work banked until the last, and a build crew supplies
+// nothing toward it. §2.4's autopsy names the two states the fullness test made unreachable, both
+// reported from ordinary play: a **half-built** meter whose builders left could not be held at all
+// — it was billed to a crew that was not there and bled its full rate with keepers idle in the role
+// and no command that could aim them at it — and a **held** rung eroding to 99% flipped into
+// *building*, where the next slice's queue would have had it displace the build the player actually
+// ordered, then dip again the moment it was topped up.
 //
 // **RETIRED WITH IT: `patch_keeping_meter(patch, improvement)`.** It answered *which* of the two
 // meters this turn's keeping spoke for, and there is only one meter now. Its two remaining jobs
@@ -3104,13 +3117,13 @@ pub fn patch_at_risk_cost(patch: &ForagePatch) -> f32 {
 /// **THE WORK THE AT-RISK METER WAS OWED THIS TURN, AND THE KEEPING POOL OWES ALL OF IT**
 /// (`docs/plan_standing_upkeep.md` §2.4/§4.6a).
 ///
-/// **A meter carrying work is billed to the band's `agriculture` pool at any fullness** — from the
+/// **A meter carrying work is billed to the patch's own crew at any fullness** — from the
 /// first work banked until the last — and a build crew supplies nothing toward it. What a crew
 /// mid-`Cultivate` owes is what a finished tended patch owes, and it is owed to the same hands. The
 /// retired fullness test is what made a half-built meter unholdable and a dipped rung the builders'
 /// business again; `patch_is_maintaining`'s gravestone above carries both autopsies.
 ///
-/// `keeping_share` is this source's slice of that pool (`systems::labor::maintenance_shares`) — a
+/// `keeping_share` is this source's slice of that pool (`systems::labor::site_keeping_claims`) — a
 /// work amount, not a crew, because a pool does not divide into whole people.
 ///
 /// [`NO_UPKEEP_DEMAND`] where there is no work on the ladder and none being started: nothing is
@@ -3223,8 +3236,8 @@ pub fn patch_material_keeping_basis<'a>(
 /// ordering. It is `0` for as long as the grace forgives the shortfall.
 ///
 /// **The build countdown's denominator and the wire's `meterRotPerTurn` are this one number**: what
-/// eats a build is not the maintenance rate (the keeping pool owes that whatever the builders do) but
-/// the ground going backwards under them.
+/// eats a build is not the maintenance rate (the site's own crew owes that whatever the builders
+/// do) but the ground going backwards under them.
 ///
 /// [`NO_UPKEEP_DECAY`] on a wild patch, on one whose keeping covers its demand, and on one still
 /// inside its rung's grace.
@@ -3271,7 +3284,7 @@ pub fn patch_upkeep_shortfall(
 /// that makes the standing cost legible: *"this wants 1, you have 0"*.
 ///
 /// **IT IS PUBLISHED WHILE THE METER IS STILL BEING BUILT TOO**, and it means exactly the same thing
-/// there: the keeping pool owes the rate from the first work banked, so these are the hands that
+/// there: the site's own crew owes the rate from the first work banked, so these are the hands that
 /// hold a half-built meter as much as a finished one. It is **not** a minimum viable build crew —
 /// a build crew supplies nothing toward the rate (`docs/plan_standing_upkeep.md` §4.6a), so a lone
 /// builder against a demand of `2.0` still banks its whole turn's work.
@@ -3427,6 +3440,8 @@ pub fn advance_cultivation(
         // they paid. Clearing it is also what re-arms this pass — next turn's shortfall is the whole
         // demand again unless somebody restates it.
         patch.upkeep_supplied = NO_UPKEEP_DEMAND;
+        patch.upkeep_hands = crate::fauna::NO_HANDS;
+        patch.upkeep_tools_short = false;
         patch.upkeep_demanded = None;
         // **The material half rides the same cycle**, and for the same reason: it is this turn's
         // bill and this turn's payment, so next turn's shortfall is the whole demand again unless a
@@ -3556,9 +3571,14 @@ pub(crate) fn patch_rung_key(patch: &ForagePatch) -> RungKey {
 /// `min(crew throughput, max(0, B − floor·K))`. The **floor** is a fraction of `K` the assignment
 /// carries (`0.5` holds the patch on its most productive biomass, `0` strips it).
 ///
-/// **`workers` is the TAKE crew and there is no build term in the expression at all**
+/// **`hands` is the TAKE crew and there is no build term in the expression at all**
 /// (`docs/plan_standing_upkeep.md` §2.2). A build on this patch is its own allocation with its own
 /// hands, so what the gatherers carry does not depend on what the builders beside them are doing.
+///
+/// ⛔ **IT IS A FRACTIONAL HAND COUNT** (`docs/plan_site_crews.md` §2.1): a site's crew keeps the
+/// site first and collects with what is left, and `crew − keep_hands` is rarely whole. Rounding it
+/// to people would throw the remainder away — the waste the site crew exists to remove — and the
+/// take is linear in hands, so a fraction is exact.
 ///
 /// The take resolves the patch's **conversion rate** off its own basket as well as its ecology, so
 /// it carries the tile's composition and the flora table alongside the forage config — one extra
@@ -3573,7 +3593,7 @@ pub(crate) fn patch_rung_key(patch: &ForagePatch) -> RungKey {
 pub(crate) fn forage_take(
     patch: &mut ForagePatch,
     tile_composition: &[FloraShare],
-    workers: u32,
+    hands: f32,
     floor: f32,
     // **Which plants this crew carries home** — empty is the whole basket.
     take_species: &TakeSelection,
@@ -3608,8 +3628,7 @@ pub(crate) fn forage_take(
     // retired `yield_fraction_while_building` multiplied this term to say *"the crew is clearing,
     // not gathering"* — which is a statement the player now makes by putting the hands where they
     // want them, rather than one the sim derives from a fraction.
-    let worker_cap =
-        workers as f32 * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal);
+    let worker_cap = hands * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal);
     let take = worker_cap
         .min(take_ceiling)
         .max(0.0)
@@ -4400,7 +4419,7 @@ pub fn project_realized_forage(
     per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
-    workers: u32,
+    hands: f32,
     floor: f32,
     // **What this crew carries home** — threaded so a projection runs the same take the turn will.
     take_species: &TakeSelection,
@@ -4429,7 +4448,7 @@ pub fn project_realized_forage(
             per_worker_biomass_capacity,
             seasonal,
             output_multiplier,
-            workers,
+            hands,
             floor,
             take_species,
         ) else {
@@ -4493,7 +4512,7 @@ impl ForageProjection {
         per_worker_biomass_capacity: f32,
         seasonal: f32,
         output_multiplier: f32,
-        workers: u32,
+        hands: f32,
         floor: f32,
         take_species: &TakeSelection,
     ) -> Option<ProjectedForageTurn> {
@@ -4508,7 +4527,7 @@ impl ForageProjection {
         let provisions = forage_take(
             &mut self.sim,
             tile_composition,
-            workers,
+            hands,
             floor,
             take_species,
             forage,
@@ -4553,7 +4572,7 @@ pub fn project_arrivals_forage(
     per_worker_biomass_capacity: f32,
     seasonal: f32,
     output_multiplier: f32,
-    workers: u32,
+    hands: f32,
     floor: f32,
     // **What this crew carries home** — see [`project_realized_forage`].
     take_species: &TakeSelection,
@@ -4573,7 +4592,7 @@ pub fn project_arrivals_forage(
             forage_take(
                 &mut sim,
                 tile_composition,
-                workers,
+                hands,
                 floor,
                 take_species,
                 forage,
@@ -4605,6 +4624,10 @@ pub fn forage_source_yield_preview(
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
+    // **The hands this crew spends keeping the patch first** (`docs/plan_site_crews.md` §2.1) —
+    // [`crate::systems::prospective_keep_hands`] for a kept patch, [`crate::fauna::NO_HANDS`] for one
+    // that owes nothing. The take is quoted on the rest.
+    keep_hands: f32,
     floor: f32,
     // **What this crew carries home** — empty is the whole basket. The seed must price the selection
     // the command just stored, or the row a player reads before committing is not the row the turn
@@ -4617,6 +4640,7 @@ pub fn forage_source_yield_preview(
     // threaded so both webs seed their row through the one `fauna::forecast_source_yield`.
     range_sigmas: f32,
 ) -> SourceYield {
+    let take_hands = (workers as f32 - keep_hands).max(crate::fauna::NO_HANDS);
     let forecast = forage_forecast(
         patch,
         tile_composition,
@@ -4657,7 +4681,7 @@ pub fn forage_source_yield_preview(
         per_worker_biomass_capacity,
         seasonal,
         output_multiplier,
-        workers,
+        take_hands,
         floor,
         take_species,
         realized_horizon,
@@ -4673,7 +4697,7 @@ pub fn forage_source_yield_preview(
         per_worker_biomass_capacity,
         seasonal,
         output_multiplier,
-        workers,
+        take_hands,
         floor,
         take_species,
         arrivals_horizon,
@@ -4686,6 +4710,7 @@ pub fn forage_source_yield_preview(
         sustainable,
         patch.is_field(),
         workers,
+        take_hands,
         floor,
         realized,
         arrivals,
@@ -4695,7 +4720,7 @@ pub fn forage_source_yield_preview(
             forage,
             patch.biomass * selected,
             patch.carrying_capacity * selected,
-            workers as f32 * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal),
+            take_hands * forage_per_worker_biomass(per_worker_biomass_capacity, seasonal),
             floor,
         ),
         range_sigmas,
@@ -4770,7 +4795,7 @@ mod tests {
             let food = forage_take(
                 &mut patch,
                 &composition,
-                TENDERS,
+                TENDERS as f32,
                 crate::fauna::MSY_BIOMASS_FRACTION,
                 &TakeSelection::EVERYTHING,
                 &forage,
@@ -4900,7 +4925,7 @@ mod tests {
             let paid = forage_take(
                 &mut patch,
                 &composition,
-                TENDERS,
+                TENDERS as f32,
                 crate::fauna::MSY_BIOMASS_FRACTION,
                 &TakeSelection::EVERYTHING,
                 &forage,
@@ -5362,7 +5387,7 @@ mod tests {
         let provisions = forage_take(
             &mut patch,
             NO_BASKET,
-            20,
+            20.0,
             0.5,
             &TakeSelection::EVERYTHING,
             &forage,
@@ -5401,7 +5426,7 @@ mod tests {
             let _ = forage_take(
                 &mut patch,
                 NO_BASKET,
-                20,
+                20.0,
                 0.5,
                 &TakeSelection::EVERYTHING,
                 &forage,
@@ -5455,7 +5480,7 @@ mod tests {
             let _ = forage_take(
                 &mut patch,
                 NO_BASKET,
-                3,
+                3.0,
                 0.0,
                 &TakeSelection::EVERYTHING,
                 &forage,
@@ -5497,7 +5522,7 @@ mod tests {
             let provisions = forage_take(
                 &mut patch,
                 NO_BASKET,
-                workers,
+                (workers) as f32,
                 policy,
                 &TakeSelection::EVERYTHING,
                 &forage,
@@ -5626,7 +5651,7 @@ mod tests {
             let _ = forage_take(
                 &mut patch,
                 NO_BASKET,
-                50,
+                50.0,
                 0.0,
                 &TakeSelection::EVERYTHING,
                 &forage,
@@ -6100,6 +6125,7 @@ mod tests {
             FULL_SEASON,
             NEUTRAL_OUTPUT,
             GATHERERS,
+            crate::fauna::NO_HANDS,
             HALF_THE_STAND,
             &TakeSelection::EVERYTHING,
             SHORT_HORIZON,
@@ -6112,7 +6138,7 @@ mod tests {
             forage_take(
                 &mut taking,
                 &composition,
-                GATHERERS,
+                GATHERERS as f32,
                 HALF_THE_STAND,
                 &TakeSelection::EVERYTHING,
                 &forage,
@@ -6167,7 +6193,7 @@ mod tests {
             forage_take(
                 patch,
                 &composition,
-                GATHERERS,
+                GATHERERS as f32,
                 HALF_THE_STAND,
                 &TakeSelection::EVERYTHING,
                 &forage,
@@ -6187,7 +6213,7 @@ mod tests {
                 forage.per_worker_biomass_capacity,
                 FULL_SEASON,
                 NEUTRAL_OUTPUT,
-                GATHERERS,
+                GATHERERS as f32,
                 HALF_THE_STAND,
                 &TakeSelection::EVERYTHING,
                 HORIZON,

@@ -1175,13 +1175,12 @@ pub enum KitJob {
     Forage,
     Scout,
     Warrior,
-    /// **The plant web's standing keepers** — the `agriculture` role's job
-    /// (`docs/plan_standing_upkeep.md` §2.5). It has its own job rather than borrowing the
-    /// gatherers' because gear **covers people**: folding keepers into `Forage` would divide the
-    /// band's baskets among hands that are not carrying anything home.
+    /// **The plant web's keeping** — the job name the roster's plant keeping kits list (`tillage`).
+    /// Its band-level role retired with `docs/plan_site_crews.md`: a patch's own crew keeps it and
+    /// its keeping tools follow from the patch's rung, so this survives as roster vocabulary.
     Agriculture,
-    /// **The animal web's standing keepers** — the `husbandry` role's job, the twin of
-    /// [`KitJob::Agriculture`] and separate from `Hunt` for its reason.
+    /// **The animal web's keeping** — the twin of [`KitJob::Agriculture`] (`hurdling`), retired
+    /// as a band-level role for the same reason.
     Husbandry,
     /// **THE BAND'S BUILDERS** — the `builders` role's job (`docs/plan_standing_upkeep.md` §2.5).
     ///
@@ -1246,18 +1245,11 @@ pub enum KitJob {
     /// compared in one language. The *variant* is named for the branch pair it serves.
     #[serde(rename = "extract")]
     Extraction,
-    /// **THE BAND'S WORKING KEEPERS** — the `quarrywork` role's job, and the deposit branches' twin
-    /// of [`KitJob::Agriculture`] / [`KitJob::Husbandry`] / [`KitJob::Roadwork`]
-    /// (`docs/plan_extraction.md` §6).
-    ///
-    /// **One job for both branches**, matching the one role: holding a face open and clearing what
-    /// has fallen is one job, and which ladder the deposit is on is the deposit's.
-    ///
-    /// ⛔ **IT IS SPLIT FROM [`KitJob::Extraction`]**, on [`KitJob::Agriculture`]'s stated reason:
-    /// **gear covers people**, so sharing a job with the take row would divide the take kit's axes
-    /// among hands that are not cutting. Its keepers are geared through the rung requirement
-    /// ([`EquipmentConfig::pool_toe`]), not through a default kit, so `default_kits.quarrywork`
-    /// stays `none`.
+    /// **The deposit branches' keeping** — the twin of [`KitJob::Agriculture`] /
+    /// [`KitJob::Husbandry`]. Its band-level role retired with `docs/plan_site_crews.md`: a
+    /// working's own `extract` crew keeps it, geared through the rung requirement rather than a
+    /// default kit, so this survives as roster vocabulary and `default_kits.quarrywork` stays
+    /// `none`.
     Quarrywork,
 }
 
@@ -1327,9 +1319,8 @@ pub struct DefaultKitsConfig {
     pub forage: String,
     pub scout: String,
     pub warrior: String,
-    /// **What a plant keeper works with today: nothing.** The shipped roster declares no maintenance
-    /// gear, so the `agriculture` role's default is the ordinary empty `none` kit rather than a
-    /// sentinel — the day a hoe declares a stat, this row is where it lands.
+    /// **The plant keeping job's default kit** — the ordinary empty `none`. A site crew's keeping
+    /// tools follow from its rung (`docs/plan_site_crews.md` §2.3), never from this default.
     pub agriculture: String,
     /// The animal keeper's default — see [`Self::agriculture`].
     pub husbandry: String,

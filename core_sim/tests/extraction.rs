@@ -216,8 +216,9 @@ fn seat_working(world: &mut World, tile: UVec2, material: &str, rung: RungKey) {
     world.resource_mut::<DepositRegistry>().insert(working);
 }
 
-/// A band with an `extract` row on each of `workings`, plus `keepers` hands on the `quarrywork`
-/// pool — the shape every keeping fixture below wants.
+/// A band with an `extract` row on each of `workings`, each crewed with `take_crew` cutters plus
+/// `keepers` hands for its keeping — the shape every keeping fixture below wants. The crew keeps its
+/// working first and cuts with the rest (`docs/plan_site_crews.md` §2.5).
 fn spawn_keepers(
     world: &mut World,
     home: Entity,
@@ -239,17 +240,7 @@ fn spawn_keepers(
                     material: (*material).to_string(),
                     floor: A_FRESH_ASSIGNMENTS_FLOOR,
                 },
-                workers: take_crew,
-                kit: None,
-                priority: SourcePriority::default(),
-                upkeep_kit: None,
-            });
-        }
-        if keepers > 0 {
-            allocation.assignments.push(LaborAssignment {
-                party: None,
-                target: LaborTarget::Quarrywork,
-                workers: keepers,
+                workers: take_crew + keepers,
                 kit: None,
                 priority: SourcePriority::default(),
                 upkeep_kit: None,
@@ -257,6 +248,23 @@ fn spawn_keepers(
         }
     }
     band
+}
+
+/// **Set the crew on this band's `extract` row for `(tile, material)`** — the fixture's stand-in
+/// for `assign_labor … extract … <workers>`, the one stepper a working's keeping is staffed by.
+fn set_extract_crew(world: &mut World, band: Entity, tile: UVec2, material: &str, workers: u32) {
+    let mut allocation = world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band has an allocation");
+    let row = allocation
+        .assignments
+        .iter_mut()
+        .find(|row| {
+            matches!(&row.target, LaborTarget::Extract { tile: t, material: m, .. }
+                if *t == tile && m == material)
+        })
+        .expect("the fixture band holds the working");
+    row.workers = workers;
 }
 
 /// The live working's ladder position.
@@ -356,6 +364,14 @@ fn a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes() {
     let cut = |ledger: Option<core_sim::BandEquipment>| {
         let (mut world, home) = world_of(WOODED);
         seat_working(&mut world, UVec2::new(0, 0), WOOD, RungKey::ForestryFelling);
+        // **The bill stated at nothing**, so the whole crew cuts and the axes are the take's alone:
+        // a felling working's own keeping claims an axe first (`docs/plan_site_crews.md` §2.3),
+        // which `two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers` pins.
+        world
+            .resource_mut::<DepositRegistry>()
+            .source_mut(UVec2::new(0, 0), WOOD)
+            .expect("the seated working")
+            .upkeep_demanded = Some(0.0);
         let band = spawn_extractors(&mut world, home, WOOD, CREW);
         send_with_the_woodcutting_kit(&mut world, band);
         if let Some(ledger) = ledger {
@@ -486,23 +502,22 @@ fn a_sled_lifts_the_deadfall_take_and_nothing_above_it() {
     );
 }
 
-/// **ONE AXE ARMS ONE PERSON PER TURN, ACROSS THE TAKE ROW AND THE POOLS** (#663). The axe is in
-/// the `extract` row's kit (`woodcutting`) *and* in the quarrywork keepers' rung requirement (its
-/// `build_work` on `forestry`), and the two used to be rationed by allocations that never saw each
-/// other — so two axes armed two fellers **and** a keeper.
+/// **ONE AXE ARMS ONE PERSON PER TURN, ACROSS THE TAKE ROW AND THE KEEPING** (#663,
+/// `docs/plan_site_crews.md` §2.3). The axe is in the `extract` row's kit (`woodcutting`) *and* in
+/// the working's own keeping requirement (its `build_work` on `forestry`), and the two used to be
+/// rationed by allocations that never saw each other — so two axes armed two fellers **and** a
+/// keeper.
 ///
-/// A band holding **two** axes puts two fellers on a seated `forestry:felling` working and two
-/// keepers on the pool holding it. The pools settle first, so the keepers are issued what their bill
-/// needs and the fellers are armed out of the rest: the people armed — fellers plus the pool's
-/// issued units — are **exactly two**. The fellers' armed count is read off the take itself (each
-/// armed feller cuts `deposit_take` more than a bare one), against a no-axe control of the same
-/// world, and a four-axe control pins that the fellers arm fully when the stock allows it.
+/// A band holding **two** axes puts a crew of four on a seated `forestry:felling` working. The
+/// settlement issues the crew's keeping hands their axes first, and the take kit is budgeted out of
+/// the rest (`LaborAllocation::item_budget`, struck less `last_keeping_issued`): the people armed —
+/// the keeping issue plus the take row's budgeted units — are **exactly two**. A four-axe control
+/// pins that the budget arms every cutter when the stock allows it.
 #[test]
 fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
     const FELLERS: u32 = 2;
     const KEEPERS: u32 = 2;
-    /// The shipped flint axe's `deposit_take` on felling.
-    const AXE_TAKE: f32 = 1.0;
+    const AXE: &str = "axe";
 
     let run = |axes: u32| {
         let (mut world, home) = world_of(WOODED);
@@ -512,46 +527,55 @@ fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
         send_with_the_woodcutting_kit(&mut world, band);
         let mut ledger = core_sim::BandEquipment::default();
         if axes > 0 {
-            ledger.stock("axe", axes, "flint", None);
+            ledger.stock(AXE, axes, "flint", None);
         }
         world.entity_mut(band).insert(ledger);
         run_full_turn(&mut world);
-        let pool_axes: f32 = world
+        let equipment = core_sim::EquipmentConfig::builtin();
+        let allocation = world
             .get::<LaborAllocation>(band)
-            .expect("the band keeps its allocation")
-            .last_pool_toe
+            .expect("the band keeps its allocation");
+        let wear = world
+            .get::<core_sim::BandEquipment>(band)
+            .expect("the band keeps its ledger");
+        let keeping: f32 = allocation
+            .last_keeping_issued
             .iter()
-            .filter(|line| line.item == "axe")
-            .map(|line| line.filled)
+            .filter(|issue| issue.item == AXE)
+            .map(|issue| issue.units)
             .sum();
-        (held(&world, band, WOOD), pool_axes)
+        let budget = allocation.item_budget(&equipment);
+        let take: f32 = allocation
+            .assignments
+            .iter()
+            .filter(|row| matches!(row.target, LaborTarget::Extract { .. }))
+            .map(|row| budget.share_for(row.workers as f32, wear, &equipment)(AXE))
+            .sum();
+        (keeping, take)
     };
 
-    let (bare, no_pool_axes) = run(0);
-    assert_eq!(no_pool_axes, 0.0, "fixture: a band with no axe issues none");
-    assert!(
-        bare > 0.0,
-        "fixture: the fellers must cut something bare-handed"
+    assert_eq!(
+        run(0),
+        (0.0, 0.0),
+        "fixture: a band with no axe issues none"
     );
 
-    let (two, pool_axes) = run(2);
-    let armed_fellers = ((two - bare) / AXE_TAKE).round();
+    let (keeping, take) = run(2);
     assert!(
-        pool_axes >= 1.0,
-        "fixture: the keepers' bill must claim an axe, or the two accounts never compete — \
-         issued {pool_axes}"
+        keeping >= 1.0,
+        "fixture: the crew's keeping must claim an axe, or the two accounts never compete — \
+         issued {keeping}"
     );
     assert_eq!(
-        armed_fellers + pool_axes,
+        keeping + take,
         2.0,
-        "two axes arm two people in all: {armed_fellers} fellers + {pool_axes} to the pool"
+        "two axes arm two people in all: {keeping} keeping + {take} cutting"
     );
 
-    let (four, _) = run(4);
-    assert_eq!(
-        ((four - bare) / AXE_TAKE).round(),
-        FELLERS as f32,
-        "**LIVENESS**: with axes to spare, every feller is armed"
+    let (keeping, take) = run(4);
+    assert!(
+        take >= FELLERS as f32 && keeping + take <= 4.0,
+        "**LIVENESS**: with axes to spare the cutters are armed — {keeping} keeping + {take} cutting"
     );
 }
 
@@ -562,18 +586,17 @@ fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
 /// already holds its share of the axes, and its take cannot be armed off a remainder whose
 /// denominator never counted it.
 ///
-/// Two axes; one builder (the pool, settled first, holds one); row A on a seated felling working;
-/// row B one hair short of felling's top on a queued `fell`, which the builder completes this turn.
-/// Each row's armed count is read off its own take against a no-axe control of the same world (an
-/// armed feller cuts `deposit_take` more), and the pool's off `last_pool_toe`. **At most two in all.**
+/// Two axes; one builder; row A on a seated felling working, whose crew claims axes for its own
+/// keeping; row B one hair short of felling's top on a queued `fell`, which the builder completes
+/// this turn. What the settlement issued is read off `LaborAllocation::pool_issued` (the builders'
+/// pool line and the site crews' keeping), and what each take row may arm off the item budget
+/// struck less it. **At most two in all.**
 #[test]
 fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
     const AXES: u32 = 2;
     const FELLERS_PER_ROW: u32 = 2;
     /// One builder: the pool claims one axe, leaving one for the take rows.
     const BUILDERS: u32 = 1;
-    /// The shipped flint axe's `deposit_take` on felling.
-    const AXE_TAKE: f32 = 1.0;
     /// How far below felling's top row B's working is seated — far less than one bare builder banks
     /// in a turn, so the raise completes this turn in both arms.
     const SHORT_OF_THE_TOP: f32 = 0.01;
@@ -659,35 +682,57 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
             RungKey::ForestryFelling,
             "fixture: the raise must complete this turn ({axes} axes)"
         );
-        let take = |tile| registry.source(tile, WOOD).expect("the working").last_take;
-        let pool_axes: f32 = world
+        let equipment = core_sim::EquipmentConfig::builtin();
+        let allocation = world
             .get::<LaborAllocation>(band)
-            .expect("the band keeps its allocation")
-            .last_pool_toe
-            .iter()
-            .filter(|line| line.item == "axe")
-            .map(|line| line.filled)
+            .expect("the band keeps its allocation");
+        let wear = world
+            .get::<core_sim::BandEquipment>(band)
+            .expect("the band keeps its ledger");
+        // **Everything the settlement issued** — the builders' pool line and the site crews'
+        // keeping — and **what the budget leaves each take row**, struck once before the walk.
+        let issued: f32 = allocation
+            .pool_issued()
+            .filter(|(item, _)| *item == "axe")
+            .map(|(_, units)| units)
             .sum();
-        (take(seated), take(climbing), pool_axes)
+        let budget = allocation.item_budget(&equipment);
+        let rows: f32 = allocation
+            .assignments
+            .iter()
+            .filter(|row| matches!(row.target, LaborTarget::Extract { .. }))
+            .map(|row| budget.share_for(row.workers as f32, wear, &equipment)("axe"))
+            .sum();
+        (
+            issued,
+            rows,
+            registry
+                .source(seated, WOOD)
+                .expect("the working")
+                .last_take,
+        )
     };
 
-    let (bare_seated, bare_climbing, no_pool_axes) = run(0);
-    assert_eq!(no_pool_axes, 0.0, "fixture: a band with no axe issues none");
-    let (seated_take, climbing_take, pool_axes) = run(AXES);
-    let armed_seated = ((seated_take - bare_seated) / AXE_TAKE).round();
-    let armed_climbing = ((climbing_take - bare_climbing) / AXE_TAKE).round();
+    let (no_issue, no_rows, _) = run(0);
     assert_eq!(
-        pool_axes, BUILDERS as f32,
-        "fixture: the builders pool must hold one axe, or the take rows share a different remainder"
+        (no_issue, no_rows),
+        (0.0, 0.0),
+        "fixture: a band with no axe issues none"
+    );
+    let (issued, rows, seated_take) = run(AXES);
+    assert!(
+        issued >= 1.0,
+        "fixture: the settlement must hold an axe back for the builders or the keeping, or the take \
+         rows never share a remainder — issued {issued}"
     );
     assert!(
-        armed_seated >= 1.0,
-        "**LIVENESS**: the seated felling row is armed out of the remainder — {armed_seated}"
+        seated_take > 0.0,
+        "**LIVENESS**: the seated felling row still cuts — {seated_take}"
     );
     assert!(
-        armed_seated + armed_climbing + pool_axes <= AXES as f32,
-        "two axes armed {armed_seated} on the felling row + {armed_climbing} on the row raised \
-         this turn + {pool_axes} to the builders"
+        issued + rows <= AXES as f32,
+        "two axes armed {issued} through the settlement + {rows} across the take rows, one of them \
+         raised this turn"
     );
 }
 
@@ -1209,7 +1254,7 @@ fn a_worked_quarry_only_ever_goes_down_and_renews_nothing() {
         );
         let outcome = take_from_deposit(
             &mut working,
-            5,
+            5.0,
             core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
             TAKE_WHAT_THE_RUNG_REACHES,
             &ground,
@@ -1247,7 +1292,7 @@ fn a_cut_wood_climbs_back_and_stops_at_capacity() {
         core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
         take_from_deposit(
             &mut working,
-            12,
+            12.0,
             core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
             TAKE_WHAT_THE_RUNG_REACHES,
             &ground,
@@ -1299,7 +1344,7 @@ fn enough_hands_drive_a_wood_down_turn_on_turn() {
         core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
         take_from_deposit(
             &mut working,
-            10,
+            10.0,
             core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
             TAKE_WHAT_THE_RUNG_REACHES,
             &ground,
@@ -1332,7 +1377,7 @@ fn a_quarry_reaches_far_more_of_one_body_than_gathering_ever_can() {
             core_sim::renew_deposit(&mut working, &ground, &config, &ladder);
             total += take_from_deposit(
                 &mut working,
-                4,
+                4.0,
                 core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
                 TAKE_WHAT_THE_RUNG_REACHES,
                 &ground,
@@ -1595,14 +1640,14 @@ fn the_regrowth_multiplier_scales_the_grounds_own_rate_and_rock_has_none() {
 /// (`docs/plan_standing_upkeep.md`).
 ///
 /// **Both halves in one drive**, because either alone is weak — a position that never moves also
-/// describes a decay that was never wired, and one that always falls describes a keeping pool that
-/// pays nothing.
+/// describes a decay that was never wired, and one that always falls describes a crew that keeps
+/// nothing. **A row held at zero crew is not kept at all** (`docs/plan_site_crews.md` §2.1).
 #[test]
 fn an_unkept_working_slides_and_a_kept_one_stops_sliding() {
     let at = UVec2::new(0, 0);
     let (mut world, home) = world_of(WOODED);
     seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
-    let band = spawn_keepers(&mut world, home, &[(at, WOOD)], 2, 0);
+    let band = spawn_keepers(&mut world, home, &[(at, WOOD)], 0, 0);
     let seated = position(&world, at, WOOD);
 
     // The grace absorbs the first turns, then the meter bleeds.
@@ -1615,21 +1660,9 @@ fn an_unkept_working_slides_and_a_kept_one_stops_sliding() {
         "a working nobody keeps must lose its meter: {slumped} against {seated}"
     );
 
-    // Put one keeper on it — the shipped `forestry:felling` bill on the reference wood is exactly
-    // 1.0 work a turn, which one bare hand covers.
-    {
-        let mut allocation = world
-            .get_mut::<LaborAllocation>(band)
-            .expect("the fixture band has an allocation");
-        allocation.assignments.push(LaborAssignment {
-            party: None,
-            target: LaborTarget::Quarrywork,
-            workers: 1,
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        });
-    }
+    // Put a crew on it — the shipped `forestry:felling` bill on the reference wood is exactly 1.0
+    // work a turn, which one bare hand covers, and the crew keeps before it cuts.
+    set_extract_crew(&mut world, band, at, WOOD, 2);
     run_full_turn(&mut world);
     let held_at = position(&world, at, WOOD);
     for _ in 0..40 {
@@ -1667,108 +1700,70 @@ fn a_staffed_working_holds_its_rung_for_ever() {
     );
 }
 
-/// **THE BAND'S OWN LEDGER PUBLISHES AND CLEARS.** A band that has put its last working down must
-/// stop republishing a bill it no longer owes — `settle_bands_roadwork`'s `(c)` failure mode, which
-/// is why both fields are cleared ahead of every exit rather than only on the paying path.
+/// **A WORKING STATES WHAT ITS OWN CREW KEPT, AND STOPS WHEN THE ROW GOES**
+/// (`docs/plan_site_crews.md` §2.5).
 ///
-/// It also pins the *ungated* half: the demand is summed **before** the head-count gate, so a band
-/// with nobody on the role publishes the bill it is failing to pay rather than a reassuring zero.
+/// A felling working with nobody on its row owes its bill and is paid none of it — the crew is the
+/// only thing that keeps it. Crewed, it is kept **first**: `upkeepSupplied` meets the bill, the hands
+/// that took are stated as `upkeep_hands`, and the rest of the crew cut. Put down, the working stops
+/// stating hands its band no longer spends.
 #[test]
-fn the_quarrywork_ledger_publishes_a_bill_nobody_is_paying_and_clears_when_the_row_goes() {
+fn a_working_states_what_its_own_crew_kept_and_stops_when_the_row_goes() {
+    /// Two hands: one keeps the shipped felling bill (1.0 work, one bare hand), one cuts.
+    const CREW: u32 = 2;
     let at = UVec2::new(0, 0);
     let (mut world, home) = world_of(WOODED);
     seat_working(&mut world, at, WOOD, RungKey::ForestryFelling);
-    let band = spawn_keepers(&mut world, home, &[(at, WOOD)], 2, 0);
+    let band = spawn_keepers(&mut world, home, &[(at, WOOD)], 0, 0);
 
-    run_full_turn(&mut world);
-    let ledger = |world: &World| {
-        let allocation = world
-            .get::<LaborAllocation>(band)
-            .expect("the fixture band has an allocation");
+    let reading = |world: &World| {
+        let working = world
+            .resource::<DepositRegistry>()
+            .source(at, WOOD)
+            .expect("the working stands");
         (
-            allocation.last_quarrywork_demand,
-            allocation.last_quarrywork_supplied,
+            working.upkeep_demanded.unwrap_or_default(),
+            working.upkeep_supplied,
+            working.upkeep_hands,
+            working.last_take,
         )
     };
-    let (demand, supplied) = ledger(&world);
+    run_full_turn(&mut world);
+    let (demand, supplied, hands, _) = reading(&world);
     assert!(
         demand > 0.0,
-        "a band holding a felling working owes a bill even with nobody on the role"
+        "a raised working owes a bill with nobody on its row"
     );
-    assert_eq!(supplied, 0.0, "and pays none of it with no keepers");
+    assert_eq!(
+        (supplied, hands),
+        (0.0, 0.0),
+        "and nobody keeps it: a site with no crew is not kept at all"
+    );
 
-    // Staff it, and the supplied half fills.
-    {
-        let mut allocation = world
-            .get_mut::<LaborAllocation>(band)
-            .expect("the fixture band has an allocation");
-        allocation.assignments.push(LaborAssignment {
-            party: None,
-            target: LaborTarget::Quarrywork,
-            workers: 1,
-            kit: None,
-            priority: SourcePriority::default(),
-            upkeep_kit: None,
-        });
-    }
+    set_extract_crew(&mut world, band, at, WOOD, CREW);
     run_full_turn(&mut world);
-    let (demand, supplied) = ledger(&world);
-    assert!(supplied > 0.0 && (supplied - demand).abs() < 1e-4);
+    let (demand, supplied, hands, take) = reading(&world);
+    assert!(
+        (supplied - demand).abs() < 1e-4,
+        "crewed, the working is kept first and in full: {supplied} against {demand}"
+    );
+    assert!(
+        hands > 0.0 && hands < CREW as f32,
+        "the keeping took part of the crew and no more: {hands} of {CREW}"
+    );
+    assert!(take > 0.0, "**LIVENESS**: the rest of the crew cut: {take}");
 
-    // Put the whole holding down. The bill must go with it.
     world
         .get_mut::<LaborAllocation>(band)
         .expect("the fixture band has an allocation")
         .assignments
         .clear();
     run_full_turn(&mut world);
+    let (_, supplied, hands, _) = reading(&world);
     assert_eq!(
-        ledger(&world),
+        (supplied, hands),
         (0.0, 0.0),
-        "a band that put its last working down must stop republishing last turn's bill"
-    );
-}
-
-/// **A SHORT POOL FUNDS THE MOST-INVESTED WORKING FIRST.** `UpkeepFundMode::Priority` walks the
-/// claims in the order the caller ranked them, and this pool ranks on the working's own ladder
-/// position — the same *"most invested"* a road is ranked by, because on both branches the position
-/// **is** the accumulator.
-#[test]
-fn a_band_short_of_keepers_funds_its_deepest_working_first() {
-    let coppice_at = UVec2::new(0, 0);
-    let felling_at = UVec2::new(1, 0);
-    let (mut world, home) = world_of(WOODED);
-    seat_working(&mut world, coppice_at, WOOD, RungKey::ForestryCoppice);
-    seat_working(&mut world, felling_at, WOOD, RungKey::ForestryFelling);
-    let band = spawn_keepers(
-        &mut world,
-        home,
-        &[(coppice_at, WOOD), (felling_at, WOOD)],
-        1,
-        // One hand against a 2.0 + 1.0 bill: the pool is short on purpose.
-        1,
-    );
-    world
-        .get_mut::<LaborAllocation>(band)
-        .expect("the fixture band has an allocation")
-        .upkeep_fund_mode = core_sim::UpkeepFundMode::Priority;
-
-    run_full_turn(&mut world);
-    let supplied = |world: &World, tile: UVec2| {
-        world
-            .resource::<DepositRegistry>()
-            .source(tile, WOOD)
-            .expect("the working stands")
-            .upkeep_supplied
-    };
-    assert!(
-        supplied(&world, coppice_at) > 0.0,
-        "the coppice is the deeper working and is paid first"
-    );
-    assert_eq!(
-        supplied(&world, felling_at),
-        0.0,
-        "and the shallower one gets what is left, which at one keeper is nothing"
+        "a working put down stops stating last turn's keeping"
     );
 }
 
@@ -1840,7 +1835,8 @@ fn a_slumped_working_can_be_cut_back_open() {
     let at = UVec2::new(0, 0);
     let (mut world, home) = world_of(ROCK);
     seat_working(&mut world, at, STONE, RungKey::ExtractionQuarry);
-    let band = spawn_keepers(&mut world, home, &[(at, STONE)], 2, 0);
+    // **Nobody on the row**, so nobody keeps it: the quarry is left to slide.
+    let band = spawn_keepers(&mut world, home, &[(at, STONE)], 0, 0);
     // The quarrying lesson, so the rung is buildable once the fixture wants it back.
     world
         .resource_mut::<DiscoveryProgressLedger>()
@@ -1911,23 +1907,33 @@ fn a_slumped_working_can_be_cut_back_open() {
         "and slid the whole way back to its free floor"
     );
 
-    // Now cut it open again: builders on the head of the queue, and the rung is re-queued.
+    // Now cut it open again: a crew on the working to keep what the builders raise, builders on
+    // the head of the queue, and the rung re-queued. A working slid all the way to its free floor
+    // with nobody on it is no longer a holding, so its row is put back if the slide took it.
     {
         let mut allocation = world
             .get_mut::<LaborAllocation>(band)
             .expect("the fixture band has an allocation");
+        let row = LaborTarget::Extract {
+            tile: at,
+            material: STONE.to_string(),
+            floor: A_FRESH_ASSIGNMENTS_FLOOR,
+        };
+        allocation
+            .assignments
+            .retain(|a| !a.target.same_source(&row));
         allocation.assignments.push(LaborAssignment {
             party: None,
-            target: LaborTarget::Builders,
-            workers: 12,
+            target: row,
+            workers: 4,
             kit: None,
             priority: SourcePriority::default(),
             upkeep_kit: None,
         });
         allocation.assignments.push(LaborAssignment {
             party: None,
-            target: LaborTarget::Quarrywork,
-            workers: 4,
+            target: LaborTarget::Builders,
+            workers: 12,
             kit: None,
             priority: SourcePriority::default(),
             upkeep_kit: None,
@@ -2172,31 +2178,20 @@ fn a_working_whose_keeping_is_short_quotes_a_rotting_meter() {
     );
 }
 
-/// ⛔ **PUTTING A WORKING DOWN STOPS THE BILL AT ONCE, AND ITS NEIGHBOUR STOPS SLIDING**
-/// (issue #650) — the gameplay claim `abandon_working` exists for, measured against the leak it
-/// closes.
+/// ⛔ **A WALKED-AWAY WORKING DRAWS NOTHING FROM THE ONE THE BAND KEEPS, AND PUTTING IT DOWN LEAVES
+/// ITS METER TO SLIDE** (issue #650, `docs/plan_site_crews.md` §2.5).
 ///
-/// **The leak.** A working raised above its free floor is a *holding*
-/// (`systems::labor::source_has_a_meter_at_risk`), so a crew of zero keeps the row —
-/// `assign_labor … extract … 0` is *"stop cutting"*, never *"this band has nothing here"*. And
-/// `extraction_keeping_claims` reads the **row**, so an abandoned working goes on claiming its share
-/// of the band's one `quarrywork` pool for the whole ~104 turns its meter takes to slide back to the
-/// free floor. Under the default `UpkeepFundMode::Spread` that share comes out of the workings the
-/// band still wants.
-///
-/// **Measured on this fixture, before the verb existed**: one keeper covers one `forestry:felling`
-/// working on the reference wood exactly (1.0 work a turn), so the live working holds at its seated
-/// **60.0** for ever alone — and slides to **49.96 in 40 turns** the moment a walked-away sibling
-/// sits beside it, with no command able to drop the sibling.
-///
-/// **The two arms are one drive apart**, because either alone is weak: an arm that only asserted the
-/// held reading describes a fixture where nothing was ever at risk, and one that only asserted the
-/// slide describes a keeping pool that pays nothing.
+/// Under the retired `quarrywork` pool a working the band had walked away from — its row held at
+/// zero crew, still a *holding* (`systems::labor::source_has_a_meter_at_risk`) — went on claiming a
+/// share of the one pool, and the working the band wanted slid beside it. **A site crew keeps its
+/// own site**, so a sibling at zero crew is simply unkept: it slides, and the live working its own
+/// crew keeps holds whether the sibling is held or put down.
 #[test]
-fn putting_a_working_down_stops_its_bill_and_its_neighbour_stops_sliding() {
-    /// Long enough for the slide to be unmistakable and short of the grace-plus-bleed the sibling
-    /// needs to reach its own free floor, so the leak is still running when the arm ends.
+fn a_walked_away_working_draws_nothing_from_the_one_the_band_keeps() {
+    /// Long enough for the sibling's slide to be unmistakable.
     const A_SPELL_OF_NEGLECT: u32 = 40;
+    /// The live working's crew: one hand keeps the reference felling bill, one cuts.
+    const LIVE_CREW: u32 = 2;
 
     let live = UVec2::new(0, 0);
     let walked_away = UVec2::new(1, 0);
@@ -2204,15 +2199,8 @@ fn putting_a_working_down_stops_its_bill_and_its_neighbour_stops_sliding() {
         let (mut world, home) = world_of(WOODED);
         seat_working(&mut world, live, WOOD, RungKey::ForestryFelling);
         seat_working(&mut world, walked_away, WOOD, RungKey::ForestryFelling);
-        let band = spawn_keepers(
-            &mut world,
-            home,
-            &[(live, WOOD), (walked_away, WOOD)],
-            2,
-            // One keeper: exactly one felling working's bill on the reference wood, so the second
-            // working is the whole of what makes the pool short.
-            1,
-        );
+        let band = spawn_keepers(&mut world, home, &[(live, WOOD), (walked_away, WOOD)], 0, 0);
+        set_extract_crew(&mut world, band, live, WOOD, LIVE_CREW);
         if put_it_down {
             // **The verb's own seam**, which is what `handle_abandon_working` calls per band: the
             // row goes and `drop_source_row`'s prune takes the working's queue entry with it.
@@ -2229,38 +2217,31 @@ fn putting_a_working_down_stops_its_bill_and_its_neighbour_stops_sliding() {
         for _ in 0..A_SPELL_OF_NEGLECT {
             run_full_turn(&mut world);
         }
-        let demand = world
-            .get::<LaborAllocation>(band)
-            .expect("the fixture band survives the drive")
-            .last_quarrywork_demand;
         (
             position(&world, live, WOOD),
             position(&world, walked_away, WOOD),
-            demand,
         )
     };
 
-    let (kept_live, _, kept_demand) = drive(false);
     let seated = {
         let (mut world, _) = world_of(WOODED);
         seat_working(&mut world, live, WOOD, RungKey::ForestryFelling);
         position(&world, live, WOOD)
     };
+    let (held_live, held_walked) = drive(false);
+    assert_eq!(
+        held_live, seated,
+        "the live working's own crew keeps it, whatever the sibling beside it owes"
+    );
     assert!(
-        kept_live < seated,
-        "**THE LEAK**: while the band still holds the walked-away working, the one it wants slides \
-         — {kept_live} against a seated {seated}"
+        held_walked < seated,
+        "**LIVENESS**: the sibling at zero crew is not kept, so it slides — {held_walked}"
     );
 
-    let (dropped_live, dropped_walked, dropped_demand) = drive(true);
+    let (dropped_live, dropped_walked) = drive(true);
     assert_eq!(
         dropped_live, seated,
-        "with the walked-away working put down, the one keeper covers what is left and the live \
-         working holds: {dropped_live} against {seated}"
-    );
-    assert!(
-        dropped_demand < kept_demand,
-        "and the band's bill falls to one working's: {dropped_demand} against {kept_demand}"
+        "and putting the sibling down changes nothing for it"
     );
     assert!(
         dropped_walked < seated,
@@ -2606,11 +2587,18 @@ mod wire {
     const WOOD: &str = "wood";
     const STONE: &str = "stone";
 
-    /// **The crew on each take row**, and the keepers on the band's `quarrywork` pool. One keeper
-    /// deliberately does **not** cover the seated quarry's bill, which is what makes the published
-    /// `demand − supplied == shortfall` identity a statement about three different numbers.
+    /// **The cutters on each take row**, and the hands each row carries on top of them for its
+    /// keeping (`docs/plan_site_crews.md` §2.5): a working's own crew keeps it first and cuts with
+    /// the rest.
     const A_TAKE_CREW: u32 = 1;
-    const TOO_FEW_KEEPERS: u32 = 1;
+    const KEEPING_HANDS: u32 = 1;
+    /// **The quarry crew the shared fixture staffs** — enough hands that its keeping is met and some
+    /// are left to cut, so the rock body is drawn down this turn.
+    const A_QUARRY_CREW: u32 = 4;
+    /// **A quarry crew short of its own bill** — one bare hand against `extraction:quarry`'s
+    /// `1.5`-a-load keeping: it keeps what it can and cuts nothing, which is what makes the published
+    /// `demand − supplied == shortfall` identity a statement about three different numbers.
+    const A_CREW_SHORT_OF_THE_QUARRY_BILL: u32 = 1;
 
     /// One published working, read off the encoded envelope.
     #[derive(Debug, Clone)]
@@ -2638,6 +2626,8 @@ mod wire {
         build_blocked_reason: String,
         is_queued: bool,
         upkeep_kit_id: String,
+        upkeep_hands: f32,
+        upkeep_tools_short: bool,
     }
 
     /// The band's `quarrywork*` trio, read off the encoded envelope.
@@ -2724,6 +2714,8 @@ mod wire {
                     .upkeepKitId()
                     .expect("the keeping kit is published")
                     .to_string(),
+                upkeep_hands: row.upkeepHands(),
+                upkeep_tools_short: row.upkeepToolsShort(),
             })
             .collect()
     }
@@ -2845,8 +2837,8 @@ mod wire {
         app.world.resource_mut::<DepositRegistry>().insert(working);
     }
 
-    /// Put a take crew of `cutters` on each working and `keepers` hands on the band's `quarrywork`
-    /// pool. The crew size is a parameter because the over-cut pair is a statement *about* it: the
+    /// Put a crew of `cutters + keepers` on each working — the cutters, and the hands its own
+    /// keeping takes first (`docs/plan_site_crews.md` §2.5). The crew size is a parameter because the over-cut pair is a statement *about* it: the
     /// same wood reads within its means at one cutter and over-cut at enough of them.
     fn staff(
         app: &mut App,
@@ -2887,18 +2879,23 @@ mod wire {
                     material: (*material).to_string(),
                     floor,
                 },
-                cutters,
+                cutters + keepers,
                 available,
                 None,
             );
         }
-        allocation.set_assignment(LaborTarget::Quarrywork, keepers, available, None);
         app.world.entity_mut(band).insert(allocation);
     }
 
     /// **A wooded tile beside a rock body, both worked, one turn resolved** — the fixture every
     /// test below reads. It returns the two tiles in the order `(renewing, finite)`.
     fn a_wood_and_a_quarry() -> (App, UVec2, UVec2) {
+        a_wood_and_a_quarry_crewed(A_QUARRY_CREW)
+    }
+
+    /// [`a_wood_and_a_quarry`] with the quarry's own crew stated — the standing-bill identity reads
+    /// a crew short of its keeping, the rest a crew that keeps and cuts.
+    fn a_wood_and_a_quarry_crewed(quarry_crew: u32) -> (App, UVec2, UVec2) {
         let mut app = build_test_app();
         app.update();
         let (band, home, working) = first_band(&mut app);
@@ -2912,23 +2909,32 @@ mod wire {
         staff(
             &mut app,
             band,
-            &[(home, WOOD), (rock, STONE)],
+            &[(home, WOOD)],
             working,
             A_TAKE_CREW,
-            TOO_FEW_KEEPERS,
+            KEEPING_HANDS,
         );
-        // ⛔ **THE BAND HOLDS NO STONE-DRESSING GEAR, AND THAT IS WHAT KEEPS ONE KEEPER SHORT.**
-        // `extraction:quarry`'s tool declares `build_work 2.0`, so a keeper holding one delivers
-        // `1 + 2 = 3` a turn — comfortably past this working's bill — and the published quad would
-        // be `demand == supplied` with a zero shortfall, which is the one shape the identity below
-        // cannot be read off.
-        //
-        // **The tool reaching this pool at all is new** (`docs/plan_pool_toe.md`): the kit lookup it
-        // replaced asked for a roster entry offering the `quarrywork` **job**, and the `paving` kit
-        // that carries the tool offers `builders` and `roadwork` only — so a quarry's keepers were
-        // silently bare-handed however many chisels the band owned. A quarry crew that owns the tool
-        // is now geared by it, which is a real pacing move and is the arc's point rather than a side
-        // effect.
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band keeps its allocation");
+            allocation.set_assignment(
+                LaborTarget::Extract {
+                    tile: rock,
+                    material: STONE.to_string(),
+                    floor: A_FRESH_ASSIGNMENTS_FLOOR,
+                },
+                quarry_crew,
+                working,
+                None,
+            );
+        }
+        // ⛔ **THE BAND HOLDS NO STONE-DRESSING GEAR, AND THAT IS WHAT KEEPS A SHORT CREW SHORT.**
+        // `extraction:quarry`'s tool declares `build_work 2.0`, so a keeping hand holding one
+        // delivers `1 + 2 = 3` a turn — comfortably past this working's bill — and a crew of one
+        // would publish `demand == supplied` with a zero shortfall, which is the one shape the
+        // identity below cannot be read off.
         core_sim::disarm_the_builders(&mut app.world, band, RungKey::ExtractionQuarry);
         app.update();
         (app, home, rock)
@@ -3013,7 +3019,7 @@ mod wire {
             &[(home, WOOD)],
             working,
             A_CREW_THAT_OUT_CUTS_A_WOOD,
-            TOO_FEW_KEEPERS,
+            KEEPING_HANDS,
         );
         app.update();
 
@@ -3059,7 +3065,7 @@ mod wire {
                 &[(home, WOOD)],
                 working,
                 A_CREW_THAT_OUT_CUTS_A_WOOD,
-                TOO_FEW_KEEPERS,
+                KEEPING_HANDS,
                 floor,
             );
             app.update();
@@ -3097,7 +3103,7 @@ mod wire {
             &[(home, STONE)],
             working,
             A_CREW_THAT_OUT_CUTS_A_WOOD,
-            TOO_FEW_KEEPERS,
+            KEEPING_HANDS,
             core_sim::STRIP_IT_BARE,
         );
         app.update();
@@ -3150,7 +3156,7 @@ mod wire {
             &[(home, WOOD)],
             working,
             A_CREW_THAT_OUT_CUTS_A_WOOD,
-            TOO_FEW_KEEPERS,
+            KEEPING_HANDS,
             A_DEEP_FLOOR,
         );
         app.update();
@@ -3215,7 +3221,7 @@ mod wire {
             &[(home, WOOD)],
             working,
             A_CREW_THAT_OUT_CUTS_A_WOOD,
-            TOO_FEW_KEEPERS,
+            KEEPING_HANDS,
             LEAVE_THE_WHOLE_STAND,
         );
         app.update();
@@ -3464,31 +3470,48 @@ mod wire {
             sim_schema::NO_BUILD_TURNS_ESTIMATE,
             "a rung nobody ordered has no quote, and never a 0 that renders as finished: {rock:?}"
         );
-        // **A WORKING NAMES NO KEEPING KIT** (`docs/plan_pool_toe.md` §4). This asserted the
-        // opposite — that a worked working always resolved one, the bare-handed kit included — and
-        // the resolution it pinned is retired: a site's tools follow from its own rung, are settled
-        // band-wide by priority, and are published per pool as `PopulationCohortState.poolToe`.
-        // The `quarrywork` pool is the one this working's keepers are drawn from, and it is where
-        // the chisels are now stated.
+        // **A WORKING NAMES NO KEEPING KIT** (`docs/plan_pool_toe.md` §4). A site's keeping tools
+        // follow from its own rung and are settled band-wide by priority for its own crew
+        // (`docs/plan_site_crews.md` §2.3); whether that claim was filled is `upkeepToolsShort`.
         assert!(
             rock.upkeep_kit_id.is_empty(),
-            "a working names no keeping kit; its keepers' tools ride the quarrywork pool's TOE: \
+            "a working names no keeping kit; its crew's keeping tools follow from its rung: \
              {rock:?}"
+        );
+        assert!(
+            rock.upkeep_hands > 0.0 && rock.upkeep_hands < A_QUARRY_CREW as f32,
+            "**THE NEW FIELD PUBLISHES**: the crew kept with part of its hands and cut with the \
+             rest: {rock:?}"
         );
     }
 
     /// ⛔ **`demand − supplied == shortfall` HOLDS VERBATIM ON BOTH QUADS**, and all three numbers
     /// are different — a quad of zeros would pass this identity while saying nothing.
+    ///
+    /// **The crew is short of its bill, so every hand of it keeps** (`docs/plan_site_crews.md`
+    /// §2.1): `upkeepHands` is the whole crew, the take is nothing, and the retired band-level
+    /// `quarrywork` triple publishes `0` (§4).
     #[test]
     fn the_standing_bill_holds_its_identity_on_the_working_and_on_the_band() {
-        let (app, wood_tile, rock_tile) = a_wood_and_a_quarry();
+        let (app, wood_tile, rock_tile) =
+            a_wood_and_a_quarry_crewed(A_CREW_SHORT_OF_THE_QUARRY_BILL);
         let rock = published_working(&app, rock_tile, STONE);
         let (quarrywork, _) = published_band(&app);
 
         assert!(
             rock.demand > 0.0 && rock.supplied > 0.0 && rock.shortfall > 0.0,
-            "fixture: one keeper must part-pay a real bill, or the identity is three zeros: \
+            "fixture: one hand must part-pay a real bill, or the identity is three zeros: \
              {rock:?}"
+        );
+        assert_eq!(
+            rock.upkeep_hands, A_CREW_SHORT_OF_THE_QUARRY_BILL as f32,
+            "a crew short of its bill spends every hand keeping: {rock:?}"
+        );
+        assert_eq!(rock.actual_take, 0.0, "…and cuts nothing: {rock:?}");
+        assert!(
+            rock.upkeep_tools_short,
+            "**THE NEW FIELD PUBLISHES**: the quarry's keeping claims stone-dressing gear the band \
+             does not hold, so its claim went unfilled — the row's ⓘ: {rock:?}"
         );
         assert_eq!(
             rock.shortfall,
@@ -3496,8 +3519,8 @@ mod wire {
             "the working's quad reads the STAMPED basis, so the identity is verbatim: {rock:?}"
         );
         assert!(
-            rock.workers_needed > TOO_FEW_KEEPERS,
-            "the bill wants more keepers than the band staffed: {rock:?}"
+            rock.workers_needed > A_CREW_SHORT_OF_THE_QUARRY_BILL,
+            "the bill wants more hands than the crew has: {rock:?}"
         );
         assert!(
             rock.has_neglect_grace,
@@ -3505,14 +3528,9 @@ mod wire {
         );
 
         assert_eq!(
-            quarrywork.shortfall,
-            quarrywork.demand - quarrywork.supplied,
-            "the band's quarrywork triple holds the same identity: {quarrywork:?}"
-        );
-        assert_eq!(
-            quarrywork.demand, rock.demand,
-            "the band keeps exactly this one billed working, so its summed demand is that \
-             working's: {quarrywork:?} vs {rock:?}"
+            (quarrywork.demand, quarrywork.supplied, quarrywork.shortfall),
+            (0.0, 0.0, 0.0),
+            "the retired band-level quarrywork triple publishes nothing: {quarrywork:?}"
         );
 
         // **The free floor owes nothing, and that is what makes it free.**

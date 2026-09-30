@@ -269,12 +269,16 @@ fn deposit_row(
         build_blocked_reason: source.build_blocked_reason.key().to_string(),
         is_queued: build_kits.deposit_is_queued(tile, &source.material),
         // **A working names no kit** — see
-        // [`crate::snapshot::subsistence::NO_SITE_KIT_ID`]. Its keepers' and its builders' tools
-        // are the `quarrywork` and `builders` pools', derived from the rung this working stands on
-        // and published as `poolToe`.
+        // [`crate::snapshot::subsistence::NO_SITE_KIT_ID`]. Its builders' tools are the builders
+        // pool's (`poolToe`); its keeping tools are its own `extract` crew's, derived from the rung
+        // it stands on and stated below as `upkeep_tools_short`.
         build_kit_id: crate::snapshot::subsistence::NO_SITE_KIT_ID.to_string(),
         upkeep_kit_id: crate::snapshot::subsistence::NO_SITE_KIT_ID.to_string(),
         upkeep_kit_named: crate::snapshot::subsistence::NO_SITE_KIT_NAMED,
+        // **WHAT THE WORKING'S OWN `extract` CREW SPENT KEEPING IT THIS TURN**
+        // (`docs/plan_site_crews.md` §2.5) — stamped by the labour pass beside `upkeep_supplied`.
+        upkeep_hands: source.upkeep_hands,
+        upkeep_tools_short: source.upkeep_tools_short,
         // **THE TAKE CREW'S DEFAULT KIT** (#663) — through the one function `assign_labor` stores a
         // no-kit row's kit with, so the picker's `(default)` is the kit the turn will arm. A fact
         // about the roster and the working's branch, not about any band, so it rides every row the

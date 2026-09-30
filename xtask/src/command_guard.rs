@@ -399,6 +399,9 @@ fn band_handle(payload: &CommandPayload) -> BandHandle {
         // that band's own rows and the pen-feed split serves that band's own stores, so its handle is
         // REQUIRED exactly as the queue reorder's is (`docs/plan_standing_upkeep.md` §4.9 item 9b).
         CommandPayload::WorkPriority { band_id, .. } => Some(*band_id),
+        // …and so does a queued build's BUILD MARK: the settlement it ranks is that band's own tools
+        // and stores (`docs/plan_site_crews.md` §2.4), so its handle is required for the same reason.
+        CommandPayload::BuildPriority { band_id, .. } => Some(*band_id),
         // …and the BENCH's rank names a band too, and requires it: a bench belongs to exactly one
         // band, so there is no faction-wide reading of this verb to fall back on.
         CommandPayload::BenchPriority { band_id, .. } => Some(*band_id),

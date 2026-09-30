@@ -661,6 +661,19 @@ fn run_ring_turn(
     };
     let keeper = spawn_keeper(&mut app, rows, tile);
     begin_a_ring(&mut app, keeper, "pen_big");
+    // **The ring's pile is claimed at its BUILD mark** (`docs/plan_site_crews.md` §2.4), the mark on
+    // the queue entry rather than the pen's hunt row — marked alike here, so "the ring's rank" is one
+    // statement about both the build and the pen it widens.
+    assert!(
+        app.world
+            .get_mut::<LaborAllocation>(keeper)
+            .expect("the keeper band keeps its allocation")
+            .set_build_priority(
+                &core_sim::BuildSource::Herd("pen_big".to_string()),
+                ring_rank
+            ),
+        "the ring was just queued, so its entry takes the mark"
+    );
     if arrangement == Arrangement::Edited {
         edit_the_big_row(&mut app, keeper, ring_rank);
     }

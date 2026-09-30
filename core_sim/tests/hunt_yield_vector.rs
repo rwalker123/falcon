@@ -744,6 +744,7 @@ fn spawn_resident_crew(
                         source: core_sim::BuildSource::Herd(fauna_id.to_string()),
                         declared: core_sim::BuildJob::Rung(declared),
                         kit: Some(bare_builders()),
+                        priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
                     .collect(),
@@ -798,6 +799,7 @@ fn precommit_food_at_band_morale(
         &HuntingParty::builtin_equipped(),
         multiplier,
         workers,
+        core_sim::NO_HANDS,
         policy,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
@@ -828,6 +830,7 @@ fn precommit_food_building(
         &HuntingParty::builtin_equipped(),
         FORECAST_OUTPUT_MULTIPLIER,
         workers,
+        core_sim::NO_HANDS,
         policy,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,

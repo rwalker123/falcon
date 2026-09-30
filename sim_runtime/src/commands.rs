@@ -231,9 +231,8 @@ pub enum CommandPayload {
     /// of two things. So it takes [`Self::Fell`]'s grammar, closed trailing material and all.
     ///
     /// **It exists because the row outlives its crew.** A working raised above its free floor is a
-    /// holding, so `assign_labor … extract … 0` is *"stop cutting"* and keeps the row — and the row
-    /// keeps drawing the band's `quarrywork` pool for the whole ~104 turns the meter takes to slide
-    /// back to the free floor, competing with the live workings beside it.
+    /// holding, so `assign_labor … extract … 0` is *"stop cutting"* and keeps the row and its queue
+    /// entry, unkept, for the whole ~104 turns the meter takes to slide back to the free floor.
     AbandonWorking {
         faction_id: u32,
         target_x: u32,
@@ -323,9 +322,8 @@ pub enum CommandPayload {
     ///
     /// **The keeping kit is per WORK SITE, not per band.** The band is the pool of workers and goods
     /// to draw from; it does not decide which tool a given site is worked with. A single stored id on
-    /// the band's `agriculture` / `husbandry` role row — which is where this lived until §2.7 — could
-    /// not say *hoes on the Field, bare hands on the scrub patch beside it*. `assign_labor` refuses a
-    /// `kit` token on those roles, and this is where the override lives.
+    /// a band-level keeping role row — which is where this lived until §2.7 — could not say *hoes on
+    /// the Field, bare hands on the scrub patch beside it*, and this is where the override lives.
     ///
     /// **An absent [`Self::UpkeepKit::kit_id`] CLEARS the override** back to the site's own web
     /// derivation — the same *"an absent `kitId` means the job's default"* rule every other selection
@@ -361,14 +359,28 @@ pub enum CommandPayload {
         /// The level token: `"high"`, `"normal"` or `"low"`.
         level: String,
     },
+    /// **Mark one QUEUED BUILD with the player's own Build mark** (`docs/plan_site_crews.md` §2.4) —
+    /// `"high"`, `"normal"` or `"low"` on the named band's queue entry for this source. The
+    /// builders' tool claim and the build's material claim rank at the head entry's mark; the site
+    /// row's [`CommandPayload::WorkPriority`] ranks that site's own crew. Addressed exactly as
+    /// `work_priority` is.
+    BuildPriority {
+        faction_id: u32,
+        band_id: u64,
+        target_x: Option<u32>,
+        target_y: Option<u32>,
+        herd_id: Option<String>,
+        /// The level token: `"high"`, `"normal"` or `"low"`.
+        level: String,
+    },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
     /// `"priority"` (fund sources completely, most-invested first).
     ///
-    /// It replaces the retired `Maintain`, which put hands on **one source's** keeping. Maintenance
-    /// is a band-level standing role now (`assign_labor <faction> <band> agriculture|husbandry
-    /// <workers>`), so what is left to decide is not *where the hands go* but *what happens when
-    /// there are not enough of them* — and that is one decision per band, not one per source.
+    /// It governs the one keeping **pool** left, `roadwork` (`docs/plan_site_crews.md` §1): a patch,
+    /// herd or working is kept by its own crew, which keeps it first. What is left to decide for the
+    /// roads is not *where the hands go* but *what happens when there are not enough of them* — one
+    /// decision per band, not one per road.
     UpkeepMode {
         faction_id: u32,
         band_id: u64,
@@ -1855,6 +1867,21 @@ impl CommandEnvelope {
                 herd_id: herd_id.clone(),
                 level: level.clone(),
             }),
+            CommandPayload::BuildPriority {
+                faction_id,
+                band_id,
+                target_x,
+                target_y,
+                herd_id,
+                level,
+            } => pb::command_envelope::Command::BuildPriority(pb::BuildPriorityCommand {
+                faction_id: *faction_id,
+                band_id: *band_id,
+                target_x: *target_x,
+                target_y: *target_y,
+                herd_id: herd_id.clone(),
+                level: level.clone(),
+            }),
             CommandPayload::UpkeepMode {
                 faction_id,
                 band_id,
@@ -2568,6 +2595,14 @@ impl CommandEnvelope {
                 kit_id: cmd.kit_id,
             },
             pb::command_envelope::Command::WorkPriority(cmd) => CommandPayload::WorkPriority {
+                faction_id: cmd.faction_id,
+                band_id: cmd.band_id,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
+                herd_id: cmd.herd_id,
+                level: cmd.level,
+            },
+            pb::command_envelope::Command::BuildPriority(cmd) => CommandPayload::BuildPriority {
                 faction_id: cmd.faction_id,
                 band_id: cmd.band_id,
                 target_x: cmd.target_x,

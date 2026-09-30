@@ -2276,26 +2276,6 @@ pub enum LaborTarget {
     /// Guard the band (band-wide role). Inert until the predator slice consumes it — it only
     /// occupies workers against the Σ invariant.
     Warrior,
-    /// **KEEP THE BAND'S PLANT IMPROVEMENTS** — the agriculture standing role
-    /// (`docs/plan_standing_upkeep.md` §2.5). Its workers are a **pool** that supplies every tended
-    /// patch and Field this band works, against the summed
-    /// [`crate::forage::patch_upkeep_demand`] of all of them.
-    ///
-    /// # WHY MAINTENANCE LEFT THE TILE
-    ///
-    /// It was a per-source crew (`maintain <faction> forage <x> <y> <n>`), and an **indivisible
-    /// supplier meeting a per-source demand wastes whatever it does not spend**: a patch asking for
-    /// `2.0` work staffed by three hands throws one away, and the waste grows as gear makes a hand
-    /// worth more. A pool has no leftover by construction — every unit either meets a demand or is
-    /// still in the pool — and the band's demand is simply the sum over what it holds.
-    ///
-    /// **One role per WEB, because the two webs are already separate ladders** — this is their
-    /// existing split, not a new axis. See [`LaborTarget::Husbandry`] for the animal half.
-    Agriculture,
-    /// **KEEP THE BAND'S HERDS** — the husbandry standing role, the animal twin of
-    /// [`LaborTarget::Agriculture`]: one pool against the summed
-    /// [`crate::fauna::herd_upkeep_demand`] of every pastoral herd and pen this band works.
-    Husbandry,
     /// **KEEP THE ROADS THIS BAND STANDS ON** — the roadwork standing role, the route branch's
     /// third keeping pool (`docs/plan_standing_upkeep.md` §4.13). One pool against the summed
     /// [`crate::routes::road_upkeep_demand`] of every road under the band's own tile.
@@ -2333,26 +2313,6 @@ pub enum LaborTarget {
     /// so spreading a short keeping pool loses nothing; splitting a builder pool across three jobs
     /// just means nothing finishes.
     Builders,
-    /// **KEEP THE WORKINGS THIS BAND HOLDS** — the quarrywork standing role
-    /// (`docs/plan_extraction.md` §6), the fourth keeping pool and the twin of
-    /// [`LaborTarget::Roadwork`]: one pool against the summed
-    /// [`crate::extraction::deposit_upkeep_demand`] of every working this band has an `extract` row
-    /// on.
-    ///
-    /// ⛔ **ONE ROLE FOR BOTH DEPOSIT BRANCHES**, where the two food webs get one each. The webs
-    /// split because they are separate *ladders a crew builds with tools*; forestry and extraction
-    /// split on **knowledge** and on nothing a keeper does — the roster declares no gear for either,
-    /// and *hold the face open, clear the fallen* is one job. A second pool would be a distinction
-    /// nothing in the game can express, which is the argument `plan_standing_upkeep.md` §6 already
-    /// makes for not splitting the two it has.
-    ///
-    /// ⛔ **AND IT IS NOT THE `extract` TAKE ROW.** The take crew stands *on the working* and is
-    /// paid in material; the keepers are a **band pool** that holds every working the band has,
-    /// worked or idle — the same split `Agriculture` draws from `Forage`. A working with no cutters
-    /// is still held, and it still owes this.
-    ///
-    /// Named for the harder half exactly as `roadwork` is named for a road rather than a trail.
-    Quarrywork,
     /// **TAKE A MATERIAL OUT OF THE GROUND** — the two deposit branches' take row
     /// (`docs/plan_extraction.md` §6), and **the only row in the game that pays no food**.
     ///
@@ -2425,9 +2385,6 @@ pub const ROADWORK_ROLE_KEY: &str = "roadwork";
 /// the same reason there is one row kind: what a crew is doing is *taking a material out of the
 /// ground*, and which of the two skills that is, is the deposit's.
 pub const EXTRACT_ROLE_KEY: &str = "extract";
-/// The **Quarrywork** twin of [`ROADWORK_ROLE_KEY`] — the band-wide keeping role that holds every
-/// working this band has an `extract` row on, across **both** deposit branches.
-pub const QUARRYWORK_ROLE_KEY: &str = "quarrywork";
 
 impl LaborTarget {
     /// The stable role key (also the snapshot `kind` string and the `activity` summary).
@@ -2437,12 +2394,9 @@ impl LaborTarget {
             LaborTarget::Hunt { .. } => HUNT_ROLE_KEY,
             LaborTarget::Scout => "scout",
             LaborTarget::Warrior => "warrior",
-            LaborTarget::Agriculture => "agriculture",
-            LaborTarget::Husbandry => "husbandry",
             LaborTarget::Roadwork => ROADWORK_ROLE_KEY,
             LaborTarget::Builders => "builders",
             LaborTarget::Extract { .. } => EXTRACT_ROLE_KEY,
-            LaborTarget::Quarrywork => QUARRYWORK_ROLE_KEY,
         }
     }
 
@@ -2460,8 +2414,6 @@ impl LaborTarget {
             LaborTarget::Hunt { .. } => crate::equipment_config::KitJob::Hunt,
             LaborTarget::Scout => crate::equipment_config::KitJob::Scout,
             LaborTarget::Warrior => crate::equipment_config::KitJob::Warrior,
-            LaborTarget::Agriculture => crate::equipment_config::KitJob::Agriculture,
-            LaborTarget::Husbandry => crate::equipment_config::KitJob::Husbandry,
             LaborTarget::Roadwork => crate::equipment_config::KitJob::Roadwork,
             LaborTarget::Builders => crate::equipment_config::KitJob::Builders,
             // **The shipped roster declares no take gear for either deposit branch**, so this job's
@@ -2471,11 +2423,6 @@ impl LaborTarget {
             // *do* ship (`earthmoving`, `stone_dressing`) declare `build_work`, which lands on the
             // builders' pool that RAISES a working rather than on the crew that takes from it.
             LaborTarget::Extract { .. } => crate::equipment_config::KitJob::Extraction,
-            // **Its own job, not the take row's**, for [`crate::equipment_config::KitJob::Agriculture`]'s
-            // reason: **gear covers people**, so folding the keepers into the take's job would divide
-            // whatever a future felling axe arms among hands that are not cutting. Both are the empty
-            // `none` kit today, which is exactly when the split is free to make.
-            LaborTarget::Quarrywork => crate::equipment_config::KitJob::Quarrywork,
         }
     }
 
@@ -2491,11 +2438,8 @@ impl LaborTarget {
             }
             (LaborTarget::Scout, LaborTarget::Scout) => true,
             (LaborTarget::Warrior, LaborTarget::Warrior) => true,
-            (LaborTarget::Agriculture, LaborTarget::Agriculture) => true,
-            (LaborTarget::Husbandry, LaborTarget::Husbandry) => true,
             (LaborTarget::Roadwork, LaborTarget::Roadwork) => true,
             (LaborTarget::Builders, LaborTarget::Builders) => true,
-            (LaborTarget::Quarrywork, LaborTarget::Quarrywork) => true,
             // **Keyed by tile AND material**, because a wooded highland holds two deposits and
             // working the timber is not working the rock — so the two are different sources on one
             // tile, not one source restated.
@@ -2532,21 +2476,21 @@ impl LaborTarget {
             | LaborTarget::Hunt { .. }
             // **A deposit is ground the band holds**, exactly as a patch is: zeroing the crew is
             // *stop cutting here*, never *this band has nothing here*, and the row has to survive it
-            // or the working loses its place in the build queue and its share of the keeping pool.
+            // or the working loses its place in the build queue — and a row held at zero is a site
+            // with no crew, so nothing keeps it.
             | LaborTarget::Extract { .. } => true,
             LaborTarget::Scout
             | LaborTarget::Warrior
-            | LaborTarget::Agriculture
-            | LaborTarget::Husbandry
             | LaborTarget::Roadwork
-            | LaborTarget::Quarrywork
             | LaborTarget::Builders => false,
         }
     }
 
-    /// **Is this row one of the five STANDING POOLS?** — the rows whose tools are derived per site
-    /// from the rung each site stands on and settled band-wide by priority
-    /// (`docs/plan_pool_toe.md`), rather than chosen off the roster and rationed pro-rata.
+    /// **Is this row one of the two STANDING POOLS — Roadwork and Builders?** — the rows whose tools
+    /// are derived per site from the rung each site stands on and settled band-wide by priority
+    /// (`docs/plan_pool_toe.md`, narrowed by `docs/plan_site_crews.md`), rather than chosen off the
+    /// roster and rationed pro-rata. A site crew's **keeping** tools are settled the same way, but
+    /// the crew is a take row and its take kit stays on the budget.
     ///
     /// It is **not** `!is_source()`: Scout and Warrior are band-wide roles too, and they keep the
     /// kit the player picks and the pro-rata item budget that goes with it. What separates a pool is
@@ -2556,11 +2500,7 @@ impl LaborTarget {
     /// Stated exhaustively so a new target has to answer the question rather than inherit a default.
     pub fn is_standing_pool(&self) -> bool {
         match self {
-            LaborTarget::Agriculture
-            | LaborTarget::Husbandry
-            | LaborTarget::Roadwork
-            | LaborTarget::Quarrywork
-            | LaborTarget::Builders => true,
+            LaborTarget::Roadwork | LaborTarget::Builders => true,
             LaborTarget::Forage { .. }
             | LaborTarget::Hunt { .. }
             | LaborTarget::Extract { .. }
@@ -2748,10 +2688,9 @@ impl PartialEq for LaborAssignment {
 impl LaborAssignment {
     /// **EVERY HAND THIS ROW HOLDS** — the take crew, and nothing else.
     ///
-    /// **Neither standing commitment is a term here any more.** The keeping is a band-level role
-    /// ([`LaborTarget::Agriculture`] / [`LaborTarget::Husbandry`]) and so, since
-    /// `docs/plan_standing_upkeep.md` §2.5, is the building ([`LaborTarget::Builders`]) — each a
-    /// *row* in the same list, counted by the same sum one level up
+    /// **Neither standing commitment is a term here.** A site's keeping is paid out of this very
+    /// crew (`docs/plan_site_crews.md` §2.1), and the building is a band-level role
+    /// ([`LaborTarget::Builders`]) — a *row* in the same list, counted by the same sum one level up
     /// ([`LaborAllocation::assigned_total`]). It survives as a named seam rather than collapsing
     /// into `workers` because *"every hand this row holds"* is the question `assigned_total` asks,
     /// and a future third allocation on a source would answer it here.
@@ -2841,10 +2780,22 @@ impl ShedCrew {
     }
 }
 
-/// **HOW MANY SPARE KEEPERS IS NONE** — the value [`ShedFacts::spare_agriculture_keepers`] is tested
+/// **HOW MANY SPARE KEEPERS IS NONE** — the value [`ShedFacts::spare_roadwork_keepers`] is tested
 /// against, named so step 3 reads as *"is there a keeper the bill does not need"* rather than as an
 /// arbitrary comparison with zero.
 const NO_SPARE_KEEPERS: u32 = 0;
+
+/// **A SITE THAT OWES NO KEEPING** — [`SourceShedFacts::keeping_need`]'s zero, named so step 8 reads
+/// as *"does this row keep anything"*.
+const NO_KEEPING_NEED: f32 = 0.0;
+
+/// **IS THE NEXT HAND OFF THIS ROW ONE ITS KEEPING DOES NOT NEED?** — `workers − 1 >= keeping_need`,
+/// with no rounding of the need (`docs/plan_site_crews.md` §2.6). A crew of 5 on a site needing 4.0
+/// has one hand above the line; the same crew on a site needing 4.2 has none, because the hand that
+/// would go is part of the keeping.
+fn hands_above_keeping(workers: u32, keeping_need: f32) -> bool {
+    workers.saturating_sub(ONE_WORKER) as f32 >= keeping_need
+}
 
 /// **THE SMALLEST CREW A ROW CAN BE THINNED FROM.** Step 5 never empties a row, so a row of one has
 /// nothing it can give: taking that hand is step 6 or lower, where *something ends*.
@@ -2889,7 +2840,7 @@ const PAYS_NOTHING: f32 = 0.0;
 /// carries that [`LaborAllocation`] does not hold and cannot derive. Resolved by
 /// `systems::labor::advance_labor_allocation`, which has the world, and handed to
 /// [`LaborAllocation::normalize`] index-aligned to [`LaborAllocation::assignments`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SourceShedFacts {
     /// **This source is still teaching the faction something** — the rung it stands on names a
     /// knowledge the faction has not completed, and the row's floor leaves a lesson to be earned
@@ -2908,6 +2859,22 @@ pub struct SourceShedFacts {
     /// [`crate::intensification::RUNG_UNSTARTED`]. It is the whole line between step 6 (*nothing was
     /// invested here*) and step 9 (*something was*).
     pub improved: bool,
+    /// **THE HANDS THIS ROW'S OWN CREW SPENDS KEEPING ITS SITE** — the site's keeping need in hands
+    /// (`docs/plan_site_crews.md` §2.1, §2.6): its share of the bill over what one of its hands
+    /// delivers keeping. Fractional, and **not** capped at the crew — a crew short of its need is
+    /// the row's `⚠`, not a smaller need.
+    ///
+    /// It is the line the shed splits the row at. Step 5 thins only a hand **above** it
+    /// (`workers − 1 >= keeping_need`), so thinning never causes rot; a hand below it goes at step 8,
+    /// after every Roadwork keeper below demand. `0` on a site that owes nothing — a wild patch, a
+    /// free-floor working, a role row.
+    ///
+    /// ⛔ **STRUCK AT THE RATE THE BAND CAN ACTUALLY ARM, NEVER AN OPTIMISTIC ONE.** The shed runs
+    /// before the band's tools are settled, so the rate is the as-if-equipped one only where the
+    /// band's own stock covers the site's whole claim at it, and the bare rate otherwise — the
+    /// retired spare-keeper gate's conservative direction: it may keep a hand the site could spare,
+    /// and never thins one the keeping needs.
+    pub keeping_need: f32,
 }
 
 /// **WHAT THE SHEDDING ORDER NEEDS AND THE ALLOCATION DOES NOT HOLD** — the keeping demand, a threat
@@ -2931,23 +2898,12 @@ pub struct ShedFacts {
     /// a threatened band's warriors wait for step 7, below every row that had nothing invested in
     /// it, because pulling the guard under a real threat can cost people.
     pub threatened: bool,
-    /// **Hands on [`LaborTarget::Agriculture`] the band's plant keeping bill does not need** — what
+    /// **Hands on [`LaborTarget::Roadwork`] the band's road keeping bill does not need** — what
     /// step 3 spends before anything that costs output. Measured against the allocation as the
-    /// player left it, before a single hand is shed.
-    pub spare_agriculture_keepers: u32,
-    /// **Hands on [`LaborTarget::Husbandry`] the band's animal keeping bill does not need** — the
-    /// twin of [`Self::spare_agriculture_keepers`], shed after it because step 3 walks Agriculture
-    /// first.
-    pub spare_husbandry_keepers: u32,
-    /// **Hands on [`LaborTarget::Roadwork`] the band's road keeping bill does not need** — the third
-    /// of the three, and shed **last** of them (see [`ShedStep::SpareKeeper`] for why a road is the
-    /// most recoverable thing a keeping role holds).
+    /// player left it, before a single hand is shed. Roadwork is the one keeping **pool** left
+    /// (`docs/plan_site_crews.md` §1); a site's keeping hands sit inside its own row and are split
+    /// at [`SourceShedFacts::keeping_need`] instead.
     pub spare_roadwork_keepers: u32,
-    /// **Hands on [`LaborTarget::Quarrywork`] the band's working-keeping bill does not need** — the
-    /// fourth of the four, and shed **last** of them: a working's meter is the most recoverable
-    /// thing a keeping role holds after a road's, because a slumped face can be re-cut by the same
-    /// builders that opened it, where a lost pen is a herd gone.
-    pub spare_quarrywork_keepers: u32,
 }
 
 impl ShedFacts {
@@ -3079,16 +3035,9 @@ pub enum ShedStep {
     /// **2 — a warrior, while nothing threatens the band.** A guard against nothing is the cheapest
     /// hand in the allocation.
     UnthreatenedWarrior,
-    /// **3 — a keeper above the keeping demand**, Agriculture before Husbandry before Roadwork. The
-    /// bill is still met in full, so nothing rots.
-    ///
-    /// ⛔ **ROADWORK IS THE LAST OF THE THREE, AND IT IS THE RECOVERABILITY THAT DECIDES IT.** A road
-    /// carries the longest graces on the ladder (`route:paved_road` forgives twelve consecutive short
-    /// turns against `plant:tended`'s), and **a lost road is re-earned by traffic alone** — the bands
-    /// that walk it wear it back in with no command typed and no crew staffed. A lost patch or a lost
-    /// flock is not: a feral patch wants a `Cultivate` and the builders behind it, and a shed herd is
-    /// gone. So of the three keeping roles it is the one whose loss costs least to undo, and it gives
-    /// last.
+    /// **3 — a Roadwork keeper above the keeping demand.** The bill is still met in full, so nothing
+    /// rots. Roadwork is the only keeping **pool**: a site's own keeping hands sit inside its row,
+    /// and a hand above that line is step 5's (`docs/plan_site_crews.md` §2.6).
     SpareKeeper,
     /// **4 — a builder the pool is not spending.** With something queued, every builder above the
     /// last one: the queue slows and no job stops. With **nothing** queued, every builder there is,
@@ -3102,7 +3051,9 @@ pub enum ShedStep {
     /// **5 — thin the least-productive worked source that has two or more hands**, on the player's
     /// rank, then the lesson, then least yield *per worker*. A source still accruing knowledge is
     /// passed over — a **level** of that ordering rather than a filter on it, so a row the player
-    /// marked `Low` gives even while it is learning. This never empties a row.
+    /// marked `Low` gives even while it is learning. This never empties a row, and it takes only a
+    /// hand **above that site's keeping need** ([`SourceShedFacts::keeping_need`]), so it never
+    /// causes rot.
     ///
     /// **THE CRAFTING BENCH IS A CANDIDATE HERE TOO**, on the same levels, whenever it holds
     /// [`SMALLEST_THINNABLE_CREW`] or more. It is not a row and not a [`LaborTarget`], but it spends
@@ -3130,8 +3081,14 @@ pub enum ShedStep {
     /// can cost people, which is worse than losing a row that had nothing invested in it.
     Warrior,
     /// **8 — a keeper below the demand.** Improvements begin to rot, which is gradual and
-    /// recoverable. Walked in step 3's order — Agriculture, Husbandry, then Roadwork — for step 3's
-    /// reason.
+    /// recoverable. A **Roadwork** keeper first — a lost road is re-earned by traffic alone, with no
+    /// command typed and no crew staffed, where a feral patch wants a `Cultivate` and a shed herd is
+    /// gone — **then a site hand below its keeping need**, least-productive improved site first
+    /// (`docs/plan_site_crews.md` §2.6).
+    ///
+    /// ⛔ **A SITE HAND HERE NEVER EMPTIES ITS ROW.** Only a row with two or more hands is a
+    /// candidate: its last hand is the row itself, and emptying an improved row is step 9's (or
+    /// step 10's, with a queued build) — thinning beats emptying, at the keeping line as everywhere.
     NeededKeeper,
     /// **9 — empty the least-productive improved source with no queued build.** Worse than step 8:
     /// an improved source with no take crew still owes its upkeep and now pays nothing, where rot is
@@ -4469,24 +4426,10 @@ pub struct LaborAllocation {
     ///
     /// Reset then re-summed every turn, and **excluded from equality** below.
     pub last_roadwork_supplied: f32,
-    /// **WHAT THE WORKINGS THIS BAND HOLDS WERE BILLED THIS TURN**, in work units — the
-    /// [`Self::last_roadwork_demand`] twin on the two deposit branches, summed by
-    /// [`crate::systems::settle_bands_extraction`].
-    ///
-    /// ⛔ **The sim sums it, not the client**, for the road ledger's reason one branch over: nothing
-    /// about a working reaches the wire yet (`docs/plan_extraction.md` §7 owns the readouts), so a
-    /// client has no row to add up at all.
-    ///
-    /// **Published whether or not the band staffs the role** — a band with nobody on `quarrywork`
-    /// owes exactly this much, and this is the field that says so. Reset then re-summed every turn,
-    /// and excluded from equality like the rest of the per-turn telemetry.
-    pub last_quarrywork_demand: f32,
-    /// The supply half of [`Self::last_quarrywork_demand`], and **this band's own contribution**
-    /// rather than the workings' totals — two bands holding one working each put a part on it.
-    pub last_quarrywork_supplied: f32,
     /// **WHAT EACH STANDING POOL'S SITES REQUIRED THIS TURN AND WHAT THE SETTLEMENT GAVE THEM** —
-    /// the five pools' tables of equipment, one line per `(pool, item)`
-    /// (`docs/plan_pool_toe.md` §4). Exported as `PopulationCohortState.pool_toe`.
+    /// the two pools' (Roadwork and Builders) tables of equipment, one line per `(pool, item)`
+    /// (`docs/plan_pool_toe.md` §4, narrowed by `docs/plan_site_crews.md` §4). Exported as
+    /// `PopulationCohortState.pool_toe`.
     ///
     /// ⛔ **IT IS REPORTED, NEVER RECOMPUTED** — [`Self::last_material_income`]'s discipline. The
     /// figures are the ones `systems::labor::plan_pool_tools` actually settled this turn, read
@@ -4503,6 +4446,20 @@ pub struct LaborAllocation {
     /// must stop republishing last turn's tools. **Excluded from equality** below, like the rest of
     /// the per-turn telemetry.
     pub last_pool_toe: Vec<PoolToeLine>,
+    /// **THE KEEPING TOOLS THIS BAND'S SITE CREWS WERE ISSUED THIS TURN**, one line per `(site, item)`
+    /// — the units the band-wide settlement handed each site crew for its keeping hands
+    /// (`docs/plan_site_crews.md` §2.3).
+    ///
+    /// It is not on the wire as a line: a site crew is not a pool, and what the row shows is its own
+    /// `upkeepToolsShort`. It exists because **one unit arms one person per turn across both
+    /// accounts** — the take crews' per-head item budget is struck less what the settlement already
+    /// issued ([`Self::pool_issued`]), and a keeping axe is as issued as a Roadwork one. **It is per
+    /// site** so a quote for one site can strike every *other* site's issue and price its own at the
+    /// crew it is asked about ([`Self::issued_excluding_site`]).
+    ///
+    /// Reported, never recomputed, and cleared before every early exit of the band's turn on
+    /// [`Self::last_pool_toe`]'s rule. **Excluded from equality** below.
+    pub last_keeping_issued: Vec<KeepingIssue>,
     /// **HOW MANY OF EACH KEEPING POOL'S KEEPERS THE TURN'S BILL DID NOT CONSUME** (issue #715) —
     /// one line per **keeping** pool, exported as `PopulationCohortState.pool_crew`.
     ///
@@ -4512,18 +4469,15 @@ pub struct LaborAllocation {
     /// geared plan had no use for them"*. A client re-deriving it from the pool's published TOE
     /// would report hands the sim has working (issue #714's own case).
     ///
-    /// ⛔ **FOUR POOLS, AND `builders` IS NOT ONE OF THEM.** `agriculture`, `husbandry`,
-    /// `roadwork`, `quarrywork` — the pools that hold sites. The builders put their **whole** head
-    /// count on the queue head (`docs/plan_pool_toe.md` §2.4), so no builder is ever left standing
-    /// by a plan that wanted fewer; a builders pool with an empty *queue* is idle in a different
-    /// sense and has no line here.
+    /// ⛔ **ONE POOL, `roadwork`, AND `builders` IS NOT ONE.** Roadwork is the only keeping pool
+    /// left (`docs/plan_site_crews.md` §1). The builders put their **whole** head count on the
+    /// queue head (`docs/plan_pool_toe.md` §2.4), so no builder is ever left standing by a plan that
+    /// wanted fewer; a builders pool with an empty *queue* is idle in a different sense and has no
+    /// line here.
     ///
-    /// **A pool with a head count and no sites states its whole head count**, which is the common
-    /// case — a line exists for every keeping pool the cohort can hold, unlike `last_pool_toe`'s.
-    /// That is **four on a band and three on an anonymous cohort**: `settle_bands_roadwork` is the
-    /// one keeping seat `advance_labor_allocation` runs under a [`BandId`], because a road's keeper
-    /// *is* a band, so a cohort without one keeps no roads and has no `roadwork` line to state. An
-    /// absent line reads *"this cohort has no such pool"*, exactly as `builders`' absence does.
+    /// **A pool with a head count and no roads states its whole head count**, which is the common
+    /// case. A cohort with no [`BandId`] keeps no roads (`settle_bands_roadwork` runs under one,
+    /// because a road's keeper *is* a band) and states no line.
     ///
     /// Held in pool-token order, cleared before every early exit out of the band's turn and
     /// rewritten from the turn that settled, on [`Self::last_pool_toe`]'s rule. **Excluded from
@@ -4582,6 +4536,19 @@ impl PartialEq for LaborAllocation {
             && self.upkeep_fund_mode == other.upkeep_fund_mode
             && self.build_queue == other.build_queue
     }
+}
+
+/// **ONE SITE CREW'S KEEPING ISSUE OF ONE ITEM** — a row of [`LaborAllocation::last_keeping_issued`]:
+/// the units the band-wide settlement handed that site's keeping hands this turn
+/// (`docs/plan_site_crews.md` §2.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeepingIssue {
+    /// The site whose crew was issued the units.
+    pub source: BuildSource,
+    /// The equipment item id.
+    pub item: String,
+    /// Units issued — whole per site, because a site crew is a group of one in the settlement.
+    pub units: f32,
 }
 
 /// **ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT** — a row of
@@ -4715,10 +4682,7 @@ impl BuildSource {
             }),
             LaborTarget::Scout
             | LaborTarget::Warrior
-            | LaborTarget::Agriculture
-            | LaborTarget::Husbandry
             | LaborTarget::Roadwork
-            | LaborTarget::Quarrywork
             | LaborTarget::Builders => None,
         }
     }
@@ -4821,11 +4785,22 @@ impl BuildJob {
 }
 
 /// One declared build: which source, **where the player said the land should end up**
-/// ([`BuildJob::destination`]), and **what this job is raised with** ([`Self::kit`]).
+/// ([`BuildJob::destination`]), **what this job is raised with** ([`Self::kit`]), and **how it
+/// ranks for scarce tools and materials** ([`Self::priority`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuildQueueEntry {
     pub source: BuildSource,
     pub declared: BuildJob,
+    /// **THE BUILD MARK** — where this build ranks when the band's tools or materials run short
+    /// (`docs/plan_site_crews.md` §2.4), set by `build_priority` and [`SourcePriority::default`]
+    /// (`Normal`) until the player sets it.
+    ///
+    /// ⛔ **IT IS THE ENTRY'S OWN, NOT ITS SITE ROW'S.** The builders' tool claim and the build's
+    /// material pile both rank at the **head** entry's mark. They used to borrow the head row's
+    /// `SourcePriority`, which welded two decisions together (#719): marking a Field's crew `High` so
+    /// it kept its hoes also pushed the Field's queued Sow ahead of every other build's pile. Within
+    /// one tier a site crew's keeping is still served before the build.
+    pub priority: SourcePriority,
     /// **The kit the player NAMED for THIS job, or `None` for "whatever this entry's web wants"** —
     /// the same distinction [`LaborAssignment::upkeep_kit`] draws one account over, on the one place
     /// the builders' default actually varies (`docs/plan_standing_upkeep.md` §4.7a ②).
@@ -5029,13 +5004,38 @@ impl LaborAllocation {
         .reserving(self.pool_issued())
     }
 
-    /// **The units the standing pools were issued this turn, per item** — `last_pool_toe`'s
-    /// `filled`, the reservation every take-row budget is struck less
+    /// **The units the band-wide settlement issued this turn, per item** — the standing pools'
+    /// `last_pool_toe` `filled` **and** the site crews' keeping issues
+    /// ([`Self::last_keeping_issued`]), the reservation every take-row budget is struck less
     /// ([`crate::equipment_config::BandItemBudget::reserving`]).
     pub fn pool_issued(&self) -> impl Iterator<Item = (&str, f32)> {
         self.last_pool_toe
             .iter()
             .map(|line| (line.item.as_str(), line.filled))
+            .chain(
+                self.last_keeping_issued
+                    .iter()
+                    .map(|issue| (issue.item.as_str(), issue.units)),
+            )
+    }
+
+    /// **[`Self::pool_issued`] without one site's own keeping issue** — the reservation a quote for a
+    /// crew on `site` strikes, before it adds the keeping that crew would claim at the size it is
+    /// asked about (`extraction::prospective_deposit_gear`). Striking the site's last issue as well
+    /// would reserve its keeping tools twice.
+    pub fn issued_excluding_site<'a>(
+        &'a self,
+        site: &'a BuildSource,
+    ) -> impl Iterator<Item = (&'a str, f32)> + 'a {
+        self.last_pool_toe
+            .iter()
+            .map(|line| (line.item.as_str(), line.filled))
+            .chain(
+                self.last_keeping_issued
+                    .iter()
+                    .filter(move |issue| &issue.source != site)
+                    .map(|issue| (issue.item.as_str(), issue.units)),
+            )
     }
 
     /// **THE BAND'S ROWS OTHER THAN THE ONE STANDING ON `source`** — the competing demand a
@@ -5410,10 +5410,10 @@ impl LaborAllocation {
     /// correction, and costing the player their position for it would make the queue punish the
     /// thing it exists to let them steer.
     ///
-    /// **AND IT KEEPS THE ENTRY'S KIT**, for the same reason it keeps its place: re-declaring is a
-    /// correction to *what* is being raised, and silently clearing the tool the player picked for
-    /// that job is the same loss as sending it to the back of the line. A new entry starts with
-    /// `kit: None`, i.e. on its own web's derivation.
+    /// **AND IT KEEPS THE ENTRY'S KIT AND ITS BUILD MARK**, for the same reason it keeps its place:
+    /// re-declaring is a correction to *what* is being raised, and silently clearing the tool or
+    /// the rank the player picked for that job is the same loss as sending it to the back of the
+    /// line. A new entry starts with `kit: None` (its own web's derivation) and a `Normal` mark.
     ///
     /// # AN ENTRY REQUIRES A ROW
     ///
@@ -5437,8 +5437,28 @@ impl LaborAllocation {
                 source,
                 declared,
                 kit: None,
+                priority: SourcePriority::default(),
             }),
         }
+        true
+    }
+
+    /// **SET ONE QUEUED BUILD'S MARK** — the whole of `build_priority` (`docs/plan_site_crews.md`
+    /// §2.4). Returns whether an entry was there to set it on.
+    ///
+    /// Nothing is minted for a source with no entry: the mark is a property of a declared job, and
+    /// an entry created here would enrol a build the player never declared — the refusal
+    /// [`Self::set_build_entry_kit`] makes. **Re-declaring keeps the mark**, as it keeps the place
+    /// and the kit ([`Self::enqueue_build`]).
+    pub fn set_build_priority(&mut self, source: &BuildSource, priority: SourcePriority) -> bool {
+        let Some(entry) = self
+            .build_queue
+            .iter_mut()
+            .find(|entry| &entry.source == source)
+        else {
+            return false;
+        };
+        entry.priority = priority;
         true
     }
 
@@ -5622,9 +5642,10 @@ impl LaborAllocation {
     ///
     /// **It trims ONE allocation per row, because a row now carries one** — the take crew. The
     /// build→take shedding order went with the per-source build crew
-    /// (`docs/plan_standing_upkeep.md` §2.5); the building and the keeping are **rows** of their own
-    /// ([`LaborTarget::Builders`] / [`LaborTarget::Agriculture`] / [`LaborTarget::Husbandry`]), and
-    /// the order names each of them explicitly.
+    /// (`docs/plan_standing_upkeep.md` §2.5); the building and the road-keeping are **rows** of their
+    /// own ([`LaborTarget::Builders`] / [`LaborTarget::Roadwork`]), and a site's keeping hands sit
+    /// inside its take row, split at [`SourceShedFacts::keeping_need`] (`docs/plan_site_crews.md`
+    /// §2.6). The order names each of them explicitly.
     ///
     /// # ONE HAND PER PASS OF THE WALK, AND THAT IS WHAT MAKES THE ORDER COHERENT
     ///
@@ -5706,25 +5727,12 @@ impl LaborAllocation {
                 break;
             };
             // Step 3 spends a surplus down: each spare keeper taken is one the bill no longer has
-            // spare, and the next pass of the walk has to see that.
+            // spare, and the next pass of the walk has to see that. Step 3 names the Roadwork row
+            // and nothing else, so the pick is that row by construction. A site's keeping line needs
+            // no such bookkeeping: it is read against the row's live head count every pass.
             if step == ShedStep::SpareKeeper {
-                if let ShedPick::Row(index) = pick {
-                    // **Each of the three pools spends its OWN surplus down**, named rather than
-                    // caught by a `_`: with a wildcard here a `Roadwork` hand decremented the
-                    // *husbandry* count, which underflows a `u32` the moment the band has road
-                    // keepers to spare and no herd ones. Step 3 is the only step that reads these,
-                    // so the arms are the three roles it walks and nothing else.
-                    let spare = match self.assignments[index].target {
-                        LaborTarget::Agriculture => Some(&mut facts.spare_agriculture_keepers),
-                        LaborTarget::Husbandry => Some(&mut facts.spare_husbandry_keepers),
-                        LaborTarget::Roadwork => Some(&mut facts.spare_roadwork_keepers),
-                        LaborTarget::Quarrywork => Some(&mut facts.spare_quarrywork_keepers),
-                        _ => None,
-                    };
-                    if let Some(spare) = spare {
-                        *spare = spare.saturating_sub(1);
-                    }
-                }
+                facts.spare_roadwork_keepers =
+                    facts.spare_roadwork_keepers.saturating_sub(ONE_WORKER);
             }
             let (subject, remaining) = match pick {
                 ShedPick::Row(index) => {
@@ -5794,18 +5802,10 @@ impl LaborAllocation {
                 return Some((ShedPick::Row(index), ShedStep::UnthreatenedWarrior));
             }
         }
-        // 3. A keeper above the keeping demand — Agriculture, then Husbandry, then Roadwork, then
-        //    Quarrywork.
-        for (role, spare) in [
-            (LaborTarget::Agriculture, facts.spare_agriculture_keepers),
-            (LaborTarget::Husbandry, facts.spare_husbandry_keepers),
-            (LaborTarget::Roadwork, facts.spare_roadwork_keepers),
-            (LaborTarget::Quarrywork, facts.spare_quarrywork_keepers),
-        ] {
-            if spare > NO_SPARE_KEEPERS {
-                if let Some(index) = self.staffed_role_row(&role) {
-                    return Some((ShedPick::Row(index), ShedStep::SpareKeeper));
-                }
+        // 3. A Roadwork keeper above the keeping demand.
+        if facts.spare_roadwork_keepers > NO_SPARE_KEEPERS {
+            if let Some(index) = self.staffed_role_row(&LaborTarget::Roadwork) {
+                return Some((ShedPick::Row(index), ShedStep::SpareKeeper));
             }
         }
         // 4. A builder the pool is not spending: with something queued, every builder above the
@@ -5835,13 +5835,17 @@ impl LaborAllocation {
         //    hands. It is not a row, so it is compared against the best row rather than iterated with
         //    them — the row call already returns the minimum among rows under this very ordering, so
         //    comparing the two winners is the same answer a single global minimum would give.
-        let thinnable = |assignment: &LaborAssignment| {
-            assignment.target.is_source() && assignment.workers >= SMALLEST_THINNABLE_CREW
+        //
+        //    **ONLY A HAND ABOVE THE SITE'S KEEPING LINE** (`docs/plan_site_crews.md` §2.6): the row
+        //    keeps its site first, so the hand this step may take is one the keeping does not need.
+        let thinnable = |index: usize, assignment: &LaborAssignment| {
+            assignment.target.is_source()
+                && assignment.workers >= SMALLEST_THINNABLE_CREW
+                && hands_above_keeping(assignment.workers, facts.source(index).keeping_need)
         };
-        let thinnest_row = self.least_productive_row_passing_over_lessons(
-            |_, assignment| thinnable(assignment),
-            |index| facts.source(index).accruing_knowledge,
-        );
+        let thinnest_row = self.least_productive_row_passing_over_lessons(thinnable, |index| {
+            facts.source(index).accruing_knowledge
+        });
         let thinnable_bench = bench.filter(|bench| bench.workers >= SMALLEST_THINNABLE_CREW);
         match (thinnest_row, thinnable_bench) {
             (Some(index), Some(bench)) => {
@@ -5882,15 +5886,19 @@ impl LaborAllocation {
         if let Some(index) = self.staffed_role_row(&LaborTarget::Warrior) {
             return Some((ShedPick::Row(index), ShedStep::Warrior));
         }
-        // 8. A keeper below the demand — improvements begin to rot. Agriculture first, as step 3.
-        for role in [
-            LaborTarget::Agriculture,
-            LaborTarget::Husbandry,
-            LaborTarget::Roadwork,
-        ] {
-            if let Some(index) = self.staffed_role_row(&role) {
-                return Some((ShedPick::Row(index), ShedStep::NeededKeeper));
-            }
+        // 8. A keeper below the demand — improvements begin to rot. A Roadwork keeper first, then a
+        //    site hand below its keeping need, least-productive improved site first. A site
+        //    candidate keeps its last hand: that hand is the row, and emptying it is step 9 or 10.
+        if let Some(index) = self.staffed_role_row(&LaborTarget::Roadwork) {
+            return Some((ShedPick::Row(index), ShedStep::NeededKeeper));
+        }
+        if let Some(index) = self.least_productive_row(|index, assignment| {
+            assignment.target.is_source()
+                && assignment.workers >= SMALLEST_THINNABLE_CREW
+                && facts.source(index).improved
+                && facts.source(index).keeping_need > NO_KEEPING_NEED
+        }) {
+            return Some((ShedPick::Row(index), ShedStep::NeededKeeper));
         }
         // 9. Empty the least-productive improved source with no queued build.
         if let Some(index) = self.least_productive_row(|index, assignment| {
@@ -6990,6 +6998,18 @@ mod tests {
             source: BuildSource::Patch(tile),
             declared: BuildJob::Rung(Improvement::Cultivate),
             kit: None,
+            priority: SourcePriority::default(),
+        }
+    }
+
+    /// A row's facts for an **improved site whose keeping needs `need` of its crew's hands** — the
+    /// line steps 5 and 8 split a site row at (`docs/plan_site_crews.md` §2.6).
+    #[cfg(test)]
+    fn kept_site(need: f32) -> SourceShedFacts {
+        SourceShedFacts {
+            improved: true,
+            keeping_need: need,
+            ..Default::default()
         }
     }
 
@@ -7053,12 +7073,12 @@ mod tests {
             assignments: vec![
                 staffed_forage(PATCH_A, 3),
                 staffed_role(LaborTarget::Warrior, 2),
-                staffed_role(LaborTarget::Agriculture, 2),
+                staffed_role(LaborTarget::Roadwork, 2),
             ],
             ..Default::default()
         };
         let spare = ShedFacts {
-            spare_agriculture_keepers: 1,
+            spare_roadwork_keepers: 1,
             ..Default::default()
         };
 
@@ -7079,57 +7099,116 @@ mod tests {
                     ..spare
                 }
             )),
-            vec![LaborTarget::Agriculture],
+            vec![LaborTarget::Roadwork],
             "under a real threat the guard stays and the spare keeper goes instead"
         );
     }
 
-    /// **STEP 3 — A KEEPER ABOVE THE DEMAND GIVES BEFORE A BUILDER**, and the three keeping roles
-    /// give in their stated order: Agriculture, then Husbandry, then Roadwork. Nothing rots either
-    /// way: every bill is still met in full.
-    ///
-    /// **Roadwork last of the three is the claim with a reason behind it** — see
-    /// [`ShedStep::SpareKeeper`]: a road carries the longest graces on the ladder and a lost road is
-    /// re-earned by traffic alone, where a feral patch wants a `Cultivate` and a shed flock is gone.
+    /// **STEP 3 — A ROAD KEEPER ABOVE THE DEMAND GIVES BEFORE A BUILDER.** Nothing rots: the road
+    /// bill is still met in full. Roadwork is the one keeping pool; a site's keeping hands sit in its
+    /// own row (`docs/plan_site_crews.md` §2.6).
     #[test]
-    fn a_spare_keeper_gives_before_a_builder_and_the_three_pools_give_in_order() {
+    fn a_spare_road_keeper_gives_before_a_builder() {
         let mut allocation = LaborAllocation {
             assignments: vec![
                 staffed_forage(PATCH_A, 3),
-                // Deliberately declared out of the shedding order, so the walk cannot be passing by
-                // reading list position — the defect `normalize`'s own callout exists for.
-                staffed_role(LaborTarget::Roadwork, 2),
-                staffed_role(LaborTarget::Husbandry, 2),
-                staffed_role(LaborTarget::Agriculture, 2),
                 staffed_role(LaborTarget::Builders, 2),
+                staffed_role(LaborTarget::Roadwork, 2),
             ],
             build_queue: vec![queued_on(PATCH_A)],
             ..Default::default()
         };
         let shed = allocation.normalize(
             None,
-            8,
+            6,
             ShedFacts {
-                spare_agriculture_keepers: 1,
-                spare_husbandry_keepers: 1,
                 spare_roadwork_keepers: 1,
                 ..Default::default()
             },
         );
-        assert_eq!(
-            shed_targets(&shed),
-            vec![
-                LaborTarget::Agriculture,
-                LaborTarget::Husbandry,
-                LaborTarget::Roadwork
-            ],
-            "the plant pool is walked first, then the animal one, then the roads — all three ahead \
-             of the queue"
-        );
+        assert_eq!(shed_targets(&shed), vec![LaborTarget::Roadwork]);
         assert_eq!(
             allocation.workers_on(&LaborTarget::Builders),
             2,
-            "no hand comes off the queue while a keeping bill has slack in it"
+            "no hand comes off the queue while the road bill has slack in it"
+        );
+    }
+
+    /// # ⛔ STEP 5 THINS ABOVE A SITE'S KEEPING LINE; STEP 8 CUTS INTO IT
+    ///
+    /// `docs/plan_site_crews.md` §2.6. A site crew keeps its site first, so its hands split at the
+    /// keeping line: a hand **above** it is output, a hand **below** it is keeping. A shrinking band
+    /// thins every hand above the line — on any row — before it takes one below it, and a Roadwork
+    /// keeper below demand goes before a site's keeping hand.
+    ///
+    /// The Field needs 4.0 of its 5 hands; the poor patch beside it needs 1.5 of its 3. Step 5 takes
+    /// the Field's fifth hand and the patch's third (`3 − 1 >= 1.5`), then finds nothing — the
+    /// patch's next hand would leave 1, below its 1.5 — so step 8 reaches the road keeper first, and
+    /// only then the **least productive** site's keeping hand.
+    #[test]
+    fn a_shrinking_band_thins_above_the_keeping_line_before_cutting_into_it() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![
+                staffed_forage(PATCH_A, 5),
+                staffed_forage(PATCH_B, 3),
+                staffed_role(LaborTarget::Roadwork, 1),
+            ],
+            last_yields: vec![realized(8.0), realized(1.0), SourceYield::ZERO],
+            ..Default::default()
+        };
+        let facts = ShedFacts {
+            sources: vec![kept_site(4.0), kept_site(1.5), SourceShedFacts::default()],
+            threatened: true,
+            ..Default::default()
+        };
+        let shed = allocation.normalize(None, 5, facts);
+        assert_eq!(
+            allocation.workers_on(&staffed_forage(PATCH_A, 0).target),
+            4,
+            "the Field keeps every hand its keeping needs"
+        );
+        assert_eq!(
+            allocation.workers_on(&staffed_forage(PATCH_B, 0).target),
+            1,
+            "the poor patch gave its hand above the line at step 5, then a keeping hand at step 8 — \
+             after the road keeper"
+        );
+        assert_eq!(allocation.workers_on(&LaborTarget::Roadwork), 0);
+        assert_eq!(
+            shed_targets(&shed),
+            vec![
+                staffed_forage(PATCH_B, 0).target,
+                staffed_forage(PATCH_A, 0).target,
+                LaborTarget::Roadwork,
+            ],
+            "the patch and the Field each thin above their line, then the road keeper goes — and \
+             the patch's keeping hand after it (one subject, reported once)"
+        );
+    }
+
+    /// **A SITE HAND AT STEP 8 NEVER EMPTIES ITS ROW.** A kept Field down to its last hand is not a
+    /// step-8 candidate: that hand is the row, and emptying an improved row is step 9's.
+    #[test]
+    fn a_keeping_hand_is_never_the_last_hand_of_its_row() {
+        let mut allocation = LaborAllocation {
+            assignments: vec![staffed_forage(PATCH_A, 1), staffed_forage(PATCH_B, 2)],
+            last_yields: vec![realized(8.0), realized(1.0)],
+            ..Default::default()
+        };
+        let shed = allocation.normalize(
+            None,
+            2,
+            ShedFacts {
+                sources: vec![kept_site(4.0), kept_site(4.0)],
+                threatened: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(shed_targets(&shed), vec![staffed_forage(PATCH_B, 0).target]);
+        assert_eq!(
+            allocation.assignments.len(),
+            2,
+            "step 8 thinned the two-hand site; the one-hand Field keeps its row"
         );
     }
 
@@ -7926,7 +8005,7 @@ mod tests {
         let mut allocation = LaborAllocation {
             assignments: vec![
                 staffed_forage(PATCH_A, 1),
-                staffed_role(LaborTarget::Agriculture, 1),
+                staffed_role(LaborTarget::Roadwork, 1),
             ],
             last_yields: vec![realized(3.0), SourceYield::ZERO],
             ..Default::default()
@@ -7947,11 +8026,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(shed_targets(&shed), vec![LaborTarget::Agriculture]);
+        assert_eq!(shed_targets(&shed), vec![LaborTarget::Roadwork]);
         assert_eq!(
             allocation.assignments.len(),
             1,
-            "the Field keeps its crew and starts to rot instead"
+            "the Field keeps its crew and the road starts to rot instead"
         );
     }
 
@@ -8006,7 +8085,7 @@ mod tests {
         let mut allocation = LaborAllocation {
             assignments: vec![
                 staffed_forage(PATCH_A, 2),
-                staffed_role(LaborTarget::Agriculture, 2),
+                staffed_role(LaborTarget::Roadwork, 2),
                 staffed_role(LaborTarget::Builders, 2),
                 staffed_role(LaborTarget::Warrior, 1),
                 staffed_role(LaborTarget::Scout, 1),
@@ -8020,7 +8099,7 @@ mod tests {
             None,
             3,
             ShedFacts {
-                spare_agriculture_keepers: 1,
+                spare_roadwork_keepers: 1,
                 ..Default::default()
             },
         );
@@ -8029,7 +8108,7 @@ mod tests {
             vec![
                 LaborTarget::Scout,
                 LaborTarget::Warrior,
-                LaborTarget::Agriculture,
+                LaborTarget::Roadwork,
                 LaborTarget::Builders,
                 staffed_forage(PATCH_A, 0).target,
             ],
@@ -8104,10 +8183,10 @@ mod tests {
             assignments: vec![staffed_forage(bevy::math::UVec2::new(1, 1), 4)],
             ..Default::default()
         };
-        assert_eq!(allocation.workers_on(&LaborTarget::Agriculture), 0);
+        assert_eq!(allocation.workers_on(&LaborTarget::Roadwork), 0);
 
-        allocation.set_assignment(LaborTarget::Agriculture, 2, BAND, None);
-        assert_eq!(allocation.workers_on(&LaborTarget::Agriculture), 2);
+        allocation.set_assignment(LaborTarget::Roadwork, 2, BAND, None);
+        assert_eq!(allocation.workers_on(&LaborTarget::Roadwork), 2);
         assert_eq!(
             allocation.assigned_total(),
             6,
@@ -8115,13 +8194,13 @@ mod tests {
         );
 
         // Re-stating the role replaces its head count — a role IS its head count.
-        allocation.set_assignment(LaborTarget::Agriculture, 5, BAND, None);
-        assert_eq!(allocation.workers_on(&LaborTarget::Agriculture), 5);
+        allocation.set_assignment(LaborTarget::Roadwork, 5, BAND, None);
+        assert_eq!(allocation.workers_on(&LaborTarget::Roadwork), 5);
 
-        // The two webs are separate pools and never merge.
-        allocation.set_assignment(LaborTarget::Husbandry, 1, BAND, None);
-        assert_eq!(allocation.workers_on(&LaborTarget::Agriculture), 5);
-        assert_eq!(allocation.workers_on(&LaborTarget::Husbandry), 1);
+        // The two band pools are separate rows and never merge.
+        allocation.set_assignment(LaborTarget::Builders, 1, BAND, None);
+        assert_eq!(allocation.workers_on(&LaborTarget::Roadwork), 5);
+        assert_eq!(allocation.workers_on(&LaborTarget::Builders), 1);
     }
 
     // **RETIRED: `restating_one_activitys_crew_only_needs_the_difference`** — it pinned

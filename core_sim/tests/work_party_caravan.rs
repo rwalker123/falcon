@@ -724,7 +724,7 @@ fn a_local_working_takes_no_party_and_its_numbers_are_unchanged() {
         .expect("wood is a material");
         core_sim::extraction::take_from_deposit(
             &mut working,
-            CREW,
+            CREW as f32,
             core_sim::extraction::CrewLift {
                 tools: core_sim::extraction::NO_DEPOSIT_GEAR,
                 carry: carry.crew_carry(carry.haul_baseline, CREW as f32),

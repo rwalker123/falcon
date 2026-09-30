@@ -64,10 +64,10 @@ fn source_tile(app: &App) -> UVec2 {
 /// comes back out of the buffer as itself.
 const CROP: &str = "wild_emmer";
 
-/// A headless world with one resident band that staffs a Forage source's take crew and the band's
-/// own **agriculture** and **builders** roles. The band is sized to afford all three rows: they draw
-/// on one pool, so a band short of `TAKE + BUILD + KEEP` would have `LaborAllocation::normalize` trim
-/// the tail and the fixture would publish numbers it never staffed.
+/// A headless world with one resident band that staffs a Forage source's crew and the band's own
+/// **roadwork** and **builders** pools. The band is sized to afford all three rows: they draw on one
+/// pool, so a band short of `TAKE + BUILD + KEEP` would have `LaborAllocation::normalize` trim the
+/// tail and the fixture would publish numbers it never staffed.
 fn world_with_a_keeping_band() -> (App, UVec2) {
     let mut app = build_test_app();
     // One `update()` runs the whole Startup worldgen chain, which is what seeds the `TileRegistry`
@@ -129,10 +129,10 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     priority: SourcePriority::default(),
                     upkeep_kit: None,
                 },
-                // The keeping — a row of its own, on the band rather than the tile.
+                // The road-keeping — a pool of its own, on the band rather than on any tile.
                 LaborAssignment {
                     party: None,
-                    target: LaborTarget::Agriculture,
+                    target: LaborTarget::Roadwork,
                     workers: KEEP_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
@@ -153,6 +153,7 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                 source: BuildSource::Patch(source),
                 declared: BuildJob::Rung(DECLARED),
                 kit: Some(bare_builders()),
+                priority: core_sim::SourcePriority::default(),
             }],
             upkeep_fund_mode: UpkeepFundMode::Priority,
             ..Default::default()
@@ -246,20 +247,23 @@ fn a_source_row_states_its_take_crew_and_the_job_queued_on_it() {
 fn the_bands_standing_pools_reach_the_client_as_their_own_rows() {
     let (app, _source) = world_with_a_keeping_band();
     assert_eq!(
-        published_role(&app, "agriculture"),
+        published_role(&app, "roadwork"),
         Some(KEEP_CREW),
-        "the agriculture role is an ordinary assignment row with its hands in `workers`"
+        "the roadwork pool is an ordinary assignment row with its hands in `workers`"
     );
     assert_eq!(
         published_role(&app, "builders"),
         Some(BUILD_CREW),
         "and so is the builders pool — the band's only build staffing since §2.5"
     );
-    assert_eq!(
-        published_role(&app, "husbandry"),
-        None,
-        "and the roles are separate rows — a band keeping no herds publishes none"
-    );
+    for retired in ["agriculture", "husbandry", "quarrywork"] {
+        assert_eq!(
+            published_role(&app, retired),
+            None,
+            "the retired `{retired}` pool publishes no row — a site's own crew keeps it \
+             (`docs/plan_site_crews.md` §4)"
+        );
+    }
 }
 
 /// **THE FUND MODE IS ON THE COHORT, AS THE TOKEN THE COMMAND TAKES.** Without it a client cannot
@@ -365,7 +369,7 @@ fn a_worked_rows_rank_reaches_the_client() {
         Some(fb::SourcePriority::Low),
         "the marked worked row publishes the player's own rank: {ranks:?}"
     );
-    for role in ["agriculture", "builders"] {
+    for role in ["roadwork", "builders"] {
         assert_eq!(
             ranks
                 .iter()
@@ -375,6 +379,54 @@ fn a_worked_rows_rank_reaches_the_client() {
             "a band-wide role is not a worked source and publishes the default: {ranks:?}"
         );
     }
+}
+
+/// **A QUEUED BUILD'S OWN MARK REACHES THE CLIENT** (`docs/plan_site_crews.md` §2.4) — on the queue
+/// entry, as the command's own token, and apart from its site row's rank: the entry is marked
+/// `high` while the row stays `normal`, so a capture that copied the row's rank onto the entry
+/// would read `normal` here.
+#[test]
+fn a_queued_builds_mark_reaches_the_client() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+
+    let (mut app, source) = world_with_a_keeping_band();
+    {
+        let mut allocation = app
+            .world
+            .query::<&mut LaborAllocation>()
+            .iter_mut(&mut app.world)
+            .find(|allocation| {
+                allocation
+                    .assignments
+                    .first()
+                    .is_some_and(|row| row.workers == TAKE_CREW)
+            })
+            .expect("the fixture band exists");
+        assert!(
+            allocation.set_build_priority(&BuildSource::Patch(source), SourcePriority::High),
+            "the fixture band has a build queued on the source"
+        );
+    }
+    recapture_snapshot_in_place(&mut app.world);
+
+    let bytes = encoded_snapshot(&app);
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let marks: Vec<String> = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .population()
+        .and_then(|section| section.populations())
+        .expect("the population section carries the cohort list")
+        .iter()
+        .flat_map(|cohort| cohort.buildQueue().into_iter().flatten())
+        .map(|entry| entry.buildPriority().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(
+        marks,
+        vec![SourcePriority::High.as_str().to_string()],
+        "the entry publishes its own Build mark"
+    );
 }
 
 #[test]

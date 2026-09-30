@@ -607,6 +607,9 @@ fn a_bands_larder_is_untouched_by_its_pens_across_repeated_turns() {
         // to a known figure is what makes "it did not move" measurable rather than inferred.
         stock(&mut app, keeper, NO_HAY, STOCKED_LARDER);
         pose_footprints(&mut app, BARREN);
+        // The keeping scratch cleared between passes, as the Logistics stage clears it: each pen's
+        // own crew stamps its keeping every pass (`docs/plan_site_crews.md` §2.1).
+        app.world.run_system_once(core_sim::advance_husbandry);
         app.world.run_system_once(advance_labor_allocation);
 
         for id in ["pen_rich", "pen_lean"] {

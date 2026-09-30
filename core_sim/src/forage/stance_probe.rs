@@ -205,7 +205,7 @@ fn run_patch_with_crew(
         let provisions = forage_take(
             &mut patch,
             &composition,
-            foragers,
+            foragers as f32,
             floor,
             &TakeSelection::EVERYTHING,
             forage,
@@ -299,7 +299,7 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
         let provisions = forage_take(
             &mut patch,
             &composition,
-            FULLY_STAFFED_FORAGERS,
+            FULLY_STAFFED_FORAGERS as f32,
             floor,
             &TakeSelection::EVERYTHING,
             forage,
@@ -652,7 +652,7 @@ fn run_herd_with_crew(
         // Population.
         let take = hunt_take(
             &mut herd,
-            hunters,
+            hunters as f32,
             floor,
             labor.hunt.per_worker_biomass_capacity,
             // The probe measures what the FLOOR does to a herd, so it hunts with the shipped kit —
@@ -724,7 +724,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
         regrow_biomass(&mut herd, &fauna);
         let take = hunt_take(
             &mut herd,
-            FULLY_STAFFED_HUNTERS,
+            FULLY_STAFFED_HUNTERS as f32,
             floor,
             labor.hunt.per_worker_biomass_capacity,
             &crate::fauna::HuntingParty::builtin_equipped(),
@@ -789,7 +789,7 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
         let standing_above_floor = escapement_ceiling(floor, herd.biomass, cap);
         let take = hunt_take(
             &mut herd,
-            FULLY_STAFFED_HUNTERS,
+            FULLY_STAFFED_HUNTERS as f32,
             floor,
             labor.hunt.per_worker_biomass_capacity,
             &crate::fauna::HuntingParty::builtin_equipped(),

@@ -399,6 +399,11 @@ fn standing_crop(app: &App, coord: UVec2) -> f32 {
 /// The labor-bound case is the one that matters: it is where a rate that were only correct on the
 /// ceiling term would come apart, which is exactly how the retired markup used to fail.
 ///
+/// **The collection term is the TAKE hands'** — the row's crew less the hands its keeping took
+/// first (`docs/plan_site_crews.md` §2.1), which the wire publishes as `upkeepHands` beside the
+/// rate. A crew of one on a tended patch spends itself on the keeping and gathers nothing, so the
+/// labor-bound arm is [`LABOR_BOUND_CREW`].
+///
 /// It read the retired trade rate until arc #527; it reads the **provisions** rate now, which is the
 /// account that survives on every basket and is the one the client's ceiling curve is drawn from.
 #[test]
@@ -406,7 +411,7 @@ fn the_published_per_biomass_rate_is_what_a_real_turn_credits_on_both_binding_si
     // A tended cash crop, so the patch is a genuinely weeded basket rather than a plain stand — the
     // rung whose conversion gain the rate has to carry.
     for floor in [0.5_f32, 0.15] {
-        for workers in [1_u32, FORAGE_WORKERS] {
+        for workers in [LABOR_BOUND_CREW, FORAGE_WORKERS] {
             let mut app = spawn_world();
             let (tile, coord) = richest_tile_growing(&mut app, "grapevine");
             seat_tended_patch(&mut app, coord, "grapevine");
@@ -427,13 +432,32 @@ fn the_published_per_biomass_rate_is_what_a_real_turn_credits_on_both_binding_si
             let rate =
                 patch_provisions_per_biomass(&patch, &composition, &flora, &labor_config.forage);
             let room = (patch.biomass - floor * patch.carrying_capacity).max(0.0);
-            let throughput = core_sim::forage_per_worker_biomass(equipped_gather_rate(), seasonal)
-                * workers as f32;
-            let expected_food =
-                core_sim::forage_provisions(room.min(throughput), rate, NEUTRAL_MULTIPLIER);
 
             let band = spawn_forager_with_workers(&mut app, tile, coord, floor, workers);
             app.world.run_system_once(advance_labor_allocation);
+            let keep_hands = app
+                .world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .expect("the seated patch")
+                .upkeep_hands;
+            let take_hands = workers as f32 - keep_hands;
+            assert!(
+                take_hands > 0.0,
+                "fixture: floor {floor} with {workers} forager(s) must have hands left over the \
+                 keeping ({keep_hands}), or the take is not exercised"
+            );
+            let throughput =
+                core_sim::forage_per_worker_biomass(equipped_gather_rate(), seasonal) * take_hands;
+            if workers == LABOR_BOUND_CREW {
+                assert!(
+                    throughput < room,
+                    "fixture: floor {floor} — the labor-bound arm must bind on its hands \
+                     ({throughput}) rather than the room ({room})"
+                );
+            }
+            let expected_food =
+                core_sim::forage_provisions(room.min(throughput), rate, NEUTRAL_MULTIPLIER);
             let credited = app
                 .world
                 .get::<PopulationCohort>(band)
@@ -455,6 +479,11 @@ fn the_published_per_biomass_rate_is_what_a_real_turn_credits_on_both_binding_si
         }
     }
 }
+
+/// **A crew the labor side binds on a tended patch** — about one hand past the fixture tile's
+/// keeping, so some are left over to gather and few enough that the take is `hands × throughput`
+/// rather than the room (both asserted in the test).
+const LABOR_BOUND_CREW: u32 = 3;
 
 /// **The #427 regression.** A Tended Patch committed to `grapevine` — `provisions_per_biomass: 0`,
 /// paid in **grapes** — under **Sustain** credited nothing at all while being drawn down at full MSY

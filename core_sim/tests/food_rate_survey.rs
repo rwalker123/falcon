@@ -346,7 +346,7 @@ fn settle_forage(
             carry,
             FULL_SEASONAL_WEIGHT,
             UNIT_OUTPUT_MULTIPLIER,
-            workers,
+            workers as f32,
             DEFAULT_ESCAPEMENT_FLOOR,
             &TakeSelection::EVERYTHING,
             horizon,
@@ -567,7 +567,7 @@ fn settle_hunt(
             carry,
             party,
             UNIT_OUTPUT_MULTIPLIER,
-            workers,
+            workers as f32,
             DEFAULT_ESCAPEMENT_FLOOR,
             // A resident band keeps what its packs carry, exactly as `hunt_take` pays it.
             CarcassKept::Carried,
@@ -591,7 +591,7 @@ fn settle_hunt(
         let seed = retreat_seed(SURVEY_MAP_SEED, u64::from(turn), &quarry.id, workers);
         let outcome = hunt_take(
             &mut quarry,
-            workers,
+            workers as f32,
             DEFAULT_ESCAPEMENT_FLOOR,
             carry,
             party,

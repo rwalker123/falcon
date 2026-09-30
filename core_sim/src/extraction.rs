@@ -103,6 +103,20 @@ pub const DEPOSIT_EMPTY: f32 = 0.0;
 /// **NOBODY IS WORKING THIS DEPOSIT** — a crew of no hands, which takes nothing and teaches nothing.
 pub const NO_CREW_ON_THE_DEPOSIT: u32 = 0;
 
+/// **NO HANDS ARE CUTTING** — [`NO_CREW_ON_THE_DEPOSIT`] on the rate side, where the take crew is a
+/// fractional hand count (`docs/plan_site_crews.md` §2.1): a working's crew keeps it first and cuts
+/// with what is left.
+pub const NO_HANDS_ON_THE_DEPOSIT: f32 = 0.0;
+
+/// **THE SHARE OF A CREW THAT IS CUTTING** — `take_hands ÷ crew`, and none of a crew of nobody. The
+/// factor [`CrewLift::of_the_cutters`] scales a whole crew's lift by.
+pub fn cutting_share(take_hands: f32, crew: u32) -> f32 {
+    if crew == NO_CREW_ON_THE_DEPOSIT {
+        return NO_HANDS_ON_THE_DEPOSIT;
+    }
+    take_hands / crew as f32
+}
+
 /// **NOBODY CUT THIS WORKING THIS TURN** — the reset value of [`DepositSource::last_take`], and the
 /// reading that makes the runway *"there is no rate to project"* rather than a division by zero.
 pub const NO_TAKE_THIS_TURN: f32 = 0.0;
@@ -140,6 +154,22 @@ pub struct CrewLift {
 }
 
 impl CrewLift {
+    /// **THE LIFT OF THE PART OF THE CREW THAT IS CUTTING** (`docs/plan_site_crews.md` §2.1) — a
+    /// working's crew keeps it first, so `cutting_share` (`take hands ÷ crew`) of it cuts. The kit is
+    /// issued to the whole crew's people, and the tools and the carry are both linear in the hands
+    /// swinging and hauling, so the cutters' lift is the crew's scaled by their share. An uncapped
+    /// carry stays uncapped.
+    pub fn of_the_cutters(self, cutting_share: f32) -> Self {
+        Self {
+            tools: self.tools * cutting_share,
+            carry: if self.carry.is_finite() {
+                self.carry * cutting_share
+            } else {
+                self.carry
+            },
+        }
+    }
+
     /// **Tools and no carry cap** — the take priced on its cut alone. See [`NO_CARRY_CAP`].
     pub fn tools_only(tools: f32) -> Self {
         Self {
@@ -255,6 +285,17 @@ pub struct DepositSource {
     /// cleared once per turn by [`advance_deposits`].
     #[serde(default)]
     pub upkeep_supplied: f32,
+    /// **THE CREW HANDS SPENT KEEPING THIS SOURCE THIS TURN** — fractional, summed across the bands
+    /// whose crews keep it (`docs/plan_site_crews.md` §2.1): each crew keeps its share first and
+    /// collects with the rest, so this is what the row's `keeps N of M` reads and what the take was
+    /// struck less. Published as `upkeepHands`. Accumulates beside [`Self::upkeep_supplied`] and is
+    /// cleared on its cycle.
+    pub upkeep_hands: f32,
+    /// **SOME CREW KEEPING THIS SOURCE WAS SHORT OF ITS KEEPING TOOLS** — the band-wide settlement
+    /// filled less than the site's claim (`docs/plan_site_crews.md` §2.3), so its crew kept with
+    /// more of its own hands. The row's `ⓘ`, published as `upkeepToolsShort`; cleared on
+    /// [`Self::upkeep_supplied`]'s cycle.
+    pub upkeep_tools_short: bool,
     /// **CONSECUTIVE TURNS THE KEEPING WENT UNMET.** Reset outright by any turn it was met, so it is
     /// a run rather than a lifetime budget. The bleed applies only while it **exceeds** the at-risk
     /// rung's `upkeep.grace_turns` — a crew re-tasked for a season does not cost the working.
@@ -339,6 +380,8 @@ impl DepositSource {
             standing: RungStanding::unstarted(branch),
             upkeep_demanded: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
+            upkeep_hands: NO_HANDS_ON_THE_DEPOSIT,
+            upkeep_tools_short: false,
             neglect_turns: NEGLECT_NONE,
             last_take: NO_TAKE_THIS_TURN,
             last_floor: NOBODY_ASKED_FOR_A_FLOOR,
@@ -716,7 +759,7 @@ pub fn deposit_reachable(
 /// costs no wood, so a band with no kit at all can still start the material economy. Pass
 /// [`NO_DEPOSIT_GEAR`] where no band stands behind the take.
 pub fn deposit_take(
-    workers: u32,
+    workers: f32,
     lift: CrewLift,
     stock: f32,
     capacity: f32,
@@ -773,6 +816,15 @@ pub fn working_offered_kits(
 /// It answers the crew's [`CrewLift`] — internal to the take math — and its **whole-kit count**
 /// ([`crate::equipment_config::KitCoverage::workers_holding_whole_kit`], the scarcest of the kit's
 /// items), the very figure a committed row publishes as `kitWorkersHolding`.
+///
+/// ⛔ **THE RESERVATION STRIKES THIS WORKING'S OWN KEEPING AT THIS CREW, NOT ITS LAST ISSUE**
+/// (`docs/plan_site_crews.md` §2.3). The working's crew keeps it first, and its keeping tools can be
+/// its take kit's too (the axe serves `forestry` keeping and the `woodcutting` take): the
+/// settlement issues the keeping first and the take is budgeted the rest. So the budget is struck
+/// less every other claimant's issue ([`crate::components::LaborAllocation::issued_excluding_site`])
+/// and less `keeping` — the units this crew's keeping would be issued at the working's own bill
+/// (`crate::systems::prospective_keeping_issue`), which is what lets a quote for a crew nobody has
+/// committed yet agree with the turn that commits it.
 #[allow(clippy::too_many_arguments)] // the ration's own inputs: roster, rows, crew, rung, carry
 pub fn prospective_deposit_gear(
     equipment: &crate::equipment_config::EquipmentConfig,
@@ -783,16 +835,23 @@ pub fn prospective_deposit_gear(
     band_kit: &crate::components::BandEquipment,
     rung: RungKey,
     carry: &DepositCarry,
+    keeping: &[(String, f32)],
 ) -> ProspectiveCrew {
     let key = rung.wire_key();
     let crew = workers as f32;
     let other_rows = allocation.rows_excluding_source(equipment, target);
+    let site = crate::components::BuildSource::of(target);
+    let issued: Vec<(&str, f32)> = match site.as_ref() {
+        Some(site) => allocation.issued_excluding_site(site).collect(),
+        None => allocation.pool_issued().collect(),
+    };
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
         other_rows.iter().map(|(kit, held)| (kit, *held)),
         kit,
         crew,
     )
-    .reserving(allocation.pool_issued());
+    .reserving(issued)
+    .reserving(keeping.iter().map(|(item, units)| (item.as_str(), *units)));
     let coverage = equipment.coverage_from_units(
         kit,
         crew,
@@ -817,35 +876,97 @@ pub struct ProspectiveCrew {
     pub kit_workers_holding: f32,
 }
 
+/// **THE KEEPING TOOLS A CREW OF `workers` WOULD BE ISSUED ON THIS WORKING** — its own bill's
+/// uncontended claim ([`crate::systems::prospective_keeping_issue`]), none on a rung that owes
+/// nothing. What [`prospective_deposit_gear`] strikes the take budget less.
+#[allow(clippy::too_many_arguments)] // the ration's inputs plus the working and its ground
+pub fn crew_keeping_issue(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &crate::components::BandEquipment,
+    working: &DepositSource,
+    ground: &Tile,
+    config: &ExtractionConfig,
+    ladder: &LadderConfig,
+    workers: u32,
+) -> Vec<(String, f32)> {
+    let demand = deposit_keeping_basis(working, deposit_measure(working, ground, config), ladder);
+    if demand <= NO_UPKEEP_DEMAND {
+        return Vec::new();
+    }
+    crate::systems::prospective_keeping_issue(equipment, band_kit, working.rung(), demand, workers)
+}
+
+/// **THE HANDS A CREW OF `workers` SPENDS KEEPING THIS WORKING FIRST** (`docs/plan_site_crews.md`
+/// §2.5) — the prospective reading every deposit quote cuts on the rest of, through the one seam
+/// the assign-time seed reads ([`crate::systems::prospective_keep_hands`]). None on a rung that owes
+/// nothing: the free floors (`extraction:gathering`, `forestry:deadfall`) declare no upkeep, so
+/// their whole crew cuts.
+#[allow(clippy::too_many_arguments)] // the ration's inputs plus the working and its ground
+pub fn crew_keep_hands(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &crate::components::BandEquipment,
+    working: &DepositSource,
+    ground: &Tile,
+    config: &ExtractionConfig,
+    ladder: &LadderConfig,
+    workers: u32,
+) -> f32 {
+    let demand = deposit_keeping_basis(working, deposit_measure(working, ground, config), ladder);
+    if demand <= NO_UPKEEP_DEMAND {
+        return NO_HANDS_ON_THE_DEPOSIT;
+    }
+    crate::systems::prospective_keep_hands(equipment, band_kit, working.rung(), demand, workers)
+}
+
 /// **WHAT A CREW WOULD CUT A TURN ONCE `held` IS RAISED ONE RUNG** — the next rung's own bare rate ×
-/// the crew plus the next rung's tool ([`prospective_deposit_gear`]), before the reach caps it:
-/// [`deposit_crew_throughput`] at the next rung's payoff, the take's own function. `NO_TAKE_THIS_TURN`
-/// at the top of a branch or for an empty crew.
-#[allow(clippy::too_many_arguments)] // the ration's inputs plus the ladder and the held rung
+/// the hands its keeping leaves, plus the cutters' share of the next rung's tool
+/// ([`prospective_deposit_gear`]), before the reach caps it: [`deposit_crew_throughput`] at the next
+/// rung's payoff, the take's own function. The keeping is the **raised** working's: a working seated
+/// at the next rung's top owes that rung's bill. `NO_TAKE_THIS_TURN` at the top of a branch or for an
+/// empty crew.
+#[allow(clippy::too_many_arguments)] // the ration's inputs plus the ladder, the working and ground
 pub fn next_rung_take_for(
     equipment: &crate::equipment_config::EquipmentConfig,
     ladder: &LadderConfig,
+    config: &ExtractionConfig,
     allocation: &crate::components::LaborAllocation,
     target: &crate::components::LaborTarget,
     kit: &crate::equipment_config::KitChoice,
     workers: u32,
     band_kit: &crate::components::BandEquipment,
-    held_rung: RungKey,
+    working: &DepositSource,
+    ground: &Tile,
     carry: &DepositCarry,
 ) -> f32 {
     if workers == NO_CREW_ON_THE_DEPOSIT {
         return NO_TAKE_THIS_TURN;
     }
-    let Some(next) = held_rung.above() else {
+    let Some(next) = working.rung().above() else {
         return NO_TAKE_THIS_TURN;
     };
     let Some(payoff) = ladder.rung(next).extraction_payoff else {
         return NO_TAKE_THIS_TURN;
     };
-    let crew = prospective_deposit_gear(
-        equipment, allocation, target, kit, workers, band_kit, next, carry,
+    let mut raised = working.clone();
+    let (base, width) = deposit_rung_span(next, ladder);
+    raised.set_ladder_position(base + width, ladder, next.branch());
+    raised.upkeep_demanded = None;
+    let keeping = crew_keeping_issue(
+        equipment, band_kit, &raised, ground, config, ladder, workers,
     );
-    deposit_crew_throughput(workers, crew.lift, &payoff)
+    let crew = prospective_deposit_gear(
+        equipment, allocation, target, kit, workers, band_kit, next, carry, &keeping,
+    );
+    let take_hands = (workers as f32
+        - crew_keep_hands(
+            equipment, band_kit, &raised, ground, config, ladder, workers,
+        ))
+    .max(NO_HANDS_ON_THE_DEPOSIT);
+    deposit_crew_throughput(
+        take_hands,
+        crew.lift.of_the_cutters(cutting_share(take_hands, workers)),
+        &payoff,
+    )
 }
 
 /// **NO USEFUL-CUTTERS ANSWER** — a row that is not `extract`, or has no crew pool to price.
@@ -975,16 +1096,26 @@ pub fn deposit_crew_quote(
         _ => crate::components::STRIP_IT_BARE,
     };
     let held_rung = working.rung();
+    let keeping = crew_keeping_issue(
+        equipment, band_kit, working, ground, config, ladder, workers,
+    );
     let crew = prospective_deposit_gear(
-        equipment, allocation, target, kit, workers, band_kit, held_rung, carry,
+        equipment, allocation, target, kit, workers, band_kit, held_rung, carry, &keeping,
     );
     let capacity = tile_deposit_capacity(config, &working.material, ground);
     let regrowth_rate = tile_deposit_regrowth(config, &working.material, ground);
     let payoff = deposit_payoff(working.standing(), ladder);
+    // **The crew keeps the working first** (`docs/plan_site_crews.md` §2.5) and cuts with the rest,
+    // exactly as the turn does.
+    let take_hands = (workers as f32
+        - crew_keep_hands(
+            equipment, band_kit, working, ground, config, ladder, workers,
+        ))
+    .max(NO_HANDS_ON_THE_DEPOSIT);
     DepositCrewQuote {
         take: deposit_take(
-            workers,
-            crew.lift,
+            take_hands,
+            crew.lift.of_the_cutters(cutting_share(take_hands, workers)),
             working.stock,
             capacity,
             regrowth_rate,
@@ -993,7 +1124,8 @@ pub fn deposit_crew_quote(
         ),
         armed_workers: crew.kit_workers_holding,
         next_rung_take: next_rung_take_for(
-            equipment, ladder, allocation, target, kit, workers, band_kit, held_rung, carry,
+            equipment, ladder, config, allocation, target, kit, workers, band_kit, working, ground,
+            carry,
         ),
     }
 }
@@ -1002,14 +1134,14 @@ pub fn deposit_crew_quote(
 /// [`deposit_take`]: `min(workers × yield_per_worker_turn + lift.tools, lift.carry)`, the cut capped
 /// by what the crew can carry off. Read by the take, by [`deposit_take_overdraws`]' ability half and
 /// by the row's staffing inversion, so the three agree on one throughput.
-pub fn deposit_crew_throughput(workers: u32, lift: CrewLift, payoff: &RungExtractionPayoff) -> f32 {
+pub fn deposit_crew_throughput(workers: f32, lift: CrewLift, payoff: &RungExtractionPayoff) -> f32 {
     deposit_cut_rate(workers, lift.tools, payoff).min(lift.carry.max(DEPOSIT_EMPTY))
 }
 
 /// **THE CUT BEFORE THE CARRY** — `workers × yield_per_worker_turn + tools`, the hands' and tools'
 /// rate alone; [`deposit_geared_units`] splits it between holders and bare hands.
-fn deposit_cut_rate(workers: u32, tools: f32, payoff: &RungExtractionPayoff) -> f32 {
-    workers as f32 * payoff.yield_per_worker_turn + tools.max(NO_DEPOSIT_GEAR)
+fn deposit_cut_rate(workers: f32, tools: f32, payoff: &RungExtractionPayoff) -> f32 {
+    workers * payoff.yield_per_worker_turn + tools.max(NO_DEPOSIT_GEAR)
 }
 
 /// **THE UNITS OF THIS TAKE THE TOOL-HOLDERS CUT** — what
@@ -1025,7 +1157,7 @@ fn deposit_cut_rate(workers: u32, tools: f32, payoff: &RungExtractionPayoff) -> 
 /// [`WearQuantum::Strike`]: crate::equipment_config::WearQuantum::Strike
 pub fn deposit_geared_units(
     taken: f32,
-    workers: u32,
+    workers: f32,
     equipped_workers: f32,
     gear_take: f32,
     payoff: &RungExtractionPayoff,
@@ -1034,7 +1166,7 @@ pub fn deposit_geared_units(
     if labor <= DEPOSIT_EMPTY || taken <= DEPOSIT_EMPTY {
         return DEPOSIT_EMPTY;
     }
-    let equipped_labor = equipped_workers.clamp(0.0, workers as f32) * payoff.yield_per_worker_turn
+    let equipped_labor = equipped_workers.clamp(0.0, workers) * payoff.yield_per_worker_turn
         + gear_take.max(NO_DEPOSIT_GEAR);
     taken * (equipped_labor / labor).min(WHOLE_TAKE)
 }
@@ -1289,7 +1421,7 @@ pub fn deposit_sustainable_take(
 #[allow(clippy::too_many_arguments)] // the take's own inputs, plus the ground and the two configs
 pub fn deposit_take_overdraws(
     source: &DepositSource,
-    workers: u32,
+    workers: f32,
     lift: CrewLift,
     stock: f32,
     escapement: f32,
@@ -1480,7 +1612,7 @@ pub struct DepositTake {
 /// than before.
 pub fn take_from_deposit(
     source: &mut DepositSource,
-    workers: u32,
+    workers: f32,
     // **What the crew's tools add and what it can carry off** ([`CrewLift`]) — struck by the caller
     // off the crew's own coverage, because the kit and the ledger are the band's and not the
     // deposit's.
@@ -1521,7 +1653,7 @@ pub fn take_from_deposit(
     // nothing and is nonetheless working the deposit at the floor it was sent with — that is the
     // dial doing its job — so a `taken > 0` guard would drop the one stamp the escapement lever
     // exists to make.
-    if workers > NO_CREW_ON_THE_DEPOSIT {
+    if workers > NO_HANDS_ON_THE_DEPOSIT {
         source.note_escapement_floor(escapement);
     }
     // **The turn's take, accumulated across the bands cutting this working** — the wire's
@@ -1626,7 +1758,7 @@ impl DepositProjection {
     /// growing. `lift` is [`take_from_deposit`]'s own term.
     pub fn step(
         &mut self,
-        workers: u32,
+        workers: f32,
         lift: CrewLift,
         floor: f32,
         ground: &Tile,
@@ -1659,7 +1791,7 @@ impl DepositProjection {
 #[allow(clippy::too_many_arguments)] // the take's full context
 pub fn project_realized_deposit(
     working: &DepositSource,
-    workers: u32,
+    workers: f32,
     lift: CrewLift,
     floor: f32,
     ground: &Tile,
@@ -1715,7 +1847,7 @@ pub fn project_realized_deposit(
 /// must decay.
 ///
 /// **It stamps rather than paying**, and the payment is a whole stage later
-/// (`systems::settle_bands_extraction`, inside the labour pass, because the head count it divides is
+/// (the `Extract` arm's keeping, inside the labour pass, because the head count it divides is
 /// the one the shedding order left). Logistics runs before Population, so the stamp this pass writes
 /// is the bill that turn's keepers pay against, and the next Logistics pass judges that pair.
 pub fn advance_deposits(
@@ -1766,6 +1898,8 @@ pub fn advance_deposits(
         // clear **together**, which is what makes *"live-queued and still cleared"* mean *"queued
         // since the last pass"*.
         source.upkeep_supplied = NO_UPKEEP_DEMAND;
+        source.upkeep_hands = NO_HANDS_ON_THE_DEPOSIT;
+        source.upkeep_tools_short = false;
         source.last_take = NO_TAKE_THIS_TURN;
         source.last_floor = NOBODY_ASKED_FOR_A_FLOOR;
         source.build_blocked_reason = BuildGate::Open;
@@ -1902,7 +2036,7 @@ mod tests {
         );
         assert_eq!(
             deposit_take(
-                1000,
+                1000.0,
                 CrewLift::tools_only(NO_DEPOSIT_GEAR),
                 A_ROCK_BODY,
                 A_ROCK_BODY,
@@ -1926,7 +2060,7 @@ mod tests {
         let mut previous = stock;
         for _ in 0..20 {
             let taken = deposit_take(
-                10,
+                10.0,
                 CrewLift::tools_only(NO_DEPOSIT_GEAR),
                 stock,
                 capacity,
@@ -2124,7 +2258,7 @@ mod tests {
         for turn in 0..60 {
             stock = deposit_regrowth(stock, CAPACITY, RATE, A_SEED);
             let taken = deposit_take(
-                CREW,
+                CREW as f32,
                 CrewLift::tools_only(NO_DEPOSIT_GEAR),
                 stock,
                 CAPACITY,
@@ -2168,7 +2302,7 @@ mod tests {
         assert_eq!(deposit_floor(A_ROCK_BODY, &none), A_ROCK_BODY);
         assert_eq!(
             deposit_take(
-                50,
+                50.0,
                 CrewLift::tools_only(NO_DEPOSIT_GEAR),
                 A_ROCK_BODY,
                 A_ROCK_BODY,
@@ -2198,7 +2332,7 @@ mod tests {
         let mut total = 0.0;
         for _ in 0..4 {
             let taken = deposit_take(
-                5,
+                5.0,
                 CrewLift::tools_only(NO_DEPOSIT_GEAR),
                 stock,
                 capacity,
@@ -2233,7 +2367,7 @@ mod tests {
         let felling = payoff(2.0, WHOLE_DEPOSIT_REACHED, REGROWTH_UNCHANGED);
         let capacity = 600.0;
         let bare = deposit_take(
-            CREW,
+            CREW as f32,
             CrewLift::tools_only(NO_DEPOSIT_GEAR),
             capacity,
             capacity,
@@ -2247,7 +2381,7 @@ mod tests {
             "zero gear is the bare take, unchanged"
         );
         let geared = deposit_take(
-            CREW,
+            CREW as f32,
             CrewLift::tools_only(TWO_AXES),
             capacity,
             capacity,
@@ -2276,7 +2410,7 @@ mod tests {
         );
         assert_eq!(
             deposit_take(
-                CREW,
+                CREW as f32,
                 CrewLift::tools_only(TWO_AXES),
                 thin_stock,
                 capacity,
@@ -2300,14 +2434,15 @@ mod tests {
         let felling = payoff(2.0, WHOLE_DEPOSIT_REACHED, REGROWTH_UNCHANGED);
         let bare_labor = CREW as f32 * felling.yield_per_worker_turn;
         assert_eq!(
-            deposit_geared_units(bare_labor, CREW, 0.0, NO_DEPOSIT_GEAR, &felling),
+            deposit_geared_units(bare_labor, CREW as f32, 0.0, NO_DEPOSIT_GEAR, &felling),
             DEPOSIT_EMPTY,
             "a crew holding nothing wears nothing"
         );
         let full_gear = CREW as f32 * AXE;
         let full_take = bare_labor + full_gear;
         assert!(
-            (deposit_geared_units(full_take, CREW, CREW as f32, full_gear, &felling) - full_take)
+            (deposit_geared_units(full_take, CREW as f32, CREW as f32, full_gear, &felling)
+                - full_take)
                 .abs()
                 < 1e-5,
             "a fully equipped crew is billed the whole take"
@@ -2315,12 +2450,12 @@ mod tests {
         // Two of four hold an axe: they lift 2 × (2.0 + 1.0) = 6 of the crew's 8 + 2 = 10.
         let half_gear = 2.0 * AXE;
         let half_take = bare_labor + half_gear;
-        let billed = deposit_geared_units(half_take, CREW, 2.0, half_gear, &felling);
+        let billed = deposit_geared_units(half_take, CREW as f32, 2.0, half_gear, &felling);
         assert!(
             (billed - 6.0).abs() < 1e-5,
             "the holders' share of the throughput: {billed}"
         );
-        let capped = deposit_geared_units(half_take / 2.0, CREW, 2.0, half_gear, &felling);
+        let capped = deposit_geared_units(half_take / 2.0, CREW as f32, 2.0, half_gear, &felling);
         assert!(
             (capped - billed / 2.0).abs() < 1e-5,
             "a capped take bills the same share of what was actually cut: {capped}"
