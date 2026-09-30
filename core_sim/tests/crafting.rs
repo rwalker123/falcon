@@ -662,7 +662,7 @@ const FIXTURE_MATERIALS: &str = r#"{
     { "name": "poor", "from": 0.0 }, { "name": "good", "from": 0.5 }
   ],
   "materials": {
-    "ore": { "craft": "tanning", "characteristics": ["hardness", "working_temp"] }
+    "ore": { "craft": "tanning", "characteristics": ["hardness", "working_temp"], "weight": 4.0 }
   }
 }"#;
 

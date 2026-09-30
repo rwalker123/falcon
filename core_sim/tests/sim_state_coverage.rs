@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 45] = [
+const SIM_STATE_RESOURCES: [&str; 46] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
@@ -132,6 +132,12 @@ const SIM_STATE_RESOURCES: [&str; 45] = [
     "PowerGridState",
     "HerdTelemetry",
     "CrisisOverlayCache",
+    // **Rebuilt every turn by `balance_supply_networks`, and still not derived** — the four above's
+    // arrangement exactly: `capture_snapshot` publishes it (`supplyNetworkId`, `poolingLinks`,
+    // `supplyNetworkSpanTiles`), and a load publishes its first frame off the restored world with no
+    // turn in between. Filed as derived, that frame drew every band as network 0 with no links. It
+    // rides each band's record (`BandRecord::supply`) because the resource is keyed by `Entity`.
+    "SupplyNetworkMembership",
     // Previous-turn positions, so `calculate_visibility` can sweep the corridor a band crossed.
     "VisibilitySweepTracker",
 ];
@@ -141,7 +147,7 @@ const SIM_STATE_RESOURCES: [&str; 45] = [
 /// The second half is the load-bearing one, and it is why `HerdTelemetry`, `PowerGridState` and
 /// `SimulationMetrics` are not here despite each having a system that rebuilds it: `capture_snapshot`
 /// publishes all three within the same turn. See the comment on them in `SIM_STATE_RESOURCES`.
-const DERIVED_RESOURCES: [(&str, &str); 6] = [
+const DERIVED_RESOURCES: [(&str, &str); 5] = [
     // Filled by `calculate_visibility` (and the expedition comm flush) and drained + cleared by
     // `advance_connections` in the SAME stage, so it is empty at the end of every turn.
     ("ContactsThisTurn", "connections::advance_connections"),
@@ -154,7 +160,6 @@ const DERIVED_RESOURCES: [(&str, &str); 6] = [
     // Written by `balance_supply_networks` and DRAINED by `advance_routes` in the SAME stage, so it
     // is empty at the end of every turn — `ContactsThisTurn`'s shape exactly, one arc over.
     ("RouteTrafficLog", "routes::advance_routes"),
-    ("SupplyNetworkMembership", "balance_supply_networks"),
 ];
 
 /// Written once when the world is built and never again.

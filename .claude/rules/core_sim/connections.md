@@ -138,8 +138,10 @@ stamped — so `decay_all` needs no second copy of the turn's contact set and ca
 ## `ContactsThisTurn` is derived; `ConnectionLedger` is `SimState`
 
 The ledger is persisted state with its own clocks, so it is checkpointed and restored whole. The
-turn's contact set is rebuilt from scratch every turn and is not. Contrast `SupplyNetworkMembership`,
-which is correctly derived; see `checkpoints.md` for why the distinction is load-bearing.
+turn's contact set is rebuilt from scratch every turn and is not — it is drained inside its own
+stage, so nothing publishes it. Contrast `SupplyNetworkMembership`, also rebuilt every turn but
+**published** by the capture and therefore carried per band; see `checkpoints.md` for why the
+distinction is load-bearing.
 
 `ConnectionLedger` and `ContactsThisTurn` are both **`BTreeMap`, not `HashMap`** — the iteration
 order is observed by the snapshot and the checkpoint, so it has to be an order and not an accident.

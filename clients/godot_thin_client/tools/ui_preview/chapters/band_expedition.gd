@@ -830,9 +830,19 @@ func run(harness) -> void:
 			== String(SourceForecast.DENIAL_VERDICTS[
 				SourceForecast.DENIAL_OUTCOME_HORIZON]["line"]) % DENIAL_TARGET_QUARRY)
 
-	# ⛔ States 1k / 1k-sustain (`expedition_launch_policy` / `_sustain`) are RETIRED with the hunt
-	# launch they depicted: the Parties footer offers no Hunt verb any more, a herd past the apron being
-	# an ordinary hunt whose crew posts a work party (`docs/plan_civilization_steps.md` §One work party).
+	# State 1k — an idle band's drawer (the no-dock fallback) scrolled to its FOOT, where the parties
+	# zone ends in the band's verb row (issue #529) rather than the parties footer it replaced. The row
+	# sits below the left dock's fold, so scroll to see it.
+	var launch_band := BandFx.band_fixture()
+	launch_band["idle_workers"] = 12
+	launch_band["labor_assignments"] = []
+	var left_scroll: ScrollContainer = h._hud.left_stack.get_parent() as ScrollContainer
+	h._hud.show_unit_selection(launch_band)
+	await h._settle()
+	left_scroll.scroll_vertical = int(left_scroll.get_v_scroll_bar().max_value)
+	await h._settle()
+	await h._save("expedition_launch_verbs")
+	left_scroll.scroll_vertical = 0
 
 	# State 1a — a well-fed but demoralized band: healthy food (∞) yet morale 0.22
 	# (< critical), so the drawer's Morale line reads a red 22%. Discontent drags
@@ -1856,10 +1866,9 @@ func _expedition_kit_states() -> void:
 	# wrong band measures the wrong thing while looking entirely ordinary.
 	h._hud._bandpanel.render_band(launch_band)
 	await h._settle()
-	# The sheet is staged the way the other harnesses stage a compose form — the mission is already
-	# settled by the footer button that would have opened it, so writing the pair is the whole of it.
-	h._hud._bandpanel._party_compose_open = true
-	h._hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_SCOUT
+	# The sheet is opened the way a player opens it (issue #529): the band selected, then the Scout
+	# verb, and the sheet mounts in the band's own drawer.
+	await _open_scout_sheet(launch_band)
 	h._hud._bandpanel._send_expedition_count = EXPEDITION_KIT_COVERED_PARTY
 	h._hud._bandpanel.rerender()
 	await h._settle()
@@ -1869,7 +1878,10 @@ func _expedition_kit_states() -> void:
 	# sees, then the hint and the send. A party of 2 is inside the band's wayfinding sets, so no
 	# shortfall run renders.
 	await h._save("expedition_kit_ranging")
-	var sheet: Control = h._hud._bandpanel._party_compose_sheet
+	var sheet: Control = _scout_sheet()
+	h._assert_hud("the scout sheet mounts in the band's own drawer",
+		sheet != null and String(sheet.get_meta(HudWidgets.VERB_FORM_META, ""))
+			== HudComposeVocab.COMPOSE_MISSION_SCOUT)
 	h._assert_hud("the scout launch sheet mounts a kit picker at all",
 		Q.find_meta_node(sheet, KitRoster.KIT_PICKER_META) != null)
 	# **THE PICKER OFFERS EVERY `expedition` KIT AND WITHHOLDS NONE.** A scouting party does not know
@@ -1909,7 +1921,7 @@ func _expedition_kit_states() -> void:
 	h._hud._bandpanel.rerender()
 	await h._settle()
 	await h._save("expedition_kit_short")
-	var short_hint := _kit_hint_text(h._hud._bandpanel._party_compose_sheet)
+	var short_hint := _kit_hint_text(_scout_sheet())
 	var expected_shortfall := HudComposeVocab.KIT_SHORTFALL_FORMAT % [
 		EXPEDITION_KIT_SHORTFALL_COVERED, EXPEDITION_KIT_SHORT_PARTY,
 		BandFx.KIT_RANGING_DISPLAY_NAME + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
@@ -1927,7 +1939,7 @@ func _expedition_kit_states() -> void:
 	h._hud._bandpanel.rerender()
 	await h._settle()
 	await h._save("expedition_kit_none")
-	var bare_hint := _kit_hint_text(h._hud._bandpanel._party_compose_sheet)
+	var bare_hint := _kit_hint_text(_scout_sheet())
 	h._assert_hud("the null kit reads bare-handed on BOTH paths — \"%s\"" % bare_hint,
 		bare_hint.contains(HudComposeVocab.KIT_EXPEDITION_HUNT_BARE)
 		and bare_hint.contains(HudComposeVocab.KIT_EXPEDITION_HAUL_BARE)
@@ -1941,28 +1953,23 @@ func _expedition_kit_states() -> void:
 			_expedition_sight_clause(BandFx.KIT_EXPEDITION_SIGHT_EQUIPPED)))
 
 	# **AND THE PICK REACHES THE COMMAND — PNG-LESS, because a tail is not a picture.** The send is
-	# driven through the REAL path (the sheet's confirm arms the targeting; the targeting's tile click
-	# builds the payload), so this covers the whole carry rather than a hand-built dictionary. The
+	# driven through the REAL path (the sheet's send arming the pick, then the click on the tile), so
+	# this covers the whole carry rather than a hand-built dictionary. The
 	# PAIR is the claim: the null pick emits the tail, and the DEFAULT pick emits none — a builder
 	# that always appended satisfies the first alone, and one that never did satisfies the second.
 	var bare_line := _expedition_command_line()
 	h._assert_hud("a non-default kit rides the command — \"%s\"" % bare_line,
 		bare_line.ends_with(" kit %s" % BandFx.KIT_ID_NONE))
-	h._hud._bandpanel._party_compose_open = true
-	h._hud._bandpanel._party_compose_mission = HudComposeVocab.COMPOSE_MISSION_SCOUT
 	h._hud._bandpanel._role_kit_ids[h._hud._bandpanel._role_kit_key(launch_band,
 		KitRoster.JOB_EXPEDITION)] = BandFx.KIT_DEFAULT_EXPEDITION
-	h._hud._bandpanel.rerender()
-	await h._settle()
+	await _open_scout_sheet(launch_band)
 	var default_line := _expedition_command_line()
 	h._assert_hud("…and the job default omits it, so the sim resolves its own — \"%s\"" % default_line,
 		not default_line.contains(" kit "))
 
 	# Release the dock and hand the reference band back — a stranded reserved edge moves every frame
 	# in the chapters after this one, and the compose sheet is shared HUD state.
-	h._hud._bandpanel._party_compose_open = false
-	h._hud._bandpanel._party_compose_mission = ""
-	h._hud._bandpanel._send_expedition_count = HudConst.WORKER_STEP
+	h._hud._bandpanel.close_verb_form()
 	h._hud.set_band_city_panel(null)
 	panel.queue_free()
 	h._hud._band_labor._player_bands = []
@@ -2028,13 +2035,13 @@ func _render_foreign_beside_own_state() -> void:
 		Readout.detail_excerpt(drawer, HudDisclosureVocab.DETAIL_ROW_MORALE)
 			== Readout.DETAIL_EXCERPT_ABSENT)
 
-	# …and nothing of OURS is offered on it. `Move` is the drawer's one band order, and the allocation
+	# …and nothing of OURS is offered on it. The verb row is the drawer's band orders, and the allocation
 	# host is what carries it — a card that merely rendered no ROWS would satisfy every claim above
 	# while still handing the player a button that names somebody else's people.
 	#
 	# ⛔ **THE CLAIM IS THE HOST'S VISIBILITY, NOT THE BUTTON'S ABSENCE FROM THE TREE.**
 	# `_render_occupant_drawer` hides the host for a foreign band rather than emptying it, so the
-	# PREVIOUS state's Move button is still parented under it and a `find_button_by_text` walk finds
+	# PREVIOUS state's verb row is still parented under it and a tree walk finds
 	# one on every frame in the chapter. Asking the node whether it is drawn is the honest question,
 	# and the paired positive below is what stops it passing on a host that never shows at all.
 	h._assert_hud("no band orders are offered on a band that is not ours",
@@ -2051,10 +2058,9 @@ func _render_foreign_beside_own_state() -> void:
 			!= Readout.DETAIL_EXCERPT_ABSENT
 		and Readout.detail_excerpt(own_drawer, HudDisclosureVocab.DETAIL_ROW_MORALE)
 			!= Readout.DETAIL_EXCERPT_ABSENT)
-	h._assert_hud("…and its own Move order is offered, so the host really does show for OUR bands",
+	h._assert_hud("…and its own verb row is offered, so the host really does show for OUR bands",
 		h._hud.allocation_panel.visible
-		and Q.find_button_by_text(h._hud.allocation_panel,
-			HudSelectionVocab.MOVE_BAND_BUTTON_TEXT) != null)
+		and Q.find_meta_node(h._hud.allocation_panel, HudWidgets.VERB_BUTTON_META) != null)
 
 	h._hud.clear_selection()
 	await h._settle()
@@ -2107,22 +2113,39 @@ func _kit_hint_text(surface: Node) -> String:
 		return (node as Label).text
 	return ""
 
-## Press the scout sheet's confirm, click a destination, and return the command line `Main` built for
-## it — the whole emit path, driven the way a player drives it. `""` if any leg of it went missing,
-## which fails the claim rather than passing it quietly.
+## Open the Scout verb's sheet for `band` the way a player does: the band selected on its own hex (the
+## map's `unit_selected` hop, which this harness has no map to make), then the verb — the sheet mounts
+## in that band's drawer.
+func _open_scout_sheet(band: Dictionary) -> void:
+	var selected := band.duplicate(true)
+	var tile := SourceForecast.band_tile(band)
+	selected["tile_info"] = {"x": tile.x, "y": tile.y, "visibility_state": "active"}
+	h._hud.show_unit_selection(selected)
+	h._hud._bandpanel.dispatch_verb(HudComposeVocab.COMPOSE_MISSION_SCOUT, band)
+	await h._settle()
+
+## Press the scout sheet's send — which arms the tile pick — then click the target, and return the
+## command line `Main` built for it: the whole emit path, driven the way a player drives it. `""` if any
+## leg of it went missing, which fails the claim rather than passing it quietly.
+
+## The Scout sheet as mounted in the band's drawer, or `null`.
+func _scout_sheet() -> Control:
+	return Q.find_meta_node(h._hud.allocation_panel, HudWidgets.VERB_FORM_META) as Control
+
 func _expedition_command_line() -> String:
-	var confirm := Q.find_meta_node(h._hud._bandpanel._party_compose_sheet,
+	var confirm := Q.find_meta_node(_scout_sheet(),
 		HudWidgets.SEND_EXPEDITION_CONFIRM_META) as Button
 	if confirm == null:
 		return ""
 	# ⛔ **THE WITNESS IS A CONTAINER, NEVER A LOCAL.** A GDScript lambda captures a local by VALUE, so
 	# a closure assigning to a `String` here reports that nothing was ever emitted — the harness trap
-	# `chapters/trade.gd`'s destination pick already cost a run over.
+	# cost a run before.
 	var caught: Array[String] = []
 	var record := func(payload: Dictionary) -> void:
 		caught.append(String(MAIN_SCRIPT.format_send_expedition(payload).get("line", "")))
 	h._hud.send_expedition_requested.connect(record)
 	confirm.pressed.emit()
-	h._hud._targeting.try_dispatch({"x": EXPEDITION_KIT_TARGET_X, "y": EXPEDITION_KIT_TARGET_Y})
+	h._hud.notify_targeting_click({"x": EXPEDITION_KIT_TARGET_X, "y": EXPEDITION_KIT_TARGET_Y,
+		"visibility_state": "active"})
 	h._hud.send_expedition_requested.disconnect(record)
 	return caught[0] if not caught.is_empty() else ""

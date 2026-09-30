@@ -354,10 +354,11 @@ fn a_revision_that_would_strand_an_onward_take_is_refused() {
     let last_band = split.band;
     let last = entity_for_band(&mut app, last_band);
 
-    let onward = standing_take(&app, last_band)
-        .get(SPEARS)
-        .copied()
-        .unwrap_or_default();
+    // The third band's default take is kit-denominated off the middle band's six spears and six
+    // sleds, and more than one roster kit carries a sled — so the onward take can hold more sleds
+    // than spears. The floor is per ITEM: whatever went onward of each item.
+    let onward_take = standing_take(&app, last_band);
+    let onward = onward_take.get(SPEARS).copied().unwrap_or_default();
     assert!(
         onward > 0,
         "**LIVENESS**: the third band must have taken something, or the refusal below is vacuous"
@@ -374,14 +375,17 @@ fn a_revision_that_would_strand_an_onward_take_is_refused() {
     )
     .expect_err("a revision below the onward take must be refused");
     // Same reason as above: `big_game` moves a spear and a sled together, so both lines strand and
-    // the walk names whichever sorts first.
+    // the walk names whichever sorts first. Either way the refusal quotes what the revision asked of
+    // THAT item (one of each per kit, so `onward - 1`) against what went onward of THAT item.
     assert!(
         matches!(
             reason,
             LoadoutRejection::OnwardTakeStranded { ref id, asked, onward: stranded, .. }
-                if (id == SLED || id == SPEARS) && asked == onward - 1 && stranded == onward
+                if (id == SLED || id == SPEARS)
+                    && asked == onward - 1
+                    && Some(&stranded) == onward_take.get(id.as_str())
         ),
-        "got {reason:?}"
+        "got {reason:?} against an onward take of {onward_take:?}"
     );
     assert_eq!(
         ledger_of(&app, middle),
@@ -390,25 +394,31 @@ fn a_revision_that_would_strand_an_onward_take_is_refused() {
     );
 
     // **And a revision that clears the onward take is accepted**, so the refusal above is a rule
-    // about the floor and not a blanket ban on revising a band that has split.
-    apply_starting_loadout(
-        &mut app.world,
-        PLAYER,
-        middle_band,
-        &kits(&[(BIG_GAME, onward)]),
-        &[],
-    )
-    .expect("a take exactly at the onward floor is honoured");
-    assert_eq!(
-        count_of(&app, middle, SPEARS),
-        0,
-        "everything it still holds went onward, which is what the floor describes"
-    );
-    assert_eq!(
-        count_of(&app, last, SPEARS),
-        onward,
-        "and the third band keeps its take"
-    );
+    // about the floor and not a blanket ban on revising a band that has split. The revision that
+    // sits exactly on the floor is the third band's own kit manifest: it expands to precisely what
+    // went onward, item by item.
+    let onward_kits = app
+        .world
+        .resource::<StartingLoadout>()
+        .window(last_band)
+        .expect("the third band has a window")
+        .kits
+        .clone();
+    apply_starting_loadout(&mut app.world, PLAYER, middle_band, &onward_kits, &[])
+        .expect("a take exactly at the onward floor is honoured");
+    for (item, went_onward) in &onward_take {
+        assert_eq!(
+            count_of(&app, middle, item),
+            0,
+            "'{item}': everything the middle band still holds went onward, which is what the \
+             floor describes"
+        );
+        assert_eq!(
+            count_of(&app, last, item),
+            *went_onward,
+            "'{item}': and the third band keeps its take"
+        );
+    }
     let _ = parent;
 }
 

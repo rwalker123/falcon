@@ -2225,7 +2225,7 @@ table LaborAssignment {
   // --- THE WORK PARTY, AS A CARAVAN (appended last, append-only) ------------------------------
   // *** WHERE THIS ROW'S WORKERS ARE STANDING, WHEN IT IS NOT WHERE THE BAND IS. ***
   //
-  // A Hunt or Forage row whose source is past the band's work range posts a work party
+  // A Hunt, Forage or Extract row whose source is past the band's work range posts a work party
   // (docs/plan_civilization_steps.md, "One work party"). It is state on this row, not an entity:
   // the workers never stopped being the band's, and the row that staffed it is the row that
   // reports it.
@@ -2261,7 +2261,23 @@ table LaborAssignment {
   // The caravan stepped forward over labor_config.yield_average_horizon_turns from this state:
   // every pack that lands, per turn - the whole take, delayed by the walk. A near row and a far row are comparable
   // figures on one board. THE TAKE FLOWS HOME, ALWAYS - to the band that owns this row.
+  // IN THE ROW'S CARGO UNITS: food on a hunt or forage row, the material's own units on an extract
+  // row (whose far working also posts a party). The row's `kind` says which.
   netRateHome:float = 0;
+  // --- HOW MANY CUTTERS THIS WORKING CAN USE, WITH THIS BAND'S GEAR (appended last, #663) -----
+  // *** THE CREW BEYOND WHICH MORE HANDS CUT NOTHING MORE THIS TURN. *** The plateau of the SAME
+  // curve `DepositCrewTakeQuery` answers - one quote per crew size over this row's crew pool (its
+  // own workers plus the band's idle hands), at the row's stored kit and floor, geared and capped by
+  // the working's reach - read by the same rule the compose sheet reads that curve by
+  // (`curve_useful_cutters`): the smallest crew whose take reaches the curve's best within a 0.1%
+  // tolerance. So the Work board's overstaffed flag and the sheet's `+` stop at one crew, and a band
+  // with axes stops earlier than the bare `room / perWorkerBiomass` quotient.
+  //
+  // == THE POOL when the take is still rising at the last crew (every hand buys take; the client's
+  // CUTTERS_UNCAPPED reading). 1 on a working whose curve pays nothing at any size (CUTTERS_BARREN -
+  // the honest ceiling is one hand, never none). 0 on every non-extract row and on a row with no
+  // crew pool at all. Derived at capture.
+  usefulCutters:uint = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -6118,6 +6134,17 @@ table SubsistenceSection {
   // the rows would reshuffle the whole screen whenever a rung was added — the same defect that made
   // column order unstable before the roster carried it. An area with no domains is never drawn.
   ladderAreas:[string];
+  // --- THE DEPOSIT CREW'S DEFAULT (appended last) -----------------------------------------------
+  // `default_kits.extract` — the JOB-LEVEL fall-back (`none` on the shipped roster), the sixth job
+  // default beside `defaultHuntKitId` ... `defaultExpeditionKitId`, so no reader has to reach into
+  // `equipmentConfigJson` for it. ⛔ A WORKING'S OWN DEFAULT IS `DepositState.defaultKitId`, which
+  // follows the rung the working holds: the tightest-fitting offered kit
+  // (`EquipmentConfig::deposit_kit_for(branch, rung)`) — `sledding` on deadfall and gathering,
+  // `woodcutting` on felling and coppice, `stonework` on the quarry. This field is the job-level
+  // fall-back that derivation uses when no offered kit is a unique tightest fit, the way
+  // `defaultHuntKitId` stands behind a herd's own `defaultKitId`. Never empty: it always names a
+  // real roster entry.
+  defaultExtractKitId:string;
 }
 
 table KnowledgeSection {
@@ -6586,9 +6613,9 @@ table DepositState {
   //   clearItNow(floor)  = ceil(reachable        / perWorkerBiomass)
   //   holdItAfter(floor) = ceil(regrowthAt(floor) / perWorkerBiomass)
   //
-  // There is no seasonal weight and no TAKE kit on either deposit branch (the two quarry tools
-  // declare `build_work`, which lands on the pool that RAISES a working), so unlike a patch's this
-  // is the rung's rate flat and is never 0 on a live rung.
+  // There is no seasonal weight, and this is a SOURCE row with no band behind it, so it is the
+  // rung's BARE rate flat and is never 0 on a live rung. A crew's take tools add `deposit_take` per
+  // equipped worker ON TOP of it (#663) - the axe on felling/coppice, the wedges on the quarry.
   perWorkerBiomass:float = 0;
   // This deposit's OWN per-turn regrowth, sampled across its capacity - the third curve on the wire
   // beside ForagePatchState.regrowthSamples and HerdTelemetryState.regrowthSamples, on the same
@@ -6603,6 +6630,28 @@ table DepositState {
   // rather than the herd curve's, and the seeded reading inside the growth term is what lets a wood
   // cut clean come back while leaving rock at zero.
   regrowthSamples:[float];
+
+  // --- THE WORKING'S DEFAULT TAKE KIT (appended, issue #663) -------------------------------------
+  // THE `extract` KIT A CREW ON THIS WORKING IS SENT WITH WHEN THE COMMAND NAMES NONE - the id the
+  // picker marks "(default)". DERIVED, not authored (`EquipmentConfig::deposit_kit_for`): the
+  // TIGHTEST offered kit for the rung the working HOLDS - of the kits in `offeredKitIds` with an
+  // item whose `deposit_take` names that rung, the one carrying the fewest items that do not. So
+  // "sledding" on deadfall and gathering, "woodcutting" on felling and coppice, "stonework" on the
+  // quarry: it follows the held rung as a herd's default follows its quarry. A row keeps the kit
+  // it was sent with when its working climbs. `default_kits.extract` ("none") only where no single
+  // kit holds the tightest fit.
+  //
+  // *** IT IS THE KIT THE SIM WILL USE. *** `assign_labor extract` with no `kit` token stores this
+  // same id on the row (extraction::working_default_kit is the one function), so the compose
+  // sheet's default and the kit the turn prices the crew with cannot disagree.
+  defaultKitId:string;
+  // --- THE KITS A CREW ON THIS WORKING MAY BE SENT WITH (appended) --------------------------------
+  // Every `extract` kit whose items EACH declare `deposit_take` on this working's branch, in roster
+  // order (`extraction::working_offered_kits` -> `EquipmentConfig::deposit_kits_for`): a wood offers
+  // "sledding" and "woodcutting", a stone working "sledding" and "stonework". The picker lists
+  // exactly these beside the job's itemless `none`; `defaultKitId` is always one of them or "none".
+  // DERIVED from the roster, never authored - a new take kit appears here with no schema change.
+  offeredKitIds:[string];
 }
 
 // --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------

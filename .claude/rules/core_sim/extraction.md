@@ -94,7 +94,7 @@ Population — once per BAND ROW on it (the `Extract` arm)
   rung      = (1 − recovery_fraction(position)) × capacity
   floor     = if regrowth_rate(terrain) > 0 { max(rung, escapement × capacity) } else { rung }
   reachable = max(0, stock − floor)
-  take      = min(workers × yield_per_worker_turn(position), reachable)
+  take      = min(workers × yield_per_worker_turn(position) + gear_take, reachable)
   stock    -= take
 ```
 
@@ -111,8 +111,10 @@ Population — once per BAND ROW on it (the `Extract` arm)
   inversion. `SourceYield::workers_needed` is
   `systems::workers_needed_for_take(take, yield_per_worker_turn(position), workers)` — the very
   function the Forage arm and both Hunt arms invert their take with, so the deposit web cannot come
-  to disagree with the plant web about one arithmetic. The throughput term is the rung's
-  interpolated `yield_per_worker_turn`, which is the rate the take's own labor cap is struck at, so
+  to disagree with the plant web about one arithmetic. The throughput term is the crew's **mean**
+  per-worker rate — the rung's interpolated `yield_per_worker_turn` plus the crew's `gear_take`
+  spread over its head count, the plant web's reading of a partly-basketed crew — which is the rate
+  the take's own labor cap is struck at, so
   a crew cutting a stand already drawn down to its composed floor reports the hands that carried the
   whole take and leaves the rest named as bringing nothing home. **`0` still means UNKNOWN** and the
   client prints no note at it: `validate` requires a positive, finite `yield_per_worker_turn` on
@@ -129,6 +131,10 @@ Population — once per BAND ROW on it (the `Extract` arm)
   generic material, and the batch merge is the one every other arrival uses. It is reported through
   the row's `SourceYield::materials`, which is the producer the band's income map and the material
   shortfall Alert both read.
+- **A far working's take walks home.** Past `band_work_range` the row posts a work party, the take
+  is priced at the hands at the deposit, and what is deposited this turn is what the porters land —
+  nothing while the party walks out. `outcome.taken` still draws the stock down the turn it is cut.
+  See `work-party.md` → "The deposit web: the cargo is the material".
 - **A shared working is drawn down SEQUENTIALLY** and needs no divider. Each band's row takes from
   the stock it actually finds, so the takes cannot sum past what the rung could reach — which is how
   `forage_take` divides a patch two bands gather.
@@ -410,12 +416,135 @@ start** — and a band spawns owning nothing (`equipment.json`'s `start_stock_fr
 `materials.json`'s own argument for `hand_working`: a bare-handed rate refuses nothing, where a zero
 would be a refusal branch the sim does not have.
 
-**There is no kit term in the take at all.** The shipped roster declares no *take* gear on either
-branch — forestry deliberately (§9: its natural tool is an axe, and a bone-hafted axe while stone
-tools are out of scope is a roster question left open), extraction because its two tools declare
-`build_work`, which lands on the pool that *raises* a working. `KitJob::Extraction` exists as the
-seam the day a felling axe declares a take stat, with `default_kits.extract: "none"` — the same
-opening `roadwork` has.
+**The take's kit term is an ADDITION above that bare rate, and it is bound off both floors.**
+`EquipmentStat::DepositTake` (`deposit_take`) is the extra units one **equipped** worker cuts per
+turn, `build_work`'s shape exactly: summed over the crew through the row's own coverage
+(`EquipmentConfig::deposit_gear` → `gear_take`) and added to `workers × yield_per_worker_turn` in
+`extraction::deposit_take` — never a replacement rate, because the bare rate is interpolated per
+rung and an absolute gear rate would erase the climb, and never a change to the reach. It carries a
+**required** `branch` and an optional `rung` (`EquipmentStat::is_rung_scoped`, filtered on
+`EquipmentEffect::serves_build`), and the shipped tools bind to the rungs above the floors only:
+
+| item | tier | `deposit_take` on | also |
+|---|---|---|---|
+| `axe` | `flint` only (no bone tier — §9's *"sits oddly"*) | `forestry:felling`, `forestry:coppice` — **not** `deadfall` | `build_work` 0.5 on `forestry`, so the builders and the quarrywork keepers on a forestry working are geared through `pool_toe` |
+| `wedges` | `flint` only | `extraction:quarry` — **not** `gathering` | — |
+| `sled` | `plain` (the hunt's own sled) | **+0.3** on `forestry:deadfall`, **+0.4** on `extraction:gathering` — the floors' only tool, costing hide and fibre and no wood | its hunt `hunt_carry`, unchanged; shared with `big_game`/`trapping`/`ranging` and the three take kits through the per-item ration |
+
+**Three take kits — `sledding` (sled), `woodcutting` (sled + axe) and `stonework` (sled + wedges) —
+each claimed whole, like every job's kit.** The sled's `deposit_take` names the floors (+0.3 on
+`deadfall`, +0.4 on `gathering`), costing no wood, so the floors stay bare-workable; the axe's and
+the wedges' name the rungs above. **The floors take the Sled kit because deadfall is picked up and
+loose stone is gathered**: nobody cuts on them, so an axe or wedges would go out with the crew and
+lift nothing.
+
+- **A working OFFERS every kit whose items each declare a `deposit_take` on its branch**
+  (`extraction::working_offered_kits` → `EquipmentConfig::deposit_kits_for`): a wood offers
+  `sledding` and `woodcutting`, a stone working `sledding` and `stonework`. A kit carrying a tool
+  that does nothing on the branch is not offered.
+- **The DEFAULT follows the held rung**, the way a herd's default follows its quarry
+  (`extraction::working_default_kit` → `EquipmentConfig::deposit_kit_for`): of the offered kits
+  with an item serving the held rung, the one carrying the fewest items that do not. So `sledding`
+  on `deadfall` and `gathering`, `woodcutting` on `felling` and `coppice`, `stonework` on `quarry`.
+  A tie between two kits falls back to `default_kits.extract`.
+- **The row keeps the kit it was sent with.** The kit is stored on the row at assignment, so a
+  working that climbs does not re-kit its crew; the player re-sends the row to change it.
+
+A row claims every item its kit uses wherever it works — through the one claim / coverage / budget
+path a hunt row's kit goes through (`LaborAllocation::item_budget`, `kitWorkersHolding`) — and each
+tool's `deposit_take` applies on the rungs it names, which is ordinary effect resolution.
+`extraction::working_default_kit` is the one function behind the kit `assign_labor extract` stores
+when the command names none, the seed, and `DepositState.defaultKitId`; `working_offered_kits` is
+behind `DepositState.offeredKitIds`. `default_kits.extract` and `default_kits.quarrywork` are both
+`none`. See `equipment.md` → "The take axis".
+
+**The useful-crew cap is on the row** — `LaborAssignment.usefulCutters`
+(`extraction::useful_cutters`): the plateau of the deposit crew curve over the row's crew pool (its
+workers plus the band's idle hands) at the row's own kit and floor, read by the compose sheet's own
+rule (`HudDepositVocab.curve_useful_cutters` — the smallest crew whose take reaches the curve's best
+within `0.1%`; the pool while still rising; `1` where the curve pays nothing; `0` off an extract
+row). So the Work board's overstaffed flag and the sheet's `+` stop at one crew, and a band with axes
+stops before the bare `room ÷ perWorkerBiomass` quotient. Pinned by
+`server::tests::useful_cutters_is_the_sheet_curves_plateau_and_gear_lowers_it`. The next rung's
+geared cut is the crew curve's `next_rung_take` alone; no committed-row field carries it.
+
+**One seam, three readers.** `take_from_deposit` (the turn), `server::seed_source_yield`'s `Extract`
+arm and `deposit_take_overdraws`' ability half all read the crew's lift — the tools' `deposit_take`
+through `deposit_gear` at the rung the working **holds** (`standing.held`), and the crew's carry —
+as one `extraction::CrewLift`, so the seed, the take and the ⚠ agree. Pinned by
+`server::tests::a_deposit_crew_with_axes_is_seeded_the_cut_the_turn_pays` and, through the shipped
+turn, `extraction::a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes`. **The
+turn reads the rung before this turn's build**: a working raised mid-walk is cut at its old rung's
+tool effects that turn and its new rung's the next.
+
+**THE CUT IS CAPPED BY WHAT THE CREW CAN CARRY, LIKE A HUNT.** `extraction::deposit_crew_throughput`
+is `min(workers × yield_per_worker_turn + tools, carry)`, where `carry` is the crew's
+coverage-weighted haul — the hunt's own `hunt_carry` resolution (bare
+`labor.hunt.per_worker_biomass_capacity` 12, the sled 40) over the same coverage a hunt row's is —
+times its head count, over the material's `weight` (`extraction::DepositCarry`). A hunt's kill is
+bounded by what its hunters can haul; a cut is bounded the same way, near or far, so a sledded crew
+cuts more of a heavy material than a bare one. The turn reads the carry its hunt arm already
+computed for the row (`hunt_per_worker_biomass`), the seed, the crew curve and the work-party query
+read it off the same coverage through `DepositCarry::lift`. Pinned by
+`work_party_caravan::a_local_extract_take_is_capped_by_carry_over_weight`. **The sled is charged
+`biomass_hauled` on every extract take** (units × weight), against the row's kit, the hunt's own
+haul quantum.
+
+### The compose sheet asks a crew curve BEFORE the commit — `DepositCrewTakeQuery`
+
+Every figure on the deposit compose sheet is read before the player presses Cut, so it cannot come
+off the committed row's `materialYield` / `kitWorkersHolding` alone.
+`QueryPayload::DepositCrewTake` (proto `QueryCommand.deposit_crew_take = 8`, answered on
+`QueryReplyEnvelope.deposit_crew_take = 11`) asks it the hunt curve's way: band, `(x, y, material)`,
+the sheet's `kit_id` (`none` included; a kit not listing `extract` is `kit_wrong_job`), `floor` and
+`max_workers`, and answers one `DepositCrewTakeRow` per crew size — `take` (this turn's cut at the
+held rung, geared, carry-capped and reach-capped), `armed_workers` (the crew's whole-kit count) and
+`next_rung_take` (the cut once raised) — plus the `held_rung` / `next_rung` it priced and `in_range`.
+
+**One model, not a second.** Each row is `extraction::deposit_crew_quote`: the crew is a
+**prospective row** (`extraction::prospective_deposit_gear` — the whole kit, the band's other rows
+beside it, less the pools' issue, and the crew's carry off the same coverage), the take runs through
+`deposit_take` at the working as
+the next turn finds it (renewed on a clone, the seed's rule; an unopened working derived from
+`DepositSource::opening`), and the next rung through `next_rung_take_for`. So committing crew `n`
+with kit `k` pays row
+`n`'s `take`: `server::tests::the_deposit_crew_curve_is_what_the_turn_pays` (felling with axes and
+idle sleds, an unopened deadfall with sleds, and `none`) and
+`::the_deposit_crew_curves_next_rung_is_what_the_turn_pays_once_raised`. It is seat-gated like the
+hunt curve (`querying_faction`), refuses a bad band, kit, floor, crew or material by token
+(`::a_deposit_crew_ask_is_refused_field_by_field`; ground holding none of the material is
+`unknown_deposit`). **Past the band's work range it quotes the take AT THE SOURCE**, exactly as
+inside it: a far working posts a work party and its crew cuts the deposit as any crew does, so row
+`n` is the cut `n` hands make standing there. `in_range` is a plain fact (`true` inside the apron)
+and zeroes nothing — the hunt crew-take curve's rule, which carries no range gate at all. What
+reaches home, delayed by the walk, is the work-party query's `rate_home` on an `extract` source
+(`work-party.md`); pinned by `work_party_caravan::a_far_workings_crew_curve_quotes_the_cut_the_turn_makes_at_the_source`.
+**`armed_workers` IS the committed row's `kitWorkersHolding`**, counted the same way: the crew's
+whole-kit count (`KitCoverage::workers_holding_whole_kit`, the scarcest of the kit's items) off the
+prospective row's share of the band's stock, which for a committed crew is arithmetically the turn's
+own budget. So the sheet's *"N of M kits available"* before the commit is the row's count after it,
+exactly as a hunt sheet's committed arm reads `kitWorkersHolding`; `none` reads the whole crew
+(*"nothing to be short of"*). The per-tool share that lifts the cut stays inside the take math
+(`extraction::CrewLift`). Pinned by
+`server::tests::the_deposit_curves_kit_count_is_the_committed_rows_kit_workers_holding`.
+
+**Wear is `WearQuantum::DepositTaken`, per unit cut BY THE HOLDERS.** `extraction::deposit_geared_units`
+bills `taken × equipped_labor / labor` — the equipped workers' share of the crew's throughput,
+applied to what was actually taken — against the items whose `deposit_take` served that rung
+(`DepositGear::wear_kit`, effect-scoped like a build tool's wear), so a bare hand in a half-axed crew cuts for free, a take capped by the
+reach bills the smaller number, and the wedges wear nothing on a felling take.
+
+> ⛔ **THE AXE IS THE FIRST ITEM ON BOTH A TAKE ROW'S KIT AND A STANDING POOL'S REQUIREMENT**, and
+> one axe arms one person per turn across the two. The builders / quarrywork keepers are issued
+> theirs first (`settle_pool_tools`, by priority), and the `extract` rows split what is left
+> (`BandItemBudget::reserving`, pro rata) — `equipment.md` → "AND THE POOLS LEFT THE PRO-RATA ITEM
+> BUDGET" owns the rule and why the pools win.
+
+**A far working's porters carry on the row's kit.** Past `band_work_range` the take walks home a
+pack at a time (`work-party.md`), and one pack is the row's haul carry over the material's `weight`
+(`materials.json`) — the same carry that caps the cut. Every take kit carries the sled, so every
+kitted crew hauls on its sleds on every rung, felling and quarry included, because the kit is
+claimed whole.
 
 ## The two road tools are WIDENED, not duplicated
 
@@ -436,19 +565,28 @@ would make which one a builder carries an alphabetical accident.
   refused, which is what protects the per-worker **sum** the `rung` bound exists for.
 - `every_crew_built_rung_has_a_builders_kit_that_serves_no_other_web` cross-checks *the rungs a kit
   did not declare*, not *every rung off its branch* — and its missing-kit arm is now a fork: a rung
-  with no kit is legal only where **nothing at all** serves its branch. `forestry` ships wholly
-  kitless on purpose; the failure the test exists to catch is a **partial** roster, one rung's kit
+  with no **builders kit** is legal only where no builders kit serves its branch at all. `forestry`
+  has none: its build tool, the axe, rides `woodcutting` (an `extract` kit) and reaches the builders
+  through the rung requirement (`pool_toe`), which asks items rather than kits. The failure the
+  test exists to catch is a **partial** roster, one rung's kit
   gone missing while its siblings keep theirs, after which every build there silently falls back to
   `none` for the rest of the game.
 
 ## The working belongs to a CAMP, like a patch — not to nobody, like a road
 
 This is the one place the arc deliberately does **not** copy `RungBranch::Route`. A road follows no
-one and is free to leave, which is why it belongs to no camp; **a quarry you walk away from is a
-quarry you lost**. So `BuildSource::Deposit` *is* backed by a labor row (`LaborTarget::Extract`),
-`holds_build_source` resolves it through that row like a patch's, and the row **lapses when the
-deposit resolves out of the band's work range** — the Forage arm's abandonment rule, byte for byte,
-and where this branch's move-or-stay pressure actually lives.
+one and is free to leave, which is why it belongs to no camp. So `BuildSource::Deposit` *is* backed
+by a labor row (`LaborTarget::Extract`), and `holds_build_source` resolves it through that row like a
+patch's.
+
+**A working past the band's work range posts a WORK PARTY, the Forage arm's rule byte for byte, and
+nothing lapses for distance.** The row keeps the working; its crew walks each full pack home and back
+(`work-party.md` → "The deposit web: the cargo is the material"). **The move-or-stay pressure is paid
+in walking**: a band that moves away from its quarry keeps it, and pays the round trip on every pack
+— the take arriving home falls with the distance, and a road between camp and quarry wins it back.
+The retired rule lapsed the row the turn the band stepped past `band_work_range`
+(`status=lapsed reason=out_of_range`), which made a working the one source a band could not keep
+from a new camp.
 
 **A working raised above its free floor keeps its row through an unstaffing**
 (`source_has_a_meter_at_risk`), with one difference from the two food webs: there is no rot to be at
@@ -570,8 +708,9 @@ Nobody built them, so there is nothing to hold.
 ### ONE role for BOTH branches
 
 The two food webs get a keeping pool each because they are separate *ladders a crew builds with
-tools*. Forestry and extraction split on **knowledge** and on nothing a keeper does — the roster
-declares no gear for either, and *hold the face open, clear what has fallen* is one job. A second
+tools*. Forestry and extraction split on **knowledge** and on nothing a keeper does — *hold the face open,
+clear what has fallen* is one job, and which tool a keeper holds follows from the working's rung
+(`pool_toe`), not from the role. A second
 pool would be a distinction nothing in the game can express, which is the argument
 `plan_standing_upkeep.md` §6 already makes for not splitting the two it has.
 
@@ -579,10 +718,9 @@ pool would be a distinction nothing in the game can express, which is the argume
 the keepers are a **band pool** that holds every working the band has, worked or idle — the same
 split `Agriculture` draws from `Forage`. A working with no cutters is still held and still owes.
 
-`KitJob::Quarrywork` is split from `KitJob::Extraction` even though both ship bare, on
-`KitJob::Agriculture`'s stated reason: **gear covers people**, so sharing a job with the take row
-would divide whatever a future felling axe arms among hands that are not cutting. The split is free
-to make while both defaults are the empty `none` kit and would be a migration afterwards.
+`KitJob::Quarrywork` is split from `KitJob::Extraction` on `KitJob::Agriculture`'s stated reason:
+**gear covers people**, so sharing a job with the take row would divide the take kit's axes among
+hands that are not cutting.
 
 ### The claims are the ROUTE shape, and the reason is the index
 
@@ -646,7 +784,7 @@ an abandoned working decays toward costing nothing rather than bleeding a band's
 
 ⛔ **IT RUNS ON EVERY WORKING, HELD OR NOT** — `bill_and_stock_roads`' lesson. A pass that billed only
 the workings some band still has a row on would leave an **abandoned** working reading as kept for
-ever: never arming its counter, never decaying. A working whose band walked out of range is precisely
+ever: never arming its counter, never decaying. A working its band has abandoned is precisely
 what this branch's move-or-stay pressure is made of, so it is precisely the case that must decay.
 
 **The payment is a whole stage later** — `systems::settle_bands_extraction`, called from inside
@@ -774,7 +912,8 @@ branch.
 |---|---|
 | `src/data/extraction.json` | **THE DEPOSITS** (`extraction_config.rs`, env override **`EXTRACTION_CONFIG_PATH`**). `seed_fraction` **0.02** — what a deposit regrows from when it has been taken to nothing, evaluated *inside* the growth term so a rate of zero seeds nothing. Then one `deposits` row per material: its `branch`, and a `by_terrain` table of `{ capacity, regrowth_rate, characteristics }`. **A terrain absent from `by_terrain` holds none of that material** — absence is the answer, so there is no `enabled` flag and no parked `0.0` row, and every water terrain is absent from both tables deliberately. `DepositDef` and `DepositTerrain` are **`deny_unknown_fields`**, so the file's prose lives at file level in `_comment_*` keys, `materials.json`'s discipline. **Stone is two populations in one table**: rock bodies in the low thousands at rate `0.0` (alpine 4200, karst 3000, basalt 2600 … rolling hills 900) and loose-stone scatters in the tens at a small positive rate (periglacial 70 … mangrove 5). **Wood regrows on every row** — mixed woodland 600 at 0.03, boreal taiga 450 at 0.015, marsh withy 90 at 0.055 — because a forest that is worked out is not a forest. **The wood table stops at 50 and the floor is a design line, not a tuning one** (issue #650): eight rows under it were **deleted** rather than tuned down — canyon badlands and tundra 15, periglacial steppe 20, prairie steppe 25, crater fields 30, high plateau and semi-arid scrub 40, sinkhole field 45 — because a wood a bare-handed crew works out in a few dozen turns costs the player a decision and pays them nothing. **Absence is the config's own mechanism**, so no code carries a threshold; the terrains simply hold no timber, and each of the eight keeps its stone row, so **nothing is left holding neither material** (the only rows absent from both tables are the six water terrains and `Glacier`, deliberately). **⛔ THE STONE TABLE'S SMALL ROWS ARE THE OPPOSITE CASE AND WERE LEFT ALONE** — the low-capacity **positive-rate** scatters are *loose stone the ground keeps turning up*, which is what makes knapping flint available nearly anywhere, and a scatter that regrows is never worked out the way a 15-unit copse is. **The characteristic ratings are LIVE on both materials since issue #736**, and the shape they were authored for is the shape their readers wanted: wood's `hardness` / `pliancy` are read by the two road tools (`earthmoving` / `stone_dressing`), and stone's `hardness` / `workability` by the three knapped kit recipes — `spears_flint` and `clubs_flint` want a hard stone for a point that holds, `hoes_flint` a workable one for a blade that flakes predictably. So a deposit's ratings now decide what grade the things made out of it come out at, which is what *"genuinely opposed, no best deposit"* was written in advance of rather than instead of. They are still **playtest dials** — nothing about a rating was retuned when its reader landed. **`capacity_per_keeper`** is the divisor that turns a tile's capacity into the keeper-loads the rungs quote their `work_per_turn` per — wood **600** (`MixedWoodland`'s own capacity, so a felling working on closed woodland is exactly one load) and stone **3000** (`KarstHighland`'s — limestone, the classic quarry stone, and the middle of the rock bodies, so rolling hills reads 0.3 and an alpine mountain 1.4). Every number is a **playtest dial** |
 | `src/data/intensification_ladder.json` | The five new rung records and the `extraction_payoff` block on each — see `intensification.md` for the ladder engine. `knowledge.lesson_costs` gains `woodcraft` / `conservationism` / `quarrying` at 20 apiece. **The three BUILT rungs each declare an `upkeep`** (`scaled_by: source_load`): `forestry:felling` **1.0** work a turn per keeper-load, rot **0.6**, grace **3**; `forestry:coppice` **2.0** / **1.5** / **2**; `extraction:quarry` **1.5** / **2.5** / **4**. The rates read as *keepers on the reference ground*, because `capacity_per_keeper` is anchored there — a felling working on closed mixed woodland is exactly one keeper, against the plant web's 2.0 for a tended patch on *its* reference tile. Each `meter_decay` is the pacing-neutral inversion of the plant web's rule of thumb (a wholly unmaintained rung lapses over ~100 bleeding turns), so it tracks each rung's own `work_cost`. The graces say how forgiving each rung is of a crew re-tasked for a season: a quarry face is the most forgiving at 4 because the rock does the holding, and a **coppice** the least at 2 because a managed wood is the most perishable thing on either branch — the same direction `plant:field` runs in against `plant:tended`. **The two free floors declare none.** |
-| `src/data/equipment.json` | `default_kits.extract` and `default_kits.quarrywork` both `"none"`, the `none` kit's `jobs` gains both, and `stone_dressing`'s `plain` tier (its only one) gains its second `build_work` effect on `extraction:quarry` |
+| `src/data/equipment.json` | three `extract` kits, **`sledding`** (`sled`), **`woodcutting`** (`sled` + `axe`) and **`stonework`** (`sled` + `wedges`) (#663); the `sled`'s plain tier declares `deposit_take` **0.3** on `forestry:deadfall` and **0.4** on `extraction:gathering` and wears `deposit_taken` **1.0**; `default_kits.extract` and `default_kits.quarrywork` are both `"none"` — a working's offered kits are derived per branch (`working_offered_kits`) and its default per held rung (`working_default_kit`); the `none` kit's `jobs` carries both; `stone_dressing`'s `plain` tier (its only one) carries its second `build_work` effect on `extraction:quarry`; the `axe` (`flint`, 70 durability) declares `deposit_take` **1.0** on `forestry:felling` and `forestry:coppice` plus `build_work` **0.5** on `forestry`, wearing `deposit_taken` **1.0** / `build_progress` **0.16** / `upkeep_work` **0.16**; the `wedges` (`flint`, 70) declare `deposit_take` **1.0** on `extraction:quarry`, wearing `deposit_taken` **1.0** |
+| `src/data/recipes.json` | `axe` — knapping, work 6, stone 1 (`reads: hardness`) + wood 2 + fibre 1 → `axe` at `flint`; `wedges` — knapping, work 6, stone 2 (`reads: hardness`) + wood 1 → `wedges` at `flint` |
 
 ## The wire — one row per DEPOSIT-BEARING TILE, and the rate picks the readout
 
@@ -844,7 +983,9 @@ Three fields ride the row for the escapement instrument, two of them **named aft
 | field | what it is |
 |---|---|
 | `rungFloorFraction` | the **rung's own** floor in the same units, `1 − recovery_fraction`. ⛔ **Compose the two as a MAXIMUM, and only where `regrowthRate > 0`** — a chart that added them would draw a gathering crew stopping 85% of a seam short of where it really stops, and one that took the maximum on a quarry would draw it stopping at the dial the sim ignores there |
-| `perWorkerBiomass` | what ONE cutter moves per turn at the standing rung, in the material's own units. No seasonal weight and no take kit on either branch, so unlike a patch's it is the rung's rate flat and is never `0` on a live rung |
+| `defaultKitId` | the `extract` kit a crew on this working is sent with when the command names none — `extraction::working_default_kit`, the same function `assign_labor` stores a no-kit row's kit with. It follows the held rung: `"sledding"` on `deadfall` and `gathering`, `"woodcutting"` on `felling` and `coppice`, `"stonework"` on `quarry`; `"none"` only where no single kit fits the rung most tightly |
+| `offeredKitIds` | the `extract` kits a crew on this working may be sent with, in roster order — `extraction::working_offered_kits`, every kit whose items all declare a `deposit_take` on the working's branch. `["sledding", "woodcutting"]` on wood, `["sledding", "stonework"]` on stone. `none` is not in it: it is the job's own fall-back, which a picker offers beside these |
+| `perWorkerBiomass` | what ONE **bare** cutter moves per turn at the standing rung, in the material's own units. No seasonal weight, and it is a SOURCE row, so no band's take kit is in it — a row's axes add `deposit_take` per equipped worker on top (see "The floor rungs must be workable BARE-HANDED"). It is the rung's rate flat and is never `0` on a live rung |
 | `regrowthSamples` | the deposit's own growth curve, sampled on the **same implicit x-axis** as the patch and herd curves (`snapshot::subsistence::regrowth_sample_fraction`), through `deposit_regrowth` — the seam `renew_deposit` advances the stock with, at the rung's scaled rate |
 
 ⛔ **THE PLAYER'S HALF OF THAT MAXIMUM IS NOT ON THIS ROW, AND A SOURCE-LEVEL ONE WAS DELETED.** A

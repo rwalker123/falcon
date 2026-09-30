@@ -503,10 +503,11 @@ frame to that seat's own stream clients, so a rewind hands no seat another's wor
 
 ### A question is gated too, and a refusal comes back as a reply
 
-Three of the five queries carry a client-supplied `faction_id` and are answered out of that faction's
+Five of the seven queries carry a client-supplied `faction_id` and are answered out of that faction's
 private state — `HuntTripForecastQuery` (a named band's live equipment wear, its idle workers, its
 forecast), `DenialRaidForecastQuery` (the party needed to break a herd, bounded by that band's
-workers) and `HuntCrewTakeQuery` (a per-crew-size take curve). A connection asking one of them about
+workers), `HuntCrewTakeQuery` (a per-crew-size take curve), `WorkPartyForecastQuery` (a far row's
+caravan) and `DepositCrewTakeQuery` (a working's per-crew-size cut, off the band's gear and rows). A connection asking one of them about
 another seat's faction is refused: same disclosure class as a foreign band's internals on the frame,
 one channel over.
 

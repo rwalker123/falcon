@@ -172,14 +172,24 @@ strip widened 5px through the documented `COLLAPSED_SIZE`-is-a-FLOOR mechanism.
 `knowledge-panel.md` for the numbers and for what the guess got wrong in both directions. That printed
 extent is what a re-measure reads; this page has now been at the edge of its box three times.
 
-**A clean run is 228 frames / 1612 `PASS` / 583 `assert OK`, exit 0 — RE-MEASURED, and this line is
-the harness's ONLY tally.** Measured windowed on the merge of the work-party branch with `main`
-(main's Trade tab and queue-head states on top of the work party's), not summed from either side.
+**A clean run is 221 frames / 1663 `PASS` / 553 `assert OK`, exit 0 — RE-MEASURED, and this line is
+the harness's ONLY tally.**
 
 **THE EAT-FIRST RULE'S RETIREMENT MOVED IT 193 / 1456 / 557 → 193 / 1453 / 557** on the work-party
-branch before that merge: five claims out (the ate line, the deficit line, its supplied-postings
-absence, its DANGER ink, the crew line's ink), two in (no row carries a retired line; every party line
-is quiet ink).
+branch: five claims out (the ate line, the deficit line, its supplied-postings absence, its DANGER
+ink, the crew line's ink), two in (no row carries a retired line; every party line is quiet ink).
+
+**THE DENY SHEET'S PRE-SELECTED PREY MOVED IT 216 / 1602 / 541 → 219 / 1629 / 547**: three frames
+(`band_panel_compose_deny_prey`, `_short_handed`, `_two_prey`), the restored sheet take, short-handed
+and pelt claims, and the highlight, pre-selection, clear and chooser claims.
+
+**THE BAND VERBS' TARGET MOVED LAST (issue #529) AND MOVED IT 222 / 1601 / 565 → 216 / 1602 / 541**:
+the Deny sheet's per-herd frames became hover-banner claims on three frames, and the sheet-content
+claims about the take line, the caveat and the seeded party went with the sheet rows they judged.
+
+**THE BAND VERBS (issue #529) RE-MEASURED IT AT 222 / 1601 / 565**, on a tree that had also taken main
+since the last figure, so the move is not one change's delta. The verb block it added is "The BAND
+VERBS block" below.
 
 **PR #738's REVIEW FIXES MOVED IT 216 / 1526 / 566 → 220 / 1533 / 566**: the returned-shipment pair
 (`trade_tab_shipment_cancelled`, `trade_tab_shipment_returned`), the anchor-gone close
@@ -449,7 +459,7 @@ and `band_panel_unbuilt_rung`'s three (its own pair plus `_assert_unbuilt_warnin
 and the `: PASS` one is unmoved** — which is exactly the shape that makes a `PASS`-only count read
 this arc as having added nothing.) (Five of those `PASS`es are `_assert_work_material_readouts`, the board half of closing
 the inedible quarry's `+0.00`; four more are the party PACK's, on `band_panel_worst_case_party`; one
-more is `_assert_denial_pelt_take`; **four more are the KIT REPRICING's material arm**, inside
+**four more are the KIT REPRICING's material arm**, inside
 `_assert_kit_reprices_the_source` — the per-material rate by RATIO, its no-op twin at the reference
 tier, the take through `expected_materials` at a crew below the saturating one, and the plant web's
 own row on the no-retreat patch beside it. **They are named rather than numbered from an offset** —
@@ -458,14 +468,6 @@ claim of the form *"the five above 310"* survives neither. It was 328 before the
 `assert OK` count is unchanged, those four riding an existing state's driven block rather than a new
 frame.)
 
-**`_assert_denial_pelt_take` IS PNG-LESS, AND THAT IS FORCED RATHER THAN CHOSEN.** An inedible
-quarry's denial take line is what the claim is about, but re-targeting the deny sheet to the
-shared-tile wolf needs that herd in the world list at THAT point in the walk — and this harness's
-state order is load-bearing, so moving a roster push to suit one claim re-points every frame after
-it. The chain asserted is the real one (`denial_forecast` → `denial_take_bbcode`) against the same
-fixture table the chooser state renders, and **`band_panel_compose_deny`'s edible boar directly above
-is the live control**: its line must still read food and waste, or "state the materials" would be
-satisfied by a producer that replaced the food clause instead of joining it.
 
 **THE WORST-CASE PARTY CARRIES THE PACK CLAUSE, and its fixture holds TWO piles of one material at
 two ratings.** A batch is one pile at ONE RATING, so a fixture with one batch per material would pass
@@ -506,31 +508,29 @@ both.) (The ACTION REGISTRY's own block is worth sixteen `PASS` and the COLLAPSE
 see "`_assert_action_registry`" and "The collapsed rail's two frames" below.) (**A new frame costs
 TWO `assert OK`s, not one** — `_assert_zones_within_bounds` and `_assert_zone_content_fits`, one of
 each per state; the content-fits line names its state and the zone-rect line does not, which is what
-makes the second easy to miss when counting a log by eye.) (**The split sheet is opened by PRESSING
-the real `⌂ Split` footer button**, found by `HudWidgets.MISSION_LAUNCH_META` — `_open_split_sheet`
-closes any sheet already open first, because an open sheet REPLACES the footer and the second and
-third states would otherwise have nothing to press. Writing `_party_compose_open` directly would pass
-against a mission button that no longer opens anything, which is the regression the frames exist to
-catch.) (The
+makes the second easy to miss when counting a log by eye.) (**The split sheet is opened through the
+real verb**: `_open_split_sheet` closes any open verb, selects the panel band on its own hex, requires
+`verb_enabled(split)` and emits the panel's REAL `action_invoked(VERB_SPLIT)` — writing the pending
+verb directly would pass against a Split that no longer opens anything, which is the regression the
+frames exist to catch. Every sheet assertion reads `_sheet_root()`, the selection drawer's allocation
+host.) (The
 only `ERROR:` lines in a clean log are Godot's own shutdown RID-leak noise, which is why the status
 is the verdict and an `ERROR:` count is not.) (The two tallies are no longer equal, and that is not
 a miscount: `_assert_scroll_only_where_sanctioned` and `_assert_band_columns_ignore_content` each
 emit several `PASS` lines under one `assert OK` heading.) (Count the `PASS` tally as `: PASS`, not a
 bare `PASS`: one `assert OK` line contains the word in its own text — `4 rung marks are hoverable
-(tooltip + PASS)` — so a bare grep answers one too many. The figure recorded before
-`_assert_chart_reads_the_settled_party` added its two was **112**, and a measurement of that same
-build reads **111**, so the previous record was one high by exactly that miscount.) Both of the
-errors this harness used to expect are gone: the 11-frame `Zone_band` 25px overflow (issue #374
+(tooltip + PASS)` — so a bare grep answers one too many. One earlier record read
+**112** where a measurement of the same build reads **111** — one high by exactly that miscount.) Both
+of the errors this harness used to expect are gone: the 11-frame `Zone_band` 25px overflow (issue #374
 re-homed the band zone's optional rows and widened the wide shell's flanks) and, after it,
 `band_panel_parties_inspector_wide`'s `Zone_parties` pair — one VBox needing 310px of a 300px box,
-reported twice, once by `_assert_zones_within_bounds` and once by `_assert_zone_content_fits`. That
-one is closed by tightening `PARTIES_INSPECTOR_LINE_SEPARATION` and merging the strip's two ORDERS
-lines (`band-city-panel.md` → "The parties strip's SEVEN lines"), and
-**`band_panel_worst_case_party` is what keeps it closed**: the fixture that state replaced was not
-the worst case — a hunt party carrying every optional detail line at once needed 328px where that
-one needed 310 — so the state stages one, asserts the strip really renders all SEVEN lines (a
-shorter strip fits, so every assertion goes green on a state that has stopped measuring anything)
-and PRINTS its extent, which reads **294 of the 300px box**.
+reported twice, once by `_assert_zones_within_bounds` and once by `_assert_zone_content_fits`. That one
+is closed by tightening `PARTIES_INSPECTOR_LINE_SEPARATION` and merging the strip's two ORDERS lines
+(`band-city-panel.md` → "The parties strip's SEVEN lines"), and **`band_panel_worst_case_party` is what
+keeps it closed**: the fixture that state replaced was not the worst case — a hunt party carrying every
+optional detail line at once needed 328px where that one needed 310 — so the state stages one, asserts
+the strip really renders all SEVEN lines (a shorter strip fits, so every assertion goes green on a state
+that has stopped measuring anything) and PRINTS its extent, which reads **294 of the 300px box**.
 
 **`band_panel_vitals_worst_case`** is the state that pins it — one band carrying EVERY optional
 vitals row at once in the height-capped TOP dock, which no fixture had ever staged, run through the
@@ -622,10 +622,7 @@ claim alone. The `band_panel_preview` `PASS` tally FELL from 257, and the drop i
 than losses: `_assert_party_ladder_rounding`, `_assert_party_past_the_rungs_is_quoted`,
 `_assert_denial_quoted_party_note` and `_assert_denial_party_needed_skips_horizon` all described the
 SAMPLED party axis the query replaced — a raid is costed for the party on the stepper now, so there
-is no rung to round to and no rung to name. The frame COUNT is unchanged in both harnesses; one
-frame was RENAMED (`band_panel_compose_deny_kit_mismatch` -> `band_panel_compose_deny_pending`, its
-subject having moved from "these numbers were priced for another kit" to "the answer has not landed
-yet").  **MOST OF `ui_preview`'S RAID FRAMES MOVED, AND THAT MOVE IS THE ARC.** Every expedition
+is no rung to round to and no rung to name. The frame COUNT is unchanged in both harnesses.  **MOST OF `ui_preview`'S RAID FRAMES MOVED, AND THAT MOVE IS THE ARC.** Every expedition
 readout, every trip verdict and every Send face went from the pending placeholder to real numbers —
 the sheets ask now and the canned answerer answers. Nothing else moved.  **Three things a harness
 has to do differently once the forecast is a QUESTION**, all learned by watching them fail:  - **A
@@ -642,9 +639,9 @@ source that CARRIES the asked-for table**, because the two harnesses disagree in
 directions: `ui_preview` selects herds it never pushes through `update_herds`, and
 `band_panel_preview` pushes tables under an id whose SELECTION is stale. Either order alone renders
 one of them out of the state it was staged into.  **The one state that needs NO answerer is the one
-that needs it uninstalled.** `band_panel_compose_deny_pending` clears the sender before the kit pick
-(a pick re-renders through the real handler, so a still-installed answerer would take that render's
-question and land the reply during `_settle`), renders, asserts, and reinstalls. It is the only
+that needs it uninstalled.** `band_panel_deny_hover_two_prey` clears the sender before its hover (a
+still-installed answerer would take the question and land the reply during `_settle`), renders,
+asserts, and reinstalls. It is the only
 frame in either harness showing the in-flight state, which is a real one — measured live at **1264
 ms for the first query of a session** and 48-63 ms once warm.  **The INTERFACE-SCALE arc's additions
 to this harness, and the three rules they cost.** `band_panel_preview` is **87 frames / 227 `assert
@@ -803,47 +800,12 @@ VIEWPORT's edge. Also from that arc: `_right_dock_content_reach()` measures each
 a box ending 1056), so a bare rect reports content that is never painted; and the promise walk
 DERIVES its fork rather than hard-coding it, having been written as `left + right ceiling` and so
 would have walked 2432 once the trailing charge was dropped — 560px clear of the real 1871, passing
-while measuring nothing.  **The COMPOSE-SHEET FLOAT's claims ride `band_panel_compose_hunt_short`,
-and they are a SET because no one of them is a fix on its own.** `_assert_zone_content_fits` passes
-TRIVIALLY once the sheet leaves the zone — an empty box fits anything — so a float that moved the
-641px overflow somewhere unmeasured would look exactly like a repair.
+while measuring nothing.
 
-**`_assert_compose_float`** therefore asserts the sheet is really gone from the parties zone AND
-whole in the float (both by the Send button's own `HudWidgets.SEND_HUNT_CONFIRM_META`, never by a
-face), that the zone holds what is left, that the float fits the VIEWPORT, that its card holds its
-own content (the `AutoSizingPanel` lie `panel-framework.md` records — a card fitted too short still
-DRAWS at its content's size), and that it clears the panel card. The last is the `event_dock` inset
-idiom, negative control included: the vacuity guard fires on the axis the two are NOT stacked along,
-and a live control first shows the very same `intersects` test firing on these very rects with the
-float moved onto the card.
-
-**`_assert_compose_in_zone` on `band_panel_compose_hunt` is the paired negative** — a trigger stuck
-ON satisfies every claim above (a whole sheet, in a float, clear of the card) in a dock with ample
-room, so the tall side dock is where the sheet must NOT float.
-
-**`_assert_float_leaves_the_map_clickable`** carries the overlay half: `BandComposeFloat` is the
-card and nothing more — no full-screen catcher, because the dock's sheet stays open through a map
-pick — and that is driven through `Viewport.push_input` against this harness's own
-`_unhandled_input`, the `_assert_open_strip_reaches_the_map` idiom, with the open band beside the
-float as the precondition, the float's own RING as the claim and three samples 3px outboard of its
-edge as the complement. Reading the node's `mouse_filter` back would only say what it was configured
-as, not what the Viewport does with it.
-
-**`_compose_surface()` is what keeps the rest honest**: `_assert_hunt_sheet_chart` and
-`_report_compose_widths` search the FLOAT when the sheet is floated, since pointed at `_panel` they
-would go vacuous the moment the float works — any new assertion about a floated sheet must go
-through it. Sabotage-verified on two DISJOINT mutations: the trigger forced always-ON fails the
-paired negative first and 23 further deny-state claims that search `_panel` for a sheet that should
-never have left it; forced always-OFF fails exactly three — the zone-content-fits assertion naming
-`needs 641px … the box is only 265px (short by 376)`, and both float assertions refusing to prove
-anything. Exactly ONE frame moved for the whole change (`band_panel_compose_hunt_short`); the other
-71 are byte-identical to the pre-change baseline (222 `assert OK` + 229 `PASS` before the
-CRAFTABLE-KITS arc (issue #493) added sixteen `PASS` claims and no `assert OK` — the kit repricing's
-own six in `_assert_kit_reprices_the_source` (two about the ratio's denominator, two about the
-retreat's own `stay_fraction` field, and the end-to-end take/cap pair), the four in
-`_assert_dock_chart_carries_the_kit` (the chart-known precondition, the two drawdown answers that
-must move under `dispersion`, and the sim-mirror hold crew that must not), and six more across the
-compose sheet's own claims.
+222 `assert OK` + 229 `PASS` before the CRAFTABLE-KITS arc (issue #493) added sixteen `PASS` claims
+and no `assert OK` — the kit repricing's own six in `_assert_kit_reprices_the_source` (two about the
+ratio's denominator, two about the retreat's own `stay_fraction` field, and the end-to-end take/cap
+pair) and ten more across the compose sheets' own claims.
 
 **Both steps moved ZERO of this harness's frames**, measured by stashing each change and
 re-rendering: no rendered fixture publishes `stayFraction` and `BandFx.kit_roster_fixture()` ships
@@ -915,19 +877,17 @@ zone would take every later state down with it instead of naming itself. 181 `as
 `PASS` before the FACTION PAGE (issue #450) added three states and eighteen assertions — the three
 states' bounds/content-fits pairs account for the six new `assert OK`s, `_assert_faction_page`'s
 eleven (its nine plus `_assert_faction_type_scale`'s two) and `_assert_faction_cycler`'s seven for
-the rest. 179 + 111 before `_assert_chart_reads_the_settled_party` added its vacuity guard and its
-crew claim to `band_panel_compose_hunt`; that step moved ZERO frames, the defect it catches being
-byte-invisible. 179 + 114 before the FILL TARGET's retirement, which removed two
+the rest. 179 + 114 before the FILL TARGET's retirement, which removed two
 `_assert_band_panel` calls — the dock sheet's offers-a-fill-target claim and the quarry chooser's
 drops-the-stale-target one — and repointed a third. 174 `assert OK` + 106 `PASS` before
 `band_panel_worst_case_party` — that step gained FIVE `assert OK`s and seven `PASS`es, and only
 three of the five are new assertions: the other two are `band_panel_parties_inspector_wide`'s bounds
 and content-fits pair, which had been reporting `ERROR` and now report `assert OK`, so a reader
 counting only the new state's own would come up two short. 175 `assert OK` + 91 `PASS` before the
-recall-verb pair and the compose float's two latch guards — that step LOST an `assert OK` and gained
+recall-verb pair — that step LOST an `assert OK` and gained
 fifteen `PASS`es, the old `_assert_row_recall_confirms` having printed its own raw `assert OK` line
 where its replacement reports through `_assert_band_panel`, 175 + 77 before the sampled party AXIS's
-three guards, 175 + 69 before the compose sheet's FLOAT, 173 + 67 before the unsampled-party guard,
+three guards, 173 + 67 before the unsampled-party guard,
 168 + 67 before the band zone gained the `Kit` row and the SHORT tier's Morale+Growth merge, 164
 `assert OK` + 57 `PASS` before the KIT PICKER's three states, 164 + 56 before the map path's
 whole-cohort claim, 164 + 53 before its Kit-row claims, 162 + 46 before the collapse verdict's five
@@ -947,165 +907,77 @@ everything else `assert OK`, so a count of one alone silently misses half the su
 assertions (the mark is SELECTIVE: two of three rows offer a rung) plus two for the forage jump naming
 the LAND. Both jump assertions are mutation-tested.
 
-## The DENIAL raid's frames (`docs/plan_denial_raid.md` slice 2)
+## The DENIAL raid's states (`docs/plan_denial_raid.md` slice 2)
 
-Three states across two harnesses, and the launch pair must be judged AS a pair: the verdict table
-answers one outcome per key, so a table that answered the same one for all four would satisfy either
-frame alone.
+The Deny sheet carries party and kit, and its herd arrives one of two ways (`targeting.md` → "THE BAND
+VERBS' TARGET IS THE LAST STEP"): PRE-SELECTED by a click on a highlighted herd while the sheet is
+open, after which the sheet states every readout and its Send commits; or, with no prey, as the click
+the Send arms, the verdict then riding the hover banner. The banner claims are made on
+`TargetingController.banner_text()` after `HudLayer.notify_hex_hovered`, each by EQUALITY on the
+banner's tail (`_assert_banner_states`) — half of every claim is what the line must NOT also say.
 
-- `band_panel_preview` **`band_panel_compose_deny`** — the viable raid. The range verdict, the estimate
-  caveat, the quiet take line, the primary Send, and the three floor surfaces that must be ABSENT.
-- `band_panel_preview` **`band_panel_compose_deny_repelled`** — the SAME quarry with only
-  `denial_estimates` swapped, so the frames differ in the sim's answer and in nothing else. Its verdict
-  is asserted by EQUALITY rather than `contains`, because the claim is what the line does NOT also say:
-  a repelled party quotes no turn count, and a `contains` would pass on a line that quoted one.
+- **`band_panel_compose_deny`** — the sheet on the band's drawer: party, kit, a plain live send, and
+  the floor surfaces ABSENT (`_assert_denial_sheet_carries_no_floor`, the heading matched
+  **upper-cased** because `alloc_section_label` upper-cases what it is given).
+- **`band_panel_deny_hover`** — the send armed and the boar hovered: the range verdict, leading with the
+  expectation, both ends shifted by `DENIAL_OUTBOUND_TRAVEL_TURNS`, then the travel split. The leg is a
+  constant derived from the fixture's OWN geometry (band (71, 18), boar (75, 18), 2 tiles a turn ⇒
+  `ceil(4 / 2)` = 2) rather than asked of `outbound_travel_turns`.
+- **PNG-less on the same banner**: the `repelled` verdict (the SAME boar with only its table swapped —
+  `_set_world_herds` resets the forecast seam, since restaging one herd id with a different table
+  changes the answer without changing the question), the zero-travel verdict on the herd standing on
+  the band's own tile (no travel split), the open-high shape on its own party size (the sheet's stepper
+  set and re-rendered, which re-captures it into the armed pick), and the SHORT-HANDED refusal: the
+  reference band's three idle against a requirement of eleven reads
+  `denial_short_handed_reason` in the banner, and the click on that herd sends nothing and leaves the
+  pick armed. Each hover is followed by a `_settle`, which is where the canned answer lands.
+- **`band_panel_deny_hover_two_prey`** — a warren and a wolf pack on one hex, hovered with the answerer
+  uninstalled: `Rabbit Warren +1 more · <DENIAL_FORECAST_PENDING>`. The shared tile is used because the
+  seam serves a cached answer for a subject it has already costed, so only a herd no hover has asked
+  about can show the in-flight state. `_assert_quarry_chooser` then clicks the hex: the chooser opens
+  and nothing is sent, it lists exactly the two, and choosing the wolf through the popup's REAL
+  `id_pressed` sends ONE raid at the wolf.
+- **THE PRE-SELECTED PREY** — `_assert_prey_highlight` holds the passive herd highlight up while the
+  sheet is open (`TargetingController.is_preselect_on`, `need: "herd"` at `QUARRY_NO_REACH_BOUND`,
+  never targeting) and down once it closes. **`band_panel_compose_deny_prey`**: a click on the boar
+  sends nothing, leaves the band selected and the pick unarmed, and the Prey row states it with its
+  `✕` (`_assert_prey_is_stated`); the party is re-pinned after the pre-selection, which SEEDS it.
+  `_assert_denial_sheet_viable` then reads the sheet by EQUALITY — the range verdict, the take line
+  (`kills … · brings home … food · leaves … on the range`, composed from the VOCABULARY and the
+  fixture's own arithmetic, never through `denial_take_bbcode`), the estimate caveat, and a plain live
+  Send — and `_assert_denial_pelt_take` pins the inedible quarry's take on the producer (pelts, no
+  false `0.00 food`). `_assert_prey_send_commits`: the Send sends ONE raid at the prey, arms no pick,
+  closes the sheet.
+- **`band_panel_compose_deny_short_handed`** — the deep-party herd pre-selected on the reference band's
+  three idle: Send DISABLED as `Not Enough Hunters`, the reason naming both numbers, the counted repelled
+  refusal not printed beside it (`_assert_denial_sheet_short_handed`). The Prey row's `✕` then clears
+  the prey, and the Send goes back to arming the pick.
+- **`band_panel_compose_deny_two_prey`** — a pre-selecting click on the two-herd hex opens the chooser;
+  choosing the wolf makes it the prey and sends nothing, and the Prey row's `⋯`
+  (`HudWidgets.QUARRY_CHOICES_META`) lists both and marks the wolf (`_assert_prey_chooser`).
+- **`_assert_denial_click_commits`** — one herd on the hex, so the click sends exactly one
+  `send_denial_raid` with the sheet's party and kit, the pick comes down, the sheet closes, and the
+  band is still the selection.
 - `ui_preview` **`expedition_denial_panel`** (`chapters/band_expedition.gd`) — the launched party's
-  drawer, plus three PNG-less claims about the verdict's structure that no frame can carry.
-- `band_panel_preview` **`band_panel_compose_deny_deep_party`** / **`band_panel_compose_deny_short_party`**
-  — a band whose idle workforce (12) outruns `max_expedition_party_size` (8), raiding a quarry whose
-  `denialPartyNeeded` (11) outruns it too. The first opens the sheet through the REAL `choose_quarry`
-  (the path that arms the seed) and reads `Party 11 · of 12 idle`; the second steps back to 4, a
-  `repelled` row, so the refusal has a count to name. **The band shape is the whole fixture** — no
-  other band in the set has more idle workers than the sampling axis, so a stepper reading the wrong
-  field is invisible everywhere else. `_denial_needs_deep_party_rows` puts the requirement INSIDE the
-  table (repelled below it, `past_recovery` at and above) and the table stops there, which is the shape
-  `snapshot.fbs` describes; `_denial_party_needed_for` DERIVES the field from those rows for every
-  fixture in the file rather than stating it beside them, so no table can quote a party its own rows
-  contradict. **It derives on `SourceForecast.denial_outcome_succeeds`, never on "is not `repelled`"** —
-  `horizon` is neither, and the looser test quoted a row whose projection merely ran out as the party
-  that breaks the herd. **No fixture in this file stages a `horizon` row at all**, so every table here
-  derives the same number under either rule and the defect is invisible to every frame; the PNG-less
-  `_assert_denial_party_needed_skips_horizon` is what covers it — a constructed
-  `repelled → horizon → past_recovery` table that must derive the THIRD party, its own negative (a
-  table that never succeeds quotes no party), and a cross-check that the success set is exactly the
-  verdict table's `VERDICT_OK` entries, those being one answer stated twice. **The counted and numberless refusals are a pair**: `band_panel_compose_deny_repelled`'s
-  table is repelled at every size, so the sim quotes nothing and the verbatim sentence is what must
-  render there.
-- **Adopting a quarry now SEEDS the party**, so `band_panel_compose_deny_in_reach` re-pins
-  `_send_expedition_count` before rendering — the chooser assertion above it drives the real
-  `choose_quarry`, which arms the one-shot the next denial render consumes.
-- `band_panel_preview` **`band_panel_compose_deny_short_handed`** — the SAME deep-party quarry in front
-  of the reference band's THREE idle workers, i.e. the one state in which this sheet's Send DISABLES.
-  Only the BAND changes between it and `band_panel_compose_deny_short_party`, so the pair differ in
-  supply alone, and they are asserted as a pair: the short-party frame's Send must stay LIVE (a party
-  the player under-sized still launches) or the disable rule would pass by disabling everything. Its
-  own four claims are the precondition (`idle < needed`, without which the rest are vacuous), the
-  disabled `Not Enough Hunters` face, the reason naming BOTH numbers, and the counted repelled refusal
-  being SUPERSEDED rather than printed beside it.
-- `band_panel_preview` **`band_panel_compose_deny_open_high`** — the REPORTED verdict shape: a bounded
-  expectation over an unbounded bad run (`turns_to_collapse_high == 0`). **No other denial table in
-  either harness leaves an end open**, so no frame could show what the old phrasing did with one — it
-  dropped the expectation and quoted the LUCKY end alone, beneath a take line priced at the
-  expectation. Asserted by EQUALITY, since half the claim is what the line must NOT say, plus that the
-  caveat still rides under it (the caveat is gated on `denial_turns_phrase`, which the rewrite
-  re-pointed at the lead figure). The other three shapes ride the PNG-less
-  `_assert_denial_turn_clause_shapes`, which drives `denial_turns_clause` over constructed forecasts —
-  a turn clause is a string, and the sheet renders a plausible sentence whichever draw it led with.
-  It also pins the IN-FLIGHT span there rather than leaving it to the drawer's own frame, the span
-  being chosen once for the whole clause. Sabotage-verified three ways, each failing a DISJOINT set:
-  leading with `low` fails all four range verdicts, dropping the unbounded-high clause fails the
-  open-high frame alone, and collapsing the only-on-a-good-run branch fails that shape alone.
-- **`ui_preview`'s `herd_hunt_party_size_bound` is DELETED**, with the cap it staged: `idle 6 >= max
-  party 2` no longer binds anything, so the frame could only have rendered the max-useful note under a
-  party-size name. `herd_hunt_labor_bound` is the surviving half of that pair. **No surviving fixture in
-  either harness gives an expedition or hunt sheet more idle workers than `max_expedition_party_size`**,
-  which is why dropping that clamp moves zero frames — the deleted state was the only one that made it
-  bind.
+  drawer, the at-the-herd clock UNSHIFTED **plus the negative that the launch wording appears nowhere
+  on it**.
 
-**`_rich_text_containing` exists because the verdict and take lines are BBCode.** They are built by
-`HudWidgets.forecast_label`, a `RichTextLabel`, and `_has_label_containing` walks `Label`s only — so a
-`Label`-scoped assertion on either would find nothing and pass vacuously. It returns the whole PARSED
-line rather than a bool for the equality claim above.
+`_assert_denial_turn_clause_shapes` drives `denial_turns_clause` over constructed forecasts for the
+shapes no table here stages — a turn clause is a string, and a banner renders a plausible sentence
+whichever draw it led with. It also pins the IN-FLIGHT span, the span being chosen once for the whole
+clause.
 
 **Two fixture rules the denial tables must follow**, both because a fixture that breaks one makes the
 assertions decorative: a row's `delivered_food` is what the PACK holds and everything else killed is
-`wasted_food` (a raid that hauled its whole kill is a hunting raid wearing a denial outcome, and the
-waste readout would have nothing to state); and a `repelled` table's kill counts are small but
-**non-zero** — a repelled party is outbred, not incapable.
+`wasted_food`, and a `repelled` table's kill counts are small but **non-zero** — a repelled party is
+outbred, not incapable. **A fixture that states one half of a sim-side pair must state the other from
+the same split.** The requirement is the forecast reply's own `party_needed`, searched server-side,
+so the client never derives it from rows.
 
-**A THIRD rule went with arc #527's retired account, and the reasoning is worth keeping.** Both
-products came off ONE conversion of that same split — `delivered_trade` rode the carried share and
-`wasted_trade` the rest, because the sim runs `hunt_yield.apply(take.wasted)` beside
-`hunt_yield.apply(take.carried)` — so a table stating a zero `wasted_trade` beside a large
-`wasted_food` was a herd no live server could produce. **The general rule survives the account: a
-fixture that states one half of a sim-side pair must state the other from the same split.**
-
-**The INEDIBLE table was the exception to that rule and states the exception's own reason.**
-`_denial_pelt_only_rows` hauls the whole kill and wastes nothing, because `carry_room_biomass` answers
-`NO_CARRY_BOUND` for a species paying no provisions — the pack is measured in provisions, so a quarry
-that pays none never fills it. **With the trade account retired that table has no product left to
-quote**, so its rows carry an all-zero food account and the frame's claim is the NEGATIVE one: no
-false `0.00 FOOD`, judged against the edible boar beside it. `band_panel_compose_deny`'s EDIBLE boar,
-where the pack binds hard, is where the waste clause itself is proved.
-
-**`_assert_denial_viable`'s take claim is an EQUALITY over the whole line**, not a `contains`: half
-the claim is what the sentence must not also say, and a `contains` passes on a line carrying an extra
-clause. (It was written against a waste stated food-only, which satisfied every containment test while
-silently dropping the hides the retired trade half accounted; the equality form is what survives the
-retirement, and the expectation is composed from the VOCABULARY and the fixture's own arithmetic
-rather than re-derived through `denial_take_bbcode`.)
-
-**The TWO SPANS are asserted on different harnesses, and each names its own.** `band_panel_compose_deny`
-expects the launch clock — both ends of the band plus `DENIAL_OUTBOUND_TRAVEL_TURNS`, then the travel
-split — with the leg stated as a constant derived from the fixture's OWN geometry (band (71, 18), boar
-(75, 18), 2 tiles a turn ⇒ `ceil(4 / 2)` = 2) rather than asked of `outbound_travel_turns`, which would
-re-derive the expectation through the code under test. `expedition_denial_panel` expects the at-the-herd
-clock UNSHIFTED **plus the negative that the launch wording appears nowhere on it** — a clause builder
-emitting neither form would satisfy the positive alone only by accident. Sabotage-verified on disjoint
-mutations: zeroing the outbound leg fails the launch claim and nothing in `ui_preview`; forcing the
-from-launch wording on both surfaces fails exactly the in-flight pair.
-
-The floor-absence claim matches its heading **upper-cased**, because `HudWidgets.alloc_section_label`
-upper-cases what it is given; the vocabulary const as written matches nothing, which is how that
-clause first shipped passing with a Policy row put back on the form.
-
-`cargo xtask command-guard` carries the half neither preview can: it drives the denial confirm through
-`HudWidgets.SEND_DENIAL_CONFIRM_META` and parses the emitted line with the REAL server parser, which
-is the only thing that can assert the four-token grammar. **Each mission's confirm wears its OWN
-meta** — a search for "the send button" on a parties compose sheet cannot tell which mission it just
-launched, and the two emit different signals with non-interchangeable payloads.
-
-### The party-axis guards, and why one of them is an INVERSION
-
-`_assert_party_past_the_rungs_is_quoted` is the former `_assert_unsampled_party_has_no_forecast`, kept
-at its own call site and turned around: the sim's sampled party LADDER made an exact match strictly
-worse than the contiguous axis it replaced, so a party past the sampled sizes is now QUOTED at the top
-rung with a note naming it, rather than blanking the sheet. It is inverted rather than deleted because
-its subject did not change — what a party past the rungs gets is still the one thing this state can
-see — and it carries the paired NEGATIVE beside it (a party ON a rung renders no note), without which
-every claim passes on a sheet that annotates every raid.
-
-**It reads the LIVE herd, not the fixture builder.** `_set_world_herds` runs every fixture through
-`_floorify_estimates`, and that is what puts `floor` / `party_workers` **on the rows** — a raw
-`_quarry_herd_fixtures()` table encodes the party in its KEY alone. A guard that scanned the builder's
-output for the sampled party axis therefore found `0` everywhere and its claim collapsed into a
-tautology (it passed on `0` vs `1`). It reads `_hud._band_labor.find_world_herd(...)` instead.
-
-**Every estimate fixture in that file still samples CONTIGUOUSLY (1..N), so no frame can reach a party
-BETWEEN two rungs** — which is the case the ladder made common and the case a blanked sheet was
-reported on. `_assert_party_ladder_rounding` is what covers it, PNG-less over CONSTRUCTED tables
-(`_ladder_hunt_estimates` / `_denial_ladder_rows`, the shipped `LADDER_PARTY_SIZES` plus the denial
-table's `DENIAL_REQUIREMENT_ROWS` run), by the `_assert_denial_party_needed_skips_horizon` rule: which
-rung a party rounds to is a number, not a picture, and the sheet renders the same plausible readout
-whichever row it came from. It asserts the tie (6, between 4 and 8) rounding DOWN, an untied gap (13)
-rounding UP — without which the tie rule is satisfied by a lookup that simply floors — a party past
-the last rung resolving to 64, and the note's exact text by EQUALITY against the vocabulary.
-
-**`_assert_denial_quoted_party_note` is the rendered half**, staged on a LADDER denial table so the
-sentence is seen to reach the sheet. It is PNG-less deliberately: staging it as a frame would move the
-state order this file's whole walk depends on. Three things make it non-vacuous — the DEEP-PARTY band
-(the stepper's ceiling is the band's idle workforce, and the reference band's three would clamp a
-party of 6 back onto a rung), an explicit precondition that the stepper really is sitting on that
-party, and the companion claim that the verdict is still THERE, a sheet that lost its figures and kept
-the note being strictly worse than the blank it replaced. **It puts the reference band back afterward**
-— `update_band_alerts` keeps a losing-population diff against the last roster pushed, and the next
-state is `band_panel_no_idle`, whose turn orb draws its calm breath only while there are no attention
-entries; without the restore that one frame moves.
-
-Sabotage-verified on two mutations failing DISJOINT sets: restoring the exact party match fails the
-between-rungs claims naming the blank (`delivers=false`, `quoted for 0`, `got ""`) plus the rendered
-sheet's fallback line, while dropping the note fails exactly the four note assertions and leaves every
-resolve claim green.
+`cargo xtask command-guard` carries the half neither preview can: it opens the Deny sheet, presses its
+send (arming the pick), clicks the herd, and parses the emitted line with the REAL server parser, which
+is the only thing that can assert the four-token grammar. **Each mission's send wears its OWN meta** —
+the missions emit different signals with non-interchangeable payloads.
 
 ### The band zone's TIERS, and why the two tier probes run LAST
 
@@ -1120,10 +992,10 @@ nothing left to perturb, and they re-push the worst-case band and select the `ba
 can render into. An extent quoted without it is a number whose content nobody can reconstruct: the
 SHORT tier renders three fewer rows than the TALL one.
 
-### The KIT PICKER's three states (`docs/plan_denial_raid.md`)
+### The KIT PICKER's two states (`docs/plan_denial_raid.md`)
 
-`band_panel_compose_deny_kit` / `_kit_open` / `_kit_mismatch`, specified in `band-city-panel.md` →
-"The KIT row rides both dock sheets". Three things about the harness half:
+`band_panel_compose_deny_kit` / `_kit_open`, specified in `band-city-panel.md` → "The KIT row rides the
+Deny and Scout sheets". What the harness half has to get right:
 
 - **`BandFx.kit_roster_fixture()` is the ONE roster and BOTH preview harnesses plus `command_guard`
   drive it** — `band_panel_preview` and `command_guard` `preload` `tools/ui_preview/fixtures_band.gd`
@@ -1144,15 +1016,10 @@ SHORT tier renders three fewer rows than the TALL one.
   `_band_fixture` lights the `Kit` vitals row in 13 other states and overflows `Zone_band` — the note
   `_kit_band_fixture` already carries. Its SLED is dry and its spears are not, so the picker's hint is
   assertable as the EFFECTIVE tier rather than the roster's fresh one.
-- **The quarry carries `defense` + `durability`** (`QUARRY_DEFENSE` / `QUARRY_DURABILITY`), chosen so
-  the combat gate's verdict FLIPS with the kit — effort at the big-game tier, a flat refusal
-  bare-handed. Without them the gate answers `stated == false` and the mismatch frame would show a
-  sheet saying nothing at all.
 - **`command_guard` composes a NON-DEFAULT kit on every path**, because `Main._kit_token` omits the
   tail at the job default and the omitted line is byte-identical to the pre-roster one. The composed
-  id must be written BEFORE the sheet is opened: the commit button's payload is captured in a
-  `pressed` closure built during the render, so a selection written afterwards is not the one the
-  button carries and the line comes out untailed, asserting nothing.
+  id must be written BEFORE the send is pressed: the send captures the sheet's values into the armed
+  pick, so a selection written afterwards is not the one the click carries.
 - **The Rust half ASSERTS the kit, and the drives alone did not.** Each entry is
   `{kind, line, expected_kit}` (`_record` takes the expectation off the drive's own payload, and
   FAILS when a drive composed the job default — that line's assertion could never fail), and
@@ -1236,9 +1103,8 @@ carries the right kit — every other assertion in the file green.
   `f32` multiply included — `f64` here would agree with a client the server refuses) and refuses a run
   in which no shipment was composed from a fractional pile, the vacuity twin of the kit and
   differing-handles preconditions: whole units survive any rounding.
-- **The destination is seated directly, not picked through the popup.** An `OptionButton`'s popup is
-  an embedded subwindow and this half runs `--headless`; WHICH tie is chosen is `ui_preview`'s
-  `trade_picker_destination`, where the pick is a real pointer gesture.
+- **The destination is the click the sheet's send arms** (`notify_targeting_click` on where the tie
+  last saw the band), the same path `ui_preview`'s trade chapter drives.
 - **`manifest_failures` is unit-tested** (`cargo test -p xtask`) over lines the real parser produces —
   both rounded spellings failing, the floored one passing — so the regression is reachable without
   launching Godot, the treatment `kit_failure` already has.
@@ -1272,12 +1138,45 @@ fixture's `BAND_ID` and never its deliberately different `BAND_ENTITY`.
   an allocation rather than the selection `Main._kit_token` omits — so `kit_token` answers
   `NotKitBearing` and the kit gate correctly says nothing about it.
 
-## The RECALL VERB pair, and the compose float's two LATCH guards
+## The BAND VERBS block (issue #529)
 
-Four claims added to `band_panel_preview`, none of which a frame can carry: three of them are about a
-tooltip or a dialog, and the fourth is about a number nobody renders. The behaviour they guard is
-specified in `band-city-panel.md` → "THE RECALL VERB FOLLOWS THE SIM" and the two latch bullets under
-"A COMPOSE SHEET THE ZONE CANNOT HOLD LEAVES THE ZONE".
+Rendered on the left dock and judged mostly PNG-less:
+
+- **`_assert_band_verbs_registered`** — the five verb ids lead the action registry in
+  `HudComposeVocab.BAND_VERBS` order, ahead of `⚒` and `▲`.
+- **`_assert_parties_zone_has_no_footer`** — the parties zone carries no verb button
+  (`HudWidgets.VERB_BUTTON_META`) and no send.
+- **`_assert_band_verbs_dispatch`** — every verb pressed through the panel's REAL `action_invoked`
+  reaches `dispatch_verb`, judged by what it does: Move arms the tile pick (under a banner naming the
+  band), and Scout, Deny, Trade and Split each open their sheet on the band's own hex with NO pick
+  armed; each is closed through the sheet's own close.
+- **`_open_verb_sheet`** opens a sheet the way a player does: the panel band selected on its own hex
+  (the map's `unit_selected` hop, which this harness has no map to make), then the verb through the
+  real `action_invoked`.
+- **`_assert_verb_sheet_mounted`** (on `band_panel_compose_scout` and `band_panel_compose_deny`) — the
+  sheet is in the drawer of the band it is for (the band is the selection), under the
+  `VERB · from <band>` header, and nowhere on the panel. **`_assert_sheet_names_no_target`** — the
+  sheet names no herd standing in the world and holds no chooser.
+- **`_assert_send_armed`** (on `band_panel_compose_scout`, the frame of the armed sheet) — the send
+  armed the verb's pick, the sheet stays open, and the send is drawn pressed.
+- **`_assert_escape_cancels_the_pick_first`** — with `Main.escape_claimant` and the real HUD readers:
+  armed, Esc is `ESC_TARGETING`; after the cancel the sheet is still open with its send un-armed, and
+  the next Esc is `ESC_VERB_FORM`.
+- **`_assert_scout_click_commits`** — `notify_targeting_click` on `SCOUT_TARGET_TILE` sends exactly one
+  party, to that tile, with the sheet's party; the pick is down, the sheet closed, and the band still
+  the selection (a targeting click selects nothing).
+- The Deny half is "The DENIAL raid's states" above.
+- **`_assert_verbs_gate_on_idle`** (on `band_panel_no_idle`) — Scout, Deny and Trade disabled on the
+  bar, Move and Split live.
+- **`_open_split_sheet`** opens the split sheet through `_open_verb_sheet` and writes only its stepper.
+
+The action-registry block unregisters the verbs to test an empty bar and re-registers them through
+`_register_band_verbs()`, so the states after it see the shipped registration.
+
+## The RECALL VERB pair
+
+Claims no frame can carry — each is about a tooltip or a dialog. The behaviour they guard is specified
+in `band-city-panel.md` → "THE RECALL VERB FOLLOWS THE SIM".
 
 **`_assert_row_recall_confirms` is a set of THREE presses, and the set is the claim.** A rule that
 showed one verb everywhere satisfies any one of them alone. Each drives the REAL `_build_party_row` and
@@ -1300,73 +1199,6 @@ caller could drift — and each asserts the verb, the tooltip and the ceremony:
 - Sabotage-verified in BOTH directions, each failing a disjoint set: pinning the predicate TRUE fails
   the field party's three and the report-owed party's three; pinning it FALSE fails the camped party's
   three alone.
-
-**`_assert_unknown_zone_box_does_not_float`** rides `band_panel_compose_hunt_short`, where the mark is
-latched at the short dock's genuine 641px — the only configuration in which the two answers differ,
-which is why the block leads with that precondition and refuses to claim anything under it. It makes
-the box unknown the way the live client does (a collapsed panel) and drives the REAL
-`_party_compose_floats`. Sabotage: restoring the `_parties_zone_box()` fallback fails exactly that one
-assertion (`mark 641px, which WOULD float against the 360px fallback`).
-
-**`_assert_mark_dropped_on_dock_change`** reads the outcome of the real `set_dock(SIDE_LEFT)` + render
-that already sat in that block. The mark it judges is STAGED (`_stage_impossible_compose_mark`, four
-viewport heights) because **no fixture here naturally produces a mark that overflows the tall dock** —
-that dock holds this sheet comfortably, which is what `_assert_compose_in_zone` asserts one state
-earlier — so a real mark leaves the two answers identical. The mark is the INPUT to the rule; the rule
-is `_note_parties_zone_box`. Sabotage: dropping the reset fails the two claims and not the
-preconditions (`the mark from the SHORT dock did not survive the move (now 4608px)`).
-
-**Zero frames moved for all four**, in either harness: 72/72 `band_panel_*` and 344/344 `ui_preview`
-byte-identical to the pre-change baseline. (`ui_preview`'s `telling_panel_unread.png` is flaky
-run-to-run on its own, unrelated to this change and to the frame set's bit-identity claim elsewhere in
-this file — it was observed differing between two runs of IDENTICAL code.)
-
-### …AND NEITHER OF THOSE TWO GUARDS COVERED THE LIVE PATH, WHICH IS WHY THE SHEET FLOATED AGAIN
-
-The empty hunt sheet was reported floating out of a tall LEFT dock a second time, with both guards
-above in place and every assertion in this harness green. Two things account for the gap and both are
-about **which question the harness was in a position to ask**:
-
-- **No state staged an EMPTY compose form as a composing act of its own.** Every compose fixture writes
-  `_party_compose_open` directly and picks a quarry first, so the smallest the sheet ever is — the form
-  a player sees the instant they press `🏹 Hunt`, on a band with no parties — was never rendered from
-  that entry point. `band_panel_compose_hunt_no_prey` looks like it covers this and does not: it
-  reaches the empty form by CLEARING a quarry mid-act, so it inherits the full form's mark and never
-  arms a fresh measurement.
-- **Every render in this harness happens from a coroutine resumed at `process_frame`**, i.e. the most
-  favourable point in the frame for the deferred container sort to have been flushed by the time
-  `_measure_party_compose` resumes one frame later. The phantom reading therefore never reached the
-  mark HERE even with the guard fully broken — measured: reverting `_party_compose_measurable` to its
-  column-width-only form leaves `_party_compose_needed` at the correct 207. **No rendered state can see
-  that**, in either direction, which is why the new guard drives the PREDICATE in the window rather
-  than judging a frame.
-
-**`_assert_empty_compose_opens_in_the_zone`** (on `band_panel_compose_hunt_empty`) presses the REAL
-footer launcher — reached by `HudWidgets.MISSION_LAUNCH_META`, valued on the mission, since all three
-buttons come from one builder and their faces carry the mission glyph — and then asks the predicate
-twice: **unmeasurable** in the pre-layout window and **measurable** after `_settle`, with the mark that
-survives asserted to equal the laid-out reading. Its vacuity guard is the whole point: the pre-layout
-column must read HIGH enough to have floated the sheet (it reads **1278px against a 1055px box**, where
-the laid-out answer is **207**), or refusing to record it proves nothing.
-
-**`_assert_zone_holds_its_compose_sheet`** states the invariant directly and against the MEASURED
-NUMBERS rather than the dock edge: a zone with room for the sheet keeps it. Its precondition is that
-room, so a state where the sheet genuinely does not fit refuses to claim anything instead of passing as
-"correctly floated", and it locates the sheet by NODE IDENTITY (the controller's own
-`_party_compose_sheet`, walked up to whichever surface owns it) — the empty form's Send is disabled and
-carries no confirm meta, being a reason rather than a confirm. **It is called at the STATE, not inside
-the block above**, so a trigger stuck ON — which takes the phantom reading out of the parties column
-and trips that block's own precondition — still has this claim asked of it.
-
-Sabotage-verified three ways, each failing a DISJOINT set: reverting the guard to the column-width test
-fails the pre-layout claim alone (and nothing else in the run, which is the demonstration that no other
-assertion here could see it); pinning the predicate FALSE fails the paired positive and the mark claim;
-and forcing `_party_compose_floats` true fails the zone-holds-its-sheet claim, with the pre-layout block
-loudly refusing its own precondition rather than passing.
-
-**One frame added, none moved**: 73 pre-existing `band_panel_*` PNGs byte-identical to the pre-change
-baseline (captured by stashing the change and re-rendering), plus the new
-`band_panel_compose_hunt_empty`.
 
 ## The QUEUE's controls, and the two traps they walked into (`docs/plan_standing_upkeep.md` §4.7b)
 
@@ -2510,15 +2342,14 @@ builder that printed one clause and never reached the others.
 - **The command claim is a PAIR and PNG-less** — a tail is not a picture. The null pick must emit
   ` kit none` and the DEFAULT pick must emit no tail at all: a builder that always appended satisfies
   the first alone, one that never did satisfies the second. It is driven through the REAL path (the
-  sheet's confirm arms the targeting; `try_dispatch` builds the payload) so it covers the whole carry
-  rather than a hand-built dictionary.
+  Scout sheet on the band's drawer, its send arming the pick, the click on the tile committing through
+  `send_expedition_to`) so it covers the whole carry rather than a hand-built dictionary.
 
 **Three harness traps this block walked into, all previously recorded elsewhere in this file and all
 met again here:**
 
 - ⛔ **A LAMBDA CAPTURES A LOCAL BY VALUE.** The command witness assigned to a `String` and reported
-  that nothing was ever emitted. It is an `Array` box now — the same trap `chapters/trade.gd`'s
-  destination pick cost a run over.
+  that nothing was ever emitted. It is an `Array` box, the container every chapter witness uses.
 - ⛔ **INJECTING THE PANEL DOES NOT RENDER THE SELECTION INTO IT.** The dock came up on whatever
   `panel_band()` the walk had left behind — the reference band with 13 of 16 hands assigned — so the
   party stepper capped at 3 and every claim was about the wrong band while looking ordinary. The block
@@ -2940,37 +2771,46 @@ exactly 5 failures** — the no-ate/deficit claim (it names the line on all thre
 postings' line counts, and the PNG-less forage walk's count; the local row's identity stays green, and
 nothing else in the run moves. Restored: green.
 
-## The DOCK's compose-surface claims ride the DENIAL form now (the Hunt verb is retired)
+## A far WORKING's party on the roster hover — PNG-less, six claims
 
-The Parties footer's Hunt verb is gone (`band-city-panel.md` → "THE PARTIES FOOTER HAS NO HUNT
-VERB"), and with it `band_panel_compose_hunt` / `_short` / `_eradicate` / `_no_prey` / `_empty` and
-the hunt-sheet-only guards (`_assert_hunt_sheet_chart`, `_assert_chart_reads_the_settled_party`, the
-dock's trip-bound clause). **The LAYOUT claims those frames carried were never about the hunt** — they
-are about the dock's compose surface — so they moved onto the denial form, which is the dock sheet with
-a quarry to lay out:
+`_assert_a_far_working_states_its_party`, called after `_assert_a_working_flags_the_crew_that_outgrew_it`,
+stages the roster fixture's FAR stone working as a posted party (`party_workers` 3, a 5-tile walk, one
+on the road, the next load in 2, `net_rate_home` 0.9) and reads the drawn row's hover: the crew line,
+the next-load line and `Arriving home: +0.90 stone a turn` by equality through `HudWorkVocab`'s own
+formats, no `food` word anywhere, and — the paired negative — a near working with no party carrying no
+block. It puts the roster fixture back with `_put_the_workings_roster_back`, the put-down state's own
+restore, so the CASE 2 / CASE 3 states after it run against the board they were written for.
 
-- `band_panel_compose_tall` — the tall side dock HOLDS its sheet (`_assert_compose_in_zone`).
-- `band_panel_compose_short` — the height-capped top dock FLOATS it, the float fits the viewport and
-  clears the card, leaves the map clickable (9/9 presses), and an unknown zone box does not float.
-- the mark latched in the short dock is DROPPED on the move back to the tall one.
-- `band_panel_compose_no_prey` — the form with no quarry.
-- `band_panel_compose_empty` — the empty form opened through the REAL **Deny** footer button, the
-  phantom-measurement pair (1498px unsorted, 291px laid out).
+## One pick armed at a time, and a hidden sheet does not stay live
 
-**The float's Send is found by `SEND_DENIAL_CONFIRM_META`** now (`SEND_HUNT_CONFIRM_META` is deleted).
-**The Deny button arms the party seed** where the Hunt button armed none, so the block spends it
-(`consume_party_autofill`) before the denial states that stage their own `DENIAL_PARTY` — without that
-the first denial frame opened on the quarry's requirement and failed its verdict and take claims.
+Three PNG-less guards run straight after `_assert_denial_click_commits`, each judged on what ONE
+targeting click emits and what the banner says:
 
-**`_assert_footer_offers_no_hunt`** reads the launchers' own `MISSION_LAUNCH_META` values and requires
-exactly `deny · scout · split · trade` — the four that stay, paired with the absence, since a footer
-that lost every button would satisfy the absence alone. Sabotage-verified by re-adding a `hunt`
-launcher: exactly that claim fails, naming `["deny", "hunt", "scout", "split", "trade"]`.
+- **`_assert_verb_pick_replaces_move`** — Move armed through `TargetingController.begin_move_band`
+  under an open Deny sheet (the action bar's Move closes the sheet first, so only the entry point can
+  put the two side by side), then the sheet's real Send: the banner reads DENY, and one click on the
+  herd emits one `send_denial_raid` and no `move_band`.
+- **`_assert_move_replaces_verb_pick`** — the Deny pick armed, then `begin_move_band`: the banner reads
+  MOVE, the sheet's send is drawn un-armed, and one click emits one `move_band` and no raid. The
+  optimistic move it records is dropped again (`drop_pending_move`).
+- **`_assert_occupant_change_closes_the_verb`** — the Deny sheet open, the selection cycled to the
+  band's own hex's LAND, then to a HERD on it: each time the verb is cleared, the herd highlight is
+  gone, and `Main.escape_claimant` no longer answers `ESC_VERB_FORM`.
+
+**Sabotage-verified** by making `_disarm_other_picks` and `note_selection_occupant` no-ops: EXIT=1,
+exactly 11 failures, all of them these claims (both clicks emit two orders), and nothing else moves.
+
+## The quarry-eligibility guards (the Hunt verb is retired)
+
+There is no hunt verb (`band-city-panel.md` → "THERE IS NO HUNT VERB"), and with it went
+`band_panel_compose_hunt` / `_short` / `_eradicate` / `_no_prey` / `_empty` and the hunt-sheet-only
+guards (`_assert_hunt_sheet_chart`, `_assert_chart_reads_the_settled_party`, the dock's trip-bound
+clause). `SEND_HUNT_CONFIRM_META` is deleted.
 
 **The quarry-eligibility guards inverted with the rule.** `_assert_quarry_eligibility` used to require
 the near herd REFUSED (inside `hunt_reach`); every herd at a known distance is a quarry now, so it
-requires the near herd TAKEN and a herd at an UNKNOWN distance refused with targeting still armed.
-`_assert_denial_quarry_eligibility` lost its hunt half and asserts the glow at `QUARRY_NO_REACH_BOUND`.
+requires the near herd COMMITTED (handed to the pick's commit) and a herd at an UNKNOWN distance
+refused with targeting still armed. `_assert_denial_quarry_eligibility` lost its hunt half and asserts the glow at `QUARRY_NO_REACH_BOUND`.
 
 `_assert_dock_chart_carries_the_kit` survives PNG-less — it is arithmetic on `floor_chart_model`,
 which the herd sheet still draws — and is called from the same block.
@@ -3048,3 +2888,13 @@ measurement chose, the relay's first hop, the friction row, the 1190 threshold w
 and `_assert_scroll_only_where_sanctioned` across both shells. The frames are listed in
 `band-city-panel.md` → "The Trade tab".
 
+## `band_panel_workings_overstaffed` measures the GEARED cap (issue #663)
+
+`_assert_a_working_flags_the_crew_that_outgrew_it` stages its cut-back pair with a room of `11` over
+a bare `2.2` per cutter, so the bare quotient is five, and publishes the sim's geared
+`useful_cutters` on the band's two `extract` rows below it (`WORKINGS_WORN_USEFUL`: wood 3, stone 2).
+Five cutters on the wood sit BETWEEN the two ceilings, so a roster row still dividing the room by the
+bare rate says nothing where the published cap says `overstaffed`. **That premise is asserted, not
+trusted**, against a chapter-local bare quotient (`_worn_workings_bare_cap`) — a fixture where the two
+ceilings agreed could not say which one the row read. The stone crew sits exactly on its own published
+cap and must carry nothing, the pair's negative half.

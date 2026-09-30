@@ -46,11 +46,11 @@ const START_ORDER_PENDING_VERB := "Starting"
 # expedition sheet is where such a blanking surfaces first: it has no chart, so its readout's aside is
 # the whole of what it says a floor MEANS.
 const FLOOR_ZONE_HINTS := {
-	"strip": "Take everything — the crew leaves nothing standing. %s",
-	"drawdown": "Below the food peak — more food now, taken out of what this source will grow back. It declines while you hold this.",
-	"peak": "",
-	"learning": "Above the food peak — you give up food to leave more standing, and your people learn faster from what they work.",
-	"untouched": "Nothing is taken — the whole stock stays standing. A crew with nothing to work learns nothing and builds nothing.",
+    "strip": "Take everything — the crew leaves nothing standing. %s",
+    "drawdown": "Below the food peak — more food now, taken out of what this source will grow back. It declines while you hold this.",
+    "peak": "",
+    "learning": "Above the food peak — you give up food to leave more standing, and your people learn faster from what they work.",
+    "untouched": "Nothing is taken — the whole stock stays standing. A crew with nothing to work learns nothing and builds nothing.",
 }
 
 # The per-WEB half of the strip-it warning, and the reason it is a clause rather than a second table:
@@ -61,9 +61,9 @@ const FLOOR_ZONE_HINTS := {
 # a WOOD is the plant web's consequence in the working's own noun — the sim's growth term reads its
 # curve at a seeded stock (`extraction::deposit_regrowth`), so a seam cut clean does come back, slowly.
 const FLOOR_STRIP_CONSEQUENCE := {
-	"forage": "The patch is stripped bare and has to reseed itself from nothing.",
-	"hunt": "It is the last hunt: the herd is gone for good, for you and for everyone else.",
-	"extract": "The seam is cut to nothing and has to grow back from a seed.",
+    "forage": "The patch is stripped bare and has to reseed itself from nothing.",
+    "hunt": "It is the last hunt: the herd is gone for good, for you and for everyone else.",
+    "extract": "The seam is cut to nothing and has to grow back from a seed.",
 }
 
 # The one thing a detached party changes about the rule above: an expedition's Hunting arm banks BOTH
@@ -83,9 +83,9 @@ const FLOOR_LEARNING_HINT_EXPEDITION := "Above the food peak — the party takes
 # below), each face keeps its zone glyph, and the sentence that actually explains the choice is the
 # floor hint under the picker, which never shortened.
 const FLOOR_PRESET_LABELS := {
-	"strip": "Everything",
-	"peak": "Best",
-	"learn": "Learning",
+    "strip": "Everything",
+    "peak": "Best",
+    "learn": "Learning",
 }
 
 # …and the phrase each is short FOR, which leads the preset's tooltip beside the number it stands
@@ -93,9 +93,9 @@ const FLOOR_PRESET_LABELS := {
 # a name and a tooltip is a sentence's opening, and folding them cost the long form the moment the
 # face shortened.
 const FLOOR_PRESET_LONG_LABELS := {
-	"strip": "Take everything",
-	"peak": "Best harvest",
-	"learn": "Learn from it",
+    "strip": "Take everything",
+    "peak": "Best harvest",
+    "learn": "Learn from it",
 }
 
 # A dialled floor stated as itself — `35% left standing`. **"Left standing", not "floor"**: the wire's
@@ -791,9 +791,11 @@ const BARE_FORECAST_PREFIX := ""
 
 const FORAGE_FORECAST_PREFIX := "patch_"
 
-const SEND_EXPEDITION_HINT := "Detach a party to scout distant territory, then click a target tile."
+## The scouting sheet's send ARMS the tile pick (issue #529), so the hint says where the order goes:
+## to the tile the player clicks next.
+const SEND_EXPEDITION_HINT := "Detach a party to scout toward the tile you click next."
 
-const SEND_EXPEDITION_BUTTON := "Send scouting party…"
+const SEND_EXPEDITION_BUTTON := "Send scouting party"
 
 # ⛔ **EVERY HERD IS AN ORDINARY HUNT, WHATEVER THE DISTANCE** (`docs/plan_civilization_steps.md`
 # §One work party). The herd sheet offered a LOCAL hunt within the selected band's `hunt_reach` and a
@@ -821,8 +823,9 @@ const ASSIGN_LOCAL_HERD_BUTTON := "Herd Here"
 
 # **THE PLANT WEB'S ONE COMMIT VERB, AT EVERY RUNG** (`docs/plan_standing_upkeep.md` §4.9 item 12c).
 # ⛔ **NOT RANGE-GATED ANY MORE.** A patch past the selected band's `work_range` posts a work party
-# rather than lapsing its crew, so the plant sheet mounts the party section instead of a refusal. The
-# refusal (`WORK_RANGE_REFUSAL_FORMAT`) is the DEPOSIT sheets' alone now: extraction still lapses.
+# rather than lapsing its crew, so the plant sheet mounts the party section instead of a refusal. No
+# sheet refuses on range now: a far wood or quarry posts a party too, and the retired
+# `WORK_RANGE_REFUSAL_FORMAT` went with the last sheet that used it.
 #
 # ⛔ **IT WAS A PAIR — `FORAGE_ASSIGN_BUTTON` (`"Forage"`) AND `TEND_ASSIGN_BUTTON` (`"Tend"`) — AND
 # THE FORK IS RETIRED, NOT MISLAID.** The dead claim, verbatim: *"A managed source — a Tended Patch
@@ -840,32 +843,13 @@ const ASSIGN_LOCAL_HERD_BUTTON := "Herd Here"
 # collides with nothing.
 const HARVEST_ASSIGN_BUTTON := "Harvest"
 
-# ⛔ **THE STATIONARY WEBS' ONE OUT-OF-RANGE REFUSAL, AND IT IS ONE STRING BECAUSE IT IS ONE NUMBER**
-# (issue #650). The forage sheet and the two DEPOSIT sheets are all judged against the same
-# `band_work_range` — `systems::labor`'s `Extract` arm lapses an out-of-range crew byte-for-byte as
-# its `Forage` arm does — so both sheets refuse in the same sentence, composed here once. Two
-# spellings of one limit is two limits as far as a player can tell.
-#
-# ⛔ **THE RANGE IS CALLED `work range`, WHICH IS THE SIM'S OWN NAME FOR THE NUMBER, and it was
-# `forage range` until issue #650.** That word was only ever right because foraging was the one web
-# with the gate: a digger told they are beyond their *forage* range is being refused in another web's
-# vocabulary. `LaborConfig::band_work_range` is what BOTH arms measure against, and the sim's own
-# lapse event already reads *"out of the band's work range"* — so the refusal and the abandonment a
-# player reads a turn later now use one word, and the Workbench's `Band work range` dial is a third
-# surface that always did.
-#
-# ⛔ **`hunt reach` IS NOT THIS NUMBER AND KEEPS ITS OWN NAME.** It is `band_work_range` PLUS the
-# leash, so the two names in this client name two quantities rather than one thing twice.
-#
-# **AND IT IS A PLAIN REFUSAL RATHER THAN THE HUNT SHEET'S OFFER.** A herd beyond reach can be
-# followed by a detached party, so that sheet says so (`"…Detach a party to follow it."`). Nothing in
-# the expedition roster works ground — the missions are `scout` / `hunt` / `deny` / `trade` — so a
-# seam beyond reach has no alternative to offer and the honest answer is *no*. What a player does
-# instead is move the band, which is a different control on a different surface.
-#
-# Args: `[x, y, distance, work_range]`.
-const WORK_RANGE_REFUSAL_FORMAT := \
-    "(%d,%d) is %d tiles away — beyond this band's work range (%d)."
+# ⛔ **RETIRED — `WORK_RANGE_REFUSAL_FORMAT`, THE STATIONARY WEBS' OUT-OF-RANGE REFUSAL** (issue #650).
+# It refused a patch or a deposit past the band's `band_work_range`, because the sim LAPSED such a
+# crew with nothing but an event-log line. The work party removed that lapse for every web
+# (`docs/plan_civilization_steps.md` §One work party, `docs/plan_extraction.md`): a far patch, herd,
+# wood or quarry posts a caravan and walks its take home, so a refusal would forbid the very
+# assignment the caravan exists to make. There is nothing special about wood or stone — every far
+# job is the same caravan, and the sheets mount the same party section for it.
 
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
 # player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
@@ -1122,32 +1106,24 @@ const SPLIT_AGE_ELDERS_KEY := "elders"
 
 ## The parties inspector strip is DENSER than the work inspector (up to SEVEN detail lines vs ~1), and
 ## the T/B parties zone is height-capped at ~300px and CLIPS, so its detail lines are tightened well
-## below HudWorkVocab.ZONE_BLOCK_SEPARATION to keep the strip + a party row + the bottom-pinned footer
-## inside the box.
+## below HudWorkVocab.ZONE_BLOCK_SEPARATION to keep the strip + a party row inside the box.
 ##
 ## **IT WAS 4, AND THE WORST CASE IS WHAT MOVED IT.** A hunt party carrying every optional line at once
 ## — the one `band_panel_worst_case_party` stages — needs 9 gaps in that column, so each pixel here
 ## costs the zone nine: at 4 the strip alone measured 218px of a 300px box that also owes a 20px head,
-## a 42px party row, a 42px footer and four 6px block gaps. Two pixels is the whole of what padding
+## a 42px party row, the 42px footer the zone then carried and four 6px block gaps. Two pixels is the whole of what padding
 ## could pay (going lower closes the gap between two 14px lines to nothing); the rest came from merging
 ## the two ORDERS lines into one — see `DetailFormat.expedition_orders_line`.
 const PARTIES_INSPECTOR_LINE_SEPARATION := 2
 
-## Why the three EXPEDITION buttons are disabled — and it says "expedition" because the fourth button
-## beside them is NOT one: a split is gated on the band's workers, not on its idle ones, so it can be
-## live in the same row. A hint that named the row rather than the missions would flatly contradict a
-## button the player can press.
-const SEND_PARTY_NO_IDLE_REASON := "No idle workers to spare for an expedition. Free some from Work."
-
-## The compose sheet — MISSION FIRST: the footer launches straight into a mission, so the sheet is
-## always already on one.
+## The compose sheet's MISSION — which of the band verbs opened it. The sheet is always already on
+## one: a verb names its mission, and the sheet opens on the band's own tile. The target is its last
+## step — Send arms the map pick, unless Deny or Trade already has one pre-selected.
 ##
 ## ⛔ **THERE IS NO HUNT MISSION.** It was the answer to game past `hunt_reach`; the work party is the
 ## answer now, composed on the herd's own sheet as an ordinary hunt (`docs/plan_civilization_steps.md`
 ## §One work party).
 const COMPOSE_MISSION_SCOUT := "scout"
-
-const COMPOSE_MISSION_LABEL_SCOUT := "⚑ Scout"
 
 ## **THE DENIAL VERB** (`docs/plan_denial_raid.md` §3). Denial is a MISSION rather than a floor on an
 ## ordinary hunt, because the thing it changes is a BOUND and not a number: the party never stops
@@ -1155,21 +1131,12 @@ const COMPOSE_MISSION_LABEL_SCOUT := "⚑ Scout"
 ## nothing else. `floor` must never appear anywhere in its UI.
 const COMPOSE_MISSION_DENY := "deny"
 
-## **THE FOURTH VERB, AND IT IS NOT A MISSION AT ALL** — a split makes a band rather than sending a
-## party. It sits beside the other three because this is where the player already comes to divide
-## people out of a band; nothing else about it is an expedition.
+## **THE VERB THAT IS NOT A MISSION AT ALL** — a split makes a band rather than sending a party, so
+## it takes no target: it opens on the band's own hex. Nothing else about it is an expedition.
 const COMPOSE_MISSION_SPLIT := "split"
 
-## 💀 is the STRIP zone's own glyph (`FoodIcons.FLOOR_ZONE_ICONS`), and it is right here for the same
-## reason it is right there: leaving nothing standing. It cannot collide with a floor glyph on this
-## control — a denial form has no floor picker at all — and the three footer buttons name their
-## missions in words beside their marks.
-const COMPOSE_MISSION_LABEL_DENY := "💀 Deny"
-
-const COMPOSE_MISSION_LABEL_SPLIT := "⌂ Split"
-
 # =====================================================================================
-#  THE SHIPMENT (arc #527, issue #517) — the FIFTH footer button and the FOURTH mission
+#  THE SHIPMENT (arc #527, issue #517) — the FOURTH mission
 # =====================================================================================
 
 ## **THE FOURTH MISSION.** A shipment is a party that walks it: it names another BAND rather than a
@@ -1178,88 +1145,133 @@ const COMPOSE_MISSION_LABEL_SPLIT := "⌂ Split"
 ## one. No quarry, no floor, no policy, no trip forecast; a destination, a party and a cargo list.
 const COMPOSE_MISSION_TRADE := "trade"
 
-## 📦 is the mark the shipment wears on all three surfaces — this button, the parties row and the map
-## marker — the `💀` rule: one mission, one glyph, so a party's mark means the same thing wherever it
-## is drawn.
-const COMPOSE_MISSION_LABEL_TRADE := "📦 Trade"
+# =====================================================================================
+#  THE BAND VERBS (issue #529) — ONE list, read by both surfaces that offer them
+# =====================================================================================
 
-## Mission → `HudSprites` MARK ID, for the launch buttons whose glyph is PICTOGRAPHIC (issue #249).
-## A mission listed here puts its mark on the `Button`'s own `icon` property and takes its label from
-## `MISSION_LABELS_SPRITE` below, the verb without the leading glyph; one absent from it keeps its
-## `COMPOSE_MISSION_LABEL_*` glyph face.
+## **THE ONE SOURCE OF TRUTH FOR WHAT A BAND CAN BE TOLD TO DO.** The Band panel registers every entry
+## on its action bar (`BandPanelController.register_band_verbs`) and the tile panel's band drawer
+## builds its verb row from the same entries (`SubjectDrawerController`), with the same `enabled`
+## predicate and the same dispatch (`BandPanelController.verb_enabled` / `dispatch_verb`). A verb
+## added here appears on both; a verb that lived in one list only would be the drift this exists to
+## end. Hunting is deliberately NOT one: it stays on the herd tile's own `Assign ▸` flow.
 ##
-## **THE IDS ARE THE ACTIVITY'S AGAIN** — `scout` retires the ⚑ FLAG for the drawn footprints, which is a vocabulary change
-## and not just an art one: the flag was this grid's own mark for a mission the rest of the client
-## already spelled with a compass, and one job may not have two drawings.
-##
-## ⛔ **`split` IS ABSENT AND IT IS NOT A GAP.** `⌂` is a text-presentation SYMBOLIC glyph, which
-## #249 leaves as text — and a split is not a mission at all (it makes a band rather than sending a
-## party), so the grid reading four drawn marks and one glyph states that difference rather than
-## hiding it.
-const MISSION_MARKS := {
-	COMPOSE_MISSION_SCOUT: "scout",
-	COMPOSE_MISSION_DENY: "deny",
-	COMPOSE_MISSION_TRADE: "trade",
-}
+## The ids are the action registry's keys (`BandCityPanel.register_action`), so they are
+## `StringName`s and carry a `verb_` prefix that keeps them apart from the panel's own `⚒` / `▲`.
+const VERB_MOVE := &"verb_move"
+const VERB_SCOUT := &"verb_scout"
+const VERB_DENY := &"verb_deny"
+const VERB_TRADE := &"verb_trade"
+const VERB_SPLIT := &"verb_split"
 
-## The launch faces once their mark is bundled ART — the verb alone, the glyph gone, because a
-## `Button` carries art on its `icon` PROPERTY and a face that kept the glyph would say its mission
-## twice. Art OR glyph, never both — the rule the work chips and the kit picker already follow.
-const MISSION_LABELS_SPRITE := {
-	COMPOSE_MISSION_SCOUT: "Scout",
-	COMPOSE_MISSION_DENY: "Deny",
-	COMPOSE_MISSION_TRADE: "Trade",
-}
+## Move's MISSION — it composes nothing (the click is the order), so it has no sheet and no
+## `COMPOSE_MISSION_*` of its own; this is the key the dispatch branches on.
+const VERB_MISSION_MOVE := "move"
 
-## What a launch button's art may occupy, through the stock `icon_max_width` theme constant. The
-## sources are 256px and a `Button` reserves its icon's drawn size in its MINIMUM, so uncapped art
-## would set the whole grid's cell size. Sized to the face's own text so the mark reads as the
-## glyph it replaced.
-const MISSION_ICON_MAX_WIDTH := 16
+## A verb descriptor's keys.
+const VERB_KEY_ID := "id"
+const VERB_KEY_MISSION := "mission"
+const VERB_KEY_GLYPH := "glyph"
+const VERB_KEY_TOOLTIP := "tooltip"
+## The `HudSprites` mark the face wears where the verb has bundled ART — `""` for none, in which case
+## the glyph is the face. Scout, Deny and Trade share the marks their parties wear on the roster row
+## and the map, so one mission is drawn one way wherever it is spoken about. `⌂` is a symbolic text
+## glyph and Move has no mark in this client's vocabulary, so both stay text.
+const VERB_KEY_MARK := "mark"
 
-## **HOW MANY LAUNCH BUTTONS FIT ONE ROW OF THE PARTIES FOOTER, and the fifth is what forced the
-## question.** Four fit a 354px dock column at ~62px each; a fifth takes them to ~48, which
-## `📦 Trade` does not fit — and the zone `clip_contents`, so what shipped for one render was a
-## button SLICED OFF THE EDGE rather than a narrower row. A `GridContainer` at this ceiling wraps to
-## 3 + 2, the `build_floor_picker` idiom for exactly this shape (its six rungs wrap 3 + 3), and the
-## second row costs the footer one row of height in a zone whose list above it is the `EXPAND_FILL`
-## child that gives it up.
-##
-## **FOUR BUTTONS SINCE THE HUNT VERB RETIRED, AND THEY WRAP 2 + 2.** Still two rows, so the footer's
-## height is unchanged, and each button gets half the column instead of a third — a 3 + 1 grid would
-## leave `⌂ Split` alone under three.
-const PARTY_FOOTER_COLUMNS := 2
+## The verbs in bar order. Each glyph is its face's fallback when the art does not load.
+const BAND_VERBS := [
+    {VERB_KEY_ID: VERB_MOVE, VERB_KEY_MISSION: VERB_MISSION_MOVE,
+        VERB_KEY_GLYPH: "➜", VERB_KEY_TOOLTIP: "Move", VERB_KEY_MARK: "move"},
+    {VERB_KEY_ID: VERB_SCOUT, VERB_KEY_MISSION: COMPOSE_MISSION_SCOUT,
+        VERB_KEY_GLYPH: "⚑", VERB_KEY_TOOLTIP: "Scout", VERB_KEY_MARK: "scout"},
+    {VERB_KEY_ID: VERB_DENY, VERB_KEY_MISSION: COMPOSE_MISSION_DENY,
+        VERB_KEY_GLYPH: "💀", VERB_KEY_TOOLTIP: "Deny", VERB_KEY_MARK: "deny"},
+    {VERB_KEY_ID: VERB_TRADE, VERB_KEY_MISSION: COMPOSE_MISSION_TRADE,
+        VERB_KEY_GLYPH: "📦", VERB_KEY_TOOLTIP: "Trade", VERB_KEY_MARK: "trade"},
+    {VERB_KEY_ID: VERB_SPLIT, VERB_KEY_MISSION: COMPOSE_MISSION_SPLIT,
+        VERB_KEY_GLYPH: "⌂", VERB_KEY_TOOLTIP: "Split", VERB_KEY_MARK: "split"},
+]
+
+## The descriptor whose MISSION is `mission`, or `{}`.
+static func verb_for_mission(mission: String) -> Dictionary:
+    for verb in BAND_VERBS:
+        if String(verb[VERB_KEY_MISSION]) == mission:
+            return verb
+    return {}
+
+## The descriptor whose registry id is `id`, or `{}`.
+static func verb_for_id(id: StringName) -> Dictionary:
+    for verb in BAND_VERBS:
+        if StringName(verb[VERB_KEY_ID]) == id:
+            return verb
+    return {}
+
+## The line over a verb's sheet in its band's drawer: the verb, and the band that carries it out.
+## **The band is stated, never offered** — it was chosen when the verb was pressed, so the sheet names
+## it as text rather than as a picker.
+const VERB_FORM_HEADER_FORMAT := "%s · from %s"
+## The verb sheet's send, at rest and while its map pick is armed (`HudStyle.apply_button` variants) —
+## `armed` is the HUD's own face for "an action awaiting its target or its cancellation".
+const VERB_SEND_STYLE := "primary"
+const VERB_SEND_ARMED_STYLE := "armed"
+## **THE HOVER BANNER** (issue #529): over a hex a click would commit to, an armed Deny / Trade pick's
+## banner reads `DENY Saltmarch → Wild Boar · <verdict>` — the arrow, then the target and what is known
+## about it, joined by the middle dot. A hex holding several eligible herds names the first and counts
+## the rest, because the click opens the chooser that tells them apart.
+const VERB_HOVER_ARROW := "→"
+const VERB_HOVER_JOIN := " · "
+const VERB_HOVER_DETAIL_FORMAT := "%s · %s"
+const VERB_HOVER_MORE_FORMAT := "%s +%d more"
+## The Deny pick's herd chooser's node name — a `PopupMenu` at the pointer, opened by a click on a hex
+## holding more than one eligible herd (`TargetingController._open_quarry_chooser`).
+const QUARRY_CHOOSER_NAME := "QuarryChooser"
+
+## **THE DENY SHEET'S PREY ROW** — the herd pre-selected on the map while the sheet is open, stated
+## read-only. ⛔ **`Prey`, NOT `Quarry` (issue #650)**: `quarry` is the extraction ladder's own rung,
+## its command verb and the word every deposit readout uses.
+const COMPOSE_FIELD_PREY := "Prey"
+## A prey face (and a chooser entry) for a species with no bundled art: its emoji, then its name.
+const COMPOSE_PREY_LABEL_FORMAT := "%s %s"
+## The prey's bundled ART on the row, capped — the source PNGs are 256px.
+const COMPOSE_PREY_ICON_MAX_WIDTH := 20
+## The `⋯` beside the prey when its hex holds more than one eligible herd.
+const COMPOSE_PREY_CHOICES_TOOLTIP := "Another herd shares this hex — choose which one to raid."
+## The row's `✕`: clear the prey, after which the send arms the herd pick instead.
+const COMPOSE_PREY_CLEAR_TOOLTIP := "Clear the prey — Send then asks for a herd on the map."
+
+## A shipment pick that landed on no band this one is tied to. Said, and the pick stays armed —
+## the prey pick's rule for a click on a hex with no huntable herd.
+const TRADE_PICK_MISS_TITLE := "Trade"
+const TRADE_PICK_MISS_TEXT := "No band this camp is tied to stands there — click a trading partner."
 
 const COMPOSE_TITLE_TRADE := "Load a shipment…"
 
-## The footer button's hover text. It names the one thing that gates the verb — a live tie — because
-## a player whose bands have met nobody will find every destination greyed out and must be told why
-## by something other than the empty list.
+## The send's hover text. It names the one thing that gates the verb — a live tie — because a player
+## whose bands have met nobody has no destination the Trade pick will take, and must be told why.
 const SEND_TRADE_EXPEDITION_HINT := "Detach a party to carry food and materials to another band you have a tie with."
 
-const SEND_TRADE_EXPEDITION_BUTTON := "Send shipment…"
+const SEND_TRADE_EXPEDITION_BUTTON := "Send shipment"
 
-## The destination row's key. `To` rather than `Destination`: the row is one of the field stack that
-## `COMPOSE_FIELD_KEY_WIDTH` (64px, sized for the longest key) lines up, and the short word leaves the
-## picker its whole share of a 354px dock column.
+## The Trade sheet's `To` row — a tied band pre-selected on the map while the sheet is open, stated
+## read-only. `To` rather than `Destination`: the key shares `COMPOSE_FIELD_KEY_WIDTH` with the rest of
+## the field stack, and the short word leaves the name its share of the row.
 const COMPOSE_FIELD_DESTINATION := "To"
+## The row's `✕`: clear the destination, after which the send arms the pick instead.
+const COMPOSE_DESTINATION_CLEAR_TOOLTIP := "Clear the destination — Send then asks for a band on the map."
 
-const COMPOSE_DESTINATION_CHOOSE := "Choose…"
-
-## **WHY THE LIST IS EMPTY, WHEN IT IS.** A band that has met nobody holds no ties, and a picker with
-## no entries says nothing at all — so the sheet states the gate in the sim's own terms rather than
-## rendering a dead control.
+## **WHY A SHIPMENT CANNOT BE ARMED, WHEN IT CANNOT.** A band holding no live tie has nobody the pick
+## could accept, so the sheet states the gate in the sim's own terms rather than arming a pick that
+## refuses every click.
 const COMPOSE_DESTINATION_NO_TIES := "This band knows no other band yet. Ties form by standing where you can see each other."
 
-const COMPOSE_DESTINATION_HINT := "Choose who the shipment is for — the manifest below is drawn from this band's stores."
 
-## **A PARKED TIE IS SHOWN, DISABLED, WITH THIS AS ITS REASON — never hidden.** Strength `0` means
-## *"we know such a people exist and have no current dealings"*, which is a different statement from
-## having never met them, and it is the thing the player has to learn: the TIE is what gates trade,
-## so a destination that has decayed out of reach must be visible decaying rather than absent.
+## **A PARKED TIE IS NAMED, WITH THIS AS ITS REASON — never hidden.** The Trade pick's hover banner
+## states it over a parked tie's band. Strength `0` means *"we know such a people exist and have no
+## current dealings"*, which is a different statement from having never met them, and it is the thing
+## the player has to learn: the TIE is what gates trade.
 const COMPOSE_DESTINATION_PARKED_REASON := "no current tie — nothing can flow"
 
-const COMPOSE_DESTINATION_ENTRY_PARKED_FORMAT := "%s — %s"
 
 ## **THE REMEMBERED POSITION, WORDED AS ONE.** A connection grants `Discovered` and never `Seen`
 ## (`.claude/rules/core_sim/connections.md` → the keystone), so where a band was the last time this
@@ -1391,53 +1403,13 @@ const COMPOSE_CARGO_EMPTY_REASON := "Nothing loaded yet — a shipment carries s
 ## is nothing to load, so the rows are absent rather than sitting at zero.
 const COMPOSE_CARGO_NO_STORES := "This band has no food, hay or materials to send."
 
-## **HOW MUCH THE COMPOSE SHEET MAY OVERSHOOT THE PARTIES ZONE BEFORE IT LEAVES IT** (see
-## `BandComposeFloat` and `BandPanelController._party_compose_floats`). The requirement is summed from
-## per-control minimum sizes while the box is a laid-out rect, so the two can differ by a subpixel on a
-## sheet that genuinely fits exactly; one pixel of slack keeps a rounding difference from floating a
-## sheet the zone holds. It is deliberately not a design margin — a sheet two pixels too tall for a
-## `clip_contents` host is two pixels sliced, and it floats.
-const COMPOSE_FLOAT_SLACK := 1.0
-
-## **THE NARROWEST PARTIES COLUMN A COMPOSE MEASUREMENT MAY BE BELIEVED AT**
-## (`BandPanelController._party_compose_measurable`). A column with no width at all has not been
-## anchored into a zone host yet, and nothing measured under it means anything. It is a
-## NOT-YET-LAID-OUT test rather than a design minimum: the shipped zone columns are ~354px (side dock
-## flank) and wider, so no real column is anywhere near it.
-##
-## **IT IS ONLY HALF THE TEST, AND THE HALF IT IS NOT IS WHY THIS DEFECT WAS REPORTED TWICE.** A column
-## width says NOTHING about whether the column's contents have been laid out, because the two are
-## established by different mechanisms: the column is anchored `PRESET_FULL_RECT` into its zone host,
-## so Godot hands it the host's width SYNCHRONOUSLY the instant it is reparented, while everything
-## inside it is sized by the container sort, which is DEFERRED through the message queue. Measured on
-## the empty hunt form in the instant between the two: `col.size.x == 356`, a wholly plausible reading,
-## beside `col.get_combined_minimum_size().y == 1278` where the laid-out answer is **207** — every
-## autowrap `Label` under it shaping one word per line. 1278px floats that sheet out of every dock this
-## client has, and the high-water mark then holds it there for the rest of the composing act: the
-## reported picture exactly, `Prey: Choose…` and a disabled Send floating out of a dock with 800px to
-## spare. The other half of the test is the SHEET having been FITTED to this column — see
-## `_party_compose_measurable`. **A bare width floor on the sheet does not do it either**: an unsorted
-## Control still clamps its own size up to its own combined minimum, so the unlaid-out sheet measures a
-## perfectly non-zero 220×903. Only the RELATION between the two widths distinguishes the states.
-const COMPOSE_MEASURE_MIN_COLUMN_WIDTH := 1.0
-
-## **HOW MANY FRAMES THE DEFERRED MEASUREMENT WILL WAIT FOR A LAYOUT PASS** before giving up on this
-## composing act's render (`BandPanelController._measure_party_compose`). One `process_frame` is the
-## normal cost and covers every path measured here; the retry exists because ONE bad reading latches
-## for the rest of the composition, so "wait another frame" has to be cheaper than "record it anyway",
-## and because the alternative to waiting — returning — leaves the mark unmeasured until the next
-## render arms a new one. Bounded rather than open so a sheet whose zone never lays out (a collapsed
-## panel, a hidden dock) cannot spin a coroutine for the session; giving up leaves the sheet INLINE,
-## which is the safe direction the whole fork is biased toward.
-const COMPOSE_MEASURE_MAX_FRAMES := 4
-
 const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 
 const COMPOSE_TITLE_DENY := "Setup a denial raid…"
 
 const COMPOSE_TITLE_SPLIT := "Form a new band…"
 
-## The footer button's hover text. It names the deal the whole mission is — kills without stopping,
+## The send's hover text. It names the deal the whole mission is — kills without stopping,
 ## brings almost nothing home — because that is the ONE thing a player must know before pressing it.
 const SEND_DENIAL_RAID_HINT := "Detach a party to break a herd. It never stops engaging, so it kills far more than it can carry and brings almost nothing home."
 
@@ -1477,41 +1449,10 @@ const COMPOSE_FIELD_POLICY := "Policy"
 ## The PREY is the hunt form's FIRST question: the herd sets the useful party size, the per-policy
 ## take and the trip length, so every field below it is unanswerable until it is picked.
 ##
-## ⛔ **THE ROW SAYS `Prey`, NOT `Quarry` (issue #650).** `quarry` is the extraction ladder's own rung
-## (`HudDepositVocab.RUNG_KEY_QUARRY`), the command verb behind it and the word every deposit readout
-## uses, so one word on the hunted animal AND on the pit being dug is a collision a bug report cannot
-## survive. `Prey` also states what the row holds in a word a player reads as hunting on the first
-## pass rather than as mining.
-const COMPOSE_FIELD_PREY := "Prey"
-
-const COMPOSE_PREY_CHOOSE := "Choose…"
-
-const COMPOSE_PREY_TOOLTIP_FORMAT := "%s (%d, %d)\nClick to choose a different herd."
-
-const COMPOSE_PREY_LABEL_FORMAT := "%s %s"
-
-# The picked prey's face carries the species' bundled ART where there is any (issue #439), as the
-# Button's own `icon` rather than a glyph in its text. The source PNGs are 256px, which a Button
-# would otherwise reserve in full and blow the compose row's width apart, so the icon is capped
-# through the stock `icon_max_width` theme constant — sized to sit with the button's label rather
-# than to be read on its own, the row already naming the herd in words beside it.
-const COMPOSE_PREY_ICON_MAX_WIDTH := 20
-
-## **A HEX CAN HOLD MORE THAN ONE HERD, AND THE MAP CLICK NAMES ONLY THE HEX.** `try_dispatch` is
-## handed a TILE, so a click on a tile carrying a rabbit warren and a wolf pack can resolve to just
-## one of them and re-clicking resolves to the same one — there was no way to reach the other. The
-## Prey row therefore grows a chooser LISTING the tile's eligible herds, and it appears ONLY
-## when there are two or more: one herd is the common case and it renders exactly as before.
-## It is the `⋯` the zone heads already use, so the panel keeps ONE "there are choices here" glyph.
-## A chooser entry names the herd the same way the picked-prey button does, so the row and the menu
-## cannot describe one herd differently: bundled ART where the species has any (as the item's own
-## icon), else the emoji through `COMPOSE_PREY_LABEL_FORMAT`. Unicode ships ONE deer, so two roster
-## species can share a glyph — which is exactly why the art branch exists in the menu too.
-const COMPOSE_PREY_CHOICES_TOOLTIP := "Another herd shares this hex — choose which one to raid."
-
-## The quarry pick's miss note — a map click that named no huntable herd — and its title in the
-## System channel. ⛔ The within-`hunt_reach` refusal that stood here is retired with the hunt
-## mission: the one mission left that picks a herd (denial) has no reach rule to teach.
+## The quarry pick's miss note — a map click that named no huntable herd. Posted under the denial
+## verb's own name (`TargetingController._pick_note_title`); `PREY_PICK_NOTE_TITLE` is the title for a
+## pick whose mission names no verb. ⛔ The within-`hunt_reach` refusal that stood here is retired with
+## the hunt mission: the one mission left that picks a herd (denial) has no reach rule to teach.
 const PREY_PICK_NOTE_TITLE := "Pick prey"
 const PREY_PICK_MISS := "No huntable herd there — click on a herd."
 
@@ -1554,10 +1495,10 @@ const KIT_PICKER_FACE_FORMAT := "%s %s"
 ## bow in this very control, where the two faces alternate). Read the art's subject off
 ## `assets/icons/icon_prompts.txt`, never off the glyph it replaced.
 const KIT_JOB_GLYPHS := {
-	"hunt": "🏹",
-	"forage": "🧺",
-	"scout": "🧭",
-	"warrior": "🪓",
+    "hunt": "🏹",
+    "forage": "🧺",
+    "scout": "🧭",
+    "warrior": "🪓",
 }
 
 ## The picker face's BUNDLED ART, keyed by the same JOB (issue #249). A job listed here puts its
@@ -1583,10 +1524,10 @@ const KIT_JOB_GLYPHS := {
 ## the remaining case — a job the table has never heard of — so this picker has no glyph face left at
 ## all.
 const KIT_JOB_MARKS := {
-	"hunt": "hunt",
-	"forage": "forage",
-	"scout": "scout",
-	"warrior": "warrior",
+    "hunt": "hunt",
+    "forage": "forage",
+    "scout": "scout",
+    "warrior": "warrior",
 }
 
 ## The MARK for a job with no entry above — the art twin of `KIT_JOB_GLYPH_FALLBACK`, and the only
@@ -1909,9 +1850,9 @@ const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — " + LOCAL_FORAGE_OVERDRAW_NOTE
 const LOCAL_EXTRACT_OVERDRAW_NOTE := "overdraws the seam"
 
 const LOCAL_OVERDRAW_NOTES := {
-	"forage": LOCAL_FORAGE_OVERDRAW_NOTE,
-	"hunt": LOCAL_HUNT_OVERDRAW_NOTE,
-	"extract": LOCAL_EXTRACT_OVERDRAW_NOTE,
+    "forage": LOCAL_FORAGE_OVERDRAW_NOTE,
+    "hunt": LOCAL_HUNT_OVERDRAW_NOTE,
+    "extract": LOCAL_EXTRACT_OVERDRAW_NOTE,
 }
 
 # CARRY-AWARE ANIMALS-FIRST preview. A hunt delivers WHOLE animals via a kill-credit bank, so an
@@ -2158,6 +2099,8 @@ const WORK_PARTY_CREW_SINGULAR := {
     HUNT_CREW_LABEL: "hunter",
     HERD_CREW_LABEL: "herder",
     HARVEST_CREW_LABEL: "harvester",
+    HudDepositVocab.FORESTRY_CREW_NOUN: "forester",
+    HudDepositVocab.EXTRACTION_CREW_NOUN: "digger",
 }
 
 ## Where the mean rounds below one person the packs fill slowly enough that the road is usually empty,
@@ -2174,10 +2117,12 @@ const WORK_PARTY_FIRST_LOAD_FORMAT := "First load home in %s"
 ## soon. Stated rather than dropped, because it is the answer that most changes whether this posting
 ## is worth making, and stated as its CAUSE — never *within the forecast*, which is the tool talking.
 ##
-## **ONE PER WEB, IN THAT WEB'S VERB** — a hunt catches, a gather gathers — picked at the mount off
-## the section's `source_kind`, so a forage party never reads as though it hunted.
+## **ONE PER WEB, IN THAT WEB'S VERB** — a hunt catches, a gather gathers, a working is cut — picked
+## at the mount off the section's `source_kind`, so a forage party never reads as though it hunted.
+## `cut` serves both deposit branches: a forester cuts timber and a digger cuts stone.
 const WORK_PARTY_SLOW_FILL_HUNT := "Their catch builds up too slowly to fill a pack soon"
 const WORK_PARTY_SLOW_FILL_FORAGE := "What they gather builds up too slowly to fill a pack soon"
+const WORK_PARTY_SLOW_FILL_EXTRACT := "What they cut builds up too slowly to fill a pack soon"
 
 ## While the answer is in flight — the raid readout's own treatment.
 const WORK_PARTY_PENDING := "Costing the work party…"

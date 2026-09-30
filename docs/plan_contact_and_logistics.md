@@ -174,11 +174,11 @@ That two-sided movement is the whole point. The ladder is *not* a straight upgra
 where the traffic pays for the upkeep, and everywhere else a trail is the right answer forever. It is
 the same economy as the pen — a rung you climb only where the land justifies it.
 
-**#215** — *"herd/game trails follow hex centers and become the basis of roads."* — remains open,
-and the bottom rung is **not** it. The rung is `path`, because nothing in the sim lets an animal wear
-a road in: route work is banked in exactly one place, `route_traffic.walked` in `supply.rs`'s
-pooling-link pass, which is the player's own trade-pooling bands. A ladder whose floor an animal
-could reach is still the origin #215 wants.
+**#215** — *"herd/game trails follow hex centers and become the basis of roads."* — is the origin
+the ladder's floor now has: migratory herds bank route work on their `Migrate` legs, so a migration
+corridor wears into a trail the way the Buffalo Trace was worn by bison, and a band that camps on it
+inherits a road the animals made. The bottom rung stays spelled `path` — it names what reaches it,
+traffic of any kind, not an origin. See `.claude/rules/core_sim/routes.md` → "Game trails".
 
 ### It is the intensification ladder's shape
 
@@ -519,7 +519,7 @@ connections this arc owns.
 - **`reach_tiles`** stops being a first-class lever and becomes "the distance at which a logistics
   link holds itself for free."
 - **Checkpoints** — connections are persisted state with their own clocks; they are `SimState`, not
-  derived. Contrast `SupplyNetworkMembership`, which is correctly derived and rebuilt each turn.
+  derived. `SupplyNetworkMembership` is rebuilt each turn but is **not** safely derived: the capture publishes it before any turn runs, so a loaded world must carry it — it rides each band's checkpoint record (`BandRecord::supply`).
 - **The event feed and the Telling** — meeting a people for the first time is a beat.
 
 ## Open items

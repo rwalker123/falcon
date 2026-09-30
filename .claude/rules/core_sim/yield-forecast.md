@@ -460,11 +460,12 @@ rather than being two shapes. Pinned by
 > threaded through `animals_that_stay`, `resolve_hunt_fight`, `hunt_take` and
 > `expedition_take_biomass`, so **the forecast runs the take's own code** rather than a second copy of
 > it. Its combat half is `combat::StrikeDraw` on `CombatTuning`, read by the one
-> `combat::landed_strikes` seam. `fauna::forecast_take_range` evaluates
-> `forecast_production_and_take_at` at `−k`, the mean, and `+k`; every arm is monotone
-> non-decreasing in the draw, so `low <= likely <= high` is a property of the arithmetic rather than
-> a clamp. `combat_config.forecast_range_sigmas` (**2.0**) is the width, and it is a **readout lever**
-> — no resolution path reads it, so widening the band cannot move a single animal.
+> `combat::landed_strikes` seam. **A forecast does not read the retreat at a quantile, though** — see
+> "ONE DISTRIBUTION, THREE READINGS" below: `fauna::forecast_take_range` resolves
+> `forecast_production_and_take_at` at every outcome of the retreat, and the fight at its own `−k`,
+> mean and `+k` draws. `combat_config.forecast_range_sigmas` (**2.0**, validated `> 0`) is the width,
+> and it is a **readout lever** — no resolution path reads it, so widening the band cannot move a
+> single animal.
 >
 > **The range is an ANSWER, not a term, and the boundary rule above says why**: the take passes
 > through `quantise_animal_take`'s `floor()`, so a band on the animals brought down is **not** a band
@@ -478,6 +479,114 @@ rather than being two shapes. Pinned by
 > **The plant web's range is a point by construction** — a gather has no engagement, no retreat and no
 > fight (`SourceYieldForecast::fight` is `None`, `engage_rate` is `INFINITY`) — so the old invariant
 > survives there unchanged, at any configured width.
+
+> ### ⛔ THE EXPECTATION IS THE TAKE'S MEAN, NOT THE TAKE AT THE RETREAT'S MEAN
+>
+> The fight clamps each turn's blow to the bodies **actually standing** (`combat::damage_absorbed`),
+> and a clamp is concave, so `E[take(S)] < take(E[S])` wherever the fight and the retreat both bind.
+> `project_realized_hunt` and `project_arrivals_hunt` used to hand the fight the retreat's mean
+> (`HuntDraw::EXPECTED`) and over-read every such hunt — at 8 speared hunters, Steppe Runners
+> `5.09` projected against `4.58` paid (+11%), Red Deer `5.04` / `4.54`, Wild Aurochs `5.38` /
+> `4.70` (+14%). The runway walks those projections, so it read `inf` on turns the larder was falling.
+>
+> **Both now average over every way the retreat can come out** — `fauna::retreat_outcomes` (the live
+> draw's whole binomial, part body kept at its expectation exactly as the draw keeps it) through
+> `fauna::expected_kill_over_retreat` — and bank the expected bodies into whole ones through the kill
+> arm's own carry (`fauna::KillCarry`: the quarry's `DamageLedger` on a fight, a fractional remainder
+> on a slaughter). Pinned against the live seeded take over 4,000 turns by
+> `core_sim/tests/hunt_realized_matches_take.rs`, at three standard errors of the live mean.
+>
+> **AND THE PROJECTED HERD LOSES WHAT THE LIVE HERD LOSES.** `HuntProjection::step` hands its landed
+> bodies to the live take's own quantiser (`quantise_animal_take`, `EngagementStop::WhenPackFull`),
+> removes every animal **killed** from the projected herd, and pays what `fauna::CarcassKept` says the
+> crew keeps — the carried share for a resident band, the whole carcass for a work party. That enum
+> is the live hunt arm's own reading of the take (`systems::labor` asks it too), so the two cannot
+> disagree about what a take pays. The step used to remove only the carried share, so a carry-bound
+> hunt on a heavy body kept a projected herd fatter by every wasted carcass and re-cleared a body
+> sooner: fourteen speared hunters on Thunder Mammoths projected `6.85` food a turn against `4.94`
+> paid. Pinned by `hunt_realized_matches_take::a_carry_bound_heavy_hunt_projects_what_the_take_pays`,
+> where the take draws nothing and the tolerance is 1%. `project_arrivals_hunt`, the seeded row's
+> outcomes and the raid and denial projections already ran the quantiser and removed the kill.
+>
+> **ONE FIGHT PER CALL, NOT ONE PER OUTCOME.** A hunt's damage to its quarry does not depend on how
+> many animals stand — it fields **one** quarry contingent, so `combat::resolve_fight` hands it every
+> attacker at any count, and the one-sided arm never reads the count — which enters only through the
+> per-turn clamp `min(damage, standing × durability)`. So the fight is resolved once, at the largest
+> outcome, and each outcome's reading is `min(that reading, stayed)`. A slaughter has no fight and
+> visits every outcome directly. `fauna::tests::a_hunts_fight_reads_one_damage_at_every_standing_count`
+> pins the property on all three arms (fights back, flees, slaughter), and **it holds only while a
+> hunt fields a single quarry group** — several quarry contingents would spread the damage by count.
+> Measured release, 80×52 shipped map, publisher shut down, 60-turn means against `e449af8e`: the
+> population stage reads `0.164 → 0.178` ms with one 12-hunter hunt row and `0.235 → 0.230` with three
+> — within noise of the base, where resolving a fight per outcome had cost `0.16 → 0.85`.
+>
+> **The crew CURVE averages through the same seam** (`hunt_crew_take_curve`, on the engagement
+> `fauna::engagement_reach` resolves), so the compose sheet and the work row quote one take —
+> `the_curve_and_realized_agree_on_a_stable_stock` holds them to one unfinished body.
+>
+> #### ONE DISTRIBUTION, THREE READINGS — the curve and the seeded range alike
+>
+> Both bands — the curve's rows and the seeded row's `forecast_take_range` — are read off **one**
+> enumeration of the retreat's outcomes (`HuntingParty::stayer_outcomes`), each outcome's take
+> resolved through `fauna::OutcomeKills` (one fight per draw, `min(blow, stayed)` per outcome; the
+> kill arm itself on a slaughter):
+>
+> | reading | what it is | fight draw |
+> |---|---|---|
+> | `likely` | `fauna::retreat_mean` — the probability-weighted mean of the per-outcome takes | expected |
+> | `low` | `fauna::retreat_band_edge` — the quantile at `Φ(−forecast_range_sigmas)` of the per-outcome takes | `−sigmas` |
+> | `high` | the same helper at `Φ(+forecast_range_sigmas)` | `+sigmas` |
+>
+> `retreat_band_edge` is the one definition of a band edge over the retreat. It ranks the outcomes by
+> their take, walks the cumulative probability and returns the take where it crosses the target;
+> `Φ` is `fauna::normal_cdf`. The **curve** reads each outcome as a rate
+> (`EngagementQuantum::Rate`), the **seeded range** as next turn's whole bodies banked onto the herd's
+> own wounds, quantised and valued on both axes, with one outcome carrying both halves of the
+> `(production, actual)` pair so an edge's waste is one outcome's waste. The seeded row's `actual`
+> is therefore the take's mean too.
+>
+> - **Why not the take at a quantile of the stayers.** The retired edges read the retreat as a
+>   continuous binomial (`mean ± σ·sd`), a head count **no draw can produce**. On a thin engagement
+>   it lands between the outcomes: a Thunder Mammoth crew of twenty engages one animal, whose outcomes
+>   are `0` stayed (`0.1`) and `1` (`0.9`); the continuous `−2σ` reading put `0.3` of a mammoth under
+>   the spears and published `low 0.300` over `likely 0.288`. The discrete edge reads the `0`
+>   outcome. The seeded range had the same reading at its middle as well: its `likely` was the take
+>   at the mean head count, which over-read the true mean on Wild Aurochs (fresh herd, crews 16–21:
+>   `7.2` against `6.912`) and on a wounded Thunder Mammoth herd (crews 20–22: `48.0` against
+>   `43.2`).
+> - **Averaging the edges is not an option either** — it collapses the band to a point at the shipped
+>   `hit_chance 1.0` and deletes the retreat's spread, which is the risk the player is choosing.
+> - **The curve's band brackets its mean** across the roster (every species, crews 1–24,
+>   `the_curve_band_brackets_its_mean_across_the_roster`).
+> - **The seeded range's band is made of outcomes, and its mean can sit outside it.** On a
+>   whole-body take what holds is `low <= high`, each edge the take of some retreat outcome
+>   (`fauna::forecast_take_outcomes` at that edge's fight draw), and the mean inside the outcomes'
+>   span — `the_seeded_band_edges_are_outcomes_and_its_mean_lies_within_them`, over the roster at
+>   three wound levels. An edge is a quantile and `likely` a mean: where one outcome carries more
+>   than `Φ(sigmas)` of the mass, both edges sit on that outcome and the mean, which still weighs
+>   the rarer outcomes, lies outside the band. On a fresh Wild Aurochs herd a crew of eighteen
+>   engages `3.06`; all three whole bodies break off together with probability `0.2³ = 0.008`, every
+>   other outcome — `0.992` of the mass, above `Φ(2) ≈ 0.977` — brings down exactly one aurochs, and
+>   the row reads `low 7.2`, `high 7.2`, `likely 7.1424`. Nothing clamps it.
+> - **The curve is NOT monotone in the crew, and must not be made so.** The retreat draws whole
+>   bodies and keeps the part body at its expectation, so a crew whose reach crosses a whole body
+>   turns a certain part body into a lottery the fight clamps: a Wild Aurochs crew of five takes
+>   `0.467` a turn and six take `0.451`. That is what the take pays. `hunt_useful_crew` reads the
+>   **last rise**, so the crew it publishes is the peak; no clamp or smoothing may hide the dip.
+>   `the_curve_is_non_zero_and_rises_across_the_whole_plateau` pins the peak, not monotonicity.
+> - **The reproduction harness DRAWS.** `forecast_query`'s `sim_take` runs `hunt_take` at the Hunt
+>   arm's own per-event seed over 2,000 turns and compares within three standard errors; at
+>   `HuntDraw::EXPECTED` it measured the take at the mean head count, which is the defect.
+>
+> ### AND THE IN-TURN `realized` DOES NOT REGROW THE TURN TWICE — `fauna::ProjectionStart`
+>
+> A projection steps `regrow → take`. The resolved row reads its source **after** Logistics has
+> regrown it, so stepping from there credited one turn's growth twice over the window: a patch held
+> on its floor, paying exactly its regrowth, published `(H + 1) / H` of it (`0.94` against `0.92` at
+> the 40-turn window). `systems::labor` projects at `ProjectionStart::AfterRegrowth` (the first
+> step is this turn's take); the seed, the query and every between-turns caller keep
+> `BeforeRegrowth`. The arrival schedules already read the post-take state and were never affected.
+> Pinned by `forage::tests::a_patch_held_at_its_floor_projects_the_gather_it_pays`.
 >
 > Wire: `LaborAssignment.actualYieldLow` / `actualYieldHigh` (append-only, after `floor`; their
 > `tradeYield*` siblings are `(deprecated)` slots since arc #527). Guarded by
@@ -594,7 +703,8 @@ client's compose-time "Expected yield" row promises. Shape:
   `hunt_source_yield_preview`, `project_realized_hunt`, `project_arrivals_hunt` and
   `forecast_production_and_take_at`, so all six take/forecast paths resolve the *identical* fight via
   the one `fauna::resolve_hunt_fight` helper. A projection cannot know the tick it is projecting, so
-  it resolves at `fauna::HuntDraw::EXPECTED` — **no draw at all**, rather than the stand-in seed the
+  it reads the fight at its own quantile — **no draw at all** — over every outcome of the retreat
+  (see "THE EXPECTATION IS THE TAKE'S MEAN"), rather than the stand-in seed the
   first cut used (`FORECAST_FIGHT_SEED` survives only as the unread stream seed a quantile-mode fight
   hands to `resolve_fight`). At the shipped `combat_config.hit_chance` of `1.0` the fight makes no
   draw either way, so this is bit-identical to what the seed produced; what it buys is that a sub-1
@@ -708,7 +818,7 @@ and hold there for ever — which is the case the client's own gate got wrong be
 |---|---|---|---|
 | plant | `forage::forage_take_overdraws` | `workers × forage_per_worker_biomass` (no engagement stage) | `fauna::reseeding_logistic_regrowth` at the patch's own `patch_ecology` |
 | animal | `fauna::hunt_take_overdraws` | `min(carry, animals_engaged × stay_fraction × body_mass)` | `fauna::regrowth_delta_at` at the herd's own `herd_ecology` — **the seam that picks the curve**, logistic for a domesticated herd and `net_biomass_delta` otherwise, so the ⚠ samples what `regrow_biomass` will actually pay. Sampling the wild curve under a managed herd standing below its collapse fraction reads a *negative* regrowth where the real one is positive, and the ability conjunct then passes on a crew that cannot draw the herd down |
-| deposit | `extraction::deposit_take_overdraws` | `workers × yield_per_worker_turn` at the standing rung (no engagement stage and no take kit on either branch) | `extraction::deposit_regrowth` at the ground's rate **scaled by the rung's `regrowth_multiplier`** — `renew_deposit`'s own terms, so the ⚠ is answered against the growth the next Logistics pass will apply |
+| deposit | `extraction::deposit_take_overdraws` | `extraction::deposit_crew_throughput` = `min(workers × yield_per_worker_turn + tools, carry)` at the standing rung — `tools` is the kit's `deposit_take` on that rung, `carry` the crew's haul carry ÷ the material's `weight` (no engagement stage) | `extraction::deposit_regrowth` at the ground's rate **scaled by the rung's `regrowth_multiplier`** — `renew_deposit`'s own terms, so the ⚠ is answered against the growth the next Logistics pass will apply |
 
 **The deposit web's floor is the COMPOSED one, and a finite working never lights the ⚠.** The intent
 conjunct reads `deposit_effective_floor ÷ capacity` rather than the row's raw dial: a crew stops at
@@ -781,12 +891,13 @@ both halves in the same run — the far row kept **and** the near row untouched,
 *"nothing lapses"* nor *"everything lapses"* can pass.
 
 **The assign-time seed prices a far row by stepping its caravan** — `seed_source_yield` no longer
-declines a Hunt or Forage row past range, and its Hunt gate no longer reads the retired
+declines a Hunt, Forage or Extract row past range, and its Hunt gate no longer reads the retired
 `hunt_reach()` (which made the seed and the turn disagree for every hunt three to five tiles out).
 The seeded `realized` is the caravan's rate home, the same function the turn's published
 `netRateHome` answers through; the seeded `actual` is what lands **next turn**, which is `0` for a
-party still walking out — honest, not absent. **Extract keeps its range gate**, because a working
-still lapses past range. See `.claude/rules/core_sim/work-party.md` → "One function, stepped".
+party still walking out — honest, not absent. A far Extract row seeds its `materials` the same way
+(what lands next turn, nothing while walking out) and writes no food field. See
+`.claude/rules/core_sim/work-party.md` → "One function, stepped".
 
 ### The band's hay ledger — three fields, and the sim does the arithmetic
 
@@ -1066,7 +1177,14 @@ rather than asserting it.
   `fauna::hunt_take_bound`, so the binding stage comes off the **live** path: the harness drives
   `systems::hunt_take` forward over the same horizon on a private clone — Logistics regrowth then the
   Population take, the shipped order — and tallies `HuntOutcome::bound`. The sim resolves the take and
-  reports its own bound; the harness only counts them. The plant web prints `n/a` there (it has no
+  reports its own bound; the harness only counts them. **The drive DRAWS**, at the live take's own
+  per-event seed over 200 independent runs, and its killed/carried/wasted columns are per-run means
+  held to three standard errors inside 5% of themselves — driving it at `HuntDraw::EXPECTED` played a
+  turn the take never plays (the fight at the retreat's mean head count). Its stage-terms diagnosis
+  reads each turn's `stayed` and `brought_down` as expectations over the retreat's outcomes
+  (`fauna::expected_stayers`, `fauna::OutcomeKills`). `food_rate_survey` settles its food and stock
+  columns on the shipped projection's own step (`fauna::HuntProjection`) and draws only its
+  binding-stage column. The plant web prints `n/a` there (it has no
   engagement, retreat or fight) and answers with **carry utilisation** instead, which is
   `biomass brought home per worker ÷ that worker's carry` and reads `100%` exactly when the basket is
   what binds.

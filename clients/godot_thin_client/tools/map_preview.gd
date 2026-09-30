@@ -76,25 +76,6 @@ const SEAM_PAN_MAP_WIDTHS := 0.5
 const SEAM_OUTLINE_MIN_PIXELS := 200
 # The clicked box, in hex radii from the pressed pixel — see `_assert_selection_outline_wraps`.
 const SEAM_BOX_RADII := 2.0
-# ---- THE SEAM-CROSSING HERD TRAIL (the guard is `_assert_herd_trail_unwraps`) --------------------
-# A migrating herd's trail banks DATA columns, so a herd that has just stepped over the seam records
-# the map's LAST columns and then its FIRST. The fixture walks exactly that — two hexes west of the
-# seam, then two east of it — with the head on the herd's own tile, because that is the point the
-# trail's frame is anchored to.
-const HERD_TRAIL_SEAM_ID := "game_deer_seam"
-const HERD_TRAIL_SEAM_Y := 3
-const HERD_TRAIL_SEAM_COLS := [GRID_W - 2, GRID_W - 1, 0, 1]
-# How wide the trail's ink may run, in hex COLUMNS. **Set from the two MEASURED spans, not from the
-# arithmetic**: the honest trail inks 224px = 3.0 columns (its four hexes are three steps apart) and
-# the unwrapped defect inks 456px = 6.1. The defect's segment is 15 columns WIDE but runs off-frame
-# west and is CLIPPED, which is why the gap is 2× rather than 5× and why a bound reasoning from the
-# map's width would sit above BOTH. 4.0 splits what was measured: a third of a hex of headroom over
-# the honest drawing, and the defect exceeds it by half as much again.
-const HERD_TRAIL_SEAM_MAX_SPAN_COLS := 4.0
-# A 2px polyline over three hex steps runs to a few hundred pixels; the floor only has to clear
-# antialiasing noise. It exists because a span bound ALONE passes when the trail draws NOTHING —
-# the tightest possible span is the empty one.
-const HERD_TRAIL_SEAM_MIN_PIXELS := 50
 const TRAVEL_EXPEDITION_ENTITY := 9301
 const HERD_ON_TILE_ID := "game_boar_03"   # herd id used by the selected-hex herd fixture
 # Quarry-targeting state: the band's hunt reach and the two herd offsets that straddle it (one inside
@@ -513,27 +494,31 @@ const ROAD_AT_RISK_ROW := 9
 # clear of the minimap's own CanvasLayer in the bottom-right, which is not hidden with the map and sat
 # squarely on top of the one tile this case exists to show.
 const ROAD_LONE_TILE := [[4, 11]]
-# State "road vs herd trail". ⛔ **THE ONE FRAME WHERE THE TWO AMBERS CAN BE JUDGED TOGETHER.** Herd
-# trails stay in the ANNOTATION layer while a road is now painted into the terrain composite, so this
-# is the only place a reviewer can see both at once and check they do not read as the same thing.
-#
-# The measured reason it is staged at the TRAIL rung specifically, and not at dirt: against
-# `MapView.HERD_TRAIL_COLOR` (0.97, 0.69, 0.25) every road surface sits within 0.8°–6.3° of the herd
-# trail's HUE — dirt is amber by nature and that cannot be designed away — so the entire separation is
-# carried by SATURATION, 0.09–0.33 against the trail's 0.92. `01_trail.png` is the closest call of the
-# four: 0.8° of hue and near-identical luminance (0.64 vs 0.61). A road has been read as a herd trail
-# once already; this frame is what stops it recurring.
-const ROAD_TRAIL_CROSS_ROW := 6
-const ROAD_TRAIL_CROSS_COL_START := 3
-const ROAD_TRAIL_CROSS_COL_END := 13   # exclusive
-# The herd walks NORTH→SOUTH across the road, so the two inks cross at a right angle rather than
-# running alongside each other — a parallel pair is the easy case, and it is not the one that misled.
-const ROAD_TRAIL_HERD_ID := "game_deer_road"
+# State "herd corridor trail" (issue #215). A migrating herd's Migrate legs bank route traffic, so the
+# corridor it walks wears into `route:path` → `route:trail` rows on the ordinary `routes` section and is
+# drawn by the ordinary road art — there is no herd-specific trail ink any more. The fixture is that
+# corridor mid-wear: the herd walks NORTH→SOUTH down one column, its oldest tiles already worn to an
+# idle TRAIL and its newest ones still PATH rows climbing toward it, down to the tile it has just
+# stepped onto — ONE pass in, a small fraction of the trail rung.
+const HERD_CORRIDOR_HERD_ID := "game_deer_corridor"
 # Clear of BAND_X/BAND_Y (8, 6) — the fixture band's tent marker stands on that hex in every state
-# built from `_base_snapshot`, and it landed squarely on the crossing this frame exists to show.
-const ROAD_TRAIL_HERD_COL := 5
-const ROAD_TRAIL_HERD_ROWS := [3, 4, 5, 6, 7, 8, 9]
-const ROAD_TRAIL_HERD_BIOMASS := 600.0
+# built from `_base_snapshot`.
+const HERD_CORRIDOR_COL := 5
+const HERD_CORRIDOR_ROWS := [3, 4, 5, 6, 7, 8, 9]
+const HERD_CORRIDOR_BIOMASS := 600.0
+# Per corridor row, north → south: the rung the tile HOLDS and its meter toward the next one. The two
+# trail tiles are idle (`ROAD_IDLE_RUNG_METER`, nothing rising); the path tiles are climbing, and the
+# last — the herd's own tile — is the LOW-WEAR case: one pass past a fresh path.
+const HERD_CORRIDOR_LOW_WEAR := 0.05
+const HERD_CORRIDOR_WEAR := [
+	[HudRouteVocab.RUNG_KEY_TRAIL, ROAD_IDLE_RUNG_METER],
+	[HudRouteVocab.RUNG_KEY_TRAIL, ROAD_IDLE_RUNG_METER],
+	[HudRouteVocab.RUNG_KEY_PATH, 0.75],
+	[HudRouteVocab.RUNG_KEY_PATH, 0.5],
+	[HudRouteVocab.RUNG_KEY_PATH, 0.25],
+	[HudRouteVocab.RUNG_KEY_PATH, 0.1],
+	[HudRouteVocab.RUNG_KEY_PATH, HERD_CORRIDOR_LOW_WEAR],
+]
 
 # The bill a road in shortfall carries. Any figure at or above `SourceForecast.UPKEEP_WORK_MIN` puts
 # it in the danger ink; these are the middle rung's own numbers so the frame states a real road.
@@ -731,10 +716,22 @@ var _canvas_size: Vector2i = DEFAULT_CANVAS_SIZE
 # How many times `_fail` fired this run — the ONE input to the exit status (see `_finish`).
 var _failures := 0
 
+## The hang guard, a child node in `map_preview.tscn` (`tools/preview_watchdog.gd`) — the `ui_preview` /
+## `band_panel_preview` treatment. The whole run is one long `await`ing `_ready()` whose last line is
+## `_finish()`, so a runtime error aborts it without ever exiting, and a parse error in this script
+## leaves the root node scriptless: either way the process idles forever with no FAIL and no status.
+## (`blend_probe` did exactly that for 20+ minutes on a parse error, and printed nothing.) The
+## watchdog lives OUTSIDE this script, so it runs even then; `_settle` — which every state reaches —
+## is the sign of life, and `_finish` disarms it.
+const WATCHDOG_NODE := "Watchdog"
+const WATCHDOG_PROGRESS_METHOD := "note_progress"
+var _watchdog: Node = null
+
 func _ready() -> void:
 	# ⛔ **THE RUN OWNS THE POINTER** — a pixel harness must open a REAL window, and a
 	# real window receives the human's mouse. See `tools/harness_window.gd`.
 	HarnessWindow.seal_from_real_mouse(get_window())
+	_watchdog = _resolve_watchdog()
 	# FREEZE ANIMATION TIME. What it buys: with the canvas pinned, the only remaining run-to-run
 	# difference was animated content, so this is what makes the frame set a STRICT BIT-IDENTITY
 	# REFERENCE (56/56 identical across runs) — which is the whole reason the harness exists, since a
@@ -1191,6 +1188,61 @@ func _ready() -> void:
 	await _save("map_quarry_targeting")
 	_map.set_targeting({})
 
+	# State M3 — THE DENY SHEET'S PASSIVE HIGHLIGHT (issue #529): an open Deny sheet glows every
+	# eligible herd — both here, the denial raid having no beyond-reach rule — with the pick UNARMED.
+	# It is drawn but it is not targeting: no reticle, and only a click on a glowing herd is captured
+	# (it pre-selects the sheet's prey); every other click selects as usual.
+	var near_herd := Vector2i(BAND_X + QUARRY_NEAR_OFFSET, BAND_Y)
+	var far_herd := Vector2i(BAND_X + QUARRY_FAR_OFFSET, BAND_Y)
+	_map.set_targeting({
+		"active": true, TargetingController.TARGETING_PASSIVE_KEY: true,
+		"command": TargetingController.DENY_PICK_COMMAND, "need": "herd",
+		"origin_x": BAND_X, "origin_y": BAND_Y,
+		"min_distance": TargetingController.QUARRY_NO_REACH_BOUND, "context_label": "Band 1",
+	})
+	await _settle()
+	await _save("map_deny_highlight")
+	_assert_map("the Deny highlight is drawn and is not targeting",
+		_map._annotations.has_targeting_overlay() and not _map._annotations.is_targeting_active())
+	_assert_map("…a click on either glowing herd is captured to pre-select it",
+		_map.targeting_click_captures(near_herd.x, near_herd.y)
+			and _map.targeting_click_captures(far_herd.x, far_herd.y))
+	_assert_map("…and a click anywhere else selects as usual",
+		not _map.targeting_click_captures(BAND_X, BAND_Y + 1))
+	_map.set_targeting({})
+
+	# State M4 — THE TRADE SHEET'S PASSIVE HIGHLIGHT: the hexes of the bands tied LIVE to the sender,
+	# carried on the descriptor as an explicit set and ringed the herd glow's way.
+	var tied_tile := Vector2i(BAND_X + QUARRY_FAR_OFFSET, BAND_Y + 2)
+	_map.set_targeting({
+		"active": true, TargetingController.TARGETING_PASSIVE_KEY: true,
+		"command": TargetingController.VERB_PICK_COMMAND_TRADE, "need": "tile",
+		"origin_x": BAND_X, "origin_y": BAND_Y, "context_label": "Band 1",
+		TargetingController.TARGETING_HIGHLIGHT_TILES_KEY: [tied_tile],
+	})
+	await _settle()
+	await _save("map_trade_highlight")
+	_assert_map("the Trade highlight captures a click on the tied band's hex",
+		_map.targeting_click_captures(tied_tile.x, tied_tile.y))
+	_assert_map("…and on no other hex, the herds included",
+		not _map.targeting_click_captures(near_herd.x, near_herd.y)
+			and not _map.targeting_click_captures(BAND_X, BAND_Y))
+	_map.set_targeting({})
+
+	# State M5 — EXPEDITION MARKER ART: a scouting, a denying and a trading party wear their bundled
+	# `expeditions/` art centred in the dark disc and ring; the hunting party has no art and keeps its
+	# 🏹 glyph. The trading party is AWAITING, so its orders pulse draws over the art face.
+	_map.display_snapshot(_snapshot_expedition_art())
+	_map.selected_unit_id = -1
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_expedition_art")
+	_assert_map("scout, deny and trade parties resolve marker art; hunt resolves none and keeps its glyph",
+		ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_SCOUT) != null
+			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_DENY) != null
+			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_TRADE) != null
+			and ExpeditionSprites.for_mission(HudExpeditionVocab.EXPEDITION_MISSION_HUNT) == null)
+
 	# State N — selected TRAVELLING band destination (non-wrapping map): the band reports
 	# `is_traveling` + a `travel_target` a few hexes away → a thin cyan line from its tile to the
 	# destination hex + a target reticle on that hex. Only drawn because the band is selected.
@@ -1220,10 +1272,6 @@ func _ready() -> void:
 	# repans the map, so it comes AFTER the frame it borrows the snapshot from; the next state's
 	# `_fit_map_to_view` puts the camera back.
 	await _assert_selection_outline_wraps()
-
-	# A SECOND PNG-less seam guard, on its own wrapping fixture — the CONNECTED-PATH half of the
-	# question the selection outline asks about a single tile.
-	await _assert_herd_trail_unwraps()
 
 	# State P — selected TRAVELLING expedition: a detached scout party in transit draws the same
 	# destination reticle + line (the draw is unit-agnostic — band OR expedition).
@@ -1932,23 +1980,18 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_road_network")
 
-	# State "road vs herd trail" — THE ONE FRAME WHERE THE TWO AMBERS MEET. A herd trail is an
-	# annotation drawn OVER the map; a road is painted INTO the terrain composite; and they are within a
-	# degree of hue of each other (see the ROAD_TRAIL_CROSS_* consts for the measurement). Staged at the
-	# TRAIL rung, the closest call of the four, with the herd crossing the road at a right angle. Read
-	# for: the trail's saturated amber line staying obviously a LINE ON the map while the road stays
-	# obviously part of the ground — if the crossing point is ambiguous, the road art is too saturated.
-	_map.display_snapshot(_snapshot_road_vs_herd_trail())
+	# State "herd corridor trail" (issue #215) — a migrating herd's corridor worn into the ground as
+	# ordinary road rows, trail-rung at the north end down to a one-pass path under the herd. Read for:
+	# the corridor reading as ONE worn line with no amber polyline over it, and what the low-wear tiles
+	# at the south end look like against the idle path/trail art.
+	_map.display_snapshot(_snapshot_herd_corridor_trail())
 	_map.selected_unit_id = -1
 	_map._fit_map_to_view()
-	var road_herd_trail: Array = []
-	for row in ROAD_TRAIL_HERD_ROWS:
-		road_herd_trail.append(Vector2i(ROAD_TRAIL_HERD_COL, int(row)))
-	_map.herd_trails[ROAD_TRAIL_HERD_ID] = road_herd_trail
-	_map.queue_redraw()
 	await _settle()
-	await _save("map_road_vs_herd_trail")
-	_map.herd_trails.clear()
+	await _save("map_herd_corridor_trail")
+
+	# …and the PNG-less half: a herd draws NO path of its own, however many snapshots it has walked.
+	await _assert_herd_draws_no_trail()
 
 	# State "max zoom" — the ZOOM CAP raised from 4× to 7× in issue #375. Every other state renders at
 	# the cover fit (MIN_ZOOM_FACTOR), so nothing here had ever judged the OTHER end of the rail, and
@@ -2000,6 +2043,7 @@ func _ready() -> void:
 	await _worked_working_states()
 	await _source_list_states()
 	await _faction_palette_state()
+	await _exchange_network_states()
 
 	_finish()
 
@@ -2882,9 +2926,23 @@ func _fail(message: String) -> void:
 	push_error("map_preview: FAIL — %s" % message)
 
 
+## The hang guard from the scene, or `null` if the node has gone. Checked for its method rather than
+## assumed: calling a missing method on an untyped `Node` is a runtime error, and one raised here would
+## abort `_ready` exactly the way the guard exists to survive.
+func _resolve_watchdog() -> Node:
+	var node := get_node_or_null(WATCHDOG_NODE)
+	if node != null and node.has_method(WATCHDOG_PROGRESS_METHOD):
+		return node
+	push_warning(("map_preview: no %s node in the scene — the run has NO hang guard. Restore it from "
+		+ "tools/map_preview.tscn (see preview_watchdog.gd).") % WATCHDOG_NODE)
+	return null
+
+
 ## **THE ONLY WAY OUT OF THIS HARNESS.** Every path that ends the run comes through here, so the
 ## status is derived from the run's own tally in exactly one place.
 func _finish() -> void:
+	if _watchdog != null:
+		_watchdog.disarm()
 	if _failures > 0:
 		print("map_preview: RUN FAILED — %d failure(s); see the FAIL lines above" % _failures)
 	else:
@@ -3015,79 +3073,54 @@ func _assert_selection_outline_wraps() -> void:
 	)
 	_map.selected_tile = Vector2i(-1, -1)
 
-## THE SEAM-CROSSING HERD TRAIL IS ONE PATH, NOT A LINE BACK ACROSS THE MAP. A PNG-less guard in the
-## shape of `_assert_selection_outline_wraps`, and PIXEL-based for its reason: it drives the real
-## draw and reads what landed, rather than re-asking `MapView._unwrapped_path_points` the question
-## the frame asks it.
+## A HERD DRAWS NO PATH OF ITS OWN (issue #215). The map used to keep a client-side breadcrumb per
+## herd id — every tile a herd had stood on across successive snapshots, drawn as an amber polyline.
+## The worn corridor is now road rows from the sim, so the map must draw a herd from the CURRENT
+## snapshot alone. PNG-less and pixel-based: walk the herd down the whole corridor one snapshot per
+## step, then compare against the same final snapshot shown to a map with no history at all. Any
+## pixel that differs is ink the walk left behind.
 ##
-## The trail banks DATA columns, so a herd stepping over the seam records `15` and then `0`; a
-## polyline through the raw `_hex_center` of each drew ONE segment the FULL WIDTH of the map at
-## nearly constant row — the defect, and what the span bound below fails on. No PNG here could ever
-## have caught it: a trail needs TWO successive snapshots to reach a second point and every fixture
-## in this harness is one snapshot, so the trail had no coverage of any kind.
-func _assert_herd_trail_unwraps() -> void:
+## Paired with a LIVENESS check — the herd's own marker must change pixels against a herd-less frame —
+## because a diff of zero also passes when the herd draws nothing at all.
+func _assert_herd_draws_no_trail() -> void:
 	_map.set_fow_enabled(false)
 	_map.selected_unit_id = -1
 	_map.selected_herd_id = ""
 	_map.selected_tile = Vector2i(-1, -1)
-	_map.display_snapshot(_snapshot_herd_trail_seam())
-	_map._fit_map_to_view()
-	# Pan half a map west, as the selection guard does, so the seam sits mid-frame and all four trail
-	# hexes are on screen: the honest drawing has to be VISIBLE for a span bound to mean anything.
-	_map.pan_offset.x = -_map.last_map_size.x * SEAM_PAN_MAP_WIDTHS
-	_map.queue_redraw()
-	await _settle()
+	var last_row: int = int(HERD_CORRIDOR_ROWS[HERD_CORRIDOR_ROWS.size() - 1])
 
-	# BEFORE already carries the herd and its marker; what it has not got is a TRAIL, because the
-	# snapshot banks exactly one tile per herd and a one-point trail draws nothing. So every pixel
-	# that changes from here is the trail and only the trail.
-	var before: Image = await _capture()
-	var trail: Array = []
-	for col in HERD_TRAIL_SEAM_COLS:
-		trail.append(Vector2i(int(col), HERD_TRAIL_SEAM_Y))
-	_map.herd_trails[HERD_TRAIL_SEAM_ID] = trail
-	_map.queue_redraw()
+	_map.reset_world_state()
+	for row in HERD_CORRIDOR_ROWS:
+		_map.display_snapshot(_snapshot_herd_walk(int(row)))
+	_map._fit_map_to_view()
 	await _settle()
-	var after: Image = await _capture()
-	if before == null or after == null:
+	var walked: Image = await _capture()
+
+	_map.reset_world_state()
+	_map.display_snapshot(_snapshot_herd_walk(last_row))
+	_map._fit_map_to_view()
+	await _settle()
+	var fresh: Image = await _capture()
+
+	var no_herd := _snapshot_herd_walk(last_row)
+	no_herd["herds"] = []
+	_map.reset_world_state()
+	_map.display_snapshot(no_herd)
+	_map._fit_map_to_view()
+	await _settle()
+	var empty: Image = await _capture()
+	if walked == null or fresh == null or empty == null:
 		return
 
-	var inked: int = _count_changed_pixels(before, after, Rect2i())
+	var herd_ink: int = _count_changed_pixels(empty, fresh, Rect2i())
+	_assert_map("the corridor herd's marker DRAWS — %d px against a herd-less frame" % herd_ink,
+		herd_ink > 0)
+	var history_ink: int = _count_changed_pixels(fresh, walked, Rect2i())
 	_assert_map(
-		"a seam-crossing herd trail DRAWS — %d px changed (min %d)"
-			% [inked, HERD_TRAIL_SEAM_MIN_PIXELS],
-		inked >= HERD_TRAIL_SEAM_MIN_PIXELS
+		"…and a herd that walked %d snapshots draws exactly what a fresh one does — %d px differ"
+			% [HERD_CORRIDOR_ROWS.size(), history_ink],
+		history_ink == 0
 	)
-
-	# Logical map units → captured-image pixels: the capture matches the pinned WINDOW while the
-	# viewport reports the `expand` projection (the `_assert_selection_outline_wraps` conversion).
-	var viewport := Rect2(Vector2.ZERO, _map._get_adjusted_viewport_size())
-	var to_image: float = float(before.get_width()) / viewport.size.x
-	var max_span: float = HERD_TRAIL_SEAM_MAX_SPAN_COLS * MapView.SQRT3 * _map.last_hex_radius * to_image
-	var span: int = _changed_pixel_bounds(before, after).size.x
-	_assert_map(
-		"…and stays ONE path across the seam — its ink spans %d px, within %d (%.0f hex columns)"
-			% [span, int(max_span), HERD_TRAIL_SEAM_MAX_SPAN_COLS],
-		float(span) <= max_span
-	)
-	_map.herd_trails.clear()
-
-## The bounding box of the pixels differing between two captures — the EXTENT of one overlay's ink,
-## which `_count_changed_pixels`' tally cannot see (a short line and a map-wide one can change the
-## same NUMBER of pixels). Empty when nothing changed.
-func _changed_pixel_bounds(before: Image, after: Image) -> Rect2i:
-	var bounds := Rect2i()
-	var found := false
-	for y in range(before.get_height()):
-		for x in range(before.get_width()):
-			if before.get_pixel(x, y) == after.get_pixel(x, y):
-				continue
-			if found:
-				bounds = bounds.expand(Vector2i(x, y))
-			else:
-				bounds = Rect2i(Vector2i(x, y), Vector2i.ZERO)
-				found = true
-	return bounds
 
 ## Pixels differing between two captures of the same frame, within `rect` (an EMPTY rect means the
 ## whole image). The images are the same scene rendered twice with one thing changed, and this
@@ -3205,6 +3238,8 @@ func _assert_yield_label_component() -> void:
 		and is_equal_approx(overlays._entry_fodder({}), 0.0))
 
 func _settle() -> void:
+	if _watchdog != null:
+		_watchdog.note_progress()   # a sign of life for the hang guard: every state reaches here
 	await _ensure_canvas()
 	await get_tree().process_frame
 	RenderingServer.force_draw()
@@ -4819,6 +4854,19 @@ func _snapshot_hunt_expeditions() -> Dictionary:
 	snap["populations"].append(_hunt_expedition(9204, 3, 4, "returning"))
 	return snap
 
+## One party per mission for the marker-art frame: scout, deny and trade (art) beside a hunt (glyph).
+func _snapshot_expedition_art() -> Dictionary:
+	var snap := _base_snapshot(_band([], 2, 2), [_deer_herd()])
+	snap["populations"].append(_expedition(9211, 11, 3, "outbound"))
+	var deny := _expedition(9212, 5, 9, "outbound")
+	deny["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_DENY
+	snap["populations"].append(deny)
+	var trade := _expedition(9213, 10, 8, "awaiting")
+	trade["expedition_mission"] = HudExpeditionVocab.EXPEDITION_MISSION_TRADE
+	snap["populations"].append(trade)
+	snap["populations"].append(_hunt_expedition(9214, 3, 4, "hunting"))
+	return snap
+
 ## A selected band in transit: carries `is_traveling` + a `travel_target` a few hexes SE of its
 ## tile, so the destination reticle + line draw on a non-wrapping map.
 func _snapshot_travel_band() -> Dictionary:
@@ -4840,21 +4888,6 @@ func _snapshot_travel_seam() -> Dictionary:
 		"overlays": {"terrain": _terrain_array()},
 		"populations": [band],
 		"herds": [],
-	}
-
-## A horizontally-wrapping map carrying ONE herd, parked one hex EAST of the seam — the head of the
-## trail `_assert_herd_trail_unwraps` seeds. No band on it: that guard diffs two captures of this
-## same frame, so anything else standing on it is noise it would have to exclude.
-func _snapshot_herd_trail_seam() -> Dictionary:
-	var head_col: int = int(HERD_TRAIL_SEAM_COLS[HERD_TRAIL_SEAM_COLS.size() - 1])
-	return {
-		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": true},
-		"overlays": {"terrain": _terrain_array()},
-		"populations": [],
-		"herds": [{
-			"id": HERD_TRAIL_SEAM_ID, "label": "Red Deer (%s)" % HERD_TRAIL_SEAM_ID,
-			"x": head_col, "y": HERD_TRAIL_SEAM_Y, "biomass": 600.0, "huntable": true,
-		}],
 	}
 
 ## A selected scouting expedition in transit → the same destination reticle + line (unit-agnostic).
@@ -5642,22 +5675,26 @@ func _snapshot_road_network() -> Dictionary:
 	snap["routes"] = rows
 	return snap
 
-## The road-vs-herd-trail backdrop: a TRAIL-rung road running west→east, and one herd standing on it.
-## The herd's own trail is written straight into `MapView.herd_trails` by the state (the snapshot banks
-## exactly ONE tile per herd, and a one-point trail draws nothing) — the seam guard's idiom.
-func _snapshot_road_vs_herd_trail() -> Dictionary:
-	var snap := _base_snapshot(_band([], 2, 0), [{
-		"id": ROAD_TRAIL_HERD_ID, "label": "Red Deer (%s)" % ROAD_TRAIL_HERD_ID,
-		"x": ROAD_TRAIL_HERD_COL,
-		"y": int(ROAD_TRAIL_HERD_ROWS[ROAD_TRAIL_HERD_ROWS.size() - 1]),
-		"biomass": ROAD_TRAIL_HERD_BIOMASS, "huntable": true,
-	}])
-	var tiles: Array = []
-	for col in range(ROAD_TRAIL_CROSS_COL_START, ROAD_TRAIL_CROSS_COL_END):
-		tiles.append([col, ROAD_TRAIL_CROSS_ROW])
-	snap["routes"] = _road_run(
-		tiles, HudRouteVocab.RUNG_KEY_TRAIL, ROAD_KEPT, ROAD_IDLE_RUNG_METER)
+## The herd-corridor backdrop: one herd at the south end of a north→south corridor whose tiles carry
+## the road rows its Migrate legs wore in — see `HERD_CORRIDOR_WEAR` for each tile's rung and meter.
+func _snapshot_herd_corridor_trail() -> Dictionary:
+	var snap := _snapshot_herd_walk(int(HERD_CORRIDOR_ROWS[HERD_CORRIDOR_ROWS.size() - 1]))
+	var rows: Array = []
+	for i in range(HERD_CORRIDOR_ROWS.size()):
+		var wear: Array = HERD_CORRIDOR_WEAR[i]
+		rows.append(_road(
+			[HERD_CORRIDOR_COL, int(HERD_CORRIDOR_ROWS[i])], String(wear[0]), ROAD_KEPT, float(wear[1])))
+	snap["routes"] = rows
 	return snap
+
+## The resident band and ONE herd on `row` of the corridor column — no roads. The herd id is held
+## fixed across calls, so a sequence of these is one herd walking.
+func _snapshot_herd_walk(row: int) -> Dictionary:
+	return _base_snapshot(_band([], 2, 0), [{
+		"id": HERD_CORRIDOR_HERD_ID, "label": "Red Deer (%s)" % HERD_CORRIDOR_HERD_ID,
+		"x": HERD_CORRIDOR_COL, "y": row,
+		"biomass": HERD_CORRIDOR_BIOMASS, "huntable": true,
+	}])
 
 ## The routes backdrop: flat terrain, the resident band for scale, and four orders — three multi-hop
 ## routes covering the int/string/unknown faction-color lookups, and one one-waypoint order the draw
@@ -5685,6 +5722,8 @@ const WORKING_WORKED_OFFSET := Vector2i(-1, 0)     # the hex a crew is on
 const WORKING_BARE_OFFSET := Vector2i(1, 0)        # the CONTROL: same deposits, nobody on them
 const WORKING_MATERIAL_WOOD := "wood"
 const WORKING_MATERIAL_STONE := "stone"
+## A material id with no bundled art (and no emoji) — the art family's null answer.
+const WORKING_MATERIAL_UNKNOWN := "obsidian"
 ## The two together, where a probe wants "every working in this fixture" as a count rather than as
 ## two names — one list, so a fixture that grew a third material cannot leave a probe behind.
 const WORKING_MATERIALS: Array[String] = [WORKING_MATERIAL_WOOD, WORKING_MATERIAL_STONE]
@@ -6084,6 +6123,13 @@ func _worked_working_states() -> void:
 		% [FoodIcons.for_material(WORKING_MATERIAL_WOOD), FoodIcons.for_material(WORKING_MATERIAL_STONE)],
 		FoodIcons.for_material(WORKING_MATERIAL_WOOD) != FoodIcons.for_material(WORKING_MATERIAL_STONE)
 			and FoodIcons.for_material(WORKING_MATERIAL_WOOD) != "")
+	# The marks this frame DRAWS are the bundled art, not those emoji: both materials resolve a texture
+	# (two different ones), and a material with no art answers null so its working keeps the emoji path.
+	var wood_art := WorkingsSprites.for_material(WORKING_MATERIAL_WOOD)
+	var stone_art := WorkingsSprites.for_material(WORKING_MATERIAL_STONE)
+	_assert_map("map_working_pair — wood and stone resolve marker art; an unknown material resolves none",
+		wood_art != null and stone_art != null and wood_art != stone_art
+			and WorkingsSprites.for_material(WORKING_MATERIAL_UNKNOWN) == null)
 
 	# State "working overflow" — the crowded hex, where three wonders take every visible slot before
 	# the working is reached. Read for: the `+N` chip carrying `⚒`, which is what stops a capped
@@ -6143,9 +6189,11 @@ func _worked_working_states() -> void:
 	for far_row_variant in far_rows:
 		var far_row: Dictionary = far_row_variant
 		if String(far_row.get("key", "")).begins_with(WORKING_ROW_KEY_PREFIX):
+			# The icon is the row's FACE — art (`WorkingsSprites`) or its emoji fallback — so the test
+			# is `face_renders`, never the glyph alone: a material with art answers an empty glyph.
 			_assert_map("map_working_farzoom — a working row still carries its own icon at far zoom, so its rate needs no noun (%s)"
-					% String(far_row.get("glyph", "")),
-				String(far_row.get("glyph", "")) != "")
+					% ("art" if far_row.get("sprite") != null else String(far_row.get("glyph", ""))),
+				SecondaryMarkerRenderer.face_renders(far_row))
 
 	# State "working unselected" (issue #650) — THE PERSISTENT HALF. The same single crewed wood
 	# working with NO band selected: the ring and the `⚒3` plate are the marks that belong to the
@@ -6429,15 +6477,20 @@ const SOURCE_LIST_FIT_TILE := Vector2i(BAND_X + 2, BAND_Y)
 ## which is why every OTHER working in this harness is `CUTTERS_UNCAPPED` and unaffected by this pair.
 const SOURCE_LIST_WORN_PER_WORKER := 2.2
 
-## The stand after it was cut back: a `deadfall` wood working whose stock has come down to a hair over
-## its composed floor, so the room next turn is worth about one cutter. **A REAL WORKING, not a
+## The stand after it was cut back: a `deadfall` wood working whose stock has come down near its
+## composed floor, so the room next turn is worth about five BARE cutters. **A REAL WORKING, not a
 ## sentinel** — the seam still pays, and the row still states a rate.
-const SOURCE_LIST_WORN_STOCK := 302.0
+const SOURCE_LIST_WORN_STOCK := 311.0
 const SOURCE_LIST_WORN_TAKE := 0.18
 
-## …and the hands beyond what that ground can use. The fixture's crew is the shipped cap PLUS this,
-## rather than a typed number, so a re-dial of `max_useful_cutters` moves the fixture with it and the
-## claim cannot quietly become vacuous.
+## ⛔ **THE SIM'S GEARED CAP ON THAT GROUND** (`LaborAssignment.usefulCutters`, issue #663) — what the
+## band's kit lets three cutters take, BELOW the bare quotient of the room over `perWorkerBiomass`.
+## That gap is the whole claim: a row measuring the bare quotient cannot flag the crew below, and one
+## measuring the published cap does. Asserted as a premise rather than trusted.
+const SOURCE_LIST_WORN_USEFUL := 3
+
+## …and the hands beyond what that ground can use. The fixture's crew is the published cap PLUS this,
+## so the overstaffed row is overstaffed BY CONSTRUCTION and still inside the bare quotient.
 const SOURCE_LIST_WASTED_HANDS := 2
 ## How many ACCOUNTS the footer's total has to name before "it is not a sum across accounts" says
 ## anything at all — on a single-account band that claim passes vacuously.
@@ -6556,12 +6609,18 @@ func _worn_working(tile: Vector2i) -> Dictionary:
 	deposit["reachable"] = SOURCE_LIST_WORN_STOCK
 	return deposit
 
-## **THE SHIPPED CEILING FOR THAT GROUND, asked of the producer rather than typed here** — the same
-## quotient the working's own compose sheet caps its `+` at. Both crews below are sized from it, so
-## the overstaffed row is overstaffed BY CONSTRUCTION and the fully-staffed one sits exactly on it.
+## **THE PUBLISHED CEILING FOR THAT GROUND** — what each `extract` row on the pair carries on the
+## wire. Both crews below are sized from it, so the overstaffed row is overstaffed BY CONSTRUCTION and
+## the fully-staffed one sits exactly on it.
 func _worn_cap() -> int:
-	return HudDepositVocab.max_useful_cutters(
-		_worn_working(SOURCE_LIST_WORN_TILE), WORK_PEAK_FLOOR)
+	return SOURCE_LIST_WORN_USEFUL
+
+## **THE BARE QUOTIENT** the overlay used to measure against — the room above the row's floor over the
+## bare `perWorkerBiomass`, rounded up. The premise's oracle, never the flag's.
+func _worn_bare_cap() -> int:
+	var deposit := _worn_working(SOURCE_LIST_WORN_TILE)
+	return ceili(HudDepositVocab.room_next_turn(deposit, WORK_PEAK_FLOOR)
+		/ HudDepositVocab.per_worker_biomass_of(deposit))
 
 ## One `extract` row on one of that pair, at a stated crew.
 func _worn_working_assignment(tile: Vector2i, crew: int) -> Dictionary:
@@ -6571,6 +6630,7 @@ func _worn_working_assignment(tile: Vector2i, crew: int) -> Dictionary:
 		"target_x": tile.x, "target_y": tile.y,
 		"material": WORKING_MATERIAL_WOOD,
 		"floor": WORK_PEAK_FLOOR,
+		HudDepositVocab.ASSIGNMENT_USEFUL_CUTTERS_KEY: SOURCE_LIST_WORN_USEFUL,
 		SourceForecast.ASSIGNMENT_MATERIAL_YIELD_KEY: [
 			{"material_id": WORKING_MATERIAL_WOOD, "amount": SOURCE_LIST_WORN_TAKE},
 		],
@@ -6749,13 +6809,18 @@ func _source_list_states() -> void:
 	# ---- A CREW BIGGER THAN ITS GROUND CAN USE (the third web joins the other two) ---------------
 	#
 	# ⛔ **THE PREMISE FIRST, because every claim under it is vacuous without one.** The pair is sized
-	# from the SHIPPED ceiling, so if `max_useful_cutters` ever answered `CUTTERS_UNCAPPED` for this
-	# ground — a fixture that lost its per-cutter rate, say — the overstaffed crew would be `1` and the
-	# fully-staffed one `-1`, and both rows would pass for the wrong reason.
+	# from the PUBLISHED ceiling, which must be a real cap — and it must sit BELOW the bare quotient with
+	# the overstaffed crew between them, or the flag below passes on an overlay still dividing the room
+	# by the bare `perWorkerBiomass`.
 	var worn_cap := _worn_cap()
+	var worn_bare := _worn_bare_cap()
 	_assert_map("map_source_list — premise: the cut-back stand PRICES a ceiling (max %d cutters)"
 			% worn_cap,
 		worn_cap != HudDepositVocab.CUTTERS_UNCAPPED and worn_cap > 0)
+	_assert_map(("map_source_list — premise: gear lowers the cap below the bare quotient, and the bare "
+			+ "one would NOT flag the crew (%d published < %d cutters <= %d bare)")
+			% [worn_cap, worn_cap + SOURCE_LIST_WASTED_HANDS, worn_bare],
+		worn_cap + SOURCE_LIST_WASTED_HANDS <= worn_bare)
 	var by_key := _rows_by_key(rows)
 	var worn_row: Dictionary = by_key.get(_map.secondary_working_key(
 		SOURCE_LIST_WORN_TILE.x, SOURCE_LIST_WORN_TILE.y, WORKING_MATERIAL_WOOD), {})
@@ -7092,3 +7157,240 @@ func _source_list_states() -> void:
 		build_distance > rot_distance * BUILD_ARC_CONTRAST_MIN)
 
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
+
+
+# ---- THE EXCHANGE NETWORK (issue #624) -----------------------------------------------------------
+## `ui_preview`'s band fixtures, for `transfer_crossing` — the one crossing-row shape both harnesses
+## stage, so a fixture here cannot drift from the decoder's.
+const EXCHANGE_BAND_FX := preload("res://tools/ui_preview/fixtures_band.gd")
+## Three of the player's camps pooling in one network, plus another people's camp a shipment reaches.
+## GIVER pays into the pool, TAKER draws from it, EVEN moves less than the readout can state.
+const EXCHANGE_NETWORK_ID := 11
+const EXCHANGE_GIVER := {"entity": 9501, "band_id": 501, "x": 4, "y": 6, "name": "Ashfell"}
+const EXCHANGE_TAKER := {"entity": 9502, "band_id": 502, "x": 7, "y": 3, "name": "Lowfen"}
+const EXCHANGE_EVEN := {"entity": 9503, "band_id": 503, "x": 8, "y": 8, "name": "Teasel"}
+const EXCHANGE_FOREIGN := {"entity": 9601, "band_id": 601, "x": 13, "y": 5, "name": "Brackwater"}
+const EXCHANGE_FOREIGN_FACTION := 1
+## The kept-road rung one link stands on; the rest are open ground.
+const EXCHANGE_ROAD_RUNG := "route:trail"
+const EXCHANGE_LINK_DISTANCE := 3
+## This turn's pooled food: the giver's out, the taker's in, and an amount under `EVEN_FLOOR`.
+const EXCHANGE_GIVER_POOLED := 3.0
+const EXCHANGE_TAKER_POOLED := 2.2
+const EXCHANGE_EVEN_POOLED := 0.02
+## The one delivered shipment (giver → the foreign camp) and one CANCELLED in camp (giver → taker,
+## the whole cargo returned the same turn), which must net to nothing and draw no arrow.
+const EXCHANGE_SHIPPED_PARTY := 7001
+const EXCHANGE_SHIPPED_AMOUNT := 12.0
+const EXCHANGE_CANCELLED_PARTY := 7002
+const EXCHANGE_CANCELLED_AMOUNT := 4.0
+## How many of the fixture's links touch the selected (giver) camp — the two that draw brighter.
+const EXCHANGE_SELECTED_LINKS := 2
+## How many camps the fixture rings — the giver and the taker; the even camp stays bare.
+const EXCHANGE_RINGED_CAMPS := 2
+## The scratch prefs file the checkbox leg writes through, so a real `set_map_toggle` never lands in
+## the developer's own `user://client_settings.cfg`.
+const EXCHANGE_PREFS_PATH := "user://map_preview_client_settings.cfg"
+## The theme the second exchange frame renders in — the one whose blue `SIGNAL` made the links read
+## as rivers (why `HudStyle.TRADE` exists).
+const EXCHANGE_LOAM_THEME := "loam"
+
+func _exchange_band(spec: Dictionary, faction: int, links: Array, crossings: Array) -> Dictionary:
+	var band := _band_at(int(spec["entity"]), int(spec["x"]), int(spec["y"]), STAGE_CAMP, faction)
+	band["name"] = String(spec["name"])
+	band["band_id"] = int(spec["band_id"])
+	band[HudTradeVocab.NETWORK_ID_KEY] = EXCHANGE_NETWORK_ID \
+		if faction == HudConst.PLAYER_FACTION_ID else HudTradeVocab.NO_NETWORK
+	band[HudTradeVocab.POOLING_LINKS_KEY] = links
+	band[HudTradeVocab.CROSSINGS_KEY] = crossings
+	return band
+
+func _exchange_link(spec: Dictionary, rung_id: String) -> Dictionary:
+	return {
+		HudTradeVocab.LINK_BAND_ID: int(spec["band_id"]),
+		HudTradeVocab.LINK_DISTANCE: EXCHANGE_LINK_DISTANCE,
+		HudTradeVocab.LINK_RUNG_ID: rung_id,
+	}
+
+func _exchange_pooled(direction: int, amount: float) -> Dictionary:
+	return EXCHANGE_BAND_FX.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, direction,
+		HudTradeVocab.CAUSE_POOLED, amount)
+
+func _exchange_shipment(cause: int, direction: int, amount: float, to: Dictionary, party: int) -> Dictionary:
+	return EXCHANGE_BAND_FX.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, direction, cause, amount, [],
+		int(to["band_id"]), String(to["name"]), HudConst.PLAYER_FACTION_ID, party)
+
+func _snapshot_exchange_network() -> Dictionary:
+	var open := HudTradeVocab.OPEN_GROUND_RUNG
+	var giver := _exchange_band(EXCHANGE_GIVER, HudConst.PLAYER_FACTION_ID,
+		[_exchange_link(EXCHANGE_TAKER, open), _exchange_link(EXCHANGE_EVEN, EXCHANGE_ROAD_RUNG)],
+		[
+			_exchange_pooled(HudTradeVocab.DIRECTION_OUT, EXCHANGE_GIVER_POOLED),
+			_exchange_shipment(HudTradeVocab.CAUSE_SHIPMENT_OUT, HudTradeVocab.DIRECTION_OUT,
+				EXCHANGE_SHIPPED_AMOUNT, EXCHANGE_FOREIGN, EXCHANGE_SHIPPED_PARTY),
+			_exchange_shipment(HudTradeVocab.CAUSE_SHIPMENT_OUT, HudTradeVocab.DIRECTION_OUT,
+				EXCHANGE_CANCELLED_AMOUNT, EXCHANGE_TAKER, EXCHANGE_CANCELLED_PARTY),
+			_exchange_shipment(HudTradeVocab.CAUSE_SHIPMENT_RETURNED, HudTradeVocab.DIRECTION_IN,
+				EXCHANGE_CANCELLED_AMOUNT, EXCHANGE_TAKER, EXCHANGE_CANCELLED_PARTY),
+		])
+	# Both ends of every link list it — the dedupe is what makes each pair ONE line.
+	var taker := _exchange_band(EXCHANGE_TAKER, HudConst.PLAYER_FACTION_ID,
+		[_exchange_link(EXCHANGE_GIVER, open), _exchange_link(EXCHANGE_EVEN, open)],
+		[_exchange_pooled(HudTradeVocab.DIRECTION_IN, EXCHANGE_TAKER_POOLED)])
+	var even := _exchange_band(EXCHANGE_EVEN, HudConst.PLAYER_FACTION_ID,
+		[_exchange_link(EXCHANGE_GIVER, EXCHANGE_ROAD_RUNG), _exchange_link(EXCHANGE_TAKER, open)],
+		[_exchange_pooled(HudTradeVocab.DIRECTION_IN, EXCHANGE_EVEN_POOLED)])
+	var foreign := _exchange_band(EXCHANGE_FOREIGN, EXCHANGE_FOREIGN_FACTION, [], [])
+	return {
+		"grid": {"width": GRID_W, "height": GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": _terrain_array()},
+		"populations": [giver, taker, even, foreign],
+		"herds": [],
+	}
+
+## `[a, b, rung]` for every link mark, sorted — the comparable form of what the layer chose.
+func _exchange_link_triples(marks: Dictionary) -> Array:
+	var out: Array = []
+	for link in marks[ExchangeNetworkRenderer.MARKS_LINKS]:
+		out.append([int(link[ExchangeNetworkRenderer.MARK_A]), int(link[ExchangeNetworkRenderer.MARK_B]),
+			String(link[ExchangeNetworkRenderer.MARK_RUNG_ID])])
+	out.sort()
+	return out
+
+func _exchange_marks_empty(marks: Dictionary) -> bool:
+	return (marks[ExchangeNetworkRenderer.MARKS_LINKS] as Array).is_empty() \
+		and (marks[ExchangeNetworkRenderer.MARKS_ARROWS] as Array).is_empty() \
+		and (marks[ExchangeNetworkRenderer.MARKS_RINGS] as Array).is_empty()
+
+## **STATE "exchange network"** — the `trade_network` map layer (issue #624): undirected pooling lines
+## weighted by rung, a warm/cool ring on each camp that gave/took food, and a dashed arrow per
+## shipment; then the `MAP LAYERS` popover that switches it, and the map with it switched off.
+##
+## A frame can show lines, rings and an arrow; it cannot show that each pair is drawn ONCE, that the
+## cancelled shipment netted away rather than drawing under the delivered one, or that the balanced
+## camp is unringed ON PURPOSE rather than missed. Those are asserted off `collect_marks`, which names
+## bands rather than pixels.
+func _exchange_network_states() -> void:
+	# At the project's base canvas, so the popover's type and the `☰` glyph are captured at the size a
+	# player sees (`SOURCE_LIST_WINDOW_SIZE` says why the default canvas renders a Control at ~half).
+	await _set_canvas(SOURCE_LIST_WINDOW_SIZE)
+	# STATE THE TOGGLE CONDITION: the autoload loaded the developer's real prefs, and a player who
+	# switched the layer off would otherwise render this whole state blank. Assigned directly, never
+	# through the setter, which would save over the player's own file.
+	ClientSettings.map_toggles = {}
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(false)
+	_map._map_cache_enabled = false
+	_map.display_snapshot(_snapshot_exchange_network())
+	_map.selected_unit_id = int(EXCHANGE_GIVER["entity"])
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(int(EXCHANGE_GIVER["x"]), int(EXCHANGE_GIVER["y"]))
+	_map._fit_map_to_view()
+	await _settle()
+
+	var giver_id := int(EXCHANGE_GIVER["band_id"])
+	var taker_id := int(EXCHANGE_TAKER["band_id"])
+	var even_id := int(EXCHANGE_EVEN["band_id"])
+	var foreign_id := int(EXCHANGE_FOREIGN["band_id"])
+	var marks: Dictionary = _map._exchange_network.collect_marks()
+
+	var expected_links := [
+		[giver_id, taker_id, HudTradeVocab.OPEN_GROUND_RUNG],
+		[giver_id, even_id, EXCHANGE_ROAD_RUNG],
+		[taker_id, even_id, HudTradeVocab.OPEN_GROUND_RUNG],
+	]
+	expected_links.sort()
+	var links := _exchange_link_triples(marks)
+	_assert_map("exchange network — each pooling pair is ONE line, carrying its rung (%s)" % str(links),
+		links == expected_links)
+	var selected_links := 0
+	for link in marks[ExchangeNetworkRenderer.MARKS_LINKS]:
+		if bool(link[ExchangeNetworkRenderer.MARK_SELECTED]):
+			selected_links += 1
+	_assert_map("exchange network — the selected camp's links, and only those, draw brighter (%d)"
+		% selected_links, selected_links == EXCHANGE_SELECTED_LINKS)
+
+	var arrows: Array = marks[ExchangeNetworkRenderer.MARKS_ARROWS]
+	var arrow_ok := arrows.size() == 1 \
+		and int(arrows[0][ExchangeNetworkRenderer.MARK_SENDER]) == giver_id \
+		and int(arrows[0][ExchangeNetworkRenderer.MARK_RECEIVER]) == foreign_id \
+		and int(arrows[0][ExchangeNetworkRenderer.MARK_PARTY_ID]) == EXCHANGE_SHIPPED_PARTY \
+		and bool(arrows[0][ExchangeNetworkRenderer.MARK_SELECTED])
+	_assert_map("exchange network — ONE arrow, giver to the foreign camp; the cancelled shipment netted away (%s)"
+		% str(arrows), arrow_ok)
+
+	var rings: Dictionary = {}
+	for ring in marks[ExchangeNetworkRenderer.MARKS_RINGS]:
+		rings[int(ring[ExchangeNetworkRenderer.MARK_BAND])] = bool(ring[ExchangeNetworkRenderer.MARK_GIVER])
+	_assert_map("exchange network — the giver rings warm, the taker cool, the even camp not at all (%s)"
+		% str(rings),
+		rings.size() == EXCHANGE_RINGED_CAMPS and rings.get(giver_id, false) == true
+			and rings.get(taker_id, true) == false and not rings.has(even_id))
+	await _save("map_exchange_network")
+	# …AND IN LOAM, the theme the layer was reported from: drawn in loam's pale-blue `SIGNAL`, the links
+	# read as RIVERS. The map draws its marks live off `HudStyle`, so re-applying the palette re-tints
+	# this frame's links and rings with no rebuild; the HUD chrome built under the default keeps its
+	# colours, which is fine — the map is what this frame is of. Put back before anything else renders.
+	HudPalette.apply(EXCHANGE_LOAM_THEME)
+	_map.queue_redraw()
+	await _settle()
+	await _save("map_exchange_network_loam")
+	HudPalette.apply(HudPalette.DEFAULT_THEME)
+	_map.queue_redraw()
+	await _settle()
+
+	# THE MAP LAYERS POPOVER — the third button's own card, attached to it like the other two.
+	var picker: OverlayPicker = _map._minimap._minimap_2d.overlay_picker
+	if picker == null:
+		_fail("map layers — the minimap panel built no picker")
+		return
+	_assert_map("map layers — the third button wears '%s' (got '%s')"
+		% [OverlayPicker.LAYERS_GLYPH, picker.layers_button_glyph()],
+		picker.layers_button_glyph() == OverlayPicker.LAYERS_GLYPH)
+	_assert_map("map layers — the bar lays its three buttons out left to right without overlap",
+		picker.channel_button_rect().end.x <= picker.legend_button_rect().position.x
+			and picker.legend_button_rect().end.x <= picker.layers_button_rect().position.x
+			and picker.layers_button_rect().has_area())
+	picker.open_layers()
+	await _settle()
+	_assert_map("map layers — the popover opened (%s)" % str(picker.open_popover_kind()),
+		picker.open_popover_kind() == OverlayPicker.POPOVER_LAYERS)
+	_assert_map("map layers — the popover hangs off ITS button (gap %.0fpx)"
+		% (picker.anchor_rect().position.y - picker.popover_rect().end.y),
+		picker.anchor_rect() == picker.layers_button_rect()
+			and absf(picker.anchor_rect().position.y - picker.popover_rect().end.y)
+				<= OverlayPicker.POPOVER_GAP + PICKER_ATTACH_TOLERANCE)
+	var boxes: Dictionary = picker.layer_checkboxes()
+	_assert_map("map layers — one checkbox per registry row, each stating its setting (%s)" % str(boxes.keys()),
+		boxes.size() == MapToggles.ROWS.size() and boxes.has(MapToggles.TRADE_NETWORK)
+			and (boxes[MapToggles.TRADE_NETWORK] as CheckBox).button_pressed)
+	await _save("map_layers_popover")
+
+	# UNCHECK IT THE WAY A PLAYER DOES — through the box, so the whole path (checkbox → settings →
+	# `changed` → MapView redraw → renderer gate) is under test, into a scratch prefs file.
+	ClientSettings.config_path_override = EXCHANGE_PREFS_PATH
+	(boxes[MapToggles.TRADE_NETWORK] as CheckBox).button_pressed = false
+	await _settle()
+	_assert_map("map layers — unchecking the box turns the layer off in the settings",
+		not ClientSettings.is_map_toggle_on(MapToggles.TRADE_NETWORK))
+	_assert_map("map layers — …and the layer draws nothing",
+		_exchange_marks_empty(_map._exchange_network.collect_marks()))
+	picker.close_popover()
+	await _settle()
+	await _save("map_exchange_network_off")
+
+	# The layers button joins the catcher's swap/close rule — driven as real presses, like the other two.
+	await _click_canvas(picker.channel_button_rect().get_center())
+	await _click_canvas(picker.layers_button_rect().get_center())
+	_assert_map("map layers — pressing the layers button with the menu open SWAPS to it (%s)"
+		% str(picker.open_popover_kind()), picker.open_popover_kind() == OverlayPicker.POPOVER_LAYERS)
+	await _click_canvas(picker.layers_button_rect().get_center())
+	_assert_map("map layers — pressing it again closes it (%s)" % str(picker.open_popover_kind()),
+		picker.open_popover_kind() == OverlayPicker.POPOVER_NONE)
+
+	ClientSettings.map_toggles = {}
+	ClientSettings.config_path_override = ""
+	ClientSettings.changed.emit()
+	await _set_canvas(DEFAULT_CANVAS_SIZE)
+	await _settle()

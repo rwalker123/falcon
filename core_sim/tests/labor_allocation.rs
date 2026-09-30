@@ -1947,6 +1947,9 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         4,
         0.5,
         horizon,
+        // The arrivals schedule regrows first, so the realized twin must too for the two to
+        // describe the same turns.
+        core_sim::ProjectionStart::BeforeRegrowth,
     );
     let schedule = core_sim::project_arrivals_hunt(
         herd,

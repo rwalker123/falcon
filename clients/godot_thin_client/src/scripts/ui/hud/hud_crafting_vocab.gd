@@ -537,7 +537,7 @@ static func apply_palette() -> void:
 ## `AutoSizingPanel.fit_width`, so a long recipe name widens the card instead of clipping the table.
 const PANEL_WIDTH := 960.0
 const PANEL_MIN_HEIGHT := 240.0
-## Clearance kept between the card and the viewport edges — the same margin `BandComposeFloat` keeps.
+## Clearance kept between the card and the viewport edges — the same margin `WorkInspectorDialog` keeps.
 const VIEWPORT_MARGIN := 12.0
 
 ## The materials rail, fixed. The main column takes whatever is left.
@@ -582,8 +582,10 @@ const LEDGER_ROW_PADDING_V := 7
 const RAIL_GROUP_PADDING_V := 10
 const SECTION_SEPARATION := 22
 
-## The dim a row wears when its offer is a shrug rather than a problem — *"Not needed yet"*, sorted
-## last and DIMMED rather than hidden, because a kit you own and never use is information too.
+## The dim a row's INFORMATION wears when its offer is a shrug rather than a problem — *"Not needed
+## yet"*, sorted last and DIMMED rather than hidden, because a kit you own and never use is information
+## too. **Never worn by a control** — the Make button or the `N recipes` link — which a fade would make
+## read as disabled.
 const DIMMED_ROW_ALPHA := 0.55
 
 const TITLE_FONT_SIZE := 12

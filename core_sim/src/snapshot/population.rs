@@ -614,6 +614,19 @@ pub(crate) struct PopulationStateInputs<'a> {
 pub(crate) struct BuildSourceInputs<'a> {
     pub(crate) forage: &'a crate::forage::ForageRegistry,
     pub(crate) herds: &'a crate::fauna::HerdRegistry,
+    /// **The deposit workings and their table** — what an `extract` row's crew curve
+    /// ([`crate::extraction::useful_cutters`]) prices the working off.
+    pub(crate) deposits: &'a crate::extraction::DepositRegistry,
+    pub(crate) extraction: &'a crate::extraction_config::ExtractionConfig,
+    /// **The two tables an `extract` row's carry is read off** — the bare haul rate and the
+    /// material's weight ([`crate::extraction::DepositCarry`]).
+    pub(crate) labor: &'a crate::labor_config::LaborConfig,
+    pub(crate) materials: &'a crate::materials_config::MaterialsConfig,
+    /// The ladder, for an `extract` row's crew curve ([`crate::extraction::useful_cutters`]).
+    pub(crate) ladder: &'a crate::intensification::LadderConfig,
+    /// **The ground under a tile**, for an `extract` row's crew curve — the capture's own tile
+    /// lookup, `None` off the map.
+    pub(crate) ground_of: &'a (dyn Fn(bevy::math::UVec2) -> Option<crate::components::Tile> + Sync),
 }
 
 /// **THE JOB TOKEN A ROW PUBLISHES** — the rung this band's queue entry for `source` is actually
@@ -731,15 +744,34 @@ fn resolved_build_job(
 /// A queue entry on a source neither registry carries resolves to `""`, which is the honest answer:
 /// the sim cannot say what is being raised on ground it does not have. Fixtures that assert on the
 /// **job token** seed real registries instead.
+/// A fixture with no map: every tile is off it.
+#[cfg(test)]
+fn no_ground(_: bevy::math::UVec2) -> Option<crate::components::Tile> {
+    None
+}
+
 #[cfg(test)]
 pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
     use std::sync::OnceLock;
     static FORAGE: OnceLock<crate::forage::ForageRegistry> = OnceLock::new();
     static HERDS: OnceLock<crate::fauna::HerdRegistry> = OnceLock::new();
+    static DEPOSITS: OnceLock<crate::extraction::DepositRegistry> = OnceLock::new();
+    static EXTRACTION: OnceLock<std::sync::Arc<crate::extraction_config::ExtractionConfig>> =
+        OnceLock::new();
+    static LADDER: OnceLock<std::sync::Arc<crate::intensification::LadderConfig>> = OnceLock::new();
+    static LABOR: OnceLock<std::sync::Arc<crate::labor_config::LaborConfig>> = OnceLock::new();
+    static MATERIALS: OnceLock<std::sync::Arc<crate::materials_config::MaterialsConfig>> =
+        OnceLock::new();
     static INPUTS: OnceLock<BuildSourceInputs<'static>> = OnceLock::new();
     INPUTS.get_or_init(|| BuildSourceInputs {
         forage: FORAGE.get_or_init(Default::default),
         herds: HERDS.get_or_init(Default::default),
+        deposits: DEPOSITS.get_or_init(Default::default),
+        extraction: EXTRACTION.get_or_init(crate::extraction_config::ExtractionConfig::builtin),
+        labor: LABOR.get_or_init(crate::labor_config::LaborConfig::builtin),
+        materials: MATERIALS.get_or_init(crate::materials_config::MaterialsConfig::builtin),
+        ladder: LADDER.get_or_init(crate::intensification::LadderConfig::builtin),
+        ground_of: &no_ground,
     })
 }
 
@@ -1234,7 +1266,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // caller's, not the row's.
                     let (material_demand, material_supplied) =
                         row_material_keeping(&assignment.target, build_sources);
-                    labor_assignment_to_state(
+                    let mut row = labor_assignment_to_state(
                         assignment,
                         a.last_yields.get(i).unwrap_or(&NO_YIELD),
                         resolved_build_job(&assignment.target, a, build_sources),
@@ -1245,7 +1277,34 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         // **HOW FAR THIS ROW'S GEAR REACHES** — off the band-wide budget every row
                         // was cut from, so two rows naming one kit state the share each really got.
                         row_gear[i].1.workers_holding_whole_kit(),
-                    )
+                    );
+                    // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the plateau of
+                    // the deposit crew curve over the same pool the hunt row's cap is struck over,
+                    // read by the sheet's own rule. `0` on every non-extract row.
+                    if let LaborTarget::Extract { tile, material, .. } = &assignment.target {
+                        if let (Some(ground), Some(carry)) = (
+                            (build_sources.ground_of)(*tile),
+                            crate::extraction::DepositCarry::of(
+                                build_sources.labor,
+                                build_sources.materials,
+                                material,
+                            ),
+                        ) {
+                            row.useful_cutters = crate::extraction::useful_cutters(
+                                kit_levers.config,
+                                build_sources.ladder,
+                                build_sources.extraction,
+                                build_sources.deposits,
+                                a,
+                                assignment,
+                                &kit,
+                                &ground,
+                                assignment.workers.saturating_add(idle_workers),
+                                &carry,
+                            );
+                        }
+                    }
+                    row
                 })
                 .collect()
         })

@@ -409,10 +409,40 @@ const JOB_BUILDERS := "builders"
 ## …and the two deposit branches' TAKE job (issue #650) — `equipment.json`'s own `extract`, the job a
 ## felling axe or a stone hammer would declare a take stat on.
 ##
-## **THE SHIPPED ROSTER DECLARES NONE**, so `build_kit_row` mounts nothing on either compose sheet
-## today and `default_kits.extract` is the bare `none` kit. That is the honest answer rather than an
-## empty picker, and the row appears by itself the day a tool declares one.
+## **THE SHIPPED ROSTER DECLARES THREE TAKE KITS** (issue #663): `sledding` (a sled alone, for the
+## floor rungs — deadfall and gathering are picked up, no axe needed), `woodcutting` (sled + axe) and
+## `stonework` (sled + wedges), beside `none`. An extract row claims its WHOLE kit wherever it works, so
+## `kitWorkersHolding` on it is the scarcest of the kit's items, as on every job. **The default is the
+## WORKING's, not the job's**: `default_kits.extract` is `none`, and each `DepositState` publishes the
+## `default_kit_id` the rung it holds wants (`sledding` on a floor rung, `woodcutting` on felling and
+## coppice, `stonework` on a quarry) — `default_kit_for` reads it off the source, as it reads a herd's.
 const JOB_EXTRACT := "extract"
+
+## The key a `deposits` row lists the kits it offers under, in roster order — `none` never among them.
+const WORKING_OFFERED_KITS_KEY := "offered_kit_ids"
+
+## **THE KITS A DEPOSIT SHEET OFFERS: THE WORKING'S `offered_kit_ids` AND `none`** (issue #663). The sim
+## publishes the list per working (`["sledding", "woodcutting"]` on wood, `["sledding", "stonework"]` on
+## stone), so the client decides nothing about which kit suits which ground. Returns the ROSTER with
+## every `extract` kit the working does not offer dropped; an itemless kit (`none`, the job's fallback)
+## and every kit that does not list `extract` stay, so the rest of the roster's lookups (the bare tier is
+## the minimum across it) are unchanged.
+static func extract_kits_for_working(kits: Array, working: Dictionary) -> Array:
+	var offered: Array = Array(working.get(WORKING_OFFERED_KITS_KEY, []))
+	var out: Array = []
+	for kit_variant in kits:
+		var kit := kit_variant as Dictionary
+		var jobs: Array = kit.get(KIT_JOBS_KEY, [])
+		if jobs.has(JOB_EXTRACT) and not kit_item_ids(kit).is_empty() \
+				and not offered.has(String(kit.get(KIT_ID_KEY, NO_KIT_ID))):
+			continue
+		out.append(kit)
+	return out
+
+## **THE JOBS WHOSE SOURCE PUBLISHES ITS OWN DEFAULT KIT** under `HERD_DEFAULT_KIT_KEY` — a herd its
+## derived quarry kit, a deposit working the kit the rung it holds wants. Every other job's source carries
+## no such field and `default_kit_for` answers the job default for it.
+const SOURCE_DEFAULT_KIT_JOBS := [JOB_HUNT, JOB_EXTRACT]
 
 ## **THE AXIS EACH BAND-WIDE ROLE IS PRICED ON** — a Scout's kit buys what a posted vantage can make
 ## out, a Warrior's buys the `attack` the camp is defended at. Only the two roles with no source to
@@ -462,8 +492,7 @@ const JOB_CARRY_AXES := {
 
 ## The `OptionButton` the kit row mounts, as meta — the stable handle for the preview harnesses. A
 ## node-type search finds the compose sheets' `Band:` picker too (and, before the control became an
-## `OptionButton`, the quarry chooser and the zone `⋯` menus), so it needs a handle of its own exactly
-## as `QUARRY_CHOICES_META` does.
+## `OptionButton`, the zone `⋯` menus), so it needs a handle of its own.
 const KIT_PICKER_META := "kit_picker"
 
 ## The hint label beneath it, as meta: the claim a harness makes about the effective tier is about
@@ -523,13 +552,14 @@ static func display_name_for_id(kits: Array, kit_id: String) -> String:
 ## estimate tables' honesty test cannot each answer it differently.
 ##
 ## **THE SOURCE OVERRIDES THE JOB, and it is a narrower answer rather than a competing one**
-## (`HERD_DEFAULT_KIT_KEY`). Only a HUNT row has a source that publishes one: the forage web's patches
-## carry no such field, and passing them through here is what keeps the two webs on one call.
+## (`HERD_DEFAULT_KIT_KEY`). A HUNT row's herd and an EXTRACT row's working publish one
+## (`SOURCE_DEFAULT_KIT_JOBS`); the forage web's patches carry no such field, and passing them through
+## here is what keeps every web on one call.
 ##
 ## **THE SOURCE ARRIVES AS A PARAMETER, never reached for.** The two sheets that price a herd already
 ## hold it — it is the same dict the offer test reads `corralled` off — so this layer stays stateless.
 static func default_kit_for(job: String, source: Dictionary, job_default_id: String) -> String:
-	if job != JOB_HUNT:
+	if not SOURCE_DEFAULT_KIT_JOBS.has(job):
 		return job_default_id
 	var stated := String(source.get(HERD_DEFAULT_KIT_KEY, "")).strip_edges()
 	return stated if stated != "" else job_default_id
@@ -542,8 +572,8 @@ static func default_kit_for(job: String, source: Dictionary, job_default_id: Str
 ## kit the command would refuse.
 ##
 ## **THE COMPOSED CHOICE STILL OUTRANKS THE DEFAULT, and that is why the composed id is dropped on a
-## SOURCE CHANGE rather than being overridden here** (`ComposeState.reset_hunt_kit` /
-## `set_party_quarry`). A player who picked `none` on this animal to compare bare-handed must keep it
+## SOURCE CHANGE rather than being overridden here** (`ComposeState.reset_hunt_kit`, and the Deny sheet's
+## kit reset with its verb). A player who picked `none` on this animal to compare bare-handed must keep it
 ## across the re-render their own click causes; what they must not keep is a choice made about a
 ## DIFFERENT animal, since the default is now a fact about the quarry.
 ##

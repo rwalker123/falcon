@@ -550,7 +550,9 @@ resource (`entity → id`, cleared and rebuilt every turn): each connected compo
 gets a stable id (`1, 2, …` in the BTreeMap's sorted-root order), singletons get none. The capture
 reads it into each cohort's snapshot field `supplyNetworkId:uint` (`0` = not in a multi-band
 network, `>= 1` = shared id) so the client can draw supply links between co-networked bands. It is
-derived, not snapshot-persisted — a rehydrated cohort reads `0` until the next turn's balance.
+rebuilt every turn yet **checkpointed per band** (`BandRecord::supply`), because a restored world is
+captured before any turn runs and must publish the links the world it restored did — see
+`checkpoints.md`.
 
 The cohort snapshot also carries two derived per-band food-readout fields the client renders:
 `turnsOfFood:float` — **the honest larder runway: TURNS until the larder is empty, income
@@ -694,10 +696,13 @@ the average food/turn the source will deliver over the next `labor_config.yield_
 assignment's policy + worker count (`fauna::project_realized_hunt` / `forage::project_realized_forage`,
 mirroring the real turn order Logistics-regrow → Population-take, exactly as
 `systems::expeditions::hunt_trip_forecast` does). It is a **pure function of state** — no history, no
-persistence — so the assign-time seed and the resolved row compute the identical number (exact
-forecast == actual, the true no-jump: `resolved_hunt_realized_equals_the_seeded_realized`). **Simulated
-UNQUANTISED:** whole-animal rounding decides *when* the food arrives, never the N-turn total, so
-projecting the smooth `hunt_escapement_ceiling` gives the smooth average directly. **Why
+persistence. The seed and the resolved row are **not** bit-identical: the seed projects from
+before the next regrowth, the in-turn row from the source this turn already regrew
+(`ProjectionStart`), and the whole-animal take inside the window re-phases by a body as it slides —
+`resolved_hunt_realized_equals_the_seeded_realized` bounds that as "no lurch", not equality. Each
+projected step averages the kill over the retreat's outcomes and lands it in whole animals through
+the fight's wound ledger, or carries the fraction at a pen (`KillCarry`; see `yield-forecast.md`).
+**Why
 not the instantaneous rate** (the bug this replaced): the instantaneous steady rate is
 `sustainable_yield(current biomass)`, and biomass *sawtooths* every time a whole animal is killed
 (drops one body, regrows between), so an instantaneous reading tracks that sawtooth — the projection's

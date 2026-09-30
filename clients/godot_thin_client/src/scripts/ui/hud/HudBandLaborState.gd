@@ -93,6 +93,8 @@ var _default_warrior_kit_id: String = KitRoster.NO_KIT_ID
 # Its own field beside the four because one kit arms both of the ways a detached party feeds itself;
 # see `KitRoster.JOB_EXPEDITION`.
 var _default_expedition_kit_id: String = KitRoster.NO_KIT_ID
+# The DEPOSIT crews' default — `SubsistenceSection.defaultExtractKitId`.
+var _default_extract_kit_id: String = KitRoster.NO_KIT_ID
 
 # ---- Read accessors (backing value returned by reference — no deep copy) --------------------------
 
@@ -154,12 +156,14 @@ func default_kit_id(job: String) -> String:
 		KitRoster.JOB_EXPEDITION:
 			return _default_expedition_kit_id
 		KitRoster.JOB_EXTRACT:
-			# **THE WIRE NAMES NO EXTRACT DEFAULT IN THIS INGEST**, so this answers `""` — stated
-			# rather than reached by fall-through, for the reason the builders arm below is: falling
-			# through would hand the deposit sheets the HUNT kit as their marked `(default)`, and
-			# `Main._kit_token` would then omit the token for a selection that happened to equal it.
-			# The shipped roster offers `extract` no kit at all, so nothing renders either way.
-			return KitRoster.NO_KIT_ID
+			# **THE JOB-LEVEL FALLBACK, THE WIRE'S `defaultExtractKitId`.** The extract default is
+			# PER WORKING first (issue #663): each `deposits` row publishes its own `default_kit_id`,
+			# which follows the rung the working holds (`sledding` on deadfall and gathering,
+			# `woodcutting` on felling and coppice, `stonework` on a quarry), and the deposit sheet and
+			# `Hud._emit_assign_labor` read off the SOURCE through `KitRoster.default_kit_for` — the
+			# hunt's herd-first precedence, with this as the fallback behind a working that states
+			# none. Stated rather than reached by fall-through, for the builders arm's reason below.
+			return _default_extract_kit_id
 		KitRoster.JOB_BUILDERS:
 			# **THE WIRE NAMES NO BUILDERS DEFAULT**, so this answers `""` — the "a job the wire has
 			# not named a default for" case above, stated rather than reached by fall-through. Falling
@@ -359,6 +363,13 @@ func band_label_for_id(band_id: int) -> String:
 			return HudFormat.band_name(party)
 	return ""
 
+## **A LIVE TIE IS ONE WITH STRENGTH ABOVE ZERO** — the sim's own gate (`strength > NO_TIE`), read in
+## one place so the shipment sheet's destination, its live re-resolve and the Trade verb's map pick
+## (`TargetingController.trade_destination_at`) can never disagree about which bands a shipment may
+## name.
+static func tie_is_live(tie: Dictionary) -> bool:
+	return float(tie.get("strength", 0.0)) > HudConst.TIE_STRENGTH_NONE
+
 ## **THE TIES ONE BAND HOLDS**, in the ledger's own order (the sim publishes a stable `BTreeMap`
 ## walk, so the picker's rows do not reshuffle frame to frame).
 ##
@@ -380,13 +391,14 @@ func connections_for_band(band_id: int) -> Array:
 			rows.append(row)
 	return rows
 
-## Ingest the world's kit roster and the FIVE job defaults. **They ride ONE call**, because they are
+## Ingest the world's kit roster and the SIX job defaults. **They ride ONE call**, because they are
 ## one fact: a roster whose defaults name kits it does not contain would let every picker open on an
 ## entry it cannot show. A non-Array roster is ignored (the last value stands), matching the
 ## `set_food_modules` / `set_forage_patches` ingest — a delta carries a section only when it changed,
 ## so absence means unchanged and never "the world has no kits".
 func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage: String,
-		default_scout: String, default_warrior: String, default_expedition: String) -> void:
+		default_scout: String, default_warrior: String, default_expedition: String,
+		default_extract: String = KitRoster.NO_KIT_ID) -> void:
 	if not (kits_variant is Array):
 		return
 	_kits = kits_variant
@@ -395,6 +407,7 @@ func set_kit_roster(kits_variant: Variant, default_hunt: String, default_forage:
 	_default_scout_kit_id = default_scout
 	_default_warrior_kit_id = default_warrior
 	_default_expedition_kit_id = default_expedition
+	_default_extract_kit_id = default_extract
 	changed.emit(&"kits")
 
 func set_panel_band(band: Dictionary) -> void:
@@ -498,6 +511,19 @@ func set_deposits(deposits_variant: Variant) -> void:
 ## The working rows, BY REFERENCE — every reader is read-only.
 func deposits() -> Array:
 	return _deposits
+
+## The `deposits` row at `(x, y)` holding `material`, `{}` where the frame carries none — the working
+## a deposit command is ABOUT, which is what `KitRoster.default_kit_for` reads the working's own
+## default kit off. Keyed by the pair: one hex can hold wood and stone both.
+func find_deposit(x: int, y: int, material: String) -> Dictionary:
+	for row_variant in _deposits:
+		if not (row_variant is Dictionary):
+			continue
+		var row: Dictionary = row_variant
+		if int(row.get("tile_x", -1)) == x and int(row.get("tile_y", -1)) == y \
+				and String(row.get("material", "")) == material:
+			return row
+	return {}
 
 ## ⛔ **WHICH ROAD TILES THE PLAYER HAS QUEUED — `{Vector2i: true}` over EVERY player band's queue.**
 ##

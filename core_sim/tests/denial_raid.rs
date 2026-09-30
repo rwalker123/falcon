@@ -592,9 +592,14 @@ fn a_wary_herd_resists_denial_and_the_forecast_says_so() {
         repelled.turns_to_collapse, None,
         "a repelled raid has no collapse turn; the OUTCOME is what the readout shows instead"
     );
+    // **The pessimistic end never gets there either.** The OPTIMISTIC end is not asserted `None`: it
+    // reads each turn's kill at the retreat's `+sigmas` outcome, which for a lone hunter engaging six
+    // of these animals is four standing (the binomial's `Φ(2)` quantile) — enough, every turn, to
+    // outpace the regrowth. The normal approximation it replaced put that edge at `3.62`, between two
+    // outcomes no draw produces, and that is the only reason it used to read `None`.
     assert_eq!(
-        repelled.turns_to_collapse_low, None,
-        "not even the optimistic draw gets a repelled party there"
+        repelled.turns_to_collapse_high, None,
+        "not even the pessimistic draw gets a repelled party there"
     );
 
     // 2. The same herd and the same lone hunter with the retreat neutralised — the mechanism pin.

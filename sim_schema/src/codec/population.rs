@@ -409,6 +409,9 @@ fn create_populations<'a>(
                                 walkOutRemaining: assignment.walk_out_remaining,
                                 nextLoadHomeIn: assignment.next_load_home_in,
                                 netRateHome: assignment.net_rate_home,
+                                // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** — the
+                                // deposit crew curve's plateau. Appended last.
+                                usefulCutters: assignment.useful_cutters,
                             },
                         )
                     })
@@ -1255,6 +1258,7 @@ fn decode_labor_assignment(
         walk_out_remaining: assignment.walkOutRemaining(),
         next_load_home_in: assignment.nextLoadHomeIn(),
         net_rate_home: assignment.netRateHome(),
+        useful_cutters: assignment.usefulCutters(),
     })
 }
 

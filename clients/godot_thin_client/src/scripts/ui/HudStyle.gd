@@ -44,6 +44,11 @@ static var HEALTHY       := Color(0.463, 0.804, 0.502, 1.0)   # #76cd80  well-su
 ## already the blue this token wanted. **Do not reach for `MapView.OVERLAY_FALLBACK_COLOR`**, which
 ## is a near neighbour on the console palette and means "an overlay channel with no ramp of its own".
 static var READY         := Color("4373e8")                   # #4373e8  satisfied / complete
+## **TRADE — goods moving between camps**, drawn on the MAP (the exchange network's pooling links and
+## the ring on a camp that gave goods out; `ExchangeNetworkRenderer`). A warm GOLD in every palette,
+## because the map already spends blue on rivers and brown on roads, and loam's pale-blue `SIGNAL`
+## made the links read as water. It is NOT `WARN`: a camp sharing its food is not a warning.
+static var TRADE         := Color("ffd23f")                   # #ffd23f  trade / goods flowing
 # The two DANGER-overlay hues (Predators Phase 3), shared by the HUD alert surfaces so the command
 # feed's threat/casualty accents and the band panel's predator-nearby warning speak the SAME danger
 # language as the map's `threat` / `hunt_danger` washes. Values MIRROR MapView.THREAT_OVERLAY_COLOR /
@@ -126,6 +131,7 @@ static func apply_palette(p: Dictionary) -> void:
 	DANGER = p["DANGER"]
 	HEALTHY = p["HEALTHY"]
 	READY = p["READY"]
+	TRADE = p["TRADE"]
 	THREAT_ACCENT = p["THREAT_ACCENT"]
 	HUNT_DANGER_ACCENT = p["HUNT_DANGER_ACCENT"]
 	BUTTON_PRIMARY_BG = p["BUTTON_PRIMARY_BG"]
@@ -642,7 +648,11 @@ static func apply_option_button(picker: OptionButton) -> void:
 	if picker == null:
 		return
 	apply_button(picker, "ghost")
-	var popup := picker.get_popup()
+	apply_popup_menu(picker.get_popup())
+
+## Dress a free-standing `PopupMenu` in the console's own menu — the popup half of `apply_option_button`,
+## for a menu that has no face (the Deny pick's herd chooser).
+static func apply_popup_menu(popup: PopupMenu) -> void:
 	if popup == null:
 		return
 	popup.add_theme_stylebox_override("panel", popup_panel_stylebox())

@@ -1124,21 +1124,37 @@ func _build_ledger_row(ledger_row: Dictionary, batches_by_item: Dictionary,
 	var row := _ledger_row_container()
 	var group := String(offer.get(HudCraftingVocab.OFFER_GROUP_KEY, ""))
 	var batch := _batch_for(offer, batches_by_item)
-	row.add_child(_column_cell(_build_item_cell(ledger_row, payload), 0.0, true))
+	# **THE SHRUG IS DIMMED, NOT HIDDEN.** "Not needed yet" arrives with its own severity precisely so
+	# it can read as the shrug it is — a neutral offer on a kit that is not worn is nothing to do, and
+	# styling it like a shortage would make a problem out of a non-problem.
+	#
+	# **IT DIMS THE ROW'S INFORMATION, NEVER ITS CONTROLS.** The item's name and role line, the Owned
+	# and cost cells and the reason under the button wear the dim; the Make button and the `N recipes`
+	# link do not, and nothing above either may — a `modulate` on the row (or on the whole item cell)
+	# would fade them with it, and a faded control reads as a DISABLED one. A player read a live Make
+	# on an untouched Hoes row as "can't make it" exactly that way.
+	var shrug := _is_shrug(ledger_row, batch)
+	var item_cell := _build_item_cell(ledger_row, payload, shrug)
 	var owned := _build_owned_cell(offer, _batches_for(offer, batches_by_item), group, payload,
 		batches_by_material)
 	owned.set_meta(HudCraftingVocab.OWNED_CELL_META,
 		String(offer.get(HudCraftingVocab.OFFER_OUTPUT_ITEM_ID_KEY, "")))
+	var cost_cell := _build_cost_cell(offer, payload)
+	if shrug:
+		for info_cell: Control in [owned, cost_cell]:
+			_dim_shrug(info_cell)
+	row.add_child(_column_cell(item_cell, 0.0, true))
 	row.add_child(_column_cell(owned, HudCraftingVocab.COLUMN_OWNED_WIDTH, false))
-	row.add_child(_column_cell(_build_cost_cell(offer, payload), HudCraftingVocab.COLUMN_COST_WIDTH, false))
-	row.add_child(_column_cell(_build_action_cell(ledger_row), HudCraftingVocab.COLUMN_ACTION_WIDTH, false))
-
-	# **THE SHRUG IS DIMMED, NOT HIDDEN.** "Not needed yet" arrives with its own severity precisely so
-	# it can read as the shrug it is — a neutral offer on a kit that is not worn is nothing to do, and
-	# styling it like a shortage would make a problem out of a non-problem.
-	if _is_shrug(ledger_row, batch):
-		row.modulate = Color(1.0, 1.0, 1.0, HudCraftingVocab.DIMMED_ROW_ALPHA)
+	row.add_child(_column_cell(cost_cell, HudCraftingVocab.COLUMN_COST_WIDTH, false))
+	row.add_child(_column_cell(_build_action_cell(ledger_row, shrug),
+		HudCraftingVocab.COLUMN_ACTION_WIDTH, false))
 	return row
+
+## Fade one piece of a shrug row's INFORMATION — the one place `DIMMED_ROW_ALPHA` is applied, so the
+## cells and the reason line cannot drift apart. Never handed a control — the Make button or the
+## `N recipes` link — nor any container holding one (`_build_ledger_row`).
+func _dim_shrug(info: Control) -> void:
+	info.modulate = Color(1.0, 1.0, 1.0, HudCraftingVocab.DIMMED_ROW_ALPHA)
 
 ## **A ROW THE PLAYER HAS NOTHING TO DO ABOUT — a kit they own and have never used.** Two published
 ## facts, no threshold of ours: the sim called the offer NEUTRAL (so it is not a shortage and not a
@@ -1167,7 +1183,10 @@ func _is_shrug(ledger_row: Dictionary, batch: Dictionary) -> bool:
 ## than stacking under it**, which is what keeps every row two lines tall: a kit row's role line names
 ## the craft that makes it, and an item with several recipes has several crafts, so the row cannot
 ## name one of them honestly — the popup is where the recipes are told apart.
-func _build_item_cell(ledger_row: Dictionary, payload: Dictionary) -> Control:
+##
+## **On a shrug row (`shrug`) the name and the role line dim label by label, never the column**, since
+## the column may hold the `N recipes` link, a live control a fade would make read as disabled.
+func _build_item_cell(ledger_row: Dictionary, payload: Dictionary, shrug: bool) -> Control:
 	var offer: Dictionary = ledger_row["offer"]
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 0)
@@ -1175,6 +1194,8 @@ func _build_item_cell(ledger_row: Dictionary, payload: Dictionary) -> Control:
 	name_label.text = String(offer.get(HudCraftingVocab.OFFER_DISPLAY_NAME_KEY, ""))
 	name_label.add_theme_font_size_override("font_size", HudCraftingVocab.ITEM_NAME_FONT_SIZE)
 	name_label.add_theme_color_override("font_color", HudStyle.INK)
+	if shrug:
+		_dim_shrug(name_label)
 	column.add_child(name_label)
 	var recipe_count := (ledger_row["offers"] as Array).size()
 	if recipe_count > 1:
@@ -1186,6 +1207,8 @@ func _build_item_cell(ledger_row: Dictionary, payload: Dictionary) -> Control:
 		role_label.text = role
 		role_label.add_theme_font_size_override("font_size", HudCraftingVocab.ITEM_ROLE_FONT_SIZE)
 		role_label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+		if shrug:
+			_dim_shrug(role_label)
 		column.add_child(role_label)
 	return column
 
@@ -1476,7 +1499,10 @@ func _build_cost_cell(offer: Dictionary, payload: Dictionary) -> Control:
 ## be the one that cannot — and a row with a recipe on the bench is spent and reads *On the bench*.
 ## Under it, the suggested offer's `reason` VERBATIM in the tint its published `severity` picked —
 ## *"Short 4.9 bone"*, never *"cannot craft"*, and never a sentence composed here.
-func _build_action_cell(ledger_row: Dictionary) -> Control:
+##
+## **On a shrug row (`shrug`) only the REASON wears the dim; the button stays at full strength**, so
+## its enabled/disabled state reads truthfully — a faded button is indistinguishable from a disabled one.
+func _build_action_cell(ledger_row: Dictionary, shrug: bool) -> Control:
 	var offer: Dictionary = ledger_row["offer"]
 	var offers: Array = ledger_row["offers"]
 	var key := String(ledger_row["key"])
@@ -1510,6 +1536,8 @@ func _build_action_cell(ledger_row: Dictionary) -> Control:
 			HudCraftingVocab.REASON_COLOR_QUIET))
 		why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		why.custom_minimum_size = Vector2(HudCraftingVocab.COLUMN_ACTION_WIDTH, 0.0)
+		if shrug:
+			_dim_shrug(why)
 		column.add_child(why)
 	return column
 
@@ -2019,7 +2047,7 @@ func _amount_text(amount: float) -> String:
 
 # ---- geometry ---------------------------------------------------------------
 
-## The room the card may use. Unlike `BandComposeFloat` this panel is not anchored to another card —
+## The room the card may use. Unlike the work inspector this panel is not anchored to another card —
 ## it is its own surface and is centred in what is left.
 ##
 ## **"WHAT IS LEFT" IS THE ROOM NOTHING ELSE HAS CLAIMED, NOT THE RAW VIEWPORT.** Two different

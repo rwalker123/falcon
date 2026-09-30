@@ -384,8 +384,7 @@ const FACTION_LIST_ROWS_MAX := 6
 
 const FACTION_LIST_MORE_FORMAT := "+%d more"
 
-## A faction with no party out. The band page's parties zone says this with a disabled footer button;
-## this page has no footer, so it says it in words.
+## A faction with no party out, said in words — the page has no list rows to say it with.
 const FACTION_PARTIES_EMPTY := "No parties out"
 
 ## The composition KEY's chip gap and type size. The bar/swatch geometry travelled to `HudWidgets`
@@ -780,7 +779,7 @@ const ROLE_CARD_HINT_HEIGHT := 28.0
 const WORK_ROW_HEIGHT := 28.0
 
 ## The node name of the PARTIES zone's scrolling LIST — the party rows plus whichever inspector strip
-## is open, between that zone's fixed head and its fixed Scout/Hunt/Deny footer.
+## is open, under that zone's fixed head.
 ##
 ## **IT IS ONE OF THE BAND/CITY PANEL'S TWO SANCTIONED `ScrollContainer`s, and the NAME is how that
 ## stays true.** The panel is no-scroll by default: a zone whose content height fed back into a FIXED
@@ -1239,9 +1238,17 @@ const WORK_ROW_PARTY_WALKING_OUT_FORMAT := "Walking out — reaches the %s in %d
 ## once and stops trusting the rest of the block.
 const WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT := "Walking out — reaches the %s in 1 turn"
 
-## The two source nouns the walking-out line names.
+## The source nouns the walking-out line names — a herd, a patch, or a WORKING (a wood or a rock a
+## far forester or digger crew walks to; the same caravan, so the same sentence).
 const WORK_ROW_PARTY_WALK_TARGET_HERD := "herd"
 const WORK_ROW_PARTY_WALK_TARGET_PATCH := "patch"
+const WORK_ROW_PARTY_WALK_TARGET_WORKING := "working"
+
+## **WHAT ARRIVES HOME, ON A ROW WITH NO RATE SLOT** — the workings roster's hover, whose one-line
+## value cell states the ground rather than a rate. `netRateHome` in the working's OWN material
+## (`+1.40 wood a turn`), never in food: the sim publishes it in material units on an `extract` row.
+## Args: `[signed rate, material]`.
+const WORK_ROW_PARTY_RATE_HOME_FORMAT := "Arriving home: %s %s a turn"
 
 ## **WHEN THE SOONEST PACK ON THE ROAD LANDS HOME** (`nextLoadHomeIn`). ⛔ **`0` IS "NOBODY IS
 ## CARRYING A LOAD HOME"**, never "lands this turn", so it drops the line exactly as the walk-out's
@@ -1262,6 +1269,44 @@ const WORK_ROW_PARTY_TURNS_SINGULAR := 1
 ## string it is about to compare against. One meta for all of them: the lines are one block, they are
 ## collected in draw order.
 const WORK_ROW_PARTY_META := &"work_row_party"
+
+## **THE PARTY BLOCK'S LINES, COMPOSED ONCE FOR EVERY SURFACE THAT STATES A POSTING** — the work
+## board's far forage and hunt rows and the workings roster's far wood and stone rows. One caravan,
+## one sentence set: nothing about a working's party differs from a patch's but the noun it walks to.
+##
+## `party` is `SourceForecast.party_readout`'s answer (the one reading of the wire's party keys),
+## `crew_noun` the row's own lowercased crew word, `walk_target` one of the `WORK_ROW_PARTY_WALK_
+## TARGET_*` nouns. `[]` where no party is posted, which keeps a local row exactly what it was.
+##
+## ⛔ **EVERY LINE BUT THE FIRST IS PRESENT ONLY WHEN ITS OWN FIELD SAYS SO.** Each countdown reads
+## `0` as *there is nothing to say*, and a line drawn at `0` would be a promise about something that
+## is not happening.
+static func party_block_lines(party: Dictionary, crew_noun: String,
+        walk_target: String) -> Array[String]:
+    if not SourceForecast.party_is_posted(party):
+        return []
+    var lines: Array[String] = []
+    var crew := WORK_ROW_PARTY_CREW_FORMAT % [
+        int(party[SourceForecast.ASSIGNMENT_PARTY_WORKERS_KEY]), crew_noun,
+        int(party[SourceForecast.ASSIGNMENT_PARTY_X_KEY]),
+        int(party[SourceForecast.ASSIGNMENT_PARTY_Y_KEY]),
+        int(party[SourceForecast.ASSIGNMENT_WALK_TILES_KEY])]
+    # **LIVE, THIS TURN** — and it moves turn to turn, which is the caravan working.
+    var on_road := int(party[SourceForecast.ASSIGNMENT_HUNTERS_ON_THE_ROAD_KEY])
+    if on_road > 0:
+        crew += WORK_ROW_PARTY_ON_ROAD_FORMAT % on_road
+    lines.append(crew)
+    var walking := int(party[SourceForecast.ASSIGNMENT_WALK_OUT_REMAINING_KEY])
+    if walking == WORK_ROW_PARTY_TURNS_SINGULAR:
+        lines.append(WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT % walk_target)
+    elif walking > 0:
+        lines.append(WORK_ROW_PARTY_WALKING_OUT_FORMAT % [walk_target, walking])
+    var next_load := int(party[SourceForecast.ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY])
+    if next_load == WORK_ROW_PARTY_TURNS_SINGULAR:
+        lines.append(WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT)
+    elif next_load > 0:
+        lines.append(WORK_ROW_PARTY_NEXT_LOAD_FORMAT % next_load)
+    return lines
 
 ## ⛔ **THE ROW'S GEAR MARK — A MARK OF ITS OWN, NOT A SECOND ⚠.** A row short of GEAR and a row
 ## short of HANDS have opposite remedies (the bench against the stepper — and adding hands to a
@@ -1479,7 +1524,7 @@ const WORK_CHIP_KIND_FORMAT := "%s %d · %s"
 
 ## The kind chip's face once its mark is bundled ART — the same line with the leading `%s` gone,
 ## because a `Button` carries art on its `icon` PROPERTY and a chip that kept the glyph would state
-## its kind twice. Art OR glyph, never both, the rule `BandCityPanel._make_icon_button` already
+## its kind twice. Art OR glyph, never both, the rule `BandCityPanel.make_icon_button` already
 ## follows for the knowledge launcher.
 const WORK_CHIP_KIND_SPRITE_FORMAT := "%d · %s"
 

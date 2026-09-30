@@ -705,6 +705,10 @@ fn decode_delta_against(
     {
         frame.insert_changed("default_expedition_kit_id", default_expedition_kit);
     }
+    // …and the extract job's, on both paths for the same reason.
+    if let Some(default_extract_kit) = delta.subsistence().and_then(|s| s.defaultExtractKitId()) {
+        frame.insert_changed("default_extract_kit_id", default_extract_kit);
+    }
     // The whole effective `EquipmentConfig` as one `serde_json` string — the Workbench's two config
     // pages parse it themselves. `insert_changed`, like its siblings: the sim diffs it as a
     // `Whole<String>`, so it rides a delta ONLY when it moved and presence here IS the change

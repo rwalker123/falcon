@@ -79,7 +79,7 @@ cannot have, which is why the command side answers the question a different way.
 
 | Goes out on | What | Why |
 |---|---|---|
-| the **seated link** | `HuntTripForecast`, `DenialRaidForecast`, `HuntCrewTake`, `WorkPartyForecast` | Each carries a client-supplied `faction_id` and is answered with that faction's private state — a named band's live equipment wear, its idle workers, its take curve. Asked from an unseated connection that is the disclosure per-seat frames just closed, one channel over |
+| the **seated link** | `HuntTripForecast`, `DenialRaidForecast`, `HuntCrewTake`, `WorkPartyForecast`, `DepositCrewTake` | Each carries a client-supplied `faction_id` and is answered with that faction's private state — a named band's live equipment wear, its idle workers, its take curve. Asked from an unseated connection that is the disclosure per-seat frames just closed, one channel over |
 | a **connection per round trip** | `ListSaves`, `FactionCapacity`, and the three save verbs | They name no faction, and they are asked from `LandingScreen` **before `Main` exists and therefore before any seat is claimed**. The server answers both ahead of its `world_active` gate so the load menu opens with no world; routing them onto the link would make that menu wait on the seat machinery to answer a question no gate will ever apply to |
 
 **A query written on the link is fire-and-forget out and correlated by `request_id` back**, exactly

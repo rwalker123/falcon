@@ -851,8 +851,8 @@ struct SplinterTake {
 ///
 /// # The rule: PROPORTIONAL, FLOORED, and the remainder is left unspent
 ///
-/// Two clamps, because `sled` is used by **both** `big_game` and `trapping` and so no kit's count can
-/// be resolved on its own:
+/// Two clamps, because `sled` is used by **several** kits — `big_game`, `trapping` and the `extract`
+/// take kits — and so no kit's count can be resolved on its own:
 ///
 /// 1. **The kit's own ceiling** — `t_k = min over the items it uses of floor(share × parent holds)`,
 ///    the complete kits' worth of `k` the share affords.

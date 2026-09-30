@@ -2519,13 +2519,18 @@ against the measurements item 12c forced. Not a readout slice: it is the structu
     > > `HudStyle.DANGER` (`AnnotationRenderer` line ~428), which nothing else on the map uses. **It is
     > > the ordinary, healthy road that must not be amber.**
     > >
+    > > **#215 removed the amber herd line** (`MapView.HERD_TRAIL_COLOR` and the polyline it drew are
+    > > deleted): a herd's path is now the worn ground itself, drawn by the road art. The rule that a
+    > > healthy road is not amber stands on its own — amber is `HudStyle.WARN`.
+    > >
     > > So the fade is over ALPHA and WIDTH of a road's own hue, never a ramp toward the warning
     > > colour — and the art of #600 has to clear the same bar, since a stylised dirt track is a
     > > tan-brown object by nature and a herd trail is drawn on top of the same ground.
     >
     > > **RELATED, AND NOT THIS STEP'S: #215** — *"herd/game trails follow hex centers and become the
-    > > basis of roads."* Its own issue, and still open: nothing in the sim banks route work for an
-    > > animal today, which is why the floor rung is spelled `path` rather than `game_trail`.
+    > > basis of roads."* Its own issue, since built: migratory herds bank route work on their `Migrate`
+    > > legs, and the floor rung stays spelled `path` because it names what reaches it, not an origin.
+    > > See `.claude/rules/core_sim/routes.md` → "Game trails".
     >
     > > #### ⛔ AND THE `Roadwork` POOL HAS NOTHING TO POINT AT — THE ROSTER IS THIS STEP'S TOO
     > >

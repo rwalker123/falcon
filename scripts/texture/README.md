@@ -9,7 +9,7 @@ Prompts live in `clients/godot_thin_client/assets/terrain/texture_prompts.txt`.
 ## Requirements
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install pillow numpy
+python3 -m venv .venv && .venv/bin/pip install pillow numpy scipy   # scipy: equalize_detail.py only
 ```
 
 ## The workflow
@@ -27,6 +27,9 @@ repeated, and this is the only way to see it. The three failure signatures:
 - **A checkerboard / lattice of dark anchors** — low-frequency tone structure (vignette,
   a dark smudge, directional sheen) that becomes periodic when repeated. Fix with
   `flatten_tone.py`.
+- **A lattice of smooth blobs inside a rippled frame** — the brightness is even but the GRAIN is
+  not: strong texture in one region, near-glassy in another. `flatten_tone.py` reports ~0 spread
+  on these and changes nothing. Fix with `equalize_detail.py`.
 - **A kaleidoscope** — mirrored features radiating from the tile corners. Not fixable by
   post-processing; re-roll.
 
@@ -38,6 +41,20 @@ illumination spread before/after — **lower is flatter is better-tiling**. Unde
 
 `devignette.py` is the narrower, older tool for the specific corner-darkening case;
 `flatten_tone.py` supersedes it in most situations.
+
+### 2b. `equalize_detail.py <in> <out> [base_radius] [amp_radius] [gain_lo] [gain_hi]`
+
+Evens out DETAIL AMPLITUDE (how strong the grain is), where `flatten_tone.py` evens out
+brightness. Splits luma into a small-radius base and the detail above it, measures the detail's
+local RMS over `amp_radius`, and scales it toward the tile median with a clamped gain, applied as a
+luma offset so the hue is untouched. Every blur wraps, so a seamless input stays seamless. Prints
+the local-std spread (max/min over an 8×8 grid) before/after — nearer 1× is more even.
+
+First use: the three smooth water tiles, which were rippled along one edge and glassy in the
+middle — `00_deep_ocean` 15.5× → 3.0×, `01_continental_shelf` 5.4× → 2.0×, `02_inland_sea`
+4.5× → 1.9×. The `gain_hi` clamp is what stops it there: lifting a glassy region further amplifies
+compression noise, not ripples. It does not remove mirrored features (the kaleidoscope case) —
+the water tiles still carry chevrons, which the shader's water-surface pass breaks up instead.
 
 ### 3. `seamless_edges.py <in> <out> [band]`
 

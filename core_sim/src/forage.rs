@@ -4405,6 +4405,8 @@ pub fn project_realized_forage(
     // **What this crew carries home** — threaded so a projection runs the same take the turn will.
     take_species: &TakeSelection,
     horizon: u32,
+    // **Where in the turn the patch is being read** — see `fauna::ProjectionStart`.
+    start: crate::fauna::ProjectionStart,
 ) -> f32 {
     if horizon == 0 {
         return 0.0; // `LaborConfig::validate` pins `horizon > 0`; belt-and-braces against /0.
@@ -4412,7 +4414,7 @@ pub fn project_realized_forage(
     // **ONE PROJECTED TURN AT A TIME, through [`ForageProjection::step`]** — the step a work
     // party's caravan forecast drives with a crew that moves turn to turn
     // (`crate::work_party::forecast_caravan`). Here the crew is constant.
-    let mut projection = ForageProjection::new(patch);
+    let mut projection = ForageProjection::starting(patch, start);
     let mut total = 0.0_f32;
     // Turns actually simulated — the average divides by this, not the full `horizon`, so a
     // self-terminating gather (an Eradicate strip) reads the rate it delivers while the stand lasts
@@ -4458,12 +4460,26 @@ pub struct ProjectedForageTurn {
 /// whole so the smooth headline and a work party's caravan forecast run one projection.
 pub struct ForageProjection {
     sim: ForagePatch,
+    /// **Has this turn's regrowth already happened?** — the plant twin of the hunt projection's
+    /// flag; see `fauna::ProjectionStart`.
+    regrown: bool,
 }
 
 impl ForageProjection {
     /// Start a projection on a **private copy** of `patch`.
     pub fn new(patch: &ForagePatch) -> Self {
-        Self { sim: patch.clone() }
+        Self {
+            sim: patch.clone(),
+            regrown: false,
+        }
+    }
+
+    /// [`Self::new`], started at `start` in the turn — see `fauna::ProjectionStart`.
+    pub fn starting(patch: &ForagePatch, start: crate::fauna::ProjectionStart) -> Self {
+        Self {
+            regrown: start == crate::fauna::ProjectionStart::AfterRegrowth,
+            ..Self::new(patch)
+        }
     }
 
     /// **Step one turn — the patch regrows, then `workers` gather through `forage_take`.** `None`
@@ -4482,8 +4498,10 @@ impl ForageProjection {
         take_species: &TakeSelection,
     ) -> Option<ProjectedForageTurn> {
         // Logistics: the patch regrows first, exactly as `advance_forage_regrowth` runs before the
-        // Population stage's gather.
-        regrow_patch(&mut self.sim, forage);
+        // Population stage's gather — unless this turn's regrowth already happened.
+        if !std::mem::take(&mut self.regrown) {
+            regrow_patch(&mut self.sim, forage);
+        }
         let biomass_before = self.sim.biomass;
         // Population: **every** plant rung is the drawn-down policy gather through the shared
         // `forage_take` path — a Field included, since this arc retired its managed branch.
@@ -4629,7 +4647,8 @@ pub fn forage_source_yield_preview(
         output_multiplier,
     );
     // The steady headline is the forward projection from THIS patch state — the same computation the
-    // resolved Forage arm runs, so seed == first resolved value exactly.
+    // resolved Forage arm runs. A seed is struck between turns, so its first step regrows; the
+    // resolved arm reads the patch after that regrowth.
     let realized = project_realized_forage(
         patch,
         tile_composition,
@@ -4642,6 +4661,7 @@ pub fn forage_source_yield_preview(
         floor,
         take_species,
         realized_horizon,
+        crate::fauna::ProjectionStart::BeforeRegrowth,
     );
     // The discrete twin, from the same patch state: what lands on each of the next
     // `arrivals_horizon` turns. A gather is continuous, so this is normally positive throughout.
@@ -6113,6 +6133,90 @@ mod tests {
             (published.actual - handed_over).abs() < 1e-4,
             "the row publishes what the gatherers are handed: {} against {handed_over}",
             published.actual
+        );
+    }
+
+    /// **A PATCH HELD AT ITS FLOOR PUBLISHES THE GATHER IT PAYS — the in-turn `realized` does not
+    /// regrow the turn twice.**
+    ///
+    /// The resolved row projects from the patch as the gather finds it, which Logistics has already
+    /// regrown. Stepping that state `regrow → take` credited this turn's growth a second time over
+    /// the horizon, so a patch settled on its floor — paying exactly its regrowth, every turn —
+    /// published `(H + 1) / H` of it: `0.94` against `0.92` at the shipped 40-turn window. Started
+    /// at [`crate::fauna::ProjectionStart::AfterRegrowth`], the first projected turn **is** this
+    /// turn's gather and the steady state is reproduced to the float.
+    #[test]
+    fn a_patch_held_at_its_floor_projects_the_gather_it_pays() {
+        const HALF_THE_STAND: f32 = 0.5;
+        /// Far more gatherers than the regrowth can feed, so the stand is held ON its floor.
+        const GATHERERS: u32 = 20;
+        const FULL_SEASON: f32 = 1.0;
+        const NEUTRAL_OUTPUT: f32 = 1.0;
+        /// The shipped `yield_average_horizon_turns`.
+        const HORIZON: u32 = 40;
+        /// Turns run before the reading — enough for the crew to draw a full stand to its floor.
+        const SETTLE_TURNS: u32 = 20;
+        /// Float slack on two sums of the same deterministic step.
+        const STEADY_EPSILON: f32 = 1e-4;
+
+        let forage = test_forage_config();
+        let flora = crate::flora_config::FloraConfig::builtin();
+        let mut patch = ForagePatch::new(REF_TILE, forage.capacity_for(TEST_BIOME));
+        let composition = flora.realized_composition(TEST_BIOME, patch.tile, REF_SEED);
+        let gather = |patch: &mut ForagePatch| {
+            forage_take(
+                patch,
+                &composition,
+                GATHERERS,
+                HALF_THE_STAND,
+                &TakeSelection::EVERYTHING,
+                &forage,
+                &flora,
+                NEUTRAL_OUTPUT,
+                forage.per_worker_biomass_capacity,
+                FULL_SEASON,
+            )
+            .to_f32()
+        };
+        let project = |patch: &ForagePatch, start| {
+            project_realized_forage(
+                patch,
+                &composition,
+                &forage,
+                &flora,
+                forage.per_worker_biomass_capacity,
+                FULL_SEASON,
+                NEUTRAL_OUTPUT,
+                GATHERERS,
+                HALF_THE_STAND,
+                &TakeSelection::EVERYTHING,
+                HORIZON,
+                start,
+            )
+        };
+        // The turn's own order: Logistics regrows, then Population gathers.
+        for _ in 0..SETTLE_TURNS {
+            regrow_patch(&mut patch, &forage);
+            gather(&mut patch);
+        }
+        regrow_patch(&mut patch, &forage);
+        let in_turn = project(&patch, crate::fauna::ProjectionStart::AfterRegrowth);
+        let regrown_twice = project(&patch, crate::fauna::ProjectionStart::BeforeRegrowth);
+        let paid = gather(&mut patch);
+
+        assert!(
+            paid > 0.0,
+            "liveness: the settled stand still pays its regrowth ({paid})"
+        );
+        assert!(
+            (in_turn - paid).abs() < STEADY_EPSILON,
+            "a stand held at its floor must publish the gather it pays: realized {in_turn}, paid \
+             {paid}"
+        );
+        assert!(
+            regrown_twice > paid + STEADY_EPSILON,
+            "the discriminator: projecting the in-turn stand as if its regrowth were still to come \
+             must over-read it ({regrown_twice} against {paid}), or this test cannot see the defect"
         );
     }
 

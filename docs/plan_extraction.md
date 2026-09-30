@@ -298,9 +298,19 @@ on a quarry is a hand not feeding the band, and labor is already allocated per a
 (`plan_standing_upkeep.md` §2.2). That, and not the walk, is what makes wood cost something.
 
 **The working belongs to a CAMP, like a patch — not to nobody, like a road.** A road follows no one
-and is free to leave, which is why it belongs to no camp; a quarry you walked away from is a quarry
-you lost. That is what puts an extraction site on the move-or-stay decision, and it is the one place
-this arc deliberately does **not** copy `RungBranch::Route`.
+and is free to leave, which is why it belongs to no camp. That is what puts an extraction site on the
+move-or-stay decision, and it is the one place this arc deliberately does **not** copy
+`RungBranch::Route`.
+
+**The move-or-stay pressure is paid in WALKING, as forage's is.** This section first read *"a quarry
+you walked away from is a quarry you lost"* — the row lapsed the turn the band stepped past
+`band_work_range`. The work party (`docs/plan_civilization_steps.md` §One work party) replaced that
+for every source: a working past the apron posts a party that walks each full pack home, so a band
+that moves on keeps its quarry and pays the round trip on every load. What distance costs is the
+material that arrives home per turn, and a road between camp and working buys it back. A porter
+carries the hunt's own carry over the material's `weight`, on the row's whole kit — so a sled
+hauls on every rung — and nothing about the rule knows wood from stone (`.claude/rules/core_sim/work-party.md` → "The deposit
+web: the cargo is the material").
 
 **Holding it costs upkeep like everything else** — work per turn, interpolating on position
 (`plan_standing_upkeep.md` §2.7), drawn from a keeping pool the two branches share. Without it a
@@ -394,12 +404,30 @@ not a blocker: the deposit works whatever the metal is for.
   free. Recorded as an item rather than a bare decision because it makes stone tools cost more
   **labor** than bone tools while costing less **material**, which is a gameplay claim rather than a
   tuning detail. **If it plays tedious the fix is a bigger yield per turn, never a free mechanism.**
-- **Forestry's kit does not exist, and the reason it could not be written is gone.** The objection
-  was that the natural tool is an axe and, with stone tools out of scope, it would have to be
-  bone-hafted — *"which sits oddly"*. Stone tools shipped (§8), so a knapped axe is now an ordinary
-  roster row: an item with a `flint` tier and a recipe reading stone's `hardness`, beside the three
-  that already exist. **It is still not written** — forestry ships kitless, so the branch has no gear
-  decision — and what it now waits on is only somebody cutting the item, not a missing material.
+- **Forestry's kit — answered (#663).** The objection was that the natural tool is an axe and, with
+  stone tools out of scope, it would have to be bone-hafted — *"which sits oddly"*. Stone tools
+  shipped (§8), so the axe shipped as an ordinary roster row: **`axe`, one `flint` tier and no bone
+  tier**, knapped from stone read on `hardness`. It declares a new stat, **`deposit_take`** — extra
+  units one equipped worker takes per turn, **added** to the rung's bare `yield_per_worker_turn` and
+  never replacing it — on **`forestry:felling` and `forestry:coppice` only**. Beside it ship
+  **quarrying `wedges`** (`flint`, `deposit_take` on `extraction:quarry` only). **The floors' tool is
+  the sled**: its plain tier gains `deposit_take` +0.3 on `forestry:deadfall` and +0.4 on
+  `extraction:gathering` — hauling fallen wood and loose stone home is what a sled is for — and it
+  costs hide and fibre and no wood, so §4d holds: the floors stay bare-workable and the sled is only
+  an addition. **Three take kits, each claimed whole like every job's**: `sledding` (sled),
+  `woodcutting` (sled + axe) and `stonework` (sled + wedges). The floors take the Sled kit because
+  deadfall is picked up and loose stone is gathered — nobody cuts there, so an axe is not part of
+  the job. A working **offers** every kit whose items all serve its branch (wood: `sledding` +
+  `woodcutting`; stone: `sledding` + `stonework`), and its **default follows the held rung**, the
+  way a herd's default follows its quarry: the tightest offered fit, so `sledding` on deadfall and
+  gathering, `woodcutting` on felling and coppice, `stonework` on the quarry. Both are **derived**
+  from the roster rather than authored; `default_kits.extract` is `none`. The kit is stored on the
+  row at assignment, so a working that climbs keeps the kit its crew was sent with. A row claims and
+  counts every item its kit uses on every rung, as a hunt row does; each tool's `deposit_take`
+  applies on the rungs it names, and the crew's haul carry over the material's weight caps the cut,
+  as a hunter's haul bounds a kill. Each tool is scoped by branch and rung so it adds
+  nothing — and wears nothing — off its own rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
+  working and the keepers holding one are geared by it through the rung requirement.
 - **The road tools' pacing moved a long way and nobody has played it.** `earthmoving` and
   `stone_dressing` cost 2 **stone** instead of 2 bone since §8's change: about 5 worker-turns on a
   scatter against about 22 turns of a whole band's hunting. `recipes.json`'s `_comment_road_tools`

@@ -2630,3 +2630,35 @@ fn a_gear_row_is_quoted_over_the_rows_whose_kit_carries_it() {
         "…and the band DOES own spears, so that zero is about the rows and not about the stock"
     );
 }
+
+/// **THE EXTRACT JOB'S DEFAULT KIT RIDES THE WIRE AS A TYPED FIELD** — `defaultExtractKitId`, the
+/// sixth job default beside `defaultHuntKitId` … `defaultExpeditionKitId`, read off the **encoded**
+/// envelope and compared with what `default_kits.extract` resolves in the sim. Paired against the
+/// expedition default, which names a different kit, so a field wired to its neighbour fails.
+#[test]
+fn the_extract_jobs_default_kit_is_published_on_the_wire() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    let app = placid_world();
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let subsistence = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .subsistence()
+        .expect("the subsistence section is present");
+    let cfg = equipment(&app);
+    let expected = cfg.default_kit_id(KitJob::Extraction);
+    assert_eq!(subsistence.defaultExtractKitId(), Some(expected));
+    assert_ne!(
+        subsistence.defaultExtractKitId(),
+        subsistence.defaultExpeditionKitId(),
+        "liveness: the extract default is its own field, not its neighbour's"
+    );
+}

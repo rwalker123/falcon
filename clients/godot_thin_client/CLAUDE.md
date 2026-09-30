@@ -116,7 +116,7 @@ below; this is the HUD's.
 | `ui/LandingScreen.gd` (`ui/LandingScreen.tscn`) | The boot main-scene (`project.godot` run/main_scene): a MenuShell in landing mode over a dark ground. `new_game_requested` stashes params in `GameLaunch.pending_new_game` and swaps to `Main.tscn`; `exit_requested` quits |
 | `MapSizes.gd` | Canonical 5-entry map-size list (`OPTIONS` + `DEFAULT_KEY`), shared by `MapPanel` and `MenuShell` (DRY) |
 | `GameLaunch.gd` (autoload) | Cross-scene handoff: `pending_new_game` dict — or `pending_load_slot`, which wins (`.claude/rules/client/save-load-menu.md`) — set by LandingScreen, consumed + cleared by `Main._build_world_request`, which also records what it RESOLVED to `active_new_game` / `active_load_slot`, so a scene reload rebuilds the same world instead of the dev default. Also owns `apply_theme_now()`, the in-process rebuild behind the Options pane's "Apply now" (`.claude/rules/client/sprites-widgets.md`) |
-| `ClientSettings.gd` (autoload) | The first general client-settings store — a `ConfigFile` wrapper over `user://client_settings.cfg` (`[map]` section) modelled on `BandCityPanel`'s `_load_prefs`/`_save_prefs`. Holds `pan_speed_multiplier` / `zoom_speed_multiplier` (defaults 1.0, each clamped to [0.25, 3.0]) — the BASE unit speeds stay as consts in `MapView`, these SCALE them — `fog_of_war_enabled` (default `true`; the rules governing that key are in `.claude/rules/client/fog-of-war.md`), and `ui_scale` + `theme` in its own `[ui]` section (`ui_scale` default 1.0, clamped to [0.75, 1.50], see `.claude/rules/client/interface-scale.md`; `theme` is the HUD palette id, installed from `_ready` via `HudPalette.apply`; its setter PERSISTS ONLY — see `.claude/rules/client/sprites-widgets.md`, which does not load on this file). Setters clamp → `_save` → emit `changed`; `restore_defaults` resets all five; `config_path_override` (static) isolates the file for tests. **No `class_name`** (it would clash with the autoload name). Read LIVE by `MapView` (keyboard + trackpad pan, and the CONTINUOUS zoom paths — wheel/pinch/Q·E); written by the Options pane |
+| `ClientSettings.gd` (autoload) | The first general client-settings store — a `ConfigFile` wrapper over `user://client_settings.cfg` (`[map]` section) modelled on `BandCityPanel`'s `_load_prefs`/`_save_prefs`. Holds `pan_speed_multiplier` / `zoom_speed_multiplier` (defaults 1.0, each clamped to [0.25, 3.0]) — the BASE unit speeds stay as consts in `MapView`, these SCALE them — `fog_of_war_enabled` (default `true`; the rules governing that key are in `.claude/rules/client/fog-of-war.md`), and `ui_scale` + `theme` in its own `[ui]` section (`ui_scale` default 1.0, clamped to [0.75, 1.50], see `.claude/rules/client/interface-scale.md`; `theme` is the HUD palette id, installed from `_ready` via `HudPalette.apply`; its setter PERSISTS ONLY — see `.claude/rules/client/sprites-widgets.md`, which does not load on this file), plus a `[map_toggles]` section of per-key bools for the minimap's MAP LAYERS toggles (`is_map_toggle_on` falls back to the `ui/overlay/MapToggles.gd` registry default; see `.claude/rules/client/overlay-channels.md`). Setters clamp → `_save` → emit `changed`; `restore_defaults` resets all five and clears `[map_toggles]`; `config_path_override` (static) isolates the file for tests. **No `class_name`** (it would clash with the autoload name). Read LIVE by `MapView` (keyboard + trackpad pan, and the CONTINUOUS zoom paths — wheel/pinch/Q·E); written by the Options pane |
 
 <!-- HUB ROUTING BLURB — source of truth: scripts/hub_blurb_client.md, appended into
      clients/godot_thin_client/CLAUDE.md by scripts/split_claude_md.sh. Edit the source file; an
@@ -226,7 +226,7 @@ What scales *all* text at once is the Options pane's **Interface scale**, which 
 scale applied to the window, not a font system — see `.claude/rules/client/interface-scale.md`.
 
 **The palette authority is `HudStyle.gd`**, and it is real: `SIGNAL`,
-`SIGNAL_WASH`, `DANGER`, `WARN`, `HEALTHY`, `READY`, `INK`, `INK_DIM`, `INK_FAINT`,
+`SIGNAL_WASH`, `DANGER`, `WARN`, `HEALTHY`, `READY`, `TRADE`, `INK`, `INK_DIM`, `INK_FAINT`,
 `GROUND`, `PANEL_SOLID`, `LINE_SOFT`, plus `card_stylebox()`, `banner_stylebox()`,
 `empty_stylebox()`, `apply_button(btn, "primary"|"ghost")`. **No hardcoded hexes**
 — the one surviving exception is documented at its call site.
@@ -262,12 +262,13 @@ shown build can never go stale.
 | `H` | Toggle hex grid lines |
 | `F` | Toggle fog of war (server-owned — see `.claude/rules/client/fog-of-war.md`) |
 | `T` | Toggle terrain textures |
+| `O` | Toggle ocean motion (chop + shore pulse) — a look-dev aid |
 | `I` | Hide/show inspector |
 | `` ` `` | Hide/show the Workbench, the designer surface (**hidden by default**) — see `.claude/rules/client/workbench.md` |
 | `V` | Show/hide the Victory panel (**hidden by default**, persisted) |
 | `R` | Show/hide the **event dock** (the notification bar; **shown by default**, persisted) |
 | Double-click herd | Quick-assign the player band's idle workers to hunt it (Sustain) |
-| `Esc` | Close the compose sheet, else cancel targeting, else close the Band panel's work inspector, else close the knowledge screen's open reading, else open/close the pause menu (`Main.escape_claimant`) |
+| `Esc` | Close the compose sheet, else cancel targeting, else close a band verb's sheet, else close the Band panel's work inspector, else close the knowledge screen's open reading, else open/close the pause menu (`Main.escape_claimant`) |
 
 **EVERY KEY ABOVE IS INERT WHILE SOMETHING ELSE OWNS THE KEYBOARD** — while a `LineEdit`/`TextEdit`
 holds focus, or while the pause menu is open. `Esc` is the exception, since it is how the player gets

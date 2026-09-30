@@ -416,6 +416,14 @@ pub struct LaborAssignmentState {
     /// The number the work row prints.
     #[serde(default)]
     pub net_rate_home: f32,
+    /// **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the plateau of the
+    /// deposit crew curve over this row's crew pool (its workers plus the band's idle hands), at the
+    /// row's own kit and floor, read by the compose sheet's `curve_useful_cutters` rule: the smallest
+    /// crew whose take reaches the curve's best within `0.1%`. **The pool** while the take is still
+    /// rising at the last crew, **`1`** where the curve pays nothing, **`0`** on a non-extract row
+    /// and on a row with no pool. Derived at capture.
+    #[serde(default)]
+    pub useful_cutters: u32,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and

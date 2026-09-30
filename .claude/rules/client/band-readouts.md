@@ -181,7 +181,8 @@ which is a property of the tier and not of the merge.
   (`_food_flow_present` / `_selected_band_food_turns` / `_disclosure_state`) lives at the top
   of `_unit_summary_lines`, NOT inside `_band_food_line` — the skipped call must not leave the
   previous render's caret or food-runway tint behind;
-  (3) `MapView._draw_supply_links` faint-chains player bands sharing a `supply_network_id` (`0` = solo).
+  (3) `ExchangeNetworkRenderer` draws each player band's pooling links, its giver/taker ring and this
+  turn's shipment arrows (`map-renderers.md` → "The exchange network").
   **Band food flow on the Food line** (snapshot `PopulationCohortState.foodIncome`/`foodConsumption`,
   decoded as `food_income`/`food_consumption`, flowed onto the
   MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,
@@ -1214,7 +1215,7 @@ range verdict, the three ABSENT hunt readouts and the surviving `Carried:` row, 
 claims about the verdict's structure (a `repelled` outcome carrying a full turn band still quotes no
 number; an unbounded `past_recovery` still names its outcome; and the two degenerate band forms). Each
 is sabotage-verified against a different mutation. The launch half and the vocabulary live in
-`band-city-panel.md` → "DENIAL is a third MISSION on the parties footer".
+`band-city-panel.md` → "DENIAL is a third MISSION".
 
 ## The Food rate is income against NEED, and a band that came short says so (the hand-to-mouth fix)
 
@@ -1348,7 +1349,7 @@ the parties strip's seven-line worst case, which is a HUNT party's.
 - **`Bound for` renders a NAME and never `expeditionDestinationBand`** — the id is the key
   `send_trade_expedition` addresses and must never reach a label. The name comes from
   `HudFormat.expedition_destination_label`, which is **the one resolution the parties-strip row and
-  the destination picker also use**, so a band cannot be called three things on three surfaces:
+  the Trade pick's hover banner also use**, so a band cannot be called three things on three surfaces:
   - **the sim's published `expeditionDestinationName` when it is non-empty** — it is resolved at
     LAUNCH and carried on the mission, because the destination is precisely the thing a party
     outlives (a band walks away, leaves the viewer's sight, or is gone while the shipment is still

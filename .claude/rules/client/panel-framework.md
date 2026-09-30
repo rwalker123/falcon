@@ -46,8 +46,8 @@ needed it (see `labor-ui.md` → "THE CARD IS AS WIDE AS ITS WIDEST ROW").
 `fit_width(0, 0)` is how: with no content measurement it can only resolve to `target_width`. The
 height a later `fit_to_content` reads is a function of the width the content was laid out at, so a
 card that spent that frame at its previous width (zero, on a first mount) reports the wrapping of a
-column that no longer exists — measured on `BandComposeFloat` as a card left 100px taller than its
-own content, which is the same lie as a card fitted too short, upside down.
+column that no longer exists — measured on a floating compose card left 100px
+taller than its own content, which is the same lie as a card fitted too short, upside down.
 
 `_fitted_width` is why the two fits cannot disagree: `fit_to_content` re-asserts the card's
 width every pass, and re-asserting `target_width` there would silently undo `fit_width` on
@@ -166,16 +166,14 @@ on the forage/hunt compose sheet.
 layer between the bar and the sheet, so the compose const now resolves to 106 and the sheet is still
 one above whatever precedes it. `compose_host()` is the node, created in
 `HudLayer._ready` (the same in-code idiom `EventDockPanel._ready` and `OverlayPicker` use), and
-`DrawerComposeController._ensure_compose_sheet` and `BandPanelController._mount_compose_float` are
-its two clients — the same sheet reached from the drawer and from the Band panel, so both entry
-points had the same defect and both take the same host.
+`DrawerComposeController._ensure_compose_sheet` is its client.
 
 **WHICH CASE TAKES WHICH:**
 
 | the surface | the answer |
 |---|---|
 | a free-floating card you READ — the crafting ledger, the knowledge screen | `set_overlay_inset` → `FloatingRoom`, i.e. **dodge** the bar |
-| a MODAL surface you WRITE INTO — a compose sheet, its Band-panel float | a CanvasLayer **above** the overlay's; no `room_bounds`, no inset |
+| a MODAL surface you WRITE INTO — a compose sheet | a CanvasLayer **above** the overlay's; no `room_bounds`, no inset |
 | a PERSISTENT NON-MODAL surface you write into — the Band panel's `WorkInspectorDialog` | the same: a CanvasLayer above the overlay's, no `room_bounds`, and **no catcher either**, because the surface it floats over has to stay live underneath (`band-city-panel.md` → "THE WORK INSPECTOR IS A DIALOG") |
 
 **A modal surface gains no `room_bounds`, deliberately.** It covers the bar rather than dodging it,
@@ -186,8 +184,6 @@ and giving it both would be two mechanisms answering one question.
 press anywhere outside the card — the event bar included — closes the sheet and does not reach the
 bar. That is the intended behaviour for a modal write surface, not a regression to carve the bar's
 band out of: one click puts the sheet away and the bar is still there for the second.
-`BandComposeFloat` has no catcher at all and keeps none, its own header carrying the reason (the
-quarry picker needs the sheet to survive a map click), so a bar click reaches the bar there.
 
 **AND THE BAND/CITY PANEL IS NOW UNDER THAT CATCHER TOO — a decision, not a side effect.**
 `COMPOSE_LAYER_INDEX` is 106, above `BandCityPanel.LAYER_INDEX` (103), the dock's 104 and the work
@@ -208,12 +204,11 @@ it is the only control inside a compose surface that navigates to another one: e
 sheet emits is a command, and those already close through `close_compose_sheet()`.
 
 **A sibling CanvasLayer carries an identity transform**, so nothing about either surface's geometry
-moved: `ComposeSheet._sync_to_viewport` and `BandComposeFloat._room` both read
-`get_viewport().get_visible_rect()` and write a parent-local `position`, and both resolve to the same
-global rect they did as children of the HUD. `event_dock.gd`'s `compose_sheet_over_event_dock` asserts
-that rather than assuming it, beside the layer indices and a rendered frame — stacking order is a
-property of the indices and no pixel comparison can state it, while an index claim alone passes on a
-sheet that never opened.
+moved: `ComposeSheet._sync_to_viewport` reads `get_viewport().get_visible_rect()` and writes a
+parent-local `position`, and resolves to the same global rect it did as a child of the HUD.
+`event_dock.gd`'s `compose_sheet_over_event_dock` asserts that rather than assuming it, beside the layer
+indices and a rendered frame — stacking order is a property of the indices and no pixel comparison can
+state it, while an index claim alone passes on a sheet that never opened.
 
 ### THE TWO REGISTRIES ARE COMPLEMENTS — `Main.push_hud_strip`
 
@@ -255,7 +250,7 @@ assertions that pin it are in `labor-ui.md` → "THE HEIGHT CHROME IS THE HEADER
 
 | Script | Purpose |
 |--------|---------|
-| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), plus `available_room(margin)`, all measured against `room_bounds` where one was set and against the raw viewport where it was not. **`centred_in_room`** picks which half of the room the height ceiling is (see above) and **`has_fitted_width()`** answers whether a width has ever been applied, which is how a caller applies its nominal before the measuring frame on the FIRST mount only. Callers: the Inspector, `ui/hud/BandComposeFloat.gd` and `ui/hud/CraftingPanel.gd` (the one that sets `room_bounds`, to the HUD's `FloatingRoom`) |
+| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), plus `available_room(margin)`, all measured against `room_bounds` where one was set and against the raw viewport where it was not. **`centred_in_room`** picks which half of the room the height ceiling is (see above) and **`has_fitted_width()`** answers whether a width has ever been applied, which is how a caller applies its nominal before the measuring frame on the FIRST mount only. Callers: the Inspector, `ui/hud/WorkInspectorDialog.gd` and `ui/hud/CraftingPanel.gd` (the one that sets `room_bounds`, to the HUD's `FloatingRoom`) |
 ## HUD Panel Framework (Docked PanelCards)
 
 The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — a
@@ -454,9 +449,8 @@ when the stack actually overflows.
 `AutoSizingPanel` height math and the legend's absolute `PRESET_TOP_RIGHT`
 positioning that used to overlap the Victory panel). `StockpilePanel` and
 `VictoryPanel` are still plain `PanelContainer`s (correctly container-sized, but
-not yet cards). `AutoSizingPanel.gd` has **two** callers: the Inspector, and
-`ui/hud/BandComposeFloat.gd` — the parties compose sheet floated off the Band
-panel when its zone cannot hold it (`band-city-panel.md`). The float is the
+not yet cards). `AutoSizingPanel.gd`'s callers are the Inspector,
+`ui/hud/WorkInspectorDialog.gd` and `ui/hud/CraftingPanel.gd` — each the
 free-floating case by the test at the top of this file: its ceiling is the
 VIEWPORT, not a dock's remaining height, so `PanelCard` + `DockScrollFit` there
 would fight a container that does not exist.

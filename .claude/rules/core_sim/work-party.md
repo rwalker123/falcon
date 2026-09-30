@@ -11,12 +11,13 @@ paths:
   - "core_sim/tests/work_party_caravan.rs"
 ---
 
-# The work party — hunt and forage are one model, and distance is a caravan
+# The work party — hunt, forage and extract are one model, and distance is a caravan
 
 Design: `docs/plan_civilization_steps.md` §One work party. Engine: `core_sim/src/work_party.rs` (the
 caravan's state and per-turn rule, the walk, the forecast, the pricing) plus the posting seam in
 `core_sim/src/systems/labor.rs`, the assign-time seed in `bin/server.rs` and the compose-sheet query
-in `forecast_query.rs`.
+in `forecast_query.rs`. **A deposit (wood, stone) posts a party by exactly the rule a patch does** —
+see "The deposit web: the cargo is the material".
 
 ## Config files
 
@@ -24,6 +25,8 @@ in `forecast_query.rs`.
 |------|---------|
 | `src/data/labor_config.json` | `band_work_range` (**2**) is the apron: past it every job posts a party, and the walk is measured from it. `band_move_tiles_per_turn` (**1**) is read a second time as the party's walking speed — the walk out and every porter's walk home — and is validated `>= 1` for that reason. **No lever of this arc's own exists**: the share of a party on the road falls out of carry, take rate and distance |
 | `src/data/supply_network_config.json` | Read, not written: `reach_tiles` is subtracted from `supply::free_pooling_reach_tiles` to give the **road bonus** — how much of a walk a road takes away. `friction` is **not** read: distance is paid in walking |
+| `src/data/materials.json` | Read, not written: every material's required **`weight`** — biomass-equivalent mass per unit, validated positive and finite — is what a deposit's pack is divided by (wood **2.4**, stone **3.0**; every value PROVISIONAL, stated in the file's `_comment_weight`) |
+| `src/data/equipment.json` | Read, not written: the extract kits `sledding` (`sled`), `woodcutting` (`sled` + `axe`) and `stonework` (`sled` + `wedges`), claimed whole like every job's kit, so a far working's porters haul on the sled on every rung |
 
 ## A party is state ON the labor assignment, not an entity
 
@@ -162,9 +165,10 @@ the remainder stays in the load for the next porter. So a far hunt's take is `ta
 not `take.carried`, and its row's `wasted` is `0`. An unbounded carry (a pen that is a larder) takes
 the whole load in one pack.
 
-**Only the FOOD account travels.** Fodder and material batches are credited to the band as they
-always were: a batch carries a characteristic vector and a band key, and a pipe over those is the
-storage arc's. Standing yield (milk) is food with no biomass: it rides the load with the next pack.
+**On the two food webs only the FOOD account travels.** Fodder and the hide, bone and fibre a take
+yields are credited to the band as they always were: a batch carries a characteristic vector and a
+band key, and a pipe over those is the storage arc's. Standing yield (milk) is food with no biomass:
+it rides the load with the next pack. **On the deposit web the material IS the cargo** — see below.
 
 **A crew at the source is what earns a lesson** (`crew_at_the_source`, the hunters present), while
 the holding test asks what the player **staffed** (`take_crew_present`). Read the holding test off the
@@ -182,6 +186,57 @@ direction over.
 
 Pinned by `labor_allocation::a_partys_take_is_credited_to_its_home_band_not_to_the_band_beside_it`.
 
+## The deposit web: the cargo is the material
+
+**A far working posts a party exactly as a far patch does** — `party_source_position` answers the
+deposit's own tile, and the Extract arm's out-of-range lapse (`status=lapsed reason=out_of_range`) is
+deleted. There is **nothing special about wood or stone**: no code path in the arc names a material.
+What a quarry the band has moved away from costs it is paid in walking, as a far patch's is.
+
+**Cargo and bulk.** The caravan does not know what it carries. `WorkParty`'s load and every walker's
+pack are **cargo** (what lands at home) measured in **bulk** (what a pack is measured in): food and
+biomass on the two food webs, and on the deposit web **both are the material's own units** — one
+number, so the caravan arithmetic is unchanged.
+
+**⛔ ONE PACK IS THE HUNT'S OWN HAUL CARRY OVER THE MATERIAL'S WEIGHT.** `work_party::material_pack`
+is `CaravanPricing::haul_carry / weight`: the bare `labor.hunt.per_worker_biomass_capacity` (**12**),
+or the sled's `hunt_carry` (**40**) under the coverage and wear of the kit the row **claims** — the
+same carry a hunter's pack is struck from. So a bare porter carries `12 / 2.4 = 5` wood and a sledded one
+`40 / 2.4 ≈ 16.7`. The whole difference between two materials is the one `weight` on each; a
+per-material branch, or an extraction-only carry lever, would be the defect.
+
+**The haul carry is read off the row's kit, claimed whole like every job's.** `CaravanPricing` is
+resolved over the row's stored kit — the same claim `LaborAllocation::item_budget` rations the band's
+gear with — and every take kit (`sledding`, `woodcutting`, `stonework`) carries the sled, so a
+kitted crew hauls on its sleds on every rung, felling and quarry included. The pricing's crew-weighted `deposit_take` per worker
+(`CaravanPricing::deposit_gear_per_worker`) is the tool term the forecast adds to each turn's cut,
+`present ×` that rate, and one pack per present hand is its carry: **the same carry caps the cut,
+near and far** (`extraction::CrewLift`), as a hunter's haul bounds a kill. The sled is **charged
+`biomass_hauled` over every extract take, in the carry's unit** (units × weight), against the row's
+kit, at the take and after it — the hunt's own haul quantum and ordering.
+
+**The take site** routes `outcome.taken` through `deliver_take_home` like every other arm. What
+lands this turn — walkers' deliveries plus any pack landed now — is what is deposited through
+`LocalStore::deposit_material` at the ground's characteristics and reported in the row's
+`materials`; while the party walks out nothing is deposited. `actual` stays zero. **A local working
+never enters the seam**: `deliver_take_home` speaks the food ledger's fixed-point `Scalar`, and the
+round trip moves an `f32` take by an ulp, which is the local identity broken on the one row with no
+party to explain it.
+
+**One projection.** `extraction::DepositProjection` is regrow-then-take on a clone
+(`renew_deposit` → `take_from_deposit`), and it is the only forward take formula on the deposit web:
+`forecast_extract_caravan` steps it for a far working, the seed's local arm reads its first step, and
+`extraction::project_realized_deposit` averages it for the query's local answer. A working is **spent**
+only when nothing is reachable on ground that never renews; a crew of nobody takes nothing while the
+stand regrows.
+
+**Where it lands is `systems::CargoHome`**, resolved from the row's target in one place
+(`CargoHome::of`): the larder for a food web, the material store — at the deposit ground's
+characteristics and `materials_cfg.band_key` — for a deposit. Every settlement reads it: the foot of
+the pass, the unassign, a lapsing row, the unposted sweep, the shed, `bring_the_dropped_party_home`.
+**The row's food projections are not written for a material cargo** (`CargoHome::is_food` gates
+`publish_caravan_projection`): its rate home rides `netRateHome` alone, in material units per turn.
+
 ## ⛔ One function, stepped — shared by the turn, the seed and the query
 
 `work_party::forecast_caravan` steps a party forward `yield_average_horizon_turns` from a state,
@@ -189,8 +244,9 @@ through `WorkParty::step` and a projected take at whatever crew is present each 
 take is the smooth headline's own step — `fauna::HuntProjection::step` and
 `forage::ForageProjection::step`, which `project_realized_hunt` / `project_realized_forage` are loops
 over — so the forecast runs the hunt's and the gather's own projection, not a second copy.
-`forecast_hunt_caravan` / `forecast_forage_caravan` are the two web adapters. The run stops once the
-source is spent **and** nothing is on the road or in the load, and averages over the turns stepped.
+`forecast_hunt_caravan` / `forecast_forage_caravan` / `forecast_extract_caravan` are the three web
+adapters, the last over `extraction::DepositProjection`. The run stops once the source is spent
+**and** nothing is on the road or in the load, and averages over the turns stepped.
 
 It is read in three places, and must stay one function:
 
@@ -215,8 +271,8 @@ identically. The turn's *take* is still priced at the hunters present.
 asked about — a stepper press on a live posting re-seeds that posting, not a fresh one that would
 re-promise a walk out. With none, they step a party posted now. **Inside the apron the query answers
 the ordinary local row's steady rate** with `posts_a_party: false` and every walk field `0`. The seed
-no longer declines a far Hunt or Forage row, and its Hunt gate no longer reads the retired
-`hunt_reach()`; **Extract keeps its range gate**, because a working still lapses past range.
+declines no far row on any web, and its Hunt gate no longer reads the retired `hunt_reach()`. A far
+Extract row seeds `materials` with what lands next turn (nothing while walking out) and no food field.
 
 Pinned by `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes`, which asks the
 socket after a turn that has put somebody on the road and compares with the row's `netRateHome` read
@@ -235,13 +291,15 @@ Every party field on `LaborAssignment` (`snapshot.fbs`) reads `0` on a local row
 | `walkTiles` | the one-way walk, from the apron, shortened by any road |
 | `walkOutRemaining` | `> 0` while the whole party is still walking out; `0` for the rest of the posting |
 | `nextLoadHomeIn` | turns until the soonest pack lands; `0` = nobody is carrying a load home |
-| `netRateHome` | food per turn arriving home — the number the row prints |
+| `netRateHome` | cargo per turn arriving home — the number the row prints: food on a hunt or forage row, the material's own units on an extract row (the row's `kind` says which) |
 
 The query is `QueryPayload::WorkPartyForecast` (`sim_runtime`, proto query field 7, reply field 10),
-seat-gated like the other faction-bearing questions: band, `Hunt { herd_id }` or `Forage { x, y,
-take_species }`, kit (named, never defaulted), crew and floor. It is refused with a `query_error`
-token for an unknown band, herd (`unknown_herd`) or patch (`unknown_patch`), an unknown or wrong-job
-kit, an invalid floor or an oversized crew.
+seat-gated like the other faction-bearing questions: band, `Hunt { herd_id }`, `Forage { x, y,
+take_species }` or `Extract { x, y, material }` (proto oneof field 8), kit (named, never defaulted),
+crew and floor. It is refused with a `query_error` token for an unknown band, herd (`unknown_herd`),
+patch (`unknown_patch`) or deposit (`unknown_deposit` — ground holding none of that material), an
+unknown or wrong-job kit, an invalid floor or an oversized crew. A deposit's `rate_home` is material
+units per turn.
 
 **The reply** is `posts_a_party`, `rate_home`, `walk_tiles`, `walk_turns`, `hunters_on_the_road` (a
 mean, so a float) and `first_load_turn` (1-based, `0` = none within the horizon) — every walk field
@@ -271,7 +329,7 @@ ends a posting routes through it:
 - **`cancel_order`** — `clear_kinds` holds no larder either, so `handle_cancel_order` reads the rows it
   is about to clear and brings each one's party home through `bring_the_dropped_party_home`.
 
-> #### ⛔ FOOD HANDED OVER ON THE WAY OUT GOES ON THE LEDGER'S ROUTE ARM
+> #### ⛔ CARGO HANDED OVER ON THE WAY OUT GOES ON THE LEDGER'S ROUTE ARM
 >
 > It is not this turn's income — a row that is ending publishes no telemetry to count it in — and food
 > that reached the larder through neither `food_income` nor a transfer would break the pinned identity
@@ -281,6 +339,11 @@ ends a posting routes through it:
 > a crossing is written, so the route arm and the cause-keyed crossings row agree and the band's own
 > caravan never reads as trade (`campaign.md` → "The cause key and the crossings list"). Food a
 > **live** posting lands (a delivered pack) goes through the row's `actual` like any other take.
+>
+> **A deposit party's cargo is MATERIAL and never touches the food ledger.** It is deposited into the
+> store at the ground's characteristics and booked as a `TransferCrossing::material` crossing with
+> the same `PartyHome` cause — the material route arm, which is the crossings list itself. Which of
+> the two a party's cargo is comes from `CargoHome::of`, never from a check at the settle site.
 
 Pinned by `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home`,
 `::a_herd_back_inside_the_apron_brings_its_caravan_home_once` and
@@ -309,3 +372,11 @@ the arm reach this row"* is the question the settlements must go on asking.
 | `work_party_caravan::a_herd_back_inside_the_apron_brings_its_caravan_home_once` | a re-entered source settles its caravan once, clears `party` and publishes none |
 | `work_party_caravan::a_vanished_herd_brings_its_caravan_home_as_the_row_lapses` | a vanished herd's caravan comes home once, before the row lapses |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes` | forecast == actual on the encoded snapshot |
+| `work_party_caravan::a_deposit_eight_hexes_out_posts_a_party_that_walks_six_each_way` | a far working posts a party on the wire, and nothing lands while it walks out |
+| `work_party_caravan::a_local_working_takes_no_party_and_its_numbers_are_unchanged` | the deposit web's local identity: the take seam's own figure |
+| `work_party_caravan::the_query_quotes_exactly_the_rate_an_extract_row_publishes` | forecast == actual on the deposit web, in material units |
+| `work_party_caravan::unassigning_a_deposit_caravan_mid_walk_brings_every_pack_home_as_material` | every pack lands in the store as wood, booked `PartyHome`, and nothing on the larder or the food route arm |
+| `work_party_caravan::a_woodcutting_crew_on_the_deadfall_floor_carries_a_larger_pack_than_bare_hands` | the first porter's pack is the pricing's haul carry over the weight — larger than bare hands |
+| `work_party_caravan::a_far_felling_crew_with_the_woodcutting_kit_carries_the_sled_pack` | the kit is claimed whole, so a felling party's pack is the sled's haul over the weight, larger than bare |
+| `work_party_caravan::a_local_extract_take_is_capped_by_carry_over_weight` | on a material heavy enough, a bare crew's cut is exactly its carry over the weight, and the sled raises it |
+| `work_party_caravan::a_pack_is_the_haul_carry_over_the_materials_weight` | twice the weight, half the units per pack — the material's one number is the whole difference |

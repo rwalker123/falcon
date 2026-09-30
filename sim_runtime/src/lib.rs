@@ -11,10 +11,11 @@ pub use sim_schema::*;
 pub mod commands;
 /// The query channel — the one direction on the command socket the server *answers*.
 pub use commands::{
-    query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, FactionCapacityQuery,
-    FactionCapacityReply, HuntCrewTakeQuery, HuntCrewTakeReply, HuntCrewTakeRow,
-    HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow, QueryPayload, QueryReply,
-    QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
+    query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, DepositCrewTakeQuery,
+    DepositCrewTakeReply, DepositCrewTakeRow, FactionCapacityQuery, FactionCapacityReply,
+    HuntCrewTakeQuery, HuntCrewTakeReply, HuntCrewTakeRow, HuntTripForecastQuery,
+    HuntTripForecastReply, HuntTripRow, QueryPayload, QueryReply, QueryReplyEnvelope,
+    WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
 };
 pub use commands::{
     CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,
@@ -439,6 +440,7 @@ pub mod knowledge {
                 default_scout_kit_id: String::new(),
                 default_warrior_kit_id: String::new(),
                 default_expedition_kit_id: String::new(),
+                default_extract_kit_id: String::new(),
                 equipment_config_json: String::new(),
                 opening_loadout: Default::default(),
                 faction_policies: Vec::new(),

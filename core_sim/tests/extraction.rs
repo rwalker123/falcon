@@ -317,6 +317,380 @@ fn a_band_with_no_kit_at_all_takes_from_the_floor_rung_of_both_branches() {
     }
 }
 
+/// **NAME THE WOODCUTTING KIT ON EVERY `extract` ROW** — what `assign_labor extract` stores on a wood's
+/// row when the command names no kit (`extraction::working_default_kit`). These fixtures build their
+/// rows by hand, and a hand-built row with no kit resolves the job default, `none`.
+fn send_with_the_woodcutting_kit(world: &mut World, band: Entity) {
+    let felling = world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .kit("woodcutting")
+        .expect("the shipped roster carries the Woodcutting kit");
+    for assignment in &mut world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the fixture band has an allocation")
+        .assignments
+    {
+        if matches!(assignment.target, LaborTarget::Extract { .. }) {
+            assignment.kit = Some(felling.clone());
+        }
+    }
+}
+
+/// **A CREW HOLDING AXES CUTS MORE OFF A FELLING WORKING THAN A BARE ONE, THROUGH THE SHIPPED TURN**
+/// (#663). Two worlds identical but for the band's ledger — one holding two flint axes and a set of
+/// wedges, one holding nothing — each run one labour pass on a seated `forestry:felling` working.
+///
+/// The geared band must take **exactly** the bare take plus two axes' `deposit_take` (the addition,
+/// never a replacement rate), its axes must wear, and its **wedges must not**: they are in the band's
+/// ledger but not in the Woodcutting kit a wood's crew is sent with, and they serve only the quarry.
+#[test]
+fn a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes() {
+    /// Fewer axes than fellers, so the partly-equipped sum is what the turn resolves.
+    const AXES: u32 = 2;
+    const WEDGES: u32 = 4;
+    const CREW: u32 = 4;
+    /// The shipped flint axe's `deposit_take` on felling.
+    const AXE_TAKE: f32 = 1.0;
+
+    let cut = |ledger: Option<core_sim::BandEquipment>| {
+        let (mut world, home) = world_of(WOODED);
+        seat_working(&mut world, UVec2::new(0, 0), WOOD, RungKey::ForestryFelling);
+        let band = spawn_extractors(&mut world, home, WOOD, CREW);
+        send_with_the_woodcutting_kit(&mut world, band);
+        if let Some(ledger) = ledger {
+            world.entity_mut(band).insert(ledger);
+        }
+        run_turn(&mut world);
+        let equipment = world.get::<core_sim::BandEquipment>(band).cloned();
+        (held(&world, band, WOOD), equipment)
+    };
+
+    let (bare, _) = cut(None);
+    let mut ledger = core_sim::BandEquipment::default();
+    ledger.stock("axe", AXES, "flint", None);
+    ledger.stock("wedges", WEDGES, "flint", None);
+    let (geared, after) = cut(Some(ledger));
+    let after = after.expect("the geared band keeps its ledger");
+
+    assert!(bare > 0.0, "fixture: the bare crew must cut something");
+    assert!(
+        (geared - (bare + AXES as f32 * AXE_TAKE)).abs() < 1e-3,
+        "two axes add two tools' worth on top of the bare cut: {geared} against {bare}"
+    );
+    assert!(
+        after.wear_of("axe") > 0.0,
+        "the axes did the extra cutting, so they wear"
+    );
+    assert_eq!(
+        after.wear_of("wedges"),
+        0.0,
+        "the wedges serve only the quarry, so a felling take wears none of them"
+    );
+}
+
+/// **ON DEADFALL THE WOODCUTTING KIT IS THE DEFAULT AND THE AXE DOES NOTHING** (#663). A wood on its
+/// free floor defaults to the Woodcutting kit — the axe in it is the tool the working will want once raised — but
+/// fallen wood is not axe work: a crew sent with it and holding axes cuts exactly what a bare crew
+/// cuts, and the axes wear nothing (`docs/plan_extraction.md` §4d).
+#[test]
+fn a_felling_kit_on_deadfall_neither_lifts_the_take_nor_wears_the_axe() {
+    const CREW: u32 = 4;
+    let cut = |axes: u32| {
+        let (mut world, home) = world_of(WOODED);
+        let band = spawn_extractors(&mut world, home, WOOD, CREW);
+        send_with_the_woodcutting_kit(&mut world, band);
+        let mut ledger = core_sim::BandEquipment::default();
+        if axes > 0 {
+            ledger.stock("axe", axes, "flint", None);
+        }
+        world.entity_mut(band).insert(ledger);
+        run_turn(&mut world);
+        let working = world
+            .resource::<DepositRegistry>()
+            .source(UVec2::new(0, 0), WOOD)
+            .expect("the crew opened the working");
+        assert_eq!(
+            working.rung(),
+            RungKey::ForestryDeadfall,
+            "fixture: the wood stands on its free floor"
+        );
+        let wear = world
+            .get::<core_sim::BandEquipment>(band)
+            .expect("the band keeps its ledger")
+            .wear_of("axe");
+        (held(&world, band, WOOD), wear)
+    };
+    let (bare, _) = cut(0);
+    let (axed, axe_wear) = cut(CREW);
+    assert!(bare > 0.0, "fixture: the deadfall crew must cut something");
+    assert_eq!(axed, bare, "the axe adds nothing to a fallen-wood take");
+    assert_eq!(axe_wear, 0.0, "and so it wears nothing there");
+}
+
+/// **THE SLED'S `deposit_take` NAMES THE FLOOR** (#663): on a deadfall wood two sleds among four
+/// cutters add exactly `2 × 0.3` to the bare cut; on a felling wood the same sleds add nothing to the
+/// cut, because the effect names deadfall and the axe is that rung's tool. **The sleds still HAUL**
+/// — the kit is claimed whole, and a sled is charged `biomass_hauled` on every take it carries, the
+/// hunt's own haul quantum — so on felling they wear exactly the haul charge: units × wood's weight
+/// × the sled's per-biomass wear.
+#[test]
+fn a_sled_lifts_the_deadfall_take_and_nothing_above_it() {
+    const CREW: u32 = 4;
+    const SLEDS: u32 = 2;
+    /// The sled's `deposit_take` on `forestry:deadfall` (`equipment.json`).
+    const SLED_TAKE: f32 = 0.3;
+    /// Wood's `weight` (`materials.json`).
+    const WOOD_WEIGHT: f32 = 2.4;
+    /// The sled's wear per unit of biomass hauled (`equipment.json`).
+    const SLED_HAUL_WEAR: f32 = 0.02;
+    let cut = |felling: bool, sleds: u32| {
+        let (mut world, home) = world_of(WOODED);
+        if felling {
+            seat_working(&mut world, UVec2::new(0, 0), WOOD, RungKey::ForestryFelling);
+        }
+        let band = spawn_extractors(&mut world, home, WOOD, CREW);
+        send_with_the_woodcutting_kit(&mut world, band);
+        let mut ledger = core_sim::BandEquipment::default();
+        if sleds > 0 {
+            ledger.stock("sled", sleds, "plain", None);
+        }
+        world.entity_mut(band).insert(ledger);
+        run_turn(&mut world);
+        let wear = world
+            .get::<core_sim::BandEquipment>(band)
+            .expect("the band keeps its ledger")
+            .wear_of("sled");
+        (held(&world, band, WOOD), wear)
+    };
+    let (bare, _) = cut(false, 0);
+    let (sledded, sled_wear) = cut(false, SLEDS);
+    assert!(
+        (sledded - (bare + SLEDS as f32 * SLED_TAKE)).abs() < 1e-4,
+        "two sleds add two sleds' deadfall take: {sledded} against {bare}"
+    );
+    assert!(
+        sled_wear > 0.0,
+        "the sleds did the extra hauling, so they wear"
+    );
+    let (felling_bare, _) = cut(true, 0);
+    let (felling_sledded, felling_sled_wear) = cut(true, SLEDS);
+    assert_eq!(
+        felling_sledded, felling_bare,
+        "a sled adds nothing to a felling take"
+    );
+    let haul_charge = felling_sledded * WOOD_WEIGHT * SLED_HAUL_WEAR;
+    assert!(
+        haul_charge > 0.0 && (felling_sled_wear - haul_charge).abs() < 1e-4,
+        "on felling the sleds wear the haul and nothing else: {felling_sled_wear} vs {haul_charge}"
+    );
+}
+
+/// **ONE AXE ARMS ONE PERSON PER TURN, ACROSS THE TAKE ROW AND THE POOLS** (#663). The axe is in
+/// the `extract` row's kit (`woodcutting`) *and* in the quarrywork keepers' rung requirement (its
+/// `build_work` on `forestry`), and the two used to be rationed by allocations that never saw each
+/// other — so two axes armed two fellers **and** a keeper.
+///
+/// A band holding **two** axes puts two fellers on a seated `forestry:felling` working and two
+/// keepers on the pool holding it. The pools settle first, so the keepers are issued what their bill
+/// needs and the fellers are armed out of the rest: the people armed — fellers plus the pool's
+/// issued units — are **exactly two**. The fellers' armed count is read off the take itself (each
+/// armed feller cuts `deposit_take` more than a bare one), against a no-axe control of the same
+/// world, and a four-axe control pins that the fellers arm fully when the stock allows it.
+#[test]
+fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
+    const FELLERS: u32 = 2;
+    const KEEPERS: u32 = 2;
+    /// The shipped flint axe's `deposit_take` on felling.
+    const AXE_TAKE: f32 = 1.0;
+
+    let run = |axes: u32| {
+        let (mut world, home) = world_of(WOODED);
+        let tile = UVec2::new(0, 0);
+        seat_working(&mut world, tile, WOOD, RungKey::ForestryFelling);
+        let band = spawn_keepers(&mut world, home, &[(tile, WOOD)], FELLERS, KEEPERS);
+        send_with_the_woodcutting_kit(&mut world, band);
+        let mut ledger = core_sim::BandEquipment::default();
+        if axes > 0 {
+            ledger.stock("axe", axes, "flint", None);
+        }
+        world.entity_mut(band).insert(ledger);
+        run_full_turn(&mut world);
+        let pool_axes: f32 = world
+            .get::<LaborAllocation>(band)
+            .expect("the band keeps its allocation")
+            .last_pool_toe
+            .iter()
+            .filter(|line| line.item == "axe")
+            .map(|line| line.filled)
+            .sum();
+        (held(&world, band, WOOD), pool_axes)
+    };
+
+    let (bare, no_pool_axes) = run(0);
+    assert_eq!(no_pool_axes, 0.0, "fixture: a band with no axe issues none");
+    assert!(
+        bare > 0.0,
+        "fixture: the fellers must cut something bare-handed"
+    );
+
+    let (two, pool_axes) = run(2);
+    let armed_fellers = ((two - bare) / AXE_TAKE).round();
+    assert!(
+        pool_axes >= 1.0,
+        "fixture: the keepers' bill must claim an axe, or the two accounts never compete — \
+         issued {pool_axes}"
+    );
+    assert_eq!(
+        armed_fellers + pool_axes,
+        2.0,
+        "two axes arm two people in all: {armed_fellers} fellers + {pool_axes} to the pool"
+    );
+
+    let (four, _) = run(4);
+    assert_eq!(
+        ((four - bare) / AXE_TAKE).round(),
+        FELLERS as f32,
+        "**LIVENESS**: with axes to spare, every feller is armed"
+    );
+}
+
+/// ⛔ **A WORKING RAISED THIS TURN ARMS NO MORE PEOPLE THAN THERE ARE AXES** (#663 review).
+///
+/// The band's item budget is struck once, before the labour walk, and every extract row claims its
+/// whole kit in it — so a row whose working the builders raise mid-walk (`deadfall` → `felling`)
+/// already holds its share of the axes, and its take cannot be armed off a remainder whose
+/// denominator never counted it.
+///
+/// Two axes; one builder (the pool, settled first, holds one); row A on a seated felling working;
+/// row B one hair short of felling's top on a queued `fell`, which the builder completes this turn.
+/// Each row's armed count is read off its own take against a no-axe control of the same world (an
+/// armed feller cuts `deposit_take` more), and the pool's off `last_pool_toe`. **At most two in all.**
+#[test]
+fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
+    const AXES: u32 = 2;
+    const FELLERS_PER_ROW: u32 = 2;
+    /// One builder: the pool claims one axe, leaving one for the take rows.
+    const BUILDERS: u32 = 1;
+    /// The shipped flint axe's `deposit_take` on felling.
+    const AXE_TAKE: f32 = 1.0;
+    /// How far below felling's top row B's working is seated — far less than one bare builder banks
+    /// in a turn, so the raise completes this turn in both arms.
+    const SHORT_OF_THE_TOP: f32 = 0.01;
+
+    let seated = UVec2::new(0, 0);
+    let climbing = UVec2::new(1, 0);
+    let run = |axes: u32| {
+        let (mut world, home) = world_of(WOODED);
+        seat_working(&mut world, seated, WOOD, RungKey::ForestryFelling);
+        {
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let config = world.resource::<ExtractionConfigHandle>().get();
+            let ground = Tile {
+                position: climbing,
+                terrain: WOODED,
+                ..Default::default()
+            };
+            let capacity = tile_deposit_capacity(&config, WOOD, &ground);
+            let mut working =
+                DepositSource::opening(climbing, WOOD, capacity, RungBranch::Forestry);
+            let (base, width) =
+                core_sim::extraction::deposit_rung_span(RungKey::ForestryFelling, &ladder);
+            working.set_ladder_position(
+                base + width - SHORT_OF_THE_TOP,
+                &ladder,
+                RungBranch::Forestry,
+            );
+            assert_eq!(
+                working.rung(),
+                RungKey::ForestryDeadfall,
+                "fixture: the climbing working must still hold deadfall"
+            );
+            world.resource_mut::<DepositRegistry>().insert(working);
+        }
+        world
+            .resource_mut::<DiscoveryProgressLedger>()
+            .add_progress(
+                FACTION,
+                core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
+                scalar_one(),
+            );
+        let band = spawn_keepers(
+            &mut world,
+            home,
+            &[(seated, WOOD), (climbing, WOOD)],
+            FELLERS_PER_ROW,
+            0,
+        );
+        send_with_the_woodcutting_kit(&mut world, band);
+        {
+            let mut allocation = world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band has an allocation");
+            allocation.assignments.push(LaborAssignment {
+                party: None,
+                target: LaborTarget::Builders,
+                workers: BUILDERS,
+                kit: None,
+                priority: SourcePriority::default(),
+                upkeep_kit: None,
+            });
+            assert!(allocation.enqueue_build(
+                core_sim::BuildSource::Deposit {
+                    tile: climbing,
+                    material: WOOD.to_string(),
+                },
+                core_sim::BuildJob::Rung(core_sim::Improvement::Fell),
+            ));
+        }
+        let mut ledger = core_sim::BandEquipment::default();
+        if axes > 0 {
+            ledger.stock("axe", axes, "flint", None);
+        }
+        world.entity_mut(band).insert(ledger);
+        run_full_turn(&mut world);
+
+        let registry = world.resource::<DepositRegistry>();
+        assert_eq!(
+            registry
+                .source(climbing, WOOD)
+                .expect("the climbing working")
+                .rung(),
+            RungKey::ForestryFelling,
+            "fixture: the raise must complete this turn ({axes} axes)"
+        );
+        let take = |tile| registry.source(tile, WOOD).expect("the working").last_take;
+        let pool_axes: f32 = world
+            .get::<LaborAllocation>(band)
+            .expect("the band keeps its allocation")
+            .last_pool_toe
+            .iter()
+            .filter(|line| line.item == "axe")
+            .map(|line| line.filled)
+            .sum();
+        (take(seated), take(climbing), pool_axes)
+    };
+
+    let (bare_seated, bare_climbing, no_pool_axes) = run(0);
+    assert_eq!(no_pool_axes, 0.0, "fixture: a band with no axe issues none");
+    let (seated_take, climbing_take, pool_axes) = run(AXES);
+    let armed_seated = ((seated_take - bare_seated) / AXE_TAKE).round();
+    let armed_climbing = ((climbing_take - bare_climbing) / AXE_TAKE).round();
+    assert_eq!(
+        pool_axes, BUILDERS as f32,
+        "fixture: the builders pool must hold one axe, or the take rows share a different remainder"
+    );
+    assert!(
+        armed_seated >= 1.0,
+        "**LIVENESS**: the seated felling row is armed out of the remainder — {armed_seated}"
+    );
+    assert!(
+        armed_seated + armed_climbing + pool_axes <= AXES as f32,
+        "two axes armed {armed_seated} on the felling row + {armed_climbing} on the row raised \
+         this turn + {pool_axes} to the builders"
+    );
+}
+
 /// **A row on a tile that holds none of that material opens no working and takes nothing.** Absence
 /// is the answer — there is no `enabled` flag and no zero row for a crew to work.
 #[test]
@@ -836,6 +1210,7 @@ fn a_worked_quarry_only_ever_goes_down_and_renews_nothing() {
         let outcome = take_from_deposit(
             &mut working,
             5,
+            core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
             TAKE_WHAT_THE_RUNG_REACHES,
             &ground,
             &config,
@@ -873,6 +1248,7 @@ fn a_cut_wood_climbs_back_and_stops_at_capacity() {
         take_from_deposit(
             &mut working,
             12,
+            core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
             TAKE_WHAT_THE_RUNG_REACHES,
             &ground,
             &config,
@@ -924,6 +1300,7 @@ fn enough_hands_drive_a_wood_down_turn_on_turn() {
         take_from_deposit(
             &mut working,
             10,
+            core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
             TAKE_WHAT_THE_RUNG_REACHES,
             &ground,
             &config,
@@ -956,6 +1333,7 @@ fn a_quarry_reaches_far_more_of_one_body_than_gathering_ever_can() {
             total += take_from_deposit(
                 &mut working,
                 4,
+                core_sim::extraction::CrewLift::tools_only(core_sim::extraction::NO_DEPOSIT_GEAR),
                 TAKE_WHAT_THE_RUNG_REACHES,
                 &ground,
                 &config,

@@ -301,7 +301,12 @@ step ≤1 hex) — split by `size_class`:
 - **Migratory**: a `Loiter { turns_left }` ↔ `Migrate` state machine over the anchors. **Loiter** —
   graze-wander within `loiter_radius` of the current anchor for `loiter_turns` (sampled). **Migrate** —
   1 hex/turn toward the next anchor, **no dwell**, then loiter at the new anchor. Fixes the old bug
-  where `Herd::advance()` teleported 4–12 tiles/turn along the sparse route.
+  where `Herd::advance()` teleported 4–12 tiles/turn along the sparse route. **A wild herd's `Migrate` step
+  — and only that; an owned herd banks nothing — banks route traffic** (`RouteTrafficLog::herd_passed`), and the step prefers a tile
+  holding a road among equally close steps (distance → `routes::tile_rank` → graze capacity), so a
+  herd follows its own trail and never detours to one. The corridors are stamped as full trails at
+  world creation (`stamp_migratory_game_trails`, after `spawn_initial_graze`); see
+  `.claude/rules/core_sim/routes.md` → "Game trails".
 
 **Herd movement is a rung primitive** (intensification ladder slice 3b — the **first** behavior
 primitive the engine reads). `advance_herds` resolves the herd's rung (`fauna::herd_rung`: penned →
@@ -647,6 +652,15 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 > wait-then-one pulse the bank used to produce. Same cadence, one fewer piece of state. **The
 > expedition keeps its own use of the field** — `expedition_take_biomass` banks the *party's*
 > processing throughput to meter when the next whole animal is ready, a different quantity.
+>
+> **A projection averages the kill over the retreat's outcomes; it never hands the fight the
+> retreat's mean.** `fauna::expected_kill_over_retreat` is the seam `HuntProjection::step` and
+> `project_arrivals_hunt` share, `fauna::kill_over_retreat` its band-edge form that the raid and
+> denial projections read (`systems::expeditions::RaidRoll::Forecast`), and the seeded row and the
+> crew curve read the same outcomes through `fauna::OutcomeKills` — because the fight's per-turn
+> clamp to the bodies standing is concave. No forecast path hands `HuntDraw::EXPECTED` or a
+> `HuntDraw::Quantile` to the retreat any more; the quantile reaches the **fight** only. See
+> `yield-forecast.md` → "THE EXPECTATION IS THE TAKE'S MEAN".
 >
 > **The take reads the CURRENT biomass, not `biomass_before_regrowth`.** That pre-regrowth basis
 > existed because a constant *catch* evaluated after Logistics regrowth takes more than the stock grew,
@@ -1235,8 +1249,14 @@ not feed on them. **Wariness stays honest; reach (`engage_rate`) carries the cor
 | `alpine_ibex` | 1.0 → **1.5** | the Alpine and Pyrenean ibex camps |
 | `gazelle` | 2.0 → **6.0** | the Levant's staple — 60–80% of the bones at some sites, taken in drive funnels (the "desert kites") |
 
-**The intended order, food per Stalking hunter:** the lowland big herds `0.54–0.70` ≈ red deer
-`0.63` > sheep `0.42` (about a basket forager) > goat `0.32` > ibex `0.27` > gazelle `0.18`.
+**The intended order, food per Stalking hunter:** the lowland big herds ≈ red deer > sheep (about a
+basket forager) > goat > ibex > gazelle. It was set against `food_rate_survey`'s one-hunter Stalking
+column when that column read the take at the retreat's mean head count: big herds `0.54–0.70`, red
+deer `0.63`, sheep `0.42`, goat `0.32`, ibex `0.27`, gazelle `0.18`. **The survey now reads the
+take's expectation** (the kill averaged over the retreat's outcomes, the seam the shipped forecasts
+read), and the same column measures big herds `0.49–0.60`, red deer `0.40`, sheep `0.36`, goat
+`0.29`, ibex `0.27`, gazelle `0.17`. Red deer falls out of the big-herd band to about a basket
+forager's rate; the other four keep their order.
 
 **The two pennable ones owe a `pen_engage_gain` retune**, because a pen's handling rate is
 `engage_rate × pen_engage_gain` — the rule `husbandry.md` records for the boar. Sheep `8.5 → 5.1` and

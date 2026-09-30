@@ -1952,6 +1952,18 @@ pub struct DepositState {
     /// picked — which is why it rides the wire beside it. See
     /// [`ForagePatchState::upkeep_kit_named`].
     pub upkeep_kit_named: bool,
+    /// **The `extract` kit a crew on this working is sent with when nobody names one** — derived
+    /// from the roster for the rung the working holds (`extraction::working_default_kit`), the same
+    /// id `assign_labor` stores on a row that named no kit: the tightest of [`Self::offered_kit_ids`]
+    /// for that rung (`EquipmentConfig::deposit_kit_for`). `"sledding"` on deadfall and gathering,
+    /// `"woodcutting"` on felling and coppice, `"stonework"` on the quarry; the job default
+    /// (`"none"`) only where no single kit fits tightest.
+    pub default_kit_id: String,
+    /// **The `extract` kits a crew on this working may be sent with**, in roster order — every take
+    /// kit whose items each declare `deposit_take` on the working's branch
+    /// (`extraction::working_offered_kits`). The picker lists these beside the itemless `none`.
+    #[serde(default)]
+    pub offered_kit_ids: Vec<String>,
 }
 
 impl Default for DepositState {
@@ -1989,6 +2001,8 @@ impl Default for DepositState {
             build_kit_id: String::new(),
             upkeep_kit_id: String::new(),
             upkeep_kit_named: false,
+            default_kit_id: String::new(),
+            offered_kit_ids: Vec::new(),
         }
     }
 }

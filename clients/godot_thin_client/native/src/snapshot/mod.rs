@@ -1448,6 +1448,13 @@ pub(crate) fn snapshot_to_dict(
     {
         let _ = dict.insert("default_expedition_kit_id", default_expedition_kit);
     }
+    // **THE DEPOSIT CREWS' DEFAULT** — the `extract` job's. Its own key because the roster offers
+    // `extract` more than one kit (the `hauling` sled beside `none`), so a sheet with no default
+    // would open on roster order and send a kit nobody picked.
+    if let Some(default_extract_kit) = snapshot.subsistence().and_then(|s| s.defaultExtractKitId())
+    {
+        let _ = dict.insert("default_extract_kit_id", default_extract_kit);
+    }
     // **THE WHOLE EFFECTIVE `EquipmentConfig`, `serde_json`-serialized** — carried as one opaque
     // string and republished as one, never parsed here. The Workbench's Equipment and Kits pages
     // parse it themselves and walk it blind, which is what lets a field added to `equipment.json`
