@@ -840,6 +840,8 @@ fn seed_snapshot() -> WorldSnapshot {
         // fixture exercises a real-shaped curve, exactly as the patch and herd curves beside it
         // do.
         deposit.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
+        // **The kits the working offers** — a `[string]`, seeded for the same reason.
+        deposit.offered_kit_ids = rows();
     }
 
     // --- knowledge -------------------------------------------------------

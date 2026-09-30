@@ -414,13 +414,18 @@ not a blocker: the deposit works whatever the metal is for.
   the sled**: its plain tier gains `deposit_take` +0.3 on `forestry:deadfall` and +0.4 on
   `extraction:gathering` — hauling fallen wood and loose stone home is what a sled is for — and it
   costs hide and fibre and no wood, so §4d holds: the floors stay bare-workable and the sled is only
-  an addition. **One kit per branch, claimed whole like every job's**: `woodcutting` (sled + axe)
-  and `stonework` (sled + wedges), because the kit is stored on the row at assignment and a working
-  climbs, so the kit must carry every rung's tool. A row claims and counts every item its kit uses
-  on every rung, as a hunt row does; each tool's `deposit_take` applies on the rungs it names, and
-  the crew's haul carry over the material's weight caps the cut, as a hunter's haul bounds a kill. A
-  working's default kit is **derived** per branch (the kit serving the most rungs of it) rather than
-  authored; `default_kits.extract` is `none`. Each tool is scoped by branch and rung so it adds
+  an addition. **Three take kits, each claimed whole like every job's**: `sledding` (sled),
+  `woodcutting` (sled + axe) and `stonework` (sled + wedges). The floors take the Sled kit because
+  deadfall is picked up and loose stone is gathered — nobody cuts there, so an axe is not part of
+  the job. A working **offers** every kit whose items all serve its branch (wood: `sledding` +
+  `woodcutting`; stone: `sledding` + `stonework`), and its **default follows the held rung**, the
+  way a herd's default follows its quarry: the tightest offered fit, so `sledding` on deadfall and
+  gathering, `woodcutting` on felling and coppice, `stonework` on the quarry. Both are **derived**
+  from the roster rather than authored; `default_kits.extract` is `none`. The kit is stored on the
+  row at assignment, so a working that climbs keeps the kit its crew was sent with. A row claims and
+  counts every item its kit uses on every rung, as a hunt row does; each tool's `deposit_take`
+  applies on the rungs it names, and the crew's haul carry over the material's weight caps the cut,
+  as a hunter's haul bounds a kill. Each tool is scoped by branch and rung so it adds
   nothing — and wears nothing — off its own rungs. The axe also declares `build_work` on `forestry`, so a crew raising a felling or coppice
   working and the keepers holding one are geared by it through the rung requirement.
 - **The road tools' pacing moved a long way and nobody has played it.** `earthmoving` and

@@ -1145,9 +1145,9 @@ func run(harness) -> void:
 	if kit_picker != null:
 		for index in range(kit_picker.item_count):
 			kit_items.append(kit_picker.get_item_text(index))
-	h._assert_hud("the far working's kit picker offers its own kit and opens on it, not the job's `none` (items %s, picked %s)"
+	h._assert_hud("the far FELLING wood's picker offers the Sled and Woodcutting kits and opens on Woodcutting, not the job's `none` (items %s, picked %s)"
 			% [str(kit_items), h._hud._compose.deposit_kit_id()],
-		str(kit_items).contains(WOODCUTTING_KIT_NAME)
+		str(kit_items).contains(SLED_KIT_NAME) and str(kit_items).contains(WOODCUTTING_KIT_NAME)
 			and not str(kit_items).contains(STONEWORK_KIT_NAME)
 			and h._hud._compose.deposit_kit_id() == WOODCUTTING_KIT_ID)
 	# ⛔ **NO REFUSAL, AND THE COMMIT IS LIVE** — the half that used to stop the order.
@@ -1327,10 +1327,12 @@ func run(harness) -> void:
 
 # ---- THE TAKE KITS (issue #663) ---------------------------------------------------------------
 #
-# The `extract` job carries two real kits beside `none` — the Woodcutting kit (sled + axe) and the
-# Stone kit (sled + wedges), ONE PER BRANCH — and the default is not the job's but the WORKING's own:
-# every `deposits` row publishes `default_kit_id`, `woodcutting` on wood and `stonework` on stone. A
-# sheet offers ONLY its working's own kit and `none`: the other branch's kit could only cost the crew.
+# The `extract` job carries three real kits beside `none` — the Sled kit (a sled alone, for the floor
+# rungs, whose wood and stone are picked up), the Woodcutting kit (sled + axe) and the Stone kit
+# (sled + wedges). Every `deposits` row publishes the kits it offers (`offered_kit_ids`, in roster
+# order, `none` never among them) and the default the rung it holds wants (`default_kit_id`: `sledding`
+# on deadfall and gathering, `woodcutting` on felling and coppice, `stonework` on a quarry). A sheet
+# offers exactly its working's list plus `none`.
 # **APPENDED LAST**, so no frame above moves; it pushes a roster of its own and hands the previous one
 # back.
 
@@ -1341,13 +1343,31 @@ const WOODCUTTING_KIT_ITEMS := ["sled", "axe"]
 const STONEWORK_KIT_ID := "stonework"
 const STONEWORK_KIT_NAME := "Stone kit"
 const STONEWORK_KIT_ITEMS := ["sled", "wedges"]
+const SLED_KIT_ID := "sledding"
+const SLED_KIT_NAME := "Sled kit"
+const SLED_KIT_ITEMS := ["sled"]
+## What a wood and a stone row offer, as `dict/deposits.rs` publishes `offered_kit_ids`.
+const WOOD_OFFERED_KITS := [SLED_KIT_ID, WOODCUTTING_KIT_ID]
+const STONE_OFFERED_KITS := [SLED_KIT_ID, STONEWORK_KIT_ID]
 
-## A sheet's picker holds two entries: the working's OWN take kit, then `none` authored last. The
-## roster carries both take kits, so a count of two is the claim that the other branch's was dropped.
-const DEPOSIT_KIT_PICKER_ENTRIES := 2
+## A sheet's picker holds three entries: the Sled kit, the working's branch kit, then `none` authored
+## last. The roster carries both branch kits, so a count of three is the claim that the other branch's
+## was dropped.
+const DEPOSIT_KIT_PICKER_ENTRIES := 3
 ## …and where each one sits in it.
-const OWN_KIT_INDEX := 0
-const NONE_KIT_INDEX := 1
+const SLED_KIT_INDEX := 0
+const BRANCH_KIT_INDEX := 1
+const NONE_KIT_INDEX := 2
+
+## The default kit a working publishes for the rung it holds — the sim's own table, restated so every
+## fixture that moves a working's rung moves its default with it. A floor rung is picked up.
+static func _default_kit_for_rung(rung: String) -> String:
+	match rung:
+		HudDepositVocab.RUNG_KEY_FELLING, HudDepositVocab.RUNG_KEY_COPPICE:
+			return WOODCUTTING_KIT_ID
+		HudDepositVocab.RUNG_KEY_QUARRY:
+			return STONEWORK_KIT_ID
+	return SLED_KIT_ID
 
 ## **THE AUTHORED CREW CURVE** (`workings_forestry_kit_curve`) — one row per crew, each figure chosen
 ## so no client-side derivation lands on it: the takes are not `perWorkerBiomass × crew` (2.0 × w), and the
@@ -1412,6 +1432,7 @@ func _deposit_kit_roster() -> Array:
 			jobs.append(KitRoster.JOB_EXTRACT)
 			entry[KitRoster.KIT_JOBS_KEY] = jobs
 			# `none` is authored LAST (the wire's own order), so the take kits go in just before it.
+			roster.append(_extract_kit_entry(SLED_KIT_ID, SLED_KIT_NAME, SLED_KIT_ITEMS))
 			roster.append(_extract_kit_entry(WOODCUTTING_KIT_ID, WOODCUTTING_KIT_NAME,
 				WOODCUTTING_KIT_ITEMS))
 			roster.append(_extract_kit_entry(STONEWORK_KIT_ID, STONEWORK_KIT_NAME,
@@ -1434,10 +1455,11 @@ func _default_marked(items: Array[String]) -> Array[String]:
 			marked.append(text)
 	return marked
 
-## ⛔ **STATES workings-forestry-kit / workings-extraction-kit — each sheet opens on, and marks
-## `(default)`, the kit its OWN working publishes, and the pick rides the command.** A wood and a rock
-## on one hex are the pair that makes the claim about the WORKING rather than the job: a job-wide
-## default would mark the same entry on both. The wood's commit carries `kit woodcutting`, and a sheet
+## ⛔ **STATES workings-forestry-kit / workings-extraction-kit — each sheet lists its working's
+## `offered_kit_ids` plus `none`, opens on and marks `(default)` the kit its OWN working publishes for
+## the rung it holds, and the pick rides the command.** A felling wood and a gathering rock on one hex
+## are the pair that makes the claim about the WORKING rather than the job: the wood opens on the
+## Woodcutting kit and the rock on the Sled kit, where a job-wide default would mark one entry on both. The wood's commit carries `kit woodcutting`, and a sheet
 ## composed bare-handed carries `kit none` — the one pick an omitted token would get wrong, since an
 ## absent token means the working's derived kit to the sim.
 func _deposit_kit_states() -> void:
@@ -1469,17 +1491,20 @@ func _deposit_kit_states() -> void:
 			picker != null)
 		if picker != null:
 			var items := _picker_items(picker)
-			h._assert_hud("…listing exactly the Woodcutting kit and No kit, in that order (%s)" % [items],
+			h._assert_hud("…listing exactly the Sled kit, the Woodcutting kit and No kit, in that order (%s)"
+					% [items],
 				items.size() == DEPOSIT_KIT_PICKER_ENTRIES
-					and items[OWN_KIT_INDEX].begins_with(WOODCUTTING_KIT_NAME)
+					and items[SLED_KIT_INDEX].begins_with(SLED_KIT_NAME)
+					and items[BRANCH_KIT_INDEX].begins_with(WOODCUTTING_KIT_NAME)
 					and items[NONE_KIT_INDEX].begins_with(_none_kit_name()))
 			h._assert_hud("…and NOT the Stone kit, whose wedges do nothing on a wood (%s)" % [items],
 				not _lists(items, STONEWORK_KIT_NAME))
-			h._assert_hud("…marking the WOOD's own kit `(default)` and nothing else (%s)" % [items],
+			h._assert_hud("…marking the FELLING wood's kit, the Woodcutting kit, `(default)` and nothing else (%s)"
+					% [items],
 				_default_marked(items) == [WOODCUTTING_KIT_NAME
 					+ HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX])
 			h._assert_hud("…and opening on it (%s)" % picker.text,
-				picker.selected == OWN_KIT_INDEX and picker.text.contains(WOODCUTTING_KIT_NAME))
+				picker.selected == BRANCH_KIT_INDEX and picker.text.contains(WOODCUTTING_KIT_NAME))
 		await h._save("workings_forestry_kit")
 		h._assert_hud("…and the commit carries `kit %s`" % WOODCUTTING_KIT_ID,
 			(await _committed_line(sheet)).ends_with(" kit %s" % WOODCUTTING_KIT_ID))
@@ -1507,8 +1532,8 @@ func _deposit_kit_states() -> void:
 	# **THE ROCK BESIDE IT, OPENED STRAIGHT OVER THE WOOD'S OPEN SHEET.** No close between them, so the
 	# composed `woodcutting` is dropped by the SOURCE changing and by nothing else — every render writes
 	# the resolved id back, so a kit left standing would read as the player's own choice and outrank the
-	# rock's `stonework`. The precondition is what keeps that a claim: without `woodcutting` composed
-	# here, "the rock opens on stonework" passes on a sheet that never had anything to drop.
+	# rock's `sledding`. The precondition is what keeps that a claim: without `woodcutting` composed
+	# here, "the rock opens on the Sled kit" passes on a sheet that never had anything to drop.
 	h._assert_hud("the wood's sheet leaves `woodcutting` composed as the rock is opened (%s)"
 			% h._hud._compose.deposit_kit_id(),
 		h._hud._compose.deposit_kit_id() == WOODCUTTING_KIT_ID)
@@ -1526,21 +1551,23 @@ func _deposit_kit_states() -> void:
 		h._assert_hud("the diggers' sheet mounts the same KIT picker", picker != null)
 		if picker != null:
 			var items := _picker_items(picker)
-			h._assert_hud("…listing exactly the Stone kit and No kit, and NOT the Woodcutting kit (%s)"
+			h._assert_hud("…listing exactly the Sled kit, the Stone kit and No kit, and NOT the Woodcutting kit (%s)"
 					% [items],
 				items.size() == DEPOSIT_KIT_PICKER_ENTRIES
-					and items[OWN_KIT_INDEX].begins_with(STONEWORK_KIT_NAME)
+					and items[SLED_KIT_INDEX].begins_with(SLED_KIT_NAME)
+					and items[BRANCH_KIT_INDEX].begins_with(STONEWORK_KIT_NAME)
 					and items[NONE_KIT_INDEX].begins_with(_none_kit_name())
 					and not _lists(items, WOODCUTTING_KIT_NAME))
-			h._assert_hud("…marking the ROCK's own kit `(default)` and nothing else (%s)" % [items],
-				_default_marked(items) == [STONEWORK_KIT_NAME
+			h._assert_hud("…marking the GATHERING rock's kit, the Sled kit, `(default)` and nothing else (%s)"
+					% [items],
+				_default_marked(items) == [SLED_KIT_NAME
 					+ HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX])
 			h._assert_hud("…and opening on it, the wood's `woodcutting` pick dropped with the source (%s)"
 					% picker.text,
-				picker.selected == OWN_KIT_INDEX and picker.text.contains(STONEWORK_KIT_NAME))
+				picker.selected == SLED_KIT_INDEX and picker.text.contains(SLED_KIT_NAME))
 		await h._save("workings_extraction_kit")
-		h._assert_hud("…and the commit carries `kit %s`" % STONEWORK_KIT_ID,
-			(await _committed_line(sheet)).ends_with(" kit %s" % STONEWORK_KIT_ID))
+		h._assert_hud("…and the commit carries `kit %s`" % SLED_KIT_ID,
+			(await _committed_line(sheet)).ends_with(" kit %s" % SLED_KIT_ID))
 		h._hud._drawercompose.close_compose_sheet()
 		await h._settle()
 	h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
@@ -1693,6 +1720,43 @@ func _crew_curve_states() -> void:
 		h._assert_hud("…a band with %d sleds and no axe holds NO whole Woodcutting kit (%s, want %s)"
 				% [SLEDS_ONLY_SLEDS, Readout.kit_hint_line(sheet), none_held],
 			none_held != "" and Readout.kit_hint_line(sheet) == none_held)
+		# ⛔ **STATE workings-deadfall-kit — THE SAME SLEDS ON A DEADFALL ARE A WHOLE CREW'S KIT.** The
+		# floor rung is picked up, so the working publishes `sledding` as its default and the sheet
+		# opens on the Sled kit; three sleds outfit a crew of three, and a covered crew reads nothing,
+		# as on the hunt. The pair is the claim: on the SAME band and crew, picking the Woodcutting kit
+		# must read `0 of 3`, or the silence would pass on a line that never renders.
+		var deadfall_wood := _curve_wood(true, SLEDS_ONLY_SLEDS)
+		deadfall_wood["rung"] = HudDepositVocab.RUNG_KEY_DEADFALL
+		deadfall_wood["default_kit_id"] = _default_kit_for_rung(HudDepositVocab.RUNG_KEY_DEADFALL)
+		h._hud._compose.set_deposit_kit_id(KitRoster.NO_KIT_ID)
+		h._show_tile(_workings_tile([deadfall_wood, _stone_working(STONE_TAKE)]))
+		await h._settle()
+		await _open_curve_sheet(deadfall_wood, SHEET_CREW)
+		sheet = await _open_curve_sheet(deadfall_wood, SHEET_CREW)
+		var deadfall_picker := _first_meta(sheet, KitRoster.KIT_PICKER_META) as OptionButton
+		var deadfall_items: Array[String] = [] if deadfall_picker == null \
+			else _picker_items(deadfall_picker)
+		h._assert_hud("…a DEADFALL wood offers the Sled kit, the Woodcutting kit and No kit (%s)"
+				% [deadfall_items],
+			deadfall_items.size() == DEPOSIT_KIT_PICKER_ENTRIES
+				and deadfall_items[SLED_KIT_INDEX].begins_with(SLED_KIT_NAME)
+				and deadfall_items[BRANCH_KIT_INDEX].begins_with(WOODCUTTING_KIT_NAME)
+				and deadfall_items[NONE_KIT_INDEX].begins_with(_none_kit_name()))
+		h._assert_hud("…and opens on the Sled kit, its `(default)` (picked %s, marked %s)"
+				% [h._hud._compose.deposit_kit_id(), _default_marked(deadfall_items)],
+			h._hud._compose.deposit_kit_id() == SLED_KIT_ID
+				and _default_marked(deadfall_items) == [SLED_KIT_NAME
+					+ HudComposeVocab.KIT_DEFAULT_ENTRY_SUFFIX])
+		h._assert_hud("…where %d sleds outfit a crew of %d and the covered crew reads no shortfall (%s)"
+				% [SLEDS_ONLY_SLEDS, SHEET_CREW, Readout.kit_hint_line(sheet)],
+			Readout.kit_hint_line(sheet) == "")
+		await h._save("workings_deadfall_kit")
+		h._hud._compose.set_deposit_kit_id(WOODCUTTING_KIT_ID)
+		sheet = await _open_curve_sheet(deadfall_wood, SHEET_CREW)
+		var no_axes := KitRoster.shortfall_sentence(woodcutting, SLEDS_ONLY_WHOLE_KITS, SHEET_CREW)
+		h._assert_hud("…while the Woodcutting kit on the same deadfall reads `0 of %d` (%s, want %s)"
+				% [SHEET_CREW, Readout.kit_hint_line(sheet), no_axes],
+			Readout.kit_hint_line(sheet) == no_axes)
 		h._hud.update_band_alerts([_curve_band(CURVE_BAND_SLEDS, CURVE_BAND_AXES)])
 		h._show_tile(_workings_tile([wood, _stone_working(STONE_TAKE)]))
 		await h._settle()
@@ -2168,9 +2232,10 @@ func _wood_working(actual_take: float) -> Dictionary:
 		"build_kit_id": "",
 		"upkeep_kit_id": "",
 		"upkeep_kit_named": false,
-		# The take kit this working's MATERIAL wants — `dict/deposits.rs`' `default_kit_id`, published
-		# on every wood row whatever rung it stands on.
-		"default_kit_id": WOODCUTTING_KIT_ID,
+		# The kits this working offers and the one its rung wants — `dict/deposits.rs`'
+		# `offered_kit_ids` / `default_kit_id`. Felling is not a floor rung, so the axe is wanted.
+		"offered_kit_ids": WOOD_OFFERED_KITS,
+		"default_kit_id": _default_kit_for_rung(HudDepositVocab.RUNG_KEY_FELLING),
 		"rung_floor_fraction": FORESTRY_RUNG_FLOOR,
 		"per_worker_biomass": FELLING_PER_WORKER,
 		"regrowth_samples": _deposit_regrowth_samples(WOOD_CAPACITY, WOOD_REGROWTH),
@@ -2243,7 +2308,9 @@ func _stone_working(actual_take: float) -> Dictionary:
 		"build_kit_id": "",
 		"upkeep_kit_id": "",
 		"upkeep_kit_named": false,
-		"default_kit_id": STONEWORK_KIT_ID,
+		# Gathering is the extraction branch's floor rung — the stone is picked up, so the Sled kit.
+		"offered_kit_ids": STONE_OFFERED_KITS,
+		"default_kit_id": _default_kit_for_rung(HudDepositVocab.RUNG_KEY_GATHERING),
 		"rung_floor_fraction": GATHERING_RUNG_FLOOR,
 		"per_worker_biomass": GATHERING_PER_WORKER,
 		# **ALL ZEROS, AND THAT IS A READING RATHER THAN AN ABSENCE.** Rock's rate is zero, so every
@@ -2257,6 +2324,7 @@ func _stone_working(actual_take: float) -> Dictionary:
 func _quarried_stone() -> Dictionary:
 	var working := _stone_working(STONE_TAKE)
 	working["rung"] = HudDepositVocab.RUNG_KEY_QUARRY
+	working["default_kit_id"] = _default_kit_for_rung(HudDepositVocab.RUNG_KEY_QUARRY)
 	working["stock"] = QUARRY_STOCK
 	working["reachable"] = QUARRY_REACHABLE
 	working["rung_floor_fraction"] = QUARRY_RUNG_FLOOR
@@ -2322,6 +2390,7 @@ func _unopened_wood() -> Dictionary:
 	deposit["stock"] = WOOD_CAPACITY
 	deposit["reachable"] = UNOPENED_WOOD_REACHABLE
 	deposit["rung"] = HudDepositVocab.RUNG_KEY_DEADFALL
+	deposit["default_kit_id"] = _default_kit_for_rung(HudDepositVocab.RUNG_KEY_DEADFALL)
 	deposit["build_fraction"] = HudDepositVocab.METER_UNSTARTED
 	deposit["ladder_position"] = HudDepositVocab.LADDER_UNSTARTED
 	deposit["upkeep_demand"] = FREE_FLOOR_NO_UPKEEP

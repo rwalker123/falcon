@@ -23304,10 +23304,12 @@ mod tests {
     }
 
     /// **A NO-KIT `extract` ROW IS SENT WITH THE KIT THE WIRE PUBLISHES AS THAT WORKING'S DEFAULT**
-    /// (#663). Rolling hills carry timber and rock on one hex, so one fixture asks both branches: the
-    /// wood row stores `felling`, the stone row `quarrying`, and each equals the `defaultKitId` its
-    /// own `DepositState` row publishes — the kit the turn arms and the picker's `(default)` mark are
-    /// one answer, through `extraction::working_default_kit`.
+    /// (#663). Rolling hills carry timber and rock on one hex, so one fixture asks both branches.
+    /// Both workings stand on their free floor (`deadfall`, `gathering`), where the only tool is the
+    /// sled, so both rows store `sledding` — the offered kit fitting the held rung most tightly — and
+    /// each equals the `defaultKitId` its own `DepositState` row publishes: the kit the turn arms and
+    /// the picker's `(default)` mark are one answer, through `extraction::working_default_kit`. Each
+    /// row's `offeredKitIds` is the floor kit beside its own branch's cutting kit.
     #[test]
     fn a_no_kit_extract_row_is_sent_with_the_kit_the_wire_publishes_for_that_working() {
         let mut app = build_test_app();
@@ -23318,8 +23320,8 @@ mod tests {
 
         assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
         assign_extract(&mut app, faction, WORKING, "stone", None, BAND_WORKERS);
-        assert_eq!(stored_extract_kit(&app, band, "wood"), "woodcutting");
-        assert_eq!(stored_extract_kit(&app, band, "stone"), "stonework");
+        assert_eq!(stored_extract_kit(&app, band, "wood"), "sledding");
+        assert_eq!(stored_extract_kit(&app, band, "stone"), "sledding");
 
         capture_deposit_grid(&mut app);
         let snapshot = app
@@ -23339,6 +23341,16 @@ mod tests {
                 row.default_kit_id,
                 stored_extract_kit(&app, band, material),
                 "{material}: the published default is the kit the row was sent with"
+            );
+            let branch_kit = if material == "wood" {
+                "woodcutting"
+            } else {
+                "stonework"
+            };
+            assert_eq!(
+                row.offered_kit_ids,
+                vec!["sledding".to_string(), branch_kit.to_string()],
+                "{material}: the working offers the floor kit and its own branch's cutting kit"
             );
         }
     }
@@ -23360,8 +23372,9 @@ mod tests {
 
     /// **`kitWorkersHolding` IS THE WHOLE KIT'S COUNT, ON EVERY RUNG, LIKE EVERY JOB'S** — the
     /// Woodcutting kit is a sled and an axe, and a crew is outfitted with it exactly as far as the
-    /// scarcer of the two reaches, whatever rung its working holds. Arms on the same five-crew wood
-    /// row:
+    /// scarcer of the two reaches, whatever rung its working holds. Every arm NAMES the kit, since a
+    /// no-kit row's default follows the held rung (`sledding` on deadfall) and this test is about one
+    /// kit's count across rungs. Arms on the same five-crew wood row:
     ///
     /// - **deadfall, two sleds and no axes** → 0 of 5: no crew holds the whole kit;
     /// - **felling, three axes and no sleds** → 0 of 5: likewise, the other way round;
@@ -23383,7 +23396,7 @@ mod tests {
                 ledger.stock("sled", sleds, "plain", None);
                 ledger.stock("axe", axes, "flint", None);
                 app.world.entity_mut(band).insert(ledger);
-                assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+                assign_extract_with_kit(&mut app, "wood", BAND_WORKERS, "woodcutting");
                 published_wood_row(&mut app)
             };
         let deadfall = arm(false, 2, 0);
@@ -23584,6 +23597,11 @@ mod tests {
     /// spread over both rungs, a shortfall in either item, a covered crew and `none`, and each
     /// compares the curve's `armed_workers` at the crew committed with the published row's
     /// `kitWorkersHolding` — never with a literal alone, so the two surfaces are held to each other.
+    ///
+    /// The two `sledding` arms are the floor kit's own sentence: a deadfall crew holding sleds and
+    /// no axes is outfitted with a whole Sled kit as far as its sleds reach — two sleds outfit two of
+    /// three, five sleds outfit all three and no more — where the same sleds make no complete
+    /// Woodcutting kit at all (the second `woodcutting` arm).
     #[test]
     fn the_deposit_curves_kit_count_is_the_committed_rows_kit_workers_holding() {
         // (felling, kit, sleds, axes, crew, expected whole-kit count)
@@ -23593,6 +23611,8 @@ mod tests {
             (false, "woodcutting", 1, 4, 3, 1.0),
             (true, "woodcutting", 6, 6, 4, 4.0),
             (true, "none", 2, 2, 4, 4.0),
+            (false, "sledding", 2, 0, 3, 2.0),
+            (false, "sledding", 5, 0, 3, 3.0),
         ] {
             let mut app = build_test_app();
             let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);

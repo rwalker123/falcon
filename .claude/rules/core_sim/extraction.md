@@ -429,19 +429,34 @@ rung and an absolute gear rate would erase the climb, and never a change to the 
 |---|---|---|---|
 | `axe` | `flint` only (no bone tier — §9's *"sits oddly"*) | `forestry:felling`, `forestry:coppice` — **not** `deadfall` | `build_work` 0.5 on `forestry`, so the builders and the quarrywork keepers on a forestry working are geared through `pool_toe` |
 | `wedges` | `flint` only | `extraction:quarry` — **not** `gathering` | — |
-| `sled` | `plain` (the hunt's own sled) | **+0.3** on `forestry:deadfall`, **+0.4** on `extraction:gathering` — the floors' only tool, costing hide and fibre and no wood | its hunt `hunt_carry`, unchanged; shared with `big_game`/`trapping`/`ranging` through the per-item ration |
+| `sled` | `plain` (the hunt's own sled) | **+0.3** on `forestry:deadfall`, **+0.4** on `extraction:gathering` — the floors' only tool, costing hide and fibre and no wood | its hunt `hunt_carry`, unchanged; shared with `big_game`/`trapping`/`ranging` and the three take kits through the per-item ration |
 
-**One kit per branch — `woodcutting` (sled + axe) and `stonework` (sled + wedges) — claimed whole,
-like every job's kit, and a working's default is derived from them.** The sled's `deposit_take`
-names the floors (+0.3 on `deadfall`, +0.4 on `gathering`), costing no wood, so the floors stay
-bare-workable; the axe's and the wedges' name the rungs above. The kit is per branch because it is
-stored on the row and a working climbs. A row claims every item its kit uses wherever it works —
-through the one claim / coverage / budget path a hunt row's kit goes through
-(`LaborAllocation::item_budget`, `kitWorkersHolding`) — and each tool's `deposit_take` applies on
-the rungs it names, which is ordinary effect resolution.
+**Three take kits — `sledding` (sled), `woodcutting` (sled + axe) and `stonework` (sled + wedges) —
+each claimed whole, like every job's kit.** The sled's `deposit_take` names the floors (+0.3 on
+`deadfall`, +0.4 on `gathering`), costing no wood, so the floors stay bare-workable; the axe's and
+the wedges' name the rungs above. **The floors take the Sled kit because deadfall is picked up and
+loose stone is gathered**: nobody cuts on them, so an axe or wedges would go out with the crew and
+lift nothing.
+
+- **A working OFFERS every kit whose items each declare a `deposit_take` on its branch**
+  (`extraction::working_offered_kits` → `EquipmentConfig::deposit_kits_for`): a wood offers
+  `sledding` and `woodcutting`, a stone working `sledding` and `stonework`. A kit carrying a tool
+  that does nothing on the branch is not offered.
+- **The DEFAULT follows the held rung**, the way a herd's default follows its quarry
+  (`extraction::working_default_kit` → `EquipmentConfig::deposit_kit_for`): of the offered kits
+  with an item serving the held rung, the one carrying the fewest items that do not. So `sledding`
+  on `deadfall` and `gathering`, `woodcutting` on `felling` and `coppice`, `stonework` on `quarry`.
+  A tie between two kits falls back to `default_kits.extract`.
+- **The row keeps the kit it was sent with.** The kit is stored on the row at assignment, so a
+  working that climbs does not re-kit its crew; the player re-sends the row to change it.
+
+A row claims every item its kit uses wherever it works — through the one claim / coverage / budget
+path a hunt row's kit goes through (`LaborAllocation::item_budget`, `kitWorkersHolding`) — and each
+tool's `deposit_take` applies on the rungs it names, which is ordinary effect resolution.
 `extraction::working_default_kit` is the one function behind the kit `assign_labor extract` stores
-when the command names none, the seed, and `DepositState.defaultKitId`. `default_kits.extract` and
-`default_kits.quarrywork` are both `none`. See `equipment.md` → "The take axis".
+when the command names none, the seed, and `DepositState.defaultKitId`; `working_offered_kits` is
+behind `DepositState.offeredKitIds`. `default_kits.extract` and `default_kits.quarrywork` are both
+`none`. See `equipment.md` → "The take axis".
 
 **The useful-crew cap is on the row** — `LaborAssignment.usefulCutters`
 (`extraction::useful_cutters`): the plateau of the deposit crew curve over the row's crew pool (its
@@ -527,8 +542,9 @@ reach bills the smaller number, and the wedges wear nothing on a felling take.
 
 **A far working's porters carry on the row's kit.** Past `band_work_range` the take walks home a
 pack at a time (`work-party.md`), and one pack is the row's haul carry over the material's `weight`
-(`materials.json`) — the same carry that caps the cut. A `woodcutting` or `stonework` crew hauls on
-its sleds on every rung, felling and quarry included, because the kit is claimed whole.
+(`materials.json`) — the same carry that caps the cut. Every take kit carries the sled, so every
+kitted crew hauls on its sleds on every rung, felling and quarry included, because the kit is
+claimed whole.
 
 ## The two road tools are WIDENED, not duplicated
 
@@ -896,7 +912,7 @@ branch.
 |---|---|
 | `src/data/extraction.json` | **THE DEPOSITS** (`extraction_config.rs`, env override **`EXTRACTION_CONFIG_PATH`**). `seed_fraction` **0.02** — what a deposit regrows from when it has been taken to nothing, evaluated *inside* the growth term so a rate of zero seeds nothing. Then one `deposits` row per material: its `branch`, and a `by_terrain` table of `{ capacity, regrowth_rate, characteristics }`. **A terrain absent from `by_terrain` holds none of that material** — absence is the answer, so there is no `enabled` flag and no parked `0.0` row, and every water terrain is absent from both tables deliberately. `DepositDef` and `DepositTerrain` are **`deny_unknown_fields`**, so the file's prose lives at file level in `_comment_*` keys, `materials.json`'s discipline. **Stone is two populations in one table**: rock bodies in the low thousands at rate `0.0` (alpine 4200, karst 3000, basalt 2600 … rolling hills 900) and loose-stone scatters in the tens at a small positive rate (periglacial 70 … mangrove 5). **Wood regrows on every row** — mixed woodland 600 at 0.03, boreal taiga 450 at 0.015, marsh withy 90 at 0.055 — because a forest that is worked out is not a forest. **The wood table stops at 50 and the floor is a design line, not a tuning one** (issue #650): eight rows under it were **deleted** rather than tuned down — canyon badlands and tundra 15, periglacial steppe 20, prairie steppe 25, crater fields 30, high plateau and semi-arid scrub 40, sinkhole field 45 — because a wood a bare-handed crew works out in a few dozen turns costs the player a decision and pays them nothing. **Absence is the config's own mechanism**, so no code carries a threshold; the terrains simply hold no timber, and each of the eight keeps its stone row, so **nothing is left holding neither material** (the only rows absent from both tables are the six water terrains and `Glacier`, deliberately). **⛔ THE STONE TABLE'S SMALL ROWS ARE THE OPPOSITE CASE AND WERE LEFT ALONE** — the low-capacity **positive-rate** scatters are *loose stone the ground keeps turning up*, which is what makes knapping flint available nearly anywhere, and a scatter that regrows is never worked out the way a 15-unit copse is. **The characteristic ratings are LIVE on both materials since issue #736**, and the shape they were authored for is the shape their readers wanted: wood's `hardness` / `pliancy` are read by the two road tools (`earthmoving` / `stone_dressing`), and stone's `hardness` / `workability` by the three knapped kit recipes — `spears_flint` and `clubs_flint` want a hard stone for a point that holds, `hoes_flint` a workable one for a blade that flakes predictably. So a deposit's ratings now decide what grade the things made out of it come out at, which is what *"genuinely opposed, no best deposit"* was written in advance of rather than instead of. They are still **playtest dials** — nothing about a rating was retuned when its reader landed. **`capacity_per_keeper`** is the divisor that turns a tile's capacity into the keeper-loads the rungs quote their `work_per_turn` per — wood **600** (`MixedWoodland`'s own capacity, so a felling working on closed woodland is exactly one load) and stone **3000** (`KarstHighland`'s — limestone, the classic quarry stone, and the middle of the rock bodies, so rolling hills reads 0.3 and an alpine mountain 1.4). Every number is a **playtest dial** |
 | `src/data/intensification_ladder.json` | The five new rung records and the `extraction_payoff` block on each — see `intensification.md` for the ladder engine. `knowledge.lesson_costs` gains `woodcraft` / `conservationism` / `quarrying` at 20 apiece. **The three BUILT rungs each declare an `upkeep`** (`scaled_by: source_load`): `forestry:felling` **1.0** work a turn per keeper-load, rot **0.6**, grace **3**; `forestry:coppice` **2.0** / **1.5** / **2**; `extraction:quarry` **1.5** / **2.5** / **4**. The rates read as *keepers on the reference ground*, because `capacity_per_keeper` is anchored there — a felling working on closed mixed woodland is exactly one keeper, against the plant web's 2.0 for a tended patch on *its* reference tile. Each `meter_decay` is the pacing-neutral inversion of the plant web's rule of thumb (a wholly unmaintained rung lapses over ~100 bleeding turns), so it tracks each rung's own `work_cost`. The graces say how forgiving each rung is of a crew re-tasked for a season: a quarry face is the most forgiving at 4 because the rock does the holding, and a **coppice** the least at 2 because a managed wood is the most perishable thing on either branch — the same direction `plant:field` runs in against `plant:tended`. **The two free floors declare none.** |
-| `src/data/equipment.json` | two `extract` kits, **`woodcutting`** (`sled` + `axe`) and **`stonework`** (`sled` + `wedges`) (#663); the `sled`'s plain tier declares `deposit_take` **0.3** on `forestry:deadfall` and **0.4** on `extraction:gathering` and wears `deposit_taken` **1.0**; `default_kits.extract` and `default_kits.quarrywork` are both `"none"` — a working's take kit is derived per branch (`working_default_kit`); the `none` kit's `jobs` carries both; `stone_dressing`'s `plain` tier (its only one) carries its second `build_work` effect on `extraction:quarry`; the `axe` (`flint`, 70 durability) declares `deposit_take` **1.0** on `forestry:felling` and `forestry:coppice` plus `build_work` **0.5** on `forestry`, wearing `deposit_taken` **1.0** / `build_progress` **0.16** / `upkeep_work` **0.16**; the `wedges` (`flint`, 70) declare `deposit_take` **1.0** on `extraction:quarry`, wearing `deposit_taken` **1.0** |
+| `src/data/equipment.json` | three `extract` kits, **`sledding`** (`sled`), **`woodcutting`** (`sled` + `axe`) and **`stonework`** (`sled` + `wedges`) (#663); the `sled`'s plain tier declares `deposit_take` **0.3** on `forestry:deadfall` and **0.4** on `extraction:gathering` and wears `deposit_taken` **1.0**; `default_kits.extract` and `default_kits.quarrywork` are both `"none"` — a working's offered kits are derived per branch (`working_offered_kits`) and its default per held rung (`working_default_kit`); the `none` kit's `jobs` carries both; `stone_dressing`'s `plain` tier (its only one) carries its second `build_work` effect on `extraction:quarry`; the `axe` (`flint`, 70 durability) declares `deposit_take` **1.0** on `forestry:felling` and `forestry:coppice` plus `build_work` **0.5** on `forestry`, wearing `deposit_taken` **1.0** / `build_progress` **0.16** / `upkeep_work` **0.16**; the `wedges` (`flint`, 70) declare `deposit_take` **1.0** on `extraction:quarry`, wearing `deposit_taken` **1.0** |
 | `src/data/recipes.json` | `axe` — knapping, work 6, stone 1 (`reads: hardness`) + wood 2 + fibre 1 → `axe` at `flint`; `wedges` — knapping, work 6, stone 2 (`reads: hardness`) + wood 1 → `wedges` at `flint` |
 
 ## The wire — one row per DEPOSIT-BEARING TILE, and the rate picks the readout
@@ -967,7 +983,8 @@ Three fields ride the row for the escapement instrument, two of them **named aft
 | field | what it is |
 |---|---|
 | `rungFloorFraction` | the **rung's own** floor in the same units, `1 − recovery_fraction`. ⛔ **Compose the two as a MAXIMUM, and only where `regrowthRate > 0`** — a chart that added them would draw a gathering crew stopping 85% of a seam short of where it really stops, and one that took the maximum on a quarry would draw it stopping at the dial the sim ignores there |
-| `defaultKitId` | the `extract` kit a crew on this working is sent with when the command names none — `extraction::working_default_kit`, the same function `assign_labor` stores a no-kit row's kit with. `"woodcutting"` on wood, `"stonework"` on stone, on every rung; `"none"` only where no single kit serves the branch |
+| `defaultKitId` | the `extract` kit a crew on this working is sent with when the command names none — `extraction::working_default_kit`, the same function `assign_labor` stores a no-kit row's kit with. It follows the held rung: `"sledding"` on `deadfall` and `gathering`, `"woodcutting"` on `felling` and `coppice`, `"stonework"` on `quarry`; `"none"` only where no single kit fits the rung most tightly |
+| `offeredKitIds` | the `extract` kits a crew on this working may be sent with, in roster order — `extraction::working_offered_kits`, every kit whose items all declare a `deposit_take` on the working's branch. `["sledding", "woodcutting"]` on wood, `["sledding", "stonework"]` on stone. `none` is not in it: it is the job's own fall-back, which a picker offers beside these |
 | `perWorkerBiomass` | what ONE **bare** cutter moves per turn at the standing rung, in the material's own units. No seasonal weight, and it is a SOURCE row, so no band's take kit is in it — a row's axes add `deposit_take` per equipped worker on top (see "The floor rungs must be workable BARE-HANDED"). It is the rung's rate flat and is never `0` on a live rung |
 | `regrowthSamples` | the deposit's own growth curve, sampled on the **same implicit x-axis** as the patch and herd curves (`snapshot::subsistence::regrowth_sample_fraction`), through `deposit_regrowth` — the seam `renew_deposit` advances the stock with, at the rung's scaled rate |
 

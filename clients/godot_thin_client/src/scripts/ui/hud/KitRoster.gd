@@ -409,32 +409,32 @@ const JOB_BUILDERS := "builders"
 ## …and the two deposit branches' TAKE job (issue #650) — `equipment.json`'s own `extract`, the job a
 ## felling axe or a stone hammer would declare a take stat on.
 ##
-## **THE SHIPPED ROSTER DECLARES ONE KIT PER BRANCH** (issue #663): `woodcutting` (sled + axe) and
-## `stonework` (sled + wedges), beside `none`. The sled pays on each branch's free floor (deadfall,
-## gathering) and the second tool on the rungs above it, so every rung has a tool — and WHICH item
-## serves the rung a working stands on is the sim's to say: `kitWorkersHolding` on an extract row
-## counts that tool alone, and `shortfall_line` reads it rather than taking a `min` over the kit.
-## **The default is the WORKING's, not the job's**: `default_kits.extract` is `none`, and each
-## `DepositState` publishes its own `default_kit_id` (`woodcutting` on wood, `stonework` on stone) —
-## `default_kit_for` reads it off the source, as it reads a herd's.
+## **THE SHIPPED ROSTER DECLARES THREE TAKE KITS** (issue #663): `sledding` (a sled alone, for the
+## floor rungs — deadfall and gathering are picked up, no axe needed), `woodcutting` (sled + axe) and
+## `stonework` (sled + wedges), beside `none`. An extract row claims its WHOLE kit wherever it works, so
+## `kitWorkersHolding` on it is the scarcest of the kit's items, as on every job. **The default is the
+## WORKING's, not the job's**: `default_kits.extract` is `none`, and each `DepositState` publishes the
+## `default_kit_id` the rung it holds wants (`sledding` on a floor rung, `woodcutting` on felling and
+## coppice, `stonework` on a quarry) — `default_kit_for` reads it off the source, as it reads a herd's.
 const JOB_EXTRACT := "extract"
 
-## **THE KITS A DEPOSIT SHEET MAY OFFER: THE WORKING'S OWN AND `none`** (issue #663). Each take kit
-## serves one branch, so the other branch's kit on this sheet is a choice that can only cost the crew
-## — the playtest report was the Quarrying kit offered on a wood. Returns the ROSTER with every
-## `extract` kit other than the working's `default_kit_id` dropped; an itemless kit (`none`) and every
-## kit that does not list `extract` stay, so the rest of the roster's lookups (the bare tier is the
-## minimum across it) are unchanged. A working that publishes no default narrows nothing.
+## The key a `deposits` row lists the kits it offers under, in roster order — `none` never among them.
+const WORKING_OFFERED_KITS_KEY := "offered_kit_ids"
+
+## **THE KITS A DEPOSIT SHEET OFFERS: THE WORKING'S `offered_kit_ids` AND `none`** (issue #663). The sim
+## publishes the list per working (`["sledding", "woodcutting"]` on wood, `["sledding", "stonework"]` on
+## stone), so the client decides nothing about which kit suits which ground. Returns the ROSTER with
+## every `extract` kit the working does not offer dropped; an itemless kit (`none`, the job's fallback)
+## and every kit that does not list `extract` stay, so the rest of the roster's lookups (the bare tier is
+## the minimum across it) are unchanged.
 static func extract_kits_for_working(kits: Array, working: Dictionary) -> Array:
-	var own := String(working.get(HERD_DEFAULT_KIT_KEY, NO_KIT_ID))
-	if own == NO_KIT_ID:
-		return kits
+	var offered: Array = Array(working.get(WORKING_OFFERED_KITS_KEY, []))
 	var out: Array = []
 	for kit_variant in kits:
 		var kit := kit_variant as Dictionary
 		var jobs: Array = kit.get(KIT_JOBS_KEY, [])
 		if jobs.has(JOB_EXTRACT) and not kit_item_ids(kit).is_empty() \
-				and String(kit.get(KIT_ID_KEY, NO_KIT_ID)) != own:
+				and not offered.has(String(kit.get(KIT_ID_KEY, NO_KIT_ID))):
 			continue
 		out.append(kit)
 	return out

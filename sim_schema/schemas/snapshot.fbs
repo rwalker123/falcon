@@ -6591,16 +6591,24 @@ table DepositState {
   // --- THE WORKING'S DEFAULT TAKE KIT (appended, issue #663) -------------------------------------
   // THE `extract` KIT A CREW ON THIS WORKING IS SENT WITH WHEN THE COMMAND NAMES NONE - the id the
   // picker marks "(default)". DERIVED, not authored (`EquipmentConfig::deposit_kit_for`): the
-  // extract kit whose items declare `deposit_take` on the MOST RUNGS of this working's branch,
-  // counted over the whole branch rather than at the rung it holds, because the kit rides the row
-  // and the working climbs. So a wood reads "woodcutting" and a scatter or a quarry "stonework", on
-  // every rung. `default_kits.extract` ("none") only where no single kit holds that top count - a
-  // tie, or a branch with no take tool at all.
+  // TIGHTEST offered kit for the rung the working HOLDS - of the kits in `offeredKitIds` with an
+  // item whose `deposit_take` names that rung, the one carrying the fewest items that do not. So
+  // "sledding" on deadfall and gathering, "woodcutting" on felling and coppice, "stonework" on the
+  // quarry: it follows the held rung as a herd's default follows its quarry. A row keeps the kit
+  // it was sent with when its working climbs. `default_kits.extract` ("none") only where no single
+  // kit holds the tightest fit.
   //
   // *** IT IS THE KIT THE SIM WILL USE. *** `assign_labor extract` with no `kit` token stores this
   // same id on the row (extraction::working_default_kit is the one function), so the compose
   // sheet's default and the kit the turn prices the crew with cannot disagree.
   defaultKitId:string;
+  // --- THE KITS A CREW ON THIS WORKING MAY BE SENT WITH (appended) --------------------------------
+  // Every `extract` kit whose items EACH declare `deposit_take` on this working's branch, in roster
+  // order (`extraction::working_offered_kits` -> `EquipmentConfig::deposit_kits_for`): a wood offers
+  // "sledding" and "woodcutting", a stone working "sledding" and "stonework". The picker lists
+  // exactly these beside the job's itemless `none`; `defaultKitId` is always one of them or "none".
+  // DERIVED from the roster, never authored - a new take kit appears here with no schema change.
+  offeredKitIds:[string];
 }
 
 // --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------

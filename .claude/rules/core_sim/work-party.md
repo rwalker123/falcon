@@ -26,7 +26,7 @@ see "The deposit web: the cargo is the material".
 | `src/data/labor_config.json` | `band_work_range` (**2**) is the apron: past it every job posts a party, and the walk is measured from it. `band_move_tiles_per_turn` (**1**) is read a second time as the party's walking speed — the walk out and every porter's walk home — and is validated `>= 1` for that reason. **No lever of this arc's own exists**: the share of a party on the road falls out of carry, take rate and distance |
 | `src/data/supply_network_config.json` | Read, not written: `reach_tiles` is subtracted from `supply::free_pooling_reach_tiles` to give the **road bonus** — how much of a walk a road takes away. `friction` is **not** read: distance is paid in walking |
 | `src/data/materials.json` | Read, not written: every material's required **`weight`** — biomass-equivalent mass per unit, validated positive and finite — is what a deposit's pack is divided by (wood **2.4**, stone **3.0**; every value PROVISIONAL, stated in the file's `_comment_weight`) |
-| `src/data/equipment.json` | Read, not written: the extract kits `woodcutting` (`sled` + `axe`) and `stonework` (`sled` + `wedges`), claimed whole like every job's kit, so a far working's porters haul on the sled on every rung |
+| `src/data/equipment.json` | Read, not written: the extract kits `sledding` (`sled`), `woodcutting` (`sled` + `axe`) and `stonework` (`sled` + `wedges`), claimed whole like every job's kit, so a far working's porters haul on the sled on every rung |
 
 ## A party is state ON the labor assignment, not an entity
 
@@ -207,8 +207,8 @@ per-material branch, or an extraction-only carry lever, would be the defect.
 
 **The haul carry is read off the row's kit, claimed whole like every job's.** `CaravanPricing` is
 resolved over the row's stored kit — the same claim `LaborAllocation::item_budget` rations the band's
-gear with — so a `woodcutting` / `stonework` crew hauls on its sleds on every rung, felling and
-quarry included. The pricing's crew-weighted `deposit_take` per worker
+gear with — and every take kit (`sledding`, `woodcutting`, `stonework`) carries the sled, so a
+kitted crew hauls on its sleds on every rung, felling and quarry included. The pricing's crew-weighted `deposit_take` per worker
 (`CaravanPricing::deposit_gear_per_worker`) is the tool term the forecast adds to each turn's cut,
 `present ×` that rate, and one pack per present hand is its carry: **the same carry caps the cut,
 near and far** (`extraction::CrewLift`), as a hunter's haul bounds a kill. The sled is **charged

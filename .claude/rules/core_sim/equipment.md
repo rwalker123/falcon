@@ -49,7 +49,7 @@ The **`sled`** also declares `deposit_take` on its `plain` tier — **+0.3** on 
 **+0.4** on `extraction:gathering` — and wears `deposit_taken` **1.0** per unit its holders cut,
 appended after its two biomass quanta so its gauge still leads with `biomass_hauled`.
 
-Shipped kits: **`woodcutting`** (`sled` + `axe`) and **`stonework`** (`sled` + `wedges`), the two `extract` kits, **`big_game`** (`spears` + `sled`), **`trapping`** (`traps` + `sled`),
+Shipped kits: **`sledding`** (`sled`), **`woodcutting`** (`sled` + `axe`) and **`stonework`** (`sled` + `wedges`), the three `extract` kits, **`big_game`** (`spears` + `sled`), **`trapping`** (`traps` + `sled`),
 **`gathering`** (`baskets`), **`hurdling`** (`crook`), **`tillage`** (`hoes`),
 **`wayfinding`** (`wayfinding`), **`warrior`** (`clubs`),
 **`ranging`** (`spears` + `sled` + `baskets` + `wayfinding`), **`none`** (nothing).
@@ -263,10 +263,13 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
 - **The floor rungs stay bare-WORKABLE** (`docs/plan_extraction.md` §4d): their one tool is the
   **sled**, which costs hide and fibre and no wood, so it is an addition above a rate the bare hand
   already has and never a prerequisite for the wood the rest of the chain needs.
-- **One kit per branch, claimed whole like every job's** — `woodcutting` (sled + axe) and
-  `stonework` (sled + wedges). **Per branch because the kit is stored on the row** at assignment
-  and a working climbs: a row assigned on deadfall is felled on the same row, so its kit has to
-  carry the next rung's tool too. **The row claims every item its kit uses, on every rung**, through
+- **Three take kits, each claimed whole like every job's** — `sledding` (sled), `woodcutting` (sled
+  + axe) and `stonework` (sled + wedges). **`sledding` is the floors' kit**: deadfall is picked up
+  and loose stone is gathered, so nobody on a floor rung cuts and an axe or wedges would only ride
+  along. **The kit is stored on the row** at assignment and a working climbs, so a row keeps the kit
+  it was sent with — a crew sent on `sledding` to a deadfall working is still on `sledding` after
+  it is raised to felling, and the player re-sends the row to hand it axes. **The row claims every
+  item its kit uses, on every rung**, through
   the one claim / coverage / budget path a hunt row's kit goes through — `LaborAllocation::item_budget`
   counts its sleds and its axes against the band's stock, and `kitWorkersHolding` is the whole-kit
   count (the scarcer item). **Which tool lifts the cut is effect resolution**: the sled's
@@ -279,14 +282,20 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
   `usefulCutters`, which read the registry between turns, price at exactly the rung the next turn
   cuts at. `extraction::a_working_raised_this_turn_arms_no_more_people_than_there_are_axes` pins
   that the axes armed never exceed the axes owned across the fellers and the keepers.
-- **A working's default kit is DERIVED, not authored** — `EquipmentConfig::deposit_kit_for`: the
-  `extract` kit whose items serve the **most rungs of the working's branch**, and only where exactly
-  one kit holds that count. Counting rungs rather than asking "does any item serve" is what stops the
-  shared sled from tying the two kits on every floor; scanned off the roster at every tier
-  (`ItemDefinition::declares_deposit_take_on`), never the ledger. `extraction::working_default_kit`
-  is the one function behind the kit `assign_labor extract` stores on a no-kit row, the seed that
-  prices it, and `DepositState.defaultKitId`. `default_kits.extract` is **`none`**, the fall-back for
-  no working in hand or no single serving kit.
+- **A working's OFFERED kits and its DEFAULT are DERIVED, not authored**, both scanned off the
+  roster at every tier (`ItemDefinition::declares_deposit_take_on`), never the ledger.
+  - **Offered** — `EquipmentConfig::deposit_kits_for`: every `extract` kit whose items EACH declare
+    a `deposit_take` on the working's branch. A wood offers `sledding` + `woodcutting`, a stone
+    working `sledding` + `stonework`; `stonework` is not offered on wood, because its wedges lift
+    nothing there. `extraction::working_offered_kits` publishes it as `DepositState.offeredKitIds`.
+  - **Default** — `EquipmentConfig::deposit_kit_for`: the tightest offered kit for the **held
+    rung**, the way a herd's default follows its quarry. Of the offered kits with at least one item
+    whose `deposit_take` names that rung, the one carrying the fewest items that do not; only where
+    exactly one kit holds that fit. So `sledding` on `deadfall` / `gathering`, `woodcutting` on
+    `felling` / `coppice`, `stonework` on `quarry`. `extraction::working_default_kit` is the one
+    function behind the kit `assign_labor extract` stores on a no-kit row, the seed that prices it,
+    and `DepositState.defaultKitId`. `default_kits.extract` is **`none`**, the fall-back for no
+    working in hand or a tie.
 - **Every pre-commit figure comes off one geared curve** — `DepositCrewTakeQuery`
   (`extraction::deposit_crew_quote`: a prospective-row ration of the stored or picked kit, whole,
   beside the band's other rows, less the pools' issue, capped by the crew's carry), and the committed row's
@@ -302,9 +311,15 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
 
 Pinned by `extraction::tests::take_gear_adds_on_top_of_the_bare_rate_and_the_reach_still_caps_it`,
 `equipment_config::tests::each_take_tool_serves_only_its_own_rung_and_the_floors_stay_bare`,
-`equipment_config::tests::a_workings_default_kit_is_the_kit_of_its_branch_on_every_rung`,
+`equipment_config::tests::a_workings_default_kit_is_the_tightest_offered_kit_for_its_held_rung`,
+`equipment_config::tests::a_working_offers_the_take_kits_whose_items_all_serve_its_branch`,
+`equipment_config::tests::two_kits_fitting_one_rung_equally_fall_back_to_the_job_default`,
 `tests/extraction.rs::a_sled_lifts_the_deadfall_take_and_nothing_above_it`,
-`server::tests::a_wood_crews_complete_kit_count_is_the_tool_serving_its_held_rung`,
+`server::tests::a_wood_crews_complete_kit_count_is_its_whole_kit_on_every_rung`,
+`server::tests::the_deposit_curves_kit_count_is_the_committed_rows_kit_workers_holding` (its two
+`sledding` arms: a deadfall crew with sleds and no axes holds a whole Sled kit as far as its sleds
+reach),
+`server::tests::a_no_kit_extract_row_is_sent_with_the_kit_the_wire_publishes_for_that_working`,
 `server::tests::the_deposit_crew_curves_next_rung_is_what_the_turn_pays_once_raised`,
 `tests/extraction.rs::a_crew_with_axes_cuts_more_off_a_felling_working_and_wears_only_the_axes`
 (the shipped turn) and `server::tests::a_deposit_crew_with_axes_is_seeded_the_cut_the_turn_pays`

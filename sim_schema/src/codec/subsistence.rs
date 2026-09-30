@@ -1032,6 +1032,9 @@ fn create_ladder_knowledge<'a>(
 
 /// **THE SUBJECT AREAS' DISPLAY ORDER**, once per world and beside the roster above. A per-world
 /// constant, so it is written whole on a snapshot and only when it moved on a delta.
+///
+/// **A plain list of strings** — the shape `ladderAreas` and `DepositState.offeredKitIds` both
+/// write, so it serves both.
 fn create_ladder_areas<'a>(
     builder: &mut FbBuilder<'a>,
     areas: &[String],
@@ -1180,6 +1183,7 @@ fn create_deposits<'a>(
             let build_kit_id = builder.create_string(&deposit.build_kit_id);
             let upkeep_kit_id = builder.create_string(&deposit.upkeep_kit_id);
             let default_kit_id = builder.create_string(&deposit.default_kit_id);
+            let offered_kit_ids = create_ladder_areas(builder, &deposit.offered_kit_ids);
             // **Absent, not empty, where the sim published no curve** — `regrowthSamples`' own rule
             // one table over: an empty vector is *"no curve was sent"* and a client blanks its chart
             // on it, where a quarry's all-zero curve is the live reading *"this does not grow"*.
@@ -1221,6 +1225,7 @@ fn create_deposits<'a>(
                     upkeepKitId: Some(upkeep_kit_id),
                     upkeepKitNamed: deposit.upkeep_kit_named,
                     defaultKitId: Some(default_kit_id),
+                    offeredKitIds: Some(offered_kit_ids),
                 },
             )
         })
@@ -1263,6 +1268,7 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
         upkeep_kit_id: text(deposit.upkeepKitId()),
         upkeep_kit_named: deposit.upkeepKitNamed(),
         default_kit_id: text(deposit.defaultKitId()),
+        offered_kit_ids: decode_strings(deposit.offeredKitIds()),
     }
 }
 

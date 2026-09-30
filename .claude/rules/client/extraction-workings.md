@@ -37,7 +37,7 @@ does with them. Read the sim one first — most of the traps here are its traps,
 | `ui/hud/HudBandLaborState.gd` → `floor_for_extract` | The dial's SEED, and the rule it exists to keep: a reopened sheet seeds from the ASSIGNMENT, never from `DepositState.floor` (see the note under the decoder's row) |
 | `MapView.gd` → `_ingest_deposit_workings` / `_workings_on_tile` / `deposit_tile_lookup` | The per-TILE index the card's rows and its two actions read out of, `_ingest_road_network`'s twin. ⛔ **It does NOT de-duplicate on the tile** — two rows on one hex is the ordinary case here — and it holds the frame's rows **by reference** with its own profile span (`layers.deposits`), this being the widest section the client ingests |
 | `ui/WorkingsSprites.gd` → `for_material` | The working marker's ART, material id → `assets/icons/workings/` texture, `null` for a material with no art (it keeps `FoodIcons.for_material`'s emoji). Read only through `SecondaryMarkerRenderer.face_for_material`, the one face the hex marker and the band source list's row icon share. The family's row is in `sprites-widgets.md` |
-| `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per DEPOSIT-BEARING TILE, keyed `(tile, material)`, carrying the live working's state where a band has opened one — and `deposit_rungs_to_array`, the per-world CATALOG for both branches, `route_rungs_to_array`'s twin. The module header carries the whole field contract. The escapement three are appended last: `rung_floor_fraction` · `per_worker_biomass` · `regrowth_samples`, the curve through the SHARED `subsistence::regrowth_samples_packed` so an ABSENT vector stays EMPTY (*no curve was sent*) and a quarry's all-zero one stays a reading (*this does not grow*). **`default_kit_id`** rides every row too (issue #663) — the take kit the working's MATERIAL wants, which the deposit sheet reads as its source default |
+| `native/src/dict/deposits.rs` | `deposits_to_array` — one dict per DEPOSIT-BEARING TILE, keyed `(tile, material)`, carrying the live working's state where a band has opened one — and `deposit_rungs_to_array`, the per-world CATALOG for both branches, `route_rungs_to_array`'s twin. The module header carries the whole field contract. The escapement three are appended last: `rung_floor_fraction` · `per_worker_biomass` · `regrowth_samples`, the curve through the SHARED `subsistence::regrowth_samples_packed` so an ABSENT vector stays EMPTY (*no curve was sent*) and a quarry's all-zero one stays a reading (*this does not grow*). **`default_kit_id`** and **`offered_kit_ids`** ride every row too (issue #663) — the take kit the rung the working HOLDS wants (the sheet's source default), and the kits the working offers in roster order, `none` never among them |
 
 ## ⛔ THE WORD "QUARRY" NAMES ONE RUNG, NEVER THIS BRANCH
 
@@ -495,22 +495,24 @@ Top to bottom, with `_build_deposit_assign_controls` the one builder:
    `label_tooltip` carries `CARD_CREW_HINT`, the sheet's one place to say that these hands CUT and the
    hands that HOLD are a pool on another panel.
 4. **the `Kit` row** through `_mount_kit_row`, at `KitRoster.JOB_EXTRACT`. The roster's `extract`
-   job lists the **Woodcutting kit** (`woodcutting`, sled + axe) and the **Stone kit** (`stonework`,
+   job lists the **Sled kit** (`sledding`, a sled alone — the floor rungs are picked up, no axe
+   needed), the **Woodcutting kit** (`woodcutting`, sled + axe) and the **Stone kit** (`stonework`,
    sled + wedges) beside `none`, so the row is a real picker and its selection moves the take (issue
-   #663). ⛔ **A SHEET OFFERS ITS WORKING'S OWN KIT AND `none`, AND NOTHING ELSE** —
-   `KitRoster.extract_kits_for_working` drops every other `extract` kit off the roster before the
-   row is built, so the Stone kit is absent from a wood's picker rather than greyed: its wedges do
-   nothing there, and offering it was a choice that could only cost the crew (the playtest report).
+   #663). ⛔ **A SHEET OFFERS ITS WORKING'S `offered_kit_ids` AND `none`, AND NOTHING ELSE** — the sim
+   publishes the list per row (`sledding, woodcutting` on wood; `sledding, stonework` on stone), and
+   `KitRoster.extract_kits_for_working` drops every `extract` kit off the roster that the list does
+   not name, so the Stone kit is absent from a wood's picker rather than greyed. `none` is never on
+   the list and rides beside it as the job's fallback.
    ⛔ **THE DEFAULT IS THE WORKING'S FIRST, THE JOB'S SECOND.** Every
-   `deposits` row publishes its own `default_kit_id` instead (`woodcutting` on wood, `stonework` on
-   stone, whatever rung it stands on). The deposit is passed to the kit row as its SOURCE, so
+   `deposits` row publishes its own `default_kit_id`, which follows the rung it holds: `sledding` on
+   deadfall and gathering, `woodcutting` on felling and coppice, `stonework` on a quarry. The deposit is passed to the kit row as its SOURCE, so
    `KitRoster.default_kit_for` — the one precedence the hunt sheet's per-herd default already rides
    (`labor-ui.md` → "THE SHEET OPENS ON THE KIT **THIS QUARRY** WANTS") — answers both the opening
    selection and the `(default)` mark off it; `JOB_EXTRACT` is in its `SOURCE_DEFAULT_KIT_JOBS`.
    ⛔ **THE COMPOSED KIT IS DROPPED ON A SOURCE CHANGE**, in the branch that calls
    `begin_deposit_source`, for `reset_hunt_kit`'s reason: every render writes the resolved id back,
    so a `woodcutting` left standing reads as the player's own choice on the next rock and outranks
-   its `stonework`. The job-level `defaultExtractKitId` (decoded `default_extract_kit_id`) stands behind
+   its own default. The job-level `defaultExtractKitId` (decoded `default_extract_kit_id`) stands behind
    a working that states none, as the job's hunt default stands behind a herd. ⛔ **THE CREW IS HANDED
    ON**: omitting it is what made the forage sheet's shortfall line mute for the whole life of that
    line. **Past the apron the WORK PARTY section follows it** — see "⛔ A FAR WORKING IS AN ORDINARY
@@ -1352,7 +1354,7 @@ explicitly rather than by fall-through, on `builders`' own reasoning: falling th
 HUNT kit as this job's default.
 
 ⛔ **THE TOKEN IS OMITTED AGAINST THE WORKING'S OWN DEFAULT, NEVER THE JOB'S.** An `extract` line with
-NO `kit` token means *the working's own derived kit* to the sim (it stores `woodcutting` / `stonework`
+NO `kit` token means *the working's own derived kit* to the sim (it stores the rung's `default_kit_id`
 itself), so `Hud._emit_assign_labor` passes the `deposits` row (`HudBandLaborState.find_deposit`) to
 `KitRoster.default_kit_for` as the payload's `default_kit_id` — the hunt row's herd-first rule, for its
 reason. Measured against the job's `none` instead, `_kit_token` would omit the token for a player's
@@ -1361,8 +1363,8 @@ the one selection an omitted token could get wrong, which is why `command_guard`
 drive sends it.
 
 ⛔ **THE `N of M available` LINE IS THE HUNT'S, WITH NOTHING SPECIAL FOR A WORKING.** An extract row
-claims its WHOLE kit wherever it works — the Woodcutting kit is a sled AND an axe, the Stone kit a sled
-AND wedges, on every rung — so `KitRoster.shortfall_line` reads it exactly as it reads spears and sled:
+claims its WHOLE kit wherever it works — the Sled kit is a sled, the Woodcutting kit a sled AND an
+axe, the Stone kit a sled AND wedges, on every rung — so `KitRoster.shortfall_line` reads it exactly as it reads spears and sled:
 complete outfits, the scarcest of the kit's items, against the crew being composed, with the band's
 committed row on the working (`HudBandLaborState.extract_assignment_of`) handed in so its published
 `kitWorkersHolding` answers for the committed crew. A band holding sleds and no axe fields ZERO
@@ -1409,7 +1411,7 @@ renews, so it is offered the dial, and it stands on a rung that strands 85% of t
 | `workings_far_party` / `workings_far_party_stone` | **A FAR WORKING POSTS A PARTY** — the chapter's band left where the shared fixture camps it, 52 tiles from this hex against a `work_range` of 2: no refusal, a live commit, the kit picker offering the working's own `Woodcutting kit` and opening on it over the job's `none`, the party section's three lines by equality in the forester noun, the headline `1.40 WOOD` under `ONCE RUNNING · PER TURN` with no food figure, and the crew curve's take at the working (`Cut at the working: 2.35 wood a turn`) beneath it. The digger sheet on the same hex posts the same caravan in stone |
 | `workings_tile_crews` | **THE TILE SAYS THE DIGGING IS HAPPENING** — one hex, a wood crew of 2 and a rock crew of 4, each on its own material row. The counts DIFFER on purpose: equal ones would pass a card that composed one number and printed it twice, which is the tile-keyed collapse the `material` field exists to prevent, so the frame also asserts neither row wears the other's count. And no bill or countdown arrives with the crew |
 | `workings_tile_crews_other_band` | **THE COUNT IS THE HEX'S, NOT THE PICKED BAND'S** — the same two workings, held by a band that is NOT the faction's default actor (a second, empty band is listed first). The rows read exactly as they did above, which is what "minimal display when the owning band is not selected" buys; a count taken off the selected band would go to zero here. Untouched ground under a CREWLESS band is asserted beside it to carry no crew mark of any count, the other half of `crew_clause`'s fork |
-| `workings_forestry_kit` / `workings_extraction_kit` | **THE TAKE KIT** (issue #663) — each sheet lists exactly its working's own kit and `No kit` (the other branch's kit ABSENT), marks its own `(default)`, and commits `kit woodcutting` / `kit none` / `kit stonework` |
+| `workings_forestry_kit` / `workings_extraction_kit` / `workings_deadfall_kit` | **THE TAKE KIT** (issue #663) — each sheet lists exactly its working's `offered_kit_ids` and `No kit` (the other branch's kit ABSENT) and marks the rung's own `(default)`: a felling wood opens on the Woodcutting kit and commits `kit woodcutting` / `kit none`, a gathering rock and a deadfall wood open on the Sled kit (`kit sledding`); three sleds outfit a deadfall crew of three on the Sled kit (no shortfall line) and read `0 of 3` on the Woodcutting kit |
 | `workings_forestry_kit_curve` / `workings_forestry_kit_flagged_out_of_range` | **THE CREW CURVE** (issue #663) — NEXT TURN and `ONCE COPPICED` read off the authored reply's row at the stepper's crew, and off the next row once the stepper moves; the available line counts the band's WHOLE kits (one sled and three axes read `1 of 3`; three sleds and no axe read `0 of 3`); `none` silences it; the in-flight sheet states no take and no deal; the verdict's settle line and *hold it after* are the curve's draw at the stepper's crew, not the bare rate's; `in_range: false` is a flag that hides nothing — the same take at the stepper's crew and a live commit. Detail in `harness-ui-preview.md` |
 
 **The LADDER's row states are asserted over the PRODUCER, without a frame**: the SITE gate on a

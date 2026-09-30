@@ -739,15 +739,27 @@ pub fn deposit_take(
 /// seed and the published `DepositState.defaultKitId` all resolve a working's default through, so
 /// the picker's `(default)` mark and the kit the turn arms are one answer.
 ///
-/// Derived from the roster for the working's **branch**
-/// ([`crate::equipment_config::EquipmentConfig::deposit_kit_for`]): every wood defaults to the
-/// Woodcutting kit and every scatter or quarry to the Stone kit, on every rung, because the kit is
-/// stored on the row and must stay right as the working climbs.
+/// Derived from the roster for the rung the working **holds**
+/// ([`crate::equipment_config::EquipmentConfig::deposit_kit_for`]) — the tightest offered kit, as a
+/// herd's default follows its quarry: `sledding` on deadfall and gathering, `woodcutting` on
+/// felling and coppice, `stonework` on the quarry. A row keeps the kit it was sent with when its
+/// working climbs.
 pub fn working_default_kit(
     equipment: &crate::equipment_config::EquipmentConfig,
     source: &DepositSource,
 ) -> crate::equipment_config::KitChoice {
-    equipment.extract_default_kit(source.rung().branch())
+    let rung = source.rung();
+    equipment.extract_default_kit(rung.branch(), &rung.wire_key())
+}
+
+/// **THE `extract` KITS A CREW ON THIS WORKING MAY BE SENT WITH** — the roster's take kits for its
+/// branch ([`crate::equipment_config::EquipmentConfig::deposit_kits_for`]), published as
+/// `DepositState.offeredKitIds` so the picker lists exactly these beside `none`.
+pub fn working_offered_kits(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    source: &DepositSource,
+) -> Vec<crate::equipment_config::KitChoice> {
+    equipment.deposit_kits_for(source.rung().branch())
 }
 
 /// **THE GEAR A PROSPECTIVE CREW WORKS `rung` WITH** — the one ration every deposit quote is armed

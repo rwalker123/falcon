@@ -3031,19 +3031,26 @@ branch says those things now. `workings_unopened` kept its name and its subject.
 `workings_far_party` / `workings_far_party_stone`, the pair `workings_tile_crews` /
 `workings_tile_crews_other_band`, and
 the take-kit pair `workings_forestry_kit` / `workings_extraction_kit` and the crew-curve pair
-`workings_forestry_kit_curve` / `workings_forestry_kit_flagged_out_of_range` last (issue #663).
+`workings_forestry_kit_curve` / `workings_forestry_kit_flagged_out_of_range`, with `workings_deadfall_kit`
+between them, last (issue #663).
 
 **THE TAKE-KIT PAIR PUSHES A ROSTER OF ITS OWN AND HANDS THE PREVIOUS ONE BACK.** The shared
 `BandFx.kit_roster_fixture()` carries no `extract` kit and its `none` does not list the job, so every
-deposit sheet earlier in the walk renders with no kit row; the states build the Woodcutting and Stone
-kits plus an extract-listing `none` locally, which keeps those frames where they were. `_wood_working`
-/ `_stone_working` publish `default_kit_id` (`woodcutting` / `stonework`) as `dict/deposits.rs` does.
+deposit sheet earlier in the walk renders with no kit row; the states build the Sled, Woodcutting and
+Stone kits plus an extract-listing `none` locally, which keeps those frames where they were.
+`_wood_working` / `_stone_working` publish `offered_kit_ids` and a `default_kit_id` derived from their
+rung (`_default_kit_for_rung`, the sim's table), and every fixture that moves a rung moves the default.
 
-- **A wood and a rock on ONE hex are the claim**: each sheet lists EXACTLY its own kit and `No kit`
-  — the roster carries both take kits, so the other branch's being ABSENT is asserted by name beside
-  the count — and marks exactly ONE entry `(default)`, its OWN working's kit. A job-wide default
-  would mark the same entry on both.
-- **The commit's line is asserted for `kit woodcutting`, `kit none` and `kit stonework`** — `none`
+- **`workings_deadfall_kit`** is the floor rung: a deadfall wood offers Sled, Woodcutting and No kit
+  and opens on the Sled kit; a band of three sleds and no axe at crew 3 reads no shortfall there, and
+  `0 of 3 Woodcutting kits available` with the Woodcutting kit picked — the pair, so the silence
+  cannot pass on a line that never renders.
+
+- **A felling wood and a gathering rock on ONE hex are the claim**: each sheet lists EXACTLY the
+  Sled kit, its branch kit and `No kit` — the roster carries both branch kits, so the other branch's
+  being ABSENT is asserted by name beside the count — and marks exactly ONE entry `(default)`: the
+  Woodcutting kit on the wood, the Sled kit on the rock. A job-wide default would mark one entry on both.
+- **The commit's line is asserted for `kit woodcutting`, `kit none` and `kit sledding`** — `none`
   being the one pick an omitted token would get wrong, an absent token meaning the working's derived
   kit.
 - ⛔ **THE ROCK IS OPENED STRAIGHT OVER THE WOOD'S OPEN SHEET, with `woodcutting` composed** — asserted as
@@ -3100,8 +3107,8 @@ NEXT TURN figures and render no deal row. Ground holding no such working is refu
 
 **THE FAR-PARTY PAIR RUNS ON THE TAKE-KIT ROSTER** (`_deposit_kit_roster`) with the job-level
 `defaultExtractKitId` pushed as `none`, so its kit claim is the working-first precedence: the wood's
-picker lists `Woodcutting kit` and not the Stone kit, and opens on `woodcutting` rather than the job's
-`none`. The far wood authors a curve (`_authored_curve(true)`), and beneath the rate-home headline the
+picker lists the Sled and Woodcutting kits and not the Stone kit, and — the wood standing on felling —
+opens on `woodcutting` rather than the job's `none`. The far wood authors a curve (`_authored_curve(true)`), and beneath the rate-home headline the
 sheet's `DEPOSIT_TAKE_AT_SOURCE_META` line must read the curve row's take at the stepper's crew by
 equality — *Cut at the working: 2.35 wood a turn*.
 

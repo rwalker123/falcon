@@ -16,9 +16,9 @@ use bevy::prelude::{Entity, With};
 
 use core_sim::{
     available_workers, split_band_from_parent, split_refusals, BandEquipment, BandId,
-    DemographicFlowAccumulator, EquipmentBatch, ExpeditionConfigHandle, FactionId,
-    MaterialsConfigHandle, PopulationCohort, ResidentBand, Scalar, SettleConfig, SimulationConfig,
-    Tile, FODDER, FOOD,
+    DemographicFlowAccumulator, EquipmentBatch, EquipmentConfigHandle, ExpeditionConfigHandle,
+    FactionId, MaterialsConfigHandle, PopulationCohort, ResidentBand, Scalar, SettleConfig,
+    SimulationConfig, StartingLoadout, Tile, FODDER, FOOD,
 };
 
 /// Tolerance for a fixed-point round trip through a fractional share. `Scalar` carries far more
@@ -371,21 +371,32 @@ fn the_kit_is_inherited_worn_rather_than_minted_fresh() {
     let (parent, _, _) = home_band(&mut app);
     stock_the_parent(&mut app, parent);
 
-    // Wear the parent's kit into a state a fresh ledger could not be mistaken for.
+    // Wear EVERY item the parent carries into a state a fresh ledger could not be mistaken for —
+    // every item, because which kits the default take moves is the manifest's business
+    // (`the_manifest_is_a_kit_allocation_that_fits_the_share`), and the claim here holds of whatever
+    // walks out.
     let worn = {
         let mut equipment = app
             .world
             .get_mut::<BandEquipment>(parent)
             .expect("a band carries a kit");
+        let items: Vec<String> = equipment
+            .batches()
+            .map(|(item, _)| item.to_string())
+            .collect();
+        assert!(
+            !items.is_empty(),
+            "a start-stocked band carries gear, which is what this fixture wears down"
+        );
         // `restore_batches` is the direct setter the checkpoint path uses — the kit-driven
         // `wear_item` would need a config and a job, neither of which this test is about.
-        let mut batches = equipment.batches_of(WORN_ITEM).to_vec();
-        assert!(
-            !batches.is_empty(),
-            "a start-stocked band carries {WORN_ITEM}, which is what this fixture wears down"
-        );
-        batches[0].wear = WORN_CONDITION;
-        equipment.restore_batches(WORN_ITEM, batches);
+        for item in items {
+            let mut batches = equipment.batches_of(&item).to_vec();
+            for batch in &mut batches {
+                batch.wear = WORN_CONDITION;
+            }
+            equipment.restore_batches(&item, batches);
+        }
         equipment.clone()
     };
     assert_ne!(
@@ -406,13 +417,12 @@ fn the_kit_is_inherited_worn_rather_than_minted_fresh() {
     // What this pins is that the units that walked out carry the parent's real condition rather than
     // a fresh `default()`.
     let carried: Vec<f32> = inherited
-        .batches_of(WORN_ITEM)
-        .iter()
-        .map(|batch| batch.wear)
+        .batches()
+        .flat_map(|(_, batches)| batches.iter().map(|batch| batch.wear))
         .collect();
     assert!(
         !carried.is_empty(),
-        "a share of the parent's {WORN_ITEM} walked out with the splinter"
+        "**LIVENESS**: a share of the parent's gear walked out with the splinter"
     );
     assert!(
         carried.iter().all(|wear| *wear == WORN_CONDITION),
@@ -661,11 +671,14 @@ fn gear_is_conserved_across_a_split() {
 /// handed the whole dowry back (`split_loadout.rs`). What crosses now is the expansion of a kit
 /// allocation, and two properties follow:
 ///
-/// - **no item exceeds its own share** of what the parent held; and
-/// - **the sled identity holds** — `big_game` grants a spear and a sled, `trapping` a trap and a
-///   sled, and `sled` is the roster's only shared item, so a kit-denominated take satisfies
-///   `sleds == spears + traps` exactly. A per-item manifest does not, which is what makes this the
-///   sharp statement of the denomination.
+/// - **no item exceeds its own share** of what the parent held — which is also the shared-item
+///   clamp: every kit that uses an item draws on that one item's share; and
+/// - **the ledger IS the expansion of the kit allocation** — for every item, the splinter holds
+///   exactly `Σ count` over the kits in its window's manifest that use it. The sled is the sharp
+///   case: `big_game`, `trapping`, the cutting kits and the sled-only `sledding` kit all carry one,
+///   so the sleds that walk out are the sum over every kit in the manifest that uses the sled, and
+///   nothing a per-item manifest could add on top. What crossed and what the card shows are one
+///   object.
 #[test]
 fn the_manifest_is_a_kit_allocation_that_fits_the_share() {
     let mut app = spawn_world();
@@ -687,17 +700,36 @@ fn the_manifest_is_a_kit_allocation_that_fits_the_share() {
         );
     }
 
-    let spears = count_of(&app, child_entity, WORN_ITEM);
-    let traps = count_of(&app, child_entity, "traps");
-    let sleds = count_of(&app, child_entity, "sled");
+    let manifest = app
+        .world
+        .resource::<StartingLoadout>()
+        .window(split.band)
+        .expect("the splinter opens a window at its default take")
+        .kits
+        .clone();
+    let roster = app.world.resource::<EquipmentConfigHandle>().get();
+    let mut expanded: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    for allocation in &manifest {
+        let kit = roster
+            .kit_definition(&allocation.kit_id)
+            .expect("the manifest names roster kits");
+        for item in &kit.uses {
+            *expanded.entry(item.clone()).or_default() += allocation.count;
+        }
+    }
     assert!(
-        spears + traps > 0,
-        "**LIVENESS**: the hunting kits must have moved, or the identity below is 0 == 0"
+        expanded.get("sled").copied().unwrap_or_default() > 0,
+        "**LIVENESS**: a kit carrying the shared sled must have moved, or the identity below is \
+         0 == 0 on the item it is about: {manifest:?}"
     );
+    let held: std::collections::BTreeMap<String, u32> = owned(&app, child_entity)
+        .into_iter()
+        .filter(|(_, units)| *units > 0)
+        .collect();
     assert_eq!(
-        sleds,
-        spears + traps,
-        "a kit-denominated take carries one sled per hunting hand, however the two kits split it"
+        held, expanded,
+        "the splinter holds exactly the expansion of its kit manifest {manifest:?} — the sleds \
+         are the sum over every kit in it that uses the sled"
     );
 }
 
