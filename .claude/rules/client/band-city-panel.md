@@ -7224,6 +7224,15 @@ Every line is the row's quiet `INK_DIM`, and `_work_row_party_lines_text` return
 > the caravan pays distance in walking alone, one hunter at a time as a pack fills, so what the block
 > can say is *who is on the road right now* and *when the next load lands*, and it says exactly that.
 
+### A far WORKING states the same block, on the workings roster's hover
+
+An `extract` row never reaches this board (`_work_source_models` admits forage and hunt), and a far
+wood or quarry posts the same caravan. Its row is on the WORKINGS ROSTER, one fixed-height line, so
+the block rides that row's hover: `HudWorkVocab.party_block_lines` — the composer
+`_work_row_party_lines_text` now calls too, walking to `WORK_ROW_PARTY_WALK_TARGET_WORKING` — plus
+`WORK_ROW_PARTY_RATE_HOME_FORMAT`, the row's `netRateHome` in the working's MATERIAL
+(`+0.90 stone a turn`), never food. `BandPanelController._workings_roster_tooltip` is the one place.
+
 ### The board charges every row the TALLEST row on the page
 
 The work zone `clip_contents` and the board is reserved and filled in **uniform rows**

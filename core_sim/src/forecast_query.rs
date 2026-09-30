@@ -177,19 +177,6 @@ const SOURCE_IS_KEYED_BY_QUARRY_ALONE: f32 = 0.0;
 /// building the party: the curve resolves one **per crew size** (coverage depends on how many people
 /// the kit has to stretch over, and on how many of them the rows beside it have already claimed) and
 /// at the **base** tuning rather than the expedition's.
-/// **The rung each of the band's `extract` workings holds**, so an extract row beside the asked
-/// party claims only the items that serve it (`LaborAssignment::take_kit`) — the same narrowing the
-/// turn rations with. `None` in a world carrying no deposit registry.
-fn held_rungs<'a>(
-    world: &'a World,
-    extraction: Option<&'a crate::extraction_config::ExtractionConfig>,
-) -> Option<crate::extraction::HeldRungs<'a>> {
-    Some(crate::extraction::HeldRungs {
-        deposits: world.get_resource::<crate::extraction::DepositRegistry>()?,
-        extraction: extraction?,
-    })
-}
-
 fn resolve_quarry_and_kit(
     world: &mut World,
     faction_id: u32,
@@ -226,10 +213,6 @@ fn resolve_quarry_and_kit(
     };
     // **The competing claims on that ledger**, with this herd's own row excluded — see
     // [`AskedQuarry::other_rows`].
-    let extraction = world
-        .get_resource::<crate::extraction_config::ExtractionConfigHandle>()
-        .map(|handle| handle.get());
-    let held = held_rungs(world, extraction.as_deref());
     let other_rows = allocation
         .map(|allocation| {
             allocation.rows_excluding_source(
@@ -238,7 +221,6 @@ fn resolve_quarry_and_kit(
                     fauna_id: herd_id.to_string(),
                     floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
                 },
-                held.as_ref(),
             )
         })
         .unwrap_or_default();
@@ -778,8 +760,15 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
 /// **An unopened working is derived**, never refused: full stock at the tile's capacity on its
 /// branch's free floor (`DepositSource::opening`, the capture's own rule), because the commonest
 /// sheet is a crew about to be put on fresh ground. Ground holding none of the material is
-/// `unknown_deposit`. **Past the band's work range** the turn abandons the row, so every take reads
-/// `0` and `in_range` says why.
+/// `unknown_deposit`.
+///
+/// **Past the band's work range the take is quoted AT THE SOURCE, exactly as inside it.** A far
+/// working posts a work party (`crate::work_party`) and its crew cuts the working as any crew does —
+/// the turn prices that cut at the hands present, through the same `deposit_take` — so a row here is
+/// the cut a crew of that size makes standing at the deposit. What reaches home, delayed by the walk,
+/// is the work-party query's answer (`WorkPartySource::Extract`), not this one's. `in_range` is a
+/// plain fact on the reply (true inside the apron) and zeroes nothing — the hunt crew-take curve's
+/// rule, which has no range gate at all.
 fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> QueryReply {
     if !floor_is_valid(ask.floor) {
         return query_failure(query_error::INVALID_FLOOR);
@@ -857,16 +846,24 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
             crate::extraction::DepositSource::opening(tile, &ask.material, capacity, branch)
         });
     crate::extraction::renew_deposit(&mut working, &ground, &extraction, &ladder);
-    let held = crate::extraction::HeldRungs {
-        deposits,
-        extraction: &extraction,
-    };
     let held_rung = working.rung();
     let wrap = world
         .resource::<crate::SimulationConfig>()
         .map_topology
         .wrap_horizontal;
-    let work_range = world.resource::<LaborConfigHandle>().get().band_work_range;
+    let labor = world.resource::<LaborConfigHandle>().get();
+    // **What the crew can carry off, per unit of haul** — the hunt's carry over the material's
+    // weight, a cap on every row's cut ([`crate::extraction::CrewLift`]).
+    let Some(carry) = crate::extraction::DepositCarry::of(
+        &labor,
+        &world
+            .resource::<crate::materials_config::MaterialsConfigHandle>()
+            .get(),
+        &ask.material,
+    ) else {
+        return query_failure(query_error::UNKNOWN_DEPOSIT);
+    };
+    let work_range = labor.band_work_range;
     let in_range =
         crate::grid_utils::hex_distance_wrapped(band_pos, tile, grid_width, wrap) <= work_range;
     let target = crate::components::LaborTarget::Extract {
@@ -880,7 +877,6 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
                 &equipment,
                 &ladder,
                 &extraction,
-                &held,
                 &allocation,
                 &target,
                 &kit,
@@ -888,20 +884,13 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
                 &wear,
                 &working,
                 &ground,
+                &carry,
             );
             DepositCrewTakeRow {
                 workers,
-                take: if in_range {
-                    quote.take
-                } else {
-                    crate::extraction::NO_TAKE_THIS_TURN
-                },
+                take: quote.take,
                 armed_workers: quote.armed_workers,
-                next_rung_take: if in_range {
-                    quote.next_rung_take
-                } else {
-                    crate::extraction::NO_TAKE_THIS_TURN
-                },
+                next_rung_take: quote.next_rung_take,
             }
         })
         .collect();
@@ -939,6 +928,11 @@ const MAX_CREW_TAKE_WORKERS: u32 = 1_000;
 ///
 /// **Inside the band's work range nothing is posted**, and the answer is the ordinary local row's
 /// steady rate with every walk field at zero — the local identity, asked for.
+///
+/// **Every web, one question**: a herd, a patch or a deposit. A deposit's `rate_home` is in its
+/// material's own units, and its pack is the haul carry over the material's weight
+/// ([`crate::work_party::material_pack`]); ground holding none of the material is refused
+/// `unknown_deposit`.
 ///
 /// It fights at the **base** tuning, like the crew-take curve and unlike the raid sheet: a party is
 /// the band's own people hunting their range, not a detached expedition.
@@ -1006,8 +1000,8 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
     let geometry = (tile_registry.width, tile_registry.height, wrap);
     let horizon = labor.yield_average_horizon_turns;
 
-    // **The source and the job its kit must serve.** A herd id the registry does not carry, or a
-    // tile with no patch on it, is refused by name.
+    // **The source and the job its kit must serve.** A herd id the registry does not carry, a tile
+    // with no patch on it, or ground holding none of the asked material, is refused by name.
     enum Asked {
         Hunt(Herd),
         Forage {
@@ -1015,7 +1009,15 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
             tile: bevy::math::UVec2,
             take: crate::components::TakeSelection,
         },
+        Extract {
+            working: crate::extraction::DepositSource,
+            ground: crate::components::Tile,
+            weight: f32,
+        },
     }
+    let extraction = world
+        .resource::<crate::extraction_config::ExtractionConfigHandle>()
+        .get();
     let (asked, target, job) = match &ask.source {
         WorkPartySource::Hunt { herd_id } => {
             let Some(herd) = world.resource::<HerdRegistry>().find(herd_id).cloned() else {
@@ -1055,6 +1057,46 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 KitJob::Forage,
             )
         }
+        WorkPartySource::Extract { x, y, material } => {
+            let tile = bevy::math::UVec2::new(*x, *y);
+            // **The working a forecast starts from** — the live one, else one derived at the
+            // ground's capacity: the construction the assign-time seed reads too.
+            let asked = world
+                .resource::<crate::resources::TileRegistry>()
+                .index(tile.x, tile.y)
+                .and_then(|entity| world.get::<crate::components::Tile>(entity))
+                .and_then(|ground| {
+                    let working = crate::extraction::projected_working(
+                        world.resource::<crate::extraction::DepositRegistry>(),
+                        tile,
+                        material,
+                        ground,
+                        &extraction,
+                    )?;
+                    let weight = world
+                        .resource::<crate::materials_config::MaterialsConfigHandle>()
+                        .get()
+                        .material(material)?
+                        .weight;
+                    Some(Asked::Extract {
+                        working,
+                        ground: ground.clone(),
+                        weight,
+                    })
+                });
+            let Some(asked) = asked else {
+                return query_failure(query_error::UNKNOWN_DEPOSIT);
+            };
+            (
+                asked,
+                crate::components::LaborTarget::Extract {
+                    tile,
+                    material: material.clone(),
+                    floor: ask.floor,
+                },
+                KitJob::Extraction,
+            )
+        }
     };
     // **Named, and never defaulted** — the rule every query on this channel follows.
     let kit = match equipment.resolve_kit_for_job(Some(&ask.kit_id), job) {
@@ -1066,21 +1108,24 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
             return query_failure(query_error::KIT_WRONG_JOB)
         }
     };
-    let extraction = world
-        .get_resource::<crate::extraction_config::ExtractionConfigHandle>()
-        .map(|handle| handle.get());
-    let held = held_rungs(world, extraction.as_deref());
     let pricing = crate::work_party::CaravanPricing::resolve(
         &equipment,
         &kit,
         ask.workers,
         &wear,
-        &allocation.rows_excluding_source(&equipment, &target, held.as_ref()),
+        &allocation.rows_excluding_source(&equipment, &target),
         &labor,
     );
     let source_pos = match &asked {
         Asked::Hunt(herd) => herd.position(),
         Asked::Forage { tile, .. } => *tile,
+        Asked::Extract { working, .. } => working.tile,
+    };
+    // **What one worker's tools add to this working's cut**, at the rung it holds — the pricing's
+    // own crew-weighted rate, the term the turn's forecast steps with.
+    let deposit_gear_per_worker = |working: &crate::extraction::DepositSource| {
+        let rung = working.standing().held;
+        pricing.deposit_gear_per_worker(&equipment, &wear, rung.branch(), &rung.wire_key())
     };
     let walk = crate::work_party::resolve_walk(
         band_pos,
@@ -1120,7 +1165,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 crate::fauna::project_realized_hunt(
                     herd,
                     &fauna,
-                    pricing.hunt_carry,
+                    pricing.haul_carry,
                     &hunters,
                     output_multiplier,
                     ask.workers,
@@ -1148,6 +1193,27 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     crate::fauna::ProjectionStart::BeforeRegrowth,
                 )
             }
+            // **A local working's steady rate** — its own projection at the whole crew. The carry
+            // does cap it, like a hunt's: the crew's haul over the weight
+            // ([`crate::extraction::CrewLift`]).
+            Asked::Extract {
+                working,
+                ground,
+                weight,
+            } => crate::extraction::project_realized_deposit(
+                working,
+                ask.workers,
+                crate::extraction::CrewLift {
+                    tools: deposit_gear_per_worker(working) * ask.workers as f32,
+                    carry: crate::work_party::material_pack(pricing.haul_carry, *weight)
+                        * ask.workers as f32,
+                },
+                ask.floor,
+                ground,
+                &extraction,
+                &ladder,
+                horizon,
+            ),
         };
         return QueryReply::WorkPartyForecast(WorkPartyForecastReply {
             posts_a_party: false,
@@ -1171,7 +1237,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 &party,
                 herd,
                 &fauna,
-                pricing.hunt_carry,
+                pricing.haul_carry,
                 &hunters,
                 output_multiplier,
                 ask.floor,
@@ -1194,6 +1260,21 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 horizon,
             )
         }
+        Asked::Extract {
+            working,
+            ground,
+            weight,
+        } => crate::work_party::forecast_extract_caravan(
+            &party,
+            working,
+            ground,
+            &extraction,
+            &ladder,
+            crate::work_party::material_pack(pricing.haul_carry, *weight),
+            deposit_gear_per_worker(working),
+            ask.floor,
+            horizon,
+        ),
     };
     QueryReply::WorkPartyForecast(WorkPartyForecastReply {
         posts_a_party: true,

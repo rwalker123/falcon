@@ -2788,6 +2788,32 @@ func _build_workings_roster_head(band: Dictionary) -> HBoxContainer:
 ##
 ## **THE NAME JUMPS AND THE REST DROPS**, the road roster's split: a working IS its tile, so the jump
 ## is `alert_focus_requested` on its own coordinates with no entity resolution.
+## **THE ROSTER ROW'S HOVER** — `HudDepositVocab.deposit_roster_tooltip`, then, on a FAR working, the
+## same party block a far forage or hunt row draws on the work board (`HudWorkVocab.party_block_lines`)
+## and what arrives home, in the working's own MATERIAL. There is nothing special about a far wood or
+## quarry: it is the same caravan, read through the same `SourceForecast.party_readout`.
+##
+## **ON THE HOVER RATHER THAN THE ROW** because a roster row is ONE fixed-height line whose value cell
+## states the ground, and the block's height is reserved in the Work zone's own arithmetic
+## (`workings_roster_height`) — a multi-line party block there would move every reservation beside it.
+func _workings_roster_tooltip(band: Dictionary, model: Dictionary, cutters: int) -> String:
+    var deposit: Dictionary = model["deposit"]
+    var tip := HudDepositVocab.deposit_roster_tooltip(deposit, cutters)
+    var tile: Vector2i = model["tile"]
+    var material := String(model["material"])
+    var party := SourceForecast.party_readout(
+        _band_labor.extract_assignment_of(band, tile.x, tile.y, material))
+    if not SourceForecast.party_is_posted(party):
+        return tip
+    var lines: Array[String] = HudWorkVocab.party_block_lines(party,
+        HudDepositVocab.crew_noun(HudDepositVocab.branch_of(deposit)).to_lower(),
+        HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_WORKING)
+    lines.append(HudWorkVocab.WORK_ROW_PARTY_RATE_HOME_FORMAT % [
+        SourceForecast.format_signed(float(party[SourceForecast.ASSIGNMENT_NET_RATE_HOME_KEY])),
+        material])
+    var party_text := "\n".join(PackedStringArray(lines))
+    return party_text if tip == "" else tip + "\n" + party_text
+
 func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var tile: Vector2i = model["tile"]
     var deposit: Dictionary = model["deposit"]
@@ -2824,8 +2850,7 @@ func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     # standing bill, the neglect COUNTDOWN, and what a crew of zero does NOT stop. All of them live on
     # this surface and no other: this is the block whose own head staffs the pool that would stop the
     # slide, and whose own rows carry the control that ends the bill.
-    HudWidgets.set_label_tooltip(value,
-        HudDepositVocab.deposit_roster_tooltip(deposit, cutters))
+    HudWidgets.set_label_tooltip(value, _workings_roster_tooltip(band, model, cutters))
     line.add_child(value)
     # ⛔ **THE DECLARING MARK, AND THE FIRST OF THE ROW'S TWO CONTROLS.** The hands that CUT a working
     # are the tile card's compose sheet and the hands that HOLD it are this block's own head; what a
@@ -6360,38 +6385,15 @@ func _work_row_party_lines_text(model: Dictionary) -> Array[String]:
     var party: Dictionary = model.get("party", {})
     if not SourceForecast.party_is_posted(party):
         return []
-    var lines: Array[String] = []
-    var crew := HudWorkVocab.WORK_ROW_PARTY_CREW_FORMAT % [
-        int(party[SourceForecast.ASSIGNMENT_PARTY_WORKERS_KEY]),
-        # The board's existing crew-noun resolver, never a third one: the plant web has one word and
-        # the animal web forks Hunters/Herders off the standing rung, and both answers are already
-        # spelled by the inspector's own key.
-        _work_inspector_take_key(model).to_lower(),
-        int(party[SourceForecast.ASSIGNMENT_PARTY_X_KEY]),
-        int(party[SourceForecast.ASSIGNMENT_PARTY_Y_KEY]),
-        int(party[SourceForecast.ASSIGNMENT_WALK_TILES_KEY])]
-    # **LIVE, THIS TURN** — and it moves turn to turn, which is the caravan working.
-    var on_road := int(party[SourceForecast.ASSIGNMENT_HUNTERS_ON_THE_ROAD_KEY])
-    if on_road > 0:
-        crew += HudWorkVocab.WORK_ROW_PARTY_ON_ROAD_FORMAT % on_road
-    lines.append(crew)
-    # **THE WALK OUT, WHILE THE WHOLE PARTY IS STILL ON IT.** It names the SOURCE the party walks to,
-    # off the row's own kind.
-    var walking := int(party[SourceForecast.ASSIGNMENT_WALK_OUT_REMAINING_KEY])
-    if walking > 0:
-        var target := HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_HERD \
-            if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
-            else HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_PATCH
-        if walking == HudWorkVocab.WORK_ROW_PARTY_TURNS_SINGULAR:
-            lines.append(HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_ONE_FORMAT % target)
-        else:
-            lines.append(HudWorkVocab.WORK_ROW_PARTY_WALKING_OUT_FORMAT % [target, walking])
-    var next_load := int(party[SourceForecast.ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY])
-    if next_load == HudWorkVocab.WORK_ROW_PARTY_TURNS_SINGULAR:
-        lines.append(HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT)
-    elif next_load > 0:
-        lines.append(HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT % next_load)
-    return lines
+    # The board's existing crew-noun resolver, never a third one: the plant web has one word and the
+    # animal web forks Hunters/Herders off the standing rung, and both answers are already spelled by
+    # the inspector's own key. The walk-out line names the SOURCE the party walks to, off the row's
+    # own kind. The lines themselves are `HudWorkVocab.party_block_lines`, which the workings roster's
+    # far wood and stone rows state too.
+    var target := HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_HERD \
+        if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_HUNT \
+        else HudWorkVocab.WORK_ROW_PARTY_WALK_TARGET_PATCH
+    return HudWorkVocab.party_block_lines(party, _work_inspector_take_key(model).to_lower(), target)
 
 func _work_row_stripe_color(model: Dictionary) -> Color:
     if bool(model.get("warn", false)) or String(model.get("note", "")) != "":

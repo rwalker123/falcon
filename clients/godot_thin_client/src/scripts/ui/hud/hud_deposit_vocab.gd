@@ -1393,9 +1393,15 @@ const BRANCH_EXTRACTION := "extraction"
 
 ## The crew each branch staffs, and the verb its commit button carries. Two tables rather than one
 ## keyed record, the `IMPROVEMENT_*_LABELS` idiom: each answers one question and a caller reads one.
+##
+## The two nouns are named consts as well as table values because `HudComposeVocab.
+## WORK_PARTY_CREW_SINGULAR` keys its singulars by the resolved crew label, and a far working's party
+## section counts foresters and diggers in the same sentence a hunt party counts hunters.
+const FORESTRY_CREW_NOUN := "Foresters"
+const EXTRACTION_CREW_NOUN := "Diggers"
 const BRANCH_CREW_NOUNS := {
-	BRANCH_FORESTRY: "Foresters",
-	BRANCH_EXTRACTION: "Diggers",
+	BRANCH_FORESTRY: FORESTRY_CREW_NOUN,
+	BRANCH_EXTRACTION: EXTRACTION_CREW_NOUN,
 }
 
 const BRANCH_COMMIT_VERBS := {
@@ -1528,25 +1534,26 @@ static func deal_value(entry: Dictionary, deposit: Dictionary, reply: Dictionary
 
 # ---- THE CREW CURVE (`ForecastQuery.KIND_DEPOSIT_CREW_TAKE`, issue #663) ------------------------
 #
-# The sheet's three gear-bearing figures — NEXT TURN, `N of M <kit> available` and the `once felled`
-# deal — are READ off one reply, one row per crew size, at the stepper's crew. None of them is
-# composed here: the sim resolves which of the kit's items serves the held rung, how the band's gear
-# is shared out, and what the reach caps the cut at. The keys are `native/src/bridge/query.rs`'s.
+# The sheet's two gear-bearing figures — NEXT TURN and the `once felled` deal — are READ off one reply,
+# one row per crew size, at the stepper's crew. Neither is composed here: the sim resolves how the
+# band's gear is shared out, what the crew's carry caps the cut at (near and far alike), and what the
+# reach caps it at. The keys are `native/src/bridge/query.rs`'s. The row's `armed_workers` — the whole
+# kits the crew holds — is the same count the committed row publishes as `kitWorkersHolding`, and the
+# sheet's available line reads the band's gear exactly as the hunt's does, so nothing here reads it.
 
 const CURVE_PER_CREW_KEY := "per_crew"
 const CURVE_WORKERS_KEY := "workers"
-## This turn's cut at the held rung, whole crew, capped by the reach at the floor — NEXT TURN.
+## This turn's cut at the working's standing rung, whole crew, capped by the crew's carry and by the
+## reach at the floor — NEXT TURN.
 const CURVE_TAKE_KEY := "take"
-## How many of the crew hold the held rung's tool — the N of `N of M <kit> available`.
-const CURVE_ARMED_WORKERS_KEY := "armed_workers"
 ## The crew's cut once the working stands one rung up — the `once felled` deal.
 const CURVE_NEXT_RUNG_TAKE_KEY := "next_rung_take"
 const CURVE_HELD_RUNG_KEY := "held_rung"
 const CURVE_NEXT_RUNG_KEY := "next_rung"
 ## `""` on `next_rung` — the working stands at the top of its branch.
 const CURVE_NO_NEXT_RUNG := ""
-## `false` past the band's work range, where the turn abandons the row and every take reads `0`.
-const CURVE_IN_RANGE_KEY := "in_range"
+## ⛔ **`in_range` IS NOT READ.** The reply still carries it as a flag, but a far working's rows quote
+## the real take at the source (the crew posts a work party), so no reading on the sheet forks on it.
 
 ## The sim's refusal for ground that holds none of the asked material
 ## (`sim_runtime::commands::query_error::UNKNOWN_DEPOSIT`).
@@ -1559,41 +1566,19 @@ const DEPOSIT_TAKE_PENDING := "Costing what this crew cuts…"
 ## client bug if it ever fires; this one is a real state of the ground (a seam cut out, or a tile the
 ## selection has moved off) and a player can act on it.
 const DEPOSIT_TAKE_UNKNOWN_DEPOSIT := "This ground holds none of that material any more."
-## **THE SIM SAYS THIS BAND IS OUT OF RANGE** (`in_range: false`), so every take is `0` — the turn
-## abandons the row. Said in the range gate's own term, `work range`, and stated only where this
-## sheet's own measurement has not already mounted `HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT`.
-const DEPOSIT_TAKE_OUT_OF_RANGE := \
-	"Beyond this band's work range — a crew sent here is dropped and cuts nothing."
+
+## **ON A FAR WORKING, WHAT THE CREW CUTS AT THE WORKING** — the crew curve's take, stated beneath the
+## headline that `DrawerComposeController._with_home_rate` has turned into the rate ARRIVING HOME.
+## Args: `[magnitude, material]`.
+const DEPOSIT_TAKE_AT_SOURCE_FORMAT := "Cut at the working: %s %s a turn"
+## The line's handle, so a harness reads it by identity rather than by face.
+const DEPOSIT_TAKE_AT_SOURCE_META := &"deposit_take_at_source"
 
 ## The row for `crew` off a curve reply, or `{}` where there is none (no reply, crew `0`, a crew past
 ## the rows asked). The rows are workers-indexed exactly as the hunt curve's are, so the one lookup
 ## serves both.
 static func curve_row(reply: Dictionary, crew: int) -> Dictionary:
 	return SourceForecast.hunt_crew_take_row(reply.get(CURVE_PER_CREW_KEY, []), crew)
-
-## Whether the curve says this band can work the ground at all. Absent (no reply) reads `true`: the
-## reply is what states the refusal, and a sheet with no reply states nothing about range.
-static func curve_in_range(reply: Dictionary) -> bool:
-	return bool(reply.get(CURVE_IN_RANGE_KEY, true))
-
-## Whether an ANSWERED reply says the band cannot work the ground. `false` for no reply at all — a
-## sheet waiting on its answer states nothing about range.
-static func curve_says_out_of_range(reply: Dictionary) -> bool:
-	return not reply.is_empty() and not curve_in_range(reply)
-
-## **THE CURVE ROW AS THE KIT ROW'S COVERAGE PAIR** — `{kit_id, workers, kit_workers_holding}`, the
-## shape `KitRoster.shortfall_line`'s committed arm reads, so the available line is worded by the one
-## `shortfall_sentence` every sheet uses and follows its rules (silent when covered, silent for `none`).
-## `{}` — silence — where there is no row to read.
-static func curve_coverage_row(row: Dictionary, kit_id: String) -> Dictionary:
-	if row.is_empty():
-		return {}
-	return {
-		KitRoster.ROW_KIT_ID_KEY: kit_id,
-		KitRoster.ROW_WORKERS_KEY: int(row.get(CURVE_WORKERS_KEY, 0)),
-		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: float(row.get(CURVE_ARMED_WORKERS_KEY,
-			0.0)),
-	}
 
 ## The line a FAILED curve states — the unknown-deposit refusal in words, every other token on the
 ## shared failure format.
@@ -1640,12 +1625,9 @@ static func curve_useful_cutters(reply: Dictionary) -> int:
 	return CUTTERS_UNCAPPED if useful >= rows else useful
 
 ## Set on a chart model when the sheet has no curve to draw a crew's draw from — the reply is in
-## flight, refused, or says the band is out of range. Every reading that projects what the crew takes
+## flight or refused. Every reading that projects what the crew takes
 ## (the walk, the two crew pills, the verdict) is withheld, never replaced by the bare rate.
 const CHART_DRAW_WITHHELD_KEY := "draw_withheld"
-## …and set beside it when the reason is the band's range, which additionally withholds every reading
-## that ADVISES about a draw at all (the teaching line, the finite verdict and runway).
-const CHART_OUT_OF_RANGE_KEY := "out_of_range"
 
 ## ⛔ **THE CHART'S CREW-DRAW READINGS, RECOMPOSED OFF THE CREW CURVE** (issue #663). `floor_chart_model`
 ## walks the stock down at `perWorkerBiomass × crew`, which is the bare rate — a crew with sleds and
@@ -1674,10 +1656,8 @@ static func curve_chart_model(model: Dictionary, deposit: Dictionary, crew: int,
 	var out := model.duplicate()
 	var reply: Dictionary = view.get("answer", {})
 	var ready := String(view.get("state", ForecastQuery.STATE_PENDING)) == ForecastQuery.STATE_READY
-	var out_of_range := ready and not curve_in_range(reply)
-	if not ready or out_of_range:
+	if not ready:
 		out[CHART_DRAW_WITHHELD_KEY] = true
-		out[CHART_OUT_OF_RANGE_KEY] = out_of_range
 		out["series"] = PackedFloat32Array()
 		out["reached_turn"] = SourceForecast.PROJECTION_REACHED_NONE
 		out["verdict"] = {}

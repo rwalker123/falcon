@@ -282,5 +282,11 @@ fn deposit_row(
         default_kit_id: crate::extraction::working_default_kit(equipment, source)
             .id()
             .to_string(),
+        // **THE KITS THE PICKER OFFERS** — the roster's take kits for this working's branch, off
+        // the same derivation the default is chosen among.
+        offered_kit_ids: crate::extraction::working_offered_kits(equipment, source)
+            .iter()
+            .map(|kit| kit.id().to_string())
+            .collect(),
     }
 }

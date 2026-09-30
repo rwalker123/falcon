@@ -1263,9 +1263,11 @@ func update_food_modules(modules_variant: Variant) -> void:
 ## axis and published `""` — and EXPEDITION joined it with the ranging kit, which is what a
 ## provisioned party gathers and hunts on (`KitRoster.JOB_EXPEDITION`).
 func update_kit_roster(kits_variant: Variant, default_hunt: Variant, default_forage: Variant,
-        default_scout: Variant, default_warrior: Variant, default_expedition: Variant) -> void:
+        default_scout: Variant, default_warrior: Variant, default_expedition: Variant,
+        default_extract: Variant = KitRoster.NO_KIT_ID) -> void:
     _band_labor.set_kit_roster(kits_variant, String(default_hunt), String(default_forage),
-        String(default_scout), String(default_warrior), String(default_expedition))
+        String(default_scout), String(default_warrior), String(default_expedition),
+        String(default_extract))
 
 ## The world's CRAFTING CATALOGUES (`docs/plan_crafting_and_materials.md` §7) — the materials, the
 ## shared rating vocabulary, the recipe book and each faction's craft knowledge. Forwarded by `Main`
@@ -1572,8 +1574,14 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         # through the absent-token door. `default_kit_for` answers the job default for every other
         # role and for a herd the snapshot does not carry.
         "kit_id": kit_id,
+        #
+        # **AND THE WORKING'S OWN DEFAULT ON AN `extract` ROW, for the identical reason** (issue #663):
+        # an absent token means the working's derived kit to the sim, so the token is omitted only
+        # where the pick IS that kit. The job's `defaultExtractKitId` is the fallback behind a
+        # working that states none, exactly as the job's hunt default stands behind a herd.
         "default_kit_id": KitRoster.default_kit_for(kind,
-            _band_labor.find_world_herd(herd_id), _band_labor.default_kit_id(kind)),
+            _band_labor.find_deposit(x, y, material) if kind == HudConst.LABOR_KIND_EXTRACT
+                else _band_labor.find_world_herd(herd_id), _band_labor.default_kit_id(kind)),
         # **THE ROLLBACK HANDLE, AND IT IS NOT A COMMAND TOKEN.** The optimistic write above has
         # already happened and the send's OUTCOME is only known in `Main`, so the failure path has to be able to
         # name the entry it must undo — and every reader of the overlay looks a band up by the

@@ -2060,6 +2060,7 @@ mod tests {
                     "metal": {
                         "craft": "smithing",
                         "characteristics": ["hardness", "working_temp"],
+                        "weight": 4.0,
                         "varieties": {
                             "bronze": { "hardness": 0.55, "working_temp": 0.30 },
                             "copper": { "hardness": 0.25, "working_temp": 0.20 },

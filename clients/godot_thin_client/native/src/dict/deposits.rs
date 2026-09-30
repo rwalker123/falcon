@@ -239,11 +239,22 @@ pub(crate) fn deposits_to_array(
             "regrowth_samples",
             &crate::dict::subsistence::regrowth_samples_packed(deposit.regrowthSamples()),
         );
-        // **THE TAKE KIT THIS WORKING'S OWN MATERIAL WANTS** (issue #663) — `woodcutting` on wood,
-        // `stonework` on stone, whatever rung it stands on. It is what an `assign_labor extract` with
-        // no `kit` token resolves to server-side, so the compose sheet opens on it and marks it
-        // `(default)`; `default_kits.extract` is the bare `none` and would be the wrong answer here.
+        // **THE TAKE KIT THE RUNG THIS WORKING HOLDS WANTS** (issue #663) — `sledding` on a deadfall or
+        // gathering, `woodcutting` on felling and coppice, `stonework` on a quarry. It is what an
+        // `assign_labor extract` with no `kit` token resolves to server-side, so the compose sheet
+        // opens on it and marks it `(default)`; `default_kits.extract` is the bare `none` and would be
+        // the wrong answer here.
         let _ = dict.insert("default_kit_id", deposit.defaultKitId().unwrap_or_default());
+        // **THE KITS THIS WORKING OFFERS**, in roster order — `["sledding", "woodcutting"]` on wood,
+        // `["sledding", "stonework"]` on stone. The itemless `none` is never listed: the picker offers
+        // it beside these as the job's fallback.
+        let _ = dict.insert(
+            "offered_kit_ids",
+            &deposit
+                .offeredKitIds()
+                .map(crate::dict::string_vector_to_packed)
+                .unwrap_or_default(),
+        );
         array.push(&dict.to_variant());
     }
     array

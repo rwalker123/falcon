@@ -97,21 +97,27 @@ pub(crate) const QUERY_KIND_DENIAL_RAID: &str = "denial_raid_forecast";
 /// rows.
 pub(crate) const QUERY_KIND_HUNT_CREW_TAKE: &str = "hunt_crew_take";
 /// **The work party's question** — *"what does this crew bring HOME per turn off this source, and how
-/// far does it walk?"* — asked by the ordinary hunt and forage compose sheets past the band's apron
-/// (`core_sim::forecast_query::answer_work_party_forecast`). One kind for both webs; the ask's
-/// `source_kind` says which, and the answer comes back under this same kind.
+/// far does it walk?"* — asked by the ordinary hunt, forage and deposit compose sheets past the
+/// band's apron (`core_sim::forecast_query::answer_work_party_forecast`). One kind for every web; the
+/// ask's `source_kind` says which, and the answer comes back under this same kind.
 pub(crate) const QUERY_KIND_WORK_PARTY: &str = "work_party_forecast";
 /// **The deposit compose sheet's question** (#663) — *"what does a crew of each size, carrying this
-/// kit, cut off this working this turn, how many of them hold the held rung's tool, and what would
+/// kit, cut off this working this turn, how many whole kits does it hold, and what would
 /// they cut once the working stands one rung up?"* One row per crew `1..=max_workers`, so the whole
 /// stepper is answered by one round trip, exactly as the hunt curve is. The working is keyed by its
 /// tile AND its material, because one hex can hold two.
 pub(crate) const QUERY_KIND_DEPOSIT_CREW_TAKE: &str = "deposit_crew_take";
-/// The two values of a work-party ask's `source_kind`, spelled as `ForecastQuery.gd` spells them. An
-/// ask naming neither is REFUSED rather than defaulted to one web: a forecast for the wrong source is
-/// worse than no forecast.
+/// The three values of a work-party ask's `source_kind`, spelled as `ForecastQuery.gd` spells them.
+/// An ask naming none of them is REFUSED rather than defaulted to one web: a forecast for the wrong
+/// source is worse than no forecast.
+///
+/// `extract` is a deposit, keyed by its tile AND its material (one tile can hold wood and stone). A
+/// deposit holding none of that material is refused server-side as `unknown_deposit`, which reaches
+/// the sheet through the ordinary `error` field exactly as `unknown_patch` does — neither token is
+/// special-cased here.
 pub(crate) const WORK_PARTY_SOURCE_HUNT: &str = "hunt";
 pub(crate) const WORK_PARTY_SOURCE_FORAGE: &str = "forage";
+pub(crate) const WORK_PARTY_SOURCE_EXTRACT: &str = "extract";
 /// **The save channel's four asks and its two answer kinds**, spelled as `SaveSlots.gd` spells them.
 ///
 /// `list_saves` is a genuine `QueryPayload`; the other three are `CommandPayload`s that *answer on
@@ -273,6 +279,11 @@ pub(crate) fn dispatch(
                     x: dict_u32(ask, "x"),
                     y: dict_u32(ask, "y"),
                     take_species: dict_string_array(ask, "take_species"),
+                },
+                WORK_PARTY_SOURCE_EXTRACT => WorkPartySource::Extract {
+                    x: dict_u32(ask, "x"),
+                    y: dict_u32(ask, "y"),
+                    material: dict_string(ask, "material"),
                 },
                 other => return Err(format!("unknown work-party source kind {other:?}")),
             };
@@ -724,9 +735,10 @@ fn crew_row_to_dict(row: &sim_runtime::HuntCrewTakeRow) -> VarDictionary {
 }
 
 /// One crew size on the deposit sheet — **whole-crew figures, never per-worker rates**. `take` is this
-/// turn's cut at the held rung (capped by the reach at the floor); `armed_workers` is how many of the
-/// crew hold the tool the held rung uses, fractional because the band-wide settlement divides a tier
-/// proportionally; `next_rung_take` is the cut once the working stands one rung up, before the reach.
+/// turn's cut at the working's standing rung (capped by the crew's carry and by the reach at the
+/// floor); `armed_workers` is how many of the crew hold the WHOLE kit — the scarcest of its items, the
+/// same count a committed row publishes as `kitWorkersHolding` — fractional because the band-wide
+/// settlement divides a tier proportionally; `next_rung_take` is the cut once the working stands one rung up, before the reach.
 fn deposit_crew_row_to_dict(row: &sim_runtime::DepositCrewTakeRow) -> VarDictionary {
     let mut dict = VarDictionary::new();
     let _ = dict.insert("workers", i64::from(row.workers));

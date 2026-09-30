@@ -20024,6 +20024,88 @@ func _worn_workings_band_fixture() -> Dictionary:
 		row[HudDepositVocab.ASSIGNMENT_USEFUL_CUTTERS_KEY] = _worn_workings_cap(material)
 	return band
 
+## ⛔ **A FAR WORKING REPORTS ITS WORK PARTY, IN ITS OWN MATERIAL — the far forage row's block, one
+## web over.** A wood or quarry past the band's work range posts the same caravan a far patch does,
+## and its `extract` row publishes the same party keys; `netRateHome` there is MATERIAL units. The
+## workings roster is where an extract row lives (the work board admits forage and hunt alone), and
+## its one-line row carries the party on its HOVER through `HudWorkVocab.party_block_lines` — the
+## work board's own composer — plus the rate home, labelled in the working's material.
+##
+## **THE PAIR IS THE CLAIM**: the far row's hover carries the block and a `stone` rate with no food
+## word anywhere, while the NEAR row beside it (no party) carries none of it. Either half alone
+## passes on a hover that always, or never, prints a party.
+const FAR_WORKING_PARTY_WORKERS := 3
+const FAR_WORKING_WALK_TILES := 5
+const FAR_WORKING_ON_ROAD := 1
+const FAR_WORKING_NEXT_LOAD := 2
+const FAR_WORKING_RATE_HOME := 0.9
+
+func _assert_a_far_working_states_its_party() -> void:
+	var band := _workings_band_fixture(WORKINGS_DEMAND)
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) != HudConst.LABOR_KIND_EXTRACT:
+			continue
+		if Vector2i(int(row["target_x"]), int(row["target_y"])) != ROSTER_FAR_TILE:
+			continue
+		row["workers"] = FAR_WORKING_PARTY_WORKERS
+		row["party_workers"] = FAR_WORKING_PARTY_WORKERS
+		row["party_x"] = ROSTER_FAR_TILE.x
+		row["party_y"] = ROSTER_FAR_TILE.y
+		row["walk_tiles"] = FAR_WORKING_WALK_TILES
+		row["walk_out_remaining"] = 0
+		row["hunters_on_the_road"] = FAR_WORKING_ON_ROAD
+		row["next_load_home_in"] = FAR_WORKING_NEXT_LOAD
+		row["net_rate_home"] = FAR_WORKING_RATE_HOME
+	_hud.update_deposits(_workings_rows())
+	_push_bands([band])
+	_hud._bandpanel.rerender()
+	await _settle()
+	var far_key := "%d,%d:%s" % [ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y, WORKINGS_STONE]
+	var far_row: Control = null
+	var near_row: Control = null
+	for row in _workings_rows_drawn():
+		var key := String(row.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META))
+		if key == far_key:
+			far_row = row
+		elif near_row == null:
+			near_row = row
+	_assert_band_panel("precondition: the far working and a near one are both drawn (far %s, near %s)"
+			% [far_row != null, near_row != null],
+		far_row != null and near_row != null)
+	if far_row == null or near_row == null:
+		await _put_the_workings_roster_back()
+		return
+	var hover := _workings_row_tooltip(far_row)
+	var crew_line := HudWorkVocab.WORK_ROW_PARTY_CREW_FORMAT % [FAR_WORKING_PARTY_WORKERS,
+		HudDepositVocab.EXTRACTION_CREW_NOUN.to_lower(), ROSTER_FAR_TILE.x, ROSTER_FAR_TILE.y,
+		FAR_WORKING_WALK_TILES] + HudWorkVocab.WORK_ROW_PARTY_ON_ROAD_FORMAT % FAR_WORKING_ON_ROAD
+	var next_line := HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT % FAR_WORKING_NEXT_LOAD
+	var rate_line := HudWorkVocab.WORK_ROW_PARTY_RATE_HOME_FORMAT % [
+		SourceForecast.format_signed(FAR_WORKING_RATE_HOME), WORKINGS_STONE]
+	print("band_panel_preview: far working hover -> %s" % hover.replace("\n", " | "))
+	_assert_band_panel("a far working's hover states its party's crew line (\"%s\")" % crew_line,
+		hover.contains(crew_line))
+	_assert_band_panel("…and when its next load lands (\"%s\")" % next_line,
+		hover.contains(next_line))
+	_assert_band_panel("…and what arrives home IN STONE (\"%s\")" % rate_line,
+		hover.contains(rate_line))
+	_assert_band_panel("…and never calls that figure food",
+		not hover.to_lower().contains("food"))
+	var near_hover := _workings_row_tooltip(near_row)
+	_assert_band_panel("a working with NO party carries no party block on its hover",
+		not near_hover.contains(HudWorkVocab.WORK_ROW_PARTY_NEXT_LOAD_FORMAT.get_slice("%", 0))
+			and not near_hover.contains("Arriving home"))
+	await _put_the_workings_roster_back()
+
+## The roster's own fixture, back — `_assert_a_working_can_be_put_down`'s restore, so the states after
+## this one run against the board they were written for.
+func _put_the_workings_roster_back() -> void:
+	_hud.update_deposits(_workings_rows())
+	_push_bands([_workings_band_fixture(WORKINGS_DEMAND)])
+	_hud._bandpanel.rerender()
+	await _settle()
+
 ## The workings roster block and its rows, off the live panel.
 func _workings_block() -> Control:
 	return _find_meta_control(_panel, HudWorkVocab.WORKINGS_ROSTER_BLOCK_META)
@@ -20184,6 +20266,7 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	await _assert_the_mark_needs_a_pressable_rung()
 	await _assert_a_working_can_be_put_down()
 	await _assert_a_working_flags_the_crew_that_outgrew_it()
+	await _assert_a_far_working_states_its_party()
 
 	# ---- CASE 2: A BILL WITH NOTHING IN SIGHT ----------------------------------------------------
 	# ⛔ **THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL.** The `deposits` rows are fog-filtered

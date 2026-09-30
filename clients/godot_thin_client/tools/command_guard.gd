@@ -499,7 +499,7 @@ func _drive_assign_labor_kits() -> void:
 		TARGET_X, TARGET_Y, "", SourceForecast.FLOOR_UNNAMED, EXTRACT_MATERIAL,
 		SourceForecast.IMPROVEMENT_NONE, KitRoster.NO_KIT_ID)
 	await _settle()
-	# **…AND WITH THE KIT TOKEN** (issue #663). The roster's `extract` job lists the Woodcutting and
+	# **…AND WITH THE KIT TOKEN** (issue #663). The roster's `extract` job lists the Sled, Woodcutting and
 	# Stone kits, so the deposit sheet mounts a picker and its selection rides the tail as
 	# `kit <id>` after the worker count — the named pair the parser lifts out before the positional
 	# `[floor] <workers>` is read. `none` is the pick because it is the one an omitted token would get

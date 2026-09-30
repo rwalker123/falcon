@@ -2771,6 +2771,16 @@ exactly 5 failures** — the no-ate/deficit claim (it names the line on all thre
 postings' line counts, and the PNG-less forage walk's count; the local row's identity stays green, and
 nothing else in the run moves. Restored: green.
 
+## A far WORKING's party on the roster hover — PNG-less, six claims
+
+`_assert_a_far_working_states_its_party`, called after `_assert_a_working_flags_the_crew_that_outgrew_it`,
+stages the roster fixture's FAR stone working as a posted party (`party_workers` 3, a 5-tile walk, one
+on the road, the next load in 2, `net_rate_home` 0.9) and reads the drawn row's hover: the crew line,
+the next-load line and `Arriving home: +0.90 stone a turn` by equality through `HudWorkVocab`'s own
+formats, no `food` word anywhere, and — the paired negative — a near working with no party carrying no
+block. It puts the roster fixture back with `_put_the_workings_roster_back`, the put-down state's own
+restore, so the CASE 2 / CASE 3 states after it run against the board they were written for.
+
 ## One pick armed at a time, and a hidden sheet does not stay live
 
 Three PNG-less guards run straight after `_assert_denial_click_commits`, each judged on what ONE

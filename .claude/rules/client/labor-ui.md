@@ -8359,10 +8359,11 @@ sheet refused it outright. The work board rendered a far party correctly; no pla
 - **The map's red HUNT-REACH ring is gone too** (`BandOverlayRenderer`, `HUNT_RANGE_OUTLINE*`). It
   drew a second, larger boundary around a selected band and told the player hunting stopped somewhere
   it does not; the green apron ring and the scout ring stay.
-- **Forage patches lost the refusal; the DEPOSIT sheets keep it.** `_mount_work_range_refusal` went in
-  for #650 because a far crew lapsed with no warning; the work party removed that lapse for forage, so
-  a refusal there would forbid the very assignment the caravan exists to make. Extraction still lapses
-  past range, so on a working the refusal is still the kind answer.
+- **No sheet refuses on range.** `_mount_work_range_refusal` went in for #650 because a far crew
+  lapsed with no warning; the work party removed that lapse for forage and then for wood and stone, so
+  the refusal and its `WORK_RANGE_REFUSAL_FORMAT` are gone. A far working mounts this same section,
+  asked with `WORK_PARTY_SOURCE_EXTRACT` and its material (`extraction-workings.md` → "A FAR WORKING IS
+  AN ORDINARY FAR SOURCE").
 
 ### The party section — what distance costs, as a standing assignment
 
@@ -8423,7 +8424,9 @@ line, its eats-everything reasons and its `[text, is_shortfall]` pairs went with
 Ray's rule for the arc is that a near row and a far row show comparable figures — ONE food number per
 source — and this file's is that a compose sheet promises exactly what the committed row will print.
 The committed row prints `netRateHome`, so past the apron `_with_home_rate` substitutes the reply's
-`rate_home` for the FOOD row's value: the number the board row will show the turn after commit.
+`rate_home` for the FOOD row's value: the number the board row will show the turn after commit. **Its
+`account` argument names the row** — `food` here, the working's MATERIAL on a deposit sheet, whose
+`rate_home` is in material units — so one substitution serves every far job.
 
 - **Only the food row moves.** The floor chart, the crew targets, the verdict, the leave-standing
   readings and the other accounts still read the SOURCE — they describe the herd or the patch, and

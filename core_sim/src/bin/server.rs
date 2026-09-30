@@ -3266,9 +3266,10 @@ fn band_allocation_mut(
 /// promises — so there is no jump when the turn lands, and it is overwritten by the resolved take.
 ///
 /// Only the **one source the command touched** is seeded (other sources keep their real actuals), and
-/// only where the resolution path would actually pay: a source the turn would skip (out of the band's
-/// work range / past the hunt leash, an unseeded patch, a vanished herd) keeps its zero row, and a
-/// genuinely barren source seeds `0.0` — `+0.00` stays reachable, and correct, there.
+/// only where the resolution path would actually pay: a source the turn would skip (an unseeded
+/// patch, a vanished herd) keeps its zero row, and a genuinely barren source seeds `0.0` — `+0.00`
+/// stays reachable, and correct, there. A source past the band's work range is not skipped: it posts
+/// a work party, and is seeded by stepping that caravan.
 fn seed_source_yield(
     app: &mut bevy::prelude::App,
     band: Entity,
@@ -3299,13 +3300,6 @@ fn seed_source_yield(
     // `advance_labor_allocation` will divide by next turn.
     let crew_gear = {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-        let extraction = app.world.resource::<ExtractionConfigHandle>().get();
-        // **The held rung of every `extract` working**, so an extract row claims only the items
-        // serving it — the turn's own narrowing (`LaborAssignment::take_kit`).
-        let held = core_sim::extraction::HeldRungs {
-            deposits: app.world.resource::<core_sim::DepositRegistry>(),
-            extraction: &extraction,
-        };
         app.world
             .get::<LaborAllocation>(band)
             .and_then(|allocation| {
@@ -3316,11 +3310,11 @@ fn seed_source_yield(
                     .map(|assignment| {
                         (
                             assignment.kit_choice(&equipment_cfg),
-                            allocation.item_budget(&equipment_cfg, Some(&held)),
+                            allocation.item_budget(&equipment_cfg),
                             // **The rows this one competes with for the band's gear** — what a far
                             // row's caravan forecast is priced beside
                             // (`core_sim::work_party::CaravanPricing`).
-                            allocation.rows_excluding_source(&equipment_cfg, target, Some(&held)),
+                            allocation.rows_excluding_source(&equipment_cfg, target),
                         )
                     })
             })
@@ -3344,12 +3338,6 @@ fn seed_source_yield(
     else {
         return;
     };
-    let grid_width = app.world.resource::<TileRegistry>().width;
-    let wrap_horizontal = app
-        .world
-        .resource::<SimulationConfig>()
-        .map_topology
-        .wrap_horizontal;
     let labor = app.world.resource::<LaborConfigHandle>().get();
     // **The reported band's width** (`combat_config.forecast_range_sigmas`) — a readout lever, not a
     // model term (`docs/plan_hunt_through_combat.md` §6.4). Read on both webs so the one
@@ -3561,7 +3549,7 @@ fn seed_source_yield(
                     &party,
                     herd,
                     &fauna,
-                    pricing.hunt_carry,
+                    pricing.haul_carry,
                     &hunters,
                     output_mult,
                     *floor,
@@ -3589,13 +3577,10 @@ fn seed_source_yield(
             material,
             floor,
         } => {
-            // Out of the band's work range → the turn abandons the row rather than paying it. Keep
-            // the zero row, exactly as the Forage arm does.
-            if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
-                > labor.band_work_range
-            {
-                return;
-            }
+            // ⛔ **PAST THE BAND'S WORK RANGE THE ROW IS A CARAVAN, AND IS SEEDED AS ONE** — the
+            // Forage arm's rule. A far working posts a party now rather than lapsing, so a seed that
+            // declined it would publish nothing for the whole first turn of every far posting.
+            let caravan = caravan_seed_party(app, band, target, *tile, band_pos, workers);
             let Some(tile_entity) = app.world.resource::<TileRegistry>().index(tile.x, tile.y)
             else {
                 return;
@@ -3605,78 +3590,105 @@ fn seed_source_yield(
             };
             let extraction = app.world.resource::<ExtractionConfigHandle>().get();
             let ladder = app.world.resource::<LadderConfigHandle>().get();
-            let capacity =
-                core_sim::extraction::tile_deposit_capacity(&extraction, material, &ground);
-            // Ground that holds none of it opens no working and pays nothing — absence is the
-            // answer, and `validate_labor_policy` has already refused the command in that case.
-            if capacity <= core_sim::NO_DEPOSIT {
-                return;
-            }
-            let Some(branch) = core_sim::extraction::deposit_branch(&extraction, material) else {
+            // **THE WORKING AS THE NEXT TURN WILL FIND IT.** A working nobody has opened is
+            // DERIVED, not seeded — full stock at the tile's capacity, on its branch's free floor —
+            // which is `snapshot::deposits`' own rule and the reason the commonest case of all (a
+            // crew put on fresh ground) has a figure at all. Ground that holds none of it opens no
+            // working and pays nothing — absence is the answer, and `validate_labor_policy` has
+            // already refused the command in that case.
+            let Some(working) = core_sim::extraction::projected_working(
+                app.world.resource::<core_sim::DepositRegistry>(),
+                *tile,
+                material,
+                &ground,
+                &extraction,
+            ) else {
                 return;
             };
-            // **THE WORKING AS THE NEXT TURN WILL FIND IT — REGROW FIRST, THEN TAKE.** The seed is
-            // read between turns, so the live stock is the one *this* turn's take already drew down;
-            // pricing against it quotes a turn the sim has not run (`yield-forecast.md` → "A
-            // FORECAST REGROWS FIRST"). `renew_deposit` is the very seam `advance_deposits` runs in
-            // Logistics, on a clone, so nothing here moves the registry.
-            //
-            // **A working nobody has opened is DERIVED, not seeded** — full stock at the tile's
-            // capacity, on its branch's free floor — which is `snapshot::deposits`' own rule and the
-            // reason the commonest case of all (a crew put on fresh ground) has a figure at all.
-            let mut projected = app
-                .world
-                .resource::<core_sim::DepositRegistry>()
-                .source(*tile, material)
-                .cloned()
-                .unwrap_or_else(|| {
-                    core_sim::extraction::DepositSource::opening(*tile, material, capacity, branch)
-                });
-            core_sim::renew_deposit(&mut projected, &ground, &extraction, &ladder);
-            let payoff = core_sim::extraction::deposit_payoff(projected.standing(), &ladder);
-            // **The take, through the one seam the turn takes** — `min(hands, what the crew is
-            // allowed to reach)`, the reach being the stock above `max(rung floor, this row's
-            // floor)`. So raising the floor lowers the seeded figure by exactly what it will lower
-            // the take by, and a floor at or above the standing stock seeds nothing. The ground's
-            // rate rides along because that `max` only takes the row's floor where the deposit
-            // renews, so a quarry's seeded figure is the one its crew will actually cut.
-            let regrowth_rate =
-                core_sim::extraction::tile_deposit_regrowth(&extraction, material, &ground);
-            // **The crew's take gear, through the seam the turn strikes it at** — this row's own
-            // coverage off its share of the band's gear, at the rung the projected working HOLDS
-            // (`EquipmentConfig::deposit_gear`). A seed priced bare would promise an axe-carrying
-            // crew the bare-handed cut and jump the moment the turn landed.
+            // **THE CREW'S KIT, claimed whole like every job's** — its tools' `deposit_take` apply
+            // on the rungs they name, and its haul carry caps the cut and is a far party's pack.
             let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
             let band_wear = app
                 .world
                 .get::<BandEquipment>(band)
                 .cloned()
                 .unwrap_or_default();
-            // **Narrowed to the tool serving the rung the working holds**, as the turn narrows it.
-            let held_rung = projected.standing().held;
+            let held_rung = working.standing().held;
             let held_key = held_rung.wire_key();
-            let take_kit = equipment_cfg.deposit_rung_kit(&crew_kit, held_rung.branch(), &held_key);
-            let crew_coverage = equipment_cfg.coverage_from_units(
-                &take_kit,
-                workers as f32,
-                &band_wear,
-                item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
-            );
-            let gear = equipment_cfg.deposit_gear(
-                &crew_coverage,
-                &band_wear,
-                held_rung.branch(),
-                Some(&held_key),
-            );
-            let taken = core_sim::extraction::deposit_take(
-                workers,
-                gear.take,
-                projected.stock,
-                capacity,
-                regrowth_rate,
-                &payoff,
-                *floor,
-            );
+            let Some(carry) = core_sim::extraction::DepositCarry::of(
+                &labor,
+                &app.world
+                    .resource::<core_sim::MaterialsConfigHandle>()
+                    .get(),
+                material,
+            ) else {
+                return;
+            };
+            // **REGROW FIRST, THEN TAKE, through the one projection the turn's forecast steps**
+            // (`core_sim::extraction::DepositProjection`). The seed is read between turns, so the
+            // live stock is the one *this* turn's take already drew down; pricing against it quotes
+            // a turn the sim has not run (`yield-forecast.md` → "A FORECAST REGROWS FIRST"). The
+            // take is the turn's own seam — `min(hands + tools, what the crew is allowed to reach)`
+            // above `max(rung floor, this row's floor)` — so raising the floor lowers the seeded
+            // figure by exactly what it will lower the take by.
+            let taken = match caravan {
+                // **A far working is priced by stepping its caravan** — the same function the turn's
+                // published `netRateHome` answers through, at the same pricing — and what it seeds
+                // is what lands home next turn: nothing while the party walks out.
+                Some(party) => {
+                    let pricing = core_sim::work_party::CaravanPricing::resolve(
+                        &equipment_cfg,
+                        &crew_kit,
+                        workers,
+                        &band_wear,
+                        &other_rows,
+                        &labor,
+                    );
+                    core_sim::work_party::forecast_extract_caravan(
+                        &party,
+                        &working,
+                        &ground,
+                        &extraction,
+                        &ladder,
+                        core_sim::work_party::material_pack(pricing.haul_carry, carry.weight),
+                        pricing.deposit_gear_per_worker(
+                            &equipment_cfg,
+                            &band_wear,
+                            held_rung.branch(),
+                            &held_key,
+                        ),
+                        *floor,
+                        labor.yield_average_horizon_turns,
+                    )
+                    .home_by_turn
+                    .first()
+                    .copied()
+                    .unwrap_or(core_sim::work_party::NOTHING_CARRIED)
+                }
+                // **A local working is priced at the whole crew, off this row's own coverage of its
+                // share of the band's gear** — the seam the turn strikes it at: its tools
+                // (`EquipmentConfig::deposit_gear`) and its carry
+                // (`core_sim::extraction::DepositCarry`). A seed priced bare would promise an
+                // axe-carrying crew the bare-handed cut and jump the moment the turn landed.
+                None => {
+                    let crew_coverage = equipment_cfg.coverage_from_units(
+                        &crew_kit,
+                        workers as f32,
+                        &band_wear,
+                        item_budget.share_for(workers as f32, &band_wear, &equipment_cfg),
+                    );
+                    let gear = equipment_cfg.deposit_gear(
+                        &crew_coverage,
+                        &band_wear,
+                        held_rung.branch(),
+                        Some(&held_key),
+                    );
+                    let lift = carry.lift(&equipment_cfg, &crew_coverage, &band_wear, gear.take);
+                    core_sim::extraction::DepositProjection::new(&working)
+                        .step(workers, lift, *floor, &ground, &extraction, &ladder)
+                        .unwrap_or(core_sim::extraction::DEPOSIT_EMPTY)
+                }
+            };
             core_sim::SourceYield {
                 // **EMPTY IS "NO ROW", NEVER A ZERO ENTRY** — `SourceYield::materials`' own rule: a
                 // crew that will take nothing next turn publishes no material line rather than one
@@ -5199,9 +5211,9 @@ fn handle_assign_labor(
 }
 
 /// Order a band to travel toward a target tile at `band_move_tiles_per_turn`/turn (Early-Game
-/// Labor). In-range sources update as the band moves; a Forage assignment the move carries out of
-/// `band_work_range` is abandoned that same turn (workers back to the pool, feed entry naming the
-/// tile). Text form: `move_band <faction> <band> <x> <y>`.
+/// Labor). In-range sources update as the band moves; a source the move carries out of
+/// `band_work_range` posts a work party on the next turn rather than lapsing
+/// (`.claude/rules/core_sim/work-party.md`). Text form: `move_band <faction> <band> <x> <y>`.
 fn handle_move_band(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -23292,10 +23304,12 @@ mod tests {
     }
 
     /// **A NO-KIT `extract` ROW IS SENT WITH THE KIT THE WIRE PUBLISHES AS THAT WORKING'S DEFAULT**
-    /// (#663). Rolling hills carry timber and rock on one hex, so one fixture asks both branches: the
-    /// wood row stores `felling`, the stone row `quarrying`, and each equals the `defaultKitId` its
-    /// own `DepositState` row publishes — the kit the turn arms and the picker's `(default)` mark are
-    /// one answer, through `extraction::working_default_kit`.
+    /// (#663). Rolling hills carry timber and rock on one hex, so one fixture asks both branches.
+    /// Both workings stand on their free floor (`deadfall`, `gathering`), where the only tool is the
+    /// sled, so both rows store `sledding` — the offered kit fitting the held rung most tightly — and
+    /// each equals the `defaultKitId` its own `DepositState` row publishes: the kit the turn arms and
+    /// the picker's `(default)` mark are one answer, through `extraction::working_default_kit`. Each
+    /// row's `offeredKitIds` is the floor kit beside its own branch's cutting kit.
     #[test]
     fn a_no_kit_extract_row_is_sent_with_the_kit_the_wire_publishes_for_that_working() {
         let mut app = build_test_app();
@@ -23306,8 +23320,8 @@ mod tests {
 
         assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
         assign_extract(&mut app, faction, WORKING, "stone", None, BAND_WORKERS);
-        assert_eq!(stored_extract_kit(&app, band, "wood"), "woodcutting");
-        assert_eq!(stored_extract_kit(&app, band, "stone"), "stonework");
+        assert_eq!(stored_extract_kit(&app, band, "wood"), "sledding");
+        assert_eq!(stored_extract_kit(&app, band, "stone"), "sledding");
 
         capture_deposit_grid(&mut app);
         let snapshot = app
@@ -23328,6 +23342,16 @@ mod tests {
                 stored_extract_kit(&app, band, material),
                 "{material}: the published default is the kit the row was sent with"
             );
+            let branch_kit = if material == "wood" {
+                "woodcutting"
+            } else {
+                "stonework"
+            };
+            assert_eq!(
+                row.offered_kit_ids,
+                vec!["sledding".to_string(), branch_kit.to_string()],
+                "{material}: the working offers the floor kit and its own branch's cutting kit"
+            );
         }
     }
 
@@ -23346,17 +23370,19 @@ mod tests {
             .expect("the extract row is published")
     }
 
-    /// **`kitWorkersHolding` COUNTS THE TOOL SERVING THE RUNG THE WORKING HOLDS** (#663) — the
-    /// Woodcutting kit is a sled on deadfall and an axe on felling, and a complete-kit count over both
-    /// would be the min of the two. Three arms, all on the same five-crew wood row:
+    /// **`kitWorkersHolding` IS THE WHOLE KIT'S COUNT, ON EVERY RUNG, LIKE EVERY JOB'S** — the
+    /// Woodcutting kit is a sled and an axe, and a crew is outfitted with it exactly as far as the
+    /// scarcer of the two reaches, whatever rung its working holds. Every arm NAMES the kit, since a
+    /// no-kit row's default follows the held rung (`sledding` on deadfall) and this test is about one
+    /// kit's count across rungs. Arms on the same five-crew wood row:
     ///
-    /// - **deadfall, two sleds and no axes** → 2 of 5: the sleds are the whole kit there;
-    /// - **felling, three axes and no sleds** → 3 of 5: the axes are, and the missing sleds do not
-    ///   zero it;
-    /// - **felling, three axes and five sleds** → 3 of 5: the sleds, which serve nothing on felling,
-    ///   do not raise it either.
+    /// - **deadfall, two sleds and no axes** → 0 of 5: no crew holds the whole kit;
+    /// - **felling, three axes and no sleds** → 0 of 5: likewise, the other way round;
+    /// - **felling, three axes and five sleds** → 3 of 5: the axes are the scarcer item;
+    /// - **deadfall, three axes and five sleds** → 3 of 5: the same answer on the floor — the count
+    ///   does not read the rung.
     #[test]
-    fn a_wood_crews_complete_kit_count_is_the_tool_serving_its_held_rung() {
+    fn a_wood_crews_complete_kit_count_is_its_whole_kit_on_every_rung() {
         let arm =
             |felling: bool, sleds: u32, axes: u32| -> sim_schema::state::LaborAssignmentState {
                 let mut app = build_test_app();
@@ -23370,24 +23396,29 @@ mod tests {
                 ledger.stock("sled", sleds, "plain", None);
                 ledger.stock("axe", axes, "flint", None);
                 app.world.entity_mut(band).insert(ledger);
-                assign_extract(&mut app, faction, WORKING, "wood", None, BAND_WORKERS);
+                assign_extract_with_kit(&mut app, "wood", BAND_WORKERS, "woodcutting");
                 published_wood_row(&mut app)
             };
         let deadfall = arm(false, 2, 0);
         assert_eq!(deadfall.kit_id, "woodcutting");
         assert_eq!(
-            deadfall.kit_workers_holding, 2.0,
-            "two sleds outfit two on deadfall"
+            deadfall.kit_workers_holding, 0.0,
+            "sleds without axes are no complete woodcutting kit"
         );
         let felling_bare_of_sleds = arm(true, 0, 3);
         assert_eq!(
-            felling_bare_of_sleds.kit_workers_holding, 3.0,
-            "three axes outfit three fellers, sleds or no sleds"
+            felling_bare_of_sleds.kit_workers_holding, 0.0,
+            "axes without sleds are no complete woodcutting kit either"
         );
         let felling_with_sleds = arm(true, 5, 3);
         assert_eq!(
             felling_with_sleds.kit_workers_holding, 3.0,
-            "sleds serve nothing on felling and add nothing to the count"
+            "three axes and five sleds outfit three"
+        );
+        let deadfall_with_both = arm(false, 5, 3);
+        assert_eq!(
+            deadfall_with_both.kit_workers_holding, felling_with_sleds.kit_workers_holding,
+            "the count is the kit's, not the rung's"
         );
     }
 
@@ -23469,10 +23500,11 @@ mod tests {
     /// arms so the agreement is not a coincidence of one rung or one kit:
     ///
     /// - a seated **felling** wood, Woodcutting kit, two axes and three sleds among four fellers —
-    ///   the axes arm two, the sleds serve nothing there;
-    /// - an **unopened** deadfall wood, Woodcutting kit, two sleds among three — the sled is the
-    ///   floor's tool;
-    /// - the felling wood again on **`none`** — the bare cut, nobody armed.
+    ///   the axes lift the cut, and two complete kits (the axes are the scarcer item);
+    /// - an **unopened** deadfall wood, Woodcutting kit, two sleds among three — the sleds lift the
+    ///   floor's cut, and no complete kit (no axes);
+    /// - the felling wood again on **`none`** — the bare cut, and the whole crew counted outfitted
+    ///   (nothing to be short of).
     #[test]
     fn the_deposit_crew_curve_is_what_the_turn_pays() {
         struct Arm {
@@ -23498,7 +23530,7 @@ mod tests {
                 sleds: 2,
                 axes: 0,
                 crew: 3,
-                armed: 2.0,
+                armed: 0.0,
             },
             Arm {
                 felling: true,
@@ -23506,7 +23538,7 @@ mod tests {
                 sleds: 0,
                 axes: 2,
                 crew: 4,
-                armed: 0.0,
+                armed: 4.0,
             },
         ] {
             let mut app = build_test_app();
@@ -23534,7 +23566,7 @@ mod tests {
                 .expect("the curve carries the crew asked about");
             assert_eq!(
                 row.armed_workers, arm.armed,
-                "{}: holders of the held rung's tool",
+                "{}: the crew's whole-kit count",
                 arm.kit
             );
 
@@ -23555,6 +23587,58 @@ mod tests {
                 arm.kit,
                 arm.felling,
                 row.take
+            );
+        }
+    }
+
+    /// ⛔ **THE CURVE'S KIT COUNT AT CREW N IS THE ROW'S `kitWorkersHolding` AFTER COMMITTING N** —
+    /// the sheet's *"N of M kits available"* before the commit and the Work board's count after it
+    /// are one number, counted the one way every job's is (the scarcest of the kit's items). Arms
+    /// spread over both rungs, a shortfall in either item, a covered crew and `none`, and each
+    /// compares the curve's `armed_workers` at the crew committed with the published row's
+    /// `kitWorkersHolding` — never with a literal alone, so the two surfaces are held to each other.
+    ///
+    /// The two `sledding` arms are the floor kit's own sentence: a deadfall crew holding sleds and
+    /// no axes is outfitted with a whole Sled kit as far as its sleds reach — two sleds outfit two of
+    /// three, five sleds outfit all three and no more — where the same sleds make no complete
+    /// Woodcutting kit at all (the second `woodcutting` arm).
+    #[test]
+    fn the_deposit_curves_kit_count_is_the_committed_rows_kit_workers_holding() {
+        // (felling, kit, sleds, axes, crew, expected whole-kit count)
+        for (felling, kit, sleds, axes, crew, expected) in [
+            (true, "woodcutting", 5, 3, 4, 3.0),
+            (false, "woodcutting", 2, 0, 3, 0.0),
+            (false, "woodcutting", 1, 4, 3, 1.0),
+            (true, "woodcutting", 6, 6, 4, 4.0),
+            (true, "none", 2, 2, 4, 4.0),
+            (false, "sledding", 2, 0, 3, 2.0),
+            (false, "sledding", 5, 0, 3, 3.0),
+        ] {
+            let mut app = build_test_app();
+            let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+            if felling {
+                seat_a_felling_working(&mut app, tile);
+            }
+            let mut ledger = BandEquipment::default();
+            ledger.stock("sled", sleds, "plain", None);
+            ledger.stock("axe", axes, "flint", None);
+            deposit_band_holding(&mut app, tile, ledger);
+            let curve = deposit_crew_curve(&mut app, "wood", kit, DEFAULT_ESCAPEMENT_FLOOR, crew);
+            let quoted = curve
+                .per_crew
+                .iter()
+                .find(|row| row.workers == crew)
+                .expect("the curve carries the crew asked about")
+                .armed_workers;
+            assign_extract_with_kit(&mut app, "wood", crew, kit);
+            let committed = published_wood_row(&mut app);
+            assert_eq!(
+                committed.kit_workers_holding, expected,
+                "fixture {kit} felling={felling} sleds={sleds} axes={axes}: the row's count"
+            );
+            assert_eq!(
+                quoted, committed.kit_workers_holding,
+                "{kit} felling={felling}: the sheet's count before the commit is the row's after it"
             );
         }
     }

@@ -1,5 +1,6 @@
-//! **THE WORK PARTY, AS A CARAVAN** — what a Hunt or Forage row becomes once its source drifts past
-//! the distance the band's own hands reach (`docs/plan_civilization_steps.md` §One work party).
+//! **THE WORK PARTY, AS A CARAVAN** — what a Hunt, Forage or Extract row becomes once its source
+//! lies past the distance the band's own hands reach (`docs/plan_civilization_steps.md` §One work
+//! party).
 //!
 //! # A PARTY IS NOT AN ENTITY
 //!
@@ -7,8 +8,16 @@
 //! its own component and no `ResidentBand`; a work party is the opposite by design — *the workers
 //! are still the band's, they are just somewhere else* — so there is no split, no move order, no
 //! follow order and no merge. The sim stands the party **at the source**: a Hunt party is wherever
-//! the herd is this turn, a Forage party stands on its patch. The row that staffed it is the row
-//! that reports it.
+//! the herd is this turn, a Forage party stands on its patch, an Extract party on its deposit. The
+//! row that staffed it is the row that reports it.
+//!
+//! # WHAT GOES HOME IS CARGO, AND A PACK IS MEASURED IN BULK
+//!
+//! The caravan does not know what it carries. **Cargo** is what lands at home — food on the two
+//! food webs, material units on the deposit web — and **bulk** is what a pack is measured in —
+//! biomass on the food webs, material units on the deposit web, where the two are one number. A
+//! deposit's pack is the hunt's own haul carry over the material's weight ([`material_pack`]), so
+//! wood and stone travel by exactly the rule meat does, with no material-specific path anywhere.
 //!
 //! # ⛔ THE LOCAL IDENTITY IS THE WHOLE POINT
 //!
@@ -90,9 +99,10 @@ pub struct Walker {
     pub walk_turns: u32,
     /// Turns since this hunter left the party with the pack.
     pub turns_out: u32,
-    /// The food in the pack — handed to the home band when `turns_out` reaches `walk_turns`, and
+    /// **The cargo in the pack** — what goes home: food on the two food webs, material units on
+    /// the deposit web. Handed to the home band when `turns_out` reaches `walk_turns`, and
     /// [`NOTHING_CARRIED`] on the way back.
-    pub food: f32,
+    pub cargo: f32,
 }
 
 impl Walker {
@@ -109,7 +119,7 @@ impl Walker {
 }
 
 /// **WHERE A BAND'S WORKERS ARE STANDING WHEN THEY ARE NOT STANDING WITH THE BAND** — one per far
-/// Hunt/Forage row, on the row that staffed it.
+/// Hunt/Forage/Extract row, on the row that staffed it.
 ///
 /// The geometry ([`Self::position`], [`Self::walk_tiles`], [`Self::walk_turns`]) and the crew are
 /// **restamped every turn** from the source's live position, which is why a Hunt party follows its
@@ -133,32 +143,35 @@ pub struct WorkParty {
     /// `walk_turns` turns with no take. It is never re-raised — a herd that drifts further out
     /// changes the next porter's walk, not a second walk out.
     pub walk_out_remaining: u32,
-    /// **THE LOAD** — take gathered at the source and not yet carried, in **biomass**, the carry
-    /// unit a pack is measured in.
-    pub load_biomass: f32,
-    /// The food [`Self::load_biomass`] converts to, riding alongside it so a pack carries its own
-    /// share of it home.
-    pub load_food: f32,
+    /// **THE LOAD** — take gathered at the source and not yet carried, in **bulk**: the unit a pack
+    /// is measured in. Biomass on the two food webs; material units on the deposit web.
+    pub load_bulk: f32,
+    /// **The cargo [`Self::load_bulk`] converts to** — what goes home (food, or material units on the
+    /// deposit web, where cargo and bulk are one number), riding alongside it so a pack carries its
+    /// own share of it home.
+    pub load_cargo: f32,
     /// **THE HUNTERS ON THE ROAD** — at most the party, in the order they left.
     pub on_the_road: Vec<Walker>,
-    /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the food home per turn over the forecast
+    /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the cargo home per turn over the forecast
     /// horizon, stepped from this party's state ([`forecast_caravan`]). The number the work row
     /// prints, so a near row and a far row are comparable figures on one board.
     pub net_rate_home: f32,
 }
 
 /// **WHAT THE SOURCE GAVE UP THIS TURN** — the take of the hunters present, in the two units the
-/// caravan reads: food (what goes home) and biomass (what a pack is measured in).
+/// caravan reads: **cargo** (what goes home — food on the two food webs, material units on the
+/// deposit web) and **bulk** (what a pack is measured in — biomass on the food webs, material units
+/// on the deposit web, where the two are one number).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SourceTake {
-    pub food: f32,
-    pub biomass: f32,
+    pub cargo: f32,
+    pub bulk: f32,
 }
 
 /// **The top of a caravan turn** ([`WorkParty::open_turn`]): what walked in, and who is left to work.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TurnOpen {
-    /// Food the walkers handed to the home band this turn.
+    /// Cargo the walkers handed to the home band this turn.
     pub delivered: f32,
     /// **The hunters at the source** — the crew the take is priced at. `0` while the party is still
     /// walking out.
@@ -227,7 +240,7 @@ impl WorkParty {
         for walker in self.on_the_road.iter_mut() {
             walker.turns_out += 1;
             if walker.turns_out == walker.walk_turns {
-                delivered += std::mem::replace(&mut walker.food, NOTHING_CARRIED);
+                delivered += std::mem::replace(&mut walker.cargo, NOTHING_CARRIED);
             }
         }
         self.on_the_road.retain(|walker| !walker.rejoined());
@@ -244,7 +257,7 @@ impl WorkParty {
         }
     }
 
-    /// **STEPS 4 AND 5 OF A CARAVAN TURN** — the take is loaded, then the packs go. Returns the food
+    /// **STEPS 4 AND 5 OF A CARAVAN TURN** — the take is loaded, then the packs go. Returns the cargo
     /// that landed home this turn without being walked (a walk of no length).
     ///
     /// 4. **The whole take goes into the load.** Nothing is eaten out of it at the source: the home
@@ -254,35 +267,35 @@ impl WorkParty {
     ///    pack.** Departures therefore never exceed the hunters present. On a walk of no length the
     ///    pack lands this turn and nobody leaves at all.
     ///
-    /// `pack_biomass` is one hunter's carry, seated by the web's own rule
-    /// ([`crate::fauna::one_pack_biomass`] on the animal web, continuous on the plant web). What one
+    /// `pack_bulk` is one hunter's carry, seated by the web's own rule
+    /// ([`crate::fauna::one_pack_biomass`] on the animal web, continuous on the plant web, the haul
+    /// carry over the material's weight on the deposit web — [`material_pack`]). What one
     /// pack cannot hold stays in the load for the next porter — nobody walks away from it, so
     /// nothing a resident band would waste is wasted here. An unbounded carry takes the whole load.
-    pub fn close_turn(&mut self, take: SourceTake, pack_biomass: f32) -> f32 {
-        // A take worth no food at all (an inedible quarry, a fibre crop) still loads its biomass —
+    pub fn close_turn(&mut self, take: SourceTake, pack_bulk: f32) -> f32 {
+        // A take worth no cargo at all (an inedible quarry, a fibre crop) still loads its bulk —
         // the porters walk it whatever it is worth.
-        self.load_biomass += take.biomass.max(NOTHING_CARRIED);
-        self.load_food += take.food.max(NOTHING_CARRIED);
+        self.load_bulk += take.bulk.max(NOTHING_CARRIED);
+        self.load_cargo += take.cargo.max(NOTHING_CARRIED);
 
         let mut delivered = NOTHING_CARRIED;
         let mut present = self.hunters_present();
-        let loads_a_pack = |load: f32| {
-            load > NOTHING_CARRIED && (!pack_biomass.is_finite() || load >= pack_biomass)
-        };
-        if pack_biomass > NOTHING_CARRIED {
-            while present > NOBODY_ON_THE_ROAD && loads_a_pack(self.load_biomass) {
-                let carried = self.load_biomass.min(pack_biomass);
-                let food = self.load_food * (carried / self.load_biomass);
-                self.load_biomass = (self.load_biomass - carried).max(NOTHING_CARRIED);
-                self.load_food = (self.load_food - food).max(NOTHING_CARRIED);
+        let loads_a_pack =
+            |load: f32| load > NOTHING_CARRIED && (!pack_bulk.is_finite() || load >= pack_bulk);
+        if pack_bulk > NOTHING_CARRIED {
+            while present > NOBODY_ON_THE_ROAD && loads_a_pack(self.load_bulk) {
+                let carried = self.load_bulk.min(pack_bulk);
+                let cargo = self.load_cargo * (carried / self.load_bulk);
+                self.load_bulk = (self.load_bulk - carried).max(NOTHING_CARRIED);
+                self.load_cargo = (self.load_cargo - cargo).max(NOTHING_CARRIED);
                 if self.walk_turns == NO_WALK {
-                    delivered += food;
+                    delivered += cargo;
                     continue;
                 }
                 self.on_the_road.push(Walker {
                     walk_turns: self.walk_turns,
                     turns_out: 0,
-                    food,
+                    cargo,
                 });
                 present -= 1;
             }
@@ -293,10 +306,10 @@ impl WorkParty {
     /// **ONE WHOLE CARAVAN TURN around a take `take` prices at the hunters present** — the forecast's
     /// entry point, and exactly [`Self::open_turn`] → the take → [`Self::close_turn`], which is the
     /// turn's own sequence. Returns everything credited home this turn and whether a load landed.
-    pub fn step(&mut self, pack_biomass: f32, take: impl FnOnce(u32) -> SourceTake) -> (f32, bool) {
+    pub fn step(&mut self, pack_bulk: f32, take: impl FnOnce(u32) -> SourceTake) -> (f32, bool) {
         let open = self.open_turn();
         let taken = take(open.present);
-        let landed_now = self.close_turn(taken, pack_biomass);
+        let landed_now = self.close_turn(taken, pack_bulk);
         let home = open.delivered + landed_now;
         (home, home > NOTHING_CARRIED)
     }
@@ -305,9 +318,9 @@ impl WorkParty {
     /// and the load emptied. What an unassign, an abandon and a row lapsing under its party all
     /// settle into the band: a caravan that ends early must not lose what is on the road.
     pub fn hand_over_everything(&mut self) -> f32 {
-        let on_the_road: f32 = self.on_the_road.iter().map(|walker| walker.food).sum();
-        let load = std::mem::replace(&mut self.load_food, NOTHING_CARRIED);
-        self.load_biomass = NOTHING_CARRIED;
+        let on_the_road: f32 = self.on_the_road.iter().map(|walker| walker.cargo).sum();
+        let load = std::mem::replace(&mut self.load_cargo, NOTHING_CARRIED);
+        self.load_bulk = NOTHING_CARRIED;
         self.on_the_road.clear();
         load + on_the_road
     }
@@ -395,8 +408,11 @@ pub fn resolve_walk(
 /// compose-sheet curves already use, so a committed row and a prospective one are armed alike.
 pub struct CaravanPricing {
     coverage: crate::equipment_config::KitCoverage,
-    /// One hunter's haul at this coverage — the hunt pack's carry and the projection's crew term.
-    pub hunt_carry: f32,
+    /// **One porter's haul at this coverage, in biomass** — the hunt pack's carry and the hunt
+    /// projection's crew term, and the carry a deposit's pack is struck from ([`material_pack`]):
+    /// the bare `labor.hunt.per_worker_biomass_capacity`, or the sled's `hunt_carry` where the kit
+    /// carries one. One carry, whatever is on the porter's back.
+    pub haul_carry: f32,
     /// One gatherer's basket at this coverage — the gather pack and the projection's crew term.
     pub forage_carry: f32,
 }
@@ -419,7 +435,7 @@ impl CaravanPricing {
         );
         let coverage =
             equipment.coverage_from_units(kit, crew, wear, budget.share_for(crew, wear, equipment));
-        let hunt_carry = coverage.weighted_rate(|kit| {
+        let haul_carry = coverage.weighted_rate(|kit| {
             equipment.hunt_per_worker_biomass_capacity(
                 labor.hunt.per_worker_biomass_capacity,
                 kit,
@@ -435,9 +451,23 @@ impl CaravanPricing {
         });
         Self {
             coverage,
-            hunt_carry,
+            haul_carry,
             forage_carry,
         }
+    }
+
+    /// **What one worker's tools add to a deposit take, crew-weighted at this coverage** — the
+    /// `deposit_take` each tool grants on the rungs it names, averaged over the staffed crew exactly
+    /// as the carries are, so a caravan forecast adds `present × this` to the bare cut each turn.
+    pub fn deposit_gear_per_worker(
+        &self,
+        equipment: &crate::equipment_config::EquipmentConfig,
+        wear: &crate::components::BandEquipment,
+        branch: crate::intensification::RungBranch,
+        rung: &str,
+    ) -> f32 {
+        self.coverage
+            .weighted_rate(|kit| equipment.deposit_take_per_worker(kit, wear, branch, Some(rung)))
     }
 
     /// **The hunters as they fight this quarry**, at the resident band's **base** tuning — a party
@@ -475,6 +505,10 @@ impl CaravanPricing {
 /// **Nothing a hunting party brings down is wasted** (`keeps_the_carcass`): what one pack cannot
 /// seat stays in the load for the next porter. A gather's `wasted` is a different fact — stock the
 /// crew could not reach — and stands.
+///
+/// **Food rows only.** Every field written here is a food projection, so a caravan carrying a
+/// material (a far working) writes none of them: its rate home rides [`WorkParty::net_rate_home`]
+/// alone, in the material's own units.
 pub fn publish_caravan_projection(
     row: &mut crate::components::SourceYield,
     forecast: &CaravanForecast,
@@ -505,7 +539,8 @@ pub fn publish_caravan_projection(
 /// **WHAT A CARAVAN DELIVERS, STEPPED FORWARD** — [`forecast_caravan`]'s answer.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CaravanForecast {
-    /// **Food arriving home per turn**, averaged over the turns stepped — the row's `netRateHome`.
+    /// **Cargo arriving home per turn** (food, or material units on the deposit web), averaged over
+    /// the turns stepped — the row's `netRateHome`.
     pub rate_home: f32,
     /// What lands home on each stepped turn, `[0]` being next turn.
     pub home_by_turn: Vec<f32>,
@@ -526,7 +561,7 @@ pub struct CaravanForecast {
 pub fn forecast_caravan(
     start: &WorkParty,
     horizon: u32,
-    pack_biomass: f32,
+    pack_bulk: f32,
     mut take: impl FnMut(u32) -> Option<SourceTake>,
 ) -> CaravanForecast {
     let mut party = start.clone();
@@ -534,7 +569,7 @@ pub fn forecast_caravan(
     let mut on_the_road = 0u32;
     for turn in 1..=horizon {
         let mut spent = false;
-        let (home, load_landed) = party.step(pack_biomass, |present| {
+        let (home, load_landed) = party.step(pack_bulk, |present| {
             take(present).unwrap_or_else(|| {
                 spent = true;
                 SourceTake::default()
@@ -545,7 +580,7 @@ pub fn forecast_caravan(
         if load_landed && forecast.first_load_turn == NO_LOAD_WITHIN_HORIZON {
             forecast.first_load_turn = turn;
         }
-        if spent && party.on_the_road.is_empty() && party.load_biomass <= NOTHING_CARRIED {
+        if spent && party.on_the_road.is_empty() && party.load_bulk <= NOTHING_CARRIED {
             break;
         }
     }
@@ -589,8 +624,66 @@ pub fn forecast_hunt_caravan(
                 crate::fauna::CarcassKept::Whole,
             )
             .map(|turn| SourceTake {
-                food: turn.yields.provisions,
-                biomass: turn.biomass,
+                cargo: turn.yields.provisions,
+                bulk: turn.biomass,
+            })
+    })
+}
+
+/// ⛔ **ONE PORTER'S PACK OF A MATERIAL, IN THE MATERIAL'S OWN UNITS** — the haul carry
+/// ([`CaravanPricing::haul_carry`], biomass) over the material's `weight` (biomass-equivalent mass per
+/// unit, `materials.json`).
+///
+/// **The same carry the hunt uses**, so a sled that drags 40 of meat drags `40 / weight` of timber,
+/// and the whole of what makes stone travel differently from wood is one number on the material.
+/// There is no per-material branch here and there must never be one. `weight` is validated positive
+/// and finite at load.
+pub fn material_pack(haul_carry: f32, weight: f32) -> f32 {
+    haul_carry / weight
+}
+
+/// **A DEPOSIT CARAVAN'S FORECAST** — [`forecast_caravan`] over
+/// [`crate::extraction::DepositProjection`], the step the assign-time seed's first turn and the
+/// local row's steady rate read too, so the three quote one take. Cargo and bulk are both the
+/// material's own units, and the pack is [`material_pack`].
+///
+/// A crew of nobody cuts nothing and the working goes on renewing, so a turn the party is walking
+/// out or wholly on the road reads as a zero take, never as the end of the run — only a working
+/// that will never renew and has nothing left to reach is spent.
+///
+/// **The hands present bring `gear_per_worker × present` of tools and `pack × present` of carry**
+/// ([`crate::extraction::CrewLift`]) — the crew-weighted rates times the hands at the deposit, the
+/// carries' own shape. One pack is one porter's carry, and it is also the most one hand can cut and
+/// carry off in a turn, as a hunter's haul bounds a kill.
+#[allow(clippy::too_many_arguments)] // the take's full context, plus the caravan's own terms
+pub fn forecast_extract_caravan(
+    party: &WorkParty,
+    working: &crate::extraction::DepositSource,
+    ground: &crate::components::Tile,
+    extraction: &crate::extraction_config::ExtractionConfig,
+    ladder: &crate::intensification::LadderConfig,
+    pack: f32,
+    gear_per_worker: f32,
+    floor: f32,
+    horizon: u32,
+) -> CaravanForecast {
+    let mut projection = crate::extraction::DepositProjection::new(working);
+    forecast_caravan(party, horizon, pack, |present| {
+        projection
+            .step(
+                present,
+                crate::extraction::CrewLift {
+                    tools: gear_per_worker * present as f32,
+                    carry: pack * present as f32,
+                },
+                floor,
+                ground,
+                extraction,
+                ladder,
+            )
+            .map(|taken| SourceTake {
+                cargo: taken,
+                bulk: taken,
             })
     })
 }
@@ -644,8 +737,8 @@ pub fn forecast_forage_caravan(
             take_species,
         ) {
             Some(turn) => Some(SourceTake {
-                food: turn.provisions,
-                biomass: turn.biomass,
+                cargo: turn.provisions,
+                bulk: turn.biomass,
             }),
             None if present == NOBODY_ON_THE_ROAD => Some(SourceTake::default()),
             None => None,
@@ -663,8 +756,8 @@ mod tests {
         move |present| {
             let biomass = present as f32 * rate;
             Some(SourceTake {
-                food: biomass,
-                biomass,
+                cargo: biomass,
+                bulk: biomass,
             })
         }
     }
@@ -754,8 +847,8 @@ mod tests {
         party.open_turn();
         party.close_turn(
             SourceTake {
-                food: 100.0,
-                biomass: 100.0,
+                cargo: 100.0,
+                bulk: 100.0,
             },
             5.0,
         );
@@ -766,9 +859,9 @@ mod tests {
         );
         assert_eq!(party.hunters_present(), 0);
         assert!(
-            (party.load_biomass - 85.0).abs() < 1e-3,
+            (party.load_bulk - 85.0).abs() < 1e-3,
             "the packs nobody could carry stay in the load: {}",
-            party.load_biomass
+            party.load_bulk
         );
     }
 
@@ -781,8 +874,8 @@ mod tests {
         party.open_turn();
         party.close_turn(
             SourceTake {
-                food: 25.0,
-                biomass: 25.0,
+                cargo: 25.0,
+                bulk: 25.0,
             },
             10.0,
         );
@@ -793,7 +886,7 @@ mod tests {
         );
         assert_eq!(party.hand_over_everything(), 25.0);
         assert_eq!(party.hunters_on_the_road(), NOBODY_ON_THE_ROAD);
-        assert_eq!(party.load_food, NOTHING_CARRIED);
+        assert_eq!(party.load_cargo, NOTHING_CARRIED);
     }
 
     /// A walk of no length — a road covering the run — lands every pack the turn it fills and never
@@ -806,8 +899,8 @@ mod tests {
         assert_eq!(open.present, 2, "nobody walks out on a walk of no length");
         let close = party.close_turn(
             SourceTake {
-                food: 30.0,
-                biomass: 30.0,
+                cargo: 30.0,
+                bulk: 30.0,
             },
             10.0,
         );
@@ -832,8 +925,8 @@ mod tests {
         party.open_turn();
         party.close_turn(
             SourceTake {
-                food: body,
-                biomass: body,
+                cargo: body,
+                bulk: body,
             },
             pack,
         );
@@ -847,12 +940,12 @@ mod tests {
             home += party.step(pack, |_| SourceTake::default()).0;
         }
         assert!(
-            (home + party.load_food - body).abs() < 1e-2,
+            (home + party.load_cargo - body).abs() < 1e-2,
             "every part of the carcass is home or still in the load: {home} + {}",
-            party.load_food
+            party.load_cargo
         );
         assert!(
-            party.load_food > 0.0,
+            party.load_cargo > 0.0,
             "the part no pack could take is still there, not wasted"
         );
     }
@@ -923,8 +1016,8 @@ mod tests {
         party.open_turn();
         party.close_turn(
             SourceTake {
-                food: 5.0,
-                biomass: 5.0,
+                cargo: 5.0,
+                bulk: 5.0,
             },
             5.0,
         );

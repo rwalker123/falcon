@@ -131,6 +131,13 @@ pub struct MaterialDef {
     /// *"this material is not named further"*.
     #[serde(default)]
     pub varieties: BTreeMap<String, VarietyReadings>,
+    /// **WHAT ONE UNIT WEIGHS ON A PORTER'S BACK**, in biomass-equivalent mass — the unit a hunter's
+    /// carry is measured in. **Required**, and validated positive and finite.
+    ///
+    /// It is the one term that lets a far deposit's work party carry home on the hunt's own carry
+    /// (`crate::work_party::material_pack`): one pack is `haul carry / weight` units, whatever the
+    /// material, so no code path anywhere knows wood from stone.
+    pub weight: f32,
 }
 
 impl MaterialDef {
@@ -407,6 +414,15 @@ impl MaterialsConfig {
                         ),
                     });
                 }
+            }
+            // **A weight of nothing is a pack of infinitely many units, and a negative one a pack
+            // of none** — neither is a material a porter can carry.
+            if !def.weight.is_finite() || def.weight <= 0.0 {
+                return Err(MaterialsConfigError::Invalid {
+                    field: format!("materials.{id}.weight"),
+                    constraint: "be finite and positive".to_string(),
+                    value: def.weight.to_string(),
+                });
             }
             self.validate_hand_working(id, def)?;
             self.validate_varieties(id, def)?;
@@ -976,6 +992,7 @@ mod tests {
                 "metal": {
                     "craft": "smithing",
                     "characteristics": ["hardness", "working_temp"],
+                    "weight": 4.0,
                     "varieties": {
                         "bronze": { "hardness": 0.55, "working_temp": 0.30 },
                         "copper": { "hardness": 0.25, "working_temp": 0.20 },
@@ -1078,6 +1095,19 @@ mod tests {
             matches!(&err, MaterialsConfigError::Invalid { field, .. } if field == "materials.fibre.hand_working.rate"),
             "got {err}"
         );
+    }
+
+    /// **A weight a porter cannot carry is refused** — zero (a pack of infinitely many units) and a
+    /// negative one (a pack of none) alike.
+    #[test]
+    fn validate_rejects_a_weight_that_is_not_positive_and_finite() {
+        for bad in [0.0, -1.0] {
+            let err = mutated(|json| json["materials"][HIDE]["weight"] = serde_json::json!(bad));
+            assert!(
+                matches!(&err, MaterialsConfigError::Invalid { field, .. } if field == "materials.hide.weight"),
+                "weight {bad}: got {err}"
+            );
+        }
     }
 
     #[test]

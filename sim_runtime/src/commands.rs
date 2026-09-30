@@ -713,8 +713,8 @@ pub enum QueryPayload {
 }
 
 /// **THE DEPOSIT COMPOSE SHEET'S QUESTION** (#663) — what a crew of each size, off this band,
-/// carrying this kit, cuts off this working this turn, how many of them hold the held rung's tool,
-/// and what they would cut once the working is raised one rung. Priced as a **prospective row**
+/// carrying this kit, cuts off this working this turn, how many of them hold the whole kit, and what
+/// they would cut once the working is raised one rung. Priced as a **prospective row**
 /// through the turn's own functions, so committing crew `n` with this kit makes the turn pay row
 /// `n`'s [`DepositCrewTakeRow::take`].
 #[derive(Debug, Clone, PartialEq)]
@@ -740,11 +740,14 @@ pub struct DepositCrewTakeQuery {
 pub struct DepositCrewTakeRow {
     /// Echoed so the row is self-describing. Rows ascend from `1`.
     pub workers: u32,
-    /// **This turn's cut at the rung the working holds** — bare rate × crew plus the held rung's
-    /// tool, capped by the reach at the floor, off the stock renewed first. The sheet's NEXT TURN.
+    /// **This turn's cut at the rung the working holds** — bare rate × crew plus what the kit's
+    /// tools add on that rung, capped by the crew's carry over the material's weight and by the
+    /// reach at the floor, off the stock renewed first. The sheet's NEXT TURN.
     pub take: f32,
-    /// **Workers holding the held rung's tool** — the *N* of *"N of `workers` kits available"*. `0`
-    /// when the kit carries no tool for the held rung.
+    /// **Workers holding the WHOLE kit** — the scarcest of the kit's items, out of this crew's share
+    /// of the band's stock: the *N* of *"N of `workers` kits available"*, and exactly the
+    /// `kitWorkersHolding` the row publishes once this crew is committed. The crew's head count for a
+    /// kit carrying nothing (`none`).
     pub armed_workers: f32,
     /// **The crew's cut once the working is raised one rung**, before the reach caps it — the
     /// sheet's *"once felled"* figure. `0` at the top of a branch.
@@ -760,11 +763,14 @@ pub struct DepositCrewTakeReply {
     pub held_rung: String,
     /// The rung above it, `""` at the top of the branch.
     pub next_rung: String,
-    /// `false` past the band's work range, where the turn abandons the row: every take reads `0`.
+    /// `true` inside the band's work range, `false` past it — a plain fact that zeroes nothing. A
+    /// far working posts a work party and is cut at the source like any other, so every take above
+    /// is the cut at the deposit; what reaches home is the work-party query's answer.
     pub in_range: bool,
 }
 
-/// **WHICH SOURCE A WORK-PARTY QUESTION IS ABOUT** — a herd or a patch, the two webs a party works.
+/// **WHICH SOURCE A WORK-PARTY QUESTION IS ABOUT** — a herd, a patch or a deposit, the three webs a
+/// party works.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorkPartySource {
     Hunt {
@@ -776,6 +782,14 @@ pub enum WorkPartySource {
         /// `flora_config.json` species keys the crew carries home. **Empty takes the whole
         /// basket**, exactly as an assignment's own take selection does.
         take_species: Vec<String>,
+    },
+    /// A deposit — the `extract` row's source. `material` is an `extraction.json` deposit id
+    /// (`wood`, `stone`); ground holding none of it is refused as
+    /// [`query_error::UNKNOWN_DEPOSIT`]. The reply's `rate_home` is in that material's own units.
+    Extract {
+        x: u32,
+        y: u32,
+        material: String,
     },
 }
 
@@ -804,8 +818,8 @@ pub struct WorkPartyForecastReply {
     /// `false` inside the band's work range: no party, no walk, and `rate_home` is the ordinary
     /// local row's steady rate. Every walk field reads `0` with it.
     pub posts_a_party: bool,
-    /// **Food per turn arriving at the home band** — what the assigned row will publish as
-    /// `netRateHome`.
+    /// **Cargo per turn arriving at the home band** — food off a herd or a patch, the material's own
+    /// units off a deposit — what the assigned row will publish as `netRateHome`.
     pub rate_home: f32,
     /// The one-way walk in tiles, from the apron and shortened by any road.
     pub walk_tiles: u32,
@@ -1087,7 +1101,8 @@ pub mod query_error {
     pub const UNKNOWN_HERD: &str = "unknown_herd";
     /// A work-party question named a tile carrying no forage patch.
     pub const UNKNOWN_PATCH: &str = "unknown_patch";
-    /// A deposit question naming ground that holds none of the material (or a tile off the map).
+    /// A deposit question — the deposit crew-take curve or a work-party forecast on an `Extract`
+    /// source — naming ground that holds none of the material (or a tile off the map).
     pub const UNKNOWN_DEPOSIT: &str = "unknown_deposit";
     /// No band of the queried faction carries the queried `BandId`.
     pub const UNKNOWN_BAND: &str = "unknown_band";
@@ -3270,6 +3285,13 @@ fn work_party_query_to_proto(ask: &WorkPartyForecastQuery) -> pb::WorkPartyForec
                     take_species: take_species.clone(),
                 })
             }
+            WorkPartySource::Extract { x, y, material } => {
+                pb::work_party_forecast_query::Source::Extract(pb::WorkPartyExtractSource {
+                    x: *x,
+                    y: *y,
+                    material: material.clone(),
+                })
+            }
         }),
     }
 }
@@ -3287,6 +3309,11 @@ fn work_party_query_from_proto(
             x: forage.x,
             y: forage.y,
             take_species: forage.take_species,
+        },
+        pb::work_party_forecast_query::Source::Extract(extract) => WorkPartySource::Extract {
+            x: extract.x,
+            y: extract.y,
+            material: extract.material,
         },
     };
     Ok(WorkPartyForecastQuery {
@@ -3339,6 +3366,11 @@ mod tests {
                 x: 17,
                 y: 23,
                 take_species: vec!["wild_emmer".to_string(), "hazel".to_string()],
+            },
+            WorkPartySource::Extract {
+                x: 29,
+                y: 31,
+                material: "stone".to_string(),
             },
         ] {
             let payload = CommandPayload::Query {

@@ -169,10 +169,13 @@ of nobody is not a band, so `min_founding_workers ≥ 1` is validated.
 > (`split_loadout::re_sending_the_published_allocation_untouched_changes_nothing`).
 >
 > **The rule is proportional, floored, remainder unspent** — `clamped_kit_defaults`' rule, applied to a
-> different budget. Two clamps, because `sled` is used by **both** `big_game` and `trapping` and so no
-> kit's count can be resolved on its own: each kit's own ceiling is the minimum share across the items
-> it uses, and where two kits' combined demand for an item exceeds that item's share they are both
-> scaled by `budget ÷ demand` and floored. Not first-come, for the reason `clamped_kit_defaults` states:
+> different budget. Two clamps, because `sled` is used by **several** kits — `big_game`, `trapping`
+> and the three `extract` kits, `sledding` among them — and so no kit's count can be resolved on its
+> own: each kit's own ceiling is the minimum share across the items it uses, and where the kits'
+> combined demand for an item exceeds that item's share they are all scaled by `budget ÷ demand` and
+> floored. **So a small share can move no hunting kit at all**: a parent holding eight sleds and four
+> spears gives a six-of-16.5 splinter two sleds' worth of share, which `big_game`, `trapping` and
+> `sledding` all want, and the scaled floor lands the one sled on `sledding`. Not first-come, for the reason `clamped_kit_defaults` states:
 > the roster has no author's order to consume in, so "declaration order" is really *id* order and makes
 > `big_game` beat `trapping` because `b` sorts first.
 >
@@ -247,11 +250,10 @@ a band's stores hold `provisions`, `fodder` and material batches and nothing els
 `corralled_at` and a `pen_radius`, so it is fenced land and neither it nor a fraction of it travels;
 and `Herd::owner` is a **`FactionId`**, so both halves of a same-faction split already co-own every
 pen. **What a band loses by walking away is reach, not title** — and since the work party
-(`.claude/rules/core_sim/work-party.md`) it does not even lose the reach: a Hunt or Forage row whose
+(`.claude/rules/core_sim/work-party.md`) it does not even lose the reach: a Hunt, Forage or Extract row whose
 source falls outside the band's work range **posts a party** and goes on working it, paying the
 distance in walking — each pack is carried home by one of the party, and the band feeds it
-through its ordinary consumption. A **deposit** row still lapses outright with
-`reason=out_of_range`.
+through its ordinary consumption.
 
 ## The wire carries the FLOORS, never the verdict
 

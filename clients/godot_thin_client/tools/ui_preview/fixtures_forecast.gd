@@ -163,9 +163,20 @@ const WORK_PARTY_FORECAST_PATCH_KEY := "patch_work_party_forecast"
 
 static func work_party_answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 	var authored := {}
-	if String(ask.get("source_kind", "")) == ForecastQuery.WORK_PARTY_SOURCE_HUNT:
+	var source_kind := String(ask.get("source_kind", ""))
+	if source_kind == ForecastQuery.WORK_PARTY_SOURCE_HUNT:
 		authored = _quarry_for_id(hud, String(ask.get("herd_id", ""))).get(
 			WORK_PARTY_FORECAST_KEY, {})
+	elif source_kind == ForecastQuery.WORK_PARTY_SOURCE_EXTRACT:
+		# **A WORKING AUTHORS ITS REPLY ON ITS OWN `deposits` ROW**, bare-keyed like a herd, and is
+		# found by the `(tile, material)` pair the ask names — one hex holds two workings.
+		var tile_info: Dictionary = hud._selection.tile_info()
+		for working_variant in tile_info.get("deposits", []):
+			var working: Dictionary = working_variant
+			if int(working.get("tile_x", -2)) == int(ask.get("x", -1)) \
+					and int(working.get("tile_y", -2)) == int(ask.get("y", -1)) \
+					and String(working.get("material", "")) == String(ask.get("material", "")):
+				authored = working.get(WORK_PARTY_FORECAST_KEY, {})
 	else:
 		var x := int(ask.get("x", -1))
 		var y := int(ask.get("y", -1))
@@ -185,11 +196,11 @@ static func work_party_answer(hud: Node, request_id: int, ask: Dictionary) -> Di
 ## **THE DEPOSIT CREW CURVE'S STAND-IN** (`ForecastQuery.KIND_DEPOSIT_CREW_TAKE`, issue #663).
 ##
 ## A working that AUTHORS its reply under `DEPOSIT_CREW_TAKE_KEY` is answered with it verbatim — the
-## states that judge the gear lines stage their own curve, since what the sim resolves (which item
-## serves the held rung, how the band's gear is shared) is exactly what a fixture must not compose.
+## states that judge the gear lines stage their own curve, since what the sim resolves (how the
+## band's gear is shared, what the crew's carry caps the cut at) is exactly what a fixture must not compose.
 ##
 ## Every other working is answered with a BARE curve: `min(perWorkerBiomass × w, the room above the
-## floor next turn)`, every hand counted as holding the tool (so no available line), and no next rung
+## floor next turn)`, every hand counted as holding the whole kit, and no next rung
 ## (so no deal row). That is the take a kit that moves nothing would earn, which keeps every earlier
 ## frame's NEXT TURN figure where it was when the sheet composed it itself.
 ##

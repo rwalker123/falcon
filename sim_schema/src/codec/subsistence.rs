@@ -32,6 +32,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
     let default_scout_kit_id = builder.create_string(&snapshot.default_scout_kit_id);
     let default_warrior_kit_id = builder.create_string(&snapshot.default_warrior_kit_id);
     let default_expedition_kit_id = builder.create_string(&snapshot.default_expedition_kit_id);
+    let default_extract_kit_id = builder.create_string(&snapshot.default_extract_kit_id);
     let equipment_config_json = builder.create_string(&snapshot.equipment_config_json);
     // The crafting catalogues — TYPED, not a second `equipmentConfigJson`: that blob has no gameplay
     // consumer, and a gameplay readout gets a field of its own rather than reaching into a string.
@@ -57,6 +58,7 @@ pub(crate) fn serialize_subsistence_section<'a>(
             defaultScoutKitId: Some(default_scout_kit_id),
             defaultWarriorKitId: Some(default_warrior_kit_id),
             defaultExpeditionKitId: Some(default_expedition_kit_id),
+            defaultExtractKitId: Some(default_extract_kit_id),
             // The designer surface's read-only catalogue — the whole TOE config as one JSON string.
             // Workbench-only; see the schema comment.
             equipmentConfigJson: Some(equipment_config_json),
@@ -128,6 +130,10 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
         .default_expedition_kit_id
         .as_ref()
         .map(|id| builder.create_string(id));
+    let default_extract_kit_id = delta
+        .default_extract_kit_id
+        .as_ref()
+        .map(|id| builder.create_string(id));
     let equipment_config_json = delta
         .equipment_config_json
         .as_ref()
@@ -175,6 +181,7 @@ pub(crate) fn serialize_subsistence_section_delta<'a>(
             defaultScoutKitId: default_scout_kit_id,
             defaultWarriorKitId: default_warrior_kit_id,
             defaultExpeditionKitId: default_expedition_kit_id,
+            defaultExtractKitId: default_extract_kit_id,
             equipmentConfigJson: equipment_config_json,
             materials,
             characteristicBands: characteristic_bands,
@@ -1025,6 +1032,9 @@ fn create_ladder_knowledge<'a>(
 
 /// **THE SUBJECT AREAS' DISPLAY ORDER**, once per world and beside the roster above. A per-world
 /// constant, so it is written whole on a snapshot and only when it moved on a delta.
+///
+/// **A plain list of strings** — the shape `ladderAreas` and `DepositState.offeredKitIds` both
+/// write, so it serves both.
 fn create_ladder_areas<'a>(
     builder: &mut FbBuilder<'a>,
     areas: &[String],
@@ -1173,6 +1183,7 @@ fn create_deposits<'a>(
             let build_kit_id = builder.create_string(&deposit.build_kit_id);
             let upkeep_kit_id = builder.create_string(&deposit.upkeep_kit_id);
             let default_kit_id = builder.create_string(&deposit.default_kit_id);
+            let offered_kit_ids = create_ladder_areas(builder, &deposit.offered_kit_ids);
             // **Absent, not empty, where the sim published no curve** — `regrowthSamples`' own rule
             // one table over: an empty vector is *"no curve was sent"* and a client blanks its chart
             // on it, where a quarry's all-zero curve is the live reading *"this does not grow"*.
@@ -1214,6 +1225,7 @@ fn create_deposits<'a>(
                     upkeepKitId: Some(upkeep_kit_id),
                     upkeepKitNamed: deposit.upkeep_kit_named,
                     defaultKitId: Some(default_kit_id),
+                    offeredKitIds: Some(offered_kit_ids),
                 },
             )
         })
@@ -1256,6 +1268,7 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
         upkeep_kit_id: text(deposit.upkeepKitId()),
         upkeep_kit_named: deposit.upkeepKitNamed(),
         default_kit_id: text(deposit.defaultKitId()),
+        offered_kit_ids: decode_strings(deposit.offeredKitIds()),
     }
 }
 
@@ -1309,6 +1322,7 @@ pub(crate) fn decode_subsistence_section(
     snapshot.default_scout_kit_id = text(section.defaultScoutKitId());
     snapshot.default_warrior_kit_id = text(section.defaultWarriorKitId());
     snapshot.default_expedition_kit_id = text(section.defaultExpeditionKitId());
+    snapshot.default_extract_kit_id = text(section.defaultExtractKitId());
     snapshot.equipment_config_json = text(section.equipmentConfigJson());
     snapshot.materials = map_rows(section.materials(), decode_material);
     snapshot.characteristic_bands =
@@ -1343,6 +1357,7 @@ pub(crate) fn decode_subsistence_section_delta(
     delta.default_scout_kit_id = section.defaultScoutKitId().map(str::to_owned);
     delta.default_warrior_kit_id = section.defaultWarriorKitId().map(str::to_owned);
     delta.default_expedition_kit_id = section.defaultExpeditionKitId().map(str::to_owned);
+    delta.default_extract_kit_id = section.defaultExtractKitId().map(str::to_owned);
     delta.equipment_config_json = section.equipmentConfigJson().map(str::to_owned);
     delta.materials = map_rows_if_present(section.materials(), decode_material);
     delta.characteristic_bands =

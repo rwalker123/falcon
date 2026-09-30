@@ -397,6 +397,7 @@ each one's section:
 | `SubsistenceSection.kits:[KitOption]` | `kits` (array of `{id, display_name, jobs, attack, hunt_carry_per_worker_biomass, forage_carry_per_worker_biomass, item_ids, …}`) | `dict/subsistence.rs` → `kits_to_array` |
 | `KitOption.itemIds` | `item_ids` — the kit's `uses` list verbatim, in config order | `dict/subsistence.rs` → `kits_to_array` |
 | `SubsistenceSection.defaultHuntKitId` / `defaultForageKitId` | `default_hunt_kit_id` / `default_forage_kit_id` | `snapshot/mod.rs` + `bridge/decoder.rs` |
+| `SubsistenceSection.defaultExtractKitId` | `default_extract_kit_id` — the deposit crews' default, beside `default_expedition_kit_id`; the roster offers `extract` two kits, so an absent default opens the sheet on roster order | `snapshot/mod.rs` + `bridge/decoder.rs` |
 | `SubsistenceSection.equipmentConfigJson` | `equipment_config_json` — the whole effective `EquipmentConfig`, `serde_json`-serialized | `snapshot/mod.rs` + `bridge/decoder.rs` |
 | `PopulationCohortState.kitId` | `kit_id` on the band dict | `dict/population.rs` |
 | `LaborAssignment.kitId` | `kit_id` on the assignment entry | `dict/population.rs` |

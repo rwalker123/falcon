@@ -992,7 +992,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_kit_roster", [snapshot["kits"],
             snapshot.get("default_hunt_kit_id", ""), snapshot.get("default_forage_kit_id", ""),
             snapshot.get("default_scout_kit_id", ""), snapshot.get("default_warrior_kit_id", ""),
-            snapshot.get("default_expedition_kit_id", "")])
+            snapshot.get("default_expedition_kit_id", ""),
+            snapshot.get("default_extract_kit_id", "")])
     # The CRAFTING CATALOGUES, forwarded as ONE call for the reason the kit roster is: they are one
     # fact, and a recipe book ingested without its materials renders a rail with no craft tracks and
     # costs in materials the panel cannot name. **Gated on `craft_knowledge`, not on `materials`** —
@@ -1396,12 +1397,13 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # **THE KIT RIDES THE TAIL AS A NAMED PAIR** (issue #663), after the worker count, on
             # `_kit_token`'s own omission rule. The grammar lifts `kit <id>` out of the tail before the
             # positional `[floor] <workers>` is read, so it never competes with the optional floor.
-            # The deposit sheet mounts a real picker (the working's own take kit beside `none`),
-            # so a selection with no token to ride would be a choice this line silently dropped. An
-            # ABSENT token means *the working's own derived kit* to the sim; the payload's
-            # `default_kit_id` is the job's `""` (see `HudBandLaborState.default_kit_id`), so every
-            # named selection is sent — `none` included, which is the one pick an omitted token
-            # would get wrong — and pinning the kit the sim would have derived anyway is harmless.
+            # The deposit sheet mounts a real picker (the working's offered kits beside `none`), so a
+            # selection with no token to ride would be a choice this line silently dropped. An ABSENT
+            # token means *the working's own derived kit* to the sim, so the payload's
+            # `default_kit_id` is the WORKING's own `default_kit_id` (`Hud._emit_assign_labor` passes
+            # the deposit row to `KitRoster.default_kit_for`, the hunt's herd-first precedence) — the
+            # token is omitted exactly where the sim would derive the same kit — the one its held rung
+            # wants — and `none` on a working whose default is a real kit rides the line.
             var ex := int(payload.get("x", -1))
             var ey := int(payload.get("y", -1))
             var material := String(payload.get("species", "")).strip_edges().to_lower()

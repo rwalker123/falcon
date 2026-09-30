@@ -3028,21 +3028,29 @@ branch says those things now. `workings_unopened` kept its name and its subject.
 `workings_just_assigned` below, the THREE `workings_floor_*` frames the preset loop emits
 (`SourceForecast.FLOOR_PRESETS`, one frame per preset) with `workings_floor_held` and
 `workings_floor_stripped` beside them, `workings_fresh_runway`, `workings_quarry_reach`,
-`workings_out_of_range`, the pair `workings_tile_crews` / `workings_tile_crews_other_band`, and
+`workings_far_party` / `workings_far_party_stone`, the pair `workings_tile_crews` /
+`workings_tile_crews_other_band`, and
 the take-kit pair `workings_forestry_kit` / `workings_extraction_kit` and the crew-curve pair
-`workings_forestry_kit_curve` / `workings_forestry_kit_out_of_range` last (issue #663).
+`workings_forestry_kit_curve` / `workings_forestry_kit_flagged_out_of_range`, with `workings_deadfall_kit`
+between them, last (issue #663).
 
 **THE TAKE-KIT PAIR PUSHES A ROSTER OF ITS OWN AND HANDS THE PREVIOUS ONE BACK.** The shared
 `BandFx.kit_roster_fixture()` carries no `extract` kit and its `none` does not list the job, so every
-deposit sheet earlier in the walk renders with no kit row; the states build the Woodcutting and Stone
-kits plus an extract-listing `none` locally, which keeps those frames where they were. `_wood_working`
-/ `_stone_working` publish `default_kit_id` (`woodcutting` / `stonework`) as `dict/deposits.rs` does.
+deposit sheet earlier in the walk renders with no kit row; the states build the Sled, Woodcutting and
+Stone kits plus an extract-listing `none` locally, which keeps those frames where they were.
+`_wood_working` / `_stone_working` publish `offered_kit_ids` and a `default_kit_id` derived from their
+rung (`_default_kit_for_rung`, the sim's table), and every fixture that moves a rung moves the default.
 
-- **A wood and a rock on ONE hex are the claim**: each sheet lists EXACTLY its own kit and `No kit`
-  — the roster carries both take kits, so the other branch's being ABSENT is asserted by name beside
-  the count — and marks exactly ONE entry `(default)`, its OWN working's kit. A job-wide default
-  would mark the same entry on both.
-- **The commit's line is asserted for `kit woodcutting`, `kit none` and `kit stonework`** — `none`
+- **`workings_deadfall_kit`** is the floor rung: a deadfall wood offers Sled, Woodcutting and No kit
+  and opens on the Sled kit; a band of three sleds and no axe at crew 3 reads no shortfall there, and
+  `0 of 3 Woodcutting kits available` with the Woodcutting kit picked — the pair, so the silence
+  cannot pass on a line that never renders.
+
+- **A felling wood and a gathering rock on ONE hex are the claim**: each sheet lists EXACTLY the
+  Sled kit, its branch kit and `No kit` — the roster carries both branch kits, so the other branch's
+  being ABSENT is asserted by name beside the count — and marks exactly ONE entry `(default)`: the
+  Woodcutting kit on the wood, the Sled kit on the rock. A job-wide default would mark one entry on both.
+- **The commit's line is asserted for `kit woodcutting`, `kit none` and `kit sledding`** — `none`
   being the one pick an omitted token would get wrong, an absent token meaning the working's derived
   kit.
 - ⛔ **THE ROCK IS OPENED STRAIGHT OVER THE WOOD'S OPEN SHEET, with `woodcutting` composed** — asserted as
@@ -3064,13 +3072,16 @@ the floor)`, every hand armed, no next rung — which is why the earlier working
 NEXT TURN figures and render no deal row. Ground holding no such working is refused
 `unknown_deposit`.
 
-- **`workings_forestry_kit_curve` reads all three gear-bearing figures off the authored row at the
-  stepper's crew** — takes `[2.35, 5.40, 5.40, 6.95]`, armed `[1, 1, 1, 2]`, next-rung takes
-  `[2.55, 5.20, 7.50, 9.85]`, none of which the bare rate (`2.0 × w`) or the catalog deal
-  (`2.0 × w`) lands on. At crew 3: NEXT TURN `5.40` (not `6.00`), `1 of 3 Woodcutting kits
-  available`, `ONCE COPPICED 7.5` (not `6`). The stepper is then moved to 2 and all three are
+- **`workings_forestry_kit_curve` reads the take and the deal off the authored row at the stepper's
+  crew** — takes `[2.35, 5.40, 5.40, 6.95]`, next-rung takes `[2.55, 5.20, 7.50, 9.85]`, none of
+  which the bare rate (`2.0 × w`) or the catalog deal (`2.0 × w`) lands on. At crew 3: NEXT TURN
+  `5.40` (not `6.00`), `ONCE COPPICED 7.5` (not `6`). The stepper is then moved to 2 and both are
   asserted against row 2, which is what says the sheet reads the row AT the stepper rather than one
-  fixed row; `none` is then picked and the available line must be silent.
+  fixed row. **The available line is the band's gear, read as the hunt's is**: the curve band
+  (`_curve_band`) holds one sled and three axes, one WHOLE Woodcutting kit, so it reads `1 of 3` and
+  then `1 of 2`; a band with three sleds and no axe reads `0 of 3` — sleds alone are no kit; `none`
+  is then picked and the line must be silent. The reply's `armed_workers` is authored as the same
+  whole-kit count, since the sim publishes one number for the curve and the committed row.
 - ⛔ **THE CREW-DRAW READINGS ARE ASSERTED AGAINST AN ORACLE, AT CREW 3**
   (`_assert_draw_reads_the_curve`). The chapter walks the stock with `SourceForecast.project_stock` at
   the row's `5.40` and at the bare `6.00`, and the verdict must carry the first walk's lead
@@ -3085,15 +3096,21 @@ NEXT TURN figures and render no deal row. Ground holding no such working is refu
   socket does — and on a CLOSED-then-settled sheet, since an open over an open sheet leaves the
   previous render's `queue_free`d nodes in the tree for the rest of the frame and the claim would
   read those.
-- **`workings_forestry_kit_out_of_range` is `in_range: false` on a band standing ON the working**, so
-  the sheet's own range gate mounts nothing and the sentence on the sheet can only be the curve's
-  (`DEPOSIT_TAKE_OUT_OF_RANGE`); no take, no available line and no deal stand beside it, and the
-  commit is dead. **Nor any verdict, crew pill or teaching line** — asserted in one claim over the
-  verdict text, both pills' `CREW_TARGET_ABSENT` and an empty teaching line.
+- **`workings_forestry_kit_flagged_out_of_range` is `in_range: false` on the same authored rows**, and
+  the claim is that the flag HIDES NOTHING: the curve row at the stepper's crew is still on the sheet,
+  the take equals the in-range frame's, and the commit is live. The server's curve no longer zeroes a
+  far crew, so a client reading the flag as "no take" is the defect this frame exists to catch.
 - **Sabotage-verified** by feeding `curve_chart_model`'s walk the bare `perWorkerBiomass × crew`:
   exactly ONE claim fails, `…the verdict at 3 is the curve's draw, not the bare rate's`, reading
   `settles at 51%` against the wanted `56%`, `EXIT=1`. The hold pill stays green under it, correctly —
   the pills come from `curve_crew_reaching`, not from the walk.
+
+**THE FAR-PARTY PAIR RUNS ON THE TAKE-KIT ROSTER** (`_deposit_kit_roster`) with the job-level
+`defaultExtractKitId` pushed as `none`, so its kit claim is the working-first precedence: the wood's
+picker lists the Sled and Woodcutting kits and not the Stone kit, and — the wood standing on felling —
+opens on `woodcutting` rather than the job's `none`. The far wood authors a curve (`_authored_curve(true)`), and beneath the rate-home headline the
+sheet's `DEPOSIT_TAKE_AT_SOURCE_META` line must read the curve row's take at the stepper's crew by
+equality — *Cut at the working: 2.35 wood a turn*.
 
 ### ⛔ AND `workings_worked_buttons` IS THE PAIR THE STACKED BUTTON IS JUDGED ON
 
@@ -3339,9 +3356,12 @@ band and tile, re-aimed from the refusal to the party section: the commit is liv
 refusal's words are absent, and the section's four lines match the tile's authored reply in the
 harvesters' own noun, and its PER TURN food headline reads the reply's rate home under the
 `ONCE RUNNING · PER TURN` caption.
-`food_forage_band_far` keeps its frame as the unauthored twin. **The deposit
-refusal is still asserted** (`chapters/workings.gd`'s `workings_out_of_range`), in the shared
-sentence the forage sheet used to refuse in.
+`food_forage_band_far` keeps its frame as the unauthored twin. **The deposit refusal went the same
+way**: `chapters/workings.gd`'s `workings_out_of_range` is `workings_far_party` /
+`workings_far_party_stone` now — the far wood and stone sheets mount the section, their headline reads
+the reply's rate home in the working's MATERIAL, and the retired sentence is asserted absent.
+`ForecastFx.work_party_answer` reads an extract ask's authored reply off the `deposits` row matching
+the ask's `(x, y, material)`.
 
 **`chapters/forecast_seam.gd` asks the WORK PARTY's question now.** Its world-boundary and
 failure-class guards are about the seam's bookkeeping, not about any one question, and were made on

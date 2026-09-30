@@ -1165,7 +1165,8 @@ const YIELD_MODEL_LIMIT := "binding_limit"
 ## fallback**: a patch reseeds and a herd breeds, so neither food model has a `false` to state and
 ## every frame either drew before this key existed is unchanged.
 const YIELD_MODEL_RENEWS := "renews"
-## Set by `_with_home_rate` when the FOOD headline is the caravan's steady rate, so the caption can say
+## Set by `_with_home_rate` when the headline (food, or a working's material) is the caravan's steady
+## rate home, so the caption can say
 ## so (`HudComposeVocab.YIELD_HEADER_ONCE_RUNNING`) instead of `next turn`. Absent everywhere else.
 const YIELD_MODEL_HOME_RATE := "home_rate"
 
@@ -3734,11 +3735,11 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _improvement_deal_row(SourceForecast.LABOR_KIND_FORAGE, tile_info,
             HudComposeVocab.FORAGE_FORECAST_PREFIX, band, deal_rung, deal_payoff))
     # ⛔ **NO RANGE REFUSAL ON THIS SHEET ANY MORE** (`docs/plan_civilization_steps.md` §One work
-    # party). A patch past the SELECTED band's work range used to disable the commit behind
-    # `_mount_work_range_refusal`, because the sim lapsed a far forage crew with no warning (#650).
-    # The work party removed that lapse for forage — the crew posts a party and walks the take home —
-    # so the refusal would now forbid the very assignment the caravan exists to make. The deposit
-    # sheets keep it: extraction still lapses past range.
+    # party). A patch past the SELECTED band's work range used to disable the commit behind the
+    # retired `_mount_work_range_refusal`, because the sim lapsed a far forage crew with no warning
+    # (#650). The work party removed that lapse — the crew posts a party and walks the take home — so
+    # the refusal would now forbid the very assignment the caravan exists to make. The deposit sheets
+    # lost theirs for the same reason: a far working posts the same caravan.
     # A dead button is always explained (the `+` stepper's cap note is the precedent) — but only when
     # the cap note has not already said it, so the panel never states one fact twice.
     if is_noop and cap_note == "":
@@ -3770,39 +3771,14 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         close_compose_sheet())
     target.add_child(assign_btn)
 
-## ⛔ **THE STATIONARY WEBS' RANGE GATE — ONE MEASUREMENT, ONE SENTENCE, ONE MOUNT** (issue #650).
-## Returns whether `(x, y)` is beyond `band`'s reach, having already mounted the refusal on `target`
-## where it is. Every caller then does the one remaining thing with the answer: disable its commit.
-##
-## **THE DEPOSIT SHEETS HAD NO GATE AT ALL, AND THAT WAS THE BUG.** `systems::labor`'s `Extract` arm
-## lapses an out-of-range crew against the same `band_work_range` its `Forage` arm does — so the
-## limit was always the sim's rule — but this client measured it on the plant sheet only. A digger
-## sheet therefore accepted any distance, sent the command, and the sim abandoned the crew on the
-## next turn with nothing but an event-log line: from the player's seat *no range limit*, right up
-## until the crew vanished. Reported from play by Ray. A REFUSAL is strictly kinder than a silent
-## lapse, which is why the fix is a gate here and no change at all over there.
-##
-## ⛔ **A DISTANCE THE GRID CANNOT ANSWER IS NOT AN OUT-OF-RANGE ONE.** `hex_distance_wrapped`
-## reports `-1` where it has no grid dimensions to wrap against, and `-1 > work_range` is false only
-## by luck of the comparison; the test is explicit so a gate cannot be written that reads *unknown*
-## as *too far* and refuses every sheet on a frame that arrived before the grid did.
-##
-## ⛔ **IT IS THE DEPOSIT SHEETS' ALONE NOW.** The forage sheet called it too, and the work party
-## removed the lapse it warned about FOR FORAGE: a patch past the apron posts a party rather than
-## abandoning its crew, so the plant sheet mounts `_mount_work_party_section` instead. Extraction
-## still lapses past range, so a refusal is still the kind answer there.
-func _mount_work_range_refusal(target: VBoxContainer, band: Dictionary, x: int, y: int) -> bool:
-    var distance := _apron_distance(band, x, y)
-    var work_range := int(band.get("work_range", 0))
-    if distance < 0 or distance <= work_range:
-        return false
-    if target != null:
-        target.add_child(HudWidgets.alloc_hint_label(
-            HudComposeVocab.WORK_RANGE_REFUSAL_FORMAT % [x, y, distance, work_range]))
-    return true
+## ⛔ **RETIRED — `_mount_work_range_refusal`, THE STATIONARY WEBS' RANGE GATE** (issue #650). It
+## refused a patch or a working past the band's `band_work_range`, because the sim lapsed such a crew
+## with nothing but an event-log line. The work party retired that lapse web by web — forage first,
+## then wood and stone — so every sheet now mounts `_mount_work_party_section` past the apron instead,
+## and a refusal would forbid the assignment the caravan exists to make.
 
 ## Wrap-aware hex distance from `band`'s own tile to `(x, y)`, or `-1` where the grid cannot answer.
-## The ONE measurement both the deposit refusal and the work-party gate take, so they cannot measure a
+## The ONE measurement the work-party gate takes, on every sheet, so no two sheets can measure a
 ## source two ways.
 func _apron_distance(band: Dictionary, x: int, y: int) -> int:
     var band_tile := SourceForecast.band_tile(band)
@@ -3828,8 +3804,12 @@ func _is_past_apron(band: Dictionary, x: int, y: int) -> bool:
 ##
 ## A crew of 0 is `invalid_crew` server-side and there is no posting to price, so it is never asked;
 ## the section then renders nothing, the unassign/no-op commit below it already saying what happens.
+##
+## **A WORKING IS NAMED BY ITS TILE AND ITS `material`** — one hex can hold wood and stone both — so
+## the material rides both the ask and the subject key. `""` on a herd or a patch.
 func _work_party_view(band: Dictionary, source_kind: String, herd_id: String, x: int, y: int,
-        take_species: Array, kit_id: String, workers: int, floor: float) -> Dictionary:
+        take_species: Array, kit_id: String, workers: int, floor: float,
+        material: String = "") -> Dictionary:
     if _forecast_query == null or workers <= 0:
         return {}
     var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
@@ -3837,6 +3817,8 @@ func _work_party_view(band: Dictionary, source_kind: String, herd_id: String, x:
         return {}
     var source_key := herd_id if source_kind == ForecastQuery.WORK_PARTY_SOURCE_HUNT \
         else "%d,%d" % [x, y]
+    if material != "":
+        source_key = WORK_PARTY_DEPOSIT_KEY_FORMAT % [source_key, material]
     var subject := ForecastQuery.subject_of(ForecastQuery.KIND_WORK_PARTY, band_id, source_key)
     var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band, _band_labor.kits())
     if not take_species.is_empty():
@@ -3849,11 +3831,16 @@ func _work_party_view(band: Dictionary, source_kind: String, herd_id: String, x:
         "x": x,
         "y": y,
         "take_species": take_species,
+        "material": material,
         "kit_id": kit_id,
         "workers": workers,
         "floor": floor,
     })
     return _forecast_query.view(subject, key)
+
+## The work-party subject key's material suffix — `x,y:wood` — so the two workings on one hex are two
+## subjects and neither reads the other's reply.
+const WORK_PARTY_DEPOSIT_KEY_FORMAT := "%s:%s"
 
 ## **THE WORK PARTY'S SECTION** — what distance costs this crew, as an ONGOING assignment: the walk,
 ## how many are on the road at a time, what arrives home once it is running, and when the first load
@@ -3906,7 +3893,14 @@ func _mount_work_party_section(target: VBoxContainer, crew_label: String, source
 ##
 ## **Until the reply lands** (or where it posts no party) the model is returned unchanged: there is no
 ## home rate to state yet, and a blank headline would read as a source that pays nothing.
-func _with_home_rate(model: Dictionary, party_view: Dictionary) -> Dictionary:
+##
+## **`account` IS THE ROW THE RATE HOME IS IN** — `food` on a herd or a patch, the working's own
+## MATERIAL on a deposit, whose reply's `rate_home` is in that material's units. A material row's
+## account is its id (`SourceForecast.yield_rows`), so the headline reads `+1.4 wood` under the same
+## `once running · per turn` caption and never as food. Nothing else forks: one caravan, one
+## substitution, whatever the far job carries home.
+func _with_home_rate(model: Dictionary, party_view: Dictionary,
+        account: String = SourceForecast.YIELD_ACCOUNT_FOOD) -> Dictionary:
     if party_view.is_empty() or model.is_empty() \
             or String(party_view.get("state", "")) != ForecastQuery.STATE_READY:
         return model
@@ -3919,12 +3913,12 @@ func _with_home_rate(model: Dictionary, party_view: Dictionary) -> Dictionary:
     var found := false
     for row_variant in rows:
         var row: Dictionary = row_variant
-        if String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, "")) == SourceForecast.YIELD_ACCOUNT_FOOD:
+        if String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, "")) == account:
             row[SourceForecast.YIELD_ROW_VALUE] = rate_home
             row.erase(SourceForecast.YIELD_ROW_AFTER)
             found = true
     if not found and SourceForecast.has_component(rate_home):
-        rows.push_front({SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_FOOD,
+        rows.push_front({SourceForecast.YIELD_ROW_ACCOUNT: account,
             SourceForecast.YIELD_ROW_VALUE: rate_home})
     out[YIELD_MODEL_ROWS] = rows
     # **AND THE WASTE NOTE GOES WITH THE AT-SOURCE FIGURE.** It is the resident take's
@@ -3967,13 +3961,22 @@ static func work_party_section_lines(answer: Dictionary, crew_label: String,
     # the apron (`_with_home_rate`); a second statement of it here would say one number twice.
     var first_load := int(answer.get("first_load_turn", 0))
     if first_load <= 0:
-        lines.append(HudComposeVocab.WORK_PARTY_SLOW_FILL_HUNT
-            if source_kind == ForecastQuery.WORK_PARTY_SOURCE_HUNT
-            else HudComposeVocab.WORK_PARTY_SLOW_FILL_FORAGE)
+        lines.append(_work_party_slow_fill(source_kind))
     else:
         lines.append(HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT % _counted(first_load,
             HudComposeVocab.WORK_PARTY_TURNS_FORMAT, HudComposeVocab.WORK_PARTY_TURNS_ONE))
     return lines
+
+## The slow-fill line in the section's own web's verb — a hunt catches, a gather gathers, a working is
+## cut. A forage party must never read as though it hunted, nor a digger as though they gathered.
+static func _work_party_slow_fill(source_kind: String) -> String:
+    match source_kind:
+        ForecastQuery.WORK_PARTY_SOURCE_HUNT:
+            return HudComposeVocab.WORK_PARTY_SLOW_FILL_HUNT
+        ForecastQuery.WORK_PARTY_SOURCE_EXTRACT:
+            return HudComposeVocab.WORK_PARTY_SLOW_FILL_EXTRACT
+        _:
+            return HudComposeVocab.WORK_PARTY_SLOW_FILL_FORAGE
 
 ## `n` in its counted phrase, singular at one.
 static func _counted(n: int, plural_format: String, singular: String) -> String:
@@ -5255,10 +5258,10 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # floor chart's drag re-asks it, so the id has to exist before either. See the kit row below for
     # the picker's own rules (issue #663).
     #
-    # ⛔ **THE PICKER OFFERS THIS WORKING'S OWN KIT AND `none`, AND NOTHING ELSE.** Each take kit
-    # serves one branch — a Stone kit's wedges do nothing on a wood — so listing the other branch's kit
-    # offered a choice that could only cost the crew. Narrowed on the working's published
-    # `default_kit_id`, the one field that names which kit this ground wants.
+    # ⛔ **THE PICKER OFFERS THIS WORKING'S `offered_kit_ids` AND `none`, AND NOTHING ELSE.** The sim
+    # publishes the list per row (the Sled kit and the branch's own kit — `woodcutting` beside it on a
+    # wood, `stonework` on stone), so the other branch's kit, whose tool does nothing here, is never
+    # offered; `none` rides beside the list as the job's fallback.
     var kits := KitRoster.extract_kits_for_working(_band_labor.kits(), deposit)
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_EXTRACT)
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_EXTRACT, default_kit,
@@ -5293,9 +5296,9 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     var curve_ready := String(curve_view.get("state", ForecastQuery.STATE_PENDING)) \
         == ForecastQuery.STATE_READY
     var curve_reply: Dictionary = curve_view.get("answer", {})
-    # **THE SIM SAYS THIS BAND CANNOT WORK THE GROUND** — every row is `0` because the turn abandons it.
-    # Only a READY answer can say so; a pending one says nothing about range.
-    var curve_out_of_range := curve_ready and not HudDepositVocab.curve_in_range(curve_reply)
+    # ⛔ **THE CURVE'S `in_range` IS A FLAG AND NOTHING HERE READS IT.** A far working's reply carries
+    # the real take at the source (the crew posts a work party rather than being dropped), so no
+    # reading on this sheet is hidden, zeroed or disabled by distance.
     # ⛔ **THE CAP IS THE SMALLER OF THE BAND'S HANDS AND WHAT THE WORKING CAN USE, AND IT IS RESOLVED
     # BEFORE THE CHART — the order is load-bearing** (the forage sheet's own finding). A crew takes
     # `min(crew × rate, the room above the composed floor)` in a turn, so a hand beyond that quotient
@@ -5304,10 +5307,10 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     var cap := crew_pool
     # ⛔ **THE "USEFUL" CAP IS THE CURVE'S PLATEAU** (issue #663) — where more hands stop buying take,
     # off the rows the sim priced WITH the band's kit. A bare quotient would divide the room by the
-    # bare per-worker rate, which a geared crew out-cuts; with no curve in hand (pending, refused, out
-    # of range) there is no gear-bearing answer and the pool alone bounds the stepper.
+    # bare per-worker rate, which a geared crew out-cuts; with no curve in hand (pending or refused)
+    # there is no gear-bearing answer and the pool alone bounds the stepper.
     var useful := HudDepositVocab.CUTTERS_UNCAPPED
-    if curve_ready and not curve_out_of_range:
+    if curve_ready:
         useful = HudDepositVocab.curve_useful_cutters(curve_reply)
     var capped_by_seam := useful != HudDepositVocab.CUTTERS_UNCAPPED and useful < cap
     if capped_by_seam:
@@ -5374,33 +5377,49 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         target.add_child(HudWidgets.alloc_hint_label(
             HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()]))
     # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Woodcutting kit (sled + axe)
-    # and the Stone kit (sled + wedges) beside `none`, so the picker's selection moves the take and
-    # rides the commit as `kit <id>` — see the commit button below.
+    # and the Stone kit (sled + wedges) beside `none`, and the picker offers only this working's own,
+    # so the selection moves the take and rides the commit as `kit <id>` — see the commit button below.
+    # On a FAR working the sled is also what each porter packs the take home on, which the work
+    # party's forecast below prices at the picked kit.
     #
-    # ⛔ **THE DEFAULT IS THE WORKING'S OWN, NOT THE JOB'S.** `default_kits.extract` is `none` and
-    # means nothing here; each `deposits` row publishes the kit its own material wants
-    # (`default_kit_id` — `woodcutting` on wood, `stonework` on stone), so the deposit is passed as the
-    # SOURCE and `KitRoster.default_kit_for` — the one precedence — answers both the opening
-    # selection and the `(default)` mark off it, exactly as a herd's does on the hunt sheet.
+    # ⛔ **THE DEFAULT IS THE WORKING'S OWN FIRST.** Each `deposits` row publishes the kit the rung it
+    # holds wants (`default_kit_id` — `sledding` on deadfall and gathering, `woodcutting` on felling
+    # and coppice, `stonework` on a quarry), so the deposit
+    # is passed as the SOURCE and `KitRoster.default_kit_for` — the one precedence — answers both the
+    # opening selection and the `(default)` mark off it, exactly as a herd's does on the hunt sheet;
+    # the wire's job-level `defaultExtractKitId` stands behind a working that states none.
     #
     # ⛔ **THE CREW IS HANDED ON**, because omitting it is what made the forage sheet's shortfall line
     # mute for the whole life of that line: `crew` then defaults to `KIT_CREW_UNCOMPOSED` and the
     # shortfall falls back to the published `workersOnQuotedJob`, which is `0` on a sheet where
     # nobody is assigned yet.
     #
-    # ⛔ **THE AVAILABLE LINE IS THE CURVE'S `armed_workers` OF `workers` AT THE STEPPER'S CREW** —
-    # handed to the kit row as its coverage pair, so `KitRoster.shortfall_line`'s committed arm words
-    # it with the one shortfall sentence. `{}` while the curve is pending, failed or out of range: the
-    # line is silent rather than derived, since which of the kit's two items serves the held rung is
-    # the sim's to say.
-    var curve_row_at_crew := HudDepositVocab.curve_row(curve_reply, _compose.deposit_count()) \
-        if curve_ready and not curve_out_of_range else {}
+    # ⛔ **THE AVAILABLE LINE IS THE HUNT'S AND THE FORAGE'S, UNCHANGED.** An extract row claims its
+    # WHOLE kit wherever it works — the Woodcutting kit is a sled AND an axe on every rung — so the line
+    # is `KitRoster.shortfall_line`'s ordinary reading: complete outfits (the scarcest of the kit's
+    # items) against the crew being composed, with the band's committed row on this working handed in
+    # so its published `kitWorkersHolding` answers for the committed crew and its own gear is handed
+    # back when it is re-composed.
     _mount_kit_row(target, kits, KitRoster.JOB_EXTRACT, kit_id, default_kit, band,
         func(picked: String) -> void:
             _compose.set_deposit_kit_id(picked)
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
         deposit, "", _compose.deposit_count(),
-        HudDepositVocab.curve_coverage_row(curve_row_at_crew, kit_id))
+        _band_labor.extract_assignment_of(band, tile.x, tile.y, material))
+    var curve_row_at_crew := HudDepositVocab.curve_row(curve_reply, _compose.deposit_count()) \
+        if curve_ready else {}
+    # **THE WORK PARTY, PAST THE APRON** — the hunt and forage sheets' own section, asked of the
+    # working's `(tile, material)` pair. A far wood or quarry posts the same caravan as a far patch:
+    # nothing about wood or stone is special, so nothing here forks. The floor it is asked at is the
+    # one the committed row will carry — the player's dial where one was offered, else the bare-strip
+    # floor the sim resolves an unnamed floor to on ground that never renews.
+    var party_view := {}
+    if _is_past_apron(band, tile.x, tile.y):
+        party_view = _work_party_view(band, ForecastQuery.WORK_PARTY_SOURCE_EXTRACT, "",
+            tile.x, tile.y, [], kit_id, _compose.deposit_count(),
+            named_floor if offers_floor else SourceForecast.FLOOR_MIN, material)
+        _mount_work_party_section(target, crew_label, ForecastQuery.WORK_PARTY_SOURCE_EXTRACT,
+            party_view)
     # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's two zero-crew cases, verbatim: `0` on a
     # working this band does not hold is a no-op (dead button), `0` on one it does is the sim's own
     # unassign (live button, renamed).
@@ -5418,18 +5437,11 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # **THE READOUT** — what this crew brings home next turn (and what it settles at once the seam
     # reaches the floor), what the next rung would pay once it stands, the verdict the branch turns
     # on, and the runway under the dashed rule.
-    # The range gate's own measurement, taken BEFORE the readout so the readout does not state a
-    # second range sentence where the gate below already states one.
-    var client_out_of_range := _mount_work_range_refusal(null, band, tile.x, tile.y)
     _mount_deposit_readout(target, live_hosts, deposit, ladder, next_entry, chart_model,
-        _compose.deposit_count(), curve_reply, curve_row_at_crew, client_out_of_range)
-    # ⛔ **THE RANGE GATE, AND IT IS THE FORAGE SHEET'S OWN** (issue #650) — the same measurement, the
-    # same refusal sentence and the same dead commit, because it is the same `band_work_range` the
-    # sim's `Extract` arm lapses a distant crew against. **A seam is offered no expedition**: the
-    # missions a party can carry are `scout` / `hunt` / `deny` / `trade`, so unlike a migrating herd
-    # a deposit cannot be followed and a plain refusal is the whole of the honest answer. Measured
-    # from the PICKED band's own tile, so switching the `Band:` picker above re-runs it for that band.
-    var out_of_range := _mount_work_range_refusal(target, band, tile.x, tile.y)
+        _compose.deposit_count(), curve_reply, curve_row_at_crew, party_view)
+    # ⛔ **NO RANGE REFUSAL** — the forage sheet's retirement, one web over. A working past the picked
+    # band's work range posts a work party (the section above) rather than lapsing its crew, so a
+    # refusal would forbid the very assignment the caravan exists to make.
     # A dead button is always explained, the `+` stepper's cap note being the precedent.
     if is_noop:
         target.add_child(HudWidgets.alloc_hint_label(
@@ -5439,13 +5451,9 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign \
         else HudDepositVocab.commit_verb(branch)
     HudStyle.apply_button(assign_btn, "primary")
-    # **THE FORAGE SHEET'S DISABLE, VERBATIM — the unassign included.** A crew the band has walked
-    # out of range of is lapsed by the sim on that same turn, so `current` is already 0 by the time
-    # the sheet reopens and `is_unassign` cannot be true here; forking the two sheets over a state
-    # neither can reach would be a difference between them with nothing behind it.
-    # **AND THE SIM'S OWN RANGE ANSWER DISABLES IT TOO** — a crew the curve says the turn would abandon
-    # is a commit that cuts nothing.
-    assign_btn.disabled = out_of_range or curve_out_of_range or is_noop
+    # **THE FORAGE SHEET'S DISABLE, VERBATIM** — dead only on the no-op. Distance disables nothing:
+    # a far working posts a party.
+    assign_btn.disabled = is_noop
     # ⛔ **ONE COMMAND, AND IT IS `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`.** The
     # material rides the `species` token — the slot the sim's own `extract` arm reads it from and half
     # the optimistic overlay's key — and the FLOOR is a validated number in forage's own position and
@@ -5454,9 +5462,10 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # **A FINITE WORKING SENDS NO FLOOR AT ALL, because it was never asked** — `named_floor` is
     # `FLOOR_UNNAMED` there and `Main`'s extract arm drops the token, leaving the sim to answer what
     # silence means on ground that never renews. A renewing working rides the player's own dial.
+    #
     # **THE KIT RIDES IT** (issue #663): the picker above offers the working's own take kit and
     # `none`, and a selection the line dropped would be a choice the sim never heard.
-    # `Main._kit_token` renders it.
+    # `Main._kit_token` renders it, omitted only where it equals the working's own default.
     assign_btn.pressed.connect(func() -> void:
         _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, _compose.deposit_count(),
             tile.x, tile.y, "", named_floor, material, SourceForecast.IMPROVEMENT_NONE,
@@ -5553,7 +5562,7 @@ func _deposit_floor_takes(deposit: Dictionary) -> Dictionary:
 ## where the walk actually REACHES the floor (`reaches`, the caller's `_live_reaches`), because
 ## promising a holding rate to a crew that settles short is the defect that reading exists to fix.
 func _deposit_yield_model(deposit: Dictionary, floor: float, crew: int,
-        reaches: bool, view: Dictionary, client_out_of_range: bool) -> Dictionary:
+        reaches: bool, view: Dictionary) -> Dictionary:
     var material := HudDepositVocab.material_of(deposit)
     # ⛔ **NEXT TURN IS THE CREW CURVE'S `take` AT THIS CREW, AND NOTHING ELSE** (issue #663). It was
     # `perWorkerBiomass × crew` capped by the room, which is the bare rate: a deadfall crew on sleds
@@ -5566,11 +5575,6 @@ func _deposit_yield_model(deposit: Dictionary, floor: float, crew: int,
         return {YIELD_MODEL_ROWS: [], YIELD_MODEL_NOTES: [
             HudDepositVocab.take_failed_text(String(view.get("error", "")))]}
     var reply: Dictionary = view.get("answer", {})
-    if not HudDepositVocab.curve_in_range(reply):
-        # Every row reads `0` because the turn abandons the crew — state the reason, never the zero.
-        # The range gate below already says it where this sheet's own measurement agrees.
-        return {YIELD_MODEL_ROWS: [], YIELD_MODEL_NOTES: [] if client_out_of_range
-            else [HudDepositVocab.DEPOSIT_TAKE_OUT_OF_RANGE]}
     var take := HudDepositVocab.curve_take_at(reply, crew)
     var after := {}
     if reaches:
@@ -5604,6 +5608,29 @@ func _deposit_yield_model(deposit: Dictionary, floor: float, crew: int,
         YIELD_MODEL_WASTE: "",
     }
 
+## **THE DEPOSIT'S YIELDS, AND ON A FAR WORKING BOTH OF ITS FIGURES.** `_with_home_rate` puts the
+## caravan's rate ARRIVING HOME on the headline — the forage and hunt sheets' own substitution, in the
+## working's material and under `once running · per turn` — and the crew curve's take AT THE WORKING
+## (`model`'s own material row, what the crew cuts there each turn) rides one line beneath it
+## (`HudDepositVocab.DEPOSIT_TAKE_AT_SOURCE_FORMAT`). The two differ by what the road carries, and the
+## sheet states both. Inside the apron `party_view` is `{}`, the substitution is the identity and no
+## second line is drawn.
+func _fill_deposit_yields(host: Container, model: Dictionary, party_view: Dictionary,
+        material: String) -> void:
+    var home := _with_home_rate(model, party_view, material)
+    _fill_yields_host(host, home, HudConst.LABOR_KIND_EXTRACT)
+    if not bool(home.get(YIELD_MODEL_HOME_RATE, false)):
+        return
+    for row_variant in model.get(YIELD_MODEL_ROWS, []):
+        var row: Dictionary = row_variant
+        if String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, "")) != material:
+            continue
+        var line := HudWidgets.alloc_hint_label(HudDepositVocab.DEPOSIT_TAKE_AT_SOURCE_FORMAT % [
+            SourceForecast.format_magnitude(float(row.get(SourceForecast.YIELD_ROW_VALUE, 0.0))),
+            material])
+        line.set_meta(HudDepositVocab.DEPOSIT_TAKE_AT_SOURCE_META, true)
+        host.add_child(line)
+
 ## **THE READOUT BOX, BUILT DIRECTLY RATHER THAN THROUGH `_mount_readout`, AND STILL.**
 ##
 ## ⛔ **THAT MOUNT DROPS THE VERDICT ON A MODEL THAT IS NOT `known`, which is every FINITE seam.** A
@@ -5617,10 +5644,15 @@ func _deposit_yield_model(deposit: Dictionary, floor: float, crew: int,
 ## `SourceForecast.yield_row_header` decides from the rows themselves.
 func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictionary,
         ladder: Array[Dictionary], next_entry: Dictionary, model: Dictionary, crew: int,
-        curve_reply: Dictionary, curve_row_at_crew: Dictionary, client_out_of_range: bool) -> void:
+        curve_reply: Dictionary, curve_row_at_crew: Dictionary,
+        party_view: Dictionary = {}) -> void:
     var column := HudWidgets.build_readout_box(target)
     var known := bool(model.get("known", false))
     var tile := HudDepositVocab.tile_of(deposit)
+    # **PAST THE APRON THE HEADLINE IS THE RATE ARRIVING HOME**, in the working's own MATERIAL —
+    # `_with_home_rate`'s substitution, the forage and hunt sheets' own. Inside the apron `party_view`
+    # is `{}` and it is the identity.
+    var material := HudDepositVocab.material_of(deposit)
     # **THE BAND'S OWN `extract` ROW, resolved once for every reading that needs a rate the working
     # has not paid out yet.** See `HudDepositVocab`'s three-state table.
     var assignment := _standing_assignment_extract(tile.x, tile.y,
@@ -5634,14 +5666,13 @@ func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictio
         # it is waiting) rather than the committed floor's.
         _register_live(hosts, yields_host, model, crew,
             func(host: Container, live: Dictionary, count: int) -> void:
-                _fill_yields_host(host, _deposit_yield_model(deposit, _live_floor(live), count,
-                    _live_reaches(live), _deposit_live_crew_view, client_out_of_range),
-                    HudConst.LABOR_KIND_EXTRACT))
+                _fill_deposit_yields(host, _deposit_yield_model(deposit, _live_floor(live),
+                    count, _live_reaches(live), _deposit_live_crew_view), party_view, material))
     else:
         # No dial, no walk, no holding state to promise — the take alone.
-        _fill_yields_host(yields_host, _deposit_yield_model(deposit,
-            SourceForecast.FLOOR_MIN, crew, false, _deposit_live_crew_view, client_out_of_range),
-            HudConst.LABOR_KIND_EXTRACT)
+        _fill_deposit_yields(yields_host, _deposit_yield_model(deposit,
+            SourceForecast.FLOOR_MIN, crew, false, _deposit_live_crew_view), party_view,
+            material)
     # **THE DEAL — ITS OWN BLOCK, NEVER A ROW INSIDE THE YIELDS FLOW.** Two harness contracts read
     # that flow structurally, so a deal term folded in would corrupt both silently; it is
     # `HudWidgets.IMPROVEMENT_DEAL_META`'s own block for that reason. It is deliberately OUT of the
@@ -5669,9 +5700,7 @@ func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictio
                 var verdict: Dictionary = live.get("verdict", {})
                 if not verdict.is_empty():
                     host.add_child(HudWidgets.build_verdict_line(verdict)))
-    elif not client_out_of_range and not HudDepositVocab.curve_says_out_of_range(curve_reply):
-        # ⛔ **OUT OF RANGE, THE FINITE VERDICT AND RUNWAY GO TOO** — both advise about a draw the turn
-        # will not make.
+    else:
         verdict_host.add_child(HudWidgets.build_verdict_line(
             HudDepositVocab.deposit_verdict(deposit, ladder, assignment)))
     var aside_host := VBoxContainer.new()
@@ -5689,9 +5718,6 @@ func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictio
                 # which is a reason to render no line rather than a blank one.
                 var teaching: Dictionary = live.get("teaching_note", {})
                 var teaching_text := String(teaching.get("text", ""))
-                # Out of range the crew cuts nothing, so there is no lesson being taught either.
-                if bool(live.get(HudDepositVocab.CHART_OUT_OF_RANGE_KEY, false)):
-                    teaching_text = ""
                 if teaching_text != "":
                     lines.append(HudWidgets.readout_aside_line(teaching_text,
                         HudStyle.SIGNAL if bool(teaching.get("teaching", false))
@@ -5702,8 +5728,6 @@ func _mount_deposit_readout(target: VBoxContainer, hosts: Array, deposit: Dictio
         # count where a turn has resolved, this crew's `reachable ÷ rate` where one has been committed
         # and nothing cut yet, and *nobody is cutting it* where there is no crew at all.
         var aside := HudDepositVocab.runway_aside(deposit, assignment)
-        if client_out_of_range or HudDepositVocab.curve_says_out_of_range(curve_reply):
-            aside = ""
         if aside != "":
             aside_host.add_child(HudWidgets.build_readout_aside(
                 [HudWidgets.readout_aside_line(aside)]))
