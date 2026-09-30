@@ -6124,10 +6124,13 @@ table SubsistenceSection {
   // --- THE DEPOSIT CREW'S DEFAULT (appended last) -----------------------------------------------
   // `default_kits.extract` — the JOB-LEVEL fall-back (`none` on the shipped roster), the sixth job
   // default beside `defaultHuntKitId` ... `defaultExpeditionKitId`, so no reader has to reach into
-  // `equipmentConfigJson` for it. ⛔ A WORKING'S OWN DEFAULT IS `DepositState.defaultKitId`, derived
-  // per branch (`woodcutting` / `stonework`); this field is what that derivation falls back to when
-  // no single kit serves a branch, the way `defaultHuntKitId` stands behind a herd's own
-  // `defaultKitId`. Never empty: it always names a real roster entry.
+  // `equipmentConfigJson` for it. ⛔ A WORKING'S OWN DEFAULT IS `DepositState.defaultKitId`, which
+  // follows the rung the working holds: the tightest-fitting offered kit
+  // (`EquipmentConfig::deposit_kit_for(branch, rung)`) — `sledding` on deadfall and gathering,
+  // `woodcutting` on felling and coppice, `stonework` on the quarry. This field is the job-level
+  // fall-back that derivation uses when no offered kit is a unique tightest fit, the way
+  // `defaultHuntKitId` stands behind a herd's own `defaultKitId`. Never empty: it always names a
+  // real roster entry.
   defaultExtractKitId:string;
 }
 

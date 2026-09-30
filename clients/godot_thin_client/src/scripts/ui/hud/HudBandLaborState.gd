@@ -157,8 +157,9 @@ func default_kit_id(job: String) -> String:
 			return _default_expedition_kit_id
 		KitRoster.JOB_EXTRACT:
 			# **THE JOB-LEVEL FALLBACK, THE WIRE'S `defaultExtractKitId`.** The extract default is
-			# PER WORKING first (issue #663): each `deposits` row publishes its own `default_kit_id`
-			# (`woodcutting` on wood, `stonework` on stone), which the deposit sheet and
+			# PER WORKING first (issue #663): each `deposits` row publishes its own `default_kit_id`,
+			# which follows the rung the working holds (`sledding` on deadfall and gathering,
+			# `woodcutting` on felling and coppice, `stonework` on a quarry), and the deposit sheet and
 			# `Hud._emit_assign_labor` read off the SOURCE through `KitRoster.default_kit_for` — the
 			# hunt's herd-first precedence, with this as the fallback behind a working that states
 			# none. Stated rather than reached by fall-through, for the builders arm's reason below.

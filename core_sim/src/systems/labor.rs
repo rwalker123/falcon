@@ -8649,6 +8649,15 @@ pub fn advance_labor_allocation(
                     // **THE CARAVAN'S FORECAST, FROM THE STATE THIS TURN LEAVES** — the working after
                     // the take and the party after its packs went, stepped through the one function
                     // the seed and the query answer through.
+                    //
+                    // ⛔ **ITS TOOLS ARE PRICED AT THE RUNG THE WORKING HOLDS NOW**, not at
+                    // `held_rung` above: that was copied before this turn's build accrual, and the
+                    // forecast steps the post-build working over every turn of its horizon. On the
+                    // turn a rung completes the old rung's tool term would price the whole horizon —
+                    // and disagree with `answer_work_party_forecast`, which reads the working as it
+                    // stands. The take's own one-turn lag is the TAKE's and stays above.
+                    let forecast_rung = working.standing().held;
+                    let forecast_key = forecast_rung.wire_key();
                     if let (Some(posting), Some(pricing)) =
                         (postings.get_mut(&idx), caravan_pricing.as_ref())
                     {
@@ -8662,8 +8671,8 @@ pub fn advance_labor_allocation(
                             pricing.deposit_gear_per_worker(
                                 &equipment_cfg,
                                 &band_kit,
-                                held_rung.branch(),
-                                &held_key,
+                                forecast_rung.branch(),
+                                &forecast_key,
                             ),
                             *floor,
                             realized_horizon,

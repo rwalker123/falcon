@@ -1122,3 +1122,152 @@ fn a_far_workings_crew_curve_quotes_the_cut_the_turn_makes_at_the_source() {
         "the curve's row for the {present} hands present is what the turn cut: {quoted} vs {cut}"
     );
 }
+
+/// The work-party query for the fixture's far wood, asked at `kit`, over [`CREW`].
+fn ask_about_the_wood(app: &mut App, distance: u32, kit: &str) -> WorkPartyForecastReply {
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+            faction_id: FACTION.0,
+            band_id: BAND,
+            source: WorkPartySource::Extract {
+                x: CAMP.x + distance,
+                y: CAMP.y,
+                material: WOOD.to_string(),
+            },
+            kit_id: kit.to_string(),
+            workers: CREW,
+            floor: FLOOR,
+        }),
+    );
+    match reply {
+        QueryReply::WorkPartyForecast(answer) => answer,
+        other => panic!("the work-party query must answer with a forecast, got {other:?}"),
+    }
+}
+
+/// The kit whose `deposit_take` names deadfall and not felling — the control a felling forecast's
+/// tool term must differ from.
+const SLEDDING_KIT: &str = "sledding";
+
+/// ⛔ **ON THE TURN A FAR WORKING COMPLETES A RUNG, THE ROW'S `netRateHome` IS THE QUERY'S
+/// `rate_home`** (PR #757 review). The turn's take is cut at the rung the working held when the turn
+/// began, but the caravan forecast it publishes steps the working as the turn LEAVES it — so its
+/// tools must be priced at the rung it holds now. Priced at the old rung, a wood raised from deadfall
+/// to felling this turn published a horizon of deadfall tool terms while the query, which reads the
+/// working as it stands, quoted felling's axes: two numbers for one row.
+///
+/// A far wood one hair short of felling's top, a queued `fell` and one builder, so the raise completes
+/// on the first turn. Then, off the encoded snapshot, the row's `netRateHome` equals the query's
+/// `rate_home` at the row's own Woodcutting kit exactly — and that figure carries felling's tool: the
+/// same query at the Sled kit, whose sled lifts deadfall and not felling, quotes a different rate.
+#[test]
+fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
+    const DISTANCE: u32 = 5;
+    const BUILDERS: u32 = 1;
+    /// How far below felling's top the working is seated — far less than one builder banks in a
+    /// turn, so the raise completes on the first turn.
+    const SHORT_OF_THE_TOP: f32 = 0.01;
+
+    let (mut app, band) = world_extracting_at(DISTANCE, Some(WOODCUTTING_KIT));
+    let tile = UVec2::new(CAMP.x + DISTANCE, CAMP.y);
+    {
+        let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+        let extraction = app
+            .world
+            .resource::<core_sim::ExtractionConfigHandle>()
+            .get();
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(tile.x, tile.y)
+            .expect("the deposit's tile is on the map");
+        let ground = app
+            .world
+            .get::<core_sim::Tile>(entity)
+            .expect("a map tile carries terrain")
+            .clone();
+        let felling = core_sim::RungKey::ForestryFelling;
+        let mut working = core_sim::extraction::projected_working(
+            app.world.resource::<core_sim::DepositRegistry>(),
+            tile,
+            WOOD,
+            &ground,
+            &extraction,
+        )
+        .expect("fixture: the ground holds wood");
+        let (base, width) = core_sim::extraction::deposit_rung_span(felling, &ladder);
+        working.set_ladder_position(base + width - SHORT_OF_THE_TOP, &ladder, felling.branch());
+        assert_eq!(
+            working.rung(),
+            core_sim::RungKey::ForestryDeadfall,
+            "fixture: the working must still hold deadfall when the turn begins"
+        );
+        app.world
+            .resource_mut::<core_sim::DepositRegistry>()
+            .insert(working);
+    }
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(
+            FACTION,
+            core_sim::extraction::WOODCRAFT_DISCOVERY_ID,
+            scalar_one(),
+        );
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the fixture band")
+        .working = scalar_from_f32((CREW + BUILDERS) as f32);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band has an allocation");
+        allocation.assignments.push(LaborAssignment {
+            party: None,
+            target: LaborTarget::Builders,
+            workers: BUILDERS,
+            kit: None,
+            priority: SourcePriority::default(),
+            upkeep_kit: None,
+        });
+        assert!(allocation.enqueue_build(
+            core_sim::BuildSource::Deposit {
+                tile,
+                material: WOOD.to_string(),
+            },
+            core_sim::BuildJob::Rung(core_sim::Improvement::Fell),
+        ));
+    }
+
+    resolve_a_turn(&mut app);
+    assert_eq!(
+        app.world
+            .resource::<core_sim::DepositRegistry>()
+            .source(tile, WOOD)
+            .expect("the far working")
+            .rung(),
+        core_sim::RungKey::ForestryFelling,
+        "fixture: the raise must complete on this turn"
+    );
+    assert!(
+        extract_party(&app, band).is_some(),
+        "fixture: a working past the apron posts a party"
+    );
+
+    let published = published_party_of(&app, EXTRACT_KIND);
+    let answer = ask_about_the_wood(&mut app, DISTANCE, WOODCUTTING_KIT);
+    assert!(
+        answer.rate_home > 0.0,
+        "liveness: a wood brings timber home ({answer:?})"
+    );
+    assert_eq!(
+        published.net_rate_home, answer.rate_home,
+        "the row and the query quote one rate on the turn the working climbed"
+    );
+    let sled_only = ask_about_the_wood(&mut app, DISTANCE, SLEDDING_KIT);
+    assert_ne!(
+        answer.rate_home, sled_only.rate_home,
+        "the rate carries felling's tool: the axe lifts felling where the sled does not"
+    );
+}

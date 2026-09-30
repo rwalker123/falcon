@@ -1138,8 +1138,8 @@ func run(harness) -> void:
 	await h._save("workings_far_party")
 	h._assert_compose_sheet_fits("workings_far_party")
 	var far_sheet: Node = h._hud._drawercompose._compose_sheet
-	# **THE KIT PICKER OFFERS THE WORKING'S OWN KIT AND OPENS ON IT** — the working's `default_kit_id`
-	# outranks the job-level `none` pushed above, the hunt's herd-first precedence.
+	# **THE KIT PICKER OFFERS THE WORKING'S KITS AND OPENS ON ITS RUNG'S DEFAULT** — the felling wood's
+	# `default_kit_id` (`woodcutting`) outranks the job-level `none` pushed above, the hunt's herd-first precedence.
 	var kit_picker := Q.find_meta_node(far_sheet, KitRoster.KIT_PICKER_META) as OptionButton
 	var kit_items: Array[String] = []
 	if kit_picker != null:
@@ -1420,7 +1420,7 @@ func _extract_kit_entry(kit_id: String, display_name: String, items: Array) -> D
 		KitRoster.KIT_ITEM_IDS_KEY: items,
 	}
 
-## The shared roster plus the two take kits, with `none` listing `extract` — the shipped `none` lists
+## The shared roster plus the three take kits, with `none` listing `extract` — the shipped `none` lists
 ## every job, and the shared fixture's copy predates this one. Built LOCALLY rather than in
 ## `BandFx.kit_roster_fixture()` so no deposit sheet rendered earlier in the walk grows a kit row.
 func _deposit_kit_roster() -> Array:

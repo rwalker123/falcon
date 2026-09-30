@@ -1397,13 +1397,13 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             # **THE KIT RIDES THE TAIL AS A NAMED PAIR** (issue #663), after the worker count, on
             # `_kit_token`'s own omission rule. The grammar lifts `kit <id>` out of the tail before the
             # positional `[floor] <workers>` is read, so it never competes with the optional floor.
-            # The deposit sheet mounts a real picker (the working's own take kit beside `none`), so a
+            # The deposit sheet mounts a real picker (the working's offered kits beside `none`), so a
             # selection with no token to ride would be a choice this line silently dropped. An ABSENT
             # token means *the working's own derived kit* to the sim, so the payload's
             # `default_kit_id` is the WORKING's own `default_kit_id` (`Hud._emit_assign_labor` passes
             # the deposit row to `KitRoster.default_kit_for`, the hunt's herd-first precedence) — the
-            # token is omitted exactly where the sim would derive the same kit, and `none` on a
-            # working whose kit is the axe rides the line.
+            # token is omitted exactly where the sim would derive the same kit — the one its held rung
+            # wants — and `none` on a working whose default is a real kit rides the line.
             var ex := int(payload.get("x", -1))
             var ey := int(payload.get("y", -1))
             var material := String(payload.get("species", "")).strip_edges().to_lower()

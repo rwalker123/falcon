@@ -250,11 +250,10 @@ a band's stores hold `provisions`, `fodder` and material batches and nothing els
 `corralled_at` and a `pen_radius`, so it is fenced land and neither it nor a fraction of it travels;
 and `Herd::owner` is a **`FactionId`**, so both halves of a same-faction split already co-own every
 pen. **What a band loses by walking away is reach, not title** — and since the work party
-(`.claude/rules/core_sim/work-party.md`) it does not even lose the reach: a Hunt or Forage row whose
+(`.claude/rules/core_sim/work-party.md`) it does not even lose the reach: a Hunt, Forage or Extract row whose
 source falls outside the band's work range **posts a party** and goes on working it, paying the
 distance in walking — each pack is carried home by one of the party, and the band feeds it
-through its ordinary consumption. A **deposit** row still lapses outright with
-`reason=out_of_range`.
+through its ordinary consumption.
 
 ## The wire carries the FLOORS, never the verdict
 

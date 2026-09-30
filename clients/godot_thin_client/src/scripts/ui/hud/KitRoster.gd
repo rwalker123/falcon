@@ -440,7 +440,7 @@ static func extract_kits_for_working(kits: Array, working: Dictionary) -> Array:
 	return out
 
 ## **THE JOBS WHOSE SOURCE PUBLISHES ITS OWN DEFAULT KIT** under `HERD_DEFAULT_KIT_KEY` — a herd its
-## derived quarry kit, a deposit working the kit its material wants. Every other job's source carries
+## derived quarry kit, a deposit working the kit the rung it holds wants. Every other job's source carries
 ## no such field and `default_kit_for` answers the job default for it.
 const SOURCE_DEFAULT_KIT_JOBS := [JOB_HUNT, JOB_EXTRACT]
 

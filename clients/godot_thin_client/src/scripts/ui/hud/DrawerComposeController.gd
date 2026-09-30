@@ -5258,10 +5258,10 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # floor chart's drag re-asks it, so the id has to exist before either. See the kit row below for
     # the picker's own rules (issue #663).
     #
-    # ⛔ **THE PICKER OFFERS THIS WORKING'S OWN KIT AND `none`, AND NOTHING ELSE.** Each take kit
-    # serves one branch — a Stone kit's wedges do nothing on a wood — so listing the other branch's kit
-    # offered a choice that could only cost the crew. Narrowed on the working's published
-    # `default_kit_id`, the one field that names which kit this ground wants.
+    # ⛔ **THE PICKER OFFERS THIS WORKING'S `offered_kit_ids` AND `none`, AND NOTHING ELSE.** The sim
+    # publishes the list per row (the Sled kit and the branch's own kit — `woodcutting` beside it on a
+    # wood, `stonework` on stone), so the other branch's kit, whose tool does nothing here, is never
+    # offered; `none` rides beside the list as the job's fallback.
     var kits := KitRoster.extract_kits_for_working(_band_labor.kits(), deposit)
     var default_kit := _band_labor.default_kit_id(KitRoster.JOB_EXTRACT)
     var kit_id := KitRoster.resolve_selection(kits, KitRoster.JOB_EXTRACT, default_kit,
@@ -5382,8 +5382,9 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # On a FAR working the sled is also what each porter packs the take home on, which the work
     # party's forecast below prices at the picked kit.
     #
-    # ⛔ **THE DEFAULT IS THE WORKING'S OWN FIRST.** Each `deposits` row publishes the kit its own
-    # material wants (`default_kit_id` — `woodcutting` on wood, `stonework` on stone), so the deposit
+    # ⛔ **THE DEFAULT IS THE WORKING'S OWN FIRST.** Each `deposits` row publishes the kit the rung it
+    # holds wants (`default_kit_id` — `sledding` on deadfall and gathering, `woodcutting` on felling
+    # and coppice, `stonework` on a quarry), so the deposit
     # is passed as the SOURCE and `KitRoster.default_kit_for` — the one precedence — answers both the
     # opening selection and the `(default)` mark off it, exactly as a herd's does on the hunt sheet;
     # the wire's job-level `defaultExtractKitId` stands behind a working that states none.
