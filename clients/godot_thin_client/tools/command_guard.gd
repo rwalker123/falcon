@@ -258,6 +258,7 @@ func _ready() -> void:
 	await _drive_assign_labor_kits()
 	await _drive_build_kit()
 	await _drive_build_order()
+	await _drive_build_priority()
 	await _drive_send_trade_expedition()
 	_drive_road_verbs()
 	_drive_deposit_verbs()
@@ -601,6 +602,20 @@ func _drive_build_order() -> void:
 	}, SourceForecast.BUILD_QUEUE_HEAD)
 	await _settle()
 
+## **`build_priority` — A QUEUED BUILD'S OWN MARK** (`docs/plan_site_crews.md` §2.4), both source
+## forms, driven through the `Build` pill's own commit. It names a BAND, so the handle assertion is what
+## proves the client does not send entity bits down it.
+func _drive_build_priority() -> void:
+	var band: Dictionary = _hud._band_labor.panel_band()
+	_hud._bandpanel._commit_build_priority(band, {
+		"x": TARGET_X, "y": TARGET_Y, "herd_id": "",
+	}, HudWorkVocab.WORK_PRIORITY_HIGH)
+	await _settle()
+	_hud._bandpanel._commit_build_priority(band, {
+		"x": -1, "y": -1, "herd_id": NEAR_HERD_ID,
+	}, HudWorkVocab.WORK_PRIORITY_LOW)
+	await _settle()
+
 ## The position the plant drive moves its entry to. **Not the head**, because 0 is what an
 ## uninitialised int and a dropped field both look like.
 const BUILD_ORDER_POSITION := 2
@@ -805,6 +820,8 @@ func _connect_recorders() -> void:
 		_record("build_kit", p, MAIN_SCRIPT.format_build_kit(p)))
 	_hud.build_order_requested.connect(func(p: Dictionary) -> void:
 		_record("build_order", p, MAIN_SCRIPT.format_build_order(p)))
+	_hud.build_priority_requested.connect(func(p: Dictionary) -> void:
+		_record("build_priority", p, MAIN_SCRIPT.format_build_priority(p)))
 	_hud.cancel_order_requested.connect(func(band: Dictionary, scope: String) -> void:
 		_record("cancel_order", band, MAIN_SCRIPT.format_cancel_order(band, scope)))
 	_hud.abandon_requested.connect(func(p: Dictionary) -> void:
@@ -1043,12 +1060,15 @@ func _record(kind: String, payload: Dictionary, formatted: Dictionary,
 const ASSIGN_LABOR_ROLES := [
 	HudConst.LABOR_KIND_SCOUT,
 	HudConst.LABOR_KIND_WARRIOR,
-	HudConst.LABOR_KIND_AGRICULTURE,
-	HudConst.LABOR_KIND_HUSBANDRY,
 	HudConst.LABOR_KIND_ROADWORK,
-	HudConst.LABOR_KIND_QUARRYWORK,
 	HudConst.LABOR_KIND_BUILDERS,
 ]
+
+## **THE THREE RETIRED KEEPING POOLS** (`docs/plan_site_crews.md` §1) — a patch, a herd and a working
+## are kept by their own crews, and the sim refuses these tokens by name. Spelled here rather than
+## reached through `HudConst`, whose constants retired with the pools: an ABSENCE claim still needs a
+## needle, and the builder must build NOTHING for any of them.
+const RETIRED_ASSIGN_LABOR_ROLES := ["agriculture", "husbandry", "quarrywork"]
 
 ## The material the `extract` drive names. A real shipped material, so the line this guard parses is
 ## the line the client emits rather than one built out of a placeholder.
@@ -1074,7 +1094,7 @@ const ASSIGN_LABOR_BARE_DRIVES := 2
 
 ## What `EXPECTED_KINDS` must say for `assign_labor`. Spelled here because a `const` initializer
 ## cannot call `Array.size()`, and re-derived at runtime so the two cannot drift.
-const ASSIGN_LABOR_EXPECTED := 15
+const ASSIGN_LABOR_EXPECTED := 12
 
 ## **THE LIST ABOVE IS THE WHOLE OF WHAT THE CLIENT CAN SAY, ASSERTED RATHER THAN TRUSTED.**
 ##
@@ -1110,6 +1130,13 @@ func _assert_every_role_is_emittable() -> void:
 		}).get("line", "")) != "":
 		_fail("`%s` built an assign_labor line, so the role list is not a list"
 			% ASSIGN_LABOR_UNKNOWN_ROLE)
+	for retired in RETIRED_ASSIGN_LABOR_ROLES:
+		if String(MAIN_SCRIPT.format_assign_labor({
+				"faction": HudConst.PLAYER_FACTION_ID,
+				"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
+				"kind": String(retired), "workers": PARTY_WORKERS,
+			}).get("line", "")) != "":
+			_fail("the retired keeping pool `%s` still builds an assign_labor line" % String(retired))
 	# **AND THE EXPECTED COUNT IS RE-DERIVED FROM THE LIST**, because `EXPECTED_KINDS` has to spell it
 	# as a literal: a role added to the sweep without bumping that number would leave the emit count
 	# short and the failure would name the COUNT rather than the role, which is a worse error message
@@ -1144,6 +1171,8 @@ const EXPECTED_KINDS := {
 	# builder can get backwards (`docs/plan_standing_upkeep.md` §4.7a ②, §4.7b ③).
 	"build_kit": 2,
 	"build_order": 2,
+	# TWO — a queued build's own mark, tile form and herd form (`docs/plan_site_crews.md` §2.4).
+	"build_priority": 2,
 	# ONE — the Deny verb's sheet, opened on the herd its pick landed on, is the raid's only launch site.
 	"send_denial_raid": 1,
 	# ONE — the Trade verb's sheet is the shipment's only launch site, and one line carries every pile.

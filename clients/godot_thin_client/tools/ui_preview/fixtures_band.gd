@@ -754,7 +754,7 @@ static func kit_roster_fixture() -> Array:
 			# and a stale roster answers EMPTY — which draws no picker and passes every claim about
 			# one vacuously.
 			"id": KIT_ID_TILLAGE, "display_name": "Tillage kit",
-			"jobs": ["builders", KitRoster.JOB_AGRICULTURE],
+			"jobs": ["builders", "agriculture"],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,
 			"forage_carry_per_worker_biomass": KIT_FORAGE_CARRY_BARE,
@@ -808,7 +808,7 @@ static func kit_roster_fixture() -> Array:
 			# player picks to send a ranging party out bare-handed, and a roster that omitted it would
 			# leave the scout sheet's picker a one-entry list with no choice to make.
 			"jobs": ["hunt", "forage", "scout", "warrior", "builders",
-				KitRoster.JOB_AGRICULTURE, KitRoster.JOB_HUSBANDRY,
+				"agriculture", "husbandry",
 				KitRoster.JOB_EXPEDITION],
 			"attack": KIT_ATTACK_BARE,
 			"hunt_carry_per_worker_biomass": KIT_HUNT_CARRY_BARE,

@@ -736,6 +736,16 @@ pub(crate) fn herds_to_array(
         // second client-side derivation. Decoded on both webs so one reader serves a herd and a
         // patch alike.
         let _ = dict.insert("upkeep_kit_named", herd.upkeepKitNamed());
+        // **WHAT THIS HERD'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.1). A site's
+        // crew keeps it first and takes with the rest, so the work row's second line reads
+        // `keeps <upkeep_supplied> of <upkeep_demand> · <workers - upkeep_hands> hunting`.
+        //   `upkeep_hands`       = crew hands spent keeping this turn, fractional, summed across
+        //                          every band keeping it; `0` on a herd that owes nothing.
+        //   `upkeep_tools_short` = the band-wide settlement filled less than this site's
+        //                          keeping-tool claim, so its crew kept with more of its own hands —
+        //                          the row's `ⓘ` where the work is still covered.
+        let _ = dict.insert("upkeep_hands", f64::from(herd.upkeepHands()));
+        let _ = dict.insert("upkeep_tools_short", herd.upkeepToolsShort());
         array.push(&dict.to_variant());
     }
     array
@@ -1384,6 +1394,9 @@ pub(crate) fn forage_patches_to_array(
         // rather than the band. Newest slot on `ForagePatchState`.
         let _ = dict.insert("upkeep_kit_id", patch.upkeepKitId().unwrap_or(""));
         let _ = dict.insert("upkeep_kit_named", patch.upkeepKitNamed());
+        // **WHAT THIS PATCH'S OWN CREW SPENT KEEPING IT** — the herd block's pair; see there.
+        let _ = dict.insert("upkeep_hands", f64::from(patch.upkeepHands()));
+        let _ = dict.insert("upkeep_tools_short", patch.upkeepToolsShort());
         // THE BUILD CREWS ARE RETIRED with `crew_needed` (docs/plan_standing_upkeep.md section
         // 2.2). They floored the compose sheet's worker cap because that cap was inverted out of the
         // TAKE and a building crew was paid a dipped take, so a 25-turn improvement asked for FEWER

@@ -562,6 +562,9 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# work site this turn is a fact about a band's doing — set by a command — so it is redacted with
 	# the rest of the live payload, as `patch_build_kit_id` above is.
 	"patch_upkeep_kit_id", "patch_upkeep_kit_named",
+	# …and how many of the SITE'S OWN CREW the keeping took this turn, and whether its keeping tools
+	# came up short (`docs/plan_site_crews.md` §2.2) — a settlement of this turn's hands, so live state.
+	"patch_upkeep_hands", "patch_upkeep_tools_short",
 	# …and what that shortfall is COSTING the meter, which is the same fact one step on. The two
 	# per-rung `*_upkeep_demand` figures beside it — and their `*_upkeep_material_demand` twins, which
 	# are the same quote in the other currency and ride the same tender-load — are deliberately NOT
@@ -3653,6 +3656,11 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# and it is set per site by a command the player issues.
 		info["patch_upkeep_kit_id"] = String(patch.get("upkeep_kit_id", ""))
 		info["patch_upkeep_kit_named"] = bool(patch.get("upkeep_kit_named", false))
+		# **THE SITE CREW'S KEEPING** (`docs/plan_site_crews.md` §2.2) — the hands of this site's own
+		# crew the sim spent keeping it, and whether their keeping tools came up short. The compose
+		# sheet and the work row read them under the same forecast keys the band's labor rows carry.
+		info["patch_upkeep_hands"] = float(patch.get("upkeep_hands", 0.0))
+		info["patch_upkeep_tools_short"] = bool(patch.get("upkeep_tools_short", false))
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
 		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the

@@ -5372,7 +5372,7 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         func(count: int) -> void:
             _compose.set_deposit_count(clampi(count, 0, cap))
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
-        HudDepositVocab.CARD_CREW_HINT_FORMAT % HudWorkVocab.ROLE_NAME_QUARRYWORK)
+        HudDepositVocab.CARD_CREW_HINT)
     if capped_by_seam:
         target.add_child(HudWidgets.alloc_hint_label(
             HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()]))

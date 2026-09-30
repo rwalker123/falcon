@@ -6641,6 +6641,59 @@ pub(crate) fn forecast_take_outcomes(
     }
 }
 
+/// **WHAT A CREW ON THIS HERD OWES FOR ITS KEEPING** — the rung it holds and its stamped bill, or
+/// `None` when the herd claims no keeping (a wild herd, a meter at zero with nothing declared).
+/// The one reading the seed, the crew curve and the compose-sheet query strike a prospective crew's
+/// keeping hands from ([`crate::systems::prospective_keep_hands`], `docs/plan_site_crews.md` §2.2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrewKeeping {
+    pub rung: RungKey,
+    pub demand: f32,
+}
+
+/// [`CrewKeeping`] for `herd`, the verb resolved off `declared` exactly as the turn resolves it.
+pub fn herd_crew_keeping(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    ladder: &LadderConfig,
+    declared: Option<crate::components::Improvement>,
+) -> Option<CrewKeeping> {
+    herd_claims_keeping(herd, herd_build_verb(herd, declared)).then(|| CrewKeeping {
+        rung: herd.standing().held,
+        demand: herd_keeping_basis(herd, fauna, ladder),
+    })
+}
+
+/// **The hands a crew of `crew` spends keeping first** — `NO_HANDS` with nothing to keep.
+pub fn crew_keep_hands(
+    keeping: Option<CrewKeeping>,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &crate::components::BandEquipment,
+    crew: u32,
+) -> f32 {
+    keeping.map_or(NO_HANDS, |keeping| {
+        crate::systems::prospective_keep_hands(
+            equipment,
+            band_kit,
+            keeping.rung,
+            keeping.demand,
+            crew,
+        )
+    })
+}
+
+/// **THE ROW'S WHOLE NEEDED CREW** — the hands its take needs plus the hands its keeping spent
+/// (`docs/plan_site_crews.md` §4). A site's row is one crew with one stepper that keeps first and
+/// takes with the rest, so `workers > workers_needed` stays the overstaffing signal only if the
+/// count carries both halves. `take_needed` is the take activity's own inversion; `keep_hands` is
+/// fractional, so the sum is rounded up to whole workers. A row that keeps nothing is unchanged.
+pub(crate) fn crew_needed_with_keeping(take_needed: u32, keep_hands: f32) -> u32 {
+    if keep_hands <= NO_HANDS {
+        return take_needed;
+    }
+    (take_needed as f32 + keep_hands).ceil() as u32
+}
+
 /// Compose the **seeded** `SourceYield` telemetry row for a source from its pre-commit forecast —
 /// what the source *will* pay next turn under this staffing/policy, written at assign time so the
 /// map annotation and the band panel never show `+0.00` for an assignment that has simply not been
@@ -6652,9 +6705,10 @@ pub(crate) fn forecast_take_outcomes(
 ///   (no ⚠), exactly as the Field/corral arms record it,
 /// - `wasted` = the uncollected signal ([`forecast_production_and_take_at`]): the production the crew
 ///   could not carry home,
-/// - `workers_needed` = **the TAKE activity's own crew** — hands to haul the offer, the expected
-///   take inverted by the per-worker throughput (a ratio, so provisions-space matches the resolution
-///   path's biomass-space result). It was `source_crew_needed(standing, take)`, a `max` blending a
+/// - `workers_needed` = **the row's whole needed crew** — the hands its keeping spends plus the
+///   hands to haul the offer ([`crew_needed_with_keeping`], `docs/plan_site_crews.md` §4), the take
+///   half inverted by the per-worker throughput (a ratio, so provisions-space matches the
+///   resolution path's biomass-space result). It was `source_crew_needed(standing, take)`, a `max` blending a
 ///   herding headcount with a hauling one and a build's staffing floor, because one crew did every
 ///   job on a source and the row had one number to give. **Each activity is staffed on its own row
 ///   now** — the take on the source, the keeping and the building on the band
@@ -6785,46 +6839,48 @@ pub(crate) fn forecast_source_yield(
         // staffing count is a RATIO, and dividing a wolf's zero food take by its zero per-worker food
         // rate is the `0/0` the vector model exists to make impossible. Every edible species divides
         // exactly the numbers it divided before #337.
-        workers_needed: match forecast.ratio_axis() {
-            Some(axis) if forecast.quantises() => hunt_take_workers(
-                forecast.ceiling_at(floor).component(axis),
-                forecast.body_mass_yield.component(axis),
-                // **THE CARRY RATE THE TAKE WAS ACTUALLY BOUND BY** — [`NO_CARRY_BOUND`] where
-                // carry does not bind ([`SourceYieldForecast::larder`], the same flag
-                // [`forecast_production_and_take_at`] hands the quantiser two screens up), so the
-                // haul term drops out of the `max` and the keepers' handling crew answers alone.
-                // Inverting the sled here published *51 haulers* beside a five-keeper
-                // `huntUsefulWorkers` on the shipped penned aurochs: two surfaces, one question,
-                // opposite answers, for a haul that never happens.
-                if forecast.larder {
-                    NO_CARRY_BOUND
-                } else {
-                    forecast.per_worker_yield.component(axis)
-                },
-                // **The engagement term is the third unit** — `hunt_engage_workers` reads it exactly
-                // as `animals_engaged` does, so the crew inverts the bound the take was actually
-                // paid. On a pen that bound is the keepers' handling rate, so the term counts
-                // keepers; only the plant web's `f32::INFINITY` drops it entirely.
-                forecast.engage_rate,
-                // **The retreat, off THIS forecast's own party and quarry** — the same
-                // `stay_fraction` the take above was priced with, so the crew and the take can
-                // never be resolved at two different dispersions.
-                forecast
-                    .fight
-                    .as_ref()
-                    .map_or(NO_RETREAT_STAGE_STAY, |(party, quarry)| {
-                        party.stay_fraction(quarry.profile.wariness)
-                    }),
-            ),
-            Some(axis) => workers_needed_for_take(
-                actual.component(axis),
-                forecast.per_worker_yield.component(axis),
-                workers,
-            ),
-            // A source that yields nothing in either currency asks for no haulers. What it costs to
-            // KEEP is a different question, answered per activity on the source's own row.
-            None => NO_CREW_ON_THIS_ACTIVITY,
-        },
+        workers_needed: crew_needed_with_keeping(
+            match forecast.ratio_axis() {
+                Some(axis) if forecast.quantises() => hunt_take_workers(
+                    forecast.ceiling_at(floor).component(axis),
+                    forecast.body_mass_yield.component(axis),
+                    // **THE CARRY RATE THE TAKE WAS ACTUALLY BOUND BY** — [`NO_CARRY_BOUND`] where
+                    // carry does not bind ([`SourceYieldForecast::larder`], the same flag
+                    // [`forecast_production_and_take_at`] hands the quantiser two screens up), so the
+                    // haul term drops out of the `max` and the keepers' handling crew answers alone.
+                    // Inverting the sled here published *51 haulers* beside a five-keeper
+                    // `huntUsefulWorkers` on the shipped penned aurochs: two surfaces, one question,
+                    // opposite answers, for a haul that never happens.
+                    if forecast.larder {
+                        NO_CARRY_BOUND
+                    } else {
+                        forecast.per_worker_yield.component(axis)
+                    },
+                    // **The engagement term is the third unit** — `hunt_engage_workers` reads it exactly
+                    // as `animals_engaged` does, so the crew inverts the bound the take was actually
+                    // paid. On a pen that bound is the keepers' handling rate, so the term counts
+                    // keepers; only the plant web's `f32::INFINITY` drops it entirely.
+                    forecast.engage_rate,
+                    // **The retreat, off THIS forecast's own party and quarry** — the same
+                    // `stay_fraction` the take above was priced with, so the crew and the take can
+                    // never be resolved at two different dispersions.
+                    forecast
+                        .fight
+                        .as_ref()
+                        .map_or(NO_RETREAT_STAGE_STAY, |(party, quarry)| {
+                            party.stay_fraction(quarry.profile.wariness)
+                        }),
+                ),
+                Some(axis) => workers_needed_for_take(
+                    actual.component(axis),
+                    forecast.per_worker_yield.component(axis),
+                    workers,
+                ),
+                // A source that yields nothing in either currency asks for no haulers.
+                None => NO_CREW_ON_THIS_ACTIVITY,
+            },
+            workers as f32 - take_hands,
+        ),
         // A **managed** source (rung 3 — a Field, a pen) takes at most its escapement MSY, so it
         // cannot overdraw whatever the dial and the crew say.
         overdraws: !managed && overdraws,
@@ -9871,6 +9927,11 @@ pub struct HuntCrewCurveInputs<'a> {
     /// The largest crew the curve is asked about — the source's own crew pool (the hands on it plus
     /// the band's idle ones), which is every crew the stepper beside it can reach.
     pub max_workers: u32,
+    /// **WHAT EACH ROW'S CREW KEEPS FIRST** ([`herd_crew_keeping`]) — a row at crew `w` takes with
+    /// `w − keep_hands(w)` (`docs/plan_site_crews.md` §2.2), so a curve for a kept herd quotes what
+    /// `w` hands collect after keeping, exactly as the deposit curve does. `None` for a herd that
+    /// owes nothing.
+    pub keeping: Option<CrewKeeping>,
 }
 
 /// **THE QUARRY AS NEXT TURN'S TAKE WILL FIND IT** — a clone with one Logistics regrowth applied,
@@ -10016,8 +10077,11 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
         && !herd_collection(&quarry, inputs.fauna, ONE_WORKER, inputs.baseline_haul_rate)
             .is_infinite();
     (1..=inputs.max_workers)
-        .map(|workers| {
-            let coverage = curve_coverage(inputs, workers as f32);
+        .map(|crew| {
+            // **The crew keeps first** — every term below reads the hands left to take with.
+            let workers =
+                crew as f32 - crew_keep_hands(inputs.keeping, inputs.equipment, inputs.wear, crew);
+            let coverage = curve_coverage(inputs, workers);
             let party = PartyResolution {
                 equipment: inputs.equipment,
                 coverage: &coverage,
@@ -10050,7 +10114,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                         inputs.wear,
                     )
                 });
-                (workers as f32 * per_worker / quarry.body_mass)
+                (workers * per_worker / quarry.body_mass)
                     // **The carry arm still cannot bind below one body**, exactly as
                     // `quantise_animal_take`'s `carryable.max(1.0)` does not: a keeper who cannot
                     // haul a whole beast still walks one out and wastes the rest. That is a fact
@@ -10062,7 +10126,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             let engaged = engagement_reach(
                 &quarry,
                 inputs.fauna,
-                workers as f32,
+                workers,
                 inputs.floor,
                 EngagementQuantum::Rate,
             )
@@ -10084,7 +10148,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             let kills_at = |draw: HuntDraw| {
                 OutcomeKills::resolve(
                     &outcomes,
-                    workers as f32,
+                    workers,
                     &party,
                     quarry_fight.as_ref(),
                     quarry.wounds,
@@ -10107,7 +10171,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
                 .unwrap_or(NO_STAYERS)
             };
             HuntCrewTake {
-                workers,
+                workers: crew,
                 // No clamp. `low <= likely <= high` is asserted across the roster by
                 // `forecast_query`'s `the_curve_band_brackets_its_mean_across_the_roster`.
                 low: edge(-sigmas),

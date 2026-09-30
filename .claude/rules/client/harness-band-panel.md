@@ -1048,10 +1048,15 @@ ever stand on the pool that funds it.
   single `scout` line. An assertion that passes because the case was never asked is the failure mode
   this repo keeps re-learning; a guard whose whole purpose is "the client's lines parse" must ask about
   **every** line the client can build, not one representative.
-- **The drive is a sweep over `ASSIGN_LABOR_ROLES`** — scout · warrior · agriculture · husbandry ·
-  builders — each with a non-default kit, **plus the bare `assign_labor … builders 2`**, which is the
-  exact form the pool's `+` emits for a player who never opened a kit picker. The kit-bearing form
-  alone would have missed it.
+- **The drive is a sweep over `ASSIGN_LABOR_ROLES`** — scout · warrior · roadwork · builders — each
+  with a non-default kit, **plus the bare `assign_labor … builders 2`**, which is the exact form the
+  pool's `+` emits for a player who never opened a kit picker. The kit-bearing form alone would have
+  missed it. **The three retired keeping pools** (`RETIRED_ASSIGN_LABOR_ROLES`: agriculture ·
+  husbandry · quarrywork, spelled as strings because their `HudConst` constants retired) are asserted
+  to build NO line (`docs/plan_site_crews.md`).
+- **`build_priority` is driven in both source forms** (`_drive_build_priority`, through the `Build`
+  pill's own `_commit_build_priority`) and counted twice in `EXPECTED_KINDS`; it names a band, so the
+  handle assertion covers it.
 - **`_assert_every_role_is_emittable` closes the other direction**: every listed role builds a real line
   from `Main.format_assign_labor`, and an unknown role builds NOTHING — so the list is a list rather
   than a builder that accepts anything.
@@ -2898,3 +2903,44 @@ bare rate says nothing where the published cap says `overstaffed`. **That premis
 trusted**, against a chapter-local bare quotient (`_worn_workings_bare_cap`) — a fixture where the two
 ceilings agreed could not say which one the row read. The stone crew sits exactly on its own published
 cap and must carry nothing, the pair's negative half.
+
+## The Work tab's SECTIONS and its SITE CREWS (`docs/plan_site_crews.md`)
+
+`_render_work_sections_states`, run straight after `_render_empty_work_zone_states`. One board carries
+every row shape the sections introduce: a WILD queued patch (owes nothing), a Tended Patch its crew
+keeps in full (`keeps 2 of 2 · 1 harvesting`), a Tended Patch its crew keeps SHORT, the reference hunt
+row, and one queued build whose own mark is `high` so the pill and the queue's read-only mark both
+state a non-default level. Frames: `band_panel_work_sections`, `band_panel_work_sections_tools_short`,
+`band_panel_work_sections_collapsed`.
+
+- **Every expected string is composed from the FORMAT and the fixture's own numbers**, never through
+  `site_crew_line` / `site_keeping_hint`: the kept line, the free line, the short hover
+  (`Needs 2 work a turn to stay a Tended Patch. Getting 1.`) and the tools `ⓘ` hover.
+- **The pills are claimed as a set**: a `Priority` pill on every row, exactly ONE `Build` pill and it
+  is on the queued row, and the queue row's `Build:` mark is a `Label`, not a control. Both pills are
+  pressed with REAL input (`_drive_click`) and the emitted LINE is read back through `Main`'s own
+  formatter — `build_priority 0 <band> 71 18 low` (High cycles to Low) and `work_priority … high`.
+- **The collapse is a pair**: the AGRICULTURE chevron folds its section (head kept, no harvest row)
+  while the HUSBANDRY row stays, and the same chevron unfolds it back to the full row count.
+- **The inspector on the kept patch** re-runs `_assert_kits_section_draws_its_control` and
+  `_assert_work_inspector_worst_case_fits`, both carried over from the retired POOLS worst-case state.
+- `_assert_scroll_only_where_sanctioned` gained the sections list: it exists exactly when the work
+  zone is mounted on a band page and neither expansion holds the zone.
+
+**What retired with the pools, as whole families**: the POOLS block states (`band_panel_pools_*`, the
+fund-mode worst case), the pool-card mark / TOE / idle / pending sets and their fixtures, the
+declare-time keeping claims, the keeper-tools remedy fork, the workings-roster head and its idle and
+unseen cases, the roster DOOR's workings frames, the Gathering filter state
+(`band_panel_rung_ready_filter`), the chips claims on the empty work zone, and the board-capacity
+probes (`_probe_work_board_layout`). The workings roster claims were re-aimed at the GROUNDWORK
+section: every row now carries its own crew stepper, and `_assert_groundwork_site_crew_lines` reads
+each row's `cutting` line. A block's HEAD is found through `_block_head`: the Work tab's section
+head on the collapsed path, the block's own first child when expanded. Every queue row is
+`BUILD_QUEUE_ROW_HEIGHT` tall, and `WIDE_DOCK_QUEUE_ROWS` is `BUILD_QUEUE_ROWS_MAX`, the zone scrolling
+rather than trading queue rows for board rows.
+
+**A 1920×1080 display cannot run the whole walk**: macOS leaves a 928px-tall window there, so every
+state that pins a 1080-high canvas fails its pin and the dock-row walk stalls into the watchdog. The
+site-crews arc was measured on a temporary copy with those pins at 900 and the dock-row and
+interface-scale walks skipped — 188 frames / 1326 `: PASS` / 401 `assert OK`, exit 0 — which is not
+comparable to the full-walk tally above.

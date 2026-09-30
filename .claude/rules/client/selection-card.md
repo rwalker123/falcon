@@ -758,8 +758,9 @@ including `HERDERS_SHED_FORMAT`, the one line in the client that says animals ar
 >
 > **What renders now is one row and one hover.** The rung row appends a state word —
 > `🌾 Tended 90% ⚠ slipping` (`🐄 Domesticated 100% ⚠ drifting` on the animal web) — and the block's
-> `tooltip_text` carries the remedy alone: *"This ground is slipping — raise this band's Agriculture
-> role."* **No shortfall figure and no countdown appear on this card at all.**
+> `tooltip_text` carries the remedy alone: *"This ground is slipping — add hands to this row's
+> crew."* (it named the Agriculture role until `docs/plan_site_crews.md` retired the keeping pools).
+> **No shortfall figure and no countdown appear on this card at all.**
 >
 > `UPKEEP_RISK_ROW`, `UPKEEP_LOST_SOON_FORMAT`, `UPKEEP_LOST_NOW_FORMAT` and `at_risk_lines` are all
 > retired. Two of those formats were the last player-facing uses of the word **rung**, which the
@@ -800,7 +801,7 @@ The rest of this section records how the row got there, and is superseded by the
   alone, so it covers both sides of the meter without re-deciding which side it is on.
 - **…BUT IT NOW CARRIES A REMEDY SUB-ROW, AND THAT ONE DOES** (§4.6b). `at_risk_lines(src, prefix,
   kind)` appends the work board's own note — `HudWorkVocab.under_kept_note_for_source` — indented
-  under the countdown: *"This ground is slipping — raise this band's Agriculture role."* The row
+  under the countdown: *"This ground is slipping — add hands to this row's crew."* The row
   stated what was being LOST and never where the hands come from, and one surface up the map's `⚠`
   badge could not be interrogated at all: `BandOverlayRenderer._draw_source_badge` paints it with
   `draw_string` into `MapView`'s canvas, so it is not a Control and can hold no `tooltip_text`. **The

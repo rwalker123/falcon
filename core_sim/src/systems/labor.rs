@@ -2287,6 +2287,24 @@ struct SiteKeeping {
     tools_short: bool,
 }
 
+impl SiteKeeping {
+    /// **The keeping the hands PRESENT can do** — `keep_hands` capped at `present`, the work and
+    /// its tool wear scaled with it. A local row is present whole and passes unchanged; a far
+    /// row's party keeps only with the hands standing at the source (`crate::work_party`).
+    fn at_the_source(self, present: u32) -> Self {
+        let present = present as f32;
+        if self.keep_hands <= present {
+            return self;
+        }
+        let share = present / self.keep_hands;
+        SiteKeeping {
+            keep_hands: present,
+            kept: self.kept * share,
+            ..self
+        }
+    }
+}
+
 /// **STEP 4 AND THE SPLIT, FOR EVERY SITE** (`docs/plan_site_crews.md` §2.1, §2.3).
 ///
 /// `keep_rate` is the coverage-weighted rate of the units the settlement gave the site
@@ -5096,7 +5114,7 @@ pub fn advance_labor_allocation(
         // per assignment index: the hands spent keeping at the rate the settled tools buy, the work
         // they delivered, and whether the site's tool claim was filled. Each arm below pays it into
         // its own source and takes with what is left.
-        let site_keeping = site_keeping(
+        let mut site_keeping = site_keeping(
             &equipment_cfg,
             &band_kit,
             &site_asks,
@@ -5459,7 +5477,19 @@ pub fn advance_labor_allocation(
             // resolved above the loop off the band-wide tool settlement. The work, the hands and the
             // kit travel together, so the hours charged and the tool charged for them can never
             // describe two different sites.
-            let keeping = site_keeping.get(idx).cloned().unwrap_or_default();
+            //
+            // **ONLY THE HANDS AT THE SOURCE KEEP IT.** A far row's party walks out and sends
+            // porters home, so `workers` here is the hands present; the keeping was planned over the
+            // whole crew, and a hand on the road keeps nothing. Capped here and written back, so the
+            // row's needed crew below reads the same hands the source was paid.
+            let keeping = site_keeping
+                .get(idx)
+                .cloned()
+                .unwrap_or_default()
+                .at_the_source(workers);
+            if let Some(slot) = site_keeping.get_mut(idx) {
+                *slot = keeping.clone();
+            }
             // **THE KIT THIS CREW WAS SENT OUT WITH** (`equipment.json`'s roster) — the mask that
             // decides which of the three components serve it at all, re-resolved from the
             // *assignment* every turn and never from what the band happens to hold. `None` = the
@@ -6130,9 +6160,26 @@ pub fn advance_labor_allocation(
                     // **THE CARAVAN'S FORECAST, FROM THE STATE THIS TURN LEAVES** — the patch after
                     // the take and the party after its packs went, stepped through the one
                     // function the seed and the query answer through.
+                    //
+                    // ⛔ **ITS KEEPING IS PLANNED AT THE STAFFED CREW, OFF THE PATCH AS IT STANDS**
+                    // (`docs/plan_site_crews.md` §2.1) — the reading the seed and the query take
+                    // (`fauna::crew_keep_hands`), netted off the hands present every stepped turn
+                    // exactly as this turn's take was (`SiteKeeping::at_the_source`).
                     if let (Some(posting), Some(carry)) =
                         (postings.get_mut(&idx), caravan_forage_carry)
                     {
+                        let keep_hands = crate::fauna::crew_keep_hands(
+                            crate::forage::patch_crew_keeping(
+                                patch,
+                                &ladder,
+                                &labor.forage,
+                                plant_tile_ground,
+                                declared,
+                            ),
+                            &equipment_cfg,
+                            &band_kit,
+                            assignment.workers,
+                        );
                         posting.forecast = Some(crate::work_party::forecast_forage_caravan(
                             &posting.party,
                             patch,
@@ -6144,6 +6191,7 @@ pub fn advance_labor_allocation(
                             mult_f,
                             *floor,
                             take_species,
+                            keep_hands,
                             realized_horizon,
                         ));
                     }
@@ -7120,6 +7168,14 @@ pub fn advance_labor_allocation(
                             caravan_haul_carry,
                             caravan_party_for(herd.body_mass),
                         ) {
+                            // The herd's keeping, planned at the staffed crew off the herd as it
+                            // stands — see the Forage arm.
+                            let keep_hands = crate::fauna::crew_keep_hands(
+                                crate::fauna::herd_crew_keeping(herd, &fauna, &ladder, declared),
+                                &equipment_cfg,
+                                &band_kit,
+                                assignment.workers,
+                            );
                             posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
                                 &posting.party,
                                 herd,
@@ -7128,6 +7184,7 @@ pub fn advance_labor_allocation(
                                 &hunters,
                                 mult_f,
                                 *floor,
+                                keep_hands,
                                 realized_horizon,
                             ));
                         }
@@ -7951,6 +8008,14 @@ pub fn advance_labor_allocation(
                         caravan_haul_carry,
                         caravan_party_for(herd.body_mass),
                     ) {
+                        // The herd's keeping, planned at the staffed crew off the herd as it
+                        // stands — see the Forage arm.
+                        let keep_hands = crate::fauna::crew_keep_hands(
+                            crate::fauna::herd_crew_keeping(herd, &fauna, &ladder, declared),
+                            &equipment_cfg,
+                            &band_kit,
+                            assignment.workers,
+                        );
                         posting.forecast = Some(crate::work_party::forecast_hunt_caravan(
                             &posting.party,
                             herd,
@@ -7959,6 +8024,7 @@ pub fn advance_labor_allocation(
                             &hunters,
                             mult_f,
                             *floor,
+                            keep_hands,
                             realized_horizon,
                         ));
                     }
@@ -8558,6 +8624,17 @@ pub fn advance_labor_allocation(
                                 &forecast_key,
                             ),
                             *floor,
+                            // The working's keeping, planned at the staffed crew off the working
+                            // as it stands — see the Forage arm.
+                            crate::extraction::crew_keep_hands(
+                                &equipment_cfg,
+                                &band_kit,
+                                working,
+                                ground,
+                                &extraction_cfg,
+                                &ladder,
+                                assignment.workers,
+                            ),
                             realized_horizon,
                         ));
                     }
@@ -9177,6 +9254,14 @@ pub fn advance_labor_allocation(
         // surviving assignments (lapsed rows carry a 0 yield anyway).
         // An arm may lapse a row from more than one place in the walk, so the list is ordered and
         // deduplicated before the reverse removal that depends on it.
+        // **A kept row's needed crew carries its keeping hands** (`docs/plan_site_crews.md` §4):
+        // each arm inverted its take alone, and the row is one crew that keeps first, so the
+        // overstaffing signal `workers > workers_needed` has to count both halves. `site_keeping`
+        // is index-aligned with `yields` until the lapse removal below.
+        for (row, keeping) in yields.iter_mut().zip(site_keeping.iter()) {
+            row.workers_needed =
+                fauna::crew_needed_with_keeping(row.workers_needed, keeping.keep_hands);
+        }
         lapsed.sort_unstable();
         lapsed.dedup();
         for idx in lapsed.into_iter().rev() {
@@ -13291,9 +13376,16 @@ mod labor_yield_tests {
             expected_foragers >= 1,
             "the tended patch must pay out, or this asserts nothing"
         );
+        // **Plus the hands the patch's own crew kept it with** (`docs/plan_site_crews.md` §4).
+        let keep_hands = world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .unwrap()
+            .upkeep_hands;
         assert_eq!(
-            tended.workers_needed, expected_foragers,
-            "a tended patch reports the crew its boosted take needs: {tended:?}"
+            tended.workers_needed,
+            fauna::crew_needed_with_keeping(expected_foragers, keep_hands),
+            "a tended patch reports the crew its boosted take needs plus its keeping: {tended:?}"
         );
         // **THE PEN'S CREW IS ITS HANDLING CREW, AND NO HAUL COUNT SURVIVES IN IT.**
         //
@@ -13319,10 +13411,18 @@ mod labor_yield_tests {
             "PRECONDITION: this pen must be big enough that the haul count ({retired_haul_crew}) \
              and the handling crew ({handling_crew}) cannot be confused"
         );
+        // The row's whole crew is the handling crew **plus** the hands it kept the pen with
+        // (`docs/plan_site_crews.md` §4) — never the haul count.
+        let pen_keep_hands = world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .unwrap()
+            .upkeep_hands;
         assert_eq!(
-            corral.workers_needed, handling_crew,
-            "a larder pen's take crew is its HANDLING crew ({handling_crew}); the haul count \
-             ({retired_haul_crew}) is the retired reading: {corral:?}"
+            corral.workers_needed,
+            fauna::crew_needed_with_keeping(handling_crew, pen_keep_hands),
+            "a larder pen's take crew is its HANDLING crew ({handling_crew}) plus its keeping; the \
+             haul count ({retired_haul_crew}) is the retired reading: {corral:?}"
         );
     }
 
@@ -13954,12 +14054,13 @@ mod labor_yield_tests {
         );
     }
 
-    /// **A domesticated slow breeder reports `max(herders_needed, steady_haul)`, and it equals the
-    /// client's `_max_useful_workers`.** The managed rung staffs one crew big enough for both jobs; the
-    /// haul side is the steady carry crew (stable across the pulse), so the band panel's overstaff note
-    /// and the compose panel's stepper cap read the same number — which is the whole point of the fix.
+    /// **A domesticated slow breeder reports its keeping hands plus its steady haul, and the haul
+    /// equals the client's `_max_useful_workers`.** The row is one crew that keeps first
+    /// (`docs/plan_site_crews.md` §4); the take side is the steady carry crew (stable across the
+    /// pulse), so the band panel's overstaff note and the compose panel's stepper cap read the same
+    /// take number.
     #[test]
-    fn a_domesticated_slow_breeder_reports_max_of_herders_and_steady_crew_matching_the_client() {
+    fn a_domesticated_slow_breeder_reports_its_keeping_plus_its_steady_crew() {
         let (mut world, tile) = world_with_source(CAP);
         reseat_slow_breeder(&mut world, SLOW_BREEDER_BIOMASS);
         // Tame it outright so it owes a standing herder cost (owner = the band's faction).
@@ -13972,7 +14073,8 @@ mod labor_yield_tests {
             );
             assert!(herd.is_domesticated(), "the fixture herd must be tamed");
         }
-        let assigned = 3;
+        // Past the steady crew **and** the hands its keeping takes, so the idle hand is real.
+        let assigned = 4;
         let band = spawn_band(
             &mut world,
             tile,
@@ -14032,10 +14134,21 @@ mod labor_yield_tests {
             herders >= 1,
             "a tamed herd owes at least one keeper, or this asserts nothing"
         );
+        // **The row's whole crew** (`docs/plan_site_crews.md` §4): the take's steady haul plus the
+        // hands the row kept its herd with this turn.
+        let keep_hands = world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .unwrap()
+            .upkeep_hands;
+        assert!(
+            keep_hands > fauna::NO_HANDS,
+            "fixture: the tamed herd's own crew keeps it"
+        );
         assert_eq!(
             yielded.workers_needed,
-            herders.max(steady_haul),
-            "a managed herd reports one crew = max(herders, steady haul): {yielded:?}"
+            fauna::crew_needed_with_keeping(steady_haul, keep_hands),
+            "a managed herd reports its keeping hands plus the steady haul: {yielded:?}"
         );
         assert_eq!(
             steady_haul, client_max_useful,
@@ -14043,7 +14156,7 @@ mod labor_yield_tests {
         );
         assert!(
             assigned > yielded.workers_needed,
-            "the 3-worker fixture is overstaffed past the steady crew: {yielded:?}"
+            "the 4-worker fixture is overstaffed past the steady crew and its keeping: {yielded:?}"
         );
     }
 

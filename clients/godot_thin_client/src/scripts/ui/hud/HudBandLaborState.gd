@@ -615,7 +615,7 @@ func pending_key(kind: String, x: int, y: int, herd_id: String, material: String
 				return "roadwork:%d,%d" % [x, y]
 			return kind
 		_:
-			return kind  # scout / warrior / the three other keeping pools — one band-wide role each
+			return kind  # scout / warrior / builders — one band-wide role each
 
 ## **THIS BAND'S OWN BUILD QUEUE, AS THE KEYS THE QUEUE MODELS ARE KEYED BY** — the wire's
 ## `PopulationCohortState.buildQueue` in the band's own order, each row mapped through `pending_key`,
@@ -649,6 +649,25 @@ func build_queue_keys(band: Dictionary) -> Array:
 			int(entry.get("target_x", -1)), int(entry.get("target_y", -1)),
 			String(entry.get("fauna_id", ""))))
 	return keys
+
+## **ONE QUEUED BUILD'S OWN MARK** — `high` / `normal` / `low` off the band's wire queue entry whose
+## source key is `key` (`BuildQueueEntryState.buildPriority`, `docs/plan_site_crews.md` §2.4), or `""`
+## when this band has nothing queued there. Normalized through `HudWorkVocab.work_priority_of` so a
+## frame the sim did not write reads as the default rather than as a fourth token.
+func build_priority_for_key(band: Dictionary, key: String) -> String:
+	var entries: Variant = band.get("build_queue", [])
+	if not (entries is Array):
+		return ""
+	for entry_variant in (entries as Array):
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		var entry_key := pending_key(String(entry.get("kind", "")).strip_edges().to_lower(),
+			int(entry.get("target_x", -1)), int(entry.get("target_y", -1)),
+			String(entry.get("fauna_id", "")))
+		if entry_key == key:
+			return HudWorkVocab.work_priority_of(String(entry.get("build_priority", "")))
+	return ""
 
 func pending_assigns_for(entity: int) -> Dictionary:
 	var e: Variant = _pending_labor.get(entity, {})
@@ -1219,65 +1238,11 @@ func effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
 		return int((pend[key] as Dictionary).get("workers", 0))
 	return workers_for_hunt(band, herd_id)
 
-## **WHAT ONE BAND'S KEEPING POOL IS BEING ASKED FOR, AND WHAT IT COVERED** — the band-level sum, per
-## WEB, of the per-source upkeep the wire already publishes (`docs/plan_standing_upkeep.md` §2.5).
-## `{demand, supplied, shortfall}` in work units, all three summed and none of them derived from the
-## other two.
-##
-## **IT REPLACED `assigned_keepers_for`, and the replacement is not cosmetic.** That reader summed the
-## per-source `maintain` crews, which no longer exist: maintenance is a band-level role and each
-## source is paid a SHARE of the pool. A headcount is therefore no longer available per source, and
-## the pool's own state is the only thing that answers *"is this band keeping what it holds"*.
-##
-## **THE SUM IS OVER EVERY SOURCE THIS BAND HOLDS ON THIS WEB, TAKE CREW OR NOT.** It skipped a row
-## with nobody on the take, on the reasoning that `systems::labor::maintenance_shares` skips it —
-## which is exactly backwards. **That function deliberately EXCLUDES the take crew from eligibility**
-## (`core_sim/tests/forage_cultivation.rs`: *"a patch with no gatherers is still kept by the band's
-## pool"*): the row's licence to exist is the ground's own at-risk meter, never who happens to be
-## standing on it. So a band that finished a Cultivate and moved its foragers to a richer stand was
-## billed by the sim and contributed nothing here — the card understating both its demand and its
-## shortfall, silently, on the one state the sim has a regression test for.
-##
-## **WHAT THE FILTER WAS ALSO DOING IS DONE BY TWO TESTS THAT REMAIN**, and neither is a headcount:
-## the KIND test above it excludes every band-wide role (`agriculture` / `husbandry` / `builders` /
-## `scout` / `warrior` carry their own kinds, none of which is a web's), and `_upkeep_source_for`
-## answers `{}` for a row whose patch or herd the snapshot does not carry — so *"is this row a real
-## source rather than a band-wide role"* survives structurally.
-##
-## A source whose at-risk meter is still being BUILT contributes its demand too, deliberately: the sim
-## leaves it out of the pool (its builders answer for it), but its published `upkeepShortfall` is
-## still what that meter bleeds, and a band summary that hid it would go quiet on a walked-away build.
-##
-## **IT ALSO CARRIES THE BARE PER-WORKER WORK RATE the sources it summed publish**, which is what lets
-## the pool card project what its OWN hands supply against that demand — read off the same sources the
-## demand came from, so a pool with something to pay for always has a rate to price its hands at.
-## `maxf` over them rather than the first: every source publishes the same constant, and taking the
-## largest means a single malformed row cannot silently zero the projection.
-##
-## `kind` is `LABOR_KIND_FORAGE` for the agriculture pool and `LABOR_KIND_HUNT` for the husbandry one
-## — the two webs' own labor kinds, so the caller never invents a third vocabulary for the split.
-func upkeep_pool_state(band: Dictionary, kind: String) -> Dictionary:
-	var demand := 0.0
-	var supplied := 0.0
-	var shortfall := 0.0
-	var per_worker := SourceForecast.BUILD_WORK_NONE
-	for entry in labor_assignments_of(band):
-		if not (entry is Dictionary):
-			continue
-		var assignment: Dictionary = entry
-		if String(assignment.get("kind", "")).to_lower() != kind:
-			continue
-		var source := _upkeep_source_for(assignment, kind)
-		if source.is_empty():
-			continue
-		var state := SourceForecast.upkeep_state(source, HudComposeVocab.BARE_FORECAST_PREFIX)
-		demand += float(state.get("demand", SourceForecast.NO_UPKEEP_DEMAND))
-		supplied += float(state.get("supplied", SourceForecast.NO_UPKEEP_DEMAND))
-		shortfall += float(state.get("shortfall", SourceForecast.NO_UPKEEP_DEMAND))
-		per_worker = maxf(per_worker, SourceForecast.build_work_per_worker_turn(
-			source, HudComposeVocab.BARE_FORECAST_PREFIX))
-	return {"demand": demand, "supplied": supplied, "shortfall": shortfall,
-		POOL_PER_WORKER_TURN_KEY: per_worker}
+## > ### ⛔ RETIRED — `upkeep_pool_state`, the Agriculture/Husbandry pool's summed bill
+## >
+## > It summed each web's per-source `{demand, supplied, shortfall}` for the POOL cards. Those pools
+## > are gone (`docs/plan_site_crews.md`): a patch or a herd is kept by its OWN crew, so each row states
+## > its own bill (`upkeep_demand` / `upkeep_supplied` / `upkeep_hands`) and nothing sums them.
 
 ## **THE `roadwork` POOL'S STATE — read off the COHORT, never summed from the road rows** (arc #532).
 ##
@@ -1303,31 +1268,6 @@ func roadwork_pool_state(band: Dictionary) -> Dictionary:
 		"shortfall": float(band.get("roadwork_shortfall", SourceForecast.NO_UPKEEP_DEMAND)),
 	}
 
-## **THE `quarrywork` POOL'S BILL, SUPPLY AND SHORTFALL — `roadwork_pool_state`'s twin one pool
-## over** (arc #583), and every word of that function's rule applies here unchanged.
-##
-## ⛔ **DO NOT SUM THE DEPOSIT ROWS.** Three published fields and no arithmetic:
-## `demand − supplied == shortfall` holds verbatim on the wire. The `deposits` rows are
-## **fog-filtered**, so a working out of sight would silently drop out of any client-side total while
-## the band certainly still owes its keeping. The demand is summed sim-side BEFORE the head-count
-## gate, so a band with nobody on `quarrywork` reports the bill it is FAILING to pay rather than a
-## reassuring zero — that is the alarm.
-##
-## It carries no `POOL_PER_WORKER_TURN_KEY` for `roadwork_pool_state`'s own reason: the shortfall
-## beside the supply is the sim's answer to *did that cover it*, so there is nothing left for a
-## projection to decide.
-func quarrywork_pool_state(band: Dictionary) -> Dictionary:
-	return {
-		"demand": float(band.get("quarrywork_demand", SourceForecast.NO_UPKEEP_DEMAND)),
-		"supplied": float(band.get("quarrywork_supplied", SourceForecast.NO_UPKEEP_DEMAND)),
-		"shortfall": float(band.get("quarrywork_shortfall", SourceForecast.NO_UPKEEP_DEMAND)),
-	}
-
-## The key the bare per-worker work rate rides out on. **Named rather than spelled at each reader**,
-## unlike the three figures beside it, because it is read from another script: a typo in a `get` there
-## is a silent zero, which would read as *this pool supplies nothing* and mark a fully staffed card.
-const POOL_PER_WORKER_TURN_KEY := "per_worker_turn"
-
 ## **WHICH WAY THIS BAND SPLITS A POOL IT CANNOT STRETCH** — `PopulationCohortState.upkeepFundMode`,
 ## normalized to one of the two tokens `upkeep_mode` takes.
 ##
@@ -1338,20 +1278,6 @@ const POOL_PER_WORKER_TURN_KEY := "per_worker_turn"
 func upkeep_fund_mode(band: Dictionary) -> String:
 	var mode := String(band.get("upkeep_fund_mode", "")).strip_edges().to_lower()
 	return mode if mode == HudConst.UPKEEP_FUND_MODE_PRIORITY else HudConst.UPKEEP_FUND_MODE_SPREAD
-
-## The LIVE source dict one assignment row points at — the patch under a forage row, the world herd
-## under a hunt row. `{}` where the snapshot does not carry it (a patch outside the ingested lookup,
-## a herd that has gone), which the caller skips: an absent source states no upkeep, and inventing a
-## zero for it would read as *"this band is keeping everything"*.
-##
-## **A HERD IS RESOLVED BY ID AND NEVER BY THE ROW'S TARGET TILE**, herds migrating; the patch is
-## resolved by tile, a patch being fixed. Same split every other reader of these two makes.
-func _upkeep_source_for(assignment: Dictionary, kind: String) -> Dictionary:
-	if kind == LABOR_KIND_HUNT:
-		return find_world_herd(String(assignment.get("fauna_id", "")))
-	var tile := Vector2i(int(assignment.get("target_x", -1)), int(assignment.get("target_y", -1)))
-	var patch: Variant = forage_patch_lookup().get(tile, {})
-	return patch if patch is Dictionary else {}
 
 ## Effective worker count on a band-wide ROLE (scout/warrior), overlaying any pending value — the
 ## role twin of `effective_forage_workers` / `effective_hunt_workers`. Roles key by kind alone (one
@@ -1530,8 +1456,8 @@ const POOL_TOE_FILLED_KEY := "filled"
 ## **ONE POOL'S TABLE OF EQUIPMENT — the rows of `pool_toe` whose `pool` is this one, in wire order.**
 ##
 ## ⛔ **`pool` IS THE LABOR-ROLE TOKEN**, the same spelling `LaborAssignment.kind` publishes for the
-## row (`agriculture` / `husbandry` / `roadwork` / `quarrywork` / `builders`), so a card joins its
-## lines on a string it already holds and this layer keeps no table of its own.
+## row — `roadwork` and `builders`, the two band-wide pools left (`docs/plan_site_crews.md` §2.4) — so
+## a pool line joins its lines on a string it already holds and this layer keeps no table of its own.
 ##
 ## ⛔ **NOTHING IS DROPPED HERE, AND AN ABSENT ROW AND A FILLED ROW ARE DIFFERENT SENTENCES.** A line
 ## exists only where `required > 0`, and a pool whose requirement was MET keeps its line with
@@ -1587,12 +1513,12 @@ const POOL_CREW_KEEPERS_KEY := "keepers"
 ##
 ## ⛔ **`pool` IS THE LABOR-ROLE TOKEN**, `pool_toe_for`'s rule verbatim, so a card resolves its crew
 ## row and its table of equipment off the one `kind` token it already holds. The vocabulary is the
-## FOUR keeping pools — `agriculture` / `husbandry` / `roadwork` / `quarrywork` — and NEVER
-## `builders`, which is not a keeping pool and publishes no row here.
+## ONE keeping pool left — `roadwork` (`docs/plan_site_crews.md` §2.4) — and NEVER `builders`, which
+## is not a keeping pool and publishes no row here.
 ##
 ## ⛔ **AN ABSENT ROW IS `{}` AND IT IS NOT A PAIR OF ZEROES.** A row exists for every keeping pool
-## the cohort CAN HOLD — four for a band, three for an anonymous cohort, which keeps no roads and so
-## has no `roadwork` pool to report on — whether or not it staffs them, so within that set
+## the cohort CAN HOLD — `roadwork` for a band, none for an anonymous cohort, which keeps no roads —
+## whether or not it staffs it, so within that set
 ## `0.0 / 0.0` genuinely means *this pool employed every hand it was given*. An absent row therefore
 ## reads *this cohort has no such pool*, the same answer `builders` already gets and needing no
 ## separate branch; so does any frame the wire never wrote. Answering those with zeroes would hand a

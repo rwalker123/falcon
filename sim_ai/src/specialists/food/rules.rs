@@ -21,8 +21,8 @@ use super::ledger::{
 };
 use super::sources::{
     cluster_sites, crew_take, deal_free_hands, foreign_band_at, is_walkable, keeping_hands,
-    patch_per_worker_yield, surplus_hands, sustained_hands, workable_patch_at, DealtSite, Source,
-    SourceKey,
+    patch_per_worker_yield, surplus_hands, sustained_hands, workable_patch_at, DealtSite, KeptSite,
+    Source, SourceKey,
 };
 use super::{
     Food, INTENT_ASSIGN, INTENT_DRAWDOWN, INTENT_FEED_MOVE, INTENT_HOLD, INTENT_HUNT,
@@ -349,6 +349,16 @@ struct SplitSite {
     income: f32,
 }
 
+/// **The keeping a band already owes and the hands already paying it** ([`Food::keeping_owed`]),
+/// both in bare hands.
+#[derive(Debug, Clone, Copy, Default)]
+struct KeepingOwed {
+    /// Every held site's bill, a build in flight at its finished rung's.
+    owed: f32,
+    /// The hands the band's rows spent keeping this turn (`upkeepHands`).
+    keeping_now: f32,
+}
+
 /// The rung *upgrade the ground* would declare on a patch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Climb {
@@ -415,7 +425,7 @@ impl Food {
                 continue;
             };
             let take = (want - drawn.hands)
-                .min(surplus_hands(row, keeping_hands(view, row)))
+                .min(surplus_hands(row))
                 .min(row.workers.saturating_sub(floor_of(row, &key)));
             if take == 0 {
                 continue;
@@ -456,14 +466,13 @@ impl Food {
 
     /// The band's rows carrying surplus hands ([`surplus_hands`]), lowest-paying first.
     fn surplus_rows<'b>(
-        view: &SeatView,
         memory: &SeatMemory,
         band: &'b PopulationCohortState,
     ) -> Vec<&'b LaborAssignmentState> {
         let mut rows: Vec<&LaborAssignmentState> = band
             .labor_assignments
             .iter()
-            .filter(|row| surplus_hands(row, keeping_hands(view, row)) > 0)
+            .filter(|row| surplus_hands(row) > 0)
             .collect();
         rows.sort_by(|a, b| {
             Self::row_rate(memory, band, a).total_cmp(&Self::row_rate(memory, band, b))
@@ -563,8 +572,8 @@ impl Food {
     /// keeping is kept by hands delivering under the `PER_WORKER_OUTPUT` the count is `ceil`ed by
     /// (49,5 on seed 23 read `need 1, supplied 0.98, short 0.92`), and one more hand is what closes
     /// it.
-    fn keeping_hands_missing(patch: &ForagePatchState) -> u32 {
-        let missing = (patch.upkeep_workers_needed as f32 - patch.upkeep_hands)
+    fn keeping_hands_missing(site: &KeptSite<'_>) -> u32 {
+        let missing = (site.workers_needed() as f32 - site.hands())
             .ceil()
             .max(0.0) as u32;
         missing.max(HOLD_MIN_HANDS)
@@ -588,23 +597,35 @@ impl Food {
         }
     }
 
-    /// **The patches the band keeps**: every forage row it holds, hands or none, whose patch the
-    /// seat owns and whose ladder has work to hold (`upkeep_workers_needed > 0`). Each is kept by
-    /// its own row's crew (`docs/plan_site_crews.md` §2.1) — a row with no hands keeps nothing.
-    fn kept_patches<'v>(
+    /// **The sites the band keeps**: every forage row it holds, hands or none, whose patch the seat
+    /// owns, and every hunt row on a herd — each whose ladder has work to hold
+    /// (`upkeep_workers_needed > 0`). Each is kept by its own row's crew
+    /// (`docs/plan_site_crews.md` §2.1, §2.2) — a row with no hands keeps nothing.
+    fn kept_sites<'v>(
         &self,
         view: &'v SeatView,
         band: &'v PopulationCohortState,
-    ) -> Vec<(&'v LaborAssignmentState, &'v ForagePatchState)> {
+    ) -> Vec<(&'v LaborAssignmentState, KeptSite<'v>)> {
         band.labor_assignments
             .iter()
-            .filter(|row| row.kind == ROLE_FORAGE)
             .filter_map(|row| {
-                let patch = view
-                    .patch_at(Tile::new(row.target_x, row.target_y))
-                    .filter(|patch| patch.owner == Some(self.faction))
-                    .filter(|patch| patch.upkeep_workers_needed > 0)?;
-                Some((row, patch))
+                let site = match row.kind.as_str() {
+                    ROLE_FORAGE => view
+                        .patch_at(Tile::new(row.target_x, row.target_y))
+                        .filter(|patch| patch.owner == Some(self.faction))
+                        .map(KeptSite::Patch),
+                    // **A herd's bill exists only while it is managed**, which on a hunt row of
+                    // this band is this faction's herd; a wild herd owes nothing and reads `0`.
+                    ROLE_HUNT => view
+                        .snapshot
+                        .herds
+                        .iter()
+                        .find(|herd| herd.id == row.fauna_id)
+                        .map(KeptSite::Herd),
+                    _ => None,
+                }
+                .filter(|site| site.workers_needed() > 0)?;
+                Some((row, site))
             })
             .collect()
     }
@@ -748,7 +769,7 @@ impl Food {
         let mut out = Vec::new();
         let idle = band.idle_workers.min(budget);
         let released = self.pool_releases(view, band);
-        let surplus_rows = Self::surplus_rows(view, memory, band);
+        let surplus_rows = Self::surplus_rows(memory, band);
         let free = self.draw(
             view,
             memory,
@@ -1032,7 +1053,7 @@ impl Food {
         };
         let fires = band.food_income < band.food_need
             || band.idle_workers > 0
-            || !Self::surplus_rows(view, memory, band).is_empty()
+            || !Self::surplus_rows(memory, band).is_empty()
             || !self.pool_releases(view, band).is_empty();
         if !fires || band.is_traveling || memory.born_by_split(band.band_id).is_some() {
             return (None, Reassignment::NONE);
@@ -1397,7 +1418,7 @@ impl Food {
             memory,
             band,
             &self.pool_releases(view, band),
-            &Self::surplus_rows(view, memory, band),
+            &Self::surplus_rows(memory, band),
             &rows,
             &[],
             crew,
@@ -1601,7 +1622,7 @@ impl Food {
             return None;
         }
         let forage = Self::rows_ascending(memory, band, ROLE_FORAGE);
-        let forage_surplus: Vec<&LaborAssignmentState> = Self::surplus_rows(view, memory, band)
+        let forage_surplus: Vec<&LaborAssignmentState> = Self::surplus_rows(memory, band)
             .into_iter()
             .filter(|row| row.kind == ROLE_FORAGE)
             .collect();
@@ -1717,6 +1738,76 @@ impl Food {
         Some((plant, payoff(plant)))
     }
 
+    /// **What the band owes in keeping, in bare hands, and the hands already keeping** — every site
+    /// its rows hold: a build in flight at its **finished** rung's bill, a standing rung at its
+    /// bill today (`docs/plan_site_crews.md` §2.1). A bill is turned into hands by the site's own
+    /// `build_work_per_worker_turn` — one bare hand's work a turn, the same divisor the land
+    /// reading's keeping crews use (`ground.rs`).
+    fn keeping_owed(&self, view: &SeatView, band: &PopulationCohortState) -> KeepingOwed {
+        let queued_here = |kind: &str, tile: Option<Tile>, herd: Option<&str>| {
+            band.build_queue.iter().any(|entry| {
+                entry.kind == kind
+                    && tile.is_none_or(|tile| entry.target_x == tile.x && entry.target_y == tile.y)
+                    && herd.is_none_or(|herd| entry.fauna_id == herd)
+            })
+        };
+        let hands = |bill: f32, per_hand: f32| {
+            if per_hand > 0.0 {
+                bill.max(0.0) / per_hand
+            } else {
+                0.0
+            }
+        };
+        let mut owed = KeepingOwed::default();
+        for row in &band.labor_assignments {
+            match row.kind.as_str() {
+                ROLE_FORAGE => {
+                    let tile = Tile::new(row.target_x, row.target_y);
+                    let Some(patch) = view
+                        .patch_at(tile)
+                        .filter(|patch| patch.owner == Some(self.faction))
+                    else {
+                        continue;
+                    };
+                    let bill = if queued_here(ROLE_FORAGE, Some(tile), None) {
+                        if patch.is_cultivated {
+                            patch.field_upkeep_demand
+                        } else {
+                            patch.cultivation_upkeep_demand
+                        }
+                    } else {
+                        patch.upkeep_demand
+                    };
+                    owed.owed += hands(bill, patch.build_work_per_worker_turn);
+                    owed.keeping_now += patch.upkeep_hands;
+                }
+                ROLE_HUNT => {
+                    let Some(herd) = view
+                        .snapshot
+                        .herds
+                        .iter()
+                        .find(|herd| herd.id == row.fauna_id)
+                    else {
+                        continue;
+                    };
+                    let bill = if queued_here(ROLE_HUNT, None, Some(&herd.id)) {
+                        if herd.domestication >= KNOWLEDGE_COMPLETE {
+                            herd.corral_upkeep_demand
+                        } else {
+                            herd.tame_upkeep_demand
+                        }
+                    } else {
+                        herd.upkeep_demand
+                    };
+                    owed.owed += hands(bill, herd.build_work_per_worker_turn);
+                    owed.keeping_now += herd.upkeep_hands;
+                }
+                _ => {}
+            }
+        }
+        owed
+    }
+
     /// The rule as a proposal alone — what the tests drive; `propose` goes through
     /// [`Food::upgrade_the_ground_change`] to carry the change forward.
     #[cfg(test)]
@@ -1766,7 +1857,7 @@ impl Food {
         let after = project(&book, carried, horizon);
         let idle = band.idle_workers.min(budget);
         let released = self.pool_releases(view, band);
-        let surplus_rows = Self::surplus_rows(view, memory, band);
+        let surplus_rows = Self::surplus_rows(memory, band);
         let free = self.draw(
             view,
             memory,
@@ -1778,6 +1869,7 @@ impl Food {
             budget,
             idle,
         );
+        let keeping = self.keeping_owed(view, band);
         let mut best: Option<(Proposal, f32, Reassignment)> = None;
         for row in band
             .labor_assignments
@@ -1833,18 +1925,18 @@ impl Food {
             if gained <= 0.0 || work_left <= 0.0 || per_builder <= 0.0 {
                 continue;
             }
-            // **The row keeps the rung it raises before it gathers** (`docs/plan_site_crews.md`
-            // §2.1), from the first work banked: the rung's bill over what one bare hand keeps is
-            // hands the row stops gathering with. Only the bill above what the row already keeps is
-            // new, and it is priced whole from the start — the bill climbs to it as the meter fills,
-            // so this is the conservative reading of a cost the build does carry.
-            let keep_demand = match climb {
+            // **A build the band cannot keep once it stands is not declared**
+            // (`docs/plan_site_crews.md` §2.1): the finished rung's bill, in bare hands, on top of
+            // what the band already owes at its builds' finished bills, must fit in the hands it
+            // is not otherwise using — its free hands plus the ones already keeping.
+            let finished_bill = match climb {
                 Climb::Tended => patch.cultivation_upkeep_demand,
                 Climb::Field => patch.field_upkeep_demand,
             };
-            let keep_hands = (keep_demand - patch.upkeep_demand).max(0.0) / per_builder;
-            let kept_take = ((row.workers as f32 - keep_hands).max(0.0) * rate).min(ceiling);
-            let keeping_cost = (today - kept_take).max(0.0);
+            let finished_hands = (finished_bill - patch.upkeep_demand).max(0.0) / per_builder;
+            if keeping.owed + finished_hands > free.hands as f32 + keeping.keeping_now {
+                continue;
+            }
             let mut pool = Self::rows_ascending(memory, band, ROLE_HUNT);
             pool.extend(
                 Self::rows_ascending(memory, band, ROLE_FORAGE)
@@ -1882,7 +1974,7 @@ impl Food {
                     continue;
                 }
                 let change = Reassignment {
-                    income_lost: drawn.income_lost + keeping_cost,
+                    income_lost: drawn.income_lost,
                     income_gained: gained,
                     payoff_turn,
                 };
@@ -2309,11 +2401,11 @@ impl Food {
         if budget == 0 {
             return None;
         }
-        // The patches the band keeps ([`Food::kept_patches`]).
-        let kept = self.kept_patches(view, band);
-        let short: Vec<&(&LaborAssignmentState, &ForagePatchState)> = kept
+        // The sites the band keeps ([`Food::kept_sites`]).
+        let kept = self.kept_sites(view, band);
+        let short: Vec<&(&LaborAssignmentState, KeptSite<'_>)> = kept
             .iter()
-            .filter(|(_, patch)| patch.upkeep_shortfall > 0.0)
+            .filter(|(_, site)| site.shortfall() > 0.0)
             .collect();
         if short.is_empty() {
             return None;
@@ -2321,11 +2413,8 @@ impl Food {
         // **Each short row's own missing hands**, in the order the rows read.
         let missing: Vec<(SourceKey, u32)> = short
             .iter()
-            .map(|(row, patch)| {
-                (
-                    SourceKey::Patch(Tile::new(row.target_x, row.target_y)),
-                    Self::keeping_hands_missing(patch),
-                )
+            .filter_map(|(row, site)| {
+                SourceKey::of_row(row).map(|key| (key, Self::keeping_hands_missing(site)))
             })
             .collect();
         let want = missing
@@ -2340,7 +2429,7 @@ impl Food {
         let is_short_row = |row: &&LaborAssignmentState| {
             SourceKey::of_row(row).is_some_and(|key| missing.iter().any(|(short, _)| *short == key))
         };
-        let surplus_rows: Vec<&LaborAssignmentState> = Self::surplus_rows(view, memory, band)
+        let surplus_rows: Vec<&LaborAssignmentState> = Self::surplus_rows(memory, band)
             .into_iter()
             .filter(|row| !is_short_row(row))
             .collect();
@@ -2351,14 +2440,18 @@ impl Food {
         // (at least one hand): the premium priced below is gathered by that row, and a hold that
         // empties it keeps a rung nobody harvests — seed 27's t28 took all three hands off 37,35
         // for its own bill and the band earned nothing for seventeen turns.
+        // A kept herd's hunters stay at the hands keeping it: its take is the curve's, and the
+        // keeping floor is what an unkept herd would shed.
         let harvesters: Vec<(SourceKey, u32)> = kept
             .iter()
-            .map(|(row, patch)| {
-                let rate = patch_per_worker_yield(memory, band, patch);
-                (
-                    SourceKey::Patch(Tile::new(row.target_x, row.target_y)),
-                    sustained_hands(patch, rate).max(HOLD_MIN_HANDS),
-                )
+            .filter_map(|(row, site)| {
+                let floor = match site {
+                    KeptSite::Patch(patch) => {
+                        sustained_hands(patch, patch_per_worker_yield(memory, band, patch))
+                    }
+                    KeptSite::Herd(_) => keeping_hands(view, row),
+                };
+                SourceKey::of_row(row).map(|key| (key, floor.max(HOLD_MIN_HANDS)))
             })
             .collect();
         let drawn = self.draw(
@@ -2384,7 +2477,24 @@ impl Food {
         let mut rebuild_total = 0.0;
         let mut any_complete = false;
         let mut subjects = Vec::new();
-        for (row, patch) in &short {
+        for (row, site) in &short {
+            let patch = match site {
+                KeptSite::Patch(patch) => *patch,
+                KeptSite::Herd(herd) => {
+                    // **A herd's unpaid bill sheds animals, and the take is what it costs**
+                    // (`docs/plan_site_crews.md` §2.2). The meter never bleeds (tameness is
+                    // permanent), so there is no rebuild term — what an unkept herd loses is the
+                    // flock the row culls, priced at the row's own take. A tamed herd's bill is a
+                    // standing one.
+                    let complete = herd.domestication >= KNOWLEDGE_COMPLETE;
+                    any_complete |= complete;
+                    if row.workers > 0 {
+                        premium_total += Self::row_rate(memory, band, row) * row.workers as f32;
+                    }
+                    subjects.push(format!("{} short {:.2}", herd.id, herd.upkeep_shortfall));
+                    continue;
+                }
+            };
             let (rung_yield, work_done) = if patch.is_field {
                 (patch.field_yield, patch.field_work_done)
             } else {
@@ -2441,7 +2551,9 @@ impl Food {
         // order the rows read — short of the whole, the first rows are kept first.
         let mut to_hand_out = want;
         for (row, _) in &short {
-            let key = SourceKey::Patch(Tile::new(row.target_x, row.target_y));
+            let Some(key) = SourceKey::of_row(row) else {
+                continue;
+            };
             let owed = missing
                 .iter()
                 .find(|(short, _)| *short == key)
@@ -3198,6 +3310,62 @@ mod tests {
 
     // ---- rule 5a: hold the ground ------------------------------------------------------------
 
+    /// **A tamed herd's hunt row short of its bill is raised the same way** (`docs/plan_site_crews.md`
+    /// §2.2): the herd's own row gets the hands its keeping is missing, out of the idle hands, and
+    /// the hold is a standing bill because the herd is tamed.
+    #[test]
+    fn a_tamed_herd_short_of_upkeep_gets_its_missing_hands_on_its_hunt_row() {
+        /// The hunters on the herd's row, all of them keeping.
+        const HUNTERS: u32 = 2;
+        /// The bill in whole bare keepers.
+        const NEEDED: u32 = 4;
+        /// The band's idle hands — enough to cover the two missing.
+        const IDLE: u32 = 3;
+        let view = a_view_with(|view| {
+            let band = &mut view.snapshot.populations[0];
+            band.idle_workers = IDLE;
+            band.food_income = band.food_need;
+            band.labor_assignments = vec![LaborAssignmentState {
+                workers_needed: HUNTERS,
+                ..hunt_row(HUNTERS, 1.0, HUNTERS)
+            }];
+            let herd = view
+                .snapshot
+                .herds
+                .iter_mut()
+                .find(|herd| herd.id == HERD_ID)
+                .expect("the fixture herd");
+            herd.domestication = 1.0;
+            herd.upkeep_demand = 4.0;
+            herd.upkeep_supplied = 2.0;
+            herd.upkeep_shortfall = 2.0;
+            herd.upkeep_workers_needed = NEEDED;
+            herd.upkeep_hands = HUNTERS as f32;
+        });
+        let proposal = food()
+            .hold_the_ground(
+                &view,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&view),
+                &Reassignment::NONE,
+            )
+            .expect("the herd's upkeep is paid");
+        assert!(proposal.standing, "a tamed herd's hold is a bill");
+        assert!(
+            proposal.reason.starts_with(&format!(
+                "hold the ground: 2 hands keeping {HERD_ID} short 2.00 ["
+            )),
+            "{}",
+            proposal.reason
+        );
+        assert_eq!(
+            assigned_to(&proposal.commands[0]),
+            (ROLE_HUNT.to_owned(), NEEDED, None, Some(HERD_ID.to_owned())),
+            "the herd's own row is raised by the two missing hands"
+        );
+    }
+
     /// The parked band's rich patch is the seat's own, its upkeep row unpaid (`shortfall 1.92,
     /// workers_needed 2`, nobody keeping): the patch's **own forage row** is raised by the two hands
     /// its keeping is missing (`docs/plan_site_crews.md` §2.1), out of the band's two idle hands;
@@ -3734,37 +3902,28 @@ mod tests {
 
     // ---- surplus hands --------------------------------------------------------------------------
 
-    /// `workers − workers_needed − keeping`; `0` on a row whose `workers_needed` is `0`, fresh or
-    /// barren.
+    /// `workers − workers_needed`; `0` on a row whose `workers_needed` is `0`, fresh or barren.
     #[test]
     fn surplus_is_the_hands_the_take_did_not_need_and_a_fresh_row_has_none() {
-        /// No hands keeping the row's site.
-        const NOBODY_KEEPING: u32 = 0;
         let mut row = forage_row(NEAR_PATCH, 17, 8.0);
         row.workers_needed = 8;
-        assert_eq!(surplus_hands(&row, NOBODY_KEEPING), 9);
+        assert_eq!(surplus_hands(&row), 9);
         row.workers_needed = 17;
-        assert_eq!(surplus_hands(&row, NOBODY_KEEPING), 0);
+        assert_eq!(surplus_hands(&row), 0);
         // Fresh: nothing resolved yet.
-        assert_eq!(
-            surplus_hands(&forage_row(NEAR_PATCH, 5, 0.0), NOBODY_KEEPING),
-            0
-        );
+        assert_eq!(surplus_hands(&forage_row(NEAR_PATCH, 5, 0.0)), 0);
         // Produced nothing: the sim's `0`, and not a surplus either.
         let mut barren = hunt_row(12, 0.0, 0);
         barren.workers_needed = 0;
-        assert_eq!(surplus_hands(&barren, NOBODY_KEEPING), 0);
+        assert_eq!(surplus_hands(&barren), 0);
     }
 
-    /// **A kept row's keeping hands are not surplus** (`docs/plan_site_crews.md` §2.1): the crew
-    /// keeps before it takes, so a hand drawn off a kept row comes out of its take. Seventeen on a
-    /// patch whose take needed eight and whose keeping took `2.4` hands leave six to spare, not
-    /// nine — the keeping read in whole hands, rounded up.
+    /// **A kept row's keeping hands read in whole hands, rounded up** — the floor a draw never
+    /// takes the row below (`docs/plan_site_crews.md` §2.1).
     #[test]
-    fn a_kept_rows_keeping_hands_are_not_surplus() {
+    fn a_kept_rows_keeping_reads_in_whole_hands() {
         const KEEPING: f32 = 2.4;
         const KEEPING_IN_WHOLE_HANDS: u32 = 3;
-        const TO_SPARE: u32 = 6;
         let view = a_view_with(|view| {
             view.snapshot
                 .forage_patches
@@ -3773,11 +3932,8 @@ mod tests {
                 .expect("the fixture carries the near patch")
                 .upkeep_hands = KEEPING;
         });
-        let mut row = forage_row(NEAR_PATCH, 17, 8.0);
-        row.workers_needed = 8;
-        let keeping = keeping_hands(&view, &row);
-        assert_eq!(keeping, KEEPING_IN_WHOLE_HANDS);
-        assert_eq!(surplus_hands(&row, keeping), TO_SPARE);
+        let row = forage_row(NEAR_PATCH, 17, 8.0);
+        assert_eq!(keeping_hands(&view, &row), KEEPING_IN_WHOLE_HANDS);
     }
 
     /// Seventeen hands parked on the rich patch, which needed eight of them: nine are surplus.
@@ -3850,6 +4006,41 @@ mod tests {
             (ROLE_BUILDERS.to_owned(), 9, None, None)
         );
         assert_eq!(proposal.cost.workers, 9);
+    }
+
+    /// **A build the band cannot keep once it stands is not declared** (`docs/plan_site_crews.md`
+    /// §2.1): the parked band's nine free hands build the climb when the tended bill costs two
+    /// hands, and the same band declines it when the bill outruns every hand it is not otherwise
+    /// using.
+    #[test]
+    fn a_climb_whose_finished_bill_outruns_the_spare_hands_is_not_declared() {
+        /// Two bare hands' worth of keeping — well inside the nine free hands.
+        const A_BILL_THE_BAND_CAN_KEEP: f32 = 2.0;
+        /// More keeping than the band's free hands and its keepers together.
+        const A_BILL_NO_SPARE_HAND_COVERS: f32 = 40.0;
+        let with_bill = |bill: f32| {
+            let mut view = a_parked_band();
+            for patch in &mut view.snapshot.forage_patches {
+                if Tile::new(patch.x, patch.y) == RICH_PATCH {
+                    patch.cultivation_upkeep_demand = bill;
+                }
+            }
+            food().upgrade_the_ground(
+                &view,
+                &plan_with_food_share(1.0),
+                &memory(),
+                own_band(&view),
+                &Reassignment::NONE,
+            )
+        };
+        assert!(
+            with_bill(A_BILL_THE_BAND_CAN_KEEP).is_some(),
+            "liveness: a bill the spare hands cover is declared"
+        );
+        assert!(
+            with_bill(A_BILL_NO_SPARE_HAND_COVERS).is_none(),
+            "a bill no spare hand covers is not declared"
+        );
     }
 
     /// §4: *"a band standing in a cluster spreads over it"*. Three sites in reach with plateaus

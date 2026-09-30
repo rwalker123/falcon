@@ -727,17 +727,10 @@ const CARD_UNOPENED_TIP := "Nobody is working this ground. Put cutters on it and
 ## the sustainable figure is `0` by arithmetic) and quotes the seam instead.
 const CARD_RUNWAY_TIP_FORMAT := "%s left within this rung's reach, at the take it is running at now."
 
-## **THE CREW SECTION'S HOVER, ON THE COMPOSE SHEET** — the one place a working differs from a road:
-## a road is not worked, a working is, and this stepper is the TAKE crew. It says so because a player
-## who staffed it expecting the bill to be met would watch the working go back anyway; the hands that
-## HOLD a working are the band-wide `Workings` pool, whose only control is the roster head's stepper.
-##
-## ⛔ **THE POOL NAMES ITSELF THROUGH `%s`, like the other two strings that name it**
-## (`DEPOSIT_IDLE_TIP_FORMAT`, `WORKING_ABANDON_WHY_FORMAT`). `HudWorkVocab.ROLE_NAME_QUARRYWORK` has
-## already been renamed once on Ray's instruction, and a hardcoded third copy is a rename that leaves
-## both compose sheets' crew hovers naming a pool no other surface calls by that word.
-const CARD_CREW_HINT_FORMAT := "Hands taking material out of this ground. The hands that HOLD it " \
-	+ "are the band's %s pool, on the Work tab."
+## **THE CREW ROW'S HOVER** — a working's hands keep it first and cut with what is left
+## (`docs/plan_site_crews.md`): there is no band-wide pool holding it any more, so the hover names no
+## pool.
+const CARD_CREW_HINT := "Hands on this ground. They keep it first, then cut with whatever is left."
 
 ## The bill's face: what the working owes a turn and how many keepers that is.
 const CARD_UPKEEP_FORMAT := "%s work a turn · %d keeper%s"
@@ -1308,7 +1301,7 @@ static func deposit_roster_tooltip(deposit: Dictionary,
 		cutters: int = CUTTERS_UNSTATED) -> String:
 	var lines: Array[String] = [deposit_card_tooltip(deposit)]
 	if is_idle(cutters) and owes_keeping(deposit):
-		lines.append(DEPOSIT_IDLE_TIP_FORMAT % HudWorkVocab.ROLE_NAME_QUARRYWORK)
+		lines.append(DEPOSIT_IDLE_TIP)
 	var countdown := reverting_value(deposit)
 	if countdown != "":
 		lines.append(DEPOSIT_REVERTING_TIP_FORMAT % countdown)
@@ -1316,10 +1309,10 @@ static func deposit_roster_tooltip(deposit: Dictionary,
 
 const DEPOSIT_REVERTING_TIP_FORMAT := "Going back %s"
 
-## …and the idle working's own line, which names the pool rather than a figure: the bill is already
-## on the line above it (`Holding it: …`), and what this adds is that a crew of zero does not stop it.
-const DEPOSIT_IDLE_TIP_FORMAT := "Nobody is cutting it, and it is still held — its keep goes on " \
-	+ "coming out of %s, the same pool the workings you do want are held out of."
+## …and the idle working's own line. A working is kept by its OWN crew, so a crew of zero keeps
+## nothing: the ground slides back toward what it gives for free.
+const DEPOSIT_IDLE_TIP := "Nobody is cutting it, so nobody keeps it — it is sliding back toward " \
+	+ "what it gives for free."
 
 # ---- PUTTING A WORKING DOWN — the undo a HELD working had nowhere else (issue #650) ---------------
 #
@@ -1347,12 +1340,10 @@ const WORKING_ABANDON_DROPS_FORMAT := "Drops this band's hold on the %s here, an
 	+ "queued on it. The work already banked is not given back: with nobody holding it, the ground " \
 	+ "slides back to what it gives for free."
 
-## …and WHY a player would want it, which is the shared bill and not tidiness. **The measurement is
-## the argument** (`.claude/rules/core_sim/extraction.md`): one keeper holds one felling working for
-## ever alone, and the moment a walked-away sibling sits beside it the working the band still wants
-## starts sliding — because both take their cut of the one pool.
-const WORKING_ABANDON_WHY_FORMAT := "Until you do, its keep still comes out of %s — so a working " \
-	+ "you have walked away from is taken out of the ones you have not."
+## …and WHY a player would want it. A working is kept by its own crew, so dropping one frees nothing
+## band-wide; what it does is take the rung's queue entry and the band's claim off the ground.
+const WORKING_ABANDON_WHY := "It stays held until you do: its queued rung stays in line, and its " \
+	+ "crew keeps it before they cut."
 
 ## **ONE HOVER, ON BOTH EMITTERS.** The ladder card's row and the roster row's `✕` send the identical
 ## command, so they state the identical consequence: roads.md's rule that *"a one-click destructive
@@ -1368,7 +1359,7 @@ const WORKING_ABANDON_WHY_FORMAT := "Until you do, its keep still comes out of %
 static func working_abandon_tooltip(deposit: Dictionary) -> String:
 	return HudFormat.join_tooltip_lines([
 		WORKING_ABANDON_DROPS_FORMAT % material_label(deposit).to_lower(),
-		WORKING_ABANDON_WHY_FORMAT % HudWorkVocab.ROLE_NAME_QUARRYWORK])
+		WORKING_ABANDON_WHY])
 
 ## The material row's INK, forked on the hazard mark the composer put there rather than on a second
 ## reading of the working — `deposit_value_color`'s rule, and the same one.

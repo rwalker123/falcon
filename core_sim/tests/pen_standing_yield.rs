@@ -1249,11 +1249,20 @@ fn the_take_crew_answers_for_the_meat_side_alone() {
     }
     let all_meat = published_hunt_row(&mut app);
 
-    let (mut app, _, keeper) = wire_world(FLEECE_SPECIES, SEED_COMPARISON_RUNG, 1.0);
+    let (mut app, milk_herd, keeper) = wire_world(FLEECE_SPECIES, SEED_COMPARISON_RUNG, 1.0);
     for _ in 0..SETTLE_TURNS {
         publishing_turn(&mut app, keeper);
     }
     let all_milk = published_hunt_row(&mut app);
+    // **The row's whole crew carries the hands its keeping took** (`docs/plan_site_crews.md` §4):
+    // the take side is the structural minimum, and the keeping sits on top of it.
+    let milk_keeping = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&milk_herd)
+        .expect("the milk herd survives")
+        .upkeep_hands;
+    let take_and_keeping = (PARTIAL_BODY_CREW as f32 + milk_keeping).ceil() as u32;
 
     assert!(
         all_meat.workers_needed > 0,
@@ -1261,9 +1270,9 @@ fn the_take_crew_answers_for_the_meat_side_alone() {
          {all_meat:?}"
     );
     assert_eq!(
-        all_milk.workers_needed, PARTIAL_BODY_CREW,
-        "a herd nothing is ever taken from asks for the take crew's structural MINIMUM, however \
-         much milk it gives — `fauna::peak_animal_drop`'s `+ 1` is the partial body a turn's \
+        all_milk.workers_needed, take_and_keeping,
+        "a herd nothing is ever taken from asks for the take crew's structural MINIMUM plus its \
+         keeping, however much milk it gives — `fauna::peak_animal_drop`'s `+ 1` is the partial body a turn's \
          regrowth could tip over, and it is the whole of what is left here: {all_milk:?}"
     );
     assert!(

@@ -1332,14 +1332,18 @@ const FORECAST_BUILD_GEAR_WORK_KEY := "build_work_from_gear"
 # the rung's grace, and a client re-deriving it would be a second authority over the number the whole
 # readout exists to make legible (the sim-answers-the-client-renders discipline).
 #
-# **`upkeep_supplied` IS THIS SOURCE'S SHARE OF ITS BAND'S POOL** (`docs/plan_standing_upkeep.md`
-# §2.5), not the hands standing on it: maintenance is a band-level role, so the three fields stopped
-# answering *"did you staff this one"* and answer *"where is my pooled shortfall landing"*. Every
-# readout of them must be worded that way — a row that reads as a per-source staffing verdict points
-# the player at a stepper that no longer exists.
+# **`upkeep_supplied` IS WHAT THIS SITE'S OWN CREW KEPT** (`docs/plan_site_crews.md` §2.1): a site's
+# crew keeps it first and collects with what is left, so the three fields answer *"did this row's crew
+# cover what its site owes"* — and the stepper on that row is the lever.
 const FORECAST_UPKEEP_DEMAND_KEY := "upkeep_demand"
 const FORECAST_UPKEEP_SUPPLIED_KEY := "upkeep_supplied"
 const FORECAST_UPKEEP_SHORTFALL_KEY := "upkeep_shortfall"
+# **THE CREW HANDS SPENT KEEPING, and whether the site's keeping tools came up short**
+# (`docs/plan_site_crews.md` §4). `upkeep_hands` is fractional and summed over every band keeping the
+# site; `crew − upkeep_hands` is what collected. `upkeep_tools_short` is the band-wide settlement
+# filling less than this site's keeping-tool claim — the row's `ⓘ` where the work is still covered.
+const FORECAST_UPKEEP_HANDS_KEY := "upkeep_hands"
+const FORECAST_UPKEEP_TOOLS_SHORT_KEY := "upkeep_tools_short"
 # **WHAT THIS SOURCE'S KEEPING IS WORTH IN HANDS** — `ceil(demand / PER_WORKER_OUTPUT)`, beside the
 # take activity's `SourceYield.workersNeeded` (hands to haul the offer). It is a SIZE, not a staffing
 # order: nobody is assigned here any more, so it reads as *this much of the band's keeping pool*.
@@ -5044,6 +5048,15 @@ static func has_upkeep(state: Dictionary) -> bool:
 ## Is the keeping being underpaid THIS turn? The gate on every warning the shortfall drives.
 static func upkeep_is_short(state: Dictionary) -> bool:
     return float(state.get("shortfall", NO_UPKEEP_DEMAND)) >= UPKEEP_WORK_MIN
+
+## The crew hands this site's keeping took this turn (`FORECAST_UPKEEP_HANDS_KEY`), floored at zero.
+static func upkeep_hands(src: Dictionary, prefix: String) -> float:
+    return maxf(float(src.get(prefix + FORECAST_UPKEEP_HANDS_KEY, NO_UPKEEP_DEMAND)),
+        NO_UPKEEP_DEMAND)
+
+## Was this site's keeping-tool claim filled less than in full? (`FORECAST_UPKEEP_TOOLS_SHORT_KEY`)
+static func upkeep_tools_short(src: Dictionary, prefix: String) -> bool:
+    return bool(src.get(prefix + FORECAST_UPKEEP_TOOLS_SHORT_KEY, false))
 
 ## **THE PILE THE RUNG ABOVE THIS SOURCE SWALLOWS TO RAISE** — one row per good, `[]` when the wire
 ## quotes none. See `FORECAST_BUILD_MATERIAL_COST_KEY`: it prices exactly ONE rung, so a caller may

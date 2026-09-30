@@ -3022,6 +3022,31 @@ pub fn patch_upkeep_demand(
 /// multiplication never happened** — `advance_forage_regrowth` is the only writer of the field and
 /// it skips exactly these patches — so the seeded number *is* the land's `K`, ungained, for as long
 /// as the coord stays off the map.
+/// **WHAT A CREW ON THIS PATCH OWES FOR ITS KEEPING** — the herd twin is
+/// [`crate::fauna::herd_crew_keeping`]: the rung the patch holds and its stamped bill at the tile's
+/// own tender-load, or `None` when the patch claims no keeping. The one reading the seed and the
+/// compose-sheet query strike a prospective crew's keeping hands from (`docs/plan_site_crews.md`
+/// §2.1).
+pub fn patch_crew_keeping(
+    patch: &ForagePatch,
+    ladder: &LadderConfig,
+    forage: &ForageLaborConfig,
+    tile_capacity: Option<f32>,
+    declared: Option<Improvement>,
+) -> Option<crate::fauna::CrewKeeping> {
+    patch_claims_keeping(patch, patch_build_verb(patch, declared)).then(|| {
+        crate::fauna::CrewKeeping {
+            rung: patch.standing().held,
+            demand: patch_keeping_basis(
+                patch,
+                ladder,
+                patch_land_capacity(patch, tile_capacity),
+                forage,
+            ),
+        }
+    })
+}
+
 pub fn patch_land_capacity(patch: &ForagePatch, tile_capacity: Option<f32>) -> f32 {
     tile_capacity.unwrap_or(patch.carrying_capacity)
 }

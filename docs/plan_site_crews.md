@@ -60,9 +60,10 @@ take         = the source's ordinary take, run on take_hands
 - **It is not the retired `maintain` trap.** That crew also kept first, but the old test was binary,
   so 2 hands on a 5-work pen bought nothing. Rot is now `(shortfall / demand) × rate`, so they slow
   the decay by two-fifths, and the row says `keeps 2 of 5 ⚠` beside the stepper that fixes it.
-- **The totals do not move.** A Field owes 4 work a turn, so 4 bare hands hold it and harvest
-  nothing. Under the pool the same band paid the same 4 hands out of Agriculture. The cost is
-  unchanged; the row now states it.
+- **The rates carry over unchanged, and they were set for shared keepers.** A Field owes 4 work a
+  turn, so 4 bare hands hold it and harvest nothing. A pool could spread its keepers across every
+  site a band held; a site crew keeps only its own. So the upkeep rates are retuned after this
+  lands — expected downward — rather than assumed right.
 
 > ⛔ **THE TAKE RUNS ON FRACTIONAL HANDS.** `forage_take`, `hunt_take` and `deposit_take` take a
 > whole-number crew today. Rounding `keep_hands` up to whole workers to feed them would bring back

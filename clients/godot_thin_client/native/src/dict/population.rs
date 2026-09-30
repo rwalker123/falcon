@@ -662,7 +662,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // **`improvement_workers` and `maintain_workers` ARE BOTH GONE**: the build and the
             // keeping left the tile (`docs/plan_standing_upkeep.md` §2.5). Each is a band-level
             // standing role now and arrives as its own row of this very list, with
-            // `kind == "builders"` / `"agriculture"` / `"husbandry"` and its hands in `workers`.
+            // `kind == "builders"` / `"roadwork"` and its hands in `workers`. The site's keeping is
+            // its own take crew's (`docs/plan_site_crews.md`), stated on the source row.
             // The wire slots stay `(deprecated)` because FlatBuffers field ids are positional, and
             // this reader stops inserting the keys — a client that still read one would be showing
             // a per-source crew the sim has stopped having.
@@ -964,9 +965,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("labor_assignments", &array);
     // **THE BUILDS THIS BAND HAS DECLARED, IN THE ORDER IT WILL RAISE THEM**
     // (`docs/plan_standing_upkeep.md` §4.9 item 9a). An Array of `{kind, target_x, target_y,
-    // fauna_id}` Dictionaries — the SAME four keys a `labor_assignments` entry spells its source
-    // with, deliberately, so a client keys both lists with one call and cannot join them on two
-    // spellings that merely happen to match.
+    // fauna_id, build_priority}` Dictionaries — the first four are the SAME keys a
+    // `labor_assignments` entry spells its source with, deliberately, so a client keys both lists
+    // with one call and cannot join them on two spellings that merely happen to match.
     //
     // **THE RANK IS THE INDEX.** There is no `position` int on the wire and there must be none
     // here: entry 0 is the head, and one ordered list has nothing to drift against. It is the
@@ -989,6 +990,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = entry.insert("target_x", wire_entry.targetX() as i64);
             let _ = entry.insert("target_y", wire_entry.targetY() as i64);
             let _ = entry.insert("fauna_id", wire_entry.faunaId().unwrap_or_default());
+            // **THE ENTRY'S OWN BUILD MARK** (`docs/plan_site_crews.md` §2.4) — `high` | `normal` |
+            // `low`, set by `build_priority`. It is the one per-entry fact NOT on the source row: a
+            // build no longer borrows its site row's `priority`. Passed through as the word the
+            // command takes, like `priority` on a labor row.
+            let _ = entry.insert(
+                "build_priority",
+                wire_entry.buildPriority().unwrap_or_default(),
+            );
             build_queue.push(&entry.to_variant());
         }
     }
@@ -1512,31 +1521,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     let _ = dict.insert("roadwork_supplied", cohort.roadworkSupplied() as f64);
     let _ = dict.insert("roadwork_shortfall", cohort.roadworkShortfall() as f64);
 
-    // **THE BAND'S WORKING-KEEPING BILL** (arc #583) — the exact `roadwork` triple above, one pool
-    // over, so the Work board can show the `quarrywork` role's need the way it shows agriculture's
-    // and husbandry's.
-    //
-    // **ONE POOL FOR BOTH DEPOSIT BRANCHES.** Forestry and extraction split on KNOWLEDGE and on
-    // nothing a keeper does — hold the face open, clear what has fallen is one job — so a band
-    // keeping a coppice and a quarry pays both out of this one bill.
-    //
-    // ⛔ **THE SIM SUMS IT AND THE CLIENT MUST NOT** — `roadwork_demand`'s rule, load-bearing for
-    // its reason: `deposits` rows are fog-filtered, so a working out of sight would silently drop
-    // out of a client-side total while the band certainly still owes its keeping.
-    //
-    //   `quarrywork_demand`    = the summed stamped bill of the workings this band holds a row on,
-    //                            summed BEFORE fog and BEFORE the head-count gate, so a band with
-    //                            nobody on `quarrywork` publishes the bill it is FAILING to pay
-    //                            rather than a reassuring zero. It is the alarm.
-    //   `quarrywork_supplied`  = what this band's `quarrywork` keepers paid into those workings
-    //                            this turn.
-    //   `quarrywork_shortfall` = demand - supplied, and that identity holds verbatim here as it
-    //                            does on the `deposits` row, so nothing downstream re-derives it.
-    let _ = dict.insert("quarrywork_demand", cohort.quarryworkDemand() as f64);
-    let _ = dict.insert("quarrywork_supplied", cohort.quarryworkSupplied() as f64);
-    let _ = dict.insert("quarrywork_shortfall", cohort.quarryworkShortfall() as f64);
-
-    // --- THE FIVE STANDING POOLS' TABLES OF EQUIPMENT (`docs/plan_pool_toe.md` §4) ----------------
+    // ⛔ **THE `quarrywork` TRIPLE IS RETIRED** (`docs/plan_site_crews.md` §4): a working is kept by
+    // its own `extract` crew, and its bill rides the `deposits` row. The wire slots stay and publish
+    // 0; this reader no longer inserts them.
+    // --- THE TWO STANDING POOLS' TABLES OF EQUIPMENT (`docs/plan_pool_toe.md` §4) -----------------
     // One row per `(pool, item)`: what a pool's OWN SITES require this turn, and what the band's
     // band-wide settlement handed it. **This is where a pool's gear is stated now** — a pool row's
     // `kit_id` publishes `""` and its `kit_workers_holding` equals its `workers` (the *nothing to be
@@ -1551,9 +1539,10 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // (by dropping filled rows on decode, say) destroys the only distinction the vector carries.
     // Nothing is filtered here; the client decides what to render.
     //
-    // **`pool` IS THE LABOR-ROLE TOKEN** — `agriculture` | `husbandry` | `roadwork` | `quarrywork` |
-    // `builders`, the same spelling `LaborAssignment.kind` publishes for the row — so a surface joins
-    // a line to its pool card on a string it already holds, with no table of its own.
+    // **`pool` IS THE LABOR-ROLE TOKEN** — `roadwork` | `builders`, the only two band-wide pools
+    // left (`docs/plan_site_crews.md` §4; a site crew's keeping-tool shortfall rides its own source
+    // row as `upkeep_tools_short`). The same spelling `LaborAssignment.kind` publishes for the row,
+    // so a surface joins a line to its pool on a string it already holds.
     //
     // **`required` is NEVER 0**, by the rule above, so a readout may divide by it; `filled` is a
     // float because the settlement divides a tier proportionally when the stock cannot cover it, and
@@ -1585,14 +1574,14 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // **IN KEEPERS, AND FRACTIONAL** — `1.68` keepers left standing is an ordinary reading, not a
     // rounding artefact, because a pool's share arithmetic is continuous.
     //
-    // **FOUR POOLS, AND `builders` IS NEVER ONE OF THEM** — `agriculture` | `husbandry` | `roadwork`
-    // | `quarrywork`. The whole builders head count goes on the build queue's head, so no builder is
+    // **ONE POOL: `roadwork`** — the only keeping pool left (`docs/plan_site_crews.md` §4). `builders`
+    // is never one: the whole builders head count goes on the build queue's head, so no builder is
     // ever left standing by a plan that wanted fewer; a builders pool with an EMPTY QUEUE is idle in
     // a different sense and is deliberately not measured.
     //
     // **A ROW EXISTS FOR EVERY KEEPING POOL, STAFFED OR NOT** — unlike `pool_toe`'s, which exists
-    // only where something is required. Three keepers on `agriculture` with no tended ground are
-    // three idle keepers, and that is the commonest reading there is, so a reader never has to tell
+    // only where something is required. Three keepers on `roadwork` with no road kept are three
+    // idle keepers, and that is the commonest reading there is, so a reader never has to tell
     // an absent row from a zero one.
     //
     // ⛔ **`idle_keepers` IS MEANINGLESS WITHOUT `keepers`, SO BOTH RIDE OUT TOGETHER.** The idle

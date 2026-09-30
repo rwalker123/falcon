@@ -174,18 +174,6 @@ const ZONE_HEADER_PEOPLE := "People"
 
 const ZONE_HEADER_WORKFORCE := "Workforce"
 
-## The POOLS block's head (`docs/plan_standing_upkeep.md` §4.7) — the three band-level pools that
-## staff what this tab is about, moved here from the Band tab because the pool was on one tab and its
-## consequences (the sources it pays for, the queue it funds) on another.
-##
-## **ITS READOUT COUNTS ALL THREE ROLES, which is a different question from the retired
-## `%d on keeping`.** That head deliberately excluded the builders — a build is a job rather than a
-## standing charge — and it could, because the block held the keeping pair alone. This block holds all
-## three cards, so a head naming two of them would be a key that does not add up to what is under it.
-const ZONE_HEADER_POOLS := "Pools"
-
-const POOLS_ZONE_READOUT_FORMAT := "%d of %d on work"
-
 const ZONE_HEADER_WORK := "Work"
 
 const ZONE_HEADER_PARTIES := "Parties"
@@ -513,54 +501,20 @@ const ROLE_NAME_SCOUT := "Scout"
 
 const ROLE_NAME_WARRIOR := "Warrior"
 
-## **THE TWO KEEPING ROLES** (`docs/plan_standing_upkeep.md` §2.5) — cards in the same family as the
-## two above, because they ARE the same family: a band-wide count of hands, set by `assign_labor`.
-## One per food web, which is the split the two intensification ladders already have.
-const ROLE_NAME_AGRICULTURE := "Agriculture"
-
-const ROLE_NAME_HUSBANDRY := "Husbandry"
-
-## **THE HINTS NAME WHAT THE POOL KEEPS**, each role's one line on its card's hover. They carry the
-## noun the coverage sentence no longer does (`UPKEEP_POOL_COVERAGE_FORMAT`), so a hint names the
-## band's own holdings — the roads it BUILT, the ground it OPENED — never the ground it stands on.
-const AGRICULTURE_ROLE_HINT := "Agriculture workers maintain improved fields."
-
-const HUSBANDRY_ROLE_HINT := "Husbandry workers maintain tamed herds and pens."
-
-## **THE THIRD KEEPING ROLE** (arc #532) — the roads. Its card sits beside the two above because it
-## is the same kind of control: a band-wide count of hands set by `assign_labor`, measured against a
-## SUM rather than staffed on a tile.
+## **THE ROADWORK POOL** (arc #532) — the one KEEPING pool left (`docs/plan_site_crews.md` §1). A
+## road collects nothing, so a crew standing on one road tile has no second use for its leftover; the
+## pool is measured against the SUM of every road the band keeps instead. It is a band-wide count of
+## hands set by `assign_labor`, like the builders beside it.
+##
+## ⛔ **THE AGRICULTURE, HUSBANDRY AND GROUNDWORK POOLS ARE RETIRED** (`docs/plan_site_crews.md` §0):
+## a site's own crew keeps it before it collects from it, so a patch, a herd and a working have ONE
+## staffing control — the row's crew stepper. The three names survive only as WORK-TAB SECTION titles
+## (`WORK_SECTION_TITLES`), which group the rows by web; they name no role and no stepper.
 const ROLE_NAME_ROADWORK := "Roadwork"
 
 ## A road tile's keeper is the band that BUILT it, wherever that band now stands
 ## (`route_keeping_claims` never reads the band's position), so the hint says *built*.
 const ROADWORK_ROLE_HINT := "Roadwork workers maintain built roads."
-
-## **THE FOURTH KEEPING ROLE** (arc #583) — the workings, on both deposit branches at once. Same
-## family again: a band-wide count of hands set by `assign_labor`, measured against a SUM.
-##
-## ⛔ **THE CARD SAYS `Groundwork`, AND THE COMMAND TOKEN `quarrywork` NEVER REACHES A PLAYER.**
-## `Quarry` already means the HUNTED ANIMAL in this client — it is one of the compose sheet's own field
-## rows — so a pool named for it would put one word on two unrelated things on two surfaces a player
-## uses in the same minute.
-##
-## ⛔ **IT SAID `Workings` FOR AN ARC AND RAY OVERRULED THAT.** *Working* is the sim's own word for a
-## live deposit a band has opened, and that is exactly what recommended it and what was wrong with it:
-## it is the ENGINE's noun, not a word the player brought. `Groundwork` is the whole set's rename —
-## this const, the roster head it aliases (below), the role hint, the pool-coverage sentence and every
-## hint and tooltip that said *working* — and the reasoning is on `ZONE_HEADER_WORKINGS_ROSTER`, where
-## the STEPPER makes it a role name rather than a caption. The identifiers still spell `QUARRYWORK` /
-## `WORKINGS_ROSTER_*`: those are grammar and code, on `quarrywork`'s own footing, and appear on no
-## label.
-##
-## ⛔ **ONE CARD FOR BOTH BRANCHES, and that is the sim's own split.** Forestry and extraction differ
-## on KNOWLEDGE and on nothing a keeper does — *hold the face open, clear what has fallen* is one job —
-## so a second card would be a distinction nothing in the game can express.
-const ROLE_NAME_QUARRYWORK := "Groundwork"
-
-## A working is held by the band that OPENED it, worked or idle, wherever that band has since camped
-## — `ROADWORK_ROLE_HINT`'s rule, so the hint says *opened*.
-const QUARRYWORK_ROLE_HINT := "Groundwork workers maintain opened ground."
 
 ## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
 ## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
@@ -585,9 +539,9 @@ const UPKEEP_MODE_PRIORITY_LABEL := "Priority"
 
 ## The two modes stated as what they DO to the band's own sources, since that is the choice. Ride
 ## each button's tooltip, so the pair of one-word faces stays narrow enough for the dock's flanks.
-const UPKEEP_MODE_SPREAD_HINT := "Fund every source in proportion — everything degrades a little."
+const UPKEEP_MODE_SPREAD_HINT := "Spread the roadwork across every road — each wears a little."
 
-const UPKEEP_MODE_PRIORITY_HINT := "Fund the biggest investments in full and let the marginal ones rot."
+const UPKEEP_MODE_PRIORITY_HINT := "Keep the best roads in full and let the lesser ones wear."
 
 ## RETIRED — **`UPKEEP_MODE_SHORT_FORMAT` AND `UPKEEP_MODE_COVERED_TEXT`, the line under the pair.**
 ## It stated `Short 2 work of 4 this turn.` — **a SUM across both webs**, since both of its terms were
@@ -747,8 +701,8 @@ const POOL_COVERAGE_SHORTFALL_KEY := "shortfall"
 ## drift from what was actually sent; the fallback exists only for a mode the sim gains before this
 ## table does, and says the token verbatim rather than describing the wrong behaviour.
 const UPKEEP_MODE_COMMAND_MESSAGES := {
-	HudConst.UPKEEP_FUND_MODE_SPREAD: "Short of keepers, everything this band holds degrades a little.",
-	HudConst.UPKEEP_FUND_MODE_PRIORITY: "Short of keepers, this band holds its biggest investments and lets the rest go.",
+	HudConst.UPKEEP_FUND_MODE_SPREAD: "Short of roadworkers, every road this band keeps wears a little.",
+	HudConst.UPKEEP_FUND_MODE_PRIORITY: "Short of roadworkers, this band keeps its best roads and lets the rest go.",
 }
 
 const UPKEEP_MODE_COMMAND_MESSAGE_FALLBACK := "Keeping split set to %s."
@@ -829,28 +783,6 @@ const BAND_ZONE_SCROLL_NAME := "BandZoneScroll"
 const WORK_COLUMN_MIN_WIDTH := 380.0
 
 const WORK_MAX_COLUMNS := 4
-
-## How many rows a board column PREFERS to hold before the board reaches for another column.
-##
-## The height-derived row count is what a column CAN hold; this is what it SHOULD hold. Six sources in
-## a bottom dock affording five rows fill COLUMN-MAJOR as 5 + 1 — a second column holding one row reads
-## as an accident rather than as a second column. At three they read as a balanced 3 + 3.
-##
-## ⛔ **A PREFERENCE, NOT A CAP: it yields to the affordance and can never cost a visible source.** All
-## it changes is the column count `BandPanelController._declare_work_layout` asks the panel for. The
-## panel still answers with what the strip can actually pay for, and the shorter column is taken ONLY
-## where that answer holds at least as many sources per page as the height-derived layout would have.
-## Where the extra column is refused the board falls back to the full height and nothing moves — which
-## is also why this needs no dock-edge test: a narrow vertical dock affords one column, refuses, and
-## keeps its tall single column.
-##
-## THREE, because it is the largest count that still reads as a balanced pair at the six sources a
-## typical band's board carries — at four, six sources are 4 + 2 again.
-const WORK_PREFERRED_ROWS_PER_COLUMN := 3
-
-const WORK_CHIPS_HEIGHT := 26.0
-
-const WORK_PAGER_HEIGHT := 24.0
 
 ## **THE INSPECTOR STRIP'S FIXED SKELETON — a BASE, never the whole height.** It covers the head row,
 ## the one-line sentence every model states, the inline-link row, the two gaps between them and the
@@ -1148,15 +1080,6 @@ const WORK_INSPECTOR_CEILING_HEIGHT := WORK_INSPECTOR_HEIGHT \
     + WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT \
     + WORK_INSPECTOR_KITS_BILL_HEIGHT \
     + WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
-
-## Gaps the work column always spends: head→chips, chips→board.
-##
-## ⛔ **IT WAS 3, AND THE THIRD WAS THE INSPECTOR'S** (`docs/plan_standing_upkeep.md` §4.9 item 12d).
-## The retired reading was *"head→chips, chips→board, board→(inspector | nothing)"* — a gap charged to
-## every render whether or not a row was selected, because the strip could appear on any of them. The
-## strip is a viewport-centred dialog now (`WorkInspectorDialog`), so there is no board→inspector seam
-## in this column at all and the gap retires with the term beside it in `_work_board_capacity`.
-const WORK_ZONE_GAP_COUNT := 2.0
 
 const WORK_COLUMN_RULE_WIDTH := 1.0
 
@@ -1490,23 +1413,7 @@ const WORK_PAGER_PADDING_V := 2
 
 const INSPECTOR_CLOSE_PADDING_V := 2
 
-const WORK_CHIP_SEPARATION := 4
-
 const WORK_CHIP_FONT_SIZE := 11
-
-## Board filters + sorts. The chips ARE the summary and the filter (they replace group headers).
-const WORK_FILTER_ALL := &"all"
-
-const WORK_FILTER_FORAGE := &"forage"
-
-const WORK_FILTER_HUNT := &"hunt"
-
-const WORK_FILTER_ATTENTION := &"attention"
-
-## The rung-ready filter (issue #412) — its own chip and its own count, NOT folded into `attention`.
-## Attention means TROUBLE (overdrawing, wasted workers, an unacknowledged edit); a rung on offer is an
-## OPPORTUNITY. One control that means both is a control that finds neither.
-const WORK_FILTER_READY := &"ready"
 
 const WORK_SORT_YIELD := &"yield"
 
@@ -1517,40 +1424,6 @@ const WORK_SORT_NAME := &"name"
 ## `_sort_work_models` branches on `== WORK_SORT_NAME` and treats everything else as yield, so an
 ## unvalidated value would silently reinstate the yield sort — the behaviour issue #460 removed.
 const WORK_SORTS: Array[StringName] = [WORK_SORT_NAME, WORK_SORT_YIELD]
-
-const WORK_CHIP_ALL_FORMAT := "All %d"
-
-const WORK_CHIP_KIND_FORMAT := "%s %d · %s"
-
-## The kind chip's face once its mark is bundled ART — the same line with the leading `%s` gone,
-## because a `Button` carries art on its `icon` PROPERTY and a chip that kept the glyph would state
-## its kind twice. Art OR glyph, never both, the rule `BandCityPanel.make_icon_button` already
-## follows for the knowledge launcher.
-const WORK_CHIP_KIND_SPRITE_FORMAT := "%d · %s"
-
-## The two kind chips' bundled marks, resolved through `HudSprites.for_mark` (issue #249). They are
-## the activity's OWN ids — `hunt` is the same mark the roster's band rows wear — so the board and
-## the roster cannot come to draw one activity two ways.
-##
-## **THE OTHER THREE CHIPS ARE ABSENT AND THAT IS COMPLETE COVERAGE.** `All` carries no mark at all,
-## and the `⚠` / `⌃` chips carry TINTED SYMBOLIC glyphs, which #249 leaves as text: their colour is
-## half of what they say (WARN on the attention chip), and this art is authored in two flat pale
-## tones whose fill IS the silhouette, so a tint would flatten it. So the chip row is not left half
-## art and half emoji — every PICTOGRAPHIC mark on it is drawn.
-const WORK_CHIP_FORAGE_MARK := "forage"
-const WORK_CHIP_HUNT_MARK := "hunt"
-
-## What a chip's art may occupy, through the stock `icon_max_width` theme constant. A cap is needed
-## because the source PNGs are 256px and a `Button` reserves its icon's drawn size in its MINIMUM —
-## one art-bearing chip would otherwise set the whole row's height. Sized to `WORK_CHIP_FONT_SIZE`'s
-## own line so the mark reads as the chip's leading glyph did, not as a picture pasted beside a word.
-const WORK_CHIP_ICON_MAX_WIDTH := 13
-
-const WORK_CHIP_ATTENTION_FORMAT := "⚠ %d"
-
-## The ready chip. `⌃` is the same chevron the map badge and the overflow chip use, so the three
-## surfaces share one mark for one idea and none of them needs a legend.
-const WORK_CHIP_READY_FORMAT := "⌃ %d ready"
 
 ## A row's ready mark: the chevron plus the offered rung's own policy glyph (`⌃▦`, `⌃🐄`). The chevron
 ## is load-bearing — the verb and standing-rung glyphs COLLIDE (▦ is both "Sow" and "this is a Field"),
@@ -1655,8 +1528,6 @@ const WORK_ROW_BUILDING_UNSTAFFED_TOOLTIP_FORMAT := "%s in progress — it is NO
 ## had already assumed — and the three build states differ by one glyph at a thumbnail's size. The
 ## meta is what lets an assertion find the Label first and read it second.
 const WORK_ROW_BUILD_STATE_META := "work_row_build_state"
-
-const WORK_CHIP_TOOLTIP := "Filter the board to these sources."
 
 const WORK_SOURCES_FORMAT := "%d sources"
 
@@ -1770,12 +1641,17 @@ const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, and there is n
 ## costs is that the note no longer distinguishes a rung being RAISED from one being HELD — it does
 ## not need to, because the player does the same thing either way, and the source's own card still
 ## says which on the rung row that carries the meter.
-const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — raise this band's Husbandry role."
+const WORK_ROW_UNDER_HERDED_NOTE := "Animals drifting off — add hands to this row's crew."
 
 ## The plant web's twin. The consequence is the ground going back to wild rather than a flock
-## shedding, and the pool is `agriculture` — the same sentence about a different web, which is why the
-## picker below is one function and not a branch at each call site.
-const WORK_ROW_UNDER_KEPT_NOTE := "This ground is slipping — raise this band's Agriculture role."
+## shedding — the same sentence about a different web, which is why the picker below is one function
+## and not a branch at each call site.
+##
+## ⛔ **BOTH NAME THE ROW'S OWN CREW, NOT A BAND ROLE** (`docs/plan_site_crews.md` §2.1). They read
+## *"raise this band's Agriculture / Husbandry role"* while a keeping POOL held the site; the pools are
+## retired, the site's own crew keeps it before it collects, and the stepper beside the note IS the
+## lever now.
+const WORK_ROW_UNDER_KEPT_NOTE := "This ground is slipping — add hands to this row's crew."
 
 ## ---- THE FOURTH ARM: THE POOL HAS THE HANDS AND NOT THE TOOLS ----------------------------------
 ##
@@ -1804,10 +1680,12 @@ const WORK_ROW_UNDER_KEPT_NOTE := "This ground is slipping — raise this band's
 ## GOOD stops the work outright and takes DANGER; a pool short of tools is still working, bare-handed
 ## and slower, which is the same *losing ground gradually* the hands arm describes. `under_kept_note_severity`
 ## therefore takes no tools argument.
-const WORK_ROW_UNDER_KEPT_TOOLS_NOTE := "This ground is slipping — Agriculture needs tools, not hands."
+const WORK_ROW_UNDER_KEPT_TOOLS_NOTE := "This ground is slipping — its crew is short of tools."
 
-## The animal web's twin, and the pool is `husbandry`.
-const WORK_ROW_UNDER_HERDED_TOOLS_NOTE := "Animals drifting off — Husbandry needs tools, not hands."
+## The animal web's twin. **The tools arm reads the SITE's own `upkeep_tools_short`**
+## (`docs/plan_site_crews.md` §2.3) — the band-wide settlement filled less than this site's
+## keeping-tool claim, so its crew kept with more of its own hands.
+const WORK_ROW_UNDER_HERDED_TOOLS_NOTE := "Animals drifting off — its crew is short of tools."
 
 ## RETIRED — **`WORK_ROW_UNDER_KEPT_TOOLTIP` AND `WORK_ROW_UNDER_HERDED_TOOLTIP`**, a four-sentence
 ## hover each (*"Under-kept — an improved patch is held out of the band's AGRICULTURE pool, not by its
@@ -2049,38 +1927,10 @@ static func under_kept_note(kind: String, material_note: String = "",
     return WORK_ROW_UNDER_HERDED_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
         else WORK_ROW_UNDER_KEPT_NOTE
 
-## **WHICH POOL KEEPS THIS WEB'S SOURCES, AS THE POOL'S OWN WIRE TOKEN** — `husbandry` on the animal
-## web, `agriculture` on the plant one. `keeping_role_name`'s twin: that one answers the display NAME
-## off a SOURCE kind, this one the token `HudBandLaborState.pool_toe_for` joins on, off a LABOR kind.
-## One picker, for `under_kept_note`'s own reason — a caller that reached for the other web's pool
-## would read a TOE that is a wrong answer looking like a right one.
-static func keeping_pool_kind(labor_kind: String) -> String:
-    return HudConst.LABOR_KIND_HUSBANDRY if labor_kind == SourceForecast.LABOR_KIND_HUNT \
-        else HudConst.LABOR_KIND_AGRICULTURE
-
-## **THIS CLIENT CANNOT NAME A WEB FOR THIS POOL** — `keeping_source_kind`'s answer for the two pools
-## whose queued jobs it may not price. A sentinel rather than a defaulted web, for the reason the
-## picker above states: a caller handed the WRONG web reads a real number about somebody else's
-## sources, which is a wrong answer wearing a right one's shape.
-const NO_KEEPING_SOURCE_KIND := ""
-
-## **AND THE WEB A KEEPING POOL KEEPS, ASKED BACK THE OTHER WAY** — the SOURCE kind whose jobs
-## queued this turn this pool will owe standing work for, off the POOL's own token.
-## `keeping_pool_kind`'s inverse, and its twin in the one-picker rule: the pending projection
-## (`BandPanelController._queued_keeping_hands`) reaches for a web off a pool token and nothing else
-## in this client does.
-##
-## ⛔ **`roadwork` AND `quarrywork` NAME NO WEB, AND THAT IS THE HONEST ANSWER RATHER THAN A GAP.**
-## Both publish their bill as a band-level roll-up the SIM struck, precisely because their rows are
-## fog-filtered and a client-side sum would drop what it cannot see
-## (`HudBandLaborState.roadwork_pool_state`) — so there is no queued term here to divide, and a web
-## named for them would be an invitation to sum exactly those rows.
-static func keeping_source_kind(pool_kind: String) -> String:
-    if pool_kind == HudConst.LABOR_KIND_HUSBANDRY:
-        return SourceForecast.LABOR_KIND_HUNT
-    if pool_kind == HudConst.LABOR_KIND_AGRICULTURE:
-        return SourceForecast.LABOR_KIND_FORAGE
-    return NO_KEEPING_SOURCE_KIND
+## ⛔ RETIRED — **`keeping_pool_kind` / `keeping_source_kind` / `NO_KEEPING_SOURCE_KIND`**, the pickers
+## between a web and the keeping POOL that held it. The `agriculture` / `husbandry` pools are retired
+## (`docs/plan_site_crews.md` §0): a site's own crew keeps it, and its keeping-tool shortfall rides the
+## source row as `upkeep_tools_short` rather than a pool's table of equipment.
 
 ## **AND ITS SEVERITY, ASKED THE SAME WAY** — DANGER for a missing good, WARN for missing hands. One
 ## producer for the pair, so a note and its ink can never describe different shortfalls.
@@ -2141,14 +1991,15 @@ static func under_kept_tooltip_for_source(source_kind: String,
 ## surfaces that need the bare word (the compose sheet's standing price, the blocked-queue remedy)
 ## read the same table rather than spelling the pair a third time.
 static func keeping_role_name(source_kind: String) -> String:
-    # ⛔ **THE ROUTE BRANCH PAYS ITS KEEPING OUT OF `roadwork`, NOT OUT OF EITHER FOOD WEB'S POOL.**
-    # Without this arm a road falls to the `else` and the price clause names `Agriculture`, sending the
-    # player to a card that cannot move the number — the exact failure this table exists to stop one
-    # web over.
+    # ⛔ **ONLY A ROAD IS KEPT BY A POOL** (`docs/plan_site_crews.md` §1). A patch, a herd and a
+    # working are kept by their own crew, so the price clause names that crew rather than a card.
     if source_kind == SourceForecast.SOURCE_KIND_ROUTE:
         return ROLE_NAME_ROADWORK
-    return ROLE_NAME_HUSBANDRY if source_kind == SourceForecast.SOURCE_KIND_HERD \
-        else ROLE_NAME_AGRICULTURE
+    return WORK_SITE_KEEPER_NAME
+
+## Who pays a SITE's keeping, in the price clause's own slot (`… 2 work a turn from %s to hold`). The
+## site's own crew — the row's stepper — since `docs/plan_site_crews.md` retired the keeping pools.
+const WORK_SITE_KEEPER_NAME := "its own crew"
 
 static func _labor_kind_of(source_kind: String) -> String:
     return SourceForecast.LABOR_KIND_HUNT if source_kind == SourceForecast.SOURCE_KIND_HERD \
@@ -2280,11 +2131,6 @@ const WORK_INSPECT_KITS := "Kits"
 ## harness identifying a button by `text` would be asserting the string it had already composed.
 const WORK_PRIORITY_RUNG_META := &"work_priority_rung"
 
-## …and the handle on a row's PREFIX label, valued the level it states. Its own node rather than a
-## splice into the accounts string, so the accounts keep their `OVERRUN_TRIM_ELLIPSIS` + tooltip
-## treatment untouched (`BandPanelController._build_work_row_accounts`).
-const WORK_ROW_PRIORITY_META := &"work_row_priority"
-
 ## The gap between that prefix and the accounts beside it, and it is **ZERO ON PURPOSE**: the prefix
 ## carries `WORK_INSPECT_SENTENCE_SEPARATOR` inside its own text, exactly as the accounts carry the
 ## one before the floor clause, so the spacing of line two is stated in one place instead of half in
@@ -2353,18 +2199,6 @@ static func work_priority_ink(level: String) -> Color:
 ## is always a stance cannot reach. A stance re-pick no longer discards anything: `assign_labor`
 ## leaves the improvement axis alone, so the pick is an ordinary change of take on every row.
 
-const PAGER_PREV_GLYPH := "‹"
-
-const PAGER_NEXT_GLYPH := "›"
-
-const PAGER_PREV_TOOLTIP := "Previous page"
-
-const PAGER_NEXT_TOOLTIP := "Next page"
-
-const PAGER_FORMAT := "Page %d / %d"
-
-const PAGER_RANGE_FORMAT := "%d–%d of %d"
-
 # ---- The POOLS block (`docs/plan_standing_upkeep.md` §4.7) ----------------------------------------
 #
 # The band's three standing pools — Agriculture, Husbandry and Builders — at the top of the WORK zone,
@@ -2374,15 +2208,6 @@ const PAGER_RANGE_FORMAT := "%d–%d of %d"
 # **THE BLOCK ALWAYS RENDERS, including for a band with an empty board.** Three steppers at 0 is a
 # live control rather than furniture explaining an absence — which is the opposite of the queue block
 # one down, where nothing queued genuinely means nothing to show.
-
-## The POOL CARD is the role card with everything but the CONTROL taken off: the role name and the
-## stepper, no kit picker (none of the three has one — the keeping pair mounts none by rule and the
-## Builders card's was deleted in §4.6b) and no prose. Each card's hint becomes its `tooltip_text`:
-## the words survive, they stop costing vertical space on a zone that clips.
-##
-## Measured on the drawn card — the stylebox's 6px top and bottom padding, the name at
-## `ROLE_CARD_NAME_FONT_SIZE`, one `ROLE_CARD_SEPARATION` and the compact stepper's own button height.
-const POOL_CARD_HEIGHT := 56.0
 
 ## …and the fund-mode row's own drawn height: ONE row, the two buttons and the shortfall/covered line
 ## side by side. Reserved only where that row renders — `_build_upkeep_mode_row` returns nothing on a
@@ -2400,35 +2225,6 @@ const POOL_CARD_HEIGHT := 56.0
 ## is therefore unchanged: **110px with the fund-mode row, 82 without.**
 const UPKEEP_MODE_ROW_HEIGHT := 22.0
 
-## **THE BLOCK'S STABLE HANDLE, valued whether its fund-mode row is present** — the harnesses assert
-## the reserved height against the drawn one and need the same `has_fund_mode` the builder used.
-const POOLS_BLOCK_META := "pools_block"
-
-## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers**, exactly as
-## `build_queue_block_height` is. The work zone `clip_contents`, so a block that drew without being
-## paid for in `_work_board_capacity`'s chrome term would silently slice board rows off the bottom of
-## the zone; reserving and drawing from one expression is what makes the two unable to disagree.
-##
-## ⛔ **IT IS ONE ROW OF FOUR CARDS AND A FIFTH DOES NOT FIT IT AT ANY TRIM** (arc #583, measured). A
-## pool card's own minimum is its STEPPER and reads **83px** at `POOL_STEPPER_*` — the width the
-## fourth card already bought out of the CONTROL — so five abreast want
-## `5 × 83 + 4 × ROLE_CARD_SEPARATION` = **439px** of a WORK zone box that is **382** on the bottom
-## dock and **356** on the left, with the horizontal padding already at 4 against `HudStyle`'s
-## authored 11. **And the height a second row would cost cannot be found either**: it is 62px
-## (`POOL_CARD_HEIGHT` + one separation), the work zone's floor rises 358 → 420 with it, and
-## `BandCityPanel.PANEL_HEIGHT_WIDE`'s own sweep has no value left to land on — the work zone needs
-## ≥ 480 while the two-column band flank's fill floor caps that budget at 473, and at the matrix's
-## shortest viewport `MAX_WIDE_HEIGHT_FRACTION` pins the box at 337 whatever the budget says.
-##
-## **SO THE `quarrywork` POOL IS NOT A CARD HERE.** Its stepper lives on the WORKINGS ROSTER block's
-## own head, one block down, which already draws and is already paid for — see
-## `ZONE_HEADER_WORKINGS_ROSTER`.
-static func pools_block_height(has_fund_mode: bool) -> float:
-    var height := ZONE_HEAD_HEIGHT + float(ZONE_BLOCK_SEPARATION) + POOL_CARD_HEIGHT
-    if has_fund_mode:
-        height += float(ZONE_BLOCK_SEPARATION) + UPKEEP_MODE_ROW_HEIGHT
-    return height
-
 # ---- THE ROADWORK ROSTER — WHICH roads the pool above is paying for (arc #532) --------------------
 #
 # ⛔ **IT IS A ROSTER, NOT A WORK BOARD.** The pool card one line up says `Roadwork 2` and nothing
@@ -2442,8 +2238,6 @@ static func pools_block_height(has_fund_mode: bool) -> float:
 # **IT SITS INSIDE THE WORK ZONE AS A BLOCK, DIRECTLY UNDER THE POOLS BLOCK THAT RAISES THE
 # QUESTION** — not as a fourth zone, which would move `wide_shell_min_width()`, the shell-flip
 # threshold and every per-dock reservation for nothing this readout needs.
-
-const ZONE_HEADER_ROADWORK_ROSTER := "Roads kept"
 
 ## **A ROAD HAS NO NAME; ITS IDENTITY IS ITS PLACE**, so the name cell is a distance and an 8-point
 ## bearing from the band's own camp — `4 tiles E`. Three rows all reading `Dirt road` would not be a
@@ -2522,32 +2316,6 @@ const ROADWORK_ROSTER_UNSEEN_META := "roadwork_roster_unseen"
 ## `build_queue_rows_max` and `_work_board_capacity`, to buy back less than a tenth of a row.
 const ROADWORK_ROSTER_HEAD_HEIGHT := 22.0
 
-## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers**, the rule both blocks
-## beside it keep. The work zone `clip_contents`, so a block that drew without being paid for in
-## `_work_board_capacity`'s chrome term silently slices board rows off the bottom.
-##
-## `0` where the block does not render at all — no roads visible AND no roadwork demand — which is the
-## expeditions block's rule stated in arithmetic.
-##
-## `visible` is the count of KEPT ROADS THIS BAND CAN SEE; `unseen_line` is whether the muted line
-## above is drawn (case 2: a bill with nothing in sight). They are the block's two inputs rather than
-## its height, so the arithmetic stays in one place.
-##
-## ⛔ **THERE IS NO `+1` FOR AN OVERFLOW ROW ANY MORE.** The `+N more` door moved ONTO the head, so
-## the block draws its head, its rows and nothing else. A term left here for a row that no longer
-## renders would silently steal a board row: this one answer is threaded into `build_queue_rows_max`
-## AND `_work_board_capacity`, and the work zone `clip_contents`.
-##
-## ⛔ **AND THE HEAD TERM IS `ROADWORK_ROSTER_HEAD_HEIGHT`, NOT `ZONE_HEAD_HEIGHT`** — that head
-## carries the disclosure BUTTON now, and an `HBoxContainer` grows to its tallest child.
-static func roadwork_roster_height(visible: int, unseen_line: bool) -> float:
-    if visible <= 0 and not unseen_line:
-        return 0.0
-    var lines := mini(visible, ROADWORK_ROSTER_ROWS_MAX)
-    if unseen_line:
-        lines += 1
-    return ROADWORK_ROSTER_HEAD_HEIGHT + float(lines) * WORK_ROW_HEIGHT
-
 # ---- THE WORKINGS ROSTER — WHICH workings the `Workings` pool is paying for (arc #583) ------------
 #
 # ⛔ **THE ROADWORK ROSTER'S TWIN, AND EVERY RULE ABOVE APPLIES UNCHANGED.** The pool card one line up
@@ -2578,65 +2346,10 @@ static func roadwork_roster_height(visible: int, unseen_line: bool) -> float:
 # <x> <y> <material>` names the `(tile, material)` PAIR and drops this band's hold on that ONE working,
 # which is why the row's control carries the material structurally rather than by label.
 
-## The block's head, which is also the `quarrywork` pool's only control.
-##
-## ⛔ **IT IS `ROLE_NAME_QUARRYWORK` ITSELF, NOT A SECOND SPELLING OF IT.** The head IS the pool — that
-## is the whole reason the stepper lives here rather than on a fifth pool card — so an independent
-## literal would be two names for one control, which is exactly how it drifted before: the head read
-## `Workings held` while the role read `Workings`.
-##
-## ⛔ **AND THE WORD IS NOT `WORKINGS` ANY MORE.** Ray: *"we decided a while ago, WORKINGS wasn't a
-## good word to us, fix it."* It is **`GROUNDWORK`**, and the shape of the head is why: it hosts a
-## STEPPER, so the name has to work as a ROLE rather than as a list caption. `Groundwork` sits in
-## `Roadwork`'s own `-work` family beside `Agriculture` / `Husbandry` / `Builders`, it is ordinary
-## English for keeping the ground's diggings and cuttings, and it survives a minerals arc that
-## anything naming wood or stone would not.
-##
-## ⛔ **DO NOT RENAME IT AFTER THE LIST** (`Wood & Stone`, `Cutting & Digging`). The stepper beside it
-## staffs the KEEPING crew, never the per-source take crews — those are on the two compose sheets — so
-## a head naming the list would make the stepper read as *how many cutters and diggers*, which is the
-## wrong control entirely.
-##
-## It still never says the command token: `Quarry` in this client is the HUNTED ANIMAL, and
-## `quarrywork` survives as grammar (`HudConst.LABOR_KIND_QUARRYWORK`) and on no label.
-const ZONE_HEADER_WORKINGS_ROSTER := ROLE_NAME_QUARRYWORK
-
-## ⛔ **WHAT THE HEAD RESERVES WITH THE POOL STEPPER ON IT — MEASURED, not `ZONE_HEAD_HEIGHT` plus a
-## guess.** `HudWidgets.zone_head` declares `ZONE_HEAD_HEIGHT` (20) as a MINIMUM and an `HBoxContainer`
-## grows to its tallest child, so a `compact` stepper button at `WORK_STEPPER_FONT_SIZE` /
-## `WORK_STEPPER_PADDING_V` sets the row instead. `band_panel_preview._assert_workings_roster_head`
-## prints the reserved figure beside the drawn one, which is what makes this a measurement rather than
-## a re-derivation — the work zone `clip_contents`, so a head drawing taller than the block reserved
-## takes the difference off the bottom of the board in silence.
-##
-## ⛔ **AND THE STEPPER IS NO LONGER THE TALLEST THING ON IT.** The head carries the roster's
-## DISCLOSURE BUTTON too now (the roster door moved onto the head), a `compact` ghost button at
-## `WORK_ROW_FONT_SIZE` / `WORK_PAGER_PADDING_V` — taller than the compact stepper at
-## `WORK_STEPPER_FONT_SIZE`, so it is the button that sets this row and the road roster's alike.
-##
-## **RE-MEASURED ON THE DRAWN HEAD: 22.0px** (`band_panel_workings_roster_collapsed` /
-## `…_expanded`, the door on the head), against the **21.0** the stepper alone takes on a band at or
-## under the cap (`band_panel_workings_roster`) and the 20 a bare title row takes. It reserves the
-## TALLER of its two states for `ROADWORK_ROSTER_HEAD_HEIGHT`'s reason. It is now the SAME figure as
-## that constant and still its own: the heads are measured separately because they hold different
-## controls, and one defined from the other would be a coincidence written down as a rule. It moves through
-## the SAME single-resolution seam — `_fill_work_zone_column` resolves `workings_roster_height` once
-## and hands it to both `build_queue_rows_max` and `_work_board_capacity` — so nothing in the zone's
-## arithmetic learns about the head separately.
-const WORKINGS_ROSTER_HEAD_HEIGHT := 22.0
-
-## The head's stepper, as a stable handle. **Valued the ROLE it staffs**, so a harness reads *this is
-## the workings pool's control* rather than *a stepper exists somewhere in the block* — and so the
-## per-ROW absence claim beside it cannot accidentally find this one.
-const WORKINGS_ROSTER_STEPPER_META := "workings_roster_stepper"
-
 ## **A WORKING HAS HALF A NAME THE ROAD LACKED — its MATERIAL** — so the name cell is the material
 ## and then the road roster's locator: `Wood · 4 tiles E`. Two workings on one tile are two rows that
 ## differ only in that first word, which is exactly why it leads.
 const WORKINGS_ROSTER_NAME_FORMAT := "%s · %s"
-
-## The block's stable handle, valued the number of working rows it drew.
-const WORKINGS_ROSTER_BLOCK_META := "workings_roster_block"
 
 ## One row, valued its working's `(tile, material)` — the roster's identity, and the pair a tile-only
 ## meta could not tell apart.
@@ -2685,40 +2398,6 @@ const WORKINGS_ROSTER_ABANDON_META := "workings_roster_abandon"
 ## there is nothing for a harness to tell apart, where a roster row's control has its siblings.
 const WORKINGS_LADDER_ABANDON_META := "workings_ladder_abandon"
 
-## The muted case-2 line's own handle, so its presence is assertable rather than inferred from a row
-## count.
-const WORKINGS_ROSTER_UNSEEN_META := "workings_roster_unseen"
-
-## ⛔ **CASE 2 OF THE HONESTY RULE.** `deposits` rows are FOG-FILTERED while the pool card's totals
-## come cohort-level from the sim — precisely because summing the visible rows would understate the
-## bill — so a band can legitimately show `Workings 2` beside a one-row roster or beside none at all.
-## An empty roster drawn next to a non-zero count would say *this band holds nothing*, which is a
-## readout that lies.
-const WORKINGS_ROSTER_UNSEEN_LINE := "The ground this band works is not in sight."
-
-## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers**, the rule every block
-## in this zone keeps. `0` where the block does not render at all: nothing held in sight AND no
-## `quarrywork` demand, which is the expeditions block's omit-entirely rule stated in arithmetic.
-##
-## It shares `ROADWORK_ROSTER_ROWS_MAX` and the `+N more` foot deliberately — the two rosters sit in
-## one zone answering the same shape of question, and two caps would be two answers to *how long may a
-## roster be here*.
-##
-## ⛔ **IT IS NOT `roadwork_roster_height` DELEGATED, and the difference is the HEAD.** This block's
-## head carries the `quarrywork` pool's own stepper as well as the disclosure button, so it reserves
-## its own MEASURED `WORKINGS_ROSTER_HEAD_HEIGHT` rather than the road roster's. The ROWS term is
-## identical, which is why the two functions read alike and are still two answers.
-##
-## ⛔ **NO `+1` FOR AN OVERFLOW ROW** — `roadwork_roster_height`'s note, for the same two capacity
-## readers and the same clipping zone.
-static func workings_roster_height(visible: int, unseen_line: bool) -> float:
-    if visible <= 0 and not unseen_line:
-        return 0.0
-    var lines := mini(visible, ROADWORK_ROSTER_ROWS_MAX)
-    if unseen_line:
-        lines += 1
-    return WORKINGS_ROSTER_HEAD_HEIGHT + float(lines) * WORK_ROW_HEIGHT
-
 # ---- The BUILD QUEUE block (`docs/plan_standing_upkeep.md` §4.6b) ---------------------------------
 #
 # The band's ordered build queue, above the filter chips in the WORK zone. **Above them deliberately:**
@@ -2728,9 +2407,6 @@ static func workings_roster_height(visible: int, unseen_line: bool) -> float:
 # **NO QUEUE MEANS NO BLOCK AT ALL** — zero nodes, zero height, zero chrome. That is the common
 # early-game state and it must cost nothing, which is also why `build_queue_block_height` answers 0
 # there rather than reserving a bare header.
-
-## The block's own head, uppercased by `HudWidgets.alloc_section_label` like every other zone head.
-const ZONE_HEADER_BUILD_QUEUE := "Build queue"
 
 ## **ENTRIES DRAWN BEFORE THE OVERFLOW ROW TAKES OVER — a CEILING, and the BOX is the other term**
 ## (`docs/plan_standing_upkeep.md` §4.7). Three is what a zone with room shows; what a zone without
@@ -2745,90 +2421,6 @@ const ZONE_HEADER_BUILD_QUEUE := "Build queue"
 ## the ceiling stays authored and the RESOLUTION reads the room.
 const BUILD_QUEUE_ROWS_MAX := 3
 
-## …and the floor. A block that drew NO entry row would be a head over an overflow line, which says
-## less than the `+N more` row alone; "no queue means no block" is the empty-queue rule and is a
-## different statement from "this zone is too short for the list".
-const BUILD_QUEUE_ROWS_MIN := 1
-
-## The gaps the queue's own room has to clear before it may claim a row: head→pools, pools→queue,
-## queue→chips, chips→board, board→pager. Named rather than spelled, since it is the one term of the
-## reservation that is a COUNT rather than a height. **A band with a roadwork roster clears a SIXTH**,
-## which is conditional and lives in `BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT` below.
-##
-## ⛔ **IT WAS 6, AND THE SIXTH WAS THE INSPECTOR'S GAP** (`docs/plan_standing_upkeep.md` §4.9 item
-## 12d), beside a `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` term that is retired with it. **The retired
-## reasoning is quoted rather than deleted**: *"AND THE INSPECTOR'S OWN HEIGHT BESIDE THAT GAP. The
-## reservation below budgeted the STRIP'S GAP and not the strip, so the queue claimed rows the zone
-## could only afford while nothing was selected — and selecting a row is one click, after which the
-## board (floored at one row) has nothing left to give back. It is the BASE height rather than a worst
-## case on purpose: the conditional lines and the policy picker are the board's to pay for, and a
-## queue cap sized on the tallest strip a model could ever produce would shrink the block on every
-## dock for a state most bands never reach."* Every word of that was true while the strip lived in
-## this column. It does not: the inspector is a viewport-centred `WorkInspectorDialog` and no
-## selection can take a pixel off this zone, so **the whole point is that NO inspector term survives
-## anywhere in the zone's budget** — one left here would go on charging the queue for a strip that
-## cannot appear.
-const BUILD_QUEUE_ROOM_GAP_COUNT := 5.0
-
-## ⛔ **THE ROADWORK ROSTER'S OWN GAP — the SIXTH, and it is conditional because the roster is** (arc
-## #532). The roster renders between the pools and the queue, so a band that draws one has one more
-## `ZONE_BLOCK_SEPARATION` in the column than the five above. `BandPanelController._work_board_capacity`
-## already adds it (`if roster_height > 0.0: gaps += 1.0`) and this reservation did not, so the two
-## disagreed by 6px on every band with a roster: for a box height whose remainder lands within those 6px
-## of a `WORK_ROW_HEIGHT` boundary the queue claimed a row the board had already been charged for, and
-## the zone clips, so it came silently off the bottom.
-const BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT := 1.0
-
-
-## **HOW MANY ENTRY ROWS THIS ZONE CAN AFFORD**, clamped into `[BUILD_QUEUE_ROWS_MIN,
-## BUILD_QUEUE_ROWS_MAX]`. It reserves everything the zone owes whatever the queue does — its head,
-## the chips, the POOLS block, one board row, the pager, the block's own head and the gaps between
-## them — and divides what is left by the row height.
-##
-## ⛔ **THE OVERFLOW ROW IS GONE, AND SO IS THE ROW THIS HELD BACK FOR IT.** It used to read *the
-## overflow row is taken off the ANSWER, not added to the cost* — `build_queue_block_height` drew a
-## `+N more` row beside the capped entries, so a zone affording two rows and handed four entries
-## showed ONE entry and the overflow. The `+N more` is on the block's HEAD now, in height the head
-## already reserves, so a queue that overflows costs the same as one that does not and every afforded
-## row goes to an ENTRY. A `-1` left here would give a board row to nothing.
-## ⛔ **`roster_height` IS THE ROADWORK ROSTER'S SHARE, AND IT IS A TERM HERE FOR THE SAME REASON THE
-## POOLS BLOCK IS** (arc #532). The roster renders BETWEEN the pools and this queue, so a ceiling that
-## did not subtract it would hand the queue rows the roster is already standing in — and the zone
-## clips, so the overflow comes silently off the bottom. `0.0` on a band with no roster, which is the
-## shipped case for most of the early game.
-## ⛔ **`workings_height` IS THE SECOND ROSTER'S SHARE, AND IT IS A SEPARATE TERM BECAUSE THE TWO
-## ROSTERS APPEAR INDEPENDENTLY** (arc #583). A band may keep roads and hold no workings, or the
-## reverse, or both — so each block's height AND its own gap are counted only where that block draws.
-## Summing them into one argument would charge one gap for two blocks, which is the 6px disagreement
-## `BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT` was added to close.
-## ⛔ **`entries` IS DELIBERATELY UNREAD NOW.** It was the input to the held-back overflow row, and the
-## ceiling is a fact about the BOX rather than about the list: a queue of four and a queue of forty
-## afford the same rows. It stays in the signature because every caller has it and because a term that
-## depends on the list is exactly what has to be re-argued if a future block puts a row back.
-##
-## ⛔ **`head_tools_height` IS HELD BACK HERE TOO** — the head row's tool-short second line, `0.0`
-## when the head is not short. It is charged before the division, so a tool-short head costs the
-## queue a row sooner rather than taking its 16px off the bottom of the board.
-static func build_queue_rows_max(box_height: float, pools_fund_mode: bool, _entries: int,
-        roster_height: float = 0.0, workings_height: float = 0.0,
-        head_tools_height: float = 0.0) -> int:
-    # The board row this leaves room for is a SOURCE row, so it is the two-line height; the rows this
-    # divides for are QUEUE rows, which are one line each.
-    # A roster's HEIGHT and its GAP are one term or neither — see BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT,
-    # and `_work_board_capacity`, which counts its gaps the same way.
-    var gaps := BUILD_QUEUE_ROOM_GAP_COUNT
-    if roster_height > 0.0:
-        gaps += BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT
-    if workings_height > 0.0:
-        gaps += BUILD_QUEUE_ROOM_ROSTER_GAP_COUNT
-    # The first head term is the WORK ZONE's own; the second is this block's, which carries the
-    # disclosure button and is measured separately for it.
-    var reserved := ZONE_HEAD_HEIGHT + WORK_CHIPS_HEIGHT + pools_block_height(pools_fund_mode) \
-        + BUILD_QUEUE_HEAD_HEIGHT + WORK_ROW_TWO_LINE_HEIGHT + WORK_PAGER_HEIGHT \
-        + BUILD_QUEUE_ROOM_SETTINGS_HEIGHT + roster_height + workings_height + head_tools_height \
-        + float(ZONE_BLOCK_SEPARATION) * gaps
-    var afforded := int((box_height - reserved) / WORK_ROW_HEIGHT)
-    return clampi(afforded, BUILD_QUEUE_ROWS_MIN, BUILD_QUEUE_ROWS_MAX)
 
 ## The HEAD marker — the one entry the whole builders pool is standing on. Its slot is reserved on
 ## EVERY row (`BUILD_QUEUE_MARKER_WIDTH`) so the job faces line up down the block; a conditionally
@@ -2902,17 +2494,6 @@ const BUILD_QUEUE_DRAG_TYPE := "build_queue_entry"
 ## (`🐄 Corral Thunder Mammoths` needs 189 — it was already ellipsised at the old width). The hover
 ## carries face and date in full.
 const BUILD_QUEUE_DATE_WIDTH := 168.0
-
-## `3 builders · Tillage kit` — the head's readout, naming the pool that funds the queue and the kit
-## it is holding. The kit comes from the SAME resolution the Builders role card's gear line states
-## (`BandPanelController._role_kit_id`), so the card and this header cannot disagree about which web's
-## tool the pool is carrying.
-const BUILD_QUEUE_BUILDERS_FORMAT := "%d builders · %s"
-
-## …and the same slot when nobody is on the role. **This branch is the direct answer to a playtest
-## report** — a Cultivate that was not progressing, with nothing on any surface saying why — so it
-## names the remedy rather than merely stating the zero, and it takes the WARN ink.
-const BUILD_QUEUE_NO_BUILDERS_NOTE := "⚠ No builders — staff the Builders role"
 
 ## …and the head's tooltip. **It names where the pool is staffed, so it moved with the card** (§4.7):
 ## the Builders card is in the POOLS block directly above this head now, not in the band tab's
@@ -3087,31 +2668,6 @@ const BUILD_QUEUE_SETTINGS_CHROME := 2.0 * float(BUILD_QUEUE_SETTINGS_PADDING_V)
 ## (`docs/plan_standing_upkeep.md` §4.7b ②): a reservation that counted only the control was short by
 ## the chrome around it every time a strip opened.
 const BUILD_QUEUE_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_CHROME \
-    + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
-
-## **THE HEADROOM `build_queue_rows_max` KEEPS FOR THIS STRIP, and it is what the retired
-## `BUILD_QUEUE_ROOM_INSPECTOR_HEIGHT` was paying for by accident** (`docs/plan_standing_upkeep.md`
-## §4.9 item 12d). An open settings strip is charged to the BOARD, and the board is floored at
-## `maxi(1, …)` — so once the queue has claimed enough rows to leave the board at that floor, an
-## opened strip has nothing to come out of and the zone simply overflows. It never showed while the
-## queue's reservation carried 84px of inspector the queue could not use: the strip fitted in its
-## shadow. Taking the inspector out of that reservation is exactly what exposed it — measured on a
-## 1920 bottom dock, the queue claimed 3 rows instead of 1 and `Zone_work` drew **414 into its 396px
-## box** the moment a strip opened.
-##
-## **STATED AS THE STRIP'S OWN WORST CASE rather than as a cushion**: the chrome, the detail line
-## (which carries the withdrawal) and the crop picker's line — what a plant entry draws. **LEGS ARE
-## DELIBERATELY NOT COUNTED** — a multi-leg climb is the rarer entry, and reserving for it would shrink
-## the block on every dock for a state most bands never reach, which is the same trade the retired
-## constant's own comment made.
-##
-## ⛔ **IT IS 54: chrome 10 + the DETAIL line 22 + the crop line 22.** The detail line every open strip
-## leads with carries `BUILD_QUEUE_UNQUEUE_LABEL` at the control height, and a crop strip adds its
-## picker's line beneath it. On the 1920 BOTTOM dock (a 358px box) that leaves the queue ONE entry row
-## (`band_panel_preview.WIDE_DOCK_QUEUE_ROWS`), the trade Ray took for the withdrawal's words.
-## ⛔ **IT IS DECLARED HERE, NOT BESIDE `BUILD_QUEUE_ROOM_GAP_COUNT` WHERE IT IS READ**, because a
-## GDScript `const` may not read one declared below it and its term is on the lines above.
-const BUILD_QUEUE_ROOM_SETTINGS_HEIGHT := BUILD_QUEUE_SETTINGS_HEIGHT \
     + BUILD_QUEUE_SETTINGS_CONTROL_HEIGHT
 
 ## **THE SETTINGS KEY'S DECLARED COLUMN.** It was shared by `CROP` and a `KIT` key beside it so the
@@ -3422,55 +2978,16 @@ const BUILD_QUEUE_SETTINGS_META := "build_queue_settings"
 ## another would be a coincidence written down as a rule.
 const BUILD_QUEUE_HEAD_HEIGHT := 22.0
 
-## **THE HEIGHT THE BLOCK RESERVES *AND* DRAWS AT — one function, two callers.** The work zone
-## `clip_contents`, so a block that drew without being paid for in `_work_board_capacity`'s chrome
-## term would silently slice board rows off the bottom of the zone. Reserving and drawing from one
-## expression is what makes the two unable to disagree.
-##
-## `0` for an empty queue, which is the no-block-at-all rule stated in arithmetic.
-##
-## `rows_max` is `build_queue_rows_max`'s answer for the zone being drawn into, so both callers hand
-## over the SAME number rather than each reading the ceiling.
-##
-## **`settings_open` / `settings_legs` ARE THE ROW EXPANSION, AND IT COSTS NOTHING CLOSED**
-## (§4.7a ②, ③). The strip is open-only and one-at-a-time, so it adds its height exactly when it
-## draws — the shape the work board's own inspector term used to have in this block's arithmetic,
-## before §4.9 item 12d took that strip out of the zone entirely and left this the only expansion in
-## the column that costs it anything.
-##
-## ⛔ **`settings_open` IS A SEPARATE ARGUMENT BECAUSE THE CONTENT CANNOT ANSWER IT.** A closed block
-## and an open HUNT strip both state *no legs, no crop*, so a height keyed on the content alone
-## charges 34px for a strip the block then declines to build — and this zone answers that by clipping
-## board rows off the bottom in silence. The caller resolves `_queue_settings_state` ONCE and hands
-## the same answer here and to the builder.
-##
-## **THEY ARE THE STRIP'S INPUTS RATHER THAN ITS HEIGHT, so the number still lives in one place.**
-## A caller passing a float could pass a different one from the strip's own, and a strip that also
-## lists an entry's LEGS has a height that varies — so what a caller states is *whether it draws* and
-## *what is in it*, and `build_queue_settings_height` remains the one arithmetic both the reservation
-## and the render read.
-##
-## ⛔ **THERE IS NO `+1` FOR AN OVERFLOW ROW ANY MORE**, and it had to come out of `build_queue_rows_max`
-## in the same breath. The `+N more` door moved ONTO the head, so the block draws its head, the rows
-## it can afford and (open-only) one settings strip. A term left here for a row that no longer renders
-## would silently steal a board row: this answer is threaded into `_work_board_capacity` and the work
-## zone `clip_contents`.
-##
-## ⛔ **AND THE HEAD TERM IS `BUILD_QUEUE_HEAD_HEIGHT`, NOT `ZONE_HEAD_HEIGHT`** — that head carries
-## the disclosure BUTTON now, and an `HBoxContainer` grows to its tallest child.
-##
-## ⛔ **`head_tools_height` IS THE HEAD ROW'S SECOND LINE** — `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT`
-## while the drawn head is short of the builders' tools and its strip is closed, `0.0` otherwise
-## (`BandPanelController._queue_head_tools_height`). The row grows only in that state, so the term is
-## an argument rather than a constant, and the same value goes to `build_queue_rows_max` and
-## `_work_board_capacity`.
+## **THE BUILD QUEUE BLOCK'S RESERVED HEIGHT** — its drawn rows, each `BUILD_QUEUE_ROW_HEIGHT` (every
+## queue row is two lines since the entry's own `Build:` mark rides the second), plus the open settings
+## strip. The block's HEAD is the section's (`BandPanelController._build_build_queue_head`) and is
+## reserved there, so it is not a term here.
 static func build_queue_block_height(entries: int, rows_max: int,
-        settings_open: bool = false, settings_legs: int = 0, settings_crop: bool = false,
-        head_tools_height: float = 0.0) -> float:
+        settings_open: bool = false, settings_legs: int = 0, settings_crop: bool = false) -> float:
     if entries <= 0:
         return 0.0
     var rows := mini(entries, rows_max)
-    return BUILD_QUEUE_HEAD_HEIGHT + float(rows) * WORK_ROW_HEIGHT + head_tools_height \
+    return float(rows) * BUILD_QUEUE_ROW_HEIGHT \
         + build_queue_settings_height(settings_open, settings_legs, settings_crop)
 
 # ---- THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c) ---------------------------
@@ -3577,40 +3094,18 @@ static func zone_disclosure_tooltip(noun: String) -> String:
 ## expands. Both halves are asserted.
 const BUILD_QUEUE_EXPANDED_SCROLL_NAME := "BuildQueueList"
 
-## **WHAT THE EXPANDED LIST'S VIEWPORT IS DECLARED AT — the zone's box less everything above it.**
-## One arithmetic, in the same shape `_work_board_capacity` charges its chrome: the work head, the
-## POOLS block, the queue's own head, and the two block separations the column puts between the three
-## blocks (the head and the list share one block at separation 0, so there is no gap inside it).
-##
-## ⛔ **IT IS NOT CLAMPED UP TO A FLOOR.** A dock too short to hold this mode must FAIL the zone-fit
-## assertion loudly, which is this zone's standing contract; a floor would turn that into a silent
-## clip of the bottom row, since the zone `clip_contents`.
-static func build_queue_expanded_scroll_height(box_height: float, pools_fund_mode: bool) -> float:
-    return zone_expanded_scroll_height(box_height, pools_fund_mode, BUILD_QUEUE_HEAD_HEIGHT)
+## **WHAT THE EXPANDED QUEUE'S VIEWPORT IS DECLARED AT** — the zone's box less the work head, the
+## queue's own head and the Builders line above the list, and the one block gap between the work head
+## and the section. Not clamped up to a floor: a dock too short for the mode must fail the zone-fit
+## assertion loudly rather than slice its bottom row.
+static func build_queue_expanded_scroll_height(box_height: float) -> float:
+    return zone_expanded_scroll_height(box_height, BUILD_QUEUE_HEAD_HEIGHT + WORK_POOL_LINE_HEIGHT)
 
-## …and the ONE arithmetic behind it, over every block that can take the zone (`docs/plan_standing_upkeep.md`
-## §4.9 item 9c; the roster door, `.claude/rules/client/band-city-panel.md`).
-##
-## ⛔ **THE BLOCK'S OWN CHROME IS THE ONLY TERM THAT DIFFERS, WHICH IS EXACTLY WHY IT IS THE
-## PARAMETER — AND IT IS NOT JUST THE HEAD.** All three heads carry a disclosure BUTTON and each
-## reserves its own MEASURED figure — `BUILD_QUEUE_HEAD_HEIGHT`,
-## `ROADWORK_ROSTER_HEAD_HEIGHT`, `WORKINGS_ROSTER_HEAD_HEIGHT`; and either roster adds a `WORK_ROW_HEIGHT`
-## unseen line above its list when the pool holds more than this band can see. Everything else above
-## the list — the work head, the POOLS block, the two block separations between the three blocks — is
-## the same for all three, and a second expression of it is how one mode comes to declare a viewport
-## the other's dock cannot hold.
-##
-## ⛔ **THE ARGUMENT CARRIES ITS CONTENT IN ITS NAME.** It was `head_height` while the roster's caller
-## was already passing head + unseen line through it, which reads as an invitation to hand it a bare
-## head and silently under-reserve by a row on every band with an unseen working. That is
-## `_draw_yield_label`'s retired `policy` parameter in a second place: a name narrower than the value
-## is a defect waiting for its next caller.
-##
-## ⛔ **NOT CLAMPED UP TO A FLOOR**: the zone `clip_contents`, so a dock too short for the mode must
-## fail `_assert_zone_content_fits` loudly rather than slice its bottom row.
-static func zone_expanded_scroll_height(box_height: float, pools_fund_mode: bool,
-        chrome_above_list: float) -> float:
-    return box_height - ZONE_HEAD_HEIGHT - pools_block_height(pools_fund_mode) - chrome_above_list \
+## …and the ONE arithmetic behind it, over both lists that can take the zone (the queue and the road
+## roster). `chrome_above_list` is the block's own chrome — its head, its pool line and, on the roster,
+## an unseen line — which is the only term that differs between the two.
+static func zone_expanded_scroll_height(box_height: float, chrome_above_list: float) -> float:
+    return box_height - ZONE_HEAD_HEIGHT - chrome_above_list \
         - float(ZONE_BLOCK_SEPARATION) * BUILD_QUEUE_EXPANDED_GAP_COUNT
 
 ## **THE FOURTH SANCTIONED `ScrollContainer` IN THIS PANEL, and the second CONDITIONAL one** — the
@@ -3634,7 +3129,7 @@ const ROSTER_OVERFLOW_META := "roster_overflow"
 
 ## The gaps above that viewport: work head → pools, pools → queue block. Named rather than spelled,
 ## the same way `BUILD_QUEUE_ROOM_GAP_COUNT` is, because it is a COUNT and not a height.
-const BUILD_QUEUE_EXPANDED_GAP_COUNT := 2.0
+const BUILD_QUEUE_EXPANDED_GAP_COUNT := 1.0
 
 # ---- EDGE AUTO-SCROLL, so a drag can reach past the viewport (§4.9 item 9c) ------------------------------
 #
@@ -4084,3 +3579,201 @@ const WORK_ROW_READY_TRACK_TOOLTIP := "Choose how far to take this source — ev
 ## reachable only by withdrawing the entry and declaring again.
 const WORK_ROW_BUILDING_TRACK_TOOLTIP := "Change where this climb ends — the work already banked is kept."
 
+
+## ---- THE WORK TAB'S SECTIONS (`docs/plan_site_crews.md` §3) ------------------------------------
+##
+## The Work zone is five collapsible SECTIONS in one scrolling list, and the sections ARE the filter
+## (the Gathering chips are retired). Their order is the spec's: the queue the builders fund, the two
+## food webs' rows, the roads the one keeping pool holds, and the workings.
+const WORK_SECTION_BUILD_QUEUE := &"build_queue"
+const WORK_SECTION_AGRICULTURE := &"agriculture"
+const WORK_SECTION_HUSBANDRY := &"husbandry"
+const WORK_SECTION_ROADWORK := &"roadwork"
+const WORK_SECTION_GROUNDWORK := &"groundwork"
+
+## ⛔ **`Groundwork` NAMES THE WORKINGS SECTION, AND `quarrywork` NEVER REACHES A PLAYER.** `Quarry` is
+## the extraction ladder's own rung, so a section named for it would put one word on two things.
+const WORK_SECTION_TITLES := {
+    WORK_SECTION_BUILD_QUEUE: "Build queue",
+    WORK_SECTION_AGRICULTURE: "Agriculture",
+    WORK_SECTION_HUSBANDRY: "Husbandry",
+    WORK_SECTION_ROADWORK: "Roadwork",
+    WORK_SECTION_GROUNDWORK: "Groundwork",
+}
+
+## Every section head's readout — the hands this section's controls spend: the builders pool on the
+## queue, the Roadwork pool on the roads, and the summed crews of the site rows on the three webs.
+const WORK_SECTION_READOUT_FORMAT := "%d on work"
+
+## The collapse chevron, the head's FIRST child. ⛔ **Not `▸` / `▾`**: `▸` is the build queue's HEAD
+## marker two rows below this head, and one glyph meaning *folded* on a head and *funded* on a row of
+## the same section is a collision.
+const WORK_SECTION_CHEVRON_OPEN := "⌄"
+const WORK_SECTION_CHEVRON_CLOSED := "›"
+const WORK_SECTION_CHEVRON_OPEN_TOOLTIP := "Collapse this section."
+const WORK_SECTION_CHEVRON_CLOSED_TOOLTIP := "Expand this section."
+
+## The chevron's square — the compact ghost button's own width at this zone's row type.
+const WORK_SECTION_CHEVRON_WIDTH := 22.0
+
+## Handles: the head carries its section key; the chevron carries its section key; the section's
+## outer column carries its key, and whether it is collapsed.
+const WORK_SECTION_HEAD_META := &"work_section_head"
+const WORK_SECTION_CHEVRON_META := &"work_section_chevron"
+const WORK_SECTION_COLLAPSED_META := &"work_section_collapsed"
+
+## **THE WORK ZONE'S ONE SCROLL** — the sections, flowed column-major across the columns the card
+## grants (`BandPanelController._flow_work_sections`). It is SANCTIONED for the reason the parties list
+## and the band zone are: a `ScrollContainer` reports no minimum on its scrolling axis, so what the
+## sections hold never reaches the panel's fixed cross-axis reservation.
+const WORK_SECTIONS_SCROLL_NAME := "WorkSections"
+
+## A section head's reserved height: `ZONE_HEAD_HEIGHT` grown to the compact chevron button (and, on
+## the queue and the roads, the `+N more` door), which is what sets the row.
+const WORK_SECTION_HEAD_HEIGHT := 22.0
+
+## ---- A POOL'S OWN LINE: `Builders` and `Roadwork` ------------------------------------------------
+##
+## The two band-wide pools left are each ONE LINE at the top of their own section — name, mark,
+## stepper — where they were cards in a four-card row. **Builders and Roadwork keep their TOE
+## behaviour** (the `⚠` / `ⓘ` mark and the hover), read through the same `_pool_tools_short_line` /
+## `upkeep_pool_is_short` / `upkeep_pool_idle_line` the cards used.
+const WORK_POOL_LINE_META := &"work_pool_line"
+const WORK_POOL_LINE_HEIGHT := WORK_ROW_HEIGHT
+
+## ---- ONE SPINNER PER SITE: the row's second line (`docs/plan_site_crews.md` §2.1, §3) -----------
+##
+## A site's crew keeps it first and collects with the rest, so the row's second line says where the
+## work goes: `Tended Patch · keeps 2 of 2 · 1 harvesting`. A site that owes nothing drops the middle
+## clause: `Wild · 3 harvesting`.
+const SITE_CREW_KEEPS_FORMAT := "%s · keeps %s of %s · %s %s"
+const SITE_CREW_FREE_FORMAT := "%s · %s %s"
+
+## The take verb per web — what the hands not spent keeping are doing.
+const SITE_CREW_VERB_HARVEST := "harvesting"
+const SITE_CREW_VERB_HUNT := "hunting"
+const SITE_CREW_VERB_CUT := "cutting"
+
+## The rung word of a source standing on no improvement.
+const SITE_CREW_RUNG_WILD := "Wild"
+
+## A hand count or a work figure reads as a WHOLE number when it is within this of one, else to one
+## decimal: `keeps 2 of 2`, `keeps 1.5 of 4`, `0.5 harvesting`.
+const SITE_CREW_WHOLE_TOLERANCE := 0.05
+const SITE_CREW_DECIMAL_FORMAT := "%.1f"
+
+## The line's handle, valued the text it drew.
+const SITE_CREW_LINE_META := &"work_row_site_crew"
+
+## One figure on the site-crew line: whole within `SITE_CREW_WHOLE_TOLERANCE`, else one decimal.
+static func site_crew_amount(value: float) -> String:
+    var v := maxf(value, 0.0)
+    var whole := roundf(v)
+    if absf(v - whole) <= SITE_CREW_WHOLE_TOLERANCE:
+        return str(int(whole))
+    return SITE_CREW_DECIMAL_FORMAT % v
+
+## **THE ROW'S SECOND LINE** — the one composer. `demand` below `SourceForecast.UPKEEP_WORK_MIN` is a
+## site that owes nothing, and states the take alone.
+static func site_crew_line(rung_word: String, kept: float, demand: float, take_hands: float,
+        verb: String) -> String:
+    if demand < SourceForecast.UPKEEP_WORK_MIN:
+        return SITE_CREW_FREE_FORMAT % [rung_word, site_crew_amount(take_hands), verb]
+    return SITE_CREW_KEEPS_FORMAT % [rung_word, site_crew_amount(kept),
+        site_crew_amount(demand), site_crew_amount(take_hands), verb]
+
+## ---- THE ROW'S KEEPING MARK: `⚠` short, `ⓘ` short of tools ---------------------------------------
+##
+## `⚠` when the crew keeps less than the demand; else `ⓘ` where the site's keeping-tool claim was not
+## fully filled (`upkeep_tools_short`) — the work is covered and more tools would only free hands.
+const SITE_KEEPING_SHORT_MARK := UPKEEP_POOL_SHORT_MARK
+const SITE_KEEPING_TOOLS_MARK := UPKEEP_POOL_IDLE_MARK
+const SITE_KEEPING_SHORT_FORMAT := "Needs %s work a turn to stay %s. Getting %s."
+const SITE_KEEPING_TOOLS_SHORT := POOL_TOOLS_SHORT_WARN_LINE
+const SITE_KEEPING_TOOLS_INFO := POOL_TOOLS_SHORT_INFO_LINE
+
+## The mark's handle, valued the glyph it drew (`""` on a row with nothing to say).
+const SITE_KEEPING_MARK_META := &"work_row_keeping_mark"
+
+## What the hover says of a rung: `a Field`, `a Tended Patch`, `Pastoral`, `Penned`. A noun takes an
+## article and the two animal states are adjectives, so the phrase is a table rather than a format.
+const SITE_KEEPING_RUNG_PHRASES := {
+    SourceForecast.IMPROVEMENT_CULTIVATE: "a Tended Patch",
+    SourceForecast.IMPROVEMENT_SOW: "a Field",
+    SourceForecast.IMPROVEMENT_TAME: "Pastoral",
+    SourceForecast.IMPROVEMENT_CORRAL: "Penned",
+}
+
+## A deposit rung is a noun off the catalog (`Coppice`, `Quarry`), so it takes the article.
+const SITE_KEEPING_NOUN_PHRASE_FORMAT := "a %s"
+
+## Is the crew keeping less than its site owes? The one test the mark and the hover fork on.
+static func site_keeping_is_short(kept: float, demand: float) -> bool:
+    return demand >= SourceForecast.UPKEEP_WORK_MIN \
+        and demand - kept >= SourceForecast.UPKEEP_WORK_MIN
+
+## **THE KEEPING HOVER** — `""` on a site with nothing to say.
+static func site_keeping_hint(rung_phrase: String, kept: float, demand: float,
+        tools_short: bool) -> String:
+    if site_keeping_is_short(kept, demand):
+        var line := SITE_KEEPING_SHORT_FORMAT % [DetailFormat.format_work_units(demand),
+            rung_phrase, DetailFormat.format_work_units(kept)]
+        return line + " " + SITE_KEEPING_TOOLS_SHORT if tools_short else line
+    return SITE_KEEPING_TOOLS_INFO if tools_short else ""
+
+## **THE KEEPING MARK** — `⚠` short, else `ⓘ` tools short, else `""`.
+static func site_keeping_mark(kept: float, demand: float, tools_short: bool) -> String:
+    if site_keeping_is_short(kept, demand):
+        return SITE_KEEPING_SHORT_MARK
+    return SITE_KEEPING_TOOLS_MARK if tools_short else ""
+
+## ---- TWO PRIORITY MARKS PER ROW (`docs/plan_site_crews.md` §2.4) --------------------------------
+##
+## `Priority` ranks the site crew's claim on scarce tools and materials and is on every forage and hunt
+## row; `Build` ranks a QUEUED build's claim and is on a row only while its site has a build queued.
+## Both CYCLE on a click. Neither writes an optimistic overlay: `LaborAssignment.priority` and
+## `BuildQueueEntryState.buildPriority` are captured live, so the new mark arrives on the command's own
+## recapture (the `work_priority` precedent) and there is nothing to roll back.
+const WORK_ROW_PRIORITY_PILL_FORMAT := "Priority: %s"
+const WORK_ROW_BUILD_PILL_FORMAT := "Build: %s"
+const WORK_ROW_PRIORITY_PILL_META := &"work_row_priority_pill"
+const WORK_ROW_BUILD_PILL_META := &"work_row_build_pill"
+const WORK_ROW_PRIORITY_PILL_TOOLTIP := "This crew's claim on scarce tools and materials — click to cycle Normal, High, Low."
+const WORK_ROW_BUILD_PILL_TOOLTIP := "The queued build's claim on scarce tools and materials — click to cycle Normal, High, Low."
+
+## The cycle a click walks: Normal → High → Low → Normal. Normal first because it is the default, and
+## High next because raising a claim is the commoner intent.
+const WORK_PRIORITY_CYCLE := {
+    WORK_PRIORITY_NORMAL: WORK_PRIORITY_HIGH,
+    WORK_PRIORITY_HIGH: WORK_PRIORITY_LOW,
+    WORK_PRIORITY_LOW: WORK_PRIORITY_NORMAL,
+}
+
+static func next_work_priority(level: String) -> String:
+    return String(WORK_PRIORITY_CYCLE.get(work_priority_of(level), WORK_PRIORITY_HIGH))
+
+## A pill's face: `Priority: High`, `Build: Normal`.
+static func work_priority_pill_text(format: String, level: String) -> String:
+    return format % String(WORK_PRIORITY_FACES.get(work_priority_of(level),
+        WORK_PRIORITY_FACES[WORK_PRIORITY_NORMAL]))
+
+## The site-crew line's height: the crew text beside the two pills, so a compact pill's at
+## `ALLOC_SECTION_FONT_SIZE` — taller than a bare note line, which is why `site_row_height` charges it.
+const WORK_ROW_PILL_LINE_HEIGHT := 18.0
+
+## The pills' side padding — they are text-only ghost buttons in a line that is short of width.
+const WORK_ROW_PILL_PADDING_H := 4
+
+## **THE BUILD QUEUE ROW STATES ITS ENTRY'S MARK, READ-ONLY** — `Build: Normal` on its second line.
+## It is set on the site's row, where the `Build` pill cycles it.
+const BUILD_QUEUE_ROW_BUILD_MARK_META := &"build_queue_row_build_mark"
+
+## **A SITE ROW'S HEIGHT** — line one, the site-crew line carrying the two priority pills, the
+## accounts line and its party block. The crew line is a compact pill's height, which is taller than a
+## bare note line, so it is charged at the pill's.
+static func site_row_height(party_lines: int) -> float:
+    return work_row_height(party_lines) + float(TWO_LINE_STEPPER_SEPARATION) \
+        + maxf(WORK_ROW_PILL_LINE_HEIGHT, WORK_INSPECTOR_NOTE_LINE_HEIGHT)
+
+## **ONE BUILD QUEUE ROW** — its line and the second line carrying the entry's `Build:` mark.
+const BUILD_QUEUE_ROW_HEIGHT := WORK_ROW_HEIGHT + BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT

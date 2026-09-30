@@ -151,28 +151,61 @@ pub(crate) fn kit_units_held(
         .min()
 }
 
-/// **The hands on `row` its take and its keeping did not need** — `workers − workers_needed −
-/// keeping`, the frame's own overstaffing signal less the hands the row spends keeping its site:
-/// `LaborAssignmentState::workers_needed` is *"Minimum workers that would have produced this
-/// turn's take"*, and a site's crew keeps it **before** it takes (`docs/plan_site_crews.md` §2.1),
-/// so its keeping hands are neither in that count nor idle. They cost nothing to move only when
-/// they are above both, because a hand drawn off a kept row comes out of its take first.
+/// **The hands on `row` its crew did not need** — `workers − workers_needed`, the frame's own
+/// overstaffing signal: `LaborAssignmentState::workers_needed` is the minimum workers that would
+/// have produced this turn's take **plus the hands the row's site kept with** (a site's crew keeps
+/// first, `docs/plan_site_crews.md` §4), so `workers > workers_needed` ⇒ the extra workers were
+/// idle. They cost nothing to move, because the row's take and keeping are what the needed hands
+/// do.
 ///
-/// `keeping` is [`keeping_hands`] for the row. `0` when `workers_needed` is `0`: that is the sim's
-/// *"the source produced nothing"* and a fresh row the turn has not resolved yet alike, and neither
-/// is an overstaffing signal — a row nobody was useful on is *negative income*'s to empty, not
-/// surplus to skim.
-pub(crate) fn surplus_hands(row: &LaborAssignmentState, keeping: u32) -> u32 {
+/// `0` when `workers_needed` is `0`: that is the sim's *"the source produced nothing"* and a fresh
+/// row the turn has not resolved yet alike, and neither is an overstaffing signal — a row nobody
+/// was useful on is *negative income*'s to empty, not surplus to skim.
+pub(crate) fn surplus_hands(row: &LaborAssignmentState) -> u32 {
     if row.workers_needed == 0 {
         0
     } else {
-        row.workers
-            .saturating_sub(row.workers_needed.saturating_add(keeping))
+        row.workers.saturating_sub(row.workers_needed)
+    }
+}
+
+/// **A site a band keeps** — a patch under its forage row or a herd under its hunt row, read
+/// through the four upkeep fields both tables publish alike (`docs/plan_site_crews.md` §4).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum KeptSite<'v> {
+    Patch(&'v ForagePatchState),
+    Herd(&'v HerdTelemetryState),
+}
+
+impl KeptSite<'_> {
+    /// `upkeepWorkersNeeded` — the keeping's own count, in bare keepers.
+    pub(crate) fn workers_needed(&self) -> u32 {
+        match self {
+            KeptSite::Patch(patch) => patch.upkeep_workers_needed,
+            KeptSite::Herd(herd) => herd.upkeep_workers_needed,
+        }
+    }
+
+    /// `upkeepHands` — the crew's hands spent keeping this turn.
+    pub(crate) fn hands(&self) -> f32 {
+        match self {
+            KeptSite::Patch(patch) => patch.upkeep_hands,
+            KeptSite::Herd(herd) => herd.upkeep_hands,
+        }
+    }
+
+    /// `upkeepShortfall` — the bill left unpaid.
+    pub(crate) fn shortfall(&self) -> f32 {
+        match self {
+            KeptSite::Patch(patch) => patch.upkeep_shortfall,
+            KeptSite::Herd(herd) => herd.upkeep_shortfall,
+        }
     }
 }
 
 /// **The whole hands `row`'s own site spent keeping this turn** — the source's published
-/// `upkeepHands`, rounded up (`docs/plan_site_crews.md` §4). It is summed across every band on the
+/// `upkeepHands`, rounded up (`docs/plan_site_crews.md` §4) — the floor `Food::draw` never takes a
+/// row below, since a hand drawn under it comes out of the keeping and rots the site. It is summed across every band on the
 /// source, so a row sharing its site reads the whole crew's keeping: the conservative direction,
 /// which holds a hand back from a draw rather than letting one go that the keeping needed. `0` for
 /// a role row and for a source the frame does not carry.

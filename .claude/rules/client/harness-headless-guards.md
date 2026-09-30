@@ -451,7 +451,7 @@ fails 4 (claims 1 and 4, naming both keys); narrowing `per_worker_biomass` with 
 3 alone, naming `110.809997558594 → 110`; and removing the two material entries from
 `FOW_DISCOVERED_HIDDEN_KEYS` fails claim 5 alone. Its fixture is gitignored — write it first with
 `cargo xtask decode-fixture`. `godot --headless --path . res://tools/patch_crossref_guard.tscn`; exits
-0/1, CI-usable, no GPU. A clean run reads `59 wire keys cross onto tile_info intact (5 declared
+0/1, CI-usable, no GPU. A clean run reads `61 wire keys cross onto tile_info intact (5 declared
 uncrossed)` — the count is printed for the reason `marker_field_guard` prints its own, a partition
 over an empty source being vacuously true and otherwise indistinguishable. **The figure is a date
 stamp, not a constant**: it moves with every appended `ForagePatchState` field, so re-measure rather

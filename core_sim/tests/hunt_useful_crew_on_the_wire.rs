@@ -1858,7 +1858,8 @@ fn seeded_workers_needed(app: &App, wear: &BandEquipment, carry_per_worker: f32)
         &party_of(app, CREW_ON_THE_ROW, wear),
         SEED_OUTPUT_MULTIPLIER,
         CREW_ON_THE_ROW,
-        core_sim::NO_HANDS,
+        // The row keeps its pen first (`docs/plan_site_crews.md` §2.2), as the server's seed does.
+        keep_hands_of(app, CREW_ON_THE_ROW, wear),
         FLOOR,
         SEED_HORIZON_TURNS,
         SEED_HORIZON_TURNS,

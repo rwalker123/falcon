@@ -1489,54 +1489,11 @@ static func work_kit_for_branch(kits: Array, job: String, branch: String,
 			return String((kit_variant as Dictionary).get(KIT_ID_KEY, NO_KIT_ID))
 	return NO_KIT_ID
 
-## The two KEEPING roles and the web each keeps — `agriculture` keeps ground, `husbandry` keeps
-## animals. Spelled here as the file spells `JOB_SCOUT` and `JOB_BUILDERS`, so this layer keeps
-## depending on nothing but `SourceForecast` and the leaves below it.
-##
-## ⛔ **THERE IS NO `roadwork` ROW, AND ITS ABSENCE IS THE FINDING RATHER THAN THE GAP.** The sim does
-## gear road upkeep — `RungBranch::Route` maps to `KitJob::Roadwork` and both road kits list that job
-## — but it asks per ROAD, at the rung that road STANDS on (`systems::labor`'s keeping claim), and
-## this table answers per POOL. A band keeps many roads at many rungs, so there is no one rung for a
-## pool-wide lookup to name, and the third arm of `kit_serves_build` would answer `NO_KIT_ID` for
-## every rung-bound tool anyway.
-##
-## **Nothing on this client would read the answer either.** The two keeping surfaces are
-## `BandPanelController`'s pool coverage — which takes the ROAD pool's supply, demand and shortfall
-## straight off the cohort, because the road rows are fog-filtered and summing them would understate
-## a real bill — and the work inspector's upkeep picker, whose job is `agriculture` or `husbandry` by
-## construction (a road has no labor row to inspect). Adding a row here would add a derivation with
-## no reader and no rung to be right about.
-const JOB_AGRICULTURE := "agriculture"
-const JOB_HUSBANDRY := "husbandry"
-const KEEPING_JOB_BUILD_BRANCHES := {
-	JOB_AGRICULTURE: BUILD_BRANCH_PLANT,
-	JOB_HUSBANDRY: BUILD_BRANCH_ANIMAL,
-}
-
-## **THE KIT A BAND'S KEEPING POOL IS ACTUALLY WORKING WITH** — the client's read of the sim's
-## `EquipmentConfig::keeping_kit_for`, which derives the tool off the ROSTER because
-## `default_kits.agriculture` / `.husbandry` are both `none` and a pool that waited to be handed a kit
-## would keep bare-handed forever.
-##
-## **THE ROW'S OWN `kitId` IS DELIBERATELY NOT CONSULTED, unlike the builders'.** The sim honours a
-## kit NAMED on the keeping row (`named_kit_on`), and the wire publishes that row's kit already
-## RESOLVED — so a row nobody has named reads back as the job default `none`, which is
-## indistinguishable here from a deliberate bare-handed pin (the trap `builders_kit_for` records one
-## rule over). There is no keeping kit picker in this client, so the only way to make that pin is the
-## command line; deriving is therefore right for every band a player can produce from the UI, and a
-## pin would be quoted one tool too generous rather than silently ignored.
-##
-## `NO_KIT_ID` for a role that keeps no web, and for a roster carrying no tool that serves it — a real
-## answer meaning the pool works bare-handed.
-## ⛔ **AND IT ASKS `BUILD_RUNG_ANY` OUT LOUD, which the table two blocks up is the reason for.** The
-## two branches this can name are the PLANT and ANIMAL webs, whose kits bind no rung, so every one of
-## their tools serves every rung of its branch and the unqualified ask is the right one. It is stated
-## rather than defaulted because `work_kit_for_branch` takes no default — a lookup that cannot name a
-## rung has to say so, so that the day a ROUTE row joins that table the omission is a decision on the
-## page instead of a `NO_KIT_ID` nobody can see.
-static func keeping_kit_for(kits: Array, role_kind: String) -> String:
-	return work_kit_for_branch(kits, role_kind,
-		String(KEEPING_JOB_BUILD_BRANCHES.get(role_kind, BUILD_BRANCH_NONE)), BUILD_RUNG_ANY)
+## > ### ⛔ RETIRED — `keeping_kit_for` and the two KEEPING jobs' web table
+## >
+## > It derived the kit a band's Agriculture or Husbandry POOL worked with. Those pools are gone
+## > (`docs/plan_site_crews.md`): a site is kept by its own crew, whose keeping tools follow from the
+## > site's own rung and are settled sim-side (`upkeepToolsShort` says when they came up short).
 
 ## **THE ROSTER'S BARE ENTRY FOR ONE JOB — the kit that carries nothing.** `kit_supplies_any` is the
 ## derived reading of "the null kit" (`item_ids` empty), which is why nothing here spells the id

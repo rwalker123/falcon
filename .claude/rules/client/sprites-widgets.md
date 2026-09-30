@@ -379,15 +379,15 @@ answered these questions, so a fifth consumer was a call, not a new resolver.
 `hud/` is the one art family whose subjects are not things on the map — they are what people are
 DOING. Its four marks are `cairn` (the knowledge launcher, #581) and `forage` / `hunt` / `scout`, and
 the rule that shapes the table is that **a mark id names the activity and nothing about where it
-draws**. `hunt` is ONE file behind the work board's hunt filter chip and the subject list's herd row
-alike; a `hunt_chip` beside a `hunt_roster` would be two answers to *what does hunting look like*,
+draws**. `hunt` is ONE file behind the subject list's herd row and wherever else a hunt mark is
+drawn; a `hunt_chip` beside a `hunt_roster` would be two answers to *what does hunting look like*,
 and `hunt.png`'s own prompt exists because the client already had two (`FoodIcons.HUNT`'s 🦌 and the
 roster's 🏹) and they had drifted into different subjects.
 
 **THE ART DOES NOT PICK THE MECHANISM; THE HOST WIDGET DOES** — the section above, one family over,
-and `hud/` proves it by using both of that section's mechanisms for one file. A filter chip is a
-`Button`, so it takes the art on its own `icon` property with an `icon_max_width` cap and DROPS the
-leading `%s` from its text (`WORK_CHIP_KIND_SPRITE_FORMAT` — art OR glyph, never both). A roster row's
+and `hud/` used both of that section's mechanisms for one file while the Work tab had filter chips
+(retired with the paged board): a chip was a `Button`, so it took the art on its own `icon` property
+and dropped the leading glyph from its text. A roster row's
 mark is a `Label` in an `HBoxContainer`, so it goes through `HudWidgets.build_marker_icon` and gets a
 `TextureRect`. Same texture, two hosts, two mechanisms, no shared builder between them.
 

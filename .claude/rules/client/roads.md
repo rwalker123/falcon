@@ -618,10 +618,23 @@ queued."*
 > the branch's bare work rate already are. **The leaf holds no roster and no queue, and teaching it to
 > walk one would give it both.**
 
+## ⛔ THE ROADWORK POOL IS ONE LINE IN ITS OWN SECTION
+
+`docs/plan_site_crews.md` §2.4. Roadwork is the one keeping pool left — a road has no crew of its own
+to put on it — so it keeps a band-wide stepper. The Work tab's ROADWORK section draws, top down: the
+head (`ROADWORK · N on work`, carrying the roster's `+N more` door), the pool's own line (`Roadwork`,
+the one-slot `⚠` / `ⓘ` mark with the coverage, tool and idle sentences on its hover, and the
+stepper), the Spread/Priority pick wherever the road bill is live (`_build_upkeep_mode_row`, which
+reads the road bill alone), the unseen line, and the roads it keeps.
+
+The POOLS block, its row of four cards and their shared metrics are retired, so the card-width
+measurements in the next two sections are the record of a layout that no longer draws. The roster
+rows, their locator and their `✕` are unchanged.
+
 ## The `roadwork` pool, and what a fourth card cost
 
-`roadwork` is an ordinary band-wide standing role in exactly the grammar `agriculture` and
-`husbandry` use — `assign_labor <faction> <band> roadwork <n>`, one more arm on
+`roadwork` is an ordinary band-wide standing role in exactly the grammar `scout` and `warrior`
+use — `assign_labor <faction> <band> roadwork <n>`, one more arm on
 `Main.format_assign_labor`'s shared role branch, one more card in the Work tab's POOLS block.
 
 ⛔ **ITS HINT NAMES THE ROADS THE BAND BUILT, NOT THE GROUND IT IS STANDING ON.** The catchment is the

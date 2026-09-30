@@ -3136,6 +3136,7 @@ pub fn capture_snapshot(
                             // The bare carry rate a **corralled** row's collection curve is resolved
                             // against; a stalked row's kill curve never reads it.
                             baseline_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
+                            ladder: &ladder_config,
                         },
                         bench,
                         // **This band's outfitting window**, or `None` when it has nothing to outfit.

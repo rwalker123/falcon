@@ -96,15 +96,15 @@ paths:
     `turn_orb_starving_pen` renders exactly that pair.
   - The detail line is deliberately terse: orb rows **clip at `POPOVER_WIDTH`**, and appending the
     keeper's name ("· Band 1") pushed this row past it (rendered, seen cut, shortened).
-  - **`under_kept_rung` / `under_kept_herd`** (warn) — an improved source the band's **keeping pool is
-    not covering**, on the neglect clock. **This producer exists because there is nowhere else the
-    warning could live** — the work board lists ASSIGNMENTS, and the pool is a band-level role, so a
-    source can be perfectly staffed with gatherers and still be losing its rung. A player can only be
-    told by something that finds them, which is what the orb is for.
+  - **`under_kept_rung` / `under_kept_herd`** (warn) — an improved source whose **own crew is not
+    keeping it**, on the neglect clock. A site's crew keeps it before it collects
+    (`docs/plan_site_crews.md`), so the remedy is that source's work-row stepper; the orb is what
+    FINDS the source, a band's rows being spread across a scrolling Work tab.
     **The urgency rides the detail TEXT, not a card row** — a persistent countdown on the tile card
-    would be a permanent readout of a condition that is usually irrelevant. Detail names the pool, the
-    bill and the clock: `Husbandry short 1 work — sheds in 3 turns` /
-    `Agriculture short 1.5 work — lapses in 2 turns`.
+    would be a permanent readout of a condition that is usually irrelevant. Detail names the crew, the
+    bill and the clock: `Crew short 1 work — sheds in 3 turns` / `Crew short 1.5 work — lapses in 2
+    turns` (`HudAttentionVocab.ATTENTION_UNDER_KEPT_DETAIL_FORMAT`). It named the Husbandry or
+    Agriculture POOL until those pools retired.
 
     > #### ⛔ RETIRED — `unworked_rung` / `under_crewed_herd`, AND THE CREW COUNT THEY COMPARED
     >

@@ -1138,7 +1138,27 @@ upkeep_supplied += keep_hands × keep_rate          // stamped on the source, su
   keeping was issued.
 - **A forecast reads the same split** — `systems::prospective_keep_hands(equipment, band_kit, rung,
   demand, crew)` is the pre-settlement reading the seed and the previews use, so a quote on the
-  hands the keeping leaves is the take the turn pays.
+  hands the keeping leaves is the take the turn pays. `fauna::herd_crew_keeping` /
+  `forage::patch_crew_keeping` resolve a site's `(rung, bill)` once for every reader, and
+  `fauna::crew_keep_hands` turns a crew into its keeping hands. **Every compose-sheet quote nets it**:
+  the hunt crew curve's row `w` takes with `w − keep_hands(w)` (`HuntCrewCurveInputs::keeping`, which
+  also moves the board's `huntUsefulWorkers`), the work-party query's local rate is struck on the
+  take hands on all three webs, and the deposit curve always did (`deposit_crew_quote`). Pinned by
+  `forecast_query::tests::a_kept_herds_curve_nets_the_hands_its_crew_keeps_with` and
+  `work_party_caravan::a_kept_herd_inside_the_apron_is_quoted_what_its_crew_takes_after_keeping`.
+- **Only the hands AT THE SOURCE keep it.** A far row's party walks out and sends porters home, so
+  the arm's crew is the hands present; `SiteKeeping::at_the_source` caps the keeping at them and
+  scales the work (and its wear) with it — a party still walking out keeps nothing. Found on bench
+  seed 22, where a walking party paid a tended patch's whole bill with nobody there; pinned by
+  `work_party_caravan::a_party_walking_out_keeps_nothing_at_the_source`.
+- **The caravan forecast nets it the same way.** `work_party::forecast_*_caravan` take a
+  `keep_hands` — the site's keeping at the row's staffed crew, read off the site as it stands
+  (`fauna::crew_keep_hands` / `extraction::crew_keep_hands`, the declared climb included) — and
+  every stepped turn takes with `work_party::take_hands_present`: the hands present less
+  `min(present, keep_hands)`, the forecast twin of `at_the_source`. The turn, the seed and the query
+  pass the one reading, so a far kept site's `netRateHome` is what its party lands after keeping.
+  Pinned by
+  `work_party_caravan::a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping`.
 - **The stamped bill and the double-pass guard are unchanged.** `upkeep_supplied` **accumulates**
   across the bands on a source and `upkeep_demanded` is stamped **first-write-wins**; a driver that
   runs `advance_labor_allocation` twice with no Logistics pass between measures a doubled supply
@@ -1177,8 +1197,9 @@ across bands) and **`upkeepToolsShort`** (`bool`, the keeping held fewer tools t
   upkeep publishes an honest `0`.
 - **IT ANSWERS FOR THE RUNG THE SOURCE IS ON, WHICH IS WHY A QUOTE CANNOT READ IT** — see "A price
   without the rate that eats it is not a quote" below, the pair that closes that gap.
-- **`upkeepWorkersNeeded`** is `ceil(demand / PER_WORKER_OUTPUT)`, in bare keepers — beside the
-  take's own `SourceYield::workersNeeded`, which counts **take** hands only.
+- **`upkeepWorkersNeeded`** is `ceil(demand / PER_WORKER_OUTPUT)`, in bare keepers — the keeping's
+  own count. The row's `SourceYield::workersNeeded` counts the **whole** crew needed, keeping hands
+  plus take hands (`yield-forecast.md` → "`workers_needed` IS THE ROW'S WHOLE CREW").
 - **All six are transient per-turn scratch on the source**, stamped by `advance_labor_allocation`
   and cleared by the Logistics decay pass (`advance_cultivation` / `advance_husbandry` /
   `advance_deposits`) — exactly `buildTurnsRemaining`'s cycle, and for its reason: they describe

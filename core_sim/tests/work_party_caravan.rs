@@ -227,6 +227,228 @@ fn ask_the_socket(app: &mut App) -> WorkPartyForecastReply {
     }
 }
 
+/// ⛔ **A KEPT SITE'S LOCAL RATE IS WHAT ITS CREW COLLECTS AFTER KEEPING** (`docs/plan_site_crews.md`
+/// §2.1, §2.2) — the compose sheet nets the keeping exactly as the deposit curve and the turn do.
+/// On a tamed herd inside the apron, a crew of [`CREW`] whose bill costs [`KEEPING_HANDS`] whole
+/// hands is quoted the rate a crew [`KEEPING_HANDS`] smaller would take from the same herd kept for
+/// nothing.
+#[test]
+fn a_kept_herd_inside_the_apron_is_quoted_what_its_crew_takes_after_keeping() {
+    /// Whole hands the stated bill costs.
+    const KEEPING_HANDS: u32 = 2;
+    /// A probe bill, to read the rate one keeping hand works at off the seam itself.
+    const PROBE_BILL: f32 = 1.0;
+    /// A bill of nothing — the same tamed herd, unkept.
+    const NO_BILL: f32 = 0.0;
+    let ask = |bill: f32, workers: u32| {
+        let (mut app, _) = world_hunting_at(INSIDE_THE_APRON);
+        let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = &mut registry.herds[0];
+            herd.tame_outright(FACTION, &ladder);
+            herd.upkeep_demanded = Some(bill);
+        }
+        let reply = core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+                faction_id: FACTION.0,
+                band_id: BAND,
+                source: WorkPartySource::Hunt {
+                    herd_id: HERD_ID.to_string(),
+                },
+                kit_id: default_hunt_kit(),
+                workers,
+                floor: FLOOR,
+            }),
+        );
+        match reply {
+            QueryReply::WorkPartyForecast(answer) => answer,
+            other => panic!("the work-party query must answer with a forecast, got {other:?}"),
+        }
+    };
+    let rate = {
+        let (app, _) = world_hunting_at(INSIDE_THE_APRON);
+        let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+        let mut herd = app.world.resource::<HerdRegistry>().herds[0].clone();
+        herd.tame_outright(FACTION, &ladder);
+        let wear = BandEquipment::start_stocked_for(
+            &EquipmentConfig::for_a_stocked_fixture(),
+            CREW as f32,
+        );
+        let keeping = core_sim::CrewKeeping {
+            rung: herd.standing().held,
+            demand: PROBE_BILL,
+        };
+        PROBE_BILL
+            / core_sim::crew_keep_hands(
+                Some(keeping),
+                &EquipmentConfig::for_a_stocked_fixture(),
+                &wear,
+                CREW,
+            )
+    };
+    let kept = ask(KEEPING_HANDS as f32 * rate, CREW);
+    let smaller_unkept = ask(NO_BILL, CREW - KEEPING_HANDS);
+    let whole_unkept = ask(NO_BILL, CREW);
+    assert!(
+        !kept.posts_a_party,
+        "fixture: a herd inside the apron posts no party"
+    );
+    assert!(
+        whole_unkept.rate_home > smaller_unkept.rate_home,
+        "liveness: more hands take more from this herd, or the comparison says nothing"
+    );
+    assert!(
+        (kept.rate_home - smaller_unkept.rate_home).abs() < SAME_FOOD,
+        "the kept crew is quoted what its take hands collect: {} against {}",
+        kept.rate_home,
+        smaller_unkept.rate_home
+    );
+}
+
+/// ⛔ **ONLY THE HANDS AT THE SOURCE KEEP IT** (`docs/plan_site_crews.md` §2.2). A far kept herd's
+/// party walks out first, and while it walks nobody stands at the herd: the keeping it was planned
+/// is not paid, and the herd publishes no keeping hands. Found on bench seed 22, where a walking
+/// party paid a tended patch's whole bill with nobody there.
+#[test]
+fn a_party_walking_out_keeps_nothing_at_the_source() {
+    /// Far enough to post a party that is still walking out on its first turn.
+    const FAR: u32 = 5;
+    let (mut app, _) = world_hunting_at(FAR);
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        registry.herds[0].tame_outright(FACTION, &ladder);
+    }
+    let bill = {
+        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+        core_sim::herd_keeping_basis(
+            &app.world.resource::<HerdRegistry>().herds[0],
+            &fauna,
+            &ladder,
+        )
+    };
+    assert!(bill > 0.0, "fixture: the tamed herd owes a keeping bill");
+    resolve_a_turn(&mut app);
+    assert!(
+        published_party(&app).walk_out_remaining > 0,
+        "fixture: the party is still walking out, so nobody stands at the herd"
+    );
+    let herd = &app.world.resource::<HerdRegistry>().herds[0];
+    assert_eq!(
+        (herd.upkeep_hands, herd.upkeep_supplied),
+        (0.0, 0.0),
+        "a party on the road keeps nothing at the source"
+    );
+}
+
+/// ⛔ **A FAR KEPT HERD'S CARAVAN FORECAST IS THE TAKE ITS PARTY MAKES AFTER KEEPING**
+/// (`docs/plan_site_crews.md` §2.1). Every turn the hands present keep the herd first and hunt with
+/// the rest — the turn's `SiteKeeping::at_the_source` — and the caravan forecast steps the same
+/// split (`work_party::take_hands_present`), so:
+///
+/// - the query and the row's published `netRateHome` quote one number;
+/// - what then lands home over the forecast's horizon is that rate, to within one landing (the
+///   food walks home a whole pack at a time);
+/// - and the same party priced as if the herd cost nothing to keep quotes more than lands — the
+///   forecast that ignored the keeping, which this test exists to keep dead.
+///
+/// The bill is pinned at [`KEEPING_HANDS`] hands' worth each turn, so the keeping is a known,
+/// partial share of a crew that is often short-handed at the source.
+#[test]
+fn a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping() {
+    /// Whole hands the pinned bill costs — fewer than the crew, so the party both keeps and hunts.
+    const KEEPING_HANDS: f32 = 2.0;
+    /// A probe bill, to read the rate one keeping hand works at off the seam itself.
+    const PROBE_BILL: f32 = 1.0;
+    /// A bill of nothing — the same tamed herd, priced unkept.
+    const NO_BILL: f32 = 0.0;
+    /// Far enough to post a party.
+    const FAR: u32 = 5;
+    let (mut app, band) = world_hunting_at(FAR);
+    let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+    app.world.resource_mut::<HerdRegistry>().herds[0].tame_outright(FACTION, &ladder);
+    let bill = {
+        let herd = &app.world.resource::<HerdRegistry>().herds[0];
+        let stocked = EquipmentConfig::for_a_stocked_fixture();
+        let wear = BandEquipment::start_stocked_for(&stocked, CREW as f32);
+        let keeping = core_sim::CrewKeeping {
+            rung: herd.standing().held,
+            demand: PROBE_BILL,
+        };
+        KEEPING_HANDS * PROBE_BILL / core_sim::crew_keep_hands(Some(keeping), &stocked, &wear, CREW)
+    };
+    // The keeping scratch the Logistics pass would clear, with the bill pinned — this fixture
+    // drives the labor pass alone.
+    let pin_the_bill = |app: &mut App, bill: f32| {
+        let herd = &mut app.world.resource_mut::<HerdRegistry>().herds[0];
+        herd.upkeep_supplied = core_sim::NO_UPKEEP_DEMAND;
+        herd.upkeep_hands = core_sim::NO_HANDS;
+        herd.upkeep_tools_short = false;
+        herd.upkeep_demanded = Some(bill);
+    };
+    let mut saw_the_road = false;
+    for _ in 0..TURNS_TO_SEE_A_PORTER {
+        pin_the_bill(&mut app, bill);
+        resolve_a_turn(&mut app);
+        if published_party(&app).hunters_on_the_road > 0 {
+            saw_the_road = true;
+            break;
+        }
+    }
+    assert!(
+        saw_the_road,
+        "liveness: the caravan must put somebody on the road"
+    );
+    assert!(
+        app.world.resource::<HerdRegistry>().herds[0].upkeep_hands > core_sim::NO_HANDS,
+        "fixture: the party keeps the herd at the source"
+    );
+    let published = published_party(&app).net_rate_home;
+    let answer = ask_the_socket(&mut app);
+    assert_eq!(
+        answer.rate_home, published,
+        "the sheet and the row quote one number for a far kept herd"
+    );
+    let unkept = {
+        pin_the_bill(&mut app, NO_BILL);
+        let unkept = ask_the_socket(&mut app).rate_home;
+        pin_the_bill(&mut app, bill);
+        unkept
+    };
+    let horizon = app
+        .world
+        .resource::<core_sim::LaborConfigHandle>()
+        .get()
+        .yield_average_horizon_turns;
+    let start = larder(&app, band);
+    let mut one_landing: f32 = 0.0;
+    for _ in 0..horizon {
+        let before = larder(&app, band);
+        pin_the_bill(&mut app, bill);
+        resolve_a_turn(&mut app);
+        one_landing = one_landing.max(larder(&app, band) - before);
+    }
+    let landed = larder(&app, band) - start;
+    let forecast = published * horizon as f32;
+    assert!(
+        one_landing > 0.0,
+        "liveness: food lands home over the horizon"
+    );
+    assert!(
+        (landed - forecast).abs() <= one_landing,
+        "a far kept herd's forecast is what lands, to within one landing: \
+         landed {landed} against {forecast} (one landing {one_landing})"
+    );
+    assert!(
+        unkept * horizon as f32 - landed > one_landing,
+        "the same party priced unkept quotes more than lands — the forecast nets the keeping: \
+         unkept {} against landed {landed}",
+        unkept * horizon as f32
+    );
+}
+
 fn larder(app: &App, band: Entity) -> f32 {
     app.world
         .get::<PopulationCohort>(band)

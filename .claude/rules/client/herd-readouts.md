@@ -179,18 +179,22 @@ paths:
     `SourceForecast.is_under_kept` — the published `upkeepShortfall` behind no build in flight — the
     Husbandry row itself takes the ⚠ (`DetailFormat.rung_row_value`'s built-and-short fork), the
     `At risk:` row prices the shortfall and its grace, and a full-width WARN sentence names the
-    consequence and the lever: **`⚠ Under-herded — animals are drifting off. This herd wants N of the
-    band's Husbandry hands.`** (`HERDERS_SHED_FORMAT`, gated additionally on `domestication > 0`). A
-    head count only matters when it is short, which is exactly when this line renders.
+    consequence and the lever: **`⚠ Under-herded — animals are drifting off. This herd wants N hands
+    on its own crew.`** (`HERDERS_SHED_FORMAT`, gated additionally on `domestication > 0`). A head
+    count only matters when it is short, which is exactly when this line renders. The lever is the
+    herd's own work row: a site is kept by its own crew (`docs/plan_site_crews.md`), so the Husbandry
+    pool this line used to name is retired.
   - **THE SENTENCE LEADS WITH THE HAZARD MARK, and that is what makes it AMBER.** `detail_bbcode`'s
     full-width WARN branch tested one known sentence by equality, so this line — the only one in the
     client that says animals are drifting off — rendered in the muted `INK_DIM` a descriptive line
     gets. The branch keys on `HudSelectionVocab.RUNG_HAZARD_GLYPH` now.
   - **`herdersNeeded` IS A DEMAND, NEVER A PAIR** (`docs/plan_standing_upkeep.md` §2.5). It was `A / N`
     whose `A` counted keepers assigned to this herd — the HUNTERS before the crews split, then the
-    per-source `maintain` crew — and **maintenance has since left the tile**: a managed herd is held
-    out of its band's `husbandry` POOL, so no per-herd crew exists to count and one derived from the
-    pool share would be a head count the sim never published. `round(herded_fraction · needed)` remains
+    per-source `maintain` crew — and then the band's `husbandry` POOL. **The pool is retired too**
+    (`docs/plan_site_crews.md`): the herd's own hunt crew keeps it before it hunts, and the hands that
+    keeping took ride the herd as `upkeepHands`; the work row states them as
+    `keeps <kept> of <demand> · <n> hunting` (`band-city-panel.md` → "THE WORK TAB IS FIVE
+    SECTIONS"). `round(herded_fraction · needed)` remains
     forbidden for its own older reason: it reads last turn's RESOLVED fraction.
   - **A PART-BUILT RUNG NOBODY IS BUILDING SHEDS TOO, and it is a different reading.** The sim's shed
     reads `upkeepShortfall` and does not care which crew failed to pay it, so a Tame the player walked
@@ -208,9 +212,9 @@ paths:
   positive keeper demand on one is a shape no server can produce.
   The **worker/assignment panel flags it too** (`BandPanelController._work_source_models` hunt branch),
   through the same `is_under_kept` call: the established overhunt ⚠ (amber marks + severity stripe +
-  the `⚠` attention filter chip) and the `WORK_ROW_UNDER_HERDED_NOTE` ("Animals drifting off — raise
-  this band's Husbandry role.") in its inspector strip, so the shed reads WHEREVER the herd is listed,
-  not only in its drawer — see `band-city-panel.md` → "The under-herded ⚠ reads the POOL's share".
+  the row's own keeping mark) and the `WORK_ROW_UNDER_HERDED_NOTE` ("Animals drifting off — add hands
+  to this row's crew.") in its inspector strip, so the shed reads WHEREVER the herd is listed, not
+  only in its drawer — see `band-city-panel.md` → "THE WORK TAB IS FIVE SECTIONS".
   band_panel_preview `band_panel_under_herded` / `band_panel_keepers_short` /
   `band_panel_keepers_staffed`.
 - **Per-species husbandry ceiling — gate the ladder by species** (Grazing 2d-δ,

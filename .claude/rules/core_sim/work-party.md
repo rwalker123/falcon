@@ -130,8 +130,12 @@ its own inline take, the forecast around a projected one (`WorkParty::step`). Or
    from the whole round trip rejoins (absent for exactly `2 · w` takes).
 2. **Walking out → no take.** A new party walks out once, `walk_turns` turns with nobody at the
    source, never re-raised.
-3. **Take with the hunters PRESENT** (`workers − on the road`) through the **ordinary take path** —
-   every arm the resident take runs. There is no caravan-specific take formula.
+3. **Keep, then take, with the hunters PRESENT** (`workers − on the road`) through the **ordinary
+   take path** — every arm the resident take runs. There is no caravan-specific take formula. A kept
+   site's keeping comes out of the hands present first and is capped at them
+   (`SiteKeeping::at_the_source`, `docs/plan_site_crews.md`): a party still walking out keeps nothing.
+   The forecast steps the same split (`work_party::take_hands_present`) off the keeping planned at
+   the staffed crew, so a far kept site's `netRateHome` is what lands after keeping.
 4. **The whole take goes into the load.** Nothing is eaten out of it at the source — see below.
 5. **Fill and dispatch.** While the load holds one pack and a hunter is present, one hunter leaves
    with one pack. Departures therefore never exceed the hunters present.
@@ -372,6 +376,7 @@ the arm reach this row"* is the question the settlements must go on asking.
 | `work_party_caravan::a_herd_back_inside_the_apron_brings_its_caravan_home_once` | a re-entered source settles its caravan once, clears `party` and publishes none |
 | `work_party_caravan::a_vanished_herd_brings_its_caravan_home_as_the_row_lapses` | a vanished herd's caravan comes home once, before the row lapses |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_the_row_publishes` | forecast == actual on the encoded snapshot |
+| `work_party_caravan::a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping` | a far kept herd: query == `netRateHome`, what lands over the horizon is that rate to within one landing, and the unkept price overshoots |
 | `work_party_caravan::a_deposit_eight_hexes_out_posts_a_party_that_walks_six_each_way` | a far working posts a party on the wire, and nothing lands while it walks out |
 | `work_party_caravan::a_local_working_takes_no_party_and_its_numbers_are_unchanged` | the deposit web's local identity: the take seam's own figure |
 | `work_party_caravan::the_query_quotes_exactly_the_rate_an_extract_row_publishes` | forecast == actual on the deposit web, in material units |

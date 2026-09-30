@@ -3432,27 +3432,20 @@ fn seed_source_yield(
             // **THE CREW KEEPS THE PATCH FIRST** (`docs/plan_site_crews.md` §2.1), so the seed quotes
             // the take on the hands its keeping leaves — the turn's own split, priced before the
             // band's tools are settled.
-            let keep_hands = {
-                let ladder = app.world.resource::<LadderConfigHandle>().get();
-                let verb = core_sim::patch_build_verb(patch, improvement);
-                if core_sim::patch_claims_keeping(patch, verb) {
-                    let land = core_sim::patch_land_capacity(
-                        patch,
-                        app.world
-                            .get::<Tile>(tile_entity)
-                            .map(|ground| core_sim::tile_forage_capacity(&labor.forage, ground)),
-                    );
-                    core_sim::prospective_keep_hands(
-                        &equipment_cfg,
-                        &band_wear,
-                        patch.standing().held,
-                        core_sim::patch_keeping_basis(patch, &ladder, land, &labor.forage),
-                        workers,
-                    )
-                } else {
-                    core_sim::NO_HANDS
-                }
-            };
+            let keep_hands = core_sim::crew_keep_hands(
+                core_sim::patch_crew_keeping(
+                    patch,
+                    &app.world.resource::<LadderConfigHandle>().get(),
+                    &labor.forage,
+                    app.world
+                        .get::<Tile>(tile_entity)
+                        .map(|ground| core_sim::tile_forage_capacity(&labor.forage, ground)),
+                    improvement,
+                ),
+                &equipment_cfg,
+                &band_wear,
+                workers,
+            );
             let mut seeded = forage_source_yield_preview(
                 patch,
                 &tile_composition,
@@ -3494,6 +3487,7 @@ fn seed_source_yield(
                     output_mult,
                     *floor,
                     take_species,
+                    keep_hands,
                     labor.yield_average_horizon_turns,
                 );
                 seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, false);
@@ -3559,21 +3553,17 @@ fn seed_source_yield(
             .party_against(core_sim::Quarry::Mass(herd.body_mass));
             // **THE HUNT ROW IS THE HERD'S CREW AND KEEPS IT FIRST** (`docs/plan_site_crews.md`
             // §2.2) — the seed quotes the cull on the hands its keeping leaves.
-            let keep_hands = {
-                let ladder = app.world.resource::<LadderConfigHandle>().get();
-                let verb = herd_build_verb(herd, improvement);
-                if core_sim::herd_claims_keeping(herd, verb) {
-                    core_sim::prospective_keep_hands(
-                        &equipment_cfg,
-                        &band_wear,
-                        herd.standing().held,
-                        core_sim::herd_keeping_basis(herd, &fauna, &ladder),
-                        workers,
-                    )
-                } else {
-                    core_sim::NO_HANDS
-                }
-            };
+            let keep_hands = core_sim::crew_keep_hands(
+                core_sim::herd_crew_keeping(
+                    herd,
+                    &fauna,
+                    &app.world.resource::<LadderConfigHandle>().get(),
+                    improvement,
+                ),
+                &equipment_cfg,
+                &band_wear,
+                workers,
+            );
             let mut seeded = hunt_source_yield_preview(
                 herd,
                 &fauna,
@@ -3611,6 +3601,7 @@ fn seed_source_yield(
                     &hunters,
                     output_mult,
                     *floor,
+                    keep_hands,
                     labor.yield_average_horizon_turns,
                 );
                 seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, true);
@@ -3716,6 +3707,16 @@ fn seed_source_yield(
                             &held_key,
                         ),
                         *floor,
+                        // The crew keeps the working first, off the hands present every turn.
+                        core_sim::extraction::crew_keep_hands(
+                            &equipment_cfg,
+                            &band_wear,
+                            &working,
+                            &ground,
+                            &extraction,
+                            &ladder,
+                            workers,
+                        ),
                         labor.yield_average_horizon_turns,
                     )
                     .home_by_turn

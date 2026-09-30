@@ -1822,9 +1822,10 @@ table LaborAssignment {
   // under Sustain). Appended (append-only).
   actualYield:float = 0;
   sustainableYield:float = 0;
-  // Minimum workers that would have produced this turn's take = the overstaffing signal. workers >
-  // workersNeeded ⇒ the binding constraint was not labor, so the extra workers were idle (client
-  // flags the wasted labor). 0 when the source produced nothing. DERIVED AT EVERY RUNG since the
+  // Minimum workers that would have produced this turn's take, PLUS the hands the row's site kept
+  // with (`upkeepHands`, rounded up - docs/plan_site_crews.md section 4: the row is one crew that
+  // keeps first) = the overstaffing signal. workers > workersNeeded ⇒ the binding constraint was
+  // not labor, so the extra workers were idle (client flags the wasted labor). 0 when the source produced nothing. DERIVED AT EVERY RUNG since the
   // intensification ladder's slice 7 — a tended patch / Field / corralled herd used to report a
   // hardcoded 1, which claimed one worker could carry home whatever the land offered. Derived
   // per-turn at capture (0 on a rehydrated save before the next tick). Appended (append-only).
@@ -3499,8 +3500,8 @@ table ForagePatchState {
   //                    wild patch, a free-floor working - and on a site nobody works.
   //                    ⚠ is `upkeepSupplied < upkeepDemand` (`upkeepShortfall > 0`); a crew short
   //                    of the demand spent every hand keeping and collected nothing.
-  //                    `workersNeeded` on the band's labor row counts the TAKE hands only; a client
-  //                    judging over-staffing adds `upkeepHands`.
+  //                    `workersNeeded` on the band's labor row counts BOTH halves - the take's
+  //                    hands plus these - so `workers > workersNeeded` is still over-staffing.
   // upkeepToolsShort = THE BAND-WIDE SETTLEMENT FILLED LESS THAN THIS SITE'S KEEPING-TOOL CLAIM
   //                    (section 2.3), so its crew kept with more of its own hands and collected
   //                    less. The row's ⓘ ("More tools would speed this up.") when the work is still
@@ -5041,8 +5042,8 @@ table HerdTelemetryState {
   //                    wild patch, a free-floor working - and on a site nobody works.
   //                    ⚠ is `upkeepSupplied < upkeepDemand` (`upkeepShortfall > 0`); a crew short
   //                    of the demand spent every hand keeping and collected nothing.
-  //                    `workersNeeded` on the band's labor row counts the TAKE hands only; a client
-  //                    judging over-staffing adds `upkeepHands`.
+  //                    `workersNeeded` on the band's labor row counts BOTH halves - the take's
+  //                    hands plus these - so `workers > workersNeeded` is still over-staffing.
   // upkeepToolsShort = THE BAND-WIDE SETTLEMENT FILLED LESS THAN THIS SITE'S KEEPING-TOOL CLAIM
   //                    (section 2.3), so its crew kept with more of its own hands and collected
   //                    less. The row's ⓘ ("More tools would speed this up.") when the work is still
@@ -6692,8 +6693,8 @@ table DepositState {
   //                    wild patch, a free-floor working - and on a site nobody works.
   //                    ⚠ is `upkeepSupplied < upkeepDemand` (`upkeepShortfall > 0`); a crew short
   //                    of the demand spent every hand keeping and collected nothing.
-  //                    `workersNeeded` on the band's labor row counts the TAKE hands only; a client
-  //                    judging over-staffing adds `upkeepHands`.
+  //                    `workersNeeded` on the band's labor row counts BOTH halves - the take's
+  //                    hands plus these - so `workers > workersNeeded` is still over-staffing.
   // upkeepToolsShort = THE BAND-WIDE SETTLEMENT FILLED LESS THAN THIS SITE'S KEEPING-TOOL CLAIM
   //                    (section 2.3), so its crew kept with more of its own hands and collected
   //                    less. The row's ⓘ ("More tools would speed this up.") when the work is still

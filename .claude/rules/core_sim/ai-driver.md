@@ -461,11 +461,11 @@ next turn as *no useful crew*.
 would have produced this turn's take — the overstaffing signal. `workers > workers_needed` ⇒ the
 binding constraint was not labor, so the extra workers were idle"*, so a row's surplus is
 `workers − workers_needed` (`surplus_hands`, `sources.rs`; `0` on a row whose `workers_needed` is
-`0` — a fresh row and one that produced nothing alike, neither an overstaffing signal). **Less the
-hands keeping the row's site** (`keeping_hands`: the source's `upkeepHands`, rounded up): a site's
-crew keeps before it takes (`docs/plan_site_crews.md` §2.1), so `workers_needed` counts none of
-them and a hand drawn off a kept row comes out of its take. `Food::draw` never takes a row below
-those keeping hands on either tier.
+`0` — a fresh row and one that produced nothing alike, neither an overstaffing signal). The sim's
+`workers_needed` already counts the hands the row's site kept with (`docs/plan_site_crews.md` §4),
+so the surplus needs no correction for keeping. `Food::draw` never takes a row below its keeping
+hands on either tier (`keeping_hands`: the source's `upkeepHands`, rounded up): a hand drawn under
+that line comes out of the keeping and rots the site.
 `Food::draw` frees hands in four tiers — idle, then **the pools with hands to spare**
 (`Food::pool_releases`, below; at no cost, like the idle), then the surplus on the rows offered
 for it (each down to its `workers_needed`, at no cost), then the rows named until each is empty
@@ -645,7 +645,8 @@ fired and what the ledger said. The rules, in `propose` order:
   lowest-paying (never the idle hands — those are rule 1's, and a hunt drawn from them competed
   with the assignment for the same rows) — whose leaving keeps the projected net at the
   goal with the herd's take counted, and whose projection survives.
-- **hold the ground** (`food:hold:<band>`) — a patch the seat owns whose row reads
+- **hold the ground** (`food:hold:<band>`) — a patch the seat owns, or a herd on the band's hunt
+  row (`Food::kept_sites`, `KeptSite`), whose row reads
   `upkeep_shortfall > 0` (the standing-upkeep bill for holding its rung, unpaid —
   `docs/plan_standing_upkeep.md`) has **its own forage row raised** on the band that holds it —
   **with or without hands on the row**, since a row with nobody on it keeps nothing
@@ -684,14 +685,17 @@ fired and what the ledger said. The rules, in `propose` order:
   ends with 286 working, 1103 hunger deaths and 29 improved patches; gated on `survives`, 399, 951
   and 15 — survival is the purpose, so the gate stands and the patches it lets go are the price.
   Fires before *upgrade the ground*: holding what the band has beats declaring the next rung.
-  **Herds are not held by this rule**: a herd's keeping is its hunt row's crew too, and no rule
-  raises a hunt row for its keeping.
-- **upgrade the ground prices the keeping it creates.** The row on the patch keeps the rung it
-  raises from the first work banked, so the change's `income_lost` carries the take the row stops
-  gathering: the rung's quoted bill (`cultivationUpkeepDemand` / `fieldUpkeepDemand`) above what
-  the patch already owes, over one bare hand's `buildWorkPerWorkerTurn`, priced whole from the
-  start. It prices each climb alone — a band declaring several builds in a row is charged each
-  one's keeping against the take as it stood.
+  **A herd is held the same way** (`docs/plan_site_crews.md` §2.2): its hunt row is raised by the
+  hands its keeping is missing, never drawn from, and kept at its keeping hands when another site
+  is short. Its bill is priced at the row's own take — an unkept herd sheds the flock the row
+  culls — with no rebuild term, because tameness never bleeds; a tamed herd's hold is `standing`.
+- **upgrade the ground declines a build the band cannot keep once it stands**
+  (`docs/plan_site_crews.md` §2.1). The finished rung's bill (`cultivationUpkeepDemand` /
+  `fieldUpkeepDemand`, above what the patch owes today), in bare hands (`/ buildWorkPerWorkerTurn`),
+  on top of what the band already owes (`Food::keeping_owed`: every site its rows hold, a build in
+  flight at its **finished** bill, a herd's `tameUpkeepDemand` / `corralUpkeepDemand` while queued)
+  must fit in the free hands plus the hands already keeping (`upkeepHands`), or the climb is not
+  proposed. It is a gate, not a price: nothing about the ranking of the climbs that pass moves.
 - **upgrade the ground** (`food:upgrade:<band>`) — `goals.ground_rung > wild`, the rung's gate
   knowledge known, and a worked forage patch below it with nothing queued (`build_destination_rung`
   is *"empty when no band has queued it"*, plus the band's own `build_queue`; not

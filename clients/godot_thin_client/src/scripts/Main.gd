@@ -421,6 +421,8 @@ func _ready() -> void:
             hud.connect("build_order_requested", Callable(self, "_on_hud_build_order"))
         if hud.has_signal("work_priority_requested") and not hud.is_connected("work_priority_requested", Callable(self, "_on_hud_work_priority")):
             hud.connect("work_priority_requested", Callable(self, "_on_hud_work_priority"))
+        if hud.has_signal("build_priority_requested") and not hud.is_connected("build_priority_requested", Callable(self, "_on_hud_build_priority")):
+            hud.connect("build_priority_requested", Callable(self, "_on_hud_build_priority"))
         if hud.has_signal("set_bench_requested") and not hud.is_connected("set_bench_requested", Callable(self, "_on_hud_set_bench")):
             hud.connect("set_bench_requested", Callable(self, "_on_hud_set_bench"))
         if hud.has_signal("bench_crew_requested") and not hud.is_connected("bench_crew_requested", Callable(self, "_on_hud_bench_crew")):
@@ -1043,9 +1045,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.has("routes") and SnapshotSections.changed(snapshot, "routes"):
         _hud_invoke("update_road_network", [snapshot["routes"]])
     # THE LIVE WORKINGS ON THE GROUND (arc #583). The map ingests the same section into its own
-    # per-tile lookup for the tile card; the HUD needs it because the WORKINGS ROSTER asks a
-    # whole-list question — *which workings is this band paying the `quarrywork` pool for* — which no
-    # per-hex index answers.
+    # per-tile lookup for the tile card; the HUD needs it because the Work tab's GROUNDWORK section asks
+    # a whole-list question — *which workings does this band hold a row on* — which no per-hex index
+    # answers.
     if snapshot.has("deposits") and SnapshotSections.changed(snapshot, "deposits"):
         _hud_invoke("update_deposits", [snapshot["deposits"]])
     # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
@@ -1437,29 +1439,19 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
                 "line": "%s %d%s" % [extract_head, workers, _kit_token(payload)],
                 "message": extract_message,
             }
-        "scout", "warrior", "agriculture", "husbandry", "roadwork", "quarrywork", "builders":
+        "scout", "warrior", "roadwork", "builders":
             # **A BAND-WIDE ROLE CARRIES THE KIT TOKEN TOO, and it is the only optional token these
             # rows take.** They have no tile, no herd, no floor and no species — the sim ignores
-            # every one of those on a role target — but `kit_job()` answers for all four
-            # roles now, so `assign_labor … scout 3 kit none` is a real selection rather than a token
-            # dropped on the floor. Same `_kit_token` omission rule as the other two branches, so a
-            # player who never opened the role card's picker emits the line they always did.
+            # every one of those on a role target — and `_kit_token` omits an empty selection, so a
+            # player who never opened a role card's picker emits the line they always did.
             #
-            # **THE FOUR KEEPING ROLES RIDE THE SAME BRANCH** (`docs/plan_standing_upkeep.md` §2.5,
-            # arc #532, arc #583). `agriculture`, `husbandry`, `roadwork` and `quarrywork` are
-            # band-wide standing roles in exactly the grammar scout and warrior use, so a branch of
-            # their own would be the same line typed four times. They send no kit today — the role
-            # cards mount no picker, the wire naming no default kit for any of the four jobs
-            # (`default_kits.roadwork` and `default_kits.quarrywork` are both the bare `none` kit, so
-            # road keepers and working keepers work bare-handed and that is intended) — and
-            # `_kit_token` omits an empty selection.
+            # **`roadwork` AND `builders` ARE THE TWO BAND-WIDE POOLS LEFT** (`docs/plan_site_crews.md`
+            # §0), in exactly the grammar scout and warrior use. Both send no kit: the sim refuses a
+            # `kit` token on either by name, a pool being HOW MANY hands and never what they carry.
             #
-            # **AND SO DOES `builders`, which the sim has always parsed and this builder DID NOT
-            # NAME** — a role omitted from this match answers `{}`, so the Builders card's stepper
-            # emitted no command at all and the pool could not be staffed from the UI. It is the one
-            # role here whose card DOES mount a kit picker, and the token is deliberately sent only
-            # for a kit the player picked: an explicit `kit` on the builders row overrides the sim's
-            # per-entry derivation for good (`BandPanelController._commanded_role_kit_id`).
+            # ⛔ **`agriculture`, `husbandry` AND `quarrywork` ARE RETIRED** with the keeping pools they
+            # staffed — a site's own crew keeps it — and the sim refuses the three tokens by name, so
+            # this builder answers `{}` for them rather than emitting a refusal.
             return {
                 "line": "assign_labor %d %d %s %d%s" % [
                     faction, band_id, kind, workers, _kit_token(payload)],
@@ -2062,6 +2054,40 @@ static func format_work_priority(payload: Dictionary) -> Dictionary:
         "message": "(%d, %d) is now %s priority for this band." % [x, y, face.to_lower()],
     }
 
+## **`build_priority <faction> <band> <x> <y> <level>` | `build_priority <faction> <band> <herd_id>
+## <level>` — A QUEUED BUILD'S OWN MARK** (`docs/plan_site_crews.md` §2.4), emitted by the `Build` pill
+## on a site's work row. `format_work_priority`'s exact shape, because it addresses the same band-and-
+## source pair: a second shape for one family of verbs is how a client sends the wrong one.
+##
+## **IT RANKS THE ENTRY, NOT THE SITE CREW.** A build no longer borrows its row's `work_priority`; the
+## sim refuses a source with nothing queued by name, which is why the pill only renders on a row whose
+## site is in this band's build queue.
+static func format_build_priority(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    var level := String(payload.get("level", "")).strip_edges().to_lower()
+    if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
+        return {}
+    var face := String(HudWorkVocab.WORK_PRIORITY_FACES[level])
+    var herd_id := String(payload.get("herd_id", "")).strip_edges()
+    if herd_id != "":
+        return {
+            "line": "build_priority %d %d %s %s" % [faction, band_id, herd_id, level],
+            "message": "The build on %s is now %s priority for this band." % [herd_id,
+                face.to_lower()],
+        }
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "build_priority %d %d %d %d %s" % [faction, band_id, x, y, level],
+        "message": "The build on (%d, %d) is now %s priority for this band." % [x, y,
+            face.to_lower()],
+    }
+
 ## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench
 ## (`docs/plan_crafting_and_materials.md` §7).
 ##
@@ -2371,6 +2397,12 @@ func _on_hud_build_order(payload: Dictionary) -> void:
 ## client-side copy would be a second statement of one value, which is the drift §4.9 forbids.
 func _on_hud_work_priority(payload: Dictionary) -> void:
     _send_formatted_command(format_work_priority(payload))
+
+## Mark one queued build with the player's rank. **No rollback, for `_on_hud_work_priority`'s reason**:
+## `BuildQueueEntryState.buildPriority` is captured live off the band's queue, so the new mark arrives
+## on this command's own recapture and there is no optimistic write to undo.
+func _on_hud_build_priority(payload: Dictionary) -> void:
+    _send_formatted_command(format_build_priority(payload))
 
 ## Say how this band splits a keeping pool it cannot stretch. Sent on its own — the fund mode is a
 ## standing policy on the band's allocation, not part of any source's commit.

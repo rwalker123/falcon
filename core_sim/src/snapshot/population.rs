@@ -264,6 +264,12 @@ fn assigned_hunt_useful_crew(
             floor: *floor,
             baseline_haul_rate: hunt_crew_levers.baseline_haul_rate,
             max_workers: crew_pool,
+            keeping: crate::fauna::herd_crew_keeping(
+                herd,
+                hunt_crew_levers.fauna,
+                hunt_crew_levers.ladder,
+                None,
+            ),
         },
     ))
 }
@@ -581,6 +587,9 @@ pub(crate) struct HuntCrewLevers<'a> {
     /// fights exactly as the range does since §4.9 item 12b, and the keepers' *haul* is the one term
     /// its curve carries that a stalking row's does not; see `fauna::hunt_crew_take_curve`.
     pub(crate) baseline_haul_rate: f32,
+    /// The ladder a kept herd's bill is read off, so a row's curve nets the hands its crew keeps
+    /// with first (`docs/plan_site_crews.md` §2.2) — the useful crew then counts its keepers too.
+    pub(crate) ladder: &'a crate::intensification::LadderConfig,
 }
 
 /// `BandId → name` over every live band, the lookup a crossing's counterparty is named from.
@@ -820,7 +829,9 @@ pub(crate) fn builtin_hunt_crew_levers() -> &'static HuntCrewLevers<'static> {
     static COMBAT: OnceLock<std::sync::Arc<crate::combat_config::CombatConfig>> = OnceLock::new();
     static LEVERS: OnceLock<HuntCrewLevers<'static>> = OnceLock::new();
     static LABOR: OnceLock<std::sync::Arc<crate::labor_config::LaborConfig>> = OnceLock::new();
+    static LADDER: OnceLock<std::sync::Arc<crate::intensification::LadderConfig>> = OnceLock::new();
     LEVERS.get_or_init(|| HuntCrewLevers {
+        ladder: LADDER.get_or_init(crate::intensification::LadderConfig::builtin),
         fauna: FAUNA.get_or_init(FaunaConfig::builtin),
         combat: COMBAT.get_or_init(crate::combat_config::CombatConfig::builtin),
         baseline_haul_rate: LABOR

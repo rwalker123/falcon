@@ -763,7 +763,7 @@ const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
 # `detail_bbcode`'s full-width WARN branch. It rendered in the muted INK_DIM a descriptive sentence
 # gets, because that branch tested one known sentence by equality — so the one line in the client that
 # says animals are drifting off was quieter than the rows around it.
-const HERDERS_SHED_FORMAT := "%s Under-herded — animals are drifting off. This herd wants %%d of the band's Husbandry hands." % HudSelectionVocab.RUNG_HAZARD_GLYPH
+const HERDERS_SHED_FORMAT := "%s Under-herded — animals are drifting off. This herd wants %%d hands on its own crew." % HudSelectionVocab.RUNG_HAZARD_GLYPH
 
 # ---- THE STANDING-STOCK ROW, AND ITS KEY NAMES ITS UNIT. `Herd: 6 / 11` counts ANIMALS — the unit
 # the hunt sheet already delivers in — so the card and the sheet finally read in one currency. It
@@ -3559,9 +3559,9 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
                     SourceForecast.SOURCE_KIND_HERD))
         # **THE CONSEQUENCE OF AN UNDER-KEPT HERD IS THE ONE KEEPER FACT THAT SURVIVED THE `Keepers:`
         # ROW** (issue #545). That row stated a demand every turn, on a herd where nothing was wrong,
-        # and read as noise; this fires ONLY when the band's Husbandry pool failed to cover this herd
-        # (`SourceForecast.is_under_kept`, the same test the work board's ⚠ and the Husbandry row's
-        # own mark make), and it is the only place in the client that says animals are drifting off.
+        # and read as noise; this fires ONLY when the herd's own crew failed to keep it
+        # (`SourceForecast.is_under_kept`, the same test the work board's ⚠ makes), and it is the only
+        # place in the client that says animals are drifting off.
         # It carries the head count because a head count only matters when it is short.
         if int(herd_data.get("herders_needed", 0)) > 0 and domestication > BUILD_METER_EMPTY \
                 and SourceForecast.is_under_kept(herd_data, herd_prefix):

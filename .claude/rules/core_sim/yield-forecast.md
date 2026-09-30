@@ -763,17 +763,22 @@ client's compose-time "Expected yield" row promises. Shape:
   `changing_the_floor_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
   `unassigning_a_source_drops_its_yield_row`.
 
-### `workers_needed` IS THE TAKE'S OWN COUNT, and each activity states its own
+### `workers_needed` IS THE ROW'S WHOLE CREW — its keeping hands plus its take's
 
 `workers_needed` is written in **two** places — the resolved turn (`advance_labor_allocation`'s three
 telemetry arms) and the assign-time seed (`forage::forage_source_yield_preview` /
-`fauna::hunt_source_yield_preview` → `fauna::forecast_source_yield`) — and both now answer the same,
-simpler question: **how many hands does it take to haul what this source offers?** It is inverted out
-of an **undipped** take, because a building crew no longer changes what a gathering crew carries.
+`fauna::hunt_source_yield_preview` → `fauna::forecast_source_yield`) — and both answer the same
+question: **how many of this row's hands were needed?** The take half is inverted out of an
+**undipped** take, because a building crew no longer changes what a gathering crew carries. **The
+keeping half is added on top** (`fauna::crew_needed_with_keeping`: `ceil(take_needed +
+keep_hands)`, `docs/plan_site_crews.md` §4): a site's row is one crew with one stepper that keeps
+first, so `workers > workers_needed` stays the overstaffing signal only if the count carries both.
+The resolved turn adds the settled `keep_hands` after the arms (`site_keeping`); the seed adds
+`workers − take_hands`, the same split through `prospective_keep_hands`. A row that keeps nothing is
+unchanged, and an all-keeping row (crew short of its bill) reads its keeping hands.
 
-The **maintain** activity publishes its own count beside it (`upkeepWorkersNeeded` =
-`ceil(upkeep_demand / PER_WORKER_OUTPUT)`, in keepers), and the **build**'s crew is simply the number
-the player typed on the verb. A `max` across those units was the compromise a single allocation
+**`upkeepWorkersNeeded` stays the keeping's own count** (`ceil(upkeep_demand / PER_WORKER_OUTPUT)`,
+in bare keepers), and the **build**'s crew is simply the number the player typed on the verb. A `max` across those units was the compromise a single allocation
 forced, and it is what made a row read `workersNeeded: 1` beside `wastedYield: 0.80`.
 
 **The floor it replaced was a real fix to a real defect, and the defect is gone rather than

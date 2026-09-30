@@ -165,6 +165,12 @@ signal build_order_requested(payload: Dictionary)
 ## the server re-captures after every command, so it arrives on this command's own recapture.
 signal work_priority_requested(payload: Dictionary)
 
+## Emitted when the player cycles a QUEUED build's own mark from its site's work row
+## (`docs/plan_site_crews.md` §2.4). Payload keys: { faction, band_id, x, y, herd_id, level }. Main
+## formats `build_priority <faction> <band_id> <source…> <level>`. No optimistic overlay and so no
+## `pending_entity`, `work_priority_requested`'s reason: the entry's mark is captured live.
+signal build_priority_requested(payload: Dictionary)
+
 ## Emitted when the player picks how a band splits a keeping POOL it cannot stretch
 ## (`docs/plan_standing_upkeep.md` §2.5). Payload keys: { faction, band_id, mode }, `mode` being
 ## `spread` or `priority`. Main formats `upkeep_mode <faction> <band_id> <mode>`.
@@ -774,6 +780,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: build_order_requested.emit(payload))
     _bandpanel.work_priority_requested.connect(
         func(payload: Dictionary) -> void: work_priority_requested.emit(payload))
+    _bandpanel.build_priority_requested.connect(
+        func(payload: Dictionary) -> void: build_priority_requested.emit(payload))
     # The WORK row's `⌃` is the DECLARATION now (`docs/plan_standing_upkeep.md` §4.7a ①), and this
     # relay carries its optimistic write — see `_on_work_row_improvement_requested`.
     _bandpanel.improvement_requested.connect(_on_work_row_improvement_requested)

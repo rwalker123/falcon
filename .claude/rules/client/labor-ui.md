@@ -310,6 +310,24 @@ the blend and the re-solve reverted. No shipped fixture states the coverage term
 state takes the absent-means-covered path where `carry_per_worker` returns `equipped` and
 `crew_for_target` reduces to `ceil(target / per_worker)`.
 
+## ⛔ THE KEEPING POOLS ARE RETIRED — a site's crew keeps it (`docs/plan_site_crews.md`)
+
+`assign_labor … agriculture|husbandry|quarrywork` is refused by the sim and `Main.format_assign_labor`
+builds nothing for it; the band-wide roles it still builds are `scout`, `warrior`, `roadwork` and
+`builders`. A patch, a herd and a working are kept by the crew on their own work row, which keeps
+first and collects with what is left. Where the sections below name the Agriculture or Husbandry
+POOL, a pool card, or a remedy of *raise this band's … role*, read the site's own crew instead:
+
+- **The price clause** (`DetailFormat.build_price_clause`) names who pays the keeping through
+  `HudWorkVocab.keeping_role_name` — `Roadwork` for a road, `its own crew` for every site.
+- **The under-kept notes** name the row's crew: `This ground is slipping — add hands to this row's
+  crew.` / `Animals drifting off — add hands to this row's crew.`, with the `— its crew is short of
+  tools.` forms where the site's keeping tools came up short (`upkeep_tools_short`, the SITE's own
+  flag; the pool TOE the row used to join on is retired for these webs).
+- **What the crew spends keeping is on the wire**: `upkeep_hands` per patch, herd and working
+  (`native-extension.md`). The compose sheet reads the patch pair as `patch_upkeep_hands` /
+  `patch_upkeep_tools_short` off `tile_info`.
+
 ## Key scripts
 
 | Script | Purpose |
