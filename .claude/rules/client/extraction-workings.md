@@ -976,8 +976,12 @@ The Work tab's GROUNDWORK section draws one row per held working
   extract <x> <y> <material> [floor] <n>`, the material in the species slot, this band's own floor
   on ground that renews and no floor (`FLOOR_UNNAMED`) on ground that does not, and the row's kit
   restated so a `+` never re-kits the crew. Its `+` greys at the published useful-cutter cap.
-- **No `Priority` or `Build` pill.** `work_priority` and `build_priority` address a forage or hunt row
-  by tile or herd; neither command names a working, so a pill here would send a line the sim refuses.
+- **Both marks, like a harvest or hunt row**: `Priority` always (`work_priority <f> <band> <x> <y>
+  <material> <level>`) and `Build` while a working build is queued there (`build_priority` in the
+  same material form). A working is always addressed `<x> <y> <material>` — the bare tile is the
+  PATCH on that hex (`band-city-panel.md` → "EVERY SITE VERB SPELLS ITS SOURCE ONE WAY").
+- **A queued working build has a queue row** (`_deposit_queue_models`), so it can be reordered and
+  withdrawn from the BUILD QUEUE block in the material form.
 - **A crew of zero keeps nothing**, and the row's hover says so (`DEPOSIT_IDLE_TIP`); the `✕`'s hover
   states what holding it still means (`WORKING_ABANDON_WHY`) rather than a shared bill.
 
@@ -1170,7 +1174,7 @@ pays two, and folding the pair into one term is the 6px disagreement
 
 ### ⛔ ITS `✕` IS `abandon_working`, AND THAT IS A DIFFERENT VERB FROM `abandon`
 
-The road roster's drop is `abandon <faction> <x> <y>`, and `abandon` **does not reach a working** —
+The road roster's drop is `abandon <faction> road <x> <y>`, and `abandon` **does not reach a working** —
 checked, not assumed. `BuildSourceRef::target()` resolves a tile pair to `forage_source(tile)`, i.e. a
 `LaborTarget::Forage`, and `LaborTarget::same_source` pairs an `Extract` row only with another
 `Extract` row of the same `(tile, material)`; `release_roads_at` beside it touches the `RoadRegistry`
@@ -1231,10 +1235,8 @@ therefore already standing on a holding the acting band can drop.
 
 ### ⛔ THERE IS NO SECOND WARN LINE, AND THAT IS A DECISION
 
-The road's `✕` carries one (`ROAD_LADDER_ABANDON_ALSO`) because *"a one-click destructive action that
-under-states what it destroys is worse in a roster than on a card: a roster invites bulk use"* — and
-`abandon` really does take a forage assignment down with the road, a consequence its label does not
-name. `abandon_working` names the `(tile, material)` pair: it touches neither the other working on the
+The road's `✕` carried one (`ROAD_LADDER_ABANDON_ALSO`, retired) while its bare-tile `abandon` took a
+forage assignment down with the road; it sends the `road <x> <y>` form now, which does not. `abandon_working` names the `(tile, material)` pair: it touches neither the other working on the
 same hex, nor any forage row, nor the road. **The blast radius is exactly what the label says**, so a
 second line would be warning about a reach the verb does not have.
 

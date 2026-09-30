@@ -4915,23 +4915,7 @@ func _build_road_abandon_row(road: Dictionary, band: Dictionary) -> VBoxContaine
         _dismiss_road_ladder()
         _emit_road_abandon(keeper, _road_ladder_tile))
     column.add_child(button)
-    if _faction_works_tile(_road_ladder_tile):
-        column.add_child(RungLadder.build_aside(HudRouteVocab.ROAD_LADDER_ABANDON_ALSO, true))
     return column
-
-## **DOES ANY BAND OF THE PLAYER'S WORK THIS HEX?** — the test behind the abandon row's second line,
-## and it is a TILE test because `abandon` is a tile command. A hunt names a herd rather than a hex, so
-## the forage row is the whole of what `bands_working_source` can find under a tile target.
-func _faction_works_tile(tile_info: Dictionary) -> bool:
-    var x := int(tile_info.get("x", -1))
-    var y := int(tile_info.get("y", -1))
-    if x < 0 or y < 0:
-        return false
-    for band_variant in _band_labor.current_player_bands():
-        if band_variant is Dictionary \
-                and not _band_labor.forage_assignment_of(band_variant as Dictionary, x, y).is_empty():
-            return true
-    return false
 
 ## **PUT THE ROAD DOWN — `abandon <faction> <x> <y>`, built by `Main.format_abandon`.**
 ##
@@ -4947,6 +4931,8 @@ func _emit_road_abandon(band: Dictionary, tile_info: Dictionary) -> void:
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
         "x": x,
         "y": y,
+        # `abandon <f> road <x> <y>` — the bare tile is the patch on that hex (`Main.format_abandon`).
+        "road": true,
     })
 
 ## **DECLARE A ROUTE RUNG — `grade|pave <faction> <band> <x> <y>`, and the command has not moved.**

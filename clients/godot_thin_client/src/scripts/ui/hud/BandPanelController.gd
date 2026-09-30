@@ -63,21 +63,10 @@ signal upkeep_mode_requested(payload: Dictionary)
 signal open_borders_requested(payload: Dictionary)
 # A build was WITHDRAWN from the band's queue (`docs/plan_standing_upkeep.md` §4.6b) — the BUILD
 # QUEUE block's row `✕`, relayed to HudLayer.unqueue_requested and formatted by `Main.format_unqueue`.
-# **The payload is byte-identical to `DrawerComposeController`'s** ({ faction, x, y, herd_id }), which
-# is what lets one command builder serve both surfaces: an unqueue names a SOURCE, and a source has
-# one grammar whichever control withdrew it.
+# `{ faction, x, y, herd_id, material, road }` — the site halves `Main.site_address` spells, so a
+# working or a road is never withdrawn as the bare tile (which names the patch on that hex).
 signal unqueue_requested(payload: Dictionary)
-# The KIT one queued build is raised with (`docs/plan_standing_upkeep.md` §4.7a ②) — relayed to
-# HudLayer.build_kit_requested and formatted by `Main.format_build_kit`.
-# `{ faction, x, y, herd_id, kit_id, default_kit_id }`: the last pair is `_kit_token`'s, so picking
-# the DERIVED answer omits the token and CLEARS the override rather than pinning it.
-#
-# ⛔ **NO UI CONTROL EMITS IT ANY MORE, AND IT IS KEPT DELIBERATELY.** The queue row's kit picker
-# retired with `docs/plan_pool_toe.md` §3 — a build's tools follow from its rung — so the only live
-# driver of this grammar is `cargo xtask command-guard`, which parses the emitted line with the real
-# server parser. The VERB retires end to end in the slice that also owns that drive; deleting the emit
-# seam here would take the gate with it a slice early.
-signal build_kit_requested(payload: Dictionary)
+
 # Another ring was declared around a pen (`docs/plan_standing_upkeep.md` §4.9 item 12c) — relayed to
 # HudLayer.extend_pen_requested and formatted by `Main.format_extend_pen`, both unchanged.
 #
@@ -1603,7 +1592,7 @@ func _composed_role_kit_id(band: Dictionary, kind: String) -> String:
 ## **AND THE ROW'S OVERRIDE IS RETIRED OUTRIGHT** (`docs/plan_standing_upkeep.md` §4.7a ②):
 ## `assign_labor` now REFUSES a `kit` token on the `builders` role, so a token sent here is a command
 ## failure rather than a pin that wins. The per-entry override lives on the queue row
-## (`_emit_build_kit` → `build_kit`), which is where an entry can answer for itself.
+## (retired with the `build_kit` verb, `docs/plan_site_crews.md`).
 ##
 ## `Main._kit_token` omits an empty selection, so the line carries no `kit` token and the sim keeps
 ## deriving.
@@ -2450,6 +2439,15 @@ func _build_roadwork_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     value.clip_text = true
     value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     line.add_child(value)
+    # **A ROAD CARRIES ONLY A `Build` MARK, and only while a road build is queued on it**
+    # (`docs/plan_site_crews.md` §2.4 as amended) — a road has no crew, so there is no `Priority`.
+    var key := _band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK, tile.x, tile.y, "")
+    if _band_labor.build_queue_keys(band).has(key):
+        _add_priority_pills(line, band, {
+            "kind": HudConst.LABOR_KIND_ROADWORK, "x": tile.x, "y": tile.y, "herd_id": "",
+            "build_queued": true,
+            "build_priority": _band_labor.build_priority_for_key(band, key),
+        }, false)
     line.add_child(_build_roadwork_roster_abandon_button(band, tile))
     return row
 
@@ -2465,8 +2463,7 @@ func _build_roadwork_roster_abandon_button(band: Dictionary, tile: Vector2i) -> 
     drop.set_meta(HudWorkVocab.ROADWORK_ROSTER_ABANDON_META, tile)
     drop.text = HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH
     drop.focus_mode = Control.FOCUS_NONE
-    drop.tooltip_text = "%s\n%s" % [HudRouteVocab.ROAD_LADDER_ABANDON_TOOLTIP,
-        HudRouteVocab.ROAD_LADDER_ABANDON_ALSO]
+    drop.tooltip_text = HudRouteVocab.ROAD_LADDER_ABANDON_TOOLTIP
     drop.custom_minimum_size = Vector2(HudWorkVocab.ROADWORK_ROSTER_ABANDON_WIDTH, 0.0)
     HudStyle.apply_button(drop, "ghost")
     HudWidgets.compact(drop, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
@@ -2477,6 +2474,7 @@ func _build_roadwork_roster_abandon_button(band: Dictionary, tile: Vector2i) -> 
             "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
             "x": tile.x,
             "y": tile.y,
+            "road": true,
         }))
     return drop
 
@@ -2569,10 +2567,22 @@ func _workings_roster_tooltip(band: Dictionary, model: Dictionary, cutters: int)
 ## Membership and order are `_workings_roster_models`' (a working is held by the band that works it).
 func _extract_source_models(band: Dictionary) -> Array:
     var models: Array = []
+    var queued: Array = _band_labor.build_queue_keys(band)
     for model_variant in _workings_roster_models(band):
         var model: Dictionary = (model_variant as Dictionary).duplicate()
         model["kind"] = HudConst.LABOR_KIND_EXTRACT
         model["workers"] = _workings_roster_cutters(band, model)
+        var tile: Vector2i = model["tile"]
+        var key := _band_labor.pending_key(HudConst.LABOR_KIND_EXTRACT, tile.x, tile.y, "",
+            String(model["material"]))
+        model["key"] = key
+        model["x"] = tile.x
+        model["y"] = tile.y
+        model["herd_id"] = ""
+        model["build_queued"] = queued.has(key)
+        model["build_priority"] = _band_labor.build_priority_for_key(band, key)
+        model["priority"] = HudWorkVocab.work_priority_of(_band_labor.extract_assignment_of(
+            band, tile.x, tile.y, String(model["material"])).get("priority", ""))
         models.append(model)
     return models
 
@@ -2586,9 +2596,9 @@ func _extract_source_models(band: Dictionary) -> Array:
 ## that does not (`FLOOR_UNNAMED`, the sheet's own sentinel), and the row's kit restated so a `+` never
 ## re-kits a crew. The Groundwork POOL that used to hold these sites is retired.
 ##
-## **NO PRIORITY OR BUILD MARK.** `work_priority` and `build_priority` address a band's forage or hunt
-## row by tile or herd; neither command can name a working, so a mark here would be a control the sim
-## refuses.
+## **BOTH MARKS, ON THE CREW LINE** (`docs/plan_site_crews.md` §2.4 as amended): `Priority` always and
+## `Build` while a working build is queued here, each sent in the material form `<x> <y> <material>` —
+## the bare tile is the patch on that hex (`Main.site_address`).
 func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var tile: Vector2i = model["tile"]
     var deposit: Dictionary = model["deposit"]
@@ -2663,10 +2673,28 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     line.add_child(_build_workings_roster_abandon_button(band, deposit))
     var take_hands := maxf(float(cutters) - SourceForecast.upkeep_hands(deposit,
         HudComposeVocab.BARE_FORECAST_PREFIX), 0.0)
-    col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
+    var crew_line := _build_site_crew_line(HudWorkVocab.site_crew_line(
         rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD, kept, demand,
-        take_hands, HudWorkVocab.SITE_CREW_VERB_CUT)))
+        take_hands, HudWorkVocab.SITE_CREW_VERB_CUT))
+    _add_priority_pills(crew_line.get_child(0) as HBoxContainer, band, model, true)
+    col.add_child(crew_line)
     return row
+
+## **THE ROW'S PRIORITY MARKS** (`docs/plan_site_crews.md` §2.4 as amended): `Priority` where the row
+## has a crew to rank (a harvest, hunt or working row — never a road), and `Build` only while its site
+## has a build in this band's queue. Both CYCLE and send the site's own address (`Main.site_address`).
+func _add_priority_pills(line: HBoxContainer, band: Dictionary, model: Dictionary,
+        with_priority: bool) -> void:
+    if with_priority:
+        line.add_child(_build_priority_pill(HudWorkVocab.WORK_ROW_PRIORITY_PILL_FORMAT,
+            String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL)),
+            HudWorkVocab.WORK_ROW_PRIORITY_PILL_META, HudWorkVocab.WORK_ROW_PRIORITY_PILL_TOOLTIP,
+            func(level: String) -> void: _commit_work_priority(band, model, level)))
+    if bool(model.get("build_queued", false)):
+        line.add_child(_build_priority_pill(HudWorkVocab.WORK_ROW_BUILD_PILL_FORMAT,
+            String(model.get("build_priority", HudWorkVocab.WORK_PRIORITY_NORMAL)),
+            HudWorkVocab.WORK_ROW_BUILD_PILL_META, HudWorkVocab.WORK_ROW_BUILD_PILL_TOOLTIP,
+            func(level: String) -> void: _commit_build_priority(band, model, level)))
 
 ## **THE SITE CREW'S LINE** — where this row's hands go: keeping first, then the take. Indented onto the
 ## name's column in the accounts' quiet register. The text is an `HBoxContainer`'s first child so a work
@@ -2737,6 +2765,10 @@ func _commit_build_priority(band: Dictionary, model: Dictionary, level: String) 
         "x": int(model.get("x", -1)),
         "y": int(model.get("y", -1)),
         "herd_id": String(model.get("herd_id", "")),
+        # **THE SITE'S ADDRESS HALVES** (`Main.site_address`): a working carries its material and a road
+        # says it is a road, or the server reads the bare tile as the PATCH on that hex.
+        "material": String(model.get("material", "")),
+        "road": String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK,
         "level": HudWorkVocab.work_priority_of(level),
     })
 
@@ -3388,6 +3420,7 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
     # this client genuinely cannot resolve still spends its rank. What was wrong is that a road's
     # source is resolvable, off `HudBandLaborState.roads()`, and nothing was resolving it.
     var road_models := _road_queue_models(band)
+    road_models.merge(_deposit_queue_models(band))
     var queued: Array = []
     for rank in range(rank_keys.size()):
         var key := String(rank_keys[rank])
@@ -3450,6 +3483,79 @@ func _build_queue_models(band: Dictionary, models: Array) -> Array:
 ##
 ## **`{}` where the band has queued no road, and a road tile the snapshot does not carry is SKIPPED** —
 ## which is `_build_queue_models`' unresolvable-source case arriving honestly, rank spent and no row.
+## **THIS BAND'S QUEUED WORKING BUILDS, AS QUEUE MODELS** keyed like `build_queue_keys` — the deposit
+## twin of `_road_queue_models`. A working has no forage or hunt model, so without this its queued rung
+## had no row and could be neither reordered nor withdrawn from the block. The model carries its
+## `material`, which is what addresses it (`Main.site_address`): the bare tile is the patch.
+func _deposit_queue_models(band: Dictionary) -> Dictionary:
+    var models: Dictionary = {}
+    var entries: Variant = band.get("build_queue", [])
+    if not (entries is Array):
+        return models
+    var ladder := _deposit_ladder()
+    for entry_variant in (entries as Array):
+        if not (entry_variant is Dictionary):
+            continue
+        var wire: Dictionary = entry_variant
+        if String(wire.get("kind", "")).strip_edges().to_lower() != HudConst.LABOR_KIND_EXTRACT:
+            continue
+        var x := int(wire.get("target_x", -1))
+        var y := int(wire.get("target_y", -1))
+        var material := _band_labor.queued_extract_material(band, x, y)
+        if material == "":
+            continue
+        var deposit := _deposit_at(x, y, material)
+        if deposit.is_empty():
+            continue
+        models[_band_labor.pending_key(HudConst.LABOR_KIND_EXTRACT, x, y, "", material)] = \
+            _deposit_queue_model(deposit, ladder, x, y, material)
+    return models
+
+## The deposits row for one `(tile, material)`, `{}` where the snapshot does not carry it.
+func _deposit_at(x: int, y: int, material: String) -> Dictionary:
+    for deposit_variant in _band_labor.deposits():
+        if not (deposit_variant is Dictionary):
+            continue
+        var deposit: Dictionary = deposit_variant
+        if HudDepositVocab.tile_of(deposit) == Vector2i(x, y) \
+                and HudDepositVocab.material_of(deposit) == material:
+            return deposit
+    return {}
+
+## One queued working build's model — the rung above where the working stands, its verb, its price and
+## the working's own meter and countdown, in the shape `_road_queue_model` gives a road.
+func _deposit_queue_model(deposit: Dictionary, ladder: Array[Dictionary], x: int, y: int,
+        material: String) -> Dictionary:
+    var rung_entry := HudDepositVocab.ladder_next_entry(ladder, deposit)
+    var verb := HudDepositVocab.catalog_verb(rung_entry)
+    var work_cost := HudDepositVocab.catalog_work_cost(rung_entry)
+    var destination := HudDepositVocab.catalog_rung_key(rung_entry)
+    var progress := HudDepositVocab.build_fraction_of(deposit)
+    return {
+        "key": _band_labor.pending_key(HudConst.LABOR_KIND_EXTRACT, x, y, "", material),
+        "kind": HudConst.LABOR_KIND_EXTRACT,
+        "x": x, "y": y, "herd_id": "", "material": material,
+        "working_name": HudDepositVocab.material_label(deposit),
+        "working_rung_name": HudDepositVocab.catalog_display_name(rung_entry),
+        "improvement": verb,
+        "build_destination": destination,
+        "building_policy": verb,
+        "building_progress": progress,
+        "build_ring_progress": SourceForecast.PEN_EXTEND_EMPTY_METER,
+        "build_turns": HudDepositVocab.build_turns_remaining_of(deposit),
+        "build_work_cost": work_cost,
+        "build_upkeep_demand": HudDepositVocab.catalog_upkeep(rung_entry),
+        "build_blocked_lines": [],
+        "build_legs": [{
+            SourceForecast.BUILD_LEG_RUNG_KEY: destination,
+            SourceForecast.BUILD_LEG_IMPROVEMENT_KEY: verb,
+            SourceForecast.BUILD_LEG_NAME_KEY: HudDepositVocab.catalog_display_name(rung_entry),
+            SourceForecast.BUILD_LEG_WORK_KEY: work_cost * maxf(
+                SourceForecast.BUILD_METER_FULL - progress, 0.0),
+            SourceForecast.BUILD_LEG_TURNS_KEY: SourceForecast.BUILD_TURNS_NO_ESTIMATE,
+        }],
+    }
+
 func _road_queue_models(band: Dictionary) -> Dictionary:
     var models: Dictionary = {}
     if _band_labor == null:
@@ -3574,6 +3680,8 @@ func _queue_source_kind(model: Dictionary) -> String:
     var kind := String(model.get("kind", ""))
     if kind == HudConst.LABOR_KIND_ROADWORK:
         return SourceForecast.SOURCE_KIND_ROUTE
+    if kind == HudConst.LABOR_KIND_EXTRACT:
+        return SourceForecast.SOURCE_KIND_DEPOSIT
     return SourceForecast.source_kind_for_labor(kind)
 
 ## The model slot `_build_queue_models` stamps its verdict into. A MODEL key rather than a node meta
@@ -4945,6 +5053,10 @@ func _emit_build_order(band: Dictionary, model: Dictionary, position: int) -> vo
         "x": int(model.get("x", -1)),
         "y": int(model.get("y", -1)),
         "herd_id": String(model.get("herd_id", "")),
+        # **THE SITE'S ADDRESS HALVES** (`Main.site_address`): a working carries its material and a road
+        # says it is a road, or the server reads the bare tile as the PATCH on that hex.
+        "material": String(model.get("material", "")),
+        "road": String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK,
         "position": position,
     })
 
@@ -4961,6 +5073,12 @@ func _build_queue_job_face(model: Dictionary) -> String:
     if String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK:
         return HudRouteVocab.ROAD_QUEUE_FACE_FORMAT % [
             String(model.get("road_rung_name", "")),
+            int(model.get("x", -1)), int(model.get("y", -1))]
+    # **A WORKING IS NAMED BY ITS RUNG AND ITS MATERIAL** — one hex can hold two workings, so the tile
+    # alone would draw two rows a player cannot tell apart; the rung is the deposit ladder's own name.
+    if String(model.get("kind", "")) == HudConst.LABOR_KIND_EXTRACT:
+        return HudWorkVocab.BUILD_QUEUE_WORKING_FACE_FORMAT % [
+            String(model.get("working_rung_name", "")), String(model.get("working_name", "")),
             int(model.get("x", -1)), int(model.get("y", -1))]
     # **THE FACE NAMES WHERE THE ENTRY IS GOING, NOT THE LEG IT IS ON** (`docs/plan_standing_upkeep.md`
     # §2.8). An entry climbs every rung between where the source stands and its destination, so a row
@@ -5079,35 +5197,7 @@ func _build_queue_crop_picker(band: Dictionary, model: Dictionary) -> OptionButt
 ## > was tried the other way for one pass: an ANIMAL entry commits no species and carries no legs, so
 ## > it stopped expanding and took its own withdrawal off the screen with it.
 ## >
-## > `_emit_build_kit` below did NOT go with it — see its own ⛔.
-
-## **THE PER-ENTRY KIT OVERRIDE** (`docs/plan_standing_upkeep.md` §4.7a ②) — `build_kit`, naming a
-## SOURCE and setting a property of that source's queue ENTRY.
-##
-## ⛔ **PICKING THE DERIVED DEFAULT EMITS NO `kit` TOKEN, AND THAT IS WHAT CLEARS THE OVERRIDE.** The
-## sim reads an absent token as *"go back to deriving this entry's kit from its own web"*, so
-## `Main._kit_token`'s standing rule — omit the token when the selection equals the default — is
-## exactly the right one here and there is no `default` literal to invent. `none` is a different
-## statement (bare-handed) and survives the round trip as a real selection.
-##
-## **NO OPTIMISTIC OVERLAY.** `buildKitId` is captured LIVE rather than turn-written, so the recapture
-## this command triggers already carries the new value — the one field in this block that needs no
-## client-side shadow.
-##
-## ⛔ **NO UI CONTROL CALLS IT ANY MORE, AND IT IS KEPT ON PURPOSE.** The picker above retired with
-## `docs/plan_pool_toe.md` §3; what still drives this seam is `cargo xtask command-guard`, which
-## presses it and parses the emitted line with the REAL server parser — the one place a client can be
-## well-formed and mean something else. The verb retires end to end in the slice that owns that drive,
-## and deleting the seam here would take the gate with it a slice early.
-func _emit_build_kit(band: Dictionary, model: Dictionary, kit_id: String, default_id: String) -> void:
-    emit_signal("build_kit_requested", {
-        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-        "x": int(model.get("x", -1)),
-        "y": int(model.get("y", -1)),
-        "herd_id": String(model.get("herd_id", "")),
-        "kit_id": kit_id,
-        "default_kit_id": default_id,
-    })
+## > `build_kit` itself is retired too (`docs/plan_site_crews.md`).
 
 ## The withdrawal. **The payload is `DrawerComposeController`'s, key for key**, so `Main.format_unqueue`
 ## serves both surfaces unchanged: `unqueue <faction> <x> <y>` for a patch, `unqueue <faction>
@@ -5371,6 +5461,10 @@ func _emit_unqueue(band: Dictionary, model: Dictionary) -> void:
         "x": int(model.get("x", -1)),
         "y": int(model.get("y", -1)),
         "herd_id": String(model.get("herd_id", "")),
+        # **THE SITE'S ADDRESS HALVES** (`Main.site_address`): a working carries its material and a road
+        # says it is a road, or the server reads the bare tile as the PATCH on that hex.
+        "material": String(model.get("material", "")),
+        "road": String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK,
         # **THE OPTIMISTIC HALF'S TWO KEYS, AND NEITHER IS A COMMAND TOKEN**
         # (`docs/plan_standing_upkeep.md` §4.7b ④). `kind` keys the withdrawal in the overlay
         # (`pending_key`'s own shape) and `pending_entity` is the client-local handle a FAILED send
@@ -5664,16 +5758,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # build's claim and is on a row only while its site has a build queued. Each CYCLES on a press.
     # **ON THIS LINE AND NOT THE ACCOUNTS'**: the accounts line is measured to hold the four-cash-crop
     # worst case whole, and a pill beside it took that below its own width; the crew line is short.
-    var pills := crew_line.get_child(0) as HBoxContainer
-    pills.add_child(_build_priority_pill(HudWorkVocab.WORK_ROW_PRIORITY_PILL_FORMAT,
-        String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL)),
-        HudWorkVocab.WORK_ROW_PRIORITY_PILL_META, HudWorkVocab.WORK_ROW_PRIORITY_PILL_TOOLTIP,
-        func(level: String) -> void: _commit_work_priority(band, model, level)))
-    if bool(model.get("build_queued", false)):
-        pills.add_child(_build_priority_pill(HudWorkVocab.WORK_ROW_BUILD_PILL_FORMAT,
-            String(model.get("build_priority", HudWorkVocab.WORK_PRIORITY_NORMAL)),
-            HudWorkVocab.WORK_ROW_BUILD_PILL_META, HudWorkVocab.WORK_ROW_BUILD_PILL_TOOLTIP,
-            func(level: String) -> void: _commit_build_priority(band, model, level)))
+    _add_priority_pills(crew_line.get_child(0) as HBoxContainer, band, model, true)
     col.add_child(crew_line)
     col.add_child(_build_work_row_accounts(model))
     return row
@@ -6289,6 +6374,7 @@ func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -
         "x": int(model.get("x", -1)),
         "y": int(model.get("y", -1)),
         "herd_id": String(model.get("herd_id", "")),
+        "material": String(model.get("material", "")),
         "level": HudWorkVocab.work_priority_of(level),
     })
     _repage_work_zone()

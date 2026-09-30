@@ -16092,6 +16092,9 @@ func _render_queue_control_states() -> void:
 	# a road does not: no keeper (the band's own `extract` ROW is the membership test) and a
 	# `(tile, material)` identity, which is why the near hex carries TWO rows.
 	await _assert_the_workings_roster_names_its_workings()
+	# **(f3) THE MARKS ON A WORKING AND A ROAD** (`docs/plan_site_crews.md` §2.4 as amended) — appended
+	# after the two rosters whose fixtures it reuses, so no frame above it moves.
+	await _assert_a_working_and_a_road_carry_their_marks()
 	# **(g) THE QUEUED SOURCE WITH NOBODY GATHERING ON IT** — reported from play, and the state (d4)
 	# used to STAGE as its hidden entry. The board admitted on the take crew while the sim keeps the
 	# row and the entry on a row-exists rule, so a `cultivate` whose harvesters the player had moved
@@ -16567,7 +16570,7 @@ func _render_queue_drag_state() -> void:
 	await _settle()
 	await _save("band_panel_queue_drag")
 	# The drop itself, read off the REAL command builder: the head dragged below the second entry is
-	# position 1, and `build_order` names the BAND where `unqueue` and `build_kit` do not.
+	# position 1, and `build_order` names the BAND where `unqueue` does not.
 	var seen: Array = []
 	var sink := func(payload: Dictionary) -> void: seen.append(payload)
 	_hud.build_order_requested.connect(sink)
@@ -17278,10 +17281,11 @@ func _assert_a_queued_road_draws_its_row() -> void:
 		withdraw.pressed.emit()
 		_hud.unqueue_requested.disconnect(sink)
 		var line := "" if seen.is_empty() 			else String(MAIN_SCRIPT.format_unqueue(seen[0] as Dictionary).get("line", ""))
-		var wanted_line := "unqueue %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+		# ⛔ **THE ROAD FORM** (`docs/plan_site_crews.md` §2.4) — the bare tile is the PATCH on that hex.
+		var wanted_line := "unqueue %d road %d %d" % [HudConst.PLAYER_FACTION_ID,
 			ROAD_QUEUE_TILE.x, ROAD_QUEUE_TILE.y]
 		print("band_panel_preview: queued road withdrawal -> %s" % line)
-		_assert_band_panel("…and pressing it sends `%s` — the TILE form, and never `abandon` (got \"%s\")"
+		_assert_band_panel("…and pressing it sends `%s` — the ROAD form, and never `abandon` (got \"%s\")"
 				% [wanted_line, line],
 			line == wanted_line)
 	_hud._bandpanel._queue_open_key = ""
@@ -17683,11 +17687,11 @@ func _assert_the_roadwork_roster_names_its_roads() -> void:
 			% HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH,
 		drop != null)
 	if drop != null:
-		# ⛔ **AND ITS HOVER SAYS WHAT ELSE GOES DOWN.** `abandon` names a faction and a PLACE and
-		# carries no band token, so it drops a forage assignment on that hex too. The tile card warns
-		# in a second line; a roster invites BULK use and must not be quieter about it.
-		_assert_band_panel("…whose hover carries the tile card's own `also` warning, verbatim",
-			drop.tooltip_text.contains(HudRouteVocab.ROAD_LADDER_ABANDON_ALSO))
+		# ⛔ **AND ITS HOVER STATES THE ROAD ALONE.** The `✕` sends the ROAD form, which puts down the
+		# road and nothing else on the hex (`docs/plan_site_crews.md` §2.4), so the retired *"the
+		# foraging goes down with it"* warning must not come back.
+		_assert_band_panel("…whose hover is the road ladder's own drop sentence and names no foraging",
+			drop.tooltip_text == HudRouteVocab.ROAD_LADDER_ABANDON_TOOLTIP)
 		# ⛔ **THROUGH THE VIEWPORT, NOT THROUGH `pressed.emit()`.** A `BaseButton` fires from its own
 		# `_gui_input`, which `gui_input.emit` does not reach and `pressed.emit()` bypasses entirely —
 		# so only a pushed event can see a `✕` that is covered, zero-size or filtered out of the hit
@@ -17700,7 +17704,7 @@ func _assert_the_roadwork_roster_names_its_roads() -> void:
 		_hud.abandon_requested.disconnect(sink)
 		var line := "" if seen.is_empty() \
 			else String(MAIN_SCRIPT.format_abandon(seen[0] as Dictionary).get("line", ""))
-		var wanted_line := "abandon %d %d %d" % [HudConst.PLAYER_FACTION_ID,
+		var wanted_line := "abandon %d road %d %d" % [HudConst.PLAYER_FACTION_ID,
 			ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y]
 		print("band_panel_preview: roadwork roster drop -> %s" % line)
 		_assert_band_panel("…and pressing it sends `%s` for that row's OWN tile (got \"%s\")"
@@ -19028,6 +19032,131 @@ func _roster_head_toggle(kind: StringName) -> Control:
 
 ## Put the world back the way the states after this one expect it — the deposits section cleared, the
 ## `_restore_roadwork_roster_fixture` idiom one branch over.
+# ---- THE MARKS ON A WORKING AND A ROAD (`docs/plan_site_crews.md` §2.4 as amended) --------------
+#
+# A Groundwork row carries BOTH marks, like a harvest or hunt row: `Priority` always, `Build` while a
+# working build is queued there. A road row carries the `Build` mark ALONE, and only while a road build
+# is queued on it — a road has no crew to rank. Every mark sends the site's own address: the working as
+# `<x> <y> <material>`, the road as `road <x> <y>`, because the bare tile is the PATCH on that hex.
+
+## The rank each queued entry is staged at, so the pill a claim reads is the one this fixture set.
+const MARKS_WORKING_BUILD_LEVEL := "high"
+const MARKS_ROAD_BUILD_LEVEL := "low"
+## The queued working's own meter and countdown.
+const MARKS_WORKING_BUILD_FRACTION := 0.25
+const MARKS_WORKING_BUILD_TURNS := 6
+
+func _assert_a_working_and_a_road_carry_their_marks() -> void:
+	_hud.update_intensification([_workings_knowledge_row()])
+	_hud.update_deposit_rungs(_deposit_rung_catalog())
+	var deposits := _workings_rows()
+	for row_variant in deposits:
+		var row: Dictionary = row_variant
+		if Vector2i(int(row["tile_x"]), int(row["tile_y"])) == ROSTER_NEAR_TILE \
+				and String(row["material"]) == WORKINGS_STONE:
+			row["is_queued"] = true
+			# A build in flight on it: part-raised and dated, so the queue row reads a live climb.
+			row["build_fraction"] = MARKS_WORKING_BUILD_FRACTION
+			row["build_turns_remaining"] = MARKS_WORKING_BUILD_TURNS
+	_hud.update_deposits(deposits)
+	_hud.update_route_rungs(_road_queue_catalog())
+	_hud.update_road_network(_roster_roads())
+	var band := _workings_band_fixture(WORKINGS_DEMAND)
+	var roster := _roster_band_fixture(ROSTER_ROADWORK_DEMAND)
+	for key in ["roadwork_demand", "roadwork_supplied", "roadwork_shortfall"]:
+		band[key] = roster[key]
+	var rows: Array = band["labor_assignments"]
+	rows.append({
+		"kind": HudConst.LABOR_KIND_ROADWORK, "workers": ROSTER_ROADWORK_WORKERS,
+		"target_x": -1, "target_y": -1, "fauna_id": "",
+	})
+	# The wire's entry names a working by its TILE alone (`BuildQueueEntryState` has no material), so
+	# the client resolves it off the deposit flagged `is_queued` above.
+	band["build_queue"] = [
+		{"kind": HudConst.LABOR_KIND_EXTRACT, "target_x": ROSTER_NEAR_TILE.x,
+			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
+			"build_priority": MARKS_WORKING_BUILD_LEVEL},
+		{"kind": HudConst.LABOR_KIND_ROADWORK, "target_x": ROSTER_NEAR_TILE.x,
+			"target_y": ROSTER_NEAR_TILE.y, "fauna_id": "",
+			"build_priority": MARKS_ROAD_BUILD_LEVEL},
+	]
+	_push_bands([band])
+	_panel.set_active_tab(BandCityPanel.ZONE_WORK)
+	_hud._bandpanel.rerender()
+	await _settle()
+	var faction := HudConst.PLAYER_FACTION_ID
+	var band_id := int(_hud._band_labor.panel_band().get("band_id", HudConst.NO_BAND_ID))
+	var working := _find_meta_control_valued(_panel, HudWorkVocab.WORKINGS_ROSTER_ROW_META,
+		"%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE])
+	var road := _find_meta_control_valued(_panel, HudWorkVocab.ROADWORK_ROSTER_ROW_META,
+		ROSTER_NEAR_TILE)
+	_assert_band_panel("the queued working draws its Groundwork row", working != null)
+	_assert_band_panel("the road with a queued build draws its roster row", road != null)
+	await _save("band_panel_site_marks")
+	# ⛔ **EVERY CONTROL IS RE-FOUND AFTER A PRESS.** A mark's optimistic write re-renders the Work tab,
+	# so a pill held across a press is a freed node and the next press aborts the state silently.
+	var working_key := "%d,%d:%s" % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]
+	var priority := _site_pill(HudWorkVocab.WORKINGS_ROSTER_ROW_META, working_key,
+		HudWorkVocab.WORK_ROW_PRIORITY_PILL_META)
+	var build := _site_pill(HudWorkVocab.WORKINGS_ROSTER_ROW_META, working_key,
+		HudWorkVocab.WORK_ROW_BUILD_PILL_META)
+	_assert_band_panel("a Groundwork row carries a Priority pill", priority != null)
+	_assert_band_panel("…and a Build pill while its working build is queued, at the entry's rank",
+		build != null and String(build.get_meta(HudWorkVocab.WORK_ROW_BUILD_PILL_META)) \
+			== MARKS_WORKING_BUILD_LEVEL)
+	var working_tail := "%d %d %s " % [ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_STONE]
+	if priority != null:
+		var line := await _pressed_line(priority, "work_priority_requested",
+			MAIN_SCRIPT.format_work_priority)
+		var wanted := "work_priority %d %d %s" % [faction, band_id, working_tail]
+		_assert_band_panel("…whose Priority press names the WORKING, not the patch (got \"%s\")"
+				% line, line.begins_with(wanted))
+	build = _site_pill(HudWorkVocab.WORKINGS_ROSTER_ROW_META, working_key,
+		HudWorkVocab.WORK_ROW_BUILD_PILL_META)
+	if build != null:
+		var line := await _pressed_line(build, "build_priority_requested",
+			MAIN_SCRIPT.format_build_priority)
+		var wanted := "build_priority %d %d %s" % [faction, band_id, working_tail]
+		_assert_band_panel("…and whose Build press names the working build (got \"%s\")" % line,
+			line.begins_with(wanted))
+	road = _find_meta_control_valued(_panel, HudWorkVocab.ROADWORK_ROSTER_ROW_META, ROSTER_NEAR_TILE)
+	if road != null:
+		_assert_band_panel("a road row carries NO Priority pill — a road has no crew",
+			_find_meta_control(road, HudWorkVocab.WORK_ROW_PRIORITY_PILL_META) == null)
+		var road_build := _find_meta_control(road, HudWorkVocab.WORK_ROW_BUILD_PILL_META) as Button
+		_assert_band_panel("…and a Build pill while a road build is queued on it", road_build != null)
+		var other := _find_meta_control_valued(_panel, HudWorkVocab.ROADWORK_ROSTER_ROW_META,
+			ROSTER_MID_TILE)
+		_assert_band_panel("a kept road with nothing queued carries no Build pill",
+			other != null and _find_meta_control(other, HudWorkVocab.WORK_ROW_BUILD_PILL_META) == null)
+		if road_build != null:
+			var line := await _pressed_line(road_build, "build_priority_requested",
+				MAIN_SCRIPT.format_build_priority)
+			var wanted := "build_priority %d %d road %d %d " % [faction, band_id, ROSTER_NEAR_TILE.x,
+				ROSTER_NEAR_TILE.y]
+			_assert_band_panel("…whose press names the ROAD (got \"%s\")" % line,
+				line.begins_with(wanted))
+	_restore_roadwork_roster_fixture()
+	_restore_workings_roster_fixture()
+	await _settle()
+
+## One site row's pill, found fresh off the live panel — `null` where the row or the pill is absent.
+func _site_pill(row_meta: String, row_value: Variant, pill_meta: String) -> Button:
+	var row := _find_meta_control_valued(_panel, row_meta, row_value)
+	return null if row == null else _find_meta_control(row, pill_meta) as Button
+
+## Press one pill and return the line `Main` would build from the payload its signal carried.
+func _pressed_line(pill: Button, signal_name: String, builder: Callable) -> String:
+	var seen: Array = []
+	var sink := func(p: Dictionary) -> void: seen.append(p)
+	_hud.connect(signal_name, sink)
+	pill.pressed.emit()
+	await _settle()
+	_hud.disconnect(signal_name, sink)
+	if seen.is_empty():
+		return ""
+	return String(builder.call(seen[0] as Dictionary).get("line", ""))
+
 func _restore_workings_roster_fixture() -> void:
 	_hud.update_deposits([])
 	# **AND THE KNOWLEDGE ROW WITH THEM.** A push REPLACES a faction's whole row, so the deposit crafts

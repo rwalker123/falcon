@@ -2912,12 +2912,12 @@ func _expected_grade_line() -> String:
 	return "%s %d %d %d %d" % [SourceForecast.IMPROVEMENT_GRADE, HudConst.PLAYER_FACTION_ID,
 		_road_keeper_band(), ROAD_TILE.x, ROAD_TILE.y]
 
-## **AND THE LINE THE ABANDON ROW WOULD TRANSMIT — three tokens, and NO BAND.** `abandon` names a
-## faction and a PLACE: it drops every band of that faction's holding on the hex, the road's keeper and
-## its queue entry with it. The band token that `grade` carries is absent here on purpose, and stating
+## **AND THE LINE THE ABANDON ROW WOULD TRANSMIT — `road` then the tile, and NO BAND.** `abandon`
+## names a faction and a SITE; a road leads with `road` because the bare tile is the PATCH on that
+## hex (`docs/plan_site_crews.md` §2.4), and it drops the road's keeper and its queue entry. The band token that `grade` carries is absent here on purpose, and stating
 ## the whole line is the only way to see that a builder has not helpfully added one.
 func _expected_abandon_line() -> String:
-	return "abandon %d %d %d" % [HudConst.PLAYER_FACTION_ID, ROAD_TILE.x, ROAD_TILE.y]
+	return "abandon %d road %d %d" % [HudConst.PLAYER_FACTION_ID, ROAD_TILE.x, ROAD_TILE.y]
 
 ## ---- THE ROAD LADDER, the tile card's route ACTION (arc #532 slice 13) -------------------------
 ##

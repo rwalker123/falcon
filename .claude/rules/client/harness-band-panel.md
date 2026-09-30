@@ -1054,9 +1054,18 @@ ever stand on the pool that funds it.
   missed it. **The three retired keeping pools** (`RETIRED_ASSIGN_LABOR_ROLES`: agriculture ·
   husbandry · quarrywork, spelled as strings because their `HudConst` constants retired) are asserted
   to build NO line (`docs/plan_site_crews.md`).
-- **`build_priority` is driven in both source forms** (`_drive_build_priority`, through the `Build`
-  pill's own `_commit_build_priority`) and counted twice in `EXPECTED_KINDS`; it names a band, so the
-  handle assertion covers it.
+- **Every site verb is driven in every form it takes** (`docs/plan_site_crews.md` §2.4):
+  `build_priority` and `build_order` in the tile, herd, working (`<x> <y> <material>`) and road
+  (`road <x> <y>`) forms, `work_priority` in the first three, `unqueue` in all four — counted per form
+  in `EXPECTED_KINDS`, and driven through the controls' own emitters so a payload missing `material`
+  or `road` fails the parse check as the patch it would name. `work_priority`'s road form is asserted
+  to build NO line, and `_assert_retired_kit_verbs` asserts `Main` has no `format_build_kit` /
+  `format_upkeep_kit` and the HUD no signal for either.
+- **`band_panel_preview`'s `(f3)` state, `_assert_a_working_and_a_road_carry_their_marks`**, frames
+  `band_panel_site_marks.png`: the queued Groundwork row carries both pills and the queued road only
+  a `Build` pill, each press building the working or road form. **Every pill is re-found after a
+  press** — the optimistic write re-renders the Work tab, and pressing a held pill aborts the state
+  silently.
 - **`_assert_every_role_is_emittable` closes the other direction**: every listed role builds a real line
   from `Main.format_assign_labor`, and an unknown role builds NOTHING — so the list is a list rather
   than a builder that accepts anything.

@@ -3777,3 +3777,7 @@ static func site_row_height(party_lines: int) -> float:
 
 ## **ONE BUILD QUEUE ROW** — its line and the second line carrying the entry's `Build:` mark.
 const BUILD_QUEUE_ROW_HEIGHT := WORK_ROW_HEIGHT + BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT
+
+## A queued WORKING build's job face — the rung it is being raised to, the working's material, its
+## tile: `Quarry · Stone (70, 17)`. The material is half the working's identity, one hex holding two.
+const BUILD_QUEUE_WORKING_FACE_FORMAT := "%s · %s (%d, %d)"

@@ -2379,10 +2379,13 @@ Tended Patch · keeps 1 of 2 · 1 harvesting   [Priority: Normal] [Build: High]
   `Short of tools.` when the keeping tools came up short); otherwise `ⓘ` with `More tools would speed
   this up.` when they did; otherwise an empty slot. The marks run keeps its `⚠` only for a missing
   GOOD with the work paid, the one at-risk case the keeping mark does not state.
-- **Two priority pills end line two.** `Priority: <level>` is on every forage and hunt row and cycles
-  `work_priority` (Normal → High → Low → Normal). `Build: <level>` is on a row only while its site has
-  a build in this band's queue, and cycles `build_priority <faction> <band> <x> <y>|<herd> <level>`
-  (`build_priority_requested`, relayed by `HudLayer`, formatted by `Main.format_build_priority`).
+- **Two priority pills end line two** (`_add_priority_pills`). `Priority: <level>` is on every
+  harvest, hunt and GROUNDWORK row and cycles `work_priority` (Normal → High → Low → Normal).
+  `Build: <level>` is on a row only while its site has a build in this band's queue, and cycles
+  `build_priority` (`build_priority_requested`, relayed by `HudLayer`, formatted by
+  `Main.format_build_priority`). **A ROAD row carries the `Build` pill alone**, only while a road build
+  is queued on it: a road has no crew, so there is nothing for `Priority` to rank and the server
+  refuses `work_priority`'s road form by name.
   Neither writes an optimistic overlay: both marks are captured live, so the new level arrives on the
   command's own recapture and there is nothing to roll back. The pills are on the crew line rather
   than the accounts line because the accounts line is measured to hold the four-cash-crop worst case
@@ -2390,6 +2393,26 @@ Tended Patch · keeps 1 of 2 · 1 harvesting   [Priority: Normal] [Build: High]
 - **Every build-queue row is two lines** (`BUILD_QUEUE_ROW_HEIGHT`): the second states the entry's own
   mark READ-ONLY, `Build: Normal` (blank on a pending entry), then `· ◆ builders short of tools` on
   the tool-short head while its strip is closed.
+
+### EVERY SITE VERB SPELLS ITS SOURCE ONE WAY — `Main.site_address`
+
+`build_order`, `build_priority`, `work_priority`, `unqueue` and a road's `abandon` all compose their
+source through the one static:
+
+| source | spelled | payload carries |
+|---|---|---|
+| a herd | `<herd_id>` | `herd_id` |
+| a working | `<x> <y> <material>` | `material` |
+| a road build | `road <x> <y>` | `road: true` |
+| a patch | `<x> <y>` | nothing else — the bare tile ALWAYS means the patch |
+
+⛔ **A WORKING OR A ROAD SENT AS THE BARE TILE LANDS ON THE PATCH ON THAT HEX**, which is why the
+emitters (`_emit_build_order`, `_emit_unqueue`, `_commit_build_priority`, `_commit_work_priority`, both
+road `✕`s) state `material` and `road` on every payload. `work_priority` passes `allow_road = false`
+and builds no line for a road. A working's queue entry names only its tile on the wire
+(`BuildQueueEntryState` has no material field), so `HudBandLaborState.queued_extract_material`
+resolves it off the deposits this band works there (the one `is_queued`, else the only one held);
+`_deposit_queue_models` gives a queued working build its queue row, face `Quarry · Stone (70, 17)`.
 
 The sections below describe the retired paged board, the POOLS block and its cards wherever they
 speak of chips, a pager, board capacity, a row of pool cards, or `agriculture` / `husbandry` /
@@ -3484,8 +3507,8 @@ did not leave the block until the turn resolved. All three land on the row that 
 
 `docs/plan_pool_toe.md` §3 took the per-entry kit back off the queue: **a build's tools follow from
 the RUNG it raises**, so an entry has nothing to override and the strip has one control. The
-`build_kit` COMMAND is retired in a later slice — leaving the verb unreachable from the UI is the
-expected state, and `cargo xtask command-guard` is its only live driver meanwhile.
+`build_kit` COMMAND is retired end to end since (`docs/plan_site_crews.md`): the server's parser
+refuses it, and the client's builder, signal and relay are gone.
 
 **What that RETIRES, stated so nobody re-derives it:** `BUILD_QUEUE_KIT_WIDTH`,
 `BUILD_QUEUE_SETTINGS_KIT_KEY`, `BUILD_QUEUE_KIT_TOOLTIP`, `BUILD_QUEUE_KIT_PICKER_META`, the
@@ -3870,13 +3893,14 @@ dead and completely green. `_drive_click` pushes the player's own events through
 Godot decide whether anything was pressed; sabotage-verified by disabling the `✕`, which the emitted
 form would have pressed anyway.
 
-**`build_kit` and `build_order` are driven in `command_guard`**, both source forms each, because a
-well-formed line that means the wrong thing is exactly what that gate exists for. `build_kit` is the
-first SOURCE-addressed verb it drives — it names no band, every band holding the source holding the
-same entry — so `BandHandle` grew a `SourceAddressed` outcome keyed on the parsed VARIANT rather than
-on the harness's own label, which is what stops a band-addressed command being opted out of the handle
-check by being relabelled. The `builders` role is swept BARE there now: the sim refuses a `kit` token
-on it, and that refusal is in the handler rather than the parser, so a parser-level gate cannot see it.
+**`build_order`, `build_priority`, `work_priority` and `unqueue` are driven in `command_guard` in every
+site form they take**, because a well-formed line that means the wrong thing is exactly what that
+gate exists for (the forms are "EVERY SITE VERB SPELLS ITS SOURCE ONE WAY" below). `BandHandle`'s
+`SourceAddressed` outcome is keyed on the parsed VARIANT rather than on the harness's own label, which
+is what stops a band-addressed command being opted out of the handle check by being relabelled. The
+`builders` role is swept BARE: the sim refuses a `kit` token on it, and that refusal is in the handler
+rather than the parser, so a parser-level gate cannot see it. `build_kit` and `upkeep_kit` are
+retired, and the guard asserts `Main` has no builder and the HUD no signal for either.
 
 ### THE EXPANSION — the whole queue over the whole Work zone (§4.9 item 9c)
 
@@ -5233,7 +5257,8 @@ as `BandPanelController.work_priority_requested`, relayed by `HudLayer` and form
 is chosen (a non-empty herd id is the herd form, else two integer tokens name a tile), which is how
 the sim's own parser chooses. **It names a BAND** for `build_order`'s reason: the ordering it feeds is
 a band's — the shedding walk partitions that band's rows and the pen-feed split serves that band's
-stores — where `unqueue` and `build_kit` are source-addressed because their subject is the ground.
+stores — where `unqueue` is source-addressed because its subject is the ground. Its source is spelled
+by `Main.site_address` like every other site verb (below).
 
 **⛔ NO OPTIMISTIC OVERLAY, AND THEREFORE NO ROLLBACK HANDLE.** `LaborAssignment.priority` is captured
 LIVE off the allocation the command mutates and the server re-captures after every command, so the

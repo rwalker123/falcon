@@ -625,7 +625,9 @@ to put on it — so it keeps a band-wide stepper. The Work tab's ROADWORK sectio
 head (`ROADWORK · N on work`, carrying the roster's `+N more` door), the pool's own line (`Roadwork`,
 the one-slot `⚠` / `ⓘ` mark with the coverage, tool and idle sentences on its hover, and the
 stepper), the Spread/Priority pick wherever the road bill is live (`_build_upkeep_mode_row`, which
-reads the road bill alone), the unseen line, and the roads it keeps.
+reads the road bill alone), the unseen line, and the roads it keeps. A road row carries a `Build`
+pill only while a road build is queued on it (`build_priority … road <x> <y>`) and never a `Priority`
+pill — a road has no crew. Its `✕` sends `abandon <f> road <x> <y>`, the bare tile being the patch.
 
 The POOLS block, its row of four cards and their shared metrics are retired, so the card-width
 measurements in the next two sections are the record of a layout that no longer draws. The roster
@@ -747,17 +749,16 @@ its tile, so there is no band-style entity resolution to do.
 ### The `✕` is the EXISTING abandon path, and it must not be quieter than the tile card
 
 The row's `✕` emits `BandPanelController.road_abandon_requested`, which `HudLayer` relays onto
-`abandon_requested` → `Main.format_abandon` → `abandon <faction> <x> <y>`. That is the **same**
+`abandon_requested` → `Main.format_abandon` → `abandon <faction> road <x> <y>`. That is the **same**
 command path `DrawerComposeController.road_abandon_requested` already takes, and a second builder was
 deliberately not written: two emitters converging on one relay is what stops the verb's grammar
 drifting. Steady, full-opacity DANGER `✕`, no confirm — the single-item idiom the build-queue
 withdrawal and the parties recall already use.
 
-⛔ **`abandon` NAMES A FACTION AND A PLACE AND CARRIES NO BAND TOKEN**, so it drops every
-band-of-that-faction's holding on the tile — **a forage assignment there included**. The tile card
-warns about this in a second line; the roster carries the identical `ROAD_LADDER_ABANDON_ALSO` string
-on the `✕`'s hover, because a one-click destructive action that under-states what it destroys is
-worse in a roster than on a card: **a roster invites bulk use.**
+⛔ **THE `✕` SENDS `abandon <faction> road <x> <y>`, WHICH NAMES THE ROAD ALONE** and carries no band
+token (`docs/plan_site_crews.md` §2.4). The bare tile would drop every band-of-that-faction's holding
+on the hex, a forage assignment included; the road form does not, so the `✕`'s hover is the road
+ladder's own drop sentence and states no second consequence.
 
 ### ⛔ THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL
 
@@ -1230,25 +1231,18 @@ taken back from the UI at all.
 - **Offered ONLY where the keeper is in the player's roster.** A road nobody keeps has nothing to put
   down and a road another people keeps is not yours to drop; in both cases the control would emit a
   command the sim refuses, which is the shape the ladder's own gated rows exist to avoid.
-- **It emits `abandon <faction> <x> <y>`** through `road_abandon_requested` → `HudLayer.abandon_requested`
+- **It emits `abandon <faction> road <x> <y>`** through `road_abandon_requested` → `HudLayer.abandon_requested`
   → `Main.format_abandon`, written beside `format_unqueue`, which is its sibling and the shape it was
   copied from. **The press closes the card before it emits**, the rung presses' own rule.
 - **It carries NO band token**, unlike `grade` / `pave` — see below.
 
-> #### ⛔ IT NAMES A PLACE, NOT A ROAD — AND THE ROW HAS TO SAY SO
+> #### ⛔ IT NAMES THE ROAD, AND ONLY THE ROAD (`docs/plan_site_crews.md` §2.4)
 >
-> `handle_abandon` drops **the faction's labor rows on that tile** as well as the road's keeper and
-> its queue entry. The sim's own comment says why: the verb names a *place*, a tile may carry a road
-> as well as a patch, and dropping one without the other would be silently partial on exactly the
-> tiles where a band both farms and keeps a road.
->
-> **So where the tile also carries work of this faction's, the row carries a second line naming what
-> else goes down with it** (`ROAD_LADDER_ABANDON_ALSO`, over `forage_assignment_of` across the
-> roster — a tile test, because `abandon` is a tile command and a hunt names a herd). On bare ground
-> it is a plain button.
->
-> ⛔ **DO NOT ADD A ROAD-ONLY ABANDON.** The sim has no such verb, and a client emitting a command
-> narrower than the sim implements would be lying about what the button does.
+> Both road `✕`s send `abandon <faction> road <x> <y>`, which puts down the road's keeping and its
+> queue entry and nothing else on the hex. It named a PLACE until the road form existed — the bare
+> tile still does, dropping the faction's labor rows there too — and the row carried a second line
+> (`ROAD_LADDER_ABANDON_ALSO`, *"…and the foraging your people do on this hex goes down with it"*)
+> saying so. That line is retired with the consequence it stated.
 
 ### The gates, keyed on the RUNG and not on the verb
 
@@ -1517,8 +1511,7 @@ else's people to a standing bill. **Which band the token names is the PLAYER'S c
 `Band:` picker above.
 
 ⛔ **AND `abandon` NAMES NO BAND, WHICH IS THE OTHER HALF OF THE SAME CONTRAST.** `Main.format_abandon`
-emits `abandon <faction> <x> <y>`: the verb names a *place* and drops every band of the faction's
-holding on it. A builder that helpfully added a band token there would be inventing grammar, and one
+emits `abandon <faction> road <x> <y>`: the road form puts down that road and nothing else. A builder that helpfully added a band token there would be inventing grammar, and one
 that dropped `grade`'s would grade the wrong hex — both handles are integers in a positional grammar,
 so either mistake still PARSES. `ui_preview` asserts both whole lines for exactly that reason.
 
@@ -1542,7 +1535,7 @@ what make the count mean anything — a rival's road, and a road with `has_keepe
 `keeper_band_id` reads as this band's; nearest-first order off a wire list deliberately in a
 different one; the three locators; the value cell equal to `HudRouteVocab.road_row_value`'s own
 output **character for character**, with the hazard glyph on the at-risk road; no stepper face
-anywhere in the block; the `✕`'s hover carrying `ROAD_LADDER_ABANDON_ALSO` verbatim; and the `✕`
+anywhere in the block; the `✕`'s hover being the ladder's own drop sentence with no foraging warning; and the `✕`
 pressed **through the viewport** — a `BaseButton` fires from its own `_gui_input`, which
 `gui_input.emit` does not reach and `pressed.emit()` bypasses, so only a pushed event can see a
 control that is covered, zero-size or filtered out of the hit test. Then case 2 (the muted line) and
@@ -1559,7 +1552,7 @@ fails the order and locator claims; and pointing the `✕` at the band's tile fa
 with the wrong coordinates in it.
 
 **And the line itself goes through the real server parser.** `command_guard._drive_road_abandon`
-stands the roster up headlessly, presses its `✕`, and records `abandon <faction> <x> <y>`; the Rust
+stands the roster up headlessly, presses its `✕`, and records `abandon <faction> road <x> <y>`; the Rust
 half classifies `CommandPayload::Abandon` as `BandHandle::PlaceAddressed` — its own outcome beside
 `SourceAddressed`, so *"this verb names no band"* stays a stated fact about one variant instead of a
 hole any un-listed command falls through. **Falsified**: removing that arm fails with *"parsed to a

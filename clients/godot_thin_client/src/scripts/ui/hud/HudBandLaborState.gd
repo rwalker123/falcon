@@ -644,11 +644,42 @@ func build_queue_keys(band: Dictionary) -> Array:
 	for entry_variant in (entries as Array):
 		if not (entry_variant is Dictionary):
 			continue
-		var entry: Dictionary = entry_variant
-		keys.append(pending_key(String(entry.get("kind", "")).strip_edges().to_lower(),
-			int(entry.get("target_x", -1)), int(entry.get("target_y", -1)),
-			String(entry.get("fauna_id", ""))))
+		keys.append(queue_entry_key(band, entry_variant as Dictionary))
 	return keys
+
+## **ONE WIRE QUEUE ENTRY'S KEY**, in `pending_key`'s shape. A WORKING's entry names only its TILE on
+## the wire (`BuildQueueEntryState` has no material field), so its material is resolved off the
+## deposits this band works there — see `queued_extract_material`.
+func queue_entry_key(band: Dictionary, entry: Dictionary) -> String:
+	var kind := String(entry.get("kind", "")).strip_edges().to_lower()
+	var x := int(entry.get("target_x", -1))
+	var y := int(entry.get("target_y", -1))
+	var material := queued_extract_material(band, x, y) \
+		if kind == HudConst.LABOR_KIND_EXTRACT else ""
+	return pending_key(kind, x, y, String(entry.get("fauna_id", "")), material)
+
+## **WHICH OF THIS BAND'S WORKINGS ON ONE TILE A QUEUED `extract` ENTRY IS ON.** The wire entry carries
+## the tile alone; the deposit rows say which material there `is_queued`, and this band's own
+## `extract` row says which it holds. A tile with one held working answers that working whatever the
+## flag reads; `""` where nothing on the tile is held.
+func queued_extract_material(band: Dictionary, x: int, y: int) -> String:
+	var held: Array[String] = []
+	var queued: Array[String] = []
+	for deposit_variant in deposits():
+		if not (deposit_variant is Dictionary):
+			continue
+		var deposit: Dictionary = deposit_variant
+		if HudDepositVocab.tile_of(deposit) != Vector2i(x, y):
+			continue
+		var material := HudDepositVocab.material_of(deposit)
+		if extract_assignment_of(band, x, y, material).is_empty():
+			continue
+		held.append(material)
+		if HudDepositVocab.is_queued(deposit):
+			queued.append(material)
+	if queued.size() >= 1:
+		return queued[0]
+	return held[0] if held.size() == 1 else ""
 
 ## **ONE QUEUED BUILD'S OWN MARK** — `high` / `normal` / `low` off the band's wire queue entry whose
 ## source key is `key` (`BuildQueueEntryState.buildPriority`, `docs/plan_site_crews.md` §2.4), or `""`
@@ -662,10 +693,7 @@ func build_priority_for_key(band: Dictionary, key: String) -> String:
 		if not (entry_variant is Dictionary):
 			continue
 		var entry: Dictionary = entry_variant
-		var entry_key := pending_key(String(entry.get("kind", "")).strip_edges().to_lower(),
-			int(entry.get("target_x", -1)), int(entry.get("target_y", -1)),
-			String(entry.get("fauna_id", "")))
-		if entry_key == key:
+		if queue_entry_key(band, entry) == key:
 			return HudWorkVocab.work_priority_of(String(entry.get("build_priority", "")))
 	return ""
 
@@ -783,13 +811,14 @@ func pending_unqueues_for(entity: int) -> Dictionary:
 ## edit on that very source, which dropping it would discard. `effective_worker_map` blanks the
 ## effective improvement for a withdrawn key instead, so the work row's `⌃` returns to its offer face
 ## on the same frame without anything else about the row moving.
-func record_pending_unqueue(entity: int, kind: String, x: int, y: int, herd_id: String) -> void:
+func record_pending_unqueue(entity: int, kind: String, x: int, y: int, herd_id: String,
+		material: String = "") -> void:
 	if entity < 0:
 		return
 	var entry: Dictionary = _pending_labor.get(entity, {})
 	entry["turn"] = _current_turn
 	var withdrawn: Dictionary = entry.get("unqueue", {})
-	withdrawn[pending_key(kind, x, y, herd_id)] = true
+	withdrawn[pending_key(kind, x, y, herd_id, material)] = true
 	entry["unqueue"] = withdrawn
 	_pending_labor[entity] = entry
 	changed.emit(&"pending")

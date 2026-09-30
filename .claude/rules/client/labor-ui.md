@@ -3814,8 +3814,8 @@ retires, so no rung of that picker can be disabled.
 > in it.** It read *"the override's home is the queue row's settings strip (`build_kit`)"*;
 > `docs/plan_pool_toe.md` §3 retired that picker on the reasoning this bullet was already halfway to
 > — a build's tools are a property of the RUNG being raised, so neither the BAND nor the ENTRY is the
-> right place to name one. `build_kit` is unreachable from the UI and `cargo xtask command-guard` is
-> its only driver until the verb retires end to end in a later slice.
+> right place to name one. `build_kit` has since retired end to end (`docs/plan_site_crews.md`):
+> the server refuses it and the client has no builder, signal or relay for it.
 >
 > **The refusal is in the HANDLER, not the parser**, so `command_guard` — a parser-level gate — cannot
 > see it; the `builders` role is swept BARE there for that reason.

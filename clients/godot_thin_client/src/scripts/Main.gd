@@ -415,8 +415,6 @@ func _ready() -> void:
             hud.connect("abandon_requested", Callable(self, "_on_hud_abandon"))
         if hud.has_signal("abandon_working_requested") and not hud.is_connected("abandon_working_requested", Callable(self, "_on_hud_abandon_working")):
             hud.connect("abandon_working_requested", Callable(self, "_on_hud_abandon_working"))
-        if hud.has_signal("build_kit_requested") and not hud.is_connected("build_kit_requested", Callable(self, "_on_hud_build_kit")):
-            hud.connect("build_kit_requested", Callable(self, "_on_hud_build_kit"))
         if hud.has_signal("build_order_requested") and not hud.is_connected("build_order_requested", Callable(self, "_on_hud_build_order")):
             hud.connect("build_order_requested", Callable(self, "_on_hud_build_order"))
         if hud.has_signal("work_priority_requested") and not hud.is_connected("work_priority_requested", Callable(self, "_on_hud_work_priority")):
@@ -1821,19 +1819,12 @@ static func format_improvement(payload: Dictionary) -> Dictionary:
 ## from the road ladder's own control.
 static func format_unqueue(payload: Dictionary) -> Dictionary:
     var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
-    var herd_id := String(payload.get("herd_id", "")).strip_edges()
-    if herd_id != "":
-        return {
-            "line": "unqueue %d %s" % [faction, herd_id],
-            "message": "Withdraw the build queued on %s." % herd_id,
-        }
-    var x := int(payload.get("x", -1))
-    var y := int(payload.get("y", -1))
-    if x < 0 or y < 0:
+    var site := site_address(payload)
+    if site == "":
         return {}
     return {
-        "line": "unqueue %d %d %d" % [faction, x, y],
-        "message": "Withdraw the build queued on (%d, %d)." % [x, y],
+        "line": "unqueue %d %s" % [faction, site],
+        "message": "Withdraw the build queued on %s." % site_label(payload),
     }
 
 ## **`abandon <faction> <x> <y>` | `abandon <faction> <herd_id>` — PUT THE HOLDING DOWN.**
@@ -1845,12 +1836,10 @@ static func format_unqueue(payload: Dictionary) -> Dictionary:
 ## of the two that does anything, which is why a road handed to the wrong band could not be taken back
 ## from the UI at all while this had no builder.
 ##
-## ⛔ **IT NAMES A PLACE, NOT A HOLDING, AND THAT HAS A CONSEQUENCE THE CALLER MUST STATE.**
-## `handle_abandon` drops the faction's labor rows on that tile as well as the road's keeper, because
-## a tile may carry a road AND a patch and putting one down without the other would be silently partial
-## on exactly the tiles where a band both farms and keeps a road. **There is no road-only form and this
-## client must not invent one** — a command narrower than the sim implements would lie about what the
-## button does — so the road ladder's own row says what else goes down with it.
+## ⛔ **THE BARE TILE NAMES A PLACE; `road <x> <y>` NAMES THE ROAD ALONE** (`docs/plan_site_crews.md`
+## §2.4). `abandon <f> <x> <y>` drops the faction's labor rows on that tile AND the road's keeping,
+## while the road form puts down the road and nothing else — which is what both road `✕`s send
+## (`road: true` on their payload), so neither states a consequence for the patch beside it.
 ##
 ## **The two source shapes are told apart the way `format_unqueue` tells them apart**, which is the way
 ## the sim's parser does: two integer tokens are a TILE, one token is a HERD id, and a non-empty herd
@@ -1870,6 +1859,12 @@ static func format_abandon(payload: Dictionary) -> Dictionary:
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
         return {}
+    # ⛔ **A ROAD IS `abandon <f> road <x> <y>`** — the bare tile is the PATCH on that hex now.
+    if bool(payload.get("road", false)):
+        return {
+            "line": "abandon %d %s %d %d" % [faction, SITE_ADDRESS_ROAD_TOKEN, x, y],
+            "message": "Put down the road your people keep at (%d, %d)." % [x, y],
+        }
     return {
         "line": "abandon %d %d %d" % [faction, x, y],
         "message": "Put down what your people hold at (%d, %d)." % [x, y],
@@ -1907,65 +1902,58 @@ static func format_abandon_working(payload: Dictionary) -> Dictionary:
         "message": "Stop holding the %s working at (%d, %d)." % [material, x, y],
     }
 
-## **`build_kit <faction> <x> <y> [kit <id>]` | `build_kit <faction> <herd_id> [kit <id>]` — THE
-## PER-ENTRY BUILDERS KIT** (`docs/plan_standing_upkeep.md` §4.7a ②). It names a SOURCE and sets a
-## property of that source's QUEUE ENTRY on every band of the faction that has it queued; the row, its
-## take crew and the banked meter are untouched.
+## > ### ⛔ RETIRED — `format_build_kit` / `format_upkeep_kit` (`docs/plan_site_crews.md`)
+## >
+## > `build_kit` named the kit ONE queued build is raised with and `upkeep_kit` a site's keeping kit.
+## > Nothing sim-side read either stored kit — a build's and a site's tools follow from the RUNG — so
+## > both verbs are retired end to end and the server's parser refuses them. `command_guard` asserts
+## > the client builds no line for either.
+
+## **THE SOURCE A QUEUED BUILD OR A WORK ROW NAMES, IN THE SERVER'S ONE GRAMMAR**
+## (`docs/plan_site_crews.md` §2.4) — `<herd_id>` for a herd, `road <x> <y>` for a road build,
+## `<x> <y> <material>` for a working, and the bare `<x> <y>` for a patch, which is what an
+## undecorated tile always means. `""` when the payload names nothing.
 ##
-## **ITS OWN BUILDER BECAUSE THE BUILDERS' KIT IS PER ENTRY, NOT PER BAND.** `assign_labor` REFUSES a
-## `kit` token on the `builders` role now: a build's default is derived from that entry's own food web
-## — a hoe for a Cultivate, hurdles for a Tame — and one stored id per band is the one thing that
-## derivation cannot express.
+## ⛔ **A WORKING IS NEVER ADDRESSED AS THE BARE TILE**: that form is the PATCH on the same hex, so a
+## reorder, a withdrawal or a mark sent that way would land on somebody else's source. The payload
+## carries `material` for a working and `road: true` for a road, and this one function reads both, so
+## every verb addressing a site spells it the same way.
 ##
-## ⛔ **AN ABSENT `kit` TOKEN CLEARS THE OVERRIDE back to the derivation, and `_kit_token` is what
-## produces it.** Its standing rule — omit the token when the selection equals the default — is
-## exactly right here, so a player picking the `(default)` entry emits `build_kit 0 12 34` and the sim
-## goes back to deriving. There is no `default` literal to invent, and `none` (bare-handed) survives
-## the round trip as the real selection it is.
-##
-## The two source shapes are told apart the way `format_unqueue` tells them apart, which is the way
-## the sim's own parser does: a non-empty herd id is the herd form, else two integer tokens are a tile.
-static func format_build_kit(payload: Dictionary) -> Dictionary:
-    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
-    var kit_face := String(payload.get("kit_id", "")).strip_edges()
-    var token := _kit_token(payload)
-    var message_kit := kit_face if token != "" else BUILD_KIT_DERIVED_NOTE
+## `allow_road` is false for `work_priority`, which the server refuses on a road — a road has no crew
+## to rank.
+static func site_address(payload: Dictionary, allow_road: bool = true) -> String:
     var herd_id := String(payload.get("herd_id", "")).strip_edges()
     if herd_id != "":
-        return {
-            "line": "build_kit %d %s%s" % [faction, herd_id, token],
-            "message": "Raise the build on %s with %s." % [herd_id, message_kit],
-        }
+        return herd_id
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
-        return {}
-    return {
-        "line": "build_kit %d %d %d%s" % [faction, x, y, token],
-        "message": "Raise the build on (%d, %d) with %s." % [x, y, message_kit],
-    }
+        return ""
+    if bool(payload.get("road", false)):
+        return ("%s %d %d" % [SITE_ADDRESS_ROAD_TOKEN, x, y]) if allow_road else ""
+    var material := String(payload.get("material", "")).strip_edges()
+    if material != "":
+        return "%d %d %s" % [x, y, material]
+    return "%d %d" % [x, y]
 
-## What the command FEED says when the line carries no `kit` token — the player handed the choice
-## back, and *"with "* followed by nothing states nothing at all.
-const BUILD_KIT_DERIVED_NOTE := "the tools this job derives for itself"
+## The token that leads a road build's address.
+const SITE_ADDRESS_ROAD_TOKEN := "road"
 
-## > ### ⛔ RETIRED — `format_upkeep_kit` AND `UPKEEP_KIT_DERIVED_NOTE`
-## >
-## > `upkeep_kit <faction> <x> <y> [kit <id>]` set a SITE's keeping tool on every band of the faction
-## > that worked it — *"a WIDER reach than `build_kit`'s, because a keeping bill is owed by every band
-## > holding the ground and not only by whoever queued a build on it"*. `docs/plan_pool_toe.md` §3
-## > retired the choice: a site's tools follow from its own rung, so there is nothing left to name.
-## >
-## > **The rule it was minted for is still true one scope out**, which is why it is quoted rather than
-## > deleted silently: *a kit stored on the band's `agriculture` / `husbandry` role row is the one
-## > thing a per-site answer cannot express — one pick put the same tool on every site that band
-## > kept, with no way back.* The requirement answers per site with nothing stored anywhere.
-## >
-## > **`format_build_kit` above did NOT go with it**, and the asymmetry is a fact rather than an
-## > oversight: `cargo xtask command-guard` drives that grammar and parses the emitted line with the
-## > real server parser, so the builder is still reached. Nothing drove this one. Both verbs retire
-## > end to end in the slice that owns the gate.
+## **THE SAME SITE, AS THE FEED LINE NAMES IT** — `(x, y)` for a patch, `(x, y) <material>` for a
+## working, `the road at (x, y)` for a road, the herd id for a herd. The address above is grammar; this
+## is what the player reads beside it.
+static func site_label(payload: Dictionary) -> String:
+    var herd_id := String(payload.get("herd_id", "")).strip_edges()
+    if herd_id != "":
+        return herd_id
+    var tile := "(%d, %d)" % [int(payload.get("x", -1)), int(payload.get("y", -1))]
+    if bool(payload.get("road", false)):
+        return SITE_LABEL_ROAD_FORMAT % tile
+    var material := String(payload.get("material", "")).strip_edges()
+    return ("%s %s" % [tile, material]) if material != "" else tile
 
+## A road site's feed-line label.
+const SITE_LABEL_ROAD_FORMAT := "the road at %s"
 
 ## **WHAT THE PLAYER CALLS THE FIRST SLOT OF A QUEUE.** The wire's `position` is a 0-based INDEX and
 ## stays one; the sim's own reply spells the landed slot `#{landed + 1}`, so the echo beside it adds
@@ -1980,7 +1968,7 @@ const BUILD_QUEUE_POSITION_LABEL_BASE := 1
 ## **THE ORDER IS THE FUNDING DECISION**: the whole `builders` pool stands on the HEAD entry until its
 ## meter fills, then on the next — so a position is not a label, it is when the job gets built.
 ##
-## **IT NAMES A BAND where `build_kit` and `unqueue` do not**, and the asymmetry is the sim's: a queue
+## **IT NAMES A BAND where `unqueue` does not**, and the asymmetry is the sim's: a queue
 ## belongs to a band, while a kit and a withdrawal are properties of the entry every band holding that
 ## source has. `position` is 0-based on the WIRE and the sim clamps it to the queue's length.
 ##
@@ -1994,21 +1982,13 @@ static func format_build_order(payload: Dictionary) -> Dictionary:
         return {}
     var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
     var position: int = max(0, int(payload.get("position", 0)))
-    var herd_id := String(payload.get("herd_id", "")).strip_edges()
-    if herd_id != "":
-        return {
-            "line": "build_order %d %d %s %d" % [faction, band_id, herd_id, position],
-            "message": "Move the build on %s to #%d in the build queue."
-                % [herd_id, position + BUILD_QUEUE_POSITION_LABEL_BASE],
-        }
-    var x := int(payload.get("x", -1))
-    var y := int(payload.get("y", -1))
-    if x < 0 or y < 0:
+    var site := site_address(payload)
+    if site == "":
         return {}
     return {
-        "line": "build_order %d %d %d %d %d" % [faction, band_id, x, y, position],
-        "message": "Move the build on (%d, %d) to #%d in the build queue."
-            % [x, y, position + BUILD_QUEUE_POSITION_LABEL_BASE],
+        "line": "build_order %d %d %s %d" % [faction, band_id, site, position],
+        "message": "Move the build on %s to #%d in the build queue."
+            % [site_label(payload), position + BUILD_QUEUE_POSITION_LABEL_BASE],
     }
 
 ## **`work_priority <faction> <band> <x> <y> <level>` | `work_priority <faction> <band> <herd_id>
@@ -2039,19 +2019,13 @@ static func format_work_priority(payload: Dictionary) -> Dictionary:
     # The FEED reads the level the way the picker's own face spells it, so the echo and the button
     # the player pressed carry one word between them.
     var face := String(HudWorkVocab.WORK_PRIORITY_FACES[level])
-    var herd_id := String(payload.get("herd_id", "")).strip_edges()
-    if herd_id != "":
-        return {
-            "line": "work_priority %d %d %s %s" % [faction, band_id, herd_id, level],
-            "message": "%s is now %s priority for this band." % [herd_id, face.to_lower()],
-        }
-    var x := int(payload.get("x", -1))
-    var y := int(payload.get("y", -1))
-    if x < 0 or y < 0:
+    # **NO ROAD FORM** — a road has no crew to rank, and the server refuses it by name.
+    var site := site_address(payload, false)
+    if site == "":
         return {}
     return {
-        "line": "work_priority %d %d %d %d %s" % [faction, band_id, x, y, level],
-        "message": "(%d, %d) is now %s priority for this band." % [x, y, face.to_lower()],
+        "line": "work_priority %d %d %s %s" % [faction, band_id, site, level],
+        "message": "%s is now %s priority for this band." % [site_label(payload), face.to_lower()],
     }
 
 ## **`build_priority <faction> <band> <x> <y> <level>` | `build_priority <faction> <band> <herd_id>
@@ -2071,21 +2045,13 @@ static func format_build_priority(payload: Dictionary) -> Dictionary:
     if not HudWorkVocab.WORK_PRIORITY_FACES.has(level):
         return {}
     var face := String(HudWorkVocab.WORK_PRIORITY_FACES[level])
-    var herd_id := String(payload.get("herd_id", "")).strip_edges()
-    if herd_id != "":
-        return {
-            "line": "build_priority %d %d %s %s" % [faction, band_id, herd_id, level],
-            "message": "The build on %s is now %s priority for this band." % [herd_id,
-                face.to_lower()],
-        }
-    var x := int(payload.get("x", -1))
-    var y := int(payload.get("y", -1))
-    if x < 0 or y < 0:
+    var site := site_address(payload)
+    if site == "":
         return {}
     return {
-        "line": "build_priority %d %d %d %d %s" % [faction, band_id, x, y, level],
-        "message": "The build on (%d, %d) is now %s priority for this band." % [x, y,
-            face.to_lower()],
+        "line": "build_priority %d %d %s %s" % [faction, band_id, site, level],
+        "message": "The build on %s is now %s priority for this band."
+            % [site_label(payload), face.to_lower()],
     }
 
 ## **`set_bench <faction_id> <band_id> recipe <recipe_id>`** — put a recipe on a band's crafting bench
@@ -2369,20 +2335,9 @@ func _on_hud_abandon(payload: Dictionary) -> void:
 func _on_hud_abandon_working(payload: Dictionary) -> void:
     _send_formatted_command(format_abandon_working(payload))
 
-## NAME THE KIT one queued build is raised with (`docs/plan_standing_upkeep.md` §4.7a ②) — its own
-## handler because its own command and its own scope: it names a SOURCE and sets a property of that
-## source's queue ENTRY, where `assign_labor` names a band and a role.
-##
-## **NO ROLLBACK, because there is no optimistic write to roll back.** `buildKitId` is captured LIVE
-## rather than turn-written, so the recapture this command triggers carries the new value — the one
-## field in the queue block that needs no client-side shadow.
-func _on_hud_build_kit(payload: Dictionary) -> void:
-    _send_formatted_command(format_build_kit(payload))
-
 ## RE-ORDER a band's build queue (`docs/plan_standing_upkeep.md` §4.7b ③).
 ##
-## **NO ROLLBACK, because there is no optimistic write to roll back** — `_on_hud_build_kit`'s rule,
-## and for the identical reason one field over. `PopulationCohortState.buildQueue` is captured LIVE
+## **NO ROLLBACK, because there is no optimistic write to roll back** — the live-capture rule. `PopulationCohortState.buildQueue` is captured LIVE
 ## rather than turn-written (§4.9 item 9a), so the reordered list arrives on this command's own
 ## recapture; the client-side ordering that used to be undone here was a second ordering beside the
 ## wire's, which is the drift that made a drag paint one order and then jump to another.
