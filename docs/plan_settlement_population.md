@@ -65,8 +65,10 @@ windfall. This **subsumes today's crude `simulate_population` growth clamp** —
 (morale, temperature penalty, food), now structured into births/aging/deaths.
 
 **Migration** moves population (and its demographics) between locations — band↔tile, tile↔tile —
-extending the existing `PendingMigration`. It is how bands settle, how colonists split off, and
-how people urbanize toward the big city.
+extending the wellbeing trickle (`advance_population_migration`), which already moves an unhappy
+band's people toward a better-off band, across factions included (`docs/plan_band_fission.md`
+§Defection). It is how bands settle, how colonists split off, and how people urbanize toward the
+big city.
 
 ### Labor — working-age, hybrid-allocated, local
 Working-age is the labor **supply**, local to each location. Competing **demands**:

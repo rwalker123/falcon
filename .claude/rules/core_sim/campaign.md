@@ -570,15 +570,19 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 >
 > It is resolved the way that chart resolves it (`snapshot::population::larder_runway_turns`), so
 > they cannot disagree by a turn or two on the same panel: (0) **the meal comes before the take**
-> (`MealOrder::BeforeIncome`) — `simulate_population` eats `min(need, larder)` before
-> `advance_labor_allocation` credits the turn's income, so a larder already below one meal answers
-> `larder / need`, a fraction under one turn, whatever the income; (1) walk the larder forward over
-> the **merged per-source `arrivals` schedules** in the sim's own order — this turn's pooled net,
-> then the meal, then the arrival — and the first meal the larder cannot cover is the answer; (2)
-> it survives the horizon (or **no
+> (`MealOrder::BeforeIncome`, `meal_first_runway`) — `simulate_population` eats `min(need, larder)`
+> after pooling has settled (Logistics) and before `advance_labor_allocation` credits the turn's
+> income, and the answer is **the meals the store covers before the first it cannot, plus the
+> fraction of that one it can** (`k + available_k / need`), so a store that cannot cover the next
+> meal even after pooling reads under one turn; (1) walk the larder forward over the **merged
+> per-source `arrivals` schedules** in that order — pooled net, meal check, arrival; (2) it survives
+> the horizon (or **no
 > source was projected at all** — an empty schedule is *no data*, never a famine): fall back to the
-> smooth `larder / net_drain` on the **steady** income (Σ per-source `realized`, computed locally at
-> capture — see the retirement note below), capped at the sentinel; (3)
+> smooth arm on the **steady** income (Σ per-source `realized`, computed locally at capture — see
+> the retirement note below) — **meal first here too**: with `net = need − income − pooled` the
+> first short meal is `k = ⌊(larder + pooled − need) / net⌋ + 1`, not `larder / net`, and it is
+> pinned against a brute-force walk (`snapshot::population::tests::{the_smooth_arm_counts_meals_eaten_before_the_income_lands,
+> pooling_feeds_the_next_meal_before_the_runway_calls_it_short}`) — capped at the sentinel; (3)
 > `net_drain <= 0` (net-positive): the `999.0` **not-food-limited** sentinel, which the client
 > renders as ∞.
 >

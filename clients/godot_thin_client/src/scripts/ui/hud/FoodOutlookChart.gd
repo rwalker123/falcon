@@ -19,9 +19,9 @@ class_name FoodOutlookChart
 ##
 ## **IT IS THE SIM'S RUNWAY WALK, TERM FOR TERM** (`snapshot::population::larder_runway_turns`,
 ## `MealOrder::BeforeIncome`), so the marker lands on the turn `turnsOfFood` beside it names: the FIRST
-## turn whose meal comes up short, which on a hand-to-mouth band is this coming one. The sim's early
-## return — a larder already below one meal — is the same answer and is taken first, ahead of pooling,
-## exactly as the sim takes it. ⛔ It walked income-before-meal and drained by what was EATEN until the
+## turn whose meal comes up short, which on a hand-to-mouth band is this coming one. The order is
+## POOL → check the meal → eat → the arrival lands, on EVERY turn including the first: pooled food
+## settles ahead of the meal, so a larder below one meal that pooling tops up is fed. ⛔ It walked income-before-meal and drained by what was EATEN until the
 ## hand-to-mouth fix, which drew a comfortable rising line over a band that starved every turn. The sim's second arm —
 ## the smooth `larder / net_drain` when the walk never empties within the horizon — has no mark here:
 ## a chart whose larder does not empty draws no marker at all.
@@ -82,9 +82,10 @@ func set_projection(start_food: float, arrivals: PackedFloat32Array, drain: floa
 	# Point 0 is NOW (before any arrival), so point i+1 is the larder after turn i resolves.
 	var food: float = maxf(start_food, 0.0)
 	_series.push_back(food)
-	# The sim's early return: a larder below one meal is short on the very next turn, before pooling.
-	if drain > 0.0 and food < drain:
-		_empty_index = 0
+	# ⛔ **NO EARLY EXIT AHEAD OF POOLING.** Pooled food settles BEFORE the meal, so a receiver whose
+	# own larder is below one meal (larder 3, need 5, pooled +4) is FED next turn. The first iteration
+	# below already asks the question in the right order — pool, then check the meal — so the retired
+	# "larder below one meal marks turn 1" shortcut, which ran ahead of pooling, is simply gone.
 	for i in range(arrivals.size()):
 		food += standing_net
 		var short := food < drain

@@ -169,8 +169,14 @@ pub(crate) fn surplus_hands(row: &LaborAssignmentState) -> u32 {
 }
 
 /// Whether a band of another faction than `faction` stands on `tile`. **Ground under a rival is
-/// not ground to work or walk to**: walking a band into a foreign camp is a contact, and the
-/// defection gate (`core_sim/tests/defection_contact_gate.rs`) can hand the whole band over.
+/// not ground to work or walk to.** Contact alone hands nothing over — but a live tie between two
+/// bands is the precondition for the sim's cross-faction trickle (`advance_population_migration`,
+/// `.claude/rules/core_sim/factions.md` → "Defection is the unhappy trickle with the same-people
+/// filter lifted"): a band camped in a rival's camp is both tied to it and within
+/// `migration.base_reach`, so the moment its morale falls below `migration.morale_threshold` its
+/// people start leaving for the rival, and a move that leaves it below `settle.parent_min_workers`
+/// takes the remnant over too. Standing elsewhere keeps that door shut for a band that is not
+/// already unhappy.
 pub(crate) fn foreign_band_at(view: &SeatView, faction: u32, tile: Tile) -> bool {
     view.snapshot
         .populations

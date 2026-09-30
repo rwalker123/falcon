@@ -16820,6 +16820,30 @@ func _hand_to_mouth_band_fixture(fed: bool = false) -> Dictionary:
 	band["turns_of_food"] = BandFoodStatus.UNLIMITED_TURNS if fed else larder / HAND_TO_MOUTH_NEED
 	return band
 
+## THE POOLED RECEIVER — a band whose OWN larder is below one meal (3 against a need of 5) that its
+## supply network tops up by 4 this turn. Pooling settles BEFORE the meal, so it is FED next turn:
+## no hungry marker on turn 1, no shortfall, and a runway well clear of the critical line. It is the
+## case the retired "larder below one meal" shortcut (which ran ahead of pooling) got wrong.
+const POOLED_RECEIVER_LARDER := 3.0
+const POOLED_RECEIVER_NEED := 5.0
+const POOLED_RECEIVER_POOLED_IN := 4.0
+const POOLED_RECEIVER_TURNS := 20.0
+
+func _pooled_receiver_band_fixture() -> Dictionary:
+	var band := _hand_to_mouth_band_fixture(true)
+	band["entity"] = 925
+	band["id"] = "Band 13"
+	band["stores"] = {"provisions": POOLED_RECEIVER_LARDER}
+	band["food_need"] = POOLED_RECEIVER_NEED
+	band["food_consumption"] = POOLED_RECEIVER_NEED
+	band["food_shortfall"] = 0.0
+	band["turns_of_food"] = POOLED_RECEIVER_TURNS
+	band[DetailFormat.TRANSFER_LOCAL_RECEIVED_TURN_KEY] = POOLED_RECEIVER_POOLED_IN
+	band[HudTradeVocab.CROSSINGS_KEY] = [
+		BandFx.transfer_crossing(HudTradeVocab.COMMODITY_FOOD, HudTradeVocab.DIRECTION_IN,
+			HudTradeVocab.CAUSE_POOLED, POOLED_RECEIVER_POOLED_IN)]
+	return band
+
 ## Every Label's and RichTextLabel's rendered text under `node`, joined — the band zone's vitals are a
 ## RichTextLabel, so a Label-only walk would miss the Food line entirely.
 func _all_text_under(node: Node) -> String:
@@ -16884,6 +16908,26 @@ func _assert_hand_to_mouth_band() -> void:
 				_hud._attention._decline_reason(BandFoodStatus.UNLIMITED_TURNS, 1.0,
 					DetailFormat.MORALE_CAUSE_NONE, 0, -1, -1, true)
 					== HudAttentionVocab.DECLINE_REASON_STARVING)
+	# THE POOLED RECEIVER: own larder below one meal, topped up by pooling BEFORE the meal — fed.
+	var receiver := _pooled_receiver_band_fixture()
+	_push_bands([receiver])
+	await _settle()
+	await _settle()
+	await _save("band_panel_food_pooled_receiver")
+	var receiver_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var receiver_chart := _find_chart(receiver_zone) if receiver_zone != null else null
+	_assert_band_panel("precondition: the receiver's own larder is below one meal, and pooling covers it",
+		POOLED_RECEIVER_LARDER < POOLED_RECEIVER_NEED
+			and is_equal_approx(DetailFormat.band_pooled_food_net(receiver), POOLED_RECEIVER_POOLED_IN)
+			and POOLED_RECEIVER_LARDER + POOLED_RECEIVER_POOLED_IN >= POOLED_RECEIVER_NEED)
+	_assert_band_panel("pooled receiver: the chart does NOT mark turn 1 hungry — pooling lands before the meal (got %s)"
+			% (str(receiver_chart.empty_turn()) if receiver_chart != null else "no chart"),
+		receiver_chart != null and receiver_chart.empty_turn() != 1)
+	var receiver_attention: Array = _hud._attention.build_band_attention([receiver], [])
+	_assert_band_panel("pooled receiver: no `starving` alert on a runway above the critical line",
+		not BandFoodStatus.is_critical(POOLED_RECEIVER_TURNS)
+			and receiver_attention.filter(func(a): return String(a.get("kind", "")) \
+				== HudAttentionVocab.ATTENTION_KIND_STARVING).is_empty())
 
 func _arrivals_starving_band_fixture() -> Dictionary:
 	var band := _band_fixture()

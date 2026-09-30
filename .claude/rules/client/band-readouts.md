@@ -1238,9 +1238,13 @@ eat) and `food_shortfall` (need − eaten, never negative). `food_consumption` i
   need is visible; the starving sentence rides under it. A fed band shows `Consumed` alone.
 - **`food_is_concerning` is true on a shortfall**, so the caret tints WARN on a hand-to-mouth band.
 - **The FOOD OUTLOOK chart walks MEAL FIRST** (`FoodOutlookChart.set_projection`, drained by
-  `food_need`): a larder below one meal is short on the very next turn; else each turn pools, eats,
-  then lands the arrival — `snapshot::population::larder_runway_turns`' `MealOrder::BeforeIncome`, term
-  for term, so its marker is the first turn whose meal comes up short and agrees with `turns_of_food`.
+  `food_need`): every turn — the first included — pools, checks the meal against the POOLED larder,
+  eats, then lands the arrival — `snapshot::population::larder_runway_turns`' `MealOrder::BeforeIncome`,
+  term for term, so its marker is the first meal that comes up short. The sim's `meal_first_runway`
+  answers `k + max(available_k, 0) / need` for that meal `k` (0-based), so `turns_of_food`'s whole part
+  is the chart's marker index (`empty_turn()` = `k + 1`, counted from now). ⛔ There is no "larder below one meal" shortcut ahead of pooling: pooled food
+  settles before the meal, so a receiver whose own larder is short (larder 3, need 5, pooled +4) is
+  fed. `band_panel_food_pooled_receiver` pins it (no turn-1 marker, no `starving` alert).
   A hand-to-mouth band's line dips to zero on its hungry turns. `band_panel_trade_tab`'s `_sim_runway`
   transcription walks the same order.
 - **Frames**: `band_panel_preview`'s `band_panel_food_hand_to_mouth` (larder 3, need 3.6, income 4.2 in

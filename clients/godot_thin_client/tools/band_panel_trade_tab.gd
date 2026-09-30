@@ -471,13 +471,17 @@ func run(harness) -> void:
 	await h._save("trade_tab_outlook_pooling")
 	var band_zone: Control = panel._zones.get(BandCityPanel.ZONE_BAND)
 	var charts := _find_all(band_zone, "FoodOutlookChart")
-	var runway := int(float(pooling_band["turns_of_food"]))
+	# `turns_of_food` is `k + fraction` for the first short meal `k` (0-based), so its whole part IS
+	# that meal's index; the chart marks the same meal, counted from now (`empty_turn()` = index + 1).
+	var runway_turns := float(pooling_band["turns_of_food"])
+	var short_meal := int(floorf(runway_turns))
 	var without := _sim_runway(pooling_band, 0.0)
-	h._assert_band_panel("precondition: the pooled food moves the runway (%d turns with it, %.1f without), so this state tests the term"
-			% [runway, without], runway < BandFoodStatus.UNLIMITED_TURNS and not is_equal_approx(float(runway), without))
-	h._assert_band_panel("the FOOD OUTLOOK chart empties on the turn `turns_of_food` names (%d; chart %s)"
-			% [runway, str((charts[0] as FoodOutlookChart).empty_turn()) if not charts.is_empty() else "none"],
-		charts.size() == 1 and (charts[0] as FoodOutlookChart).empty_turn() == runway)
+	h._assert_band_panel("precondition: the pooled food moves the runway (%.2f turns with it, %.2f without), so this state tests the term"
+			% [runway_turns, without], runway_turns < BandFoodStatus.UNLIMITED_TURNS
+			and not is_equal_approx(runway_turns, without))
+	h._assert_band_panel("the FOOD OUTLOOK chart marks the meal `turns_of_food` names (meal %d; chart index %s)"
+			% [short_meal, str((charts[0] as FoodOutlookChart).empty_turn() - 1) if not charts.is_empty() else "none"],
+		charts.size() == 1 and (charts[0] as FoodOutlookChart).empty_turn() - 1 == short_meal)
 
 	# **EVERY COUNT ON THE TAB, AT ONE AND AT TWO** — the pairs themselves, so a count no fixture
 	# reaches at 1 (a 1-tile link, a single import) is still claimed.
@@ -715,28 +719,33 @@ func _shipments_only(list: Array) -> Array:
 func _has_heading(node: Node, label: String) -> bool:
 	return _text_of(node).contains(label.to_upper())
 
-## **THE SIM'S RUNWAY, TRANSCRIBED** (`snapshot::population::larder_runway_turns`, `MealOrder::
-## BeforeIncome`): a larder below one meal answers the fraction of that meal it covers; else walk the
-## merged arrivals MEAL FIRST — pool, eat, then the take lands — and the first turn whose meal comes up
-## short is the answer; else the smooth `larder / (drain − (steady + standing_net))`, else not
-## food-limited. The drain is the fixture's `food_need`, the sim's demand.
+## **THE SIM'S RUNWAY, TRANSCRIBED** (`snapshot::population::meal_first_runway`, the
+## `MealOrder::BeforeIncome` arm): `k + max(available_k, 0) / need` for the first meal `k` (0-based)
+## that comes up short, where `available_k` is the store after that turn's pooling. Walked over the
+## merged arrivals first — pool, check the meal, eat, then the take lands — and, if the store survives
+## the schedule, the same arithmetic in closed form on the steady income from the current larder
+## (`net = need − income − pooled`; the first short meal is `⌊(larder + pooled − need) / net⌋ + 1`, or
+## `0` when even the first is short). `net ≤ 0` never runs short. The drain is the fixture's
+## `food_need`, the sim's demand.
 func _sim_runway(band: Dictionary, standing_net: float) -> float:
 	var larder := DetailFormat.band_provisions(band)
 	var drain := DetailFormat.band_food_need(band)
+	if drain <= 0.0:
+		return BandFoodStatus.UNLIMITED_TURNS
 	var arrivals := DetailFormat.merged_arrival_schedule(band)
-	var food := maxf(larder, 0.0)
-	if drain > 0.0 and food < drain:
-		return food / drain
+	var food := larder
 	for i in range(arrivals.size()):
 		food += standing_net
-		var short := food < drain
-		food = maxf(food - drain, 0.0) + arrivals[i]
-		if short:
-			return float(i + 1)
+		if food < drain:
+			return minf(float(i) + maxf(food, 0.0) / drain, BandFoodStatus.UNLIMITED_TURNS)
+		food = food - drain + arrivals[i]
 	var net_drain := drain - (DetailFormat.band_food_income(band) + standing_net)
 	if net_drain <= 0.0:
 		return BandFoodStatus.UNLIMITED_TURNS
-	return minf(larder / net_drain, BandFoodStatus.UNLIMITED_TURNS)
+	var first_meal := larder + standing_net
+	var short_meal := 0.0 if first_meal < drain else floorf((first_meal - drain) / net_drain) + 1.0
+	var available := maxf(first_meal - short_meal * net_drain, 0.0)
+	return minf(short_meal + available / drain, BandFoodStatus.UNLIMITED_TURNS)
 
 ## The harness's arrivals band (a net-POSITIVE larder on its own) pooling food AWAY this turn, enough
 ## that its larder now empties inside the horizon — with `turns_of_food` derived the sim's way.

@@ -553,7 +553,7 @@ const SIM_DESTINATION_LABEL_FORMAT := "band %d"
 ## id and the client says its name, so every place the sim writes a band into a sentence needs the
 ## same join, and a table is what stops the next producer growing a fifth copy of it.
 ## **THE TOKENS THAT NAME A PEOPLE, and the sim's spelling of one** (`core_sim`
-## `systems::population::people_label`, byte-identical or the swap silently no-ops). `from=` / `to=`
+## `systems::population::faction_label`, output `Faction N` — byte-identical or the swap silently no-ops). `from=` / `to=`
 ## on `migrated`, `band_changed_hands` and `party_defected` are FACTION ids; `EventDockPanel` swaps the
 ## sim's `Faction <id>` for the faction's published name (`FactionMark.faction_name`).
 const PEOPLE_ID_TOKEN_KEYS: Array[String] = ["from", "to"]

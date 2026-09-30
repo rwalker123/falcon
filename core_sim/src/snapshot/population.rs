@@ -338,29 +338,14 @@ pub(crate) fn larder_runway_turns(
 ) -> f32 {
     let drain = consumption;
     let larder = larder.max(0.0);
-    if meal == MealOrder::BeforeIncome && drain > 0.0 && larder < drain {
-        // The next meal is already short: the store cannot cover it, whatever lands after it. The
-        // answer is the fraction of that meal the store can feed — under one turn, which is the
-        // truth about a band that goes hungry this coming turn.
-        return larder / drain;
+    if meal == MealOrder::BeforeIncome {
+        return meal_first_runway(larder, drain, steady_income, standing_net, arrivals);
     }
     if !arrivals.is_empty() {
         let mut food = larder;
         for (turn, arrival) in arrivals.iter().enumerate() {
-            let short = match meal {
-                MealOrder::BeforeIncome => {
-                    // Pooling settles in Logistics, ahead of the meal; the take lands after it.
-                    food += standing_net;
-                    let short = food < drain;
-                    food = (food - drain).max(0.0) + arrival;
-                    short
-                }
-                MealOrder::WithIncome => {
-                    food = (food + arrival + standing_net - drain).max(0.0);
-                    food <= 0.0
-                }
-            };
-            if short {
+            food = (food + arrival + standing_net - drain).max(0.0);
+            if food <= 0.0 {
                 // `turn` is 0-based over "turns from now", so the count is one more.
                 return (turn + 1) as f32;
             }
@@ -371,6 +356,54 @@ pub(crate) fn larder_runway_turns(
         return NOT_FOOD_LIMITED_TURNS;
     }
     (larder / net_drain).min(NOT_FOOD_LIMITED_TURNS)
+}
+
+/// **The runway when the meal comes before the take** ([`MealOrder::BeforeIncome`]) — in the sim's
+/// own order each turn: this turn's pooled net lands (pooling settles in Logistics, ahead of the
+/// meal), the meal is checked and eaten, then the turn's take lands.
+///
+/// **The answer is the meals the store covers before the first it cannot, plus the fraction of that
+/// one it can** — `k + available_k / need`, where `available_k` is what the store holds at that
+/// meal. So a larder that cannot cover the very next meal (after pooling) reads under one turn, and
+/// an expedition with no income reads exactly `provisions / need`, the historical reading.
+///
+/// Walked over the merged arrival schedule first; if the store survives it (or no source was
+/// projected — an empty schedule is *no data*), the same arithmetic in closed form on the steady
+/// income from the current larder: with `net = need − income − pooled`, the store holds
+/// `available_k = larder + pooled − k·net` at meal `k`, so the first short meal is
+/// `k = ⌊(larder + pooled − need) / net⌋ + 1` (or `0` if even the first meal is short). A
+/// `net ≤ 0` never runs short: the [`NOT_FOOD_LIMITED_TURNS`] sentinel.
+fn meal_first_runway(
+    larder: f32,
+    drain: f32,
+    steady_income: f32,
+    standing_net: f32,
+    arrivals: &[f32],
+) -> f32 {
+    if drain <= 0.0 {
+        return NOT_FOOD_LIMITED_TURNS;
+    }
+    let mut food = larder;
+    for (turn, arrival) in arrivals.iter().enumerate() {
+        food += standing_net;
+        if food < drain {
+            return (turn as f32 + food.max(0.0) / drain).min(NOT_FOOD_LIMITED_TURNS);
+        }
+        food = food - drain + arrival;
+    }
+    let net_drain = drain - (steady_income + standing_net);
+    if net_drain <= 0.0 {
+        return NOT_FOOD_LIMITED_TURNS;
+    }
+    let first_meal = f64::from(larder) + f64::from(standing_net);
+    let (drain, net_drain) = (f64::from(drain), f64::from(net_drain));
+    let short_meal = if first_meal < drain {
+        0.0
+    } else {
+        ((first_meal - drain) / net_drain).floor() + 1.0
+    };
+    let available = (first_meal - short_meal * net_drain).max(0.0);
+    ((short_meal + available / drain) as f32).min(NOT_FOOD_LIMITED_TURNS)
 }
 
 /// **Whether a store is eaten from before or with the turn's income** — the one ordering fact
@@ -2571,21 +2604,100 @@ mod tests {
             runway > pessimistic,
             "income must lengthen the runway: got {runway}, pessimistic {pessimistic}"
         );
-        // Walk it by hand in the sim's own order — the meal is eaten BEFORE the turn's take lands —
-        // and land on the same turn: the first meal the larder cannot cover.
-        let mut food = TEST_LARDER;
-        let mut expected = 0;
-        for turn in 1..=20 {
-            let short = food < demand;
-            food = (food - demand).max(0.0) + per_turn;
-            if short {
-                expected = turn;
-                break;
+        // Walk it by hand in the sim's own order — the meal is eaten BEFORE the turn's take lands.
+        let expected = brute_force_meal_first(TEST_LARDER, demand, per_turn, 0.0);
+        assert!(
+            (runway - expected).abs() < RUNWAY_TOLERANCE,
+            "the reported runway must be the walked one: got {runway}, walked {expected}"
+        );
+    }
+
+    /// Meals the walk may take before it gives up — far past any runway these fixtures reach.
+    const BRUTE_FORCE_MEALS: u32 = 100_000;
+    /// How close the closed form must land to the walk (f32 arithmetic over many meals).
+    const RUNWAY_TOLERANCE: f32 = 1e-2;
+
+    /// **The runway by brute force**, in the sim's order: pooled lands, the meal is checked and
+    /// eaten, the take lands. The answer is the meals covered plus the fraction of the first short
+    /// one the store could feed — what [`larder_runway_turns`] claims to compute in closed form.
+    fn brute_force_meal_first(larder: f32, need: f32, income: f32, pooled: f32) -> f32 {
+        let mut food = f64::from(larder);
+        for meal in 0..BRUTE_FORCE_MEALS {
+            food += f64::from(pooled);
+            if food < f64::from(need) {
+                return (f64::from(meal) + food.max(0.0) / f64::from(need)) as f32;
             }
+            food += f64::from(income) - f64::from(need);
         }
-        assert_eq!(
-            runway as u32, expected,
-            "the reported runway must be the first meal the walked larder cannot cover"
+        NOT_FOOD_LIMITED_TURNS
+    }
+
+    /// **A pooled receiver is fed before it eats.** Pooling settles in Logistics, ahead of the meal,
+    /// so a larder of 3 against a need of 5 with 4 pooled in covers its next meal — and must not
+    /// read under one turn (a false "starving" alert). Its control: the same larder with nothing
+    /// pooled cannot cover the meal and reads its fraction of it.
+    #[test]
+    fn pooling_feeds_the_next_meal_before_the_runway_calls_it_short() {
+        const LARDER: f32 = 3.0;
+        const NEED: f32 = 5.0;
+        const POOLED_IN: f32 = 4.0;
+        const NO_INCOME: f32 = 0.0;
+        let pooled = larder_runway_turns(
+            LARDER,
+            NEED,
+            NO_INCOME,
+            POOLED_IN,
+            &[],
+            MealOrder::BeforeIncome,
+        );
+        assert!(
+            pooled >= 1.0,
+            "a pooled receiver covers its next meal: {pooled}"
+        );
+        assert!(
+            (pooled - brute_force_meal_first(LARDER, NEED, NO_INCOME, POOLED_IN)).abs()
+                < RUNWAY_TOLERANCE
+        );
+        let alone = larder_runway_turns(LARDER, NEED, NO_INCOME, 0.0, &[], MealOrder::BeforeIncome);
+        assert!(
+            alone < 1.0,
+            "without the pooling the next meal is short: {alone}"
+        );
+        assert!((alone - LARDER / NEED).abs() < RUNWAY_TOLERANCE);
+    }
+
+    /// **The smooth arm eats first too.** Need 1, income 0.95, larder 5: with the income landing
+    /// after each meal the store covers ~81 meals, not the `5 / 0.05 = 100` the with-income
+    /// arithmetic says. Checked against the brute-force walk, and the walked arm (a long schedule)
+    /// against the same number, so the two arms agree.
+    #[test]
+    fn the_smooth_arm_counts_meals_eaten_before_the_income_lands() {
+        const NEED: f32 = 1.0;
+        const INCOME: f32 = 0.95;
+        const LARDER: f32 = 5.0;
+        const LONG_SCHEDULE: usize = 200;
+        let walked = brute_force_meal_first(LARDER, NEED, INCOME, 0.0);
+        let smooth = larder_runway_turns(LARDER, NEED, INCOME, 0.0, &[], MealOrder::BeforeIncome);
+        assert!(
+            (smooth - walked).abs() < RUNWAY_TOLERANCE,
+            "closed form {smooth} vs walk {walked}"
+        );
+        let with_income = LARDER / (NEED - INCOME);
+        assert!(
+            smooth < with_income - 1.0,
+            "meal-first is shorter than the with-income arithmetic: {smooth} vs {with_income}"
+        );
+        let scheduled = larder_runway_turns(
+            LARDER,
+            NEED,
+            INCOME,
+            0.0,
+            &vec![INCOME; LONG_SCHEDULE],
+            MealOrder::BeforeIncome,
+        );
+        assert!(
+            (scheduled - walked).abs() < RUNWAY_TOLERANCE,
+            "the walked arm agrees: {scheduled} vs {walked}"
         );
     }
 
