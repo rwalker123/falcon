@@ -818,7 +818,11 @@ whose output scales with people standing there, so a work row with a stepper is 
 **The pool was never the problem — the automatic billing was.** With the free floor free and `grade`
 the only way onto a paid rung, every road a band pays for is one it chose by typing a command. So
 `Roadwork` covers **the roads that band is the keeper of**, and the per-road choice is exercised
-with `abandon`. It is the **one band-level keeping pool left**: the food webs' and the deposits'
+with `abandon <faction> road <x> <y>`, which puts down the road alone (keeper and queue entry) and
+leaves a patch on the same tile standing; a bare-tile `abandon <faction> <x> <y>` puts down both.
+`unqueue <faction> road <x> <y>` withdraws a queued `grade` / `pave` and leaves the keeper, and
+`build_priority` / `build_order` reach the queued road build by the same address
+(`docs/plan_site_crews.md` §2.4). It is the **one band-level keeping pool left**: the food webs' and the deposits'
 keeping moved onto each site's own crew (`docs/plan_site_crews.md`), because a patch, a herd and a
 working each have a row to carry a crew and a road has none.
 

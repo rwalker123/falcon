@@ -122,8 +122,9 @@ deficit. A site crew covers its own deficit first by construction.
   queue entry and defaults to Normal.
 - **The build queue shows each entry's Build mark read-only.** It is set on the site's row.
 - **Settlement:** High, then Normal, then Low. Inside a tier, site crews are served before the build
-  — the existing keep-before-build rule (`plan_pool_toe.md` §2.2). A Roadwork claim ranks at its
-  road's Priority as today.
+  — the existing keep-before-build rule (`plan_pool_toe.md` §2.2). Roadwork's claims rank at
+  Normal, as today: a road has no crew, so its row carries only the **Build** mark, while a road
+  build is queued on it. A Groundwork row carries both marks, exactly like a harvest or hunt row.
 - **There is no per-pool or per-tool player allocation.** The two marks are the only levers.
 
 ### 2.5 Groundwork sites

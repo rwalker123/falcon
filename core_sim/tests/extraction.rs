@@ -170,7 +170,6 @@ fn spawn_band_of(
                     workers: take_crew,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -243,7 +242,6 @@ fn spawn_keepers(
                 workers: take_crew + keepers,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             });
         }
     }
@@ -656,7 +654,6 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
                 workers: BUILDERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             });
             assert!(allocation.enqueue_build(
                 core_sim::BuildSource::Deposit {
@@ -1161,7 +1158,6 @@ fn a_band_learns_woodcraft_at_the_free_floor_and_then_raises_a_felling_working()
             workers: 8,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
         assert!(allocation.enqueue_build(
             core_sim::BuildSource::Deposit {
@@ -1928,7 +1924,6 @@ fn a_slumped_working_can_be_cut_back_open() {
             workers: 4,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
         allocation.assignments.push(LaborAssignment {
             party: None,
@@ -1936,7 +1931,6 @@ fn a_slumped_working_can_be_cut_back_open() {
             workers: 12,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
         assert!(allocation.enqueue_build(
             core_sim::BuildSource::Deposit {

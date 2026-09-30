@@ -648,7 +648,7 @@ for the verb to declare for, and the verb's own rejection names the crew.
 > The `Command` it comes out as is compared against `commanding_faction`'s own label rather than a
 > hand-written expectation, so a `fell` line that decoded into `Command::Coppice` cannot pass.
 
-## The fourth verb — `abandon_working`, and why it is not a token on `abandon`
+## The fourth verb — `abandon_working`, and why a bare-tile `abandon` never reaches a working
 
 `abandon_working <faction> <x> <y> <material>`, on the three rung verbs' grammar exactly: no band
 token, the material as the closed trailing token, and the same *"no band of yours works this"*
@@ -668,21 +668,21 @@ and the row prunes itself — **104 turns**. `forestry:felling` is the same shap
 103 turns; `forestry:coppice` slides through `felling` on the way and takes **202**.
 `abandon_working` drops the row and its build entry at once.
 
-> ### ⛔ IT MAY NOT BE AN OPTIONAL MATERIAL ON `abandon`
+> ### ⛔ A BARE-TILE `abandon` NEVER REACHES A WORKING; ITS MATERIAL FORM *IS* THIS VERB
 >
-> `abandon <faction> <x> <y>` names a **place**: it drops every band's holding on that tile, a forage
-> row included, *and* releases the faction's road keeping there — which its own tile card already
-> warns about in a second line. A deposit verb names a tile **and** a material, because one hex holds
-> two workings, so covering one with an optional token would make an already-destructive verb quietly
-> more destructive on exactly the hexes where the player meant one of two things. The two verbs are
-> therefore siblings rather than one verb with a tail, and `abandon_working` rides
-> `command_text.rs`'s `fell | coppice | quarry` arm so the material's position and the closed tail
-> cannot drift from the rung verbs' — which is the whole of *"the two ways of addressing one working
-> read alike"*.
+> `abandon <faction> <x> <y>` names a **place**: it drops the forage row on that tile *and*
+> releases the faction's road keeping there — which its own tile card already warns about in a
+> second line. A deposit verb names a tile **and** a material, because one hex holds two workings,
+> so a bare tile reaching the workings too would make an already-destructive verb quietly more
+> destructive on exactly the hexes where the player meant one of two things.
 >
-> **Nothing was widened to carry it**: proto field **74**, its own `CommandPayload` variant, its own
-> `Command` variant, its own `handle_abandon_working`. `abandon`'s message, grammar and handler are
-> untouched.
+> **`abandon <faction> <x> <y> <material>` is `abandon_working`, not a second definition of it**
+> (`docs/plan_site_crews.md` §2.4): `handle_abandon` calls `handle_abandon_working`, so the two
+> spellings cannot disagree. `abandon_working` keeps its own proto field (**74**), payload and
+> command, and rides `command_text.rs`'s `fell | coppice | quarry` arm so the material's position
+> and the closed tail cannot drift from the rung verbs'; `abandon`'s material form carries the same
+> token in the same place (`command_text::parse_site_source`). `unqueue <faction> <x> <y>
+> <material>` withdraws a queued `fell` / `coppice` / `quarry` and leaves the row.
 >
 > `server::tests::abandon_working_drops_one_workings_holding_and_leaves_its_neighbour` drives the
 > line through the **encoded** envelope on a hex carrying timber and rock at once, both staffed and
@@ -690,6 +690,8 @@ and the row prunes itself — **104 turns**. `forestry:felling` is the same shap
 > single-deposit fixture. `extraction::putting_a_working_down_stops_its_bill_and_its_neighbour_stops_sliding`
 > pins the gameplay claim against the measurement above: the leak arm and the fix arm one drive
 > apart, plus that the put-down working's meter still slides — untouched, not destroyed.
+> `server::tests::abandon_and_unqueue_reach_a_working_and_a_road` pins the material forms of
+> `abandon` and `unqueue`.
 
 ## What a working costs to HOLD — its own crew keeps it
 

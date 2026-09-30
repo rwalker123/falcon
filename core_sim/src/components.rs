@@ -2604,26 +2604,6 @@ pub struct LaborAssignment {
     /// along. `assign_labor` stores the *resolved* choice for a Forage/Hunt row, so a replayed
     /// command lands on the kit it named rather than on whatever the default is today.
     pub kit: Option<crate::equipment_config::KitChoice>,
-    /// **The kit the player NAMED for KEEPING THIS SITE, or `None` for "whatever this site's web
-    /// wants"** — the same distinction [`BuildQueueEntry::kit`] draws for a queue entry, moved to the
-    /// one place the keeping default actually varies (`docs/plan_standing_upkeep.md` §2.7).
-    ///
-    /// **THE KEEPING KIT IS PER WORK SITE, NOT PER BAND.** The band is the pool of workers and goods
-    /// to draw from; it does not decide which tool a given site is worked with. A single stored id
-    /// per band — which is what the retired kit on the `agriculture` / `husbandry` role row was —
-    /// cannot say *hoes on the Field, bare hands on the scrub patch beside it*, so every site a band
-    /// kept was worked with one tool and there was no way back. `None` is the **web's derived
-    /// default** ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]: the roster's plant
-    /// keeping kit for a patch, its animal one for a herd), which is what leaves that derivation
-    /// reachable.
-    ///
-    /// **`none` is a real selection and answers `Some`**, which is what preserves working one site
-    /// bare-handed to conserve the tool while its neighbour keeps the hoes.
-    ///
-    /// Set by `upkeep_kit <faction> <source…> [kit <id>]`; an absent `kit` token clears it back to
-    /// the derivation. A band-wide role row carries `None` and nothing reads it there — a role stands
-    /// on no ground, so it has no site to keep.
-    pub upkeep_kit: Option<crate::equipment_config::KitChoice>,
     /// **WHERE THE PLAYER PUT THIS ROW WHEN THE BAND RUNS SHORT** — see [`SourcePriority`].
     ///
     /// It is **intent**, so it is inside this type's `PartialEq` (unlike `LaborAllocation`'s
@@ -2656,7 +2636,7 @@ pub struct LaborAssignment {
 
 /// ⛔ **EQUALITY IS THE ORDER THE PLAYER GAVE, AND THE PARTY IS NOT PART OF IT.**
 ///
-/// Everything here is intent — the source, the crew, the two kits, the rank — and
+/// Everything here is intent — the source, the crew, the kit, the rank — and
 /// [`LaborAssignment::party`] is derived per-turn telemetry, excluded for exactly the reason
 /// [`LaborAllocation::last_yields`] is excluded one level up. A `#[derive]` would have folded a
 /// herd's position into the comparison a rollback record and the command no-op guard both make.
@@ -2665,7 +2645,6 @@ impl PartialEq for LaborAssignment {
         self.target == other.target
             && self.workers == other.workers
             && self.kit == other.kit
-            && self.upkeep_kit == other.upkeep_kit
             && self.priority == other.priority
     }
 }
@@ -4785,8 +4764,9 @@ impl BuildJob {
 }
 
 /// One declared build: which source, **where the player said the land should end up**
-/// ([`BuildJob::destination`]), **what this job is raised with** ([`Self::kit`]), and **how it
-/// ranks for scarce tools and materials** ([`Self::priority`]).
+/// ([`BuildJob::destination`]), and **how it ranks for scarce tools and materials**
+/// ([`Self::priority`]). What it is raised with is not the entry's to say: the builders' tools
+/// follow from the rung in flight (`docs/plan_pool_toe.md` §4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuildQueueEntry {
     pub source: BuildSource,
@@ -4801,18 +4781,6 @@ pub struct BuildQueueEntry {
     /// it kept its hoes also pushed the Field's queued Sow ahead of every other build's pile. Within
     /// one tier a site crew's keeping is still served before the build.
     pub priority: SourcePriority,
-    /// **The kit the player NAMED for THIS job, or `None` for "whatever this entry's web wants"** —
-    /// the same distinction [`LaborAssignment::upkeep_kit`] draws one account over, on the one place
-    /// the builders' default actually varies (`docs/plan_standing_upkeep.md` §4.7a ②).
-    ///
-    /// A single stored id per **band** cannot be right for both food webs — a hoe for a Cultivate,
-    /// hurdles for a `Tame` — so the derivation is per **entry**, and `None` is what leaves it
-    /// reachable. An absent choice already means *"the job's default"* everywhere else; this is what
-    /// lets that default vary per job.
-    ///
-    /// **`none` is a real selection and answers `Some`**, which is what preserves deliberately
-    /// sending the builders out bare-handed on one job to conserve gear.
-    pub kit: Option<crate::equipment_config::KitChoice>,
 }
 
 impl LaborAllocation {
@@ -5134,61 +5102,10 @@ impl LaborAllocation {
     }
 
     // **RETIRED: `named_kit_on`** — *"the kit the player named on a singleton role"*, whose one
-    // reader was the keeping pools' per-web gear derivation. The keeping kit is per **work site**
-    // now ([`LaborAssignment::upkeep_kit`]), so there is no band-wide keeping selection left for it
+    // reader was the keeping pools' per-web gear derivation. A site's keeping tools follow from the
+    // rung it stands on now (`docs/plan_pool_toe.md` §4), so there is no keeping selection left for it
     // to answer about, and neither remaining singleton role (`scout`, `warrior`) has a derived
     // default to distinguish a named `none` from.
-
-    /// **THE WEB THE BAND'S BUILDERS ARE ACTUALLY WORKING ON** — the head entry's, since the whole
-    /// pool goes on the head. `None` when the queue is empty, which is *"nothing is being raised"*
-    /// rather than a web.
-    ///
-    /// ⛔ **IT READS THE ENTRY'S DECLARED DESTINATION, NOT THE KIND OF SOURCE IT SITS ON.** It used
-    /// to be a match over [`BuildSource`], which worked only while *"what kind of thing is this"*
-    /// and *"which ladder is being climbed"* were the same question — and [`BuildSource::Deposit`]
-    /// is where they stop being: a deposit is worked by **either** `forestry` or `extraction`, and
-    /// which one is the deposit's own (`extraction_config::DepositDef::branch`), which this
-    /// component cannot see and must not carry a second copy of. Every entry already names a
-    /// destination rung ([`BuildJob::destination`]) and every rung names exactly one branch, so this
-    /// is the same fact read from the authority that has it.
-    pub fn head_build_branch(&self) -> Option<crate::intensification::RungBranch> {
-        self.build_queue
-            .first()
-            .map(|entry| entry.declared.destination().branch())
-    }
-
-    /// **The kit this band's builders are working with**, resolved through the one seam
-    /// ([`crate::equipment_config::EquipmentConfig::builders_kit_for`]) — the **head entry's** own
-    /// choice, else the kit the roster says that entry's web wants, else the job default.
-    ///
-    /// **It reads the ENTRY, never the `builders` row.** The whole pool goes on the head, so *"what
-    /// are the builders holding"* is a question about the job they are standing on; a kit stored on
-    /// the row would be one per **band** and would pin the animal web's tool onto a plant build with
-    /// no way back (`docs/plan_standing_upkeep.md` §4.7a ②).
-    ///
-    /// **The wire states this rather than a stored id**, on `kit_id`'s existing rule (*"the wire
-    /// states the kit rather than 'the player named none'"*): the builders' default is per entry, so
-    /// an entry that named nothing would otherwise publish `none` while the pool was out with
-    /// hurdles.
-    ///
-    /// ⛔ **THE RUNG IT RESOLVES AT IS THE HEAD ENTRY'S DESTINATION, because a queue is all this
-    /// seam can see.** The turn itself prices the pool at the rung actually **in flight**
-    /// (`systems::labor::BuildersGear::for_source`), and the two agree wherever a command could have
-    /// created the entry: `pave` is refused on anything below a dirt road, so a route entry's
-    /// destination *is* the rung under its builders. They part only if the source falls back down
-    /// the ladder while its entry waits, which this seam has no registry to see.
-    pub fn builders_kit(
-        &self,
-        config: &crate::equipment_config::EquipmentConfig,
-    ) -> crate::equipment_config::KitChoice {
-        let head = self.build_queue.first();
-        let destination = head.map(|entry| entry.declared.destination().wire_key());
-        config.builders_kit_for(
-            head.and_then(|entry| entry.kit.as_ref()),
-            self.head_build_branch(),
-            destination.as_deref(),
-        )
-    }
 
     /// Keep the derived `last_yields` the same length as `assignments` — the snapshot **zips the two
     /// by index**, so a mutation that adds/removes an assignment without touching the telemetry would
@@ -5266,13 +5183,6 @@ impl LaborAllocation {
         // staffed or not: `assign_labor` states a crew and a tier and says nothing at all about
         // priority, so there is no reading of this command that could be an order to clear it.
         let mut standing_priority = SourcePriority::default();
-        // **AND THE KEEPING KIT THE PLAYER NAMED FOR THIS SITE, CARRIED THE SAME WAY THE RANK IS.**
-        // `assign_labor` states a take crew and the tier that crew works at; it says nothing at all
-        // about the tool the site is *kept* with, so there is no reading of this command that could
-        // be an order to clear the keeping override. Unlike [`LaborAssignment::kit`] it is therefore
-        // kept on **every** path, staffed or not — a `−`/`+` on the row must not silently put the
-        // keepers back on the derived default.
-        let mut standing_upkeep_kit = None;
         // **AND THE PARTY, CARRIED THE SAME WAY** — and for a stronger reason than the rank's: a
         // `−`/`+` on a far row is not an order to bring the workers home and start the walk out
         // again. Dropping it here would restart the transit countdown on every stepper press, so a
@@ -5286,7 +5196,6 @@ impl LaborAllocation {
         {
             standing_kit = self.assignments[idx].kit.clone();
             standing_priority = self.assignments[idx].priority;
-            standing_upkeep_kit = self.assignments[idx].upkeep_kit.clone();
             standing_party = self.assignments[idx].party.clone();
             had_row = true;
             self.assignments.remove(idx);
@@ -5307,7 +5216,6 @@ impl LaborAllocation {
                 // command deliberately resolves no kit when it is unstaffing, and writing that
                 // `None` onto a surviving row would forget the tier the band was working at.
                 kit: if keep_holding { standing_kit } else { kit },
-                upkeep_kit: standing_upkeep_kit,
                 priority: standing_priority,
                 party: standing_party,
             });
@@ -5370,35 +5278,6 @@ impl LaborAllocation {
         true
     }
 
-    /// **NAME THE KIT ONE WORK SITE IS KEPT WITH** — the whole of `upkeep_kit`
-    /// (`docs/plan_standing_upkeep.md` §2.7). Returns `false` when this band holds no row for that
-    /// source, which the caller reports the way the queue verbs report the same miss.
-    ///
-    /// `None` **clears the override** back to the site's own web derivation
-    /// ([`crate::equipment_config::EquipmentConfig::keeping_kit_for`]), which is the existing *"an
-    /// absent `kitId` means the job's default"* rule and is what lets a client say *"back to
-    /// default"* with no new vocabulary. `Some(<the bare kit>)` is a real selection and stays.
-    ///
-    /// **It touches nothing else on the row.** The take crew, its kit, the floor, the rank and the
-    /// queue entry are all statements the player made separately; this one says only *what the
-    /// keepers of this site carry*, so it is settable on a row held at zero exactly as it is on a
-    /// staffed one — a source with no gatherers on it still has a meter the pool owes for.
-    pub fn set_upkeep_kit(
-        &mut self,
-        target: &LaborTarget,
-        kit: Option<crate::equipment_config::KitChoice>,
-    ) -> bool {
-        let Some(assignment) = self
-            .assignments
-            .iter_mut()
-            .find(|a| a.target.same_source(target))
-        else {
-            return false;
-        };
-        assignment.upkeep_kit = kit;
-        true
-    }
-
     /// **Put a source in this band's build queue, or restate what it is building there** — the
     /// whole of what the five build verbs do (`docs/plan_standing_upkeep.md` §2.5). Returns `false`
     /// when the band has no row for that source, which the caller reports as *"staff it first"*.
@@ -5436,7 +5315,6 @@ impl LaborAllocation {
             None => self.build_queue.push(BuildQueueEntry {
                 source,
                 declared,
-                kit: None,
                 priority: SourcePriority::default(),
             }),
         }
@@ -5448,8 +5326,8 @@ impl LaborAllocation {
     ///
     /// Nothing is minted for a source with no entry: the mark is a property of a declared job, and
     /// an entry created here would enrol a build the player never declared — the refusal
-    /// [`Self::set_build_entry_kit`] makes. **Re-declaring keeps the mark**, as it keeps the place
-    /// and the kit ([`Self::enqueue_build`]).
+    /// [`Self::move_build_entry`] makes. **Re-declaring keeps the mark**, as it keeps the place
+    /// ([`Self::enqueue_build`]).
     pub fn set_build_priority(&mut self, source: &BuildSource, priority: SourcePriority) -> bool {
         let Some(entry) = self
             .build_queue
@@ -5459,32 +5337,6 @@ impl LaborAllocation {
             return false;
         };
         entry.priority = priority;
-        true
-    }
-
-    /// **Name the kit ONE queued job is raised with** — the `build_kit` command's whole effect
-    /// (`docs/plan_standing_upkeep.md` §4.7a ②). Returns whether an entry was there to set it on.
-    ///
-    /// `None` **clears the override** back to the entry's own web derivation, which is the existing
-    /// *"an absent `kitId` means the job's default"* rule and is what lets a client say *"back to
-    /// default"* with no new vocabulary. `Some(<the bare kit>)` is a real selection and stays.
-    ///
-    /// Nothing is invented for a source with no entry: a kit is a property of a declared job, and
-    /// minting an entry here would enrol a build the player never declared — the same refusal
-    /// [`Self::move_build_entry`] makes.
-    pub fn set_build_entry_kit(
-        &mut self,
-        source: &BuildSource,
-        kit: Option<crate::equipment_config::KitChoice>,
-    ) -> bool {
-        let Some(entry) = self
-            .build_queue
-            .iter_mut()
-            .find(|entry| &entry.source == source)
-        else {
-            return false;
-        };
-        entry.kit = kit;
         true
     }
 
@@ -6638,74 +6490,6 @@ impl Default for Tile {
 mod tests {
     use super::*;
 
-    /// **A `−`/`+` ON A ROW DOES NOT PUT ITS KEEPERS BACK ON THE DEFAULT TOOL** — the keeping
-    /// override survives a re-crew (`docs/plan_standing_upkeep.md` §2.7).
-    ///
-    /// [`LaborAllocation::set_assignment`] removes the edited row and appends it at the end, so
-    /// anything not deliberately carried across is lost. `assign_labor` states a take crew and the
-    /// tier **that crew** works at and says nothing at all about the keeping, so there is no reading
-    /// of the command that could be an order to clear the site's tool — the same argument
-    /// [`SourcePriority`] is carried on, and unlike [`LaborAssignment::kit`], which the command
-    /// really is a statement about.
-    ///
-    /// **The pair is the test**: the keeping kit survives *and* the take kit is still replaced. The
-    /// first alone would pass for a method that carried everything across and made the take kit
-    /// unchangeable.
-    #[test]
-    fn a_re_crew_keeps_the_sites_keeping_kit_and_still_replaces_its_take_kit() {
-        let equipment = crate::equipment_config::EquipmentConfig::builtin();
-        let hoed = equipment
-            .kit("tillage")
-            .expect("the shipped roster carries tillage");
-        let baskets = equipment
-            .kit("gathering")
-            .expect("the shipped roster carries gathering");
-        let bare = equipment
-            .kit("none")
-            .expect("the shipped roster carries the bare kit");
-        let tile = bevy::math::UVec2::new(3, 4);
-        let target = || LaborTarget::Forage {
-            tile,
-            floor: crate::DEFAULT_ESCAPEMENT_FLOOR,
-            species: None,
-            take_species: TakeSelection::EVERYTHING,
-        };
-
-        let mut allocation = LaborAllocation::default();
-        const A_CREW: u32 = 2;
-        const A_BIGGER_CREW: u32 = 3;
-        const THE_BANDS_HANDS: u32 = 9;
-        allocation.set_assignment(target(), A_CREW, THE_BANDS_HANDS, Some(baskets.clone()));
-        assert!(
-            allocation.set_upkeep_kit(&target(), Some(hoed.clone())),
-            "fixture: the row must be there for the keeping kit to land on"
-        );
-
-        // The re-crew: a different crew, and a different TAKE kit.
-        allocation.set_assignment(target(), A_BIGGER_CREW, THE_BANDS_HANDS, Some(bare.clone()));
-        let row = allocation
-            .assignments
-            .iter()
-            .find(|assignment| assignment.target.same_source(&target()))
-            .expect("the row survives a re-crew");
-        assert_eq!(
-            row.upkeep_kit.as_ref().map(|kit| kit.id()),
-            Some(hoed.id()),
-            "the site's keeping tool is not a statement `assign_labor` makes, so a re-crew must \
-             leave it exactly where the player put it"
-        );
-        assert_eq!(
-            row.kit.as_ref().map(|kit| kit.id()),
-            Some(bare.id()),
-            "…while the TAKE kit is exactly what the command decides, and a re-assignment replaces \
-             it — carrying that one across would make the selection unchangeable"
-        );
-        assert_eq!(
-            row.workers, A_BIGGER_CREW,
-            "fixture: the re-crew must actually have landed"
-        );
-    }
-
     /// **A COMMITMENT PRUNES THE SELECTION AND NAMES THE NEW CROP** — the repair that keeps a crew
     /// from asking for plants its own `Cultivate`/`Sow` displaced, which is a zero selected share
     /// and therefore `+0.00` in **every** account at once.
@@ -6926,7 +6710,6 @@ mod tests {
             workers: take,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         }
     }
 
@@ -6955,7 +6738,6 @@ mod tests {
             workers: take,
             kit: None,
             priority,
-            upkeep_kit: None,
         }
     }
 
@@ -6977,7 +6759,6 @@ mod tests {
             workers,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         }
     }
 
@@ -6997,7 +6778,6 @@ mod tests {
         BuildQueueEntry {
             source: BuildSource::Patch(tile),
             declared: BuildJob::Rung(Improvement::Cultivate),
-            kit: None,
             priority: SourcePriority::default(),
         }
     }

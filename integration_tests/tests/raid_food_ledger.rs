@@ -74,7 +74,6 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
             workers: workers.max(1),
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         }],
         ..Default::default()
     });

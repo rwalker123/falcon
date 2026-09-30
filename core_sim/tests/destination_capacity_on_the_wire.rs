@@ -315,7 +315,6 @@ fn spawn_the_farming_band(
                     workers: gatherers + keepers,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     party: None,
@@ -323,13 +322,11 @@ fn spawn_the_farming_band(
                     workers: builders,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Patch(source),
                 declared: core_sim::BuildJob::Rung(declared),
-                kit: None,
                 priority: core_sim::SourcePriority::default(),
             }],
             ..Default::default()
@@ -701,7 +698,6 @@ fn spawn_the_herding_band(
                     workers: hunters + keepers,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     party: None,
@@ -709,13 +705,11 @@ fn spawn_the_herding_band(
                     workers: A_STEADY_BUILD_POOL,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
             build_queue: vec![core_sim::BuildQueueEntry {
                 source: core_sim::BuildSource::Herd(herd_id.to_string()),
                 declared: core_sim::BuildJob::Rung(declared),
-                kit: None,
                 priority: core_sim::SourcePriority::default(),
             }],
             ..Default::default()

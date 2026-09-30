@@ -336,7 +336,6 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         workers: KEEPER_WORKERS + KEEPER_WORKERS,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **The builders' pool, staffed** — a `set_herd_output` commitment is an
                     // ordinary build and is raised from this pool at the head of the band's queue,
@@ -347,7 +346,6 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         workers: BUILDERS,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **The keeping role, staffed** — the fixture's keeper really is keeping the
                     // herd, and an unstaffed `husbandry` pool reads as total neglect (see

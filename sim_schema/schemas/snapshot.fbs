@@ -3452,8 +3452,8 @@ table ForagePatchState {
   // --- WHAT THIS SITE IS KEPT WITH (appended last, append-only wire) ----------------------------
   // THE KEEPING KIT IS PER WORK SITE, NOT PER BAND (docs/plan_standing_upkeep.md 2.7). The band is
   // the pool of workers and goods to draw from; it does not decide which tool a given site is worked
-  // with. So this is a property of the WORKED ROW, set by `upkeep_kit <faction> <x> <y> [kit <id>]`,
-  // exactly as `buildKitId` above is a property of the queue entry.
+  // with. So this was a property of the WORKED ROW, set by the retired `upkeep_kit` command, exactly
+  // as `buildKitId` above was of the queue entry. Both publish empty (docs/plan_pool_toe.md 4).
   //
   // upkeepKitId = THE KIT THE KEEPERS OF THIS SITE ARE ACTUALLY CARRYING, resolved - never "the
   //               player named none". `kitId`'s standing rule, and it matters here for `buildKitId`'s
@@ -3548,7 +3548,7 @@ table BuildLegState {
 // destination rung, the legs, the chained date and the blocked cause are all published on the
 // SOURCE row (ForagePatchState / the herd twin), and they agree across every band holding that
 // source BY CONSTRUCTION: `cultivate`/`sow`/`tame` enqueue the same declaration on every band
-// working it, and `build_kit` is source-addressed and sets every holder's entry. Repeating any of
+// working it. Repeating any of
 // them here would be a second copy of a fact that already has a home, which is how two copies come
 // to disagree.
 table BuildQueueEntryState {

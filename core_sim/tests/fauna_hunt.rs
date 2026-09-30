@@ -153,7 +153,6 @@ fn hunt_assignment_takes_biomass_and_yields() {
                     workers: HUNT_WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

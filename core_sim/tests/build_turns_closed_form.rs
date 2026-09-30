@@ -254,9 +254,6 @@ fn spawn_keepers_of(
     let kit = equipment
         .kit(HANDLING_KIT)
         .expect("the shipped roster carries the big-game kit");
-    let builders_kit = equipment
-        .kit(BUILDERS_KIT)
-        .expect("the shipped roster carries the hurdling kit");
     app.world
         .spawn((
             PopulationCohort {
@@ -315,7 +312,6 @@ fn spawn_keepers_of(
                         workers: KEEPERS,
                         kit: Some(kit.clone()),
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **The build is staffed by the band's own POOL**, at the crew the caller
                     // named (`docs/plan_standing_upkeep.md` §2.5). **The row carries no kit** — a
@@ -328,7 +324,6 @@ fn spawn_keepers_of(
                         workers: builders,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                 ],
                 build_queue: improvement
@@ -337,7 +332,6 @@ fn spawn_keepers_of(
                         declared: core_sim::BuildJob::Rung(declared),
                         // **The kit rides the ENTRY**, which is where a build's gear offset is read
                         // from since §4.7a ②.
-                        kit: Some(builders_kit),
                         // **Marked above the hunt row**, because the herd's own crew keeps it first
                         // and its keeping reaches for the same hurdles at the row's priority
                         // (`docs/plan_site_crews.md` §2.3). A build whose mark wins the one set is
@@ -1296,7 +1290,6 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         workers: GATHERERS,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **The builders are a band-level pool** since `docs/plan_standing_upkeep.md` §2.5,
                     // and the whole of it goes on the head of the queue below — which is this patch.
@@ -1308,13 +1301,11 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                         workers: BUILDERS,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                 ],
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Patch(source),
                     declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
-                    kit: None,
                     priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()

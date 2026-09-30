@@ -1221,7 +1221,6 @@ fn spawn_band(
                     vec![core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(patch),
                         declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),
-                        kit: None,
                         priority: core_sim::SourcePriority::default(),
                     }]
                 } else {
@@ -1253,7 +1252,6 @@ fn build_rows(
         workers,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     }];
     if builders > 0 {
         rows.push(LaborAssignment {
@@ -1262,7 +1260,6 @@ fn build_rows(
             workers: builders,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
     }
     rows

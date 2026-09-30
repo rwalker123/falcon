@@ -2200,31 +2200,16 @@ impl EquipmentConfig {
         self.work_kit_for(Self::keeping_job(branch), branch, rung)
     }
 
-    /// **THE KIT ONE WORK SITE IS ACTUALLY KEPT WITH** — [`Self::builders_kit_for`]'s twin, on the
-    /// same three rules: the kit named on **this site's row** wins (`none` included), else the
-    /// roster answers for this site's web, else the job's own default.
-    ///
-    /// ⛔ **THE SELECTION IS PER WORK SITE, NEVER PER BAND** (`docs/plan_standing_upkeep.md` §2.7).
-    /// The band is the pool of workers and goods to draw from; it does not decide which tool a given
-    /// site is worked with. `site_kit` is therefore [`crate::components::LaborAssignment::upkeep_kit`]
-    /// — the same place the take kit lives and one account over from
-    /// [`crate::components::BuildQueueEntry::kit`], which makes the identical argument: *a single
-    /// stored id per band cannot be right for both food webs*. It was read off the band's
-    /// `agriculture` / `husbandry` **role row** until §2.7, which pinned one tool onto every site
-    /// that band kept with no way back.
-    ///
-    /// It takes no `Option<branch>` where the builders' seam does, because a site **is** a web: a
-    /// patch is plant and a herd is animal, so there is no *"nothing is being worked"* case for a
-    /// branch to be absent in.
+    /// **THE KIT THE ROSTER KEEPS A SITE OF THIS WEB WITH** — the roster's answer for `branch`
+    /// ([`Self::keeping_kit_for_branch`]), else the keeping job's own default. There is no per-site
+    /// override to consult: a site's keeping tools follow from its own rung and are settled
+    /// band-wide (`docs/plan_pool_toe.md` §4), which retired the `upkeep_kit` command.
     pub fn keeping_kit_for(
         &self,
-        site_kit: Option<&KitChoice>,
         branch: crate::intensification::RungBranch,
         rung: Option<&str>,
     ) -> KitChoice {
-        site_kit
-            .cloned()
-            .or_else(|| self.keeping_kit_for_branch(branch, rung))
+        self.keeping_kit_for_branch(branch, rung)
             .unwrap_or_else(|| self.default_kit(Self::keeping_job(branch)))
     }
 
@@ -2240,34 +2225,6 @@ impl EquipmentConfig {
         let fresh = crate::components::BandEquipment::start_stocked(self);
         self.kits_for_job(job)
             .find(|kit| self.build_work_per_worker(kit, &fresh, branch, rung) > NO_BUILD_GEAR)
-    }
-
-    /// **THE KIT ONE QUEUE ENTRY IS RAISED WITH** — the one seam the turn, the wear charge and the
-    /// wire all resolve through, so a card cannot state a kit the pool is not using.
-    ///
-    /// 1. **The kit named on THIS ENTRY wins**, `none` included — that is how a player sends the
-    ///    pool out bare-handed on one job to conserve gear, and *"an absent `kitId` means the job's
-    ///    default"* is the rule every other selection already follows.
-    /// 2. **Otherwise the roster answers for this entry's web** ([`Self::build_kit_for_branch`]).
-    /// 3. **`default_kits.builders` is the FALL-BACK, not the answer** — reached when the entry
-    ///    named nothing and either there is no entry at all (`branch` is `None`: nothing is being
-    ///    raised, so no tool is out) or no roster entry serves that web.
-    ///
-    /// ⛔ **A kit on the `builders` ROW is not an input, and the row cannot carry one**
-    /// (`docs/plan_standing_upkeep.md` §4.7a ②). It was rule ① until §4.7: a single stored id per
-    /// **band** is the one thing the per-entry derivation cannot express, so one pick pinned the
-    /// animal web's tool onto every later plant build with no way back. `assign_labor` refuses a
-    /// `kit` token on that role rather than storing one nothing reads.
-    pub fn builders_kit_for(
-        &self,
-        entry_kit: Option<&KitChoice>,
-        branch: Option<crate::intensification::RungBranch>,
-        rung: Option<&str>,
-    ) -> KitChoice {
-        entry_kit
-            .cloned()
-            .or_else(|| branch.and_then(|branch| self.build_kit_for_branch(branch, rung)))
-            .unwrap_or_else(|| self.default_kit(KitJob::Builders))
     }
 
     /// **The same kit holding only the tools that WORKED this build** — what a build's wear is

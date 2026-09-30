@@ -152,8 +152,8 @@ fn published_build_legs(
 /// pool as `PopulationCohortState.poolToe` — so there is no per-site answer left to state, and a
 /// site that kept stating one would name a tool the pool may not have been issued.
 ///
-/// ⛔ **The FIELDS stay on the wire.** FlatBuffers ids are positional, and #676 retires the
-/// `upkeep_kit` / `build_kit` commands that fed them while #677 retires the client's pickers.
+/// ⛔ **The FIELDS stay on the wire.** FlatBuffers ids are positional. The `upkeep_kit` /
+/// `build_kit` commands that fed them are retired (proto fields 63 and 60, reserved).
 pub(crate) const NO_SITE_KIT_ID: &str = "";
 
 /// **NOTHING IS NAMED, SO NOTHING WAS OVERRIDDEN** — what `upkeepKitNamed` publishes beside
@@ -173,9 +173,9 @@ pub(crate) const NO_SITE_KIT_NAMED: bool = false;
 ///
 /// # ⛔ IT CARRIES NO KIT ANY MORE (`docs/plan_pool_toe.md` §4)
 ///
-/// It was `BuildKitIds`, and each entry's value was the kit that build would be raised with —
-/// `EquipmentConfig::builders_kit_for` over the entry's own named choice, published as `buildKitId`
-/// on both source tables. **A builder's tools follow from the rung the leg in flight stands on
+/// It was `BuildKitIds`, and each entry's value was the kit that build would be raised with — the
+/// entry's own named choice, else the roster's answer for its web, published as `buildKitId` on
+/// both source tables. **A builder's tools follow from the rung the leg in flight stands on
 /// now**, settled band-wide by the player's own row priority and published per pool as
 /// `PopulationCohortState.poolToe`, so there is no per-site kit left to resolve and `buildKitId`
 /// publishes empty on every row.

@@ -103,7 +103,6 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                     workers: GATHERERS,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

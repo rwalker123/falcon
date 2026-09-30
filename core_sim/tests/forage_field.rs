@@ -499,7 +499,6 @@ fn spawn_forager_of(
                         workers: foragers + keepers,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                     // **A pool of the same size staffs the build** — what this fixture meant when
                     // one crew did every job (`docs/plan_standing_upkeep.md` §2.5).
@@ -509,7 +508,6 @@ fn spawn_forager_of(
                         workers: foragers,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     },
                 ],
                 build_queue: improvement
@@ -518,7 +516,6 @@ fn spawn_forager_of(
                         declared: core_sim::BuildJob::Rung(declared),
                         // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a
                         // pool's tools follow from the rung. The gear axis is held on the LEDGER.
-                        kit: None,
                         priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
@@ -1144,31 +1141,21 @@ fn a_bare_ground_sow_wears_the_builders_kit_on_its_first_leg() {
     );
 }
 
-/// **Put the shipped plant builders' kit on the QUEUE ENTRY, and NOTHING on the keeping row** —
-/// the isolation the wear arm above needs, since both jobs derive the same kit when neither names
-/// one.
-///
-/// **The entry, not the `builders` row.** A build's kit is a property of the job since
-/// `docs/plan_standing_upkeep.md` §4.7a ②, and the row carries none at all.
+/// **Stock the band with the shipped plant builders' gear, one unit per builder** — the tools the
+/// rung in flight asks the pool for (`docs/plan_pool_toe.md` §4), so the wear arm above has
+/// something to spend.
 fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
     let equipment = core_sim::EquipmentConfig::for_a_stocked_fixture();
-    let kit = equipment
-        .kit(TILLAGE_KIT)
-        .expect("the shipped roster carries the tillage kit");
     let builders = {
-        let mut allocation = app
+        let allocation = app
             .world
-            .get_mut::<LaborAllocation>(band)
+            .get::<LaborAllocation>(band)
             .expect("the fixture band keeps its allocation");
-        let builders = allocation.workers_on(&LaborTarget::Builders);
         assert!(
             !allocation.build_queue.is_empty(),
-            "fixture: the band must have declared a build for the kit to ride"
+            "fixture: the band must have declared a build for the gear to be spent on"
         );
-        for entry in allocation.build_queue.iter_mut() {
-            entry.kit = Some(kit.clone());
-        }
-        builders
+        allocation.workers_on(&LaborTarget::Builders)
     };
     app.world
         .entity_mut(band)
@@ -1178,8 +1165,7 @@ fn gear_the_builders_alone(app: &mut App, band: bevy::prelude::Entity) {
         ));
 }
 
-/// The plant web's builders kit, and the one item it carries — what a build's wear is spent on.
-const TILLAGE_KIT: &str = "tillage";
+/// The plant web's builders' tool — what a build's wear is spent on.
 const TILLAGE_ITEM: &str = "hoes";
 
 /// **THE LADDER MUST CLIMB: wild ≤ tended < Field** (on a *bare* patch). Same tile, same biomass,
@@ -1506,7 +1492,6 @@ fn a_field_worked_by(crew: u32, ledger: core_sim::BandEquipment) -> (App, Entity
                     workers: crew,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

@@ -258,7 +258,6 @@ fn spawn_hunters(
                     workers,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -723,7 +722,6 @@ fn spawn_resident_crew(
                     workers,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 })
                 // **The build's hands are a band-level pool** since
                 // `docs/plan_standing_upkeep.md` §2.5, staffed at the same count the take is so the
@@ -736,14 +734,12 @@ fn spawn_resident_crew(
                     workers: build_crew,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }))
                 .collect(),
                 build_queue: improvement
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Herd(fauna_id.to_string()),
                         declared: core_sim::BuildJob::Rung(declared),
-                        kit: Some(bare_builders()),
                         priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
@@ -2438,17 +2434,3 @@ fn the_exported_crew_pays_for_the_retreat() {
 /// A wary, light-bodied quarry — the reach term binds (so the exported crew *is* the engagement
 /// count) and the shipped `wariness 0.65` is high enough that the retreat moves it by a lot.
 const WARY_SPECIES: &str = SMALL_BODIED_SPECIES;
-
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
-///
-/// It rides the **entry** because that is where a build's kit lives
-/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
-/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
-/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. Naming `none` holds the gear
-/// axis at its identity so these arms measure what they say they measure; the geared default is
-/// pinned in `core_sim/tests/build_turns_closed_form.rs`.
-fn bare_builders() -> core_sim::KitChoice {
-    core_sim::EquipmentConfig::builtin()
-        .kit("none")
-        .expect("the shipped roster carries the empty kit")
-}

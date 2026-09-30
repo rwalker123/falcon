@@ -507,12 +507,13 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 >   was bare-handed however many chisels the band owned — `stone_dressing` declares
 >   `extraction:quarry` and no kit offers `quarrywork`. It is geared now, off the rung requirement,
 >   which is a real pacing move on that branch and is the arc's point rather than a side effect.
-> - **the per-site / per-entry SELECTION.** `LaborAssignment::upkeep_kit` and `BuildQueueEntry::kit`
->   still exist and are still set by `upkeep_kit` / `build_kit` — and **nothing in the turn prices a
->   pool from either, nor does anything on the wire state them** (see "A SITE NAMES NO KIT" below).
->   The lever they carried is genuinely lost: there is no longer a way to keep a site or a job bare
->   on purpose to spare the band's tools. A site marked **Low** is served last when tools run short,
->   which is what replaces it. The commands retire end to end in #676.
+> - **the per-site / per-entry SELECTION.** `LaborAssignment::upkeep_kit`, `BuildQueueEntry::kit`
+>   and the `upkeep_kit` / `build_kit` commands that set them are **retired end to end** — the
+>   fields, the setters, the resolvers (`builders_kit_for`, `LaborAllocation::builders_kit`), the
+>   payloads and the verbs (proto fields **60** and **63** reserved). Nothing priced a pool from
+>   either. The lever they carried is genuinely lost: there is no way to keep a site or a job bare on
+>   purpose to spare the band's tools. A site marked **Low** is served last when tools run short, and
+>   a build marked **Low** likewise (`docs/plan_site_crews.md` §2.4), which is what replaces it.
 >
 > #### THE ORDER, AND WHICH FOUR OF ITS STEPS KEEP IT FROM BEING A LOOP
 >
@@ -877,115 +878,22 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > is the replacement, and it strips **this rung's tools only** — an empty ledger disarms the take
 > crews beside the build, and an *absent* one is filled in by the labour pass at the band's own head
 > count.
-> #### ~~THE BUILDERS' KIT IS A PROPERTY OF THE QUEUE ENTRY~~ — SUPERSEDED, and kept for its reasons
+> #### RETIRED: the per-entry builders' kit and the per-site keeping kit
 >
-> ⛔ **THE POOL HAS NO KIT AT ALL NOW** — see "A STANDING POOL HAS NO KIT" above. Everything below
-> describes the per-entry *kit* derivation the per-site *requirement* replaced. It is kept because
-> the arguments it makes are still live one level down — *a queue item is one job*, *a single stored
-> id per band cannot be right for both webs*, *wear follows the work actually done* — and because
-> `BuildQueueEntry::kit` and the `build_kit` command survive until #676 retires them. **Nothing in
-> the turn prices a build from them, and the wire states nothing about them.**
+> ⛔ **THE POOL HAS NO KIT AT ALL** — see "A STANDING POOL HAS NO KIT" above. A build's tools and a
+> site's keeping tools follow from the rung, so the two overrides that used to pick them —
+> `BuildQueueEntry::kit` (set by `build_kit`) and `LaborAssignment::upkeep_kit` (set by
+> `upkeep_kit`) — are gone with their commands, their resolvers and their proto fields (60 and 63,
+> reserved; `command_text` refuses both verbs). `buildKitId` / `upkeepKitId` / `upkeepKitNamed` stay
+> on the wire only because FlatBuffers ids are positional, and publish empty.
 >
-> **A queue item is one job, so a kit per job is exactly following the row.** With two builders kits
-> a single stored id cannot be right for both webs, and the hunt had already solved the same problem
-> one axis over: it derives a per-quarry default and lets the player override, greying kits that
-> genuinely cannot do the job.
->
-> `systems::labor` resolves the pool's gear **per branch**, once per band per turn, plus **one
-> reading per entry that named a kit of its own** (`BuildersGear`). Each build arm reads
-> `for_source`, so the **head** entry's branch is the one actually funded and everything below it is
-> *dated* at the gear **it** will be raised with — an overridden entry at its own kit, never at its
-> web's derived one. The precedence for one entry (`EquipmentConfig::builders_kit_for`) is:
->
-> 1. **The kit named on THIS ENTRY wins**, `none` included. An absent `kitId` already means *"the
->    job's default"* everywhere else, and this is what preserves deliberately sending the pool out
->    bare-handed on one job to conserve gear.
-> 2. **Otherwise the ROSTER answers for that entry's web** — `EquipmentConfig::build_kit_for_branch`,
->    the earliest entry in file order whose `build_work` serves that web at the fresh tier. It is
->    `kit_supplying(job, HuntCarry)`'s shape, with the branch the extra axis a build has and a pen
->    does not, and it is what keeps a kit id out of the sim: ⛔ **there is no `BuildJob → kit` match
->    anywhere in Rust**, so a third build tool is a roster edit.
-> 3. **`default_kits.builders` (`none`) is the FALL-BACK**, reached when the entry named nothing and
->    either there is no entry at all (nothing is being raised, so no tool is out) or no roster entry
->    serves that web. `every_branch_of_the_ladder_has_a_builders_kit_that_serves_only_it` is what
->    stops the third rung from becoming the answer by accident.
->
-> > ⛔ **A KIT ON THE `builders` ROW IS NOT AN INPUT, AND `assign_labor` REFUSES ONE.**
-> > It was rule ① until `docs/plan_standing_upkeep.md` §4.7a ②, and it is the one thing the
-> > derivation cannot express: a single stored id is per **BAND**, so one pick pinned `hurdling`
-> > onto every later builders command and locked a band raising a *plant* Cultivate to the animal
-> > web's tool with no way back (`none` means bare-handed, which is a different statement, not an
-> > undo). §4.6b deleted the client picker rather than leave it harmful; §4.7 gave the override its
-> > home. The refusal is by name — a silently-dropped token is the same class of defect as the
-> > pinning it replaces.
->
-> > ⛔ **~~AND THE KEEPING KIT IS PER WORK SITE~~ — SUPERSEDED BY THE PER-SITE REQUIREMENT.** A site's
-> > tools follow from its own **rung** now, so `LaborAssignment::upkeep_kit` prices nothing, the wire
-> > states nothing about it (`upkeepKitId` and `upkeepKitNamed` publish `""` / `false` on every row —
-> > see "ON THE WIRE" above), and the `upkeep_kit` command retires in #676. What survives is the
-> > argument, which the requirement makes more strongly: *the band does not decide which tool a given
-> > site is worked with*. The rest of this callout describes the retired selection and its wire.
-> >
-> > ⛔ **AND THE KEEPING KIT IS PER WORK SITE, ON THE SAME ARGUMENT** (§2.7). The band is the pool of
-> > workers and goods to draw from; it does not decide which tool a given site is worked with. So
-> > `keeping_kit_for(site_kit, branch)` reads **`LaborAssignment::upkeep_kit`** — the worked row's own
-> > selection, the same place the take kit lives — and `None` is the web's derivation (`tillage` for a
-> > patch, `hurdling` for a herd). It was read off the band's `agriculture` / `husbandry` **role row**
-> > until §2.7, which could not say *hoes on the Field, bare hands on the scrub beside it*: one pick
-> > put the same tool on every site that band kept, and its wear was charged against the work of all
-> > of them. `LaborAllocation::named_kit_on` retired with that reading — it had no other caller, and
-> > `assign_labor` refuses a `kit` token on `agriculture` / `husbandry` exactly as it does on
-> > `builders`: **none of the three standing pools takes one**, because a pool is *how many hands*
-> > and never *what they carry*.
-> >
-> > **THE COMMAND IS `upkeep_kit <faction> <source…> [kit <id>]`**, `build_kit` line for line: same
-> > `BuildSourceRef` addressing, an absent token CLEARS back to the derivation, `kit none` is a real
-> > selection, and a kit that does not serve **this site's web** (`keeping_job(branch)` →
-> > `agriculture` for a patch, `husbandry` for a herd) is refused by name. Its reach is every band of
-> > the faction that **works** the source — wider than `build_kit`'s, because a keeping bill is owed
-> > by every band holding the ground and not only by whoever queued a build on it.
-> >
-> > **THE WIRE** states the RESOLVED kit per source — `ForagePatchState.upkeepKitId` /
-> > `HerdTelemetryState.upkeepKitId`, `""` only when no band of the faction works it — beside
-> > `upkeepKitNamed`, which says whether that id is a stated override or the derivation. The flag is
-> > not recoverable from the id (a player may name the very kit the derivation would have picked), so
-> > it rides the wire rather than being re-derived. Captured LIVE off the bands' rows
-> > (`snapshot::subsistence::resolve_upkeep_kits`) for `buildKitId`'s reason; where several bands work
-> > one source a **stated override beats a derivation** and the first stated one wins. A picker's
-> > option list is `KitOption.jobs` containing `agriculture` / `husbandry` — there is no second roster.
->
-> **THE COMMAND IS `build_kit <faction> <source…> [kit <id>]`** — the fourth member of the queue
-> family, addressing a source through the same `BuildSourceRef` as `abandon` / `unqueue` /
-> `build_order` and reaching every band of the faction that has it queued. **An absent `kit` token
-> CLEARS the override** back to the derivation, which is what lets the client say *"back to default"*
-> with no new vocabulary (`Main._kit_token` already omits the token when the selection equals the
-> default). A source nothing of yours has queued, an unknown id, and a kit that does not list
-> `builders` are each refused by name.
->
-> **THE WIRE STATES THE DERIVED KIT, not the stored one.** `LaborAssignmentState.kit_id` on the
-> `builders` row is the **head entry's** resolved kit (`LaborAllocation::builders_kit` at capture) —
-> the existing rule *"the wire states the kit rather than 'the player named none'"*, which a
-> per-entry default would otherwise break by publishing `none` while the pool was out with hurdles.
-> Per source, `ForagePatchState.buildKitId` / `HerdTelemetryState.buildKitId` state **that entry's**
-> resolved kit, `""` for a source in nobody's queue. Both are **captured LIVE off the bands' queues**
-> (`snapshot::subsistence::resolve_build_kit_ids`), not stamped by the turn like `buildQueuePosition`
-> beside them: the server re-captures and broadcasts after every dispatched command, so a
-> turn-written field would show a kit pick a whole turn late. There is deliberately **no second
-> "what would the default be" field** — the client mirrors the same roster derivation
-> (`KitRoster.build_kit_for_branch`) to draw its `(default)` mark. Beside them, every `kitTiers[]`
-> row carries **`buildWorkBranch`** so a picker can grey a builders kit whose tool does not serve the
-> entry in front of it, exactly as it greys a snare against a Red Deer.
->
-> **WEAR FOLLOWS THE WORK ACTUALLY DONE, so the charge is narrowed too.** A player who names
-> `hurdling` and then raises a Cultivate takes *nothing* off that job, so the hurdles are charged
-> nothing: `charge_build_wear` is handed `EquipmentConfig::build_gear_kit`, the same kit holding only
-> the items whose `build_work` served this branch.
->
-> **A FIXTURE HOLDS THE GEAR AXIS AT ITS IDENTITY ON THE ENTRY, NOT ON THE ROW.** Every pace fixture
-> that measures the ladder rather than a tool writes `kit: Some(bare_builders())` on its
-> `BuildQueueEntry`; a bare kit on the `builders` row is now simply ignored, and a source with **no**
-> entry has nowhere to carry one — such a fixture holds the axis with an empty `BandEquipment`
-> instead, since an *absent* ledger is read as a fully stocked band.
+> **The arguments they made are still live one level down**: *a queue item is one job*, *a single
+> stored id per band cannot be right for both webs*, and *wear follows the work actually done* —
+> `charge_build_wear` is handed `EquipmentConfig::build_gear_kit`, the kit holding only the items
+> whose `build_work` served this branch. **A kit on a standing pool's row is still not an input**,
+> and `assign_labor` refuses one by name, because a pool is *how many hands* and never *what they
+> carry*. `EquipmentConfig::keeping_kit_for(branch, rung)` survives as the roster's answer for a web,
+> with no site override to consult.
 >
 > **THE SHIPPED OPENING MOVES HERE, deliberately.** `default_kits.builders` was `none` and *meant*
 > it, so every build in the game was bare-handed unless the player named a kit; the derivation makes

@@ -1790,7 +1790,7 @@ pub struct PoolCrewLineState {
 /// the destination rung, the legs, the chained date and the blocked cause are all published on the
 /// **source** row (`ForagePatchState` / the herd twin) and agree across every band holding the
 /// source by construction — `cultivate`/`sow`/`tame` enqueue the same declaration on every band
-/// working it, and `build_kit` is source-addressed and sets every holder's entry. The mark is the
+/// working it. The mark is the
 /// entry's own and per band (`build_priority` names one band), so it rides here.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BuildQueueEntryState {

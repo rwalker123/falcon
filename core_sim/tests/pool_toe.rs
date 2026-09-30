@@ -354,6 +354,205 @@ fn stone_dressing_shared_by_roadwork_and_a_quarry_crew_serves_high_first() {
     );
 }
 
+/// ⛔ **A `Low` GROUNDWORK ROW LOSES THE ONE CHISEL TO A `Normal` ONE** (`docs/plan_site_crews.md`
+/// §2.4) — a working's extract row carries the site crew's Priority like a forage or hunt row, and
+/// its keeping-tool claim ranks at it. Two quarries, one set of stone-dressing gear: the `Normal`
+/// crew keeps armed and the `Low` one keeps tool-short.
+///
+/// **Both arms, swapping which quarry is `Low`**, so the rank decides and never the order the rows
+/// or the workings happen to sit in.
+#[test]
+fn a_low_groundwork_row_loses_the_one_chisel_to_a_normal_one() {
+    for low_first in [true, false] {
+        let (first, second) = if low_first {
+            (SourcePriority::Low, SourcePriority::Normal)
+        } else {
+            (SourcePriority::Normal, SourcePriority::Low)
+        };
+        let [first_short, second_short] = two_quarries_and_one_chisel([first, second]);
+        let (low_short, normal_short) = if low_first {
+            (first_short, second_short)
+        } else {
+            (second_short, first_short)
+        };
+        assert!(
+            low_short && !normal_short,
+            "the Normal quarry's crew takes the one chisel and the Low one keeps without it \
+             (Low listed first: {low_first}) — Low short {low_short}, Normal short {normal_short}"
+        );
+    }
+}
+
+/// **A band holding two quarries with ONE set of stone-dressing gear**, each row at its given rank.
+/// Returns each working's `upkeep_tools_short` after one turn.
+fn two_quarries_and_one_chisel(ranks: [SourcePriority; 2]) -> [bool; 2] {
+    const ONE_CHISEL: u32 = 1;
+    const A_TAKE_CREW: u32 = 1;
+    /// Hands enough to keep a quarry bare-handed, so both crews keep it and differ only in the tool.
+    const A_QUARRY_KEEPING_CREW: u32 = 3;
+    let mut app = spawn_world();
+    let (band, _, _, home) = first_band(&mut app);
+    let tiles = [tile_east_of(&app, home, 1), tile_east_of(&app, home, 2)];
+    let materials = tiles.map(|tile| seat_a_quarry(&mut app, tile));
+    let staffed = {
+        let mut allocation = LaborAllocation::default();
+        for ((tile, material), rank) in tiles.iter().zip(&materials).zip(ranks) {
+            allocation.assignments.push(core_sim::LaborAssignment {
+                party: None,
+                target: LaborTarget::Extract {
+                    tile: *tile,
+                    material: material.clone(),
+                    floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+                },
+                workers: A_TAKE_CREW + A_QUARRY_KEEPING_CREW,
+                kit: None,
+                priority: rank,
+            });
+        }
+        let staffed: u32 = allocation.assignments.iter().map(|row| row.workers).sum();
+        app.world.entity_mut(band).insert(allocation);
+        staffed
+    };
+    size_the_band(&mut app, band, staffed);
+    stock_exactly(&mut app, band, &[(STONE_DRESSING, ONE_CHISEL)]);
+
+    app.update();
+
+    let registry = app.world.resource::<DepositRegistry>();
+    [0, 1].map(|index| {
+        registry
+            .source(tiles[index], &materials[index])
+            .expect("the seated working survives the turn")
+            .upkeep_tools_short
+    })
+}
+
+/// ⛔ **A ROAD BUILD'S BUILD MARK RANKS ITS BUILDERS' TOOL CLAIM** (`docs/plan_site_crews.md`
+/// §2.4). A road has no crew, so its only mark is the Build mark on a queued road build — and that
+/// mark is what the builders' claim on the paving's stone-dressing gear settles at. Against a
+/// `Normal` quarry crew reaching for the same single chisel: a `High` paving takes it and leaves
+/// the quarry keeping tool-short; a `Low` paving loses it and the quarry keeps armed.
+#[test]
+fn a_road_builds_mark_ranks_its_builders_tool_claim() {
+    /// The one chisel, armed.
+    const ONE_CHISEL: f32 = 1.0;
+    /// Nothing armed.
+    const NO_CHISEL: f32 = 0.0;
+    let high = a_queued_paving_and_a_quarry(SourcePriority::High);
+    let low = a_queued_paving_and_a_quarry(SourcePriority::Low);
+    assert!(
+        high.builders_armed == ONE_CHISEL && high.quarry_short,
+        "a High paving wins the chisel from the Normal quarry: builders armed {}, quarry short {}",
+        high.builders_armed,
+        high.quarry_short
+    );
+    assert!(
+        low.builders_armed == NO_CHISEL && !low.quarry_short,
+        "a Low paving loses it to the Normal quarry: builders armed {}, quarry short {}",
+        low.builders_armed,
+        low.quarry_short
+    );
+}
+
+/// **A band paving a dirt road it keeps, with a quarry crew beside it and ONE chisel** — the
+/// road's queued `pave` at the head of the queue, marked `build_mark`. Returns whether the quarry
+/// kept tool-short and how much gear the builders were armed with.
+fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
+    const ONE_CHISEL: u32 = 1;
+    const A_TAKE_CREW: u32 = 1;
+    const A_QUARRY_KEEPING_CREW: u32 = 3;
+    const BUILDERS: u32 = 2;
+    /// Kept from next door — the paving's cost is not what is under test.
+    const NEXT_DOOR: f32 = 1.0;
+    let mut app = spawn_world();
+    let (band, faction, band_id, home) = first_band(&mut app);
+    // A `pave` is only raised by a faction that knows paving.
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(
+            faction,
+            core_sim::PAVING_DISCOVERY_ID,
+            core_sim::scalar_one(),
+        );
+    let road_tile = tile_east_of(&app, home, 1);
+    let quarry_tile = tile_east_of(&app, home, 2);
+    seat_road(
+        &mut app,
+        road_tile,
+        RungKey::RouteDirtRoad,
+        band_id,
+        NEXT_DOOR,
+    );
+    let material = seat_a_quarry(&mut app, quarry_tile);
+    let staffed = {
+        let mut allocation = LaborAllocation::default();
+        allocation.assignments.push(core_sim::LaborAssignment {
+            party: None,
+            target: LaborTarget::Extract {
+                tile: quarry_tile,
+                material: material.clone(),
+                floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+            },
+            workers: A_TAKE_CREW + A_QUARRY_KEEPING_CREW,
+            kit: None,
+            priority: SourcePriority::Normal,
+        });
+        allocation.assignments.push(core_sim::LaborAssignment {
+            party: None,
+            target: LaborTarget::Builders,
+            workers: BUILDERS,
+            kit: None,
+            priority: SourcePriority::default(),
+        });
+        assert!(
+            allocation.enqueue_build(
+                core_sim::BuildSource::Road(road_tile),
+                core_sim::BuildJob::Rung(core_sim::Improvement::Pave),
+            ),
+            "fixture: the band keeps the road, so its paving is enrolled"
+        );
+        assert!(
+            allocation.set_build_priority(&core_sim::BuildSource::Road(road_tile), build_mark),
+            "fixture: the queued paving takes its Build mark"
+        );
+        let staffed: u32 = allocation.assignments.iter().map(|row| row.workers).sum();
+        app.world.entity_mut(band).insert(allocation);
+        staffed
+    };
+    size_the_band(&mut app, band, staffed);
+    stock_exactly(&mut app, band, &[(STONE_DRESSING, ONE_CHISEL)]);
+
+    app.update();
+
+    let builders_armed = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the fixture band holds an allocation")
+        .last_pool_toe
+        .iter()
+        .filter(|line| line.pool == core_sim::KitJob::Builders && line.item == STONE_DRESSING)
+        .map(|line| line.filled)
+        .sum();
+    let quarry_short = app
+        .world
+        .resource::<DepositRegistry>()
+        .source(quarry_tile, &material)
+        .expect("the seated working survives the turn")
+        .upkeep_tools_short;
+    PavingTurn {
+        builders_armed,
+        quarry_short,
+    }
+}
+
+/// What one arm of the paving-against-a-quarry settlement did with the one chisel.
+struct PavingTurn {
+    /// Stone-dressing units the builders' claim was settled (`PoolToeLine::filled`).
+    builders_armed: f32,
+    /// The quarry crew kept without its tool (`DepositSource::upkeep_tools_short`).
+    quarry_short: bool,
+}
+
 /// What one arm of the shared-tool settlement put on the ground.
 struct SharedToolTurn {
     road_supplied: f32,
@@ -406,7 +605,6 @@ fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> Shar
             workers: A_TAKE_CREW + A_QUARRY_KEEPING_CREW,
             kit: None,
             priority: quarry_rank,
-            upkeep_kit: None,
         });
         allocation.assignments.push(core_sim::LaborAssignment {
             party: None,
@@ -414,7 +612,6 @@ fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> Shar
             workers: ONE_KEEPER,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
         let staffed: u32 = allocation.assignments.iter().map(|row| row.workers).sum();
         app.world.entity_mut(band).insert(allocation);
@@ -507,7 +704,7 @@ fn a_roadwork_pool_that_is_not_short_of_tools_splits_exactly_as_the_retired_one_
         // an ULP for a reason that predates this arc entirely.
         let equipment = EquipmentConfig::builtin();
         let rung = RungKey::RouteDirtRoad.wire_key();
-        let retired_kit = equipment.keeping_kit_for(None, RungBranch::Route, Some(&rung));
+        let retired_kit = equipment.keeping_kit_for(RungBranch::Route, Some(&rung));
         let retired_rate = core_sim::build_work_per_worker_turn(
             equipment
                 .coverage(&retired_kit, ONE_KEEPER as f32, &ledger)
@@ -949,7 +1146,6 @@ fn staff_one_role(
         workers: keepers,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     });
     app.world.entity_mut(band).insert(allocation);
     size_the_band(app, band, keepers);
@@ -2250,7 +2446,6 @@ mod a_pool_puts_its_idle_hands_on_the_work_still_owed {
                     workers: keepers,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 });
             }
             size_the_band(app, band, keepers);

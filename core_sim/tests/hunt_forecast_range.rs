@@ -219,7 +219,6 @@ fn spawn_hunters(app: &mut App, pos: UVec2, fauna_id: &str, floor: f32) -> bevy:
                     workers: CREW,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -917,7 +916,6 @@ fn a_gather_reports_a_point_and_pays_it() {
                         workers: CREW,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     }],
                     ..Default::default()
                 },

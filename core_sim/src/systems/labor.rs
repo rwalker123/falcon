@@ -261,11 +261,11 @@ pub struct LaborConfigs<'w> {
 /// [`crate::equipment_config::EquipmentConfig::pool_toe`] at the branch **and rung in flight**:
 /// every item whose `build_work` serves this build, whatever it is bound to.
 ///
-/// ⛔ **A KIT NAMED ON THE ENTRY IS NO LONGER AN INPUT.** `BuildQueueEntry::kit` and the `build_kit`
-/// command still exist and are retired end to end by #676; nothing here reads them, and nothing on
-/// the wire states them either — a source row's `buildKitId` publishes empty
-/// (`snapshot::subsistence::NO_SITE_KIT_ID`) — because *"which tools does this job want"*
-/// follows from the job. The `builders` **row's** kit was never an input and still is not.
+/// ⛔ **A KIT NAMED ON THE ENTRY IS NOT AN INPUT, AND CANNOT BE NAMED.** The entry's stored kit and
+/// the `build_kit` command are retired (proto field 60 reserved): *"which tools does this job want"*
+/// follows from the job, and a source row's `buildKitId` publishes empty
+/// (`snapshot::subsistence::NO_SITE_KIT_ID`). The `builders` **row's** kit was never an input and
+/// still is not.
 ///
 /// # The head is FUNDED and everything below it is DATED
 ///
@@ -469,8 +469,8 @@ fn source_branch(
 /// the band's settlement gave it ([`keeping_rate_from`]), which is what lets one pool hold a dirt
 /// road and a paved road at two different tools (`docs/plan_pool_toe.md` §2.1).
 ///
-/// **It was a stored SELECTION per site** — `LaborAssignment::upkeep_kit`, defaulting to the web's
-/// derived kit — and that lookup named no rung, so it could resolve at most one tool per pool and
+/// **It was a stored SELECTION per site** — the retired `upkeep_kit` override, defaulting to the
+/// web's derived kit — and that lookup named no rung, so it could resolve at most one tool per pool and
 /// refused a rung-bound one outright.
 struct KeepingRate {
     /// **What one of this site's keepers banks per turn**, bare hands included — the `r` a claim's
@@ -2908,9 +2908,10 @@ fn route_keeping_claims(
         claims.push(KeepingClaim {
             index: kept.len(),
             branch: crate::intensification::RungBranch::Route,
-            // **A road carries no per-row rank for a player to set**, so every road bids at the
-            // default tier — the same answer `bill_and_stock_roads` gives a road's material draw
-            // and `build_priority` gives its build pile.
+            // **A road carries no per-row rank for a player to set** — it has no crew, so its only
+            // mark is the Build mark on a queued road build, which ranks the BUILD (§2.4). Every
+            // road's keeping bids at the default tier — the answer `bill_and_stock_roads` gives a
+            // road's material draw.
             priority: SourcePriority::default(),
             rung: Some(rung),
             // **The stamped bill where this turn's pass has struck one, the live demand where it
@@ -3011,8 +3012,8 @@ pub fn bill_and_stock_roads(
                     .road(kept[claim.index])
                     .map(|road| road.upkeep_materials_demanded.clone())
                     .unwrap_or_default();
-                // A road carries no per-row rank for a player to set, so every road bids at the
-                // default tier — the same answer `build_priority` gives a road's build pile.
+                // A road carries no per-row rank for a player to set, so every road's keeping bids at
+                // the default tier. Its queued BUILD ranks at its entry's Build mark instead.
                 (SourcePriority::default(), demand)
             })
             .collect();
@@ -12624,7 +12625,6 @@ mod labor_yield_tests {
                 kit: None,
                 workers: builders,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             });
             assert!(
                 allocation.enqueue_build(source.clone(), declared),
@@ -12632,14 +12632,6 @@ mod labor_yield_tests {
             );
         }
         crate::disarm_the_builders(world, band, declared.destination());
-    }
-
-    /// **The roster's empty kit** — every predicate reads false, so a party carrying it runs at the
-    /// unequipped tiers throughout and spends no durability on anything.
-    fn bare_builders() -> crate::equipment_config::KitChoice {
-        crate::equipment_config::EquipmentConfig::builtin()
-            .kit("none")
-            .expect("the shipped roster carries the empty kit")
     }
 
     /// [`declare_build`]'s plant half, by tile.
@@ -12801,7 +12793,6 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 LaborAssignment {
                     party: None,
@@ -12812,7 +12803,6 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
         );
@@ -12886,7 +12876,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -12929,7 +12918,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         let fauna = world.resource::<FaunaConfigHandle>().get();
@@ -13074,7 +13062,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -13107,7 +13094,6 @@ mod labor_yield_tests {
                 workers: assigned,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
 
@@ -13175,7 +13161,6 @@ mod labor_yield_tests {
                 workers: assigned,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
 
@@ -13294,7 +13279,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         let keeper = spawn_band(
@@ -13316,7 +13300,6 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the big-game kit"),
                 ),
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
 
@@ -13513,7 +13496,6 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
             );
             declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, BUILDERS);
@@ -13651,7 +13633,6 @@ mod labor_yield_tests {
                 workers: GATHERERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, BUILDERS);
@@ -13715,7 +13696,6 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
             );
             if let Some(declared) = improvement {
@@ -13829,7 +13809,6 @@ mod labor_yield_tests {
                 workers,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -13853,7 +13832,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -14087,7 +14065,6 @@ mod labor_yield_tests {
                 workers: assigned,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         // The sim's expectation: one crew, `max(herders, steady_haul)` — taken on the **pre-take**
@@ -14308,7 +14285,6 @@ mod labor_yield_tests {
                             workers,
                             kit: None,
                             priority: SourcePriority::default(),
-                            upkeep_kit: None,
                         }],
                     );
                     if let Some(declared) = improvement {
@@ -14398,7 +14374,6 @@ mod labor_yield_tests {
                                 workers,
                                 kit: None,
                                 priority: SourcePriority::default(),
-                                upkeep_kit: None,
                             }],
                         );
                         if let Some(declared) = improvement {
@@ -14616,7 +14591,6 @@ mod labor_yield_tests {
                 workers: field_workers_needed + field_keepers,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         let short_handed = spawn_band(
@@ -14645,7 +14619,6 @@ mod labor_yield_tests {
                         .expect("the shipped roster carries the big-game kit"),
                 ),
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -14766,7 +14739,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
 
@@ -14868,7 +14840,6 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
             );
             world.run_system_once(advance_labor_allocation);
@@ -14952,7 +14923,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         // Band B (same faction) forages the neighbor tile (1,0), which has no food module/patch →
@@ -14972,7 +14942,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
 
@@ -15021,7 +14990,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
 
@@ -15125,7 +15093,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -15158,7 +15125,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -15253,7 +15219,6 @@ mod labor_yield_tests {
                     workers: SOLE_FORAGER,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
             );
             if let Some(declared) = improvement {
@@ -15350,7 +15315,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         a_labour_pass(&mut world);
@@ -15389,7 +15353,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -15464,7 +15427,6 @@ mod labor_yield_tests {
                     workers: SOLE_HUNTER + keepers,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
             );
             if let Some(declared) = improvement {
@@ -15658,7 +15620,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -15816,7 +15777,6 @@ mod labor_yield_tests {
                 workers: WORKERS + keepers,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -15947,7 +15907,6 @@ mod labor_yield_tests {
                 workers: WORKERS + keepers,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Tame, builders);
@@ -16121,7 +16080,6 @@ mod labor_yield_tests {
                     workers: WORKERS,
                     kit: Some(take_kit),
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 // **THE `builders` ROW CARRIES NO KIT** — one is refused there since §4.7a ②,
                 // because a build's gear is a property of the queue ENTRY and not of the band.
@@ -16131,7 +16089,6 @@ mod labor_yield_tests {
                     workers: builders,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
         );
@@ -16360,7 +16317,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: Some(equipment.default_kit(crate::equipment_config::KitJob::Hunt)),
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         world
@@ -16545,7 +16501,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -16711,7 +16666,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             });
             assert!(
                 allocation.enqueue_build(source.clone(), BuildJob::Rung(Improvement::Sow)),
@@ -16723,7 +16677,6 @@ mod labor_yield_tests {
                 "fixture: the sow must sit BEHIND the pen — a head is funded and a waiting entry is \
                  only dated, which is the whole distinction under test"
             );
-            assert!(allocation.set_build_entry_kit(&source, Some(bare_builders())));
         }
         (world, band)
     }
@@ -17574,7 +17527,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -17660,7 +17612,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_patch_build(&mut world, band, SOURCE, Improvement::Cultivate, builders);
@@ -17692,7 +17643,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -17725,7 +17675,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         declare_herd_build(&mut world, band, HERD_ID, Improvement::Corral, builders);
@@ -17771,7 +17720,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);
@@ -17793,7 +17741,6 @@ mod labor_yield_tests {
                 workers: WORKERS,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
         );
         world.run_system_once(advance_labor_allocation);

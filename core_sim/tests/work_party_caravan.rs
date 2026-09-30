@@ -143,7 +143,6 @@ fn spawn_camp_band(app: &mut App, target: LaborTarget, kit: Option<KitChoice>) -
                     workers: CREW,
                     kit,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },
@@ -1451,7 +1450,6 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
             workers: BUILDERS,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
         assert!(allocation.enqueue_build(
             core_sim::BuildSource::Deposit {

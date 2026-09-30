@@ -356,7 +356,6 @@ fn a_world_where_both_peoples_farm() -> (App, StagedTiles) {
                 allocation.build_queue.push(BuildQueueEntry {
                     source: BuildSource::Patch(*tile),
                     declared: BuildJob::Rung(Improvement::Sow),
-                    kit: None,
                     priority: core_sim::SourcePriority::default(),
                 });
             }

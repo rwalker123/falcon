@@ -190,7 +190,6 @@ fn keeper_row(herd_id: &str) -> LaborAssignment {
         workers: KEEPERS,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     }
 }
 
@@ -1285,7 +1284,6 @@ fn forager_row(patch: UVec2) -> LaborAssignment {
         workers: KEEPERS,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     }
 }
 

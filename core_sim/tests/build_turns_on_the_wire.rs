@@ -433,7 +433,6 @@ fn spawn_the_holding_band(
                     workers: gatherers,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 // **The builders are a band-level POOL** (`docs/plan_standing_upkeep.md` §2.5), and
                 // the whole of it goes on the head of the queue below. `builders == 0` is the
@@ -445,14 +444,12 @@ fn spawn_the_holding_band(
                     workers: builders,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
             build_queue: declared
                 .map(|declared| core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Patch(source),
                     declared: core_sim::BuildJob::Rung(declared),
-                    kit: None,
                     priority: core_sim::SourcePriority::default(),
                 })
                 .into_iter()
@@ -675,7 +672,7 @@ fn published_patch_field<T>(
 /// ⛔ **THE KIT NAMED ON THE ENTRY IS GONE FROM THIS TEST.** It used to carry a fourth arm — `none`
 /// on the entry, *"going out bare is a real selection"* — and `docs/plan_pool_toe.md` retires that
 /// lever: a pool's tools follow from the rung, so an entry's kit prices nothing. The loss is stated
-/// in §3 rather than hidden, and the `build_kit` command is retired end to end by #676.
+/// in §3 rather than hidden, and the `build_kit` command is retired (proto field 60 reserved).
 #[test]
 fn a_plant_build_is_geared_by_the_rungs_own_tool_and_by_nothing_else() {
     /// The pool raising the Cultivate. More than one, so a per-worker sum is visible as a sum.
@@ -1438,7 +1435,7 @@ fn a_blocked_head_publishes_no_supply_against_the_zero_demand_it_publishes() {
                     allocation.build_queue.push(core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Patch(source),
                         priority: core_sim::SourcePriority::default(),
-                        declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate), kit: None,});
+                        declared: core_sim::BuildJob::Rung(core_sim::Improvement::Cultivate),});
                     found = true;
                 }
             }

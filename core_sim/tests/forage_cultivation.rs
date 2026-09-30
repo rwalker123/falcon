@@ -265,7 +265,6 @@ fn forage_row(patch: UVec2, policy: f32, foragers: u32) -> LaborAssignment {
         workers: foragers,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     }
 }
 
@@ -308,7 +307,6 @@ fn set_forage_improvement(
                     workers: builders,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }),
             }
         }
@@ -460,7 +458,6 @@ fn spawn_forager_at(
                                 workers: foragers,
                                 kit: None,
                                 priority: SourcePriority::default(),
-                                upkeep_kit: None,
                             },
                         ]
                     })
@@ -472,7 +469,6 @@ fn spawn_forager_at(
                         // ⛔ **AN ENTRY'S KIT PRICES NOTHING** since `docs/plan_pool_toe.md`: a
                         // pool's tools follow from the rung. The gear axis is held on the LEDGER
                         // below.
-                        kit: None,
                         priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
@@ -2857,7 +2853,6 @@ fn an_unstarted_patch_quotes_the_next_rungs_job_and_the_quote_halves_with_the_cr
                 workers,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             });
         // ⛔ **AN EMPTY LEDGER IS WHAT HOLDS THE GEAR AXIS AT ITS IDENTITY HERE.** Nothing is
         // queued on this patch, so there is no entry to carry the bare kit the pace fixtures use
@@ -3239,13 +3234,11 @@ fn spawn_band_holding_one_patch_and_queueing_a_build(
             workers: builders,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
         let headroom = allocation.assigned_total();
         allocation.build_queue.push(core_sim::BuildQueueEntry {
             source: core_sim::BuildSource::Patch(build),
             declared: core_sim::BuildJob::Rung(Improvement::Cultivate),
-            kit: None,
             priority: core_sim::SourcePriority::default(),
         });
         headroom
@@ -4057,7 +4050,6 @@ fn a_rung_completes_erodes_and_is_repaired_only_by_re_queueing_it() {
             workers: builders,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
         assert!(allocation.enqueue_build(
             core_sim::BuildSource::Patch(coord),

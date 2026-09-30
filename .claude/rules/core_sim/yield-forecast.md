@@ -1504,10 +1504,27 @@ row the player marked to give up. The codec maps the two rather than casting, so
 into the other.
 
 `work_priority` names a **band**, like `build_order` and unlike the source-addressed `unqueue` /
-`build_kit`: the orderings it feeds partition one band's own rows and serve one band's own stores.
+`abandon`: the orderings it feeds partition one band's own rows and serve one band's own stores.
 `xtask`'s command guard classifies it as band-addressed for that reason. An unknown level is refused
 **by name** (`upkeep_mode`'s rule) — a mistyped rank must not silently land on the default, which is
 the one value that would look like it worked.
+
+**The site source grammar** (every queue verb: `abandon`, `unqueue`, `build_order`,
+`work_priority`, `build_priority` — `command_text::parse_site_source`) is the tile-or-herd grammar
+plus two shapes a tile alone cannot name: `<x> <y> <material>` is a **working** (one hex can hold
+two deposits; the material sits where `fell` carries it) and `road <x> <y>` is a **road** (a tile can
+carry a road and a patch, so the road is said out loud and leads). They ride `material` / `road` on
+each proto message (fields **7** / **8** on the band-scoped three, **5** / **6** on `abandon` /
+`unqueue`). The bare tile still names the patch. What each verb does with the two new shapes:
+
+| verb | `<x> <y> <material>` | `road <x> <y>` |
+|---|---|---|
+| `work_priority` | the extract row's Priority | **refused by name** — a road has no crew |
+| `build_priority` / `build_order` | the queued working build | the queued road build |
+| `unqueue` | withdraws the queued working build | withdraws the queued road build; the keeper stays |
+| `abandon` | **is `abandon_working`** — `handle_abandon` calls it, one path | puts down the road alone (keeper and entry), not the patch |
+
+A bare-tile `abandon` is a **place**: its patch row and its road, never a working.
 
 ### `normalize` and the commands now measure the same pool
 

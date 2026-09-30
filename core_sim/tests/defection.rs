@@ -815,7 +815,6 @@ fn work(app: &mut App, band: Entity, target: LaborTarget) {
         workers: 0,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     };
     match app.world.get_mut::<LaborAllocation>(band) {
         Some(mut allocation) => allocation.assignments.push(row),

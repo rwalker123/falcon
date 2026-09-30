@@ -314,7 +314,6 @@ fn spawn_forager_with_workers(
                     workers,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 }],
                 ..Default::default()
             },

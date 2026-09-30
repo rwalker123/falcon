@@ -1218,27 +1218,44 @@ fn release_seat_and_settle(
     settle_open_turn_and_publish(app, command_log, seats, turn_gate, world_active);
 }
 
-/// **HOW THE FOUR QUEUE VERBS NAME A SOURCE** — a tile, or a herd id
-/// (`docs/plan_standing_upkeep.md` §2.5).
+/// **HOW THE QUEUE VERBS NAME A SOURCE** — a tile, a herd id, a working (`material` on the tile
+/// pair) or a road (`road` on the tile pair) (`docs/plan_standing_upkeep.md` §2.5,
+/// `docs/plan_site_crews.md` §2.4). Every queue verb reads it: `abandon`, `unqueue`, `build_order`,
+/// `work_priority` and `build_priority`.
 ///
-/// One type rather than four copies of the same optional triple, because `abandon`, `unqueue`,
-/// `build_order` and `build_kit` address a source identically and a per-verb spelling is how one of
-/// them comes to accept a shape the others reject. It resolves to a [`LaborTarget`] once, in
-/// [`BuildSourceRef::target`].
-#[derive(Debug, Clone)]
+/// One type rather than per-verb copies of the same optional fields, because the queue verbs address
+/// a source identically and a per-verb spelling is how one of them comes to accept a shape the
+/// others reject. It resolves to a [`LaborTarget`] once, in [`BuildSourceRef::target`], and to a
+/// queue key once, in [`BuildSourceRef::build_source`].
+#[derive(Debug, Clone, Default)]
 struct BuildSourceRef {
     target_x: Option<u32>,
     target_y: Option<u32>,
     herd_id: Option<String>,
+    /// With the tile pair, the deposit a **working** is keyed by — one hex can hold two.
+    material: Option<String>,
+    /// With the tile pair, the tile's **road** rather than its patch.
+    road: bool,
 }
 
 impl BuildSourceRef {
-    /// The labor target this names, or `None` when the wire carried neither shape. A herd id wins a
-    /// malformed both-shapes message only because the tile pair is tested first and requires both
-    /// halves — the text grammar cannot produce one at all.
+    /// The labor target this names, or `None` when the wire carried neither shape — **and for a
+    /// road**, which has no labor row ([`BuildSource::Road`]). A herd id wins a malformed
+    /// both-shapes message only because the tile pair is tested first and requires both halves —
+    /// the text grammar cannot produce one at all.
     fn target(&self) -> Option<LaborTarget> {
+        if self.road {
+            return None;
+        }
         match (self.target_x, self.target_y, self.herd_id.as_ref()) {
-            (Some(x), Some(y), _) => Some(forage_source(UVec2::new(x, y))),
+            (Some(x), Some(y), _) => Some(match &self.material {
+                Some(material) => LaborTarget::Extract {
+                    tile: UVec2::new(x, y),
+                    material: material.clone(),
+                    floor: SOURCE_NAMED_NOT_ASSIGNED,
+                },
+                None => forage_source(UVec2::new(x, y)),
+            }),
             (_, _, Some(herd_id)) => Some(LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
                 floor: SOURCE_NAMED_NOT_ASSIGNED,
@@ -1247,15 +1264,34 @@ impl BuildSourceRef {
         }
     }
 
+    /// **The build-queue key this names** — a road's own [`BuildSource::Road`], else the queue key
+    /// of the labor row it names ([`BuildSource::of`]).
+    fn build_source(&self) -> Option<BuildSource> {
+        match (self.road, self.target_x, self.target_y) {
+            (true, Some(x), Some(y)) => Some(BuildSource::Road(UVec2::new(x, y))),
+            (true, _, _) => None,
+            (false, _, _) => self.target().as_ref().and_then(BuildSource::of),
+        }
+    }
+
     /// What the feed line calls it.
     fn label(&self) -> String {
         match (self.target_x, self.target_y, self.herd_id.as_ref()) {
-            (Some(x), Some(y), _) => format!("({x}, {y})"),
+            (Some(x), Some(y), _) if self.road => format!("the road at ({x}, {y})"),
+            (Some(x), Some(y), _) => match &self.material {
+                Some(material) => format!("the {material} at ({x}, {y})"),
+                None => format!("({x}, {y})"),
+            },
             (_, _, Some(herd_id)) => herd_id.clone(),
             _ => "that source".to_string(),
         }
     }
 }
+
+/// **What a queue verb says when it was handed no source** — one sentence for every verb that reads
+/// a [`BuildSourceRef`], so the grammar it names cannot drift between them.
+const SITE_SOURCE_GRAMMAR: &str = "two numbers name a tile, one token names a herd, \
+     `<x> <y> <material>` names a working and `road <x> <y>` names a road";
 
 #[derive(Debug, Clone)]
 enum Command {
@@ -1474,10 +1510,11 @@ enum Command {
     /// grammar: it drops the `extract` row and its queue entry on every band of the faction working
     /// `(tile, material)`, and leaves the working's meter to slide back at the rung's own rate.
     ///
-    /// ⛔ **IT IS ITS OWN VERB RATHER THAN A MATERIAL TOKEN ON [`Command::Abandon`]** (issue #650).
-    /// `abandon` names a **place** and puts down *every* holding on that tile — a forage row and the
-    /// faction's road keeping included — so widening it would make a destructive verb quietly more
-    /// destructive on exactly the hexes that carry two workings.
+    /// ⛔ **A BARE-TILE `abandon` NEVER REACHES A WORKING** (issue #650). `abandon <f> <x> <y>` names
+    /// a **place** and puts down the forage row and the road on it; reaching the workings too would
+    /// make a destructive verb quietly more so on exactly the hexes that carry two. `abandon <f> <x>
+    /// <y> <material>` is this verb exactly — [`handle_abandon`] calls [`handle_abandon_working`] —
+    /// so the two spellings are one path (`docs/plan_site_crews.md` §2.4).
     AbandonWorking {
         faction: FactionId,
         target_x: u32,
@@ -1510,21 +1547,6 @@ enum Command {
         band_id: u64,
         source: BuildSourceRef,
         position: u32,
-    },
-    /// **Name the kit ONE queued build is raised with** — set it on the source's queue entry, on
-    /// every band of the faction that has it queued. `kit_id` absent **clears** the override back to
-    /// the entry's own web derivation (`docs/plan_standing_upkeep.md` §4.7a ②).
-    BuildKit {
-        faction: FactionId,
-        source: BuildSourceRef,
-        kit_id: Option<String>,
-    },
-    /// **Name the kit one work site is kept with** — on every band of the faction that works the
-    /// source (`docs/plan_standing_upkeep.md` §2.7). See `handle_upkeep_kit`.
-    UpkeepKit {
-        faction: FactionId,
-        source: BuildSourceRef,
-        kit_id: Option<String>,
     },
     /// **Mark one worked row with the player's own rank** — `high`, `normal` or `low`, on the named
     /// band's assignment for this source (`docs/plan_standing_upkeep.md` §4.9 item 9b). The band's
@@ -5085,56 +5107,26 @@ fn handle_assign_labor(
     // absent-token door instead. `default_kits.hunt` stays the answer wherever there is no quarry
     // to score: every other role, and a Hunt row whose herd or species will not resolve.
     //
-    // ⛔ **A BUILDERS ROW CARRIES NO KIT AT ALL, AND NAMING ONE IS REFUSED**
-    // (`docs/plan_standing_upkeep.md` §4.7a ②). The builders' kit is a property of the **queue
-    // entry** — a hoe for a Cultivate, hurdles for a `Tame` — so a single stored id per *band* is
-    // the one thing the derivation cannot express. It was an override that won permanently: one
-    // pick pinned the animal web's tool onto every later plant build with no way back, and `none`
-    // (bare-handed) is a different statement, not an undo. `build_kit <faction> <source…> kit <id>`
-    // is where the override lives, one job at a time.
-    //
-    // **Refused rather than ignored.** A token the command silently drops is the same class of
-    // defect as the one this replaces — the player names a tool and the sim does something else —
-    // so the row says so by name.
+    // ⛔ **A STANDING POOL CARRIES NO KIT AT ALL, AND NAMING ONE IS REFUSED**
+    // (`docs/plan_pool_toe.md` §4). A pool — `builders` or `roadwork` — says HOW MANY hands; the
+    // tools they carry follow from the rung each of its sites stands on and are settled band-wide
+    // by the player's marks. A kit stored on the row would reach nothing, so accepting the token
+    // would be the worst version of the defect: the player names a tool, the sim stores it, and
+    // nobody anywhere picks it up. **Refused rather than ignored**, by name.
     //
     // The fork is **here and not in `default_kit_for_target`**, because the question it answers is
     // *"what does this command STORE"*, not *"which kit is the absent one"*: that helper returns a
-    // resolved `KitChoice` for the raid path too, and widening it to an `Option` would push the
-    // absent-means-derive case into two call sites that have no derivation to defer to. Only the
-    // builders arm is touched — the other six roles' stored default is load-bearing (the wire and
-    // the turn both read the row's kit for them, and there is nothing per-entry to derive).
-    //
-    // **AND THE TWO KEEPING ROLES ARE THE SAME RULE, ONE ACCOUNT OVER**
-    // (`docs/plan_standing_upkeep.md` §2.7). A keeping kit is a property of the **work site**, not of
-    // the band: the `agriculture` / `husbandry` rows say how many keepers a web gets, and
-    // `upkeep_kit <faction> <source…> kit <id>` says what the keepers of one site carry. A kit stored
-    // here reached the split through `LaborAllocation::named_kit_on` until §2.7 and reaches nothing
-    // now, so accepting the token would be the worst version of the defect the builders row had —
-    // the player names a tool, the sim stores it, and no keeper anywhere picks it up.
-    //
-    // **Refused rather than ignored**, for the builders row's reason: a token the command silently
-    // drops is the same class of defect as the one this replaces.
-    //
-    // The rules below are separate and reach the same store, so they are named separately and OR'd
-    // rather than written as two arms of one `if` — which is the same block twice, and reads as an
-    // accident.
+    // resolved `KitChoice` for the raid path too.
     let unstaffing = workers == 0;
     let staffing_a_standing_pool = matches!(target, LaborTarget::Builders | LaborTarget::Roadwork);
     if staffing_a_standing_pool && kit_id.is_some() {
-        // **AND THE ROAD KEEPERS ARE THE SAME RULE WITH NO OVERRIDE TO POINT AT.** A road is not a
-        // work site the player holds — it is owned by nobody — so there is no `upkeep_kit <source…>`
-        // that could name one, and the kit is derived from the roster alone
-        // (`EquipmentConfig::keeping_kit_for` at `RungBranch::Route`, today the bare `none`).
-        // **Refused rather than ignored**, for the builders row's reason: a token the command
-        // silently drops is the same class of defect as the one this rule replaces.
         let refusal = match target {
-            LaborTarget::Builders => "the builders kit is set per queue entry — use `build_kit                                       <faction> <source…> kit <id>`"
-                .to_string(),
-            LaborTarget::Roadwork => "a road has no keeper's kit to name — the roadwork kit is                                       derived from the roster"
-                .to_string(),
-            _ => "the keeping kit is set per work site — use `upkeep_kit <faction> <source…> kit                   <id>`"
-                .to_string(),
-        };
+            LaborTarget::Builders => {
+                "a pool names no kit — the builders' tools follow from the rung they are raising"
+            }
+            _ => "a pool names no kit — the road keepers' tools follow from the rung each road stands on",
+        }
+        .to_string();
         emit_command_failure(
             app,
             event_kind,
@@ -8150,13 +8142,13 @@ fn handle_deposit_verb(
 /// (steady at position 60.0 alone) slides to **49.96 in 40 turns** the moment a walked-away sibling
 /// sits beside it. Before this verb there was no command that could drop the sibling.
 ///
-/// # ⛔ IT IS NOT A MATERIAL TOKEN ON `abandon`, AND THAT IS THE DESIGN AND NOT A CONVENIENCE
+/// # ⛔ A BARE-TILE `abandon` NEVER REACHES A WORKING, AND ITS MATERIAL FORM IS THIS VERB
 ///
-/// [`handle_abandon`] resolves a **place**: it drops every band's holding on that tile, a forage row
-/// included, *and* releases the faction's road keeping there. Adding an optional material to it would
-/// make a verb that is already destructive quietly more so on exactly the hexes that carry two
-/// workings. So this takes `fell`/`coppice`/`quarry`'s grammar — tile, then the closed trailing
-/// material — which is also what makes the two ways of addressing one working read alike.
+/// [`handle_abandon`]'s bare tile resolves a **place**: the forage row and the road on it. Reaching
+/// the workings too would make a verb that is already destructive quietly more so on exactly the
+/// hexes that carry two. So this takes `fell`/`coppice`/`quarry`'s grammar — tile, then the closed
+/// trailing material — and `abandon <f> <x> <y> <material>` routes here rather than keeping a second
+/// definition of *"put a working down"* (`docs/plan_site_crews.md` §2.4).
 ///
 /// **There is no `validate_*` gate to run.** Putting a thing down asks nothing of the ground, the
 /// knowledge or the rung; the only way to fail is to hold nothing there, which is what the count
@@ -9283,7 +9275,16 @@ fn handle_set_herd_output(
 const WHOLE_HERD_COMMITTED: f32 = 1.0;
 
 /// **PUT A SOURCE DOWN** — `abandon <faction> <x> <y>` / `abandon <faction> <herd_id>`
-/// (`docs/plan_standing_upkeep.md` §2.5).
+/// (`docs/plan_standing_upkeep.md` §2.5), and `abandon <faction> <x> <y> <material>` /
+/// `abandon <faction> road <x> <y>` (`docs/plan_site_crews.md` §2.4).
+///
+/// # THREE READINGS OF A TILE, ONE PATH EACH
+///
+/// - **The bare tile is a PLACE** — every holding on it: the patch row, its entry and the road.
+/// - **The working form is [`handle_abandon_working`], called, not copied** — so there is one
+///   definition of *"put a working down"* and the two spellings cannot disagree.
+/// - **The road form puts down the tile's road ALONE** ([`release_roads_at`]) and leaves the patch —
+///   the per-road choice the `Roadwork` pool needs, without taking the farm with it.
 ///
 /// Drops the band's **holding**: the assignment row *and* its build-queue entry, on every band of
 /// the faction working it. `drop_source_row` prunes the entry on the same edge, so the two cannot
@@ -9300,25 +9301,58 @@ const WHOLE_HERD_COMMITTED: f32 = 1.0;
 /// per-source *funding* lever stays deleted.
 fn handle_abandon(app: &mut bevy::prelude::App, faction: FactionId, source: BuildSourceRef) {
     let label = source.label();
+    if let (Some(x), Some(y), Some(material), false) = (
+        source.target_x,
+        source.target_y,
+        source.material.as_deref(),
+        source.road,
+    ) {
+        handle_abandon_working(app, faction, UVec2::new(x, y), material);
+        return;
+    }
+    if source.road {
+        let roads_put_down = release_roads_at(app, faction, &source);
+        if roads_put_down == 0 {
+            emit_command_failure(
+                app,
+                CommandEventKind::CancelOrder,
+                faction,
+                format!("No band of yours keeps {label}, so there is nothing to put down."),
+            );
+            return;
+        }
+        let tick = app.world.resource::<SimulationTick>().0;
+        push_command_event(
+            app,
+            tick,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("Put down {label} — with nobody keeping it, the roadbed goes back down"),
+            Some(format!(
+                "status=applied action=abandon source={label} bands=0 roads={roads_put_down}"
+            )),
+        );
+        return;
+    }
     let Some(target) = source.target() else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
             faction,
-            "abandon needs a source: two numbers name a tile, one token names a herd.".to_string(),
+            format!("abandon needs a source: {SITE_SOURCE_GRAMMAR}."),
         );
         return;
     };
-    // ⛔ **A TILE MAY CARRY A ROAD AS WELL AS A PATCH, AND `abandon` PUTS DOWN BOTH.**
+    // ⛔ **A TILE MAY CARRY A ROAD AS WELL AS A PATCH, AND THE BARE TILE PUTS DOWN BOTH.**
     //
     // `abandon <faction> <x> <y>` names a *place*, and since roads became per-tile improvements a
     // place can hold two holdings at once. Putting one down without the other would leave `abandon`
     // silently partial on exactly the tiles where a band both farms and keeps a road — so this drops
     // the faction's keeping of the road on that tile too, and its queue entry with it.
     //
-    // **It is the per-road choice the `Roadwork` POOL needs.** The pool covers every road the band
-    // keeps, so *"pay for this road and not that one"* has to be expressible somewhere; this is that
-    // somewhere, and it needs no verb of its own (`docs/plan_standing_upkeep.md` §4.13b).
+    // **The road form above is the per-road choice the `Roadwork` POOL needs** without the patch:
+    // the pool covers every road the band keeps, so *"pay for this road and not that one"* has to be
+    // expressible (`docs/plan_standing_upkeep.md` §4.13b).
     //
     // **The meter is untouched**, exactly as it is for a patch: the ground keeps whatever is on it
     // and, with nobody keeping it, rots back down at the rung's own rate over the following turns.
@@ -9393,10 +9427,13 @@ fn release_roads_at(
     1
 }
 
-/// **WITHDRAW A DECLARATION** — `unqueue <faction> <x> <y>` / `unqueue <faction> <herd_id>`.
+/// **WITHDRAW A DECLARATION** — `unqueue <faction> <x> <y>` / `unqueue <faction> <herd_id>` /
+/// `unqueue <faction> <x> <y> <material>` / `unqueue <faction> road <x> <y>`.
 ///
-/// Drops the build-queue entry only, on every band of the faction working the source. The row, its
-/// take crew, its kit and the meter are untouched.
+/// Drops the build-queue entry only, on every band of the faction that has it queued. The row, its
+/// take crew, its kit and the meter are untouched — and on a road, the **keeper**: withdrawing a
+/// `pave` leaves the band keeping the dirt road it already holds, and `abandon … road <x> <y>` is how
+/// the road itself is put down.
 ///
 /// **It is the undo a declaration never had.** `cultivate <f> <x> <y> 0` *set* the improvement with
 /// zero builders rather than clearing it, so an unwanted verb was stuck on the row for the life of
@@ -9404,20 +9441,17 @@ fn release_roads_at(
 /// [`handle_abandon`] is how a source with work already banked on it is put down.
 fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: BuildSourceRef) {
     let label = source.label();
-    let Some(target) = source.target() else {
+    let Some(build_source) = source.build_source() else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
             faction,
-            "unqueue needs a source: two numbers name a tile, one token names a herd.".to_string(),
+            format!("unqueue needs a source: {SITE_SOURCE_GRAMMAR}."),
         );
         return;
     };
-    let Some(build_source) = BuildSource::of(&target) else {
-        return;
-    };
     let mut dropped = 0usize;
-    for band in bands_working_source(app, faction, &target) {
+    for band in bands_queueing_source(app, faction, &build_source) {
         // **A withdrawn ring is cancelled, not paused** — the flag `extend_pen` set before it
         // queued is cleared here, so the pen can be extended again (see
         // [`core_sim::cancel_dropped_rings`]).
@@ -9447,7 +9481,9 @@ fn handle_unqueue(app: &mut bevy::prelude::App, faction: FactionId, source: Buil
     );
 }
 
-/// **RE-ORDER ONE BAND'S BUILD QUEUE** — `build_order <faction> <band> <source…> <position>`.
+/// **RE-ORDER ONE BAND'S BUILD QUEUE** — `build_order <faction> <band> <source…> <position>`, the
+/// source in the band-scoped grammar ([`BuildSourceRef`]): a tile, a herd, a working
+/// (`<x> <y> <material>`) or a road (`road <x> <y>`).
 ///
 /// **The queue's defining input.** The whole `builders` pool goes on the head entry until its meter
 /// fills, so where an entry sits *is* what it is funded at — and re-ordering is the one input a list
@@ -9465,17 +9501,13 @@ fn handle_build_order(
     position: u32,
 ) {
     let label = source.label();
-    let Some(target) = source.target() else {
+    let Some(build_source) = source.build_source() else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
             faction,
-            "build_order needs a source: two numbers name a tile, one token names a herd."
-                .to_string(),
+            format!("build_order needs a source: {SITE_SOURCE_GRAMMAR}."),
         );
-        return;
-    };
-    let Some(build_source) = BuildSource::of(&target) else {
         return;
     };
     let Some(band) = select_starting_band(
@@ -9519,7 +9551,9 @@ fn handle_build_order(
 }
 
 /// **MARK ONE QUEUED BUILD WITH THE PLAYER'S BUILD MARK** — `build_priority <faction> <band> <x> <y>
-/// <level>` / `build_priority <faction> <band> <herd_id> <level>` (`docs/plan_site_crews.md` §2.4).
+/// <level>` / `build_priority <faction> <band> <herd_id> <level>`, and for a queued working
+/// `<x> <y> <material>` or a queued road `road <x> <y>` in the source's place
+/// (`docs/plan_site_crews.md` §2.4).
 ///
 /// Sets [`core_sim::BuildQueueEntry::priority`] on the named band's queue entry for that source. The
 /// entry's place, its kit and the site row are untouched: the row's own `work_priority` ranks the
@@ -9537,13 +9571,12 @@ fn handle_build_priority(
     level: String,
 ) {
     let label = source.label();
-    let Some(build_source) = source.target().as_ref().and_then(BuildSource::of) else {
+    let Some(build_source) = source.build_source() else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
             faction,
-            "build_priority needs a source: two numbers name a tile, one token names a herd."
-                .to_string(),
+            format!("build_priority needs a source: {SITE_SOURCE_GRAMMAR}."),
         );
         return;
     };
@@ -9620,8 +9653,9 @@ fn handle_build_priority(
 }
 
 /// **MARK ONE WORKED ROW WITH THE PLAYER'S OWN RANK** — `work_priority <faction> <band> <x> <y>
-/// <level>` / `work_priority <faction> <band> <herd_id> <level>` (`docs/plan_standing_upkeep.md`
-/// §4.9 item 9b).
+/// <level>` / `work_priority <faction> <band> <herd_id> <level>` / `work_priority <faction> <band>
+/// <x> <y> <material> <level>` for a working's extract row (`docs/plan_standing_upkeep.md` §4.9
+/// item 9b, `docs/plan_site_crews.md` §2.4). A road (`road <x> <y>`) has no row and is refused.
 ///
 /// Sets [`core_sim::SourcePriority`] on the named band's assignment for that source. The take crew,
 /// the floor, the kit and the queue entry are untouched — this says only *where this row stands when
@@ -9631,8 +9665,8 @@ fn handle_build_priority(
 ///
 /// The ordering it feeds is a **band's**: the shedding walk partitions that band's own rows, and the
 /// pen-feed split serves that band's own stores. `build_order` names a band for exactly the same
-/// reason. The source-addressed verbs that reach *every* band working a source (`unqueue`,
-/// `build_kit`) are the ones whose subject is the ground rather than the holding.
+/// reason. The source-addressed verbs that reach *every* band holding a source (`unqueue`,
+/// `abandon`) are the ones whose subject is the ground rather than the holding.
 ///
 /// # AN UNKNOWN LEVEL IS REFUSED BY NAME
 ///
@@ -9646,13 +9680,27 @@ fn handle_work_priority(
     level: String,
 ) {
     let label = source.label();
+    // ⛔ **A ROAD HAS NO CREW, SO NO ROW TO RANK** (`docs/plan_site_crews.md` §2.4): its only mark
+    // is the Build mark on a queued road build. Refused by name rather than read as the tile's patch,
+    // which is the one outcome that would look like it worked.
+    if source.road {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!(
+                "{label} has no crew to rank — a road's only mark is its queued build's, set with \
+                 build_priority."
+            ),
+        );
+        return;
+    }
     let Some(target) = source.target() else {
         emit_command_failure(
             app,
             CommandEventKind::CancelOrder,
             faction,
-            "work_priority needs a source: two numbers name a tile, one token names a herd."
-                .to_string(),
+            format!("work_priority needs a source: {SITE_SOURCE_GRAMMAR}."),
         );
         return;
     };
@@ -9719,245 +9767,7 @@ fn handle_work_priority(
     );
 }
 
-/// **NAME THE KIT ONE QUEUED BUILD IS RAISED WITH** — `build_kit <faction> <x> <y> [kit <id>]` /
-/// `build_kit <faction> <herd_id> [kit <id>]` (`docs/plan_standing_upkeep.md` §4.7a ②).
-///
-/// Sets [`core_sim::BuildQueueEntry::kit`] on every band of the faction that has the source queued —
-/// the same `bands_working_source` reach [`handle_unqueue`] has, narrowed to the bands that actually
-/// carry an entry. The row, its take crew and the meter are untouched.
-///
-/// # THE BUILDERS' KIT IS PER ENTRY, AND THIS IS THE ONLY OVERRIDE
-///
-/// A build's default kit is derived from that entry's own food web — a hoe for a Cultivate, hurdles
-/// for a `Tame` — so a kit stored on the band's `builders` **row** is the one thing that derivation
-/// cannot express: one pick pinned the animal web's tool onto every later plant build with no way
-/// back. `handle_assign_labor` refuses a `kit` token on that role, and the override lives here.
-///
-/// # AN ABSENT `kit` TOKEN CLEARS IT
-///
-/// Back to the derivation, on the existing *"an absent `kitId` means the job's default"* rule — which
-/// is what lets a client express *"back to default"* with no new vocabulary, since it already omits
-/// the token whenever the selection equals the default. **`kit none` is bare-handed and is a real
-/// selection**, which is how a player conserves gear on one job.
-fn handle_build_kit(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    source: BuildSourceRef,
-    kit_id: Option<String>,
-) {
-    let label = source.label();
-    let Some(target) = source.target() else {
-        emit_command_failure(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            "build_kit needs a source: two numbers name a tile, one token names a herd."
-                .to_string(),
-        );
-        return;
-    };
-    let Some(build_source) = BuildSource::of(&target) else {
-        return;
-    };
-    // **The kit resolves at the command boundary and FAILS CLOSED**, exactly as every other role's
-    // does: an unknown id, or one whose `jobs` does not cover `builders`, is refused by name rather
-    // than quietly becoming the derivation — naming a kit is how the player compares tools, so a
-    // silent substitution answers a different question than the one asked.
-    //
-    // **The `absent` arm is never taken**: an absent token is handled above this call as *"clear the
-    // override"*, so `resolve_kit_or` is only reached with a real id. The job default is passed
-    // because the signature needs one, and it is the same fall-back `builders_kit_for` ends on.
-    let kit = match kit_id {
-        None => None,
-        Some(id) => {
-            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let absent = equipment_cfg.default_kit(KitJob::Builders);
-            match equipment_cfg.resolve_kit_or(Some(id.as_str()), KitJob::Builders, absent) {
-                Ok(kit) => Some(kit),
-                Err(reason) => {
-                    emit_command_failure(
-                        app,
-                        CommandEventKind::CancelOrder,
-                        faction,
-                        format!("build_kit: {reason}."),
-                    );
-                    return;
-                }
-            }
-        }
-    };
-    let mut set = 0usize;
-    for band in bands_working_source(app, faction, &target) {
-        if band_allocation_mut(app, band).set_build_entry_kit(&build_source, kit.clone()) {
-            set += 1;
-        }
-    }
-    if set == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            format!("Nothing of yours is queued to be built at {label}."),
-        );
-        return;
-    }
-    let tick = app.world.resource::<SimulationTick>().0;
-    // **The feed says which kit, or that the job is back on its own default** — a player who cleared
-    // an override must be able to see that they did, and `none` is a kit id rather than a clearing.
-    let (sentence, action) = match kit.as_ref() {
-        Some(kit) => (
-            format!("{label} will be built with {}", kit.id()),
-            format!("kit={}", kit.id()),
-        ),
-        None => (
-            format!("{label} is back on the kit its own web wants"),
-            "kit=default".to_string(),
-        ),
-    };
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::CancelOrder,
-        faction,
-        sentence,
-        Some(format!(
-            "status=applied action=build_kit source={label} {action} bands={set}"
-        )),
-    );
-}
-
-/// **NAME THE KIT ONE WORK SITE IS KEPT WITH** — `upkeep_kit <faction> <x> <y> [kit <id>]` /
-/// `upkeep_kit <faction> <herd_id> [kit <id>]` (`docs/plan_standing_upkeep.md` §2.7).
-///
-/// Sets [`core_sim::LaborAssignment::upkeep_kit`] on every band of the faction that works the
-/// source — the same `bands_working_source` reach [`handle_build_kit`] has, and the wider one of the
-/// two: a keeping bill is owed by every band holding the ground, not only by whoever queued a build
-/// on it. The take crew, its own kit, the queue entry and the meter are untouched.
-///
-/// # THE KEEPING KIT IS PER WORK SITE, AND THIS IS THE ONLY OVERRIDE
-///
-/// The band is the pool of workers and goods to draw from; it does not decide which tool a given
-/// site is worked with. A kit stored on the band's `agriculture` / `husbandry` **role row** — where
-/// this lived until §2.7 — is the one thing a per-site derivation cannot express: one pick put the
-/// same tool on every site that band kept, with no way back. `handle_assign_labor` names no kit on
-/// those roles, and the override lives here.
-///
-/// # AN ABSENT `kit` TOKEN CLEARS IT
-///
-/// Back to the site's own web derivation, on the existing *"an absent `kitId` means the job's
-/// default"* rule. **`kit none` is bare-handed and is a real selection**, which is how a player
-/// conserves the tool on one site while its neighbour goes on using it.
-///
-/// # ⛔ AND THE KIT MUST SERVE THIS SITE'S WEB
-///
-/// A patch is kept on the `agriculture` job and a herd on `husbandry`
-/// ([`core_sim::EquipmentConfig::keeping_job`]), so naming a plant keeping kit on a herd is a
-/// **command failure** rather than a silent fall back to the derivation — `build_kit`'s rule, and
-/// for its reason: naming a kit is how a player compares tools, so a silent substitution answers a
-/// different question than the one asked.
-fn handle_upkeep_kit(
-    app: &mut bevy::prelude::App,
-    faction: FactionId,
-    source: BuildSourceRef,
-    kit_id: Option<String>,
-) {
-    let label = source.label();
-    let Some(target) = source.target() else {
-        emit_command_failure(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            "upkeep_kit needs a source: two numbers name a tile, one token names a herd."
-                .to_string(),
-        );
-        return;
-    };
-    let Some(build_source) = BuildSource::of(&target) else {
-        return;
-    };
-    let branch = match build_source {
-        BuildSource::Patch(_) => core_sim::RungBranch::Plant,
-        BuildSource::Herd(_) => core_sim::RungBranch::Animal,
-        // Unreachable through this path — `BuildSource::of` maps a *labor target*, and no target
-        // names a road (the keeping is the band-wide `Roadwork` row, which names no tile). The arm
-        // is stated rather than wildcarded so a future road labor row fails to compile here.
-        BuildSource::Road(_) => core_sim::RungBranch::Route,
-        // **Which of the two deposit ladders this is, is the DEPOSIT'S** — `DepositDef::branch`,
-        // never the row's. A material the table does not carry cannot be worked at all, and the
-        // stance gate has already refused the row, so `Forestry` is a fall-back nothing reaches.
-        BuildSource::Deposit { ref material, .. } => app
-            .world
-            .resource::<ExtractionConfigHandle>()
-            .get()
-            .deposit(material)
-            .map_or(core_sim::RungBranch::Forestry, |deposit| deposit.branch),
-    };
-    // **The kit resolves at the command boundary and FAILS CLOSED** — see the doc above. The
-    // `absent` arm is never taken: an absent token is handled here as *"clear the override"*, so
-    // `resolve_kit_or` is only reached with a real id, and the job default it is passed is the same
-    // fall-back `keeping_kit_for` ends on.
-    let job = core_sim::EquipmentConfig::keeping_job(branch);
-    let kit = match kit_id {
-        None => None,
-        Some(id) => {
-            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
-            let absent = equipment_cfg.default_kit(job);
-            match equipment_cfg.resolve_kit_or(Some(id.as_str()), job, absent) {
-                Ok(kit) => Some(kit),
-                Err(reason) => {
-                    emit_command_failure(
-                        app,
-                        CommandEventKind::CancelOrder,
-                        faction,
-                        format!("upkeep_kit: {reason}."),
-                    );
-                    return;
-                }
-            }
-        }
-    };
-    let mut set = 0usize;
-    for band in bands_working_source(app, faction, &target) {
-        if band_allocation_mut(app, band).set_upkeep_kit(&target, kit.clone()) {
-            set += 1;
-        }
-    }
-    if set == 0 {
-        emit_command_failure(
-            app,
-            CommandEventKind::CancelOrder,
-            faction,
-            format!("Nothing of yours works {label} to keep."),
-        );
-        return;
-    }
-    let tick = app.world.resource::<SimulationTick>().0;
-    // **The feed says which kit, or that the site is back on its own default** — a player who
-    // cleared an override must be able to see that they did, and `none` is a kit id rather than a
-    // clearing.
-    let (sentence, action) = match kit.as_ref() {
-        Some(kit) => (
-            format!("{label} will be kept with {}", kit.id()),
-            format!("kit={}", kit.id()),
-        ),
-        None => (
-            format!("{label} is back on the keeping kit its own web wants"),
-            "kit=default".to_string(),
-        ),
-    };
-    push_command_event(
-        app,
-        tick,
-        CommandEventKind::CancelOrder,
-        faction,
-        sentence,
-        Some(format!(
-            "status=applied action=upkeep_kit source={label} {action} bands={set}"
-        )),
-    );
-}
-
-/// Every band of `faction` with a row on this source — the set all four queue verbs act over, and
+/// Every band of `faction` with a row on this source — the set the source-wide queue verbs act over, and
 /// the same "a verb reaches only bands that already work the source" rule
 /// [`queue_build_on_working_bands`] applies.
 ///
@@ -9978,6 +9788,23 @@ fn bands_working_source(
                 .iter()
                 .any(|assignment| assignment.target.same_source(target))
         })
+        .map(|(entity, _, _)| entity)
+        .collect()
+}
+
+/// Every band of `faction` with this source in its build queue — the set `unqueue` acts over. It
+/// reaches a **road** entry too, which no labor row backs ([`BuildSource::Road`]), so it asks the
+/// queue rather than the rows.
+fn bands_queueing_source(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    source: &BuildSource,
+) -> Vec<Entity> {
+    app.world
+        .query::<(Entity, &PopulationCohort, &LaborAllocation)>()
+        .iter(&app.world)
+        .filter(|(_, cohort, _)| cohort.faction == faction)
+        .filter(|(_, _, allocation)| allocation.build_queue_position(source).is_some())
         .map(|(entity, _, _)| entity)
         .collect()
 }
@@ -10929,12 +10756,16 @@ fn command_from_payload(
             target_x,
             target_y,
             herd_id,
+            material,
+            road,
         } => Some(Command::Abandon {
             faction: FactionId(faction_id),
             source: BuildSourceRef {
                 target_x,
                 target_y,
                 herd_id,
+                material,
+                road,
             },
         }),
         ProtoCommandPayload::Unqueue {
@@ -10942,12 +10773,16 @@ fn command_from_payload(
             target_x,
             target_y,
             herd_id,
+            material,
+            road,
         } => Some(Command::Unqueue {
             faction: FactionId(faction_id),
             source: BuildSourceRef {
                 target_x,
                 target_y,
                 herd_id,
+                material,
+                road,
             },
         }),
         ProtoCommandPayload::BuildOrder {
@@ -10957,6 +10792,8 @@ fn command_from_payload(
             target_y,
             herd_id,
             position,
+            material,
+            road,
         } => Some(Command::BuildOrder {
             faction: FactionId(faction_id),
             band_id,
@@ -10964,38 +10801,10 @@ fn command_from_payload(
                 target_x,
                 target_y,
                 herd_id,
+                material,
+                road,
             },
             position,
-        }),
-        ProtoCommandPayload::BuildKit {
-            faction_id,
-            target_x,
-            target_y,
-            herd_id,
-            kit_id,
-        } => Some(Command::BuildKit {
-            faction: FactionId(faction_id),
-            source: BuildSourceRef {
-                target_x,
-                target_y,
-                herd_id,
-            },
-            kit_id,
-        }),
-        ProtoCommandPayload::UpkeepKit {
-            faction_id,
-            target_x,
-            target_y,
-            herd_id,
-            kit_id,
-        } => Some(Command::UpkeepKit {
-            faction: FactionId(faction_id),
-            source: BuildSourceRef {
-                target_x,
-                target_y,
-                herd_id,
-            },
-            kit_id,
         }),
         ProtoCommandPayload::WorkPriority {
             faction_id,
@@ -11004,6 +10813,8 @@ fn command_from_payload(
             target_y,
             herd_id,
             level,
+            material,
+            road,
         } => Some(Command::WorkPriority {
             faction: FactionId(faction_id),
             band_id,
@@ -11011,6 +10822,8 @@ fn command_from_payload(
                 target_x,
                 target_y,
                 herd_id,
+                material,
+                road,
             },
             level,
         }),
@@ -11021,6 +10834,8 @@ fn command_from_payload(
             target_y,
             herd_id,
             level,
+            material,
+            road,
         } => Some(Command::BuildPriority {
             faction: FactionId(faction_id),
             band_id,
@@ -11028,6 +10843,8 @@ fn command_from_payload(
                 target_x,
                 target_y,
                 herd_id,
+                material,
+                road,
             },
             level,
         }),
@@ -11766,8 +11583,6 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         Command::Abandon { faction, .. } => Some((*faction, "abandon")),
         Command::Unqueue { faction, .. } => Some((*faction, "unqueue")),
         Command::BuildOrder { faction, .. } => Some((*faction, "build_order")),
-        Command::BuildKit { faction, .. } => Some((*faction, "build_kit")),
-        Command::UpkeepKit { faction, .. } => Some((*faction, "upkeep_kit")),
         Command::WorkPriority { faction, .. } => Some((*faction, "work_priority")),
         Command::BuildPriority { faction, .. } => Some((*faction, "build_priority")),
         Command::BenchPriority { faction, .. } => Some((*faction, "bench_priority")),
@@ -12268,13 +12083,6 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
         Command::Unqueue { faction, source } => {
             handle_unqueue(app, faction, source);
         }
-        Command::BuildKit {
-            faction,
-            source,
-            kit_id,
-        } => {
-            handle_build_kit(app, faction, source, kit_id);
-        }
         Command::BuildOrder {
             faction,
             band_id,
@@ -12282,13 +12090,6 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
             position,
         } => {
             handle_build_order(app, faction, band_id, source, position);
-        }
-        Command::UpkeepKit {
-            faction,
-            source,
-            kit_id,
-        } => {
-            handle_upkeep_kit(app, faction, source, kit_id);
         }
         Command::WorkPriority {
             faction,
@@ -13142,7 +12943,6 @@ mod tests {
                         workers: BAND_WORKERS,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     }],
                     ..Default::default()
                 },
@@ -18585,336 +18385,6 @@ mod tests {
         );
     }
 
-    /// **`build_kit` SETS ONE JOB'S TOOL, AND AN ABSENT TOKEN CLEARS IT BACK TO THE DERIVATION**
-    /// (`docs/plan_standing_upkeep.md` §4.7a ②).
-    ///
-    /// The three states are three different statements and the command has to keep them apart:
-    /// **a named kit** is an override, **an absent token** is *"whatever this entry's web wants"*,
-    /// and **`kit none`** is a real selection — send this job's builders out bare-handed. The absent
-    /// case is what lets the client express *"back to default"* with no new vocabulary, since
-    /// `Main._kit_token` already omits the token whenever the selection equals the default.
-    #[test]
-    fn build_kit_sets_the_entrys_kit_and_an_absent_token_clears_it() {
-        /// The plant web's own builders kit — what the roster derives for a Cultivate.
-        const PLANT_BUILD_KIT: &str = "tillage";
-        /// The bare-handed roster entry, which is a selection and not an absence.
-        const BARE_KIT: &str = "none";
-
-        let (mut app, band, patch) = a_band_with_a_queued_cultivate();
-        let named = |app: &bevy::prelude::App| -> Option<String> {
-            app.world
-                .get::<LaborAllocation>(band)
-                .expect("the fixture band carries an allocation")
-                .build_queue_entry(&BuildSource::Patch(patch))
-                .expect("the fixture entry survives")
-                .kit
-                .as_ref()
-                .map(|kit| kit.id().to_string())
-        };
-        assert_eq!(
-            named(&app),
-            None,
-            "fixture: a fresh entry names no kit, so its own web answers"
-        );
-
-        handle_build_kit(
-            &mut app,
-            FactionId(0),
-            patch_source(patch),
-            Some(PLANT_BUILD_KIT.to_string()),
-        );
-        assert_eq!(
-            named(&app),
-            Some(PLANT_BUILD_KIT.to_string()),
-            "a named kit is stored on the ENTRY — the band's `builders` row carries none at all"
-        );
-
-        handle_build_kit(&mut app, FactionId(0), patch_source(patch), None);
-        assert_eq!(
-            named(&app),
-            None,
-            "an ABSENT `kit` token clears the override back to the entry's own derivation — the \
-             existing 'an absent kitId means the job's default' rule, and the client's only way to \
-             say 'back to default'"
-        );
-
-        handle_build_kit(
-            &mut app,
-            FactionId(0),
-            patch_source(patch),
-            Some(BARE_KIT.to_string()),
-        );
-        assert_eq!(
-            named(&app),
-            Some(BARE_KIT.to_string()),
-            "…and `kit none` is a REAL selection that survives the round trip: bare-handed is a \
-             different statement from 'derive', and collapsing the two makes conserving gear on \
-             one job unexpressible"
-        );
-    }
-
-    /// **`build_kit` FAILS CLOSED** — on a source nothing of the faction's has queued, on an id the
-    /// roster does not carry, and on a kit that cannot do the `builders` job.
-    ///
-    /// The same failing-closed resolution every other role uses: naming a kit is how the player
-    /// compares tools, so a silent substitution answers a different question than the one asked.
-    #[test]
-    fn build_kit_refuses_an_unqueued_source_and_a_kit_that_cannot_build() {
-        /// A roster kit that lists no `builders` job — gathering is all it can do.
-        const NOT_A_BUILD_KIT: &str = "gathering";
-        /// An id no roster entry carries.
-        const NO_SUCH_KIT: &str = "adamantine_trowel";
-
-        // A refusal is a `CancelOrder` event whose DETAIL carries the reason —
-        // `emit_command_failure` puts the sentence there and leaves the label generic.
-        let refused = |app: &bevy::prelude::App, needle: &str| -> bool {
-            app.world.resource::<CommandEventLog>().iter().any(|entry| {
-                matches!(entry.kind, CommandEventKind::CancelOrder)
-                    && entry
-                        .detail
-                        .as_deref()
-                        .is_some_and(|detail| detail.contains(needle))
-            })
-        };
-
-        // **A source in nobody's queue** — mirrors `handle_unqueue`'s own refusal, by name.
-        let (mut app, _, patch) = a_band_with_a_queued_cultivate();
-        let elsewhere = UVec2::new(patch.x + 7, patch.y + 7);
-        handle_build_kit(&mut app, FactionId(0), patch_source(elsewhere), None);
-        assert!(
-            refused(&app, "queued to be built"),
-            "a source nothing of yours has queued has no job to re-kit, and inventing one would \
-             enrol a build the player never declared"
-        );
-
-        // **An unknown id**, and **a kit that does not list the job** — both through `resolve_kit_or`.
-        for bad in [NO_SUCH_KIT, NOT_A_BUILD_KIT] {
-            let (mut app, band, patch) = a_band_with_a_queued_cultivate();
-            handle_build_kit(
-                &mut app,
-                FactionId(0),
-                patch_source(patch),
-                Some(bad.to_string()),
-            );
-            assert!(
-                refused(&app, "build_kit"),
-                "'{bad}' cannot raise a build and must be refused by name"
-            );
-            assert!(
-                app.world
-                    .get::<LaborAllocation>(band)
-                    .expect("the fixture band carries an allocation")
-                    .build_queue_entry(&BuildSource::Patch(patch))
-                    .expect("the fixture entry survives")
-                    .kit
-                    .is_none(),
-                "…and a refused command stores nothing: the entry stays on its own derivation"
-            );
-        }
-    }
-
-    /// **`upkeep_kit` SETS ONE WORK SITE'S TOOL, AND AN ABSENT TOKEN CLEARS IT BACK TO THE
-    /// DERIVATION** (`docs/plan_standing_upkeep.md` §2.7).
-    ///
-    /// The same three statements `build_kit` keeps apart one account over: **a named kit** is an
-    /// override, **an absent token** is *"whatever this site's web wants"*, and **`kit none`** is a
-    /// real selection — work this one site bare-handed while its neighbour keeps the tool.
-    ///
-    /// **It lands on the ROW and on nothing else.** The row's take kit is a separate statement, and
-    /// a command that quietly overwrote it would make the two selections one.
-    #[test]
-    fn upkeep_kit_sets_the_sites_kit_and_an_absent_token_clears_it() {
-        /// The plant web's own keeping kit — what the roster derives for a patch.
-        const PLANT_KEEPING_KIT: &str = "tillage";
-        /// The bare-handed roster entry, which is a selection and not an absence.
-        const BARE_KIT: &str = "none";
-
-        let (mut app, band, patch) = a_band_with_a_queued_cultivate();
-        let row = |app: &bevy::prelude::App| -> (Option<String>, Option<String>) {
-            let assignment = app
-                .world
-                .get::<LaborAllocation>(band)
-                .expect("the fixture band carries an allocation")
-                .assignments
-                .iter()
-                .find(|assignment| matches!(assignment.target, LaborTarget::Forage { tile, .. } if tile == patch))
-                .cloned()
-                .expect("the fixture row survives");
-            (
-                assignment
-                    .upkeep_kit
-                    .as_ref()
-                    .map(|kit| kit.id().to_string()),
-                assignment.kit.as_ref().map(|kit| kit.id().to_string()),
-            )
-        };
-        let (kept_with, take_kit) = row(&app);
-        assert_eq!(
-            kept_with, None,
-            "fixture: a fresh row names no keeping kit, so its own web answers"
-        );
-
-        handle_upkeep_kit(
-            &mut app,
-            FactionId(0),
-            patch_source(patch),
-            Some(PLANT_KEEPING_KIT.to_string()),
-        );
-        assert_eq!(
-            row(&app).0,
-            Some(PLANT_KEEPING_KIT.to_string()),
-            "a named kit is stored on the SITE's row"
-        );
-        assert_eq!(
-            row(&app).1,
-            take_kit,
-            "…and the row's TAKE kit is untouched: what the gatherers carry and what the keepers \
-             carry are two statements the player makes separately"
-        );
-
-        handle_upkeep_kit(&mut app, FactionId(0), patch_source(patch), None);
-        assert_eq!(
-            row(&app).0,
-            None,
-            "an ABSENT `kit` token clears the override back to the site's own derivation — the \
-             existing 'an absent kitId means the job's default' rule, and the client's only way to \
-             say 'back to default'"
-        );
-
-        handle_upkeep_kit(
-            &mut app,
-            FactionId(0),
-            patch_source(patch),
-            Some(BARE_KIT.to_string()),
-        );
-        assert_eq!(
-            row(&app).0,
-            Some(BARE_KIT.to_string()),
-            "…and `kit none` is a REAL selection that survives the round trip: keeping ONE site \
-             bare-handed to conserve the tool is a different statement from 'derive'"
-        );
-    }
-
-    /// **`upkeep_kit` FAILS CLOSED** — on a source nothing of the faction's works, on an id the
-    /// roster does not carry, and ⛔ **on a kit that does not serve THIS SITE'S WEB**.
-    ///
-    /// The last is the one the per-site scope makes reachable: a patch is kept on the `agriculture`
-    /// job and a herd on `husbandry`, so a plant keeping kit named on a herd is refused by name
-    /// rather than falling silently back to the animal derivation. `build_kit`'s rule and its
-    /// reason — naming a kit is how a player compares tools, so a silent substitution answers a
-    /// different question than the one asked.
-    #[test]
-    fn upkeep_kit_refuses_an_unworked_source_and_a_kit_that_cannot_keep_this_web() {
-        /// The PLANT keeping kit, which is exactly what must not be accepted on a herd.
-        const PLANT_KEEPING_KIT: &str = "tillage";
-        /// An id no roster entry carries.
-        const NO_SUCH_KIT: &str = "adamantine_trowel";
-
-        // A refusal is a `CancelOrder` event whose DETAIL carries the reason. ⛔ The needle has to be
-        // one an APPLIED command cannot also carry: a success writes `action=upkeep_kit` into the
-        // same field, so bare `"upkeep_kit"` reads true for the very outcome this is testing against.
-        let refused = |app: &bevy::prelude::App, needle: &str| -> bool {
-            app.world.resource::<CommandEventLog>().iter().any(|entry| {
-                matches!(entry.kind, CommandEventKind::CancelOrder)
-                    && entry
-                        .detail
-                        .as_deref()
-                        .is_some_and(|detail| detail.contains(needle))
-            })
-        };
-
-        // **A source nothing of yours works** — there is no row for a keeping kit to live on, and
-        // minting one would enrol a holding the player never took.
-        let (mut app, _, patch) = a_band_with_a_queued_cultivate();
-        let elsewhere = UVec2::new(patch.x + 7, patch.y + 7);
-        handle_upkeep_kit(&mut app, FactionId(0), patch_source(elsewhere), None);
-        assert!(
-            refused(&app, "to keep"),
-            "a source nothing of yours works has no row to re-kit"
-        );
-
-        // **An unknown id** on a patch.
-        let (mut app, band, patch) = a_band_with_a_queued_cultivate();
-        handle_upkeep_kit(
-            &mut app,
-            FactionId(0),
-            patch_source(patch),
-            Some(NO_SUCH_KIT.to_string()),
-        );
-        assert!(
-            refused(&app, "upkeep_kit: "),
-            "'{NO_SUCH_KIT}' is on no roster and must be refused by name"
-        );
-        assert!(
-            app.world
-                .get::<LaborAllocation>(band)
-                .expect("the fixture band carries an allocation")
-                .assignments
-                .iter()
-                .all(|assignment| assignment.upkeep_kit.is_none()),
-            "…and a refused command stores nothing: the site stays on its own derivation"
-        );
-
-        // ⛔ **THE WRONG WEB** — the plant keeping kit named on a herd.
-        let mut app = build_test_app();
-        let faction = FactionId(0);
-        let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
-        let band = spawn_addressable_band(&mut app, faction, &herd_id);
-        handle_upkeep_kit(
-            &mut app,
-            faction,
-            BuildSourceRef {
-                target_x: None,
-                target_y: None,
-                herd_id: Some(herd_id.clone()),
-            },
-            Some(PLANT_KEEPING_KIT.to_string()),
-        );
-        assert!(
-            refused(&app, "upkeep_kit: "),
-            "a PLANT keeping kit on a herd serves nothing there and is a command failure, never a \
-             silent fall back to the animal derivation"
-        );
-        assert!(
-            app.world
-                .get::<LaborAllocation>(band)
-                .expect("the fixture band carries an allocation")
-                .assignments
-                .iter()
-                .all(|assignment| assignment.upkeep_kit.is_none()),
-            "…and nothing was stored: the herd stays on its own web's tool"
-        );
-    }
-
-    /// The `build_kit` fixture: one band foraging one patch, with a `Cultivate` declared on it.
-    fn a_band_with_a_queued_cultivate() -> (bevy::prelude::App, Entity, UVec2) {
-        let mut app = build_test_app();
-        let faction = FactionId(0);
-        let patch = UVec2::new(2, 2);
-        let band = spawn_resident_working_band(
-            &mut app,
-            faction,
-            LaborTarget::Forage {
-                tile: patch,
-                floor: DEFAULT_ESCAPEMENT_FLOOR,
-                species: None,
-                take_species: TakeSelection::EVERYTHING,
-            },
-        );
-        app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
-        assert!(
-            app.world
-                .get_mut::<LaborAllocation>(band)
-                .expect("the fixture band carries an allocation")
-                .enqueue_build(
-                    BuildSource::Patch(patch),
-                    BuildJob::Rung(Improvement::Cultivate),
-                ),
-            "fixture: the band works this patch, so a declaration on it is accepted"
-        );
-        (app, band, patch)
-    }
-
     /// **A STANDING POOL TAKES NO KIT, AND THE TOKEN IS REFUSED BY NAME**
     /// (`docs/plan_standing_upkeep.md` §2.7, `docs/plan_pool_toe.md` §3).
     ///
@@ -18996,168 +18466,8 @@ mod tests {
         BuildSourceRef {
             target_x: Some(tile.x),
             target_y: Some(tile.y),
-            herd_id: None,
+            ..BuildSourceRef::default()
         }
-    }
-
-    /// **A `builders` row CANNOT NAME A KIT, and the head entry's own web answers instead**
-    /// (`docs/plan_standing_upkeep.md` §4.7a ②).
-    ///
-    /// The command boundary used to resolve *every* row's absent kit into a stored id, so a builders
-    /// row carried `default_kits.builders` = `none` and the pool built bare-handed. That was fixed by
-    /// storing nothing — but the row could still carry an **explicit** kit, and that override won
-    /// permanently: measured in play, one pick pinned `hurdling` onto every later builders command,
-    /// locking a band raising a *plant* Cultivate to the animal web's tool with no way back. So the
-    /// row's kit is gone entirely and `build_kit` sets it per queue entry.
-    ///
-    /// **The refusal is asserted with the two derived cases and is what makes them mean something**:
-    /// a fix that merely stopped *storing* the token would satisfy the first two while silently
-    /// swallowing a kit the player named.
-    #[test]
-    fn a_builders_row_takes_no_kit_and_derives_from_the_head_entry() {
-        /// The roster kit the plant web's builds want (`equipment.json` → `build_work` on `hoes`).
-        const PLANT_BUILD_KIT: &str = "tillage";
-        /// …and the animal web's (`hurdles`).
-        const ANIMAL_BUILD_KIT: &str = "hurdling";
-        /// The bare-handed roster entry: `default_kits.builders`, and what an explicit `kit none`
-        /// names. Both readings must be distinguishable, which is the point of the third case.
-        const BARE_KIT: &str = "none";
-        /// Hands on the builders row — any positive count; the fork only asks `workers > 0`.
-        const BUILDERS: u32 = 2;
-
-        /// One trip through the real command path: a band whose build queue head is on `animal_head`'s
-        /// web takes an `assign_labor … builders` carrying `named`, and the kit the pool ends up
-        /// working with is read back through the one seam the turn and the wire both resolve through.
-        fn resolved_builders_kit(animal_head: bool, named: Option<&str>) -> String {
-            let mut app = build_test_app();
-            let faction = FactionId(0);
-            let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
-            let patch = UVec2::new(2, 2);
-            let (worked, head) = if animal_head {
-                (
-                    LaborTarget::Hunt {
-                        fauna_id: herd_id.clone(),
-                        floor: DEFAULT_ESCAPEMENT_FLOOR,
-                    },
-                    core_sim::BuildQueueEntry {
-                        source: BuildSource::Herd(herd_id.clone()),
-                        declared: BuildJob::Rung(Improvement::Tame),
-                        kit: None,
-                        priority: core_sim::SourcePriority::default(),
-                    },
-                )
-            } else {
-                (
-                    LaborTarget::Forage {
-                        tile: patch,
-                        floor: DEFAULT_ESCAPEMENT_FLOOR,
-                        species: None,
-                        take_species: TakeSelection::EVERYTHING,
-                    },
-                    core_sim::BuildQueueEntry {
-                        source: BuildSource::Patch(patch),
-                        declared: BuildJob::Rung(Improvement::Cultivate),
-                        kit: None,
-                        priority: core_sim::SourcePriority::default(),
-                    },
-                )
-            };
-            let band = spawn_resident_working_band(&mut app, faction, worked);
-            app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
-            app.world
-                .get_mut::<LaborAllocation>(band)
-                .expect("the fixture band carries an allocation")
-                .build_queue
-                .push(head);
-
-            handle_assign_labor(
-                &mut app,
-                faction,
-                Some(FIXTURE_BAND_ID),
-                "builders".to_string(),
-                BUILDERS,
-                None,
-                None,
-                None,
-                None,
-                None,
-                named.map(str::to_string),
-                Vec::new(),
-            );
-
-            let equipment = app.world.resource::<EquipmentConfigHandle>().get();
-            let allocation = app
-                .world
-                .get::<LaborAllocation>(band)
-                .expect("the fixture band carries an allocation");
-            assert_eq!(
-                allocation.workers_on(&LaborTarget::Builders),
-                BUILDERS,
-                "the command must actually staff the builders row, or this measures nothing"
-            );
-            allocation.builders_kit(&equipment).id().to_string()
-        }
-
-        /// **Does `assign_labor … builders <n> kit <id>` refuse?** Measured by the row staying
-        /// unstaffed: the handler returns before it touches the allocation.
-        fn builders_kit_token_is_refused(named: &str) -> bool {
-            let mut app = build_test_app();
-            let faction = FactionId(0);
-            let patch = UVec2::new(2, 2);
-            let band = spawn_resident_working_band(
-                &mut app,
-                faction,
-                LaborTarget::Forage {
-                    tile: patch,
-                    floor: DEFAULT_ESCAPEMENT_FLOOR,
-                    species: None,
-                    take_species: TakeSelection::EVERYTHING,
-                },
-            );
-            app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
-            handle_assign_labor(
-                &mut app,
-                faction,
-                Some(FIXTURE_BAND_ID),
-                "builders".to_string(),
-                BUILDERS,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(named.to_string()),
-                Vec::new(),
-            );
-            app.world
-                .get::<LaborAllocation>(band)
-                .expect("the fixture band carries an allocation")
-                .workers_on(&LaborTarget::Builders)
-                == 0
-        }
-
-        assert_eq!(
-            resolved_builders_kit(false, None),
-            PLANT_BUILD_KIT,
-            "a builders pool on a plant-web head with no kit named must work the roster's plant \
-             build kit — storing the job default here makes §4.6b's derivation unreachable and \
-             sends the pool out bare-handed"
-        );
-        assert_eq!(
-            resolved_builders_kit(true, None),
-            ANIMAL_BUILD_KIT,
-            "…and the same row on an animal-web head must work the roster's animal build kit"
-        );
-        // **A kit token on the row is REFUSED, not swallowed.** The command leaves the row
-        // unstaffed, so the fixture's own liveness assertion inside `resolved_builders_kit` would
-        // trip — which is exactly the observable difference between refusing and ignoring, and is
-        // why this arm reads the refusal directly rather than through that helper.
-        assert!(
-            builders_kit_token_is_refused(BARE_KIT),
-            "naming a kit on the builders row must be refused by name: the builders kit is per \
-             queue entry, and a silently-dropped token is the same defect as the pinning override \
-             it replaced"
-        );
     }
 
     /// **The collapse window's prose may not contradict the three numbers published beside it.**
@@ -22777,6 +22087,337 @@ mod tests {
             "the withdrawal arrives on the command's own recapture too"
         );
     }
+    /// ⛔ **A WORKING AND A ROAD ARE ADDRESSABLE BY THE BAND-SCOPED VERBS**
+    /// (`docs/plan_site_crews.md` §2.4). A Groundwork row carries both marks, so `work_priority`
+    /// reaches its extract row and `build_priority` its queued working build by `<x> <y>
+    /// <material>`; a road carries only the Build mark, so `build_priority` and `build_order`
+    /// reach its queued road build by `road <x> <y>` and `work_priority` refuses it by name.
+    ///
+    /// **The bare tile form still names the PATCH**, so it reaches neither — the case that would
+    /// look like it worked while marking nothing the player named.
+    #[test]
+    fn the_band_scoped_verbs_reach_a_working_and_a_road() {
+        const WOOD: &str = "wood";
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let working_tile = UVec2::new(2, 2);
+        let road_tile = UVec2::new(3, 2);
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Extract {
+                tile: working_tile,
+                material: WOOD.to_string(),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+            },
+        );
+        app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+        let working_build = BuildSource::Deposit {
+            tile: working_tile,
+            material: WOOD.to_string(),
+        };
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation");
+            assert!(
+                allocation.enqueue_build(working_build.clone(), BuildJob::Rung(Improvement::Fell)),
+                "fixture: the band works this deposit, so a declaration on it is accepted"
+            );
+            assert!(
+                allocation.enqueue_build(
+                    BuildSource::Road(road_tile),
+                    BuildJob::Rung(Improvement::Grade)
+                ),
+                "fixture: a road entry is enrolled on its keeper's word"
+            );
+        }
+        let working = BuildSourceRef {
+            target_x: Some(working_tile.x),
+            target_y: Some(working_tile.y),
+            material: Some(WOOD.to_string()),
+            ..BuildSourceRef::default()
+        };
+        let road = BuildSourceRef {
+            target_x: Some(road_tile.x),
+            target_y: Some(road_tile.y),
+            road: true,
+            ..BuildSourceRef::default()
+        };
+        let allocation = |app: &bevy::prelude::App| {
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation")
+                .clone()
+        };
+        let entry_mark = |app: &bevy::prelude::App, source: &BuildSource| {
+            allocation(app)
+                .build_queue
+                .iter()
+                .find(|entry| &entry.source == source)
+                .map(|entry| entry.priority)
+        };
+
+        // ① The extract row's Priority.
+        handle_work_priority(
+            &mut app,
+            faction,
+            FIXTURE_BAND_ID,
+            working.clone(),
+            "low".to_string(),
+        );
+        assert_eq!(
+            allocation(&app).assignments[0].priority,
+            SourcePriority::Low,
+            "`work_priority … <x> <y> <material> low` marks the working's extract row"
+        );
+        // ② A road has no row: refused, and nothing on the band moves.
+        let before = allocation(&app);
+        handle_work_priority(
+            &mut app,
+            faction,
+            FIXTURE_BAND_ID,
+            road.clone(),
+            "high".to_string(),
+        );
+        assert_eq!(
+            allocation(&app).assignments[0].priority,
+            before.assignments[0].priority,
+            "a road has no crew to rank, so `work_priority … road` changes nothing"
+        );
+        // ③ The queued working's Build mark, apart from its row's Priority.
+        handle_build_priority(
+            &mut app,
+            faction,
+            FIXTURE_BAND_ID,
+            working.clone(),
+            "high".to_string(),
+        );
+        assert_eq!(
+            entry_mark(&app, &working_build),
+            Some(SourcePriority::High),
+            "`build_priority … <x> <y> <material> high` marks the queued working build"
+        );
+        assert_eq!(
+            allocation(&app).assignments[0].priority,
+            SourcePriority::Low,
+            "…and leaves its row's Priority where `work_priority` put it"
+        );
+        // ④ The queued road's Build mark.
+        handle_build_priority(
+            &mut app,
+            faction,
+            FIXTURE_BAND_ID,
+            road.clone(),
+            "low".to_string(),
+        );
+        assert_eq!(
+            entry_mark(&app, &BuildSource::Road(road_tile)),
+            Some(SourcePriority::Low),
+            "`build_priority … road <x> <y> low` marks the queued road build"
+        );
+        // ⑤ The bare tile names the patch, which is queued nowhere.
+        let marks_before = allocation(&app).build_queue;
+        handle_build_priority(
+            &mut app,
+            faction,
+            FIXTURE_BAND_ID,
+            patch_source(working_tile),
+            "normal".to_string(),
+        );
+        assert_eq!(
+            allocation(&app).build_queue,
+            marks_before,
+            "the bare tile form names the patch, never the working on the same hex"
+        );
+        // ⑥ `build_order` reaches the road entry by the same address.
+        handle_build_order(&mut app, faction, FIXTURE_BAND_ID, road, 0);
+        assert_eq!(
+            allocation(&app).build_queue_position(&BuildSource::Road(road_tile)),
+            Some(0),
+            "`build_order … road <x> <y> 0` moves the road build to the head"
+        );
+    }
+
+    /// The fixture [`abandon_and_unqueue_reach_a_working_and_a_road`] stands on: one band cutting
+    /// wood at one tile with a `fell` queued there, and keeping a road one tile over with a `grade`
+    /// queued on it. Returns the band, the working tile and the road tile.
+    fn a_band_with_a_queued_working_and_a_queued_road(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        material: &str,
+    ) -> (Entity, UVec2, UVec2) {
+        let working_tile = UVec2::new(2, 2);
+        let road_tile = UVec2::new(3, 2);
+        let band = spawn_resident_working_band(
+            app,
+            faction,
+            LaborTarget::Extract {
+                tile: working_tile,
+                material: material.to_string(),
+                floor: DEFAULT_ESCAPEMENT_FLOOR,
+            },
+        );
+        app.world.entity_mut(band).insert(BandId(FIXTURE_BAND_ID));
+        // **Standing on a real tile**, as every live band does: a road's keeper is resolved back to
+        // its band through the band's own position (`band_entity_and_tile`).
+        let camp = app
+            .world
+            .resource::<TileRegistry>()
+            .index(working_tile.x, working_tile.y)
+            .expect("the test map carries the camp tile");
+        app.world
+            .get_mut::<PopulationCohort>(band)
+            .expect("the fixture band has a cohort")
+            .current_tile = camp;
+        {
+            let ladder = app.world.resource::<core_sim::LadderConfigHandle>().get();
+            app.world
+                .resource_mut::<core_sim::RoadRegistry>()
+                .road_or_trail(road_tile, &ladder)
+                .take_keeper(
+                    core_sim::RoadKeeper {
+                        faction,
+                        band: BandId(FIXTURE_BAND_ID),
+                    },
+                    core_sim::NEAR_ENOUGH_TO_KEEP,
+                    &ladder,
+                );
+        }
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the fixture band carries an allocation");
+        assert!(
+            allocation.enqueue_build(
+                BuildSource::Deposit {
+                    tile: working_tile,
+                    material: material.to_string(),
+                },
+                BuildJob::Rung(Improvement::Fell)
+            ),
+            "fixture: the band works this deposit, so a declaration on it is accepted"
+        );
+        assert!(
+            allocation.enqueue_build(
+                BuildSource::Road(road_tile),
+                BuildJob::Rung(Improvement::Grade)
+            ),
+            "fixture: a road entry is enrolled on its keeper's word"
+        );
+        (band, working_tile, road_tile)
+    }
+
+    /// ⛔ **`abandon` AND `unqueue` REACH A WORKING AND A ROAD** (`docs/plan_site_crews.md` §2.4).
+    ///
+    /// - `unqueue <f> <x> <y> <material>` withdraws the queued `fell` and leaves the extract row;
+    ///   `unqueue <f> road <x> <y>` withdraws the queued `grade` and leaves the road's keeper.
+    /// - `abandon <f> <x> <y> <material>` IS `abandon_working`: the row and its entry go.
+    /// - `abandon <f> road <x> <y>` puts down the road alone — keeper and entry — and leaves the
+    ///   working beside it standing.
+    /// - The bare tile names the patch, which is queued nowhere, so `unqueue <f> <x> <y>` on the
+    ///   working's hex withdraws nothing — the case that would look like it worked.
+    #[test]
+    fn abandon_and_unqueue_reach_a_working_and_a_road() {
+        const WOOD: &str = "wood";
+        let faction = FactionId(0);
+        let working_at = |tile: UVec2| BuildSourceRef {
+            target_x: Some(tile.x),
+            target_y: Some(tile.y),
+            material: Some(WOOD.to_string()),
+            ..BuildSourceRef::default()
+        };
+        let road_at = |tile: UVec2| BuildSourceRef {
+            target_x: Some(tile.x),
+            target_y: Some(tile.y),
+            road: true,
+            ..BuildSourceRef::default()
+        };
+        let allocation = |app: &bevy::prelude::App, band: Entity| {
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("the fixture band carries an allocation")
+                .clone()
+        };
+        let keeper_of = |app: &bevy::prelude::App, tile: UVec2| {
+            app.world
+                .resource::<core_sim::RoadRegistry>()
+                .road(tile)
+                .and_then(|road| road.keeper)
+        };
+
+        // ① `unqueue`: the bare tile misses, the working and road forms land.
+        let mut app = build_test_app();
+        // The map, so the band stands on a real tile.
+        app.update();
+        let (band, working_tile, road_tile) =
+            a_band_with_a_queued_working_and_a_queued_road(&mut app, faction, WOOD);
+        let working_build = BuildSource::Deposit {
+            tile: working_tile,
+            material: WOOD.to_string(),
+        };
+        handle_unqueue(&mut app, faction, patch_source(working_tile));
+        assert!(
+            allocation(&app, band)
+                .build_queue_position(&working_build)
+                .is_some(),
+            "the bare tile names the patch, never the working on the same hex"
+        );
+        handle_unqueue(&mut app, faction, working_at(working_tile));
+        assert_eq!(
+            allocation(&app, band).build_queue_position(&working_build),
+            None,
+            "`unqueue … <x> <y> <material>` withdraws the queued working build"
+        );
+        assert_eq!(
+            allocation(&app, band).assignments.len(),
+            1,
+            "…and leaves the extract row standing"
+        );
+        handle_unqueue(&mut app, faction, road_at(road_tile));
+        assert_eq!(
+            allocation(&app, band).build_queue_position(&BuildSource::Road(road_tile)),
+            None,
+            "`unqueue … road <x> <y>` withdraws the queued road build"
+        );
+        assert!(
+            keeper_of(&app, road_tile).is_some(),
+            "…and the band still keeps the road — withdrawing a declaration is not putting it down"
+        );
+
+        // ② `abandon`: the working form is `abandon_working`; the road form takes the road alone.
+        let mut app = build_test_app();
+        // The map, so the band stands on a real tile.
+        app.update();
+        let (band, working_tile, road_tile) =
+            a_band_with_a_queued_working_and_a_queued_road(&mut app, faction, WOOD);
+        handle_abandon(&mut app, faction, road_at(road_tile));
+        assert!(
+            keeper_of(&app, road_tile).is_none(),
+            "`abandon … road <x> <y>` releases the road's keeper"
+        );
+        assert_eq!(
+            allocation(&app, band).build_queue_position(&BuildSource::Road(road_tile)),
+            None,
+            "…and its queued build with it"
+        );
+        assert_eq!(
+            allocation(&app, band).assignments.len(),
+            1,
+            "…while the working beside it stands"
+        );
+        handle_abandon(&mut app, faction, working_at(working_tile));
+        assert!(
+            allocation(&app, band).assignments.is_empty(),
+            "`abandon … <x> <y> <material>` puts the working down, row and all"
+        );
+        assert!(
+            allocation(&app, band).build_queue.is_empty(),
+            "…and its queued build with it — `abandon_working`'s contract exactly"
+        );
+    }
+
     // ---------------------------------------------------------------------------------------
     // ⛔ THE ROUTE BRANCH'S TWO TILE VERBS — `grade` and `pave`
     // ---------------------------------------------------------------------------------------

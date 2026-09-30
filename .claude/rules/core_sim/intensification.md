@@ -810,8 +810,8 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > > being the vector index**, so there is no second integer for the two to drift apart on. It names
 > > only each entry's **source**; the job, the kit, the destination and the estimate stay
 > > source-addressed and keep the winner rule above, and they agree across every holder by
-> > construction (one `cultivate` enqueues the same declaration on every band working the source,
-> > `build_kit` sets every holder's entry). It is **captured live** off `LaborAllocation::build_queue`
+> > construction (one `cultivate` enqueues the same declaration on every band working the source).
+> > It is **captured live** off `LaborAllocation::build_queue`
 > > rather than turn-written — `buildKitId`'s discipline — so `build_order` / `unqueue` / a
 > > declaration land on the command's own recapture and the client keeps **no optimistic ordering
 > > overlay**, an overlay being the second ordering this rule exists to forbid.
@@ -1093,10 +1093,16 @@ worked; a second axis would ask the player to state the same thing twice.
   site's crew (its keeping tools and its take). So a `Low` build loses a contested hoe to a `Normal`
   keeping site and a `High` build wins it (`build_queue.rs::
   a_low_build_loses_the_hoe_to_a_normal_site_and_a_high_build_wins_it`). Set by
-  `build_priority <faction> <band> <x> <y>|<herd_id> high|normal|low` (proto field **77**,
+  `build_priority <faction> <band> <source…> high|normal|low` (proto field **77**,
   `BuildPriorityCommand`, `LaborAllocation::set_build_priority`); a new entry is `Normal`, and
   re-declaring the verb keeps the mark as it keeps the place and the kit. Published as
-  `BuildQueueEntryState.buildPriority`.
+  `BuildQueueEntryState.buildPriority`. **Every queued build is addressable**: a patch by `<x> <y>`,
+  a herd by its id, a working by `<x> <y> <material>` and a road by `road <x> <y>` (the site
+  grammar, `yield-forecast.md` → "The player's rank on a worked row"). A Groundwork row carries both
+  marks, like a harvest or hunt row; **a road carries only the Build mark**, while a road build is
+  queued, because it has no crew for a Priority to rank — its keeping claims bid at `Normal`. Pinned
+  by `pool_toe::a_low_groundwork_row_loses_the_one_chisel_to_a_normal_one` and
+  `::a_road_builds_mark_ranks_its_builders_tool_claim`.
 
 #### KEEPING IS THE SITE'S OWN CREW'S FIRST JOB
 
@@ -1963,24 +1969,13 @@ its table carries a fallback, so a key this sim adds later renders honestly rath
 > stock falls under the floor, which is the `escapement` key one step later. `selection-card.md` →
 > "THE BLOCKED ROW NAMES THE REMEDY" carries the autopsy.
 
-### AN UNNAMED `builders` KIT STORES **NOTHING**, OR THE PER-ENTRY DERIVATION IS DEAD
+### A `builders` row stores no kit, and there is no per-entry kit to derive
 
-`handle_assign_labor` resolves a kit for every staffed row, and for `builders` with no `kit` token it
-stored `default_kits.builders` — `"none"`. `EquipmentConfig::builders_kit_for` applies *a named row kit
-wins* first, so that stored `none` beat the per-branch derivation §4.6b exists for, and **the pool
-built bare-handed on every job**. Not cosmetic: `BuildersGear::resolve` reads the same field.
-
-The client was already right — `BandPanelController._commanded_role_kit_id` emits no `kit` token on
-that row precisely so the derivation stays live — and the server was filling the slot in on the way
-past. The fork lives in `handle_assign_labor`'s `crew_kit` rather than in `default_kit_for_target`,
-because the question is *what does this command store*, not *which kit is the absent one*; that helper
-also serves the raid path, which has no derivation to defer to. **An explicit `kit <id>` still stores
-and still wins.**
-
-**IT SURVIVED BECAUSE EVERY FIXTURE HAND-BUILT THE ROW** (`kit: Some(bare_builders())`), so no test
-ever drove `assign_labor … builders <n>` into `builders_kit`. The test that closes it drives the real
-command path on both webs **and** asserts an explicit `kit none` is still honoured — without that third
-case, "never store anything" satisfies the pair and silently deletes the override.
+`handle_assign_labor` refuses a `kit` token on a standing pool (`builders`, `roadwork`) by name, and
+an unnamed one stores nothing. The per-entry derivation that once made an unnamed pool's stored
+`none` a defect is retired with the `build_kit` command and `BuildQueueEntry::kit`
+(`equipment.md` → "RETIRED: the per-entry builders' kit and the per-site keeping kit"): the pool's
+tools follow from the rung in flight.
 
 ### The build on the wire — the fraction stays, the WORK is appended
 

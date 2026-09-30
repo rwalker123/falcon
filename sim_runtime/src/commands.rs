@@ -259,6 +259,10 @@ pub enum CommandPayload {
     ///
     /// **One bit per source, never a number.** It is disposal rather than a smaller share; the
     /// per-source *funding* lever stays deleted.
+    ///
+    /// **The bare tile names a PLACE** — every holding on it, its road included. The working form
+    /// (`material`) is [`Self::AbandonWorking`] exactly, and the road form (`road`) puts down the
+    /// tile's road alone (`docs/plan_site_crews.md` §2.4).
     Abandon {
         faction_id: u32,
         /// The source: `Some` tile coordinates for a patch, or [`Self::Abandon::herd_id`] for a
@@ -266,6 +270,11 @@ pub enum CommandPayload {
         target_x: Option<u32>,
         target_y: Option<u32>,
         herd_id: Option<String>,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road**: with the tile pair, the tile's road rather than its patch.
+        road: bool,
     },
     /// **WITHDRAW A DECLARATION** — drop the source's build-queue entry only, leaving the row, its
     /// take crew, its kit and the meter exactly as they are.
@@ -279,6 +288,11 @@ pub enum CommandPayload {
         target_x: Option<u32>,
         target_y: Option<u32>,
         herd_id: Option<String>,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road**: with the tile pair, the tile's road rather than its patch.
+        road: bool,
     },
     /// **RE-ORDER ONE BAND'S BUILD QUEUE** — move its entry for the named source to `position`
     /// (0-based, clamped to the queue's length).
@@ -293,52 +307,17 @@ pub enum CommandPayload {
         target_y: Option<u32>,
         herd_id: Option<String>,
         position: u32,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road build**: with the tile pair, the road's queue entry rather than the tile's
+        /// patch.
+        road: bool,
     },
-    /// **NAME THE KIT ONE QUEUED BUILD IS RAISED WITH** — on every band of the faction that has the
-    /// source queued (`docs/plan_standing_upkeep.md` §4.7a ②). The row, its take crew and the meter
-    /// are untouched; this sets a property of the **queue entry**.
-    ///
-    /// **The builders' kit is per ENTRY, not per band.** A build's default is derived from that
-    /// entry's own food web — `tillage`'s hoes for a Cultivate, `hurdling`'s crook for a `Tame` — so one stored id per band
-    /// is the one thing the derivation cannot express: naming a kit on the `builders` labor row
-    /// pinned the animal web's tool onto every later plant build with no way back. `assign_labor`
-    /// refuses a `kit` token on that role, and this is where the override lives.
-    ///
-    /// **An absent [`Self::BuildKit::kit_id`] CLEARS the override** back to the derivation — the same
-    /// *"an absent `kitId` means the job's default"* rule every other selection follows, and what lets
-    /// a client say *"back to default"* with no new vocabulary. An explicit bare-handed kit is a
-    /// **real** selection and survives the round trip.
-    BuildKit {
-        faction_id: u32,
-        target_x: Option<u32>,
-        target_y: Option<u32>,
-        herd_id: Option<String>,
-        /// Absent = clear the override; present = this roster kit, the bare one included.
-        kit_id: Option<String>,
-    },
-    /// **NAME THE KIT ONE WORK SITE IS KEPT WITH** — on every band of the faction that works the
-    /// source (`docs/plan_standing_upkeep.md` §2.7). The take crew, its own kit, the queue entry and
-    /// the meter are untouched; this sets a property of the **worked row**.
-    ///
-    /// **The keeping kit is per WORK SITE, not per band.** The band is the pool of workers and goods
-    /// to draw from; it does not decide which tool a given site is worked with. A single stored id on
-    /// a band-level keeping role row — which is where this lived until §2.7 — could not say *hoes on
-    /// the Field, bare hands on the scrub patch beside it*, and this is where the override lives.
-    ///
-    /// **An absent [`Self::UpkeepKit::kit_id`] CLEARS the override** back to the site's own web
-    /// derivation — the same *"an absent `kitId` means the job's default"* rule every other selection
-    /// follows. An explicit bare-handed kit is a **real** selection and survives the round trip.
-    ///
-    /// **A kit that does not serve this site's web is a command FAILURE**, never a silent fall back,
-    /// exactly as `build_kit` refuses one whose `jobs` does not list `builders`.
-    UpkeepKit {
-        faction_id: u32,
-        target_x: Option<u32>,
-        target_y: Option<u32>,
-        herd_id: Option<String>,
-        /// Absent = clear the override; present = this roster kit, the bare one included.
-        kit_id: Option<String>,
-    },
+    // **RETIRED: `BuildKit` and `UpkeepKit`** (proto fields 60 and 63, reserved). The per-entry
+    // builders' kit and the per-site keeping kit were overrides of a per-kit lookup that
+    // `docs/plan_pool_toe.md` §4 replaced: a pool's tools follow from the rung each of its sites
+    // stands on and are settled band-wide by the player's marks, so nothing read either stored kit.
     /// **MARK ONE WORKED ROW WITH THE PLAYER'S OWN RANK** — `high` | `normal` | `low`, on the named
     /// band's assignment for that source (`docs/plan_standing_upkeep.md` §4.9 item 9b).
     ///
@@ -358,6 +337,12 @@ pub enum CommandPayload {
         herd_id: Option<String>,
         /// The level token: `"high"`, `"normal"` or `"low"`.
         level: String,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road build**: with the tile pair, the road's queue entry rather than the tile's
+        /// patch.
+        road: bool,
     },
     /// **Mark one QUEUED BUILD with the player's own Build mark** (`docs/plan_site_crews.md` §2.4) —
     /// `"high"`, `"normal"` or `"low"` on the named band's queue entry for this source. The
@@ -372,6 +357,12 @@ pub enum CommandPayload {
         herd_id: Option<String>,
         /// The level token: `"high"`, `"normal"` or `"low"`.
         level: String,
+        /// **A working**: with the tile pair, the deposit's material key — one hex can hold two
+        /// workings, so the tile alone names neither. `None` = the tile's forage patch.
+        material: Option<String>,
+        /// **A road build**: with the tile pair, the road's queue entry rather than the tile's
+        /// patch.
+        road: bool,
     },
     /// **Say how a band splits a maintenance pool it cannot stretch**
     /// (`docs/plan_standing_upkeep.md` §2.5) — `"spread"` (everything degrades a little) or
@@ -1794,22 +1785,30 @@ impl CommandEnvelope {
                 target_x,
                 target_y,
                 herd_id,
+                material,
+                road,
             } => pb::command_envelope::Command::Abandon(pb::AbandonCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
                 herd_id: herd_id.clone(),
+                material: material.clone(),
+                road: *road,
             }),
             CommandPayload::Unqueue {
                 faction_id,
                 target_x,
                 target_y,
                 herd_id,
+                material,
+                road,
             } => pb::command_envelope::Command::Unqueue(pb::UnqueueCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
                 herd_id: herd_id.clone(),
+                material: material.clone(),
+                road: *road,
             }),
             CommandPayload::BuildOrder {
                 faction_id,
@@ -1818,6 +1817,8 @@ impl CommandEnvelope {
                 target_y,
                 herd_id,
                 position,
+                material,
+                road,
             } => pb::command_envelope::Command::BuildOrder(pb::BuildOrderCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -1825,32 +1826,8 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 herd_id: herd_id.clone(),
                 position: *position,
-            }),
-            CommandPayload::BuildKit {
-                faction_id,
-                target_x,
-                target_y,
-                herd_id,
-                kit_id,
-            } => pb::command_envelope::Command::BuildKit(pb::BuildKitCommand {
-                faction_id: *faction_id,
-                target_x: *target_x,
-                target_y: *target_y,
-                herd_id: herd_id.clone(),
-                kit_id: kit_id.clone(),
-            }),
-            CommandPayload::UpkeepKit {
-                faction_id,
-                target_x,
-                target_y,
-                herd_id,
-                kit_id,
-            } => pb::command_envelope::Command::UpkeepKit(pb::UpkeepKitCommand {
-                faction_id: *faction_id,
-                target_x: *target_x,
-                target_y: *target_y,
-                herd_id: herd_id.clone(),
-                kit_id: kit_id.clone(),
+                material: material.clone(),
+                road: *road,
             }),
             CommandPayload::WorkPriority {
                 faction_id,
@@ -1859,6 +1836,8 @@ impl CommandEnvelope {
                 target_y,
                 herd_id,
                 level,
+                material,
+                road,
             } => pb::command_envelope::Command::WorkPriority(pb::WorkPriorityCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -1866,6 +1845,8 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 herd_id: herd_id.clone(),
                 level: level.clone(),
+                material: material.clone(),
+                road: *road,
             }),
             CommandPayload::BuildPriority {
                 faction_id,
@@ -1874,6 +1855,8 @@ impl CommandEnvelope {
                 target_y,
                 herd_id,
                 level,
+                material,
+                road,
             } => pb::command_envelope::Command::BuildPriority(pb::BuildPriorityCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -1881,6 +1864,8 @@ impl CommandEnvelope {
                 target_y: *target_y,
                 herd_id: herd_id.clone(),
                 level: level.clone(),
+                material: material.clone(),
+                road: *road,
             }),
             CommandPayload::UpkeepMode {
                 faction_id,
@@ -2565,12 +2550,16 @@ impl CommandEnvelope {
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
+                material: cmd.material,
+                road: cmd.road,
             },
             pb::command_envelope::Command::Unqueue(cmd) => CommandPayload::Unqueue {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
+                material: cmd.material,
+                road: cmd.road,
             },
             pb::command_envelope::Command::BuildOrder(cmd) => CommandPayload::BuildOrder {
                 faction_id: cmd.faction_id,
@@ -2579,20 +2568,8 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
                 position: cmd.position,
-            },
-            pb::command_envelope::Command::BuildKit(cmd) => CommandPayload::BuildKit {
-                faction_id: cmd.faction_id,
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                herd_id: cmd.herd_id,
-                kit_id: cmd.kit_id,
-            },
-            pb::command_envelope::Command::UpkeepKit(cmd) => CommandPayload::UpkeepKit {
-                faction_id: cmd.faction_id,
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                herd_id: cmd.herd_id,
-                kit_id: cmd.kit_id,
+                material: cmd.material,
+                road: cmd.road,
             },
             pb::command_envelope::Command::WorkPriority(cmd) => CommandPayload::WorkPriority {
                 faction_id: cmd.faction_id,
@@ -2601,6 +2578,8 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
                 level: cmd.level,
+                material: cmd.material,
+                road: cmd.road,
             },
             pb::command_envelope::Command::BuildPriority(cmd) => CommandPayload::BuildPriority {
                 faction_id: cmd.faction_id,
@@ -2609,6 +2588,8 @@ impl CommandEnvelope {
                 target_y: cmd.target_y,
                 herd_id: cmd.herd_id,
                 level: cmd.level,
+                material: cmd.material,
+                road: cmd.road,
             },
             pb::command_envelope::Command::UpkeepMode(cmd) => CommandPayload::UpkeepMode {
                 faction_id: cmd.faction_id,
@@ -3391,6 +3372,69 @@ mod tests {
                 patch_json: r#"{"lethality": 1.5}"#.to_string(),
             },
             CommandPayload::ClearConfigOverrides,
+        ] {
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
+    }
+
+    /// **A working and a road survive the envelope on every verb that takes the site grammar**
+    /// (`docs/plan_site_crews.md` §2.4) — the appended `material` and `road` fields, beside the tile
+    /// pair they qualify.
+    #[test]
+    fn band_scoped_sources_round_trip_through_the_envelope() {
+        for payload in [
+            CommandPayload::WorkPriority {
+                faction_id: 1,
+                band_id: 7,
+                target_x: Some(4),
+                target_y: Some(9),
+                herd_id: None,
+                level: "low".to_string(),
+                material: Some("wood".to_string()),
+                road: false,
+            },
+            CommandPayload::BuildPriority {
+                faction_id: 2,
+                band_id: 8,
+                target_x: Some(5),
+                target_y: Some(11),
+                herd_id: None,
+                level: "high".to_string(),
+                material: None,
+                road: true,
+            },
+            CommandPayload::BuildOrder {
+                faction_id: 3,
+                band_id: 9,
+                target_x: Some(6),
+                target_y: Some(13),
+                herd_id: None,
+                position: 2,
+                material: Some("stone".to_string()),
+                road: false,
+            },
+            CommandPayload::Abandon {
+                faction_id: 4,
+                target_x: Some(7),
+                target_y: Some(15),
+                herd_id: None,
+                material: None,
+                road: true,
+            },
+            CommandPayload::Unqueue {
+                faction_id: 5,
+                target_x: Some(8),
+                target_y: Some(17),
+                herd_id: None,
+                material: Some("wood".to_string()),
+                road: false,
+            },
         ] {
             let envelope = CommandEnvelope {
                 payload: payload.clone(),

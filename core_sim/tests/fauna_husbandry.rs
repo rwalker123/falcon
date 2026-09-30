@@ -1095,7 +1095,6 @@ fn spawn_crew_of(
                         workers: hunters + keepers,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     }],
                     improvement.map_or(0, |_| hunters),
                 ),
@@ -1105,7 +1104,6 @@ fn spawn_crew_of(
                     .map(|declared| core_sim::BuildQueueEntry {
                         source: core_sim::BuildSource::Herd(herd_id.to_string()),
                         declared: core_sim::BuildJob::Rung(declared),
-                        kit: None,
                         priority: core_sim::SourcePriority::default(),
                     })
                     .into_iter()
@@ -1772,7 +1770,6 @@ fn an_untamed_herd_quotes_the_tame_it_would_take_on_and_the_quote_halves_with_th
                 workers: keepers,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             });
         run_turns_with_hunt(&mut app, 1);
         count(herd_of(&app, &id).build_turns_remaining)
@@ -3426,7 +3423,6 @@ fn set_hunt_improvement(
                         workers: builders,
                         kit: None,
                         priority: SourcePriority::default(),
-                        upkeep_kit: None,
                     }),
                 }
                 assert!(
@@ -4192,7 +4188,6 @@ fn with_builders_pool(mut rows: Vec<LaborAssignment>, builders: u32) -> Vec<Labo
                     .expect("the shipped roster carries the empty kit"),
             ),
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         });
     }
     rows
@@ -5183,7 +5178,6 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
             workers: crew,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         };
         // **The holding's own row carries its keeping hands** (`docs/plan_site_crews.md` §2.2); the
         // blocked head's row carries its hunters alone.
@@ -5232,7 +5226,6 @@ fn a_blocked_tame_claims_no_keeping_and_the_pastoral_flock_beside_it_is_paid_in_
                 build_queue: vec![core_sim::BuildQueueEntry {
                     source: core_sim::BuildSource::Herd(build.clone()),
                     declared: core_sim::BuildJob::Rung(Improvement::Tame),
-                    kit: None,
                     priority: core_sim::SourcePriority::default(),
                 }],
                 ..Default::default()

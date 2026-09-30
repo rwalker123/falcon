@@ -127,7 +127,6 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     workers: TAKE_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 // The road-keeping — a pool of its own, on the band rather than on any tile.
                 LaborAssignment {
@@ -136,7 +135,6 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     workers: KEEP_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
                 // …and so is the building, since §2.5.
                 LaborAssignment {
@@ -145,14 +143,12 @@ fn world_with_a_keeping_band() -> (App, UVec2) {
                     workers: BUILD_CREW,
                     kit: None,
                     priority: SourcePriority::default(),
-                    upkeep_kit: None,
                 },
             ],
             // The declaration the source row's `improvement` token is derived from.
             build_queue: vec![BuildQueueEntry {
                 source: BuildSource::Patch(source),
                 declared: BuildJob::Rung(DECLARED),
-                kit: Some(bare_builders()),
                 priority: core_sim::SourcePriority::default(),
             }],
             upkeep_fund_mode: UpkeepFundMode::Priority,
@@ -471,21 +467,4 @@ fn a_bare_gathering_row_publishes_an_empty_job_token() {
         (TAKE_CREW, ""),
         "a pure gather states its take crew and an honest empty job"
     );
-}
-
-/// **THE EMPTY KIT, NAMED ON A FIXTURE'S QUEUE ENTRY** — an isolation, not a default.
-///
-/// It rides the **entry** because that is where a build's kit lives
-/// (`docs/plan_standing_upkeep.md` §4.7a ②); a kit on the `builders` row is not an input at all.
-/// An absent kit means *derive from this entry's web*, and the roster's answer (`tillage` for a
-/// patch, `hurdling` for a herd) adds `+0.5` work per covered worker per turn. A start-stocked band holds a
-/// unit per worker and a half, so at the crews these fixtures staff every builder is geared and the
-/// pool delivers half again what it asserts, moving every pacing claim below. Naming `none` holds
-/// the gear axis at its identity so these arms measure the **crew**, exactly as
-/// `FaunaConfig::without_retreat` holds the retreat at its identity across the hunt suites. The
-/// geared default is pinned in `core_sim/tests/build_turns_closed_form.rs`.
-fn bare_builders() -> core_sim::KitChoice {
-    core_sim::EquipmentConfig::builtin()
-        .kit("none")
-        .expect("the shipped roster carries the empty kit")
 }

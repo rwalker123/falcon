@@ -312,7 +312,6 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocatio
             workers,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         }],
         ..Default::default()
     }
@@ -464,7 +463,6 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                 workers: 1,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
             ..Default::default()
         },
@@ -554,7 +552,6 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                 workers: 2,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
             ..Default::default()
         },
@@ -696,7 +693,6 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                 workers: 4,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
             ..Default::default()
         },
@@ -785,7 +781,6 @@ fn a_hunt_past_the_leash_follows_its_herd_and_only_a_vanished_herd_ends_it() {
             workers: 3,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         }],
         ..Default::default()
     };
@@ -914,7 +909,6 @@ fn a_hunt_inside_the_old_leash_posts_a_party_on_the_same_apron_as_forage() {
                 workers: 3,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
             ..Default::default()
         },
@@ -1068,7 +1062,6 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
             workers: 3,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         }],
         ..Default::default()
     };
@@ -1078,7 +1071,6 @@ fn every_labor_loss_line_names_the_band_by_its_durable_id() {
         workers: 1,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     });
     let band = spawn_band(&mut app, camp, 3, allocation);
     app.world.entity_mut(band).insert(LOSS_LINE_BAND);
@@ -1371,7 +1363,6 @@ fn hunt_alloc(fauna_id: &str, workers: u32, floor: f32) -> LaborAllocation {
             workers,
             kit: None,
             priority: SourcePriority::default(),
-            upkeep_kit: None,
         }],
         ..Default::default()
     }
@@ -1821,7 +1812,6 @@ fn stage_hunt(
                 workers,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             }],
             ..Default::default()
         },
@@ -2052,7 +2042,6 @@ fn a_crew_that_is_only_trimmed_is_announced_and_says_what_is_left() {
         workers: 3,
         kit: None,
         priority: SourcePriority::default(),
-        upkeep_kit: None,
     });
     let band = spawn_band(&mut app, patch_tile, 5, allocation);
 
@@ -2132,7 +2121,6 @@ fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
                 workers: 1,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             },
             LaborAssignment {
                 party: None,
@@ -2140,7 +2128,6 @@ fn a_shed_assignment_is_announced_and_its_declaration_goes_with_it() {
                 workers: 1,
                 kit: None,
                 priority: SourcePriority::default(),
-                upkeep_kit: None,
             },
         ],
         ..Default::default()
