@@ -772,11 +772,11 @@ pub struct Herd {
     /// struck less. Published as `upkeepHands`. Accumulates beside [`Self::upkeep_supplied`] and is
     /// cleared on its cycle.
     pub upkeep_hands: f32,
-    /// **SOME CREW KEEPING THIS SOURCE WAS SHORT OF ITS KEEPING TOOLS** — the band-wide settlement
-    /// filled less than the site's claim (`docs/plan_site_crews.md` §2.3), so its crew kept with
-    /// more of its own hands. The row's `ⓘ`, published as `upkeepToolsShort`; cleared on
-    /// [`Self::upkeep_supplied`]'s cycle.
-    pub upkeep_tools_short: bool,
+    /// **WHICH KEEPING TOOLS THE CREWS KEEPING THIS SOURCE WERE SHORT OF, BY NAME** — one
+    /// [`crate::components::KeepingToolLine`] per `(faction, tool)` claimed, summed over that
+    /// people's crews. Published as `upkeepToe`, a viewer's own lines only, and the row's
+    /// `upkeepToolsShort` is read off them; cleared on `upkeep_supplied`'s cycle.
+    pub upkeep_toe: Vec<crate::components::KeepingToolLine>,
     /// **THE BILL THIS HERD'S KEEPERS WERE HANDED** — the demand [`herd_upkeep_demand`] answered when
     /// the site's keeping was claimed, stamped by the labor arm and cleared each turn by
     /// `advance_husbandry`. `None` = no band answered for this herd this turn.
@@ -898,7 +898,7 @@ impl Herd {
             neglect_pressure: NO_NEGLECT_PRESSURE,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_hands: NO_HANDS,
-            upkeep_tools_short: false,
+            upkeep_toe: Vec::new(),
             upkeep_demanded: None,
             upkeep_materials_demanded: BTreeMap::new(),
             upkeep_materials_supplied: BTreeMap::new(),
@@ -4350,7 +4350,7 @@ pub fn advance_husbandry(
         // the same Logistics stage, so its abandonment gate still sees last turn's value.)
         herd.upkeep_supplied = NO_UPKEEP_DEMAND;
         herd.upkeep_hands = NO_HANDS;
-        herd.upkeep_tools_short = false;
+        herd.upkeep_toe.clear();
         // …and the bill it was judged against, so "already stamped" always means *this* turn.
         herd.upkeep_demanded = None;
         // **The material half rides the same cycle**, and for the same reason: it is this turn's bill

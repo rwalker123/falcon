@@ -3529,6 +3529,13 @@ table ForagePatchState {
   //                             is not dated, or no whole-worker step before it completes.
   upkeepWorkersAtCompletion:uint = 0;
   upkeepNextWorkerTurn:int = -1;
+  // --- WHICH KEEPING TOOLS THE SITE IS SHORT OF, BY NAME (appended last, #751) --------------------
+  // One KitToeLine per tool this site's keeping claimed this turn: the units its crew's planned
+  // keeping hands asked for (`required`, over the tool's workers_per_unit) beside the units the
+  // band-wide settlement handed it (`filled`), summed over the crews keeping the site. SHORT is
+  // `filled < required`, and `upkeepToolsShort` is exactly "some line is short". Item ids only - the
+  // client resolves each to its roster display name. Absent = the site's keeping claimed no tool.
+  upkeepToe:[KitToeLine];
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -5092,6 +5099,13 @@ table HerdTelemetryState {
   //                             is not dated, or no whole-worker step before it completes.
   upkeepWorkersAtCompletion:uint = 0;
   upkeepNextWorkerTurn:int = -1;
+  // --- WHICH KEEPING TOOLS THE SITE IS SHORT OF, BY NAME (appended last, #751) --------------------
+  // One KitToeLine per tool this site's keeping claimed this turn: the units its crew's planned
+  // keeping hands asked for (`required`, over the tool's workers_per_unit) beside the units the
+  // band-wide settlement handed it (`filled`), summed over the crews keeping the site. SHORT is
+  // `filled < required`, and `upkeepToolsShort` is exactly "some line is short". Item ids only - the
+  // client resolves each to its roster display name. Absent = the site's keeping claimed no tool.
+  upkeepToe:[KitToeLine];
 }
 
 table CommandEventState {
@@ -6755,6 +6769,13 @@ table DepositState {
   //                             is not dated, or no whole-worker step before it completes.
   upkeepWorkersAtCompletion:uint = 0;
   upkeepNextWorkerTurn:int = -1;
+  // --- WHICH KEEPING TOOLS THE SITE IS SHORT OF, BY NAME (appended last, #751) --------------------
+  // One KitToeLine per tool this site's keeping claimed this turn: the units its crew's planned
+  // keeping hands asked for (`required`, over the tool's workers_per_unit) beside the units the
+  // band-wide settlement handed it (`filled`), summed over the crews keeping the site. SHORT is
+  // `filled < required`, and `upkeepToolsShort` is exactly "some line is short". Item ids only - the
+  // client resolves each to its roster display name. Absent = the site's keeping claimed no tool.
+  upkeepToe:[KitToeLine];
 }
 
 // --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------

@@ -1746,7 +1746,9 @@ for tier in High, Normal, Low:
 > **On the wire, by item:** `LaborAssignment.kitToe[]{itemId, required, filled}` — per item, the units
 > the row claimed beside the units it was settled. Short is `filled < required`; an absent list is a
 > row that claims nothing. `kitWorkersHolding < workers` no longer means short, because unclaimed hands
-> work bare by design. The builders' and Roadwork's per-item twin is `poolToe`.
+> work bare by design. The builders' and Roadwork's per-item twin is `poolToe`; a site's
+> **keeping** tools ride its own source row as `upkeepToe` (`intensification.md` → "The standing
+> upkeep on the wire").
 
 - **BY PRIORITY, then whole units by largest remainder** (`docs/plan_site_crews.md` §2.3,
   `BandItemBudget::settle`). A take kit's items settle **High rows in full first, then Normal, then

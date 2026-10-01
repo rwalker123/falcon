@@ -4517,6 +4517,55 @@ impl PartialEq for LaborAllocation {
     }
 }
 
+/// **ONE LINE OF A SITE'S KEEPING-TOOL CLAIM** — a tool one people's crews keeping the site asked
+/// for this turn and what their band-wide settlement handed it (`docs/plan_site_crews.md` §2.3).
+/// Stamped on the source and published, **to that people only**, as the site's `upkeepToe`, so a
+/// shortage names its item; the site's `upkeepToolsShort` is read off the same viewer's lines.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeepingToolLine {
+    /// **Whose crews claimed it.** A rival's tool stock is not the viewer's to read, so the capture
+    /// publishes a viewer only its own people's lines.
+    pub faction: FactionId,
+    /// The `equipment.json` item id.
+    pub item: String,
+    /// Units the site's planned keeping hands claimed — `hands ÷ workers_per_unit`.
+    pub required: f32,
+    /// Units the settlement handed the site.
+    pub filled: f32,
+}
+
+impl KeepingToolLine {
+    /// Short is `filled < required`.
+    pub fn is_short(&self) -> bool {
+        self.filled < self.required
+    }
+}
+
+/// **ADD ONE CREW'S KEEPING-TOOL LINES TO A SOURCE'S** — stamped as `faction`'s, summed per
+/// `(faction, item)`: several bands of one people can keep one source, exactly as its
+/// `upkeep_supplied` and `upkeep_hands` accumulate, and two peoples' claims stay apart.
+pub fn merge_keeping_tool_lines(
+    into: &mut Vec<KeepingToolLine>,
+    faction: FactionId,
+    add: &[KeepingToolLine],
+) {
+    for line in add {
+        match into
+            .iter_mut()
+            .find(|held| held.faction == faction && held.item == line.item)
+        {
+            Some(held) => {
+                held.required += line.required;
+                held.filled += line.filled;
+            }
+            None => into.push(KeepingToolLine {
+                faction,
+                ..line.clone()
+            }),
+        }
+    }
+}
+
 /// **ONE SITE CREW'S KEEPING ISSUE OF ONE ITEM** — a row of [`LaborAllocation::last_keeping_issued`]:
 /// the units the band-wide settlement handed that site's keeping hands this turn
 /// (`docs/plan_site_crews.md` §2.3).

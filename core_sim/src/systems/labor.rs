@@ -881,6 +881,10 @@ fn take_hands_after_keeping(workers: u32, keep_hands: f32) -> f32 {
     (workers as f32 - keep_hands).max(fauna::NO_HANDS)
 }
 
+/// **A KEEPING-TOOL LINE NOT YET STAMPED WITH ITS PEOPLE** — `merge_keeping_tool_lines` writes the
+/// keeping crew's own faction over it.
+const UNSTAMPED_FACTION: u32 = 0;
+
 /// **WHAT A KEEPER WITH NO TOOL AT ALL BANKS IN A TURN** — `PER_WORKER_OUTPUT`, reached through
 /// [`crate::intensification::build_work_per_worker_turn`] at
 /// [`crate::intensification::NO_BUILD_GEAR`] rather than spelled,
@@ -2283,8 +2287,10 @@ struct SiteKeeping {
     /// The keeping tools those hands carried, narrowed to the ones serving this site — what the
     /// keeping wear is billed against, on `kept` and nothing else.
     wear_kit: Option<crate::equipment_config::KitChoice>,
-    /// **The site's keeping-tool claim was not fully filled** — the row's `ⓘ` (`upkeepToolsShort`).
-    tools_short: bool,
+    /// **The site's keeping-tool claim, per tool** — what it asked for and what the settlement
+    /// handed it, published as the site's `upkeepToe` so a shortage names its item. Whether any line
+    /// is short is the row's `ⓘ` (`upkeepToolsShort`).
+    tool_lines: Vec<crate::components::KeepingToolLine>,
 }
 
 impl SiteKeeping {
@@ -2337,16 +2343,24 @@ fn site_keeping(
             rung_key.as_deref(),
         );
         let keep_hands = toe_worker_need(rate.per_worker, ask.claim.demand).min(ask.crew as f32);
-        let tools_short = fill
+        let tool_lines = fill
             .required
             .iter()
-            .any(|(item, required)| fill.units_of(item) < *required);
+            .filter(|(_, required)| *required > NO_UNITS_SETTLED)
+            .map(|(item, required)| crate::components::KeepingToolLine {
+                // Stamped with the people's own id at the merge, the one place it is known.
+                faction: crate::orders::FactionId(UNSTAMPED_FACTION),
+                item: item.to_string(),
+                required: *required,
+                filled: fill.units_of(item),
+            })
+            .collect();
         if let Some(slot) = keeping.get_mut(ask.claim.index) {
             *slot = SiteKeeping {
                 keep_hands,
                 kept: keep_hands * rate.per_worker,
                 wear_kit: Some(rate.wear_kit),
-                tools_short,
+                tool_lines,
             };
         }
     }
@@ -5962,7 +5976,15 @@ pub fn advance_labor_allocation(
                     let keep_hands =
                         crate::forage::patch_upkeep_supply(patch, improvement, keeping.keep_hands);
                     patch.upkeep_hands += keep_hands;
-                    patch.upkeep_tools_short |= keeping.tools_short && keep_hands > fauna::NO_HANDS;
+                    // **AND WHICH TOOLS IT WAS SHORT OF, BY NAME** — the lines the flag is read off,
+                    // so the two can never disagree.
+                    if keep_hands > fauna::NO_HANDS {
+                        crate::components::merge_keeping_tool_lines(
+                            &mut patch.upkeep_toe,
+                            faction,
+                            &keeping.tool_lines,
+                        );
+                    }
                     let take_hands = take_hands_after_keeping(workers, keep_hands);
                     // **AND THE BILL IT ANSWERS**, recorded because the plant demand INTERPOLATES on
                     // the source's position and this stamp is read a whole turn later, after the
@@ -6907,7 +6929,13 @@ pub fn advance_labor_allocation(
                     let keep_hands =
                         fauna::herd_upkeep_supply(herd, improvement, keeping.keep_hands);
                     herd.upkeep_hands += keep_hands;
-                    herd.upkeep_tools_short |= keeping.tools_short && keep_hands > fauna::NO_HANDS;
+                    if keep_hands > fauna::NO_HANDS {
+                        crate::components::merge_keeping_tool_lines(
+                            &mut herd.upkeep_toe,
+                            faction,
+                            &keeping.tool_lines,
+                        );
+                    }
                     let take_hands = take_hands_after_keeping(workers, keep_hands);
                     // **AND THE MATERIAL HALF OF THE SAME BILL** — the pen's hurdles, on the plant
                     // twin's own two rules (see the Forage arm). The bill's *work* stamp is struck
@@ -8487,8 +8515,13 @@ pub fn advance_labor_allocation(
                             .expect("the working was just opened");
                         working.upkeep_supplied += keeping.kept;
                         working.upkeep_hands += keeping.keep_hands;
-                        working.upkeep_tools_short |=
-                            keeping.tools_short && keeping.keep_hands > fauna::NO_HANDS;
+                        if keeping.keep_hands > fauna::NO_HANDS {
+                            crate::components::merge_keeping_tool_lines(
+                                &mut working.upkeep_toe,
+                                faction,
+                                &keeping.tool_lines,
+                            );
+                        }
                         keeping.keep_hands
                     };
                     charge_keeping_wear(

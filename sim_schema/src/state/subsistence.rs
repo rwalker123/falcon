@@ -417,6 +417,13 @@ pub struct HerdTelemetryState {
     /// the build's own pace; [`NO_NEXT_KEEPING_WORKER`] = never within the build.
     #[serde(default = "no_next_keeping_worker")]
     pub upkeep_next_worker_turn: i32,
+    /// **WHICH KEEPING TOOLS THIS SITE IS SHORT OF, BY NAME** — one
+    /// [`crate::state::population::KitToeLineState`] per tool the site's keeping claimed this turn,
+    /// summed over the crews keeping it. Short is `filled < required`, and
+    /// `upkeep_tools_short` is exactly *"some line is short"*. Empty = the keeping claimed no tool.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
     /// **Is there anything here to neglect?** `false` for a **wild** herd — nobody's to keep, so it
     /// never sheds and [`Self::neglect_grace_remaining`] means nothing. Read this first, exactly as
     /// [`ForagePatchState::owner`]'s `has_owner` companion is read first.
@@ -1012,6 +1019,7 @@ impl Default for HerdTelemetryState {
             upkeep_workers_needed: 0,
             upkeep_workers_at_completion: 0,
             upkeep_next_worker_turn: NO_NEXT_KEEPING_WORKER,
+            upkeep_toe: Vec::new(),
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
             provisions_per_biomass: 0.0,
@@ -1300,6 +1308,13 @@ pub struct ForagePatchState {
     /// the build's own pace; [`NO_NEXT_KEEPING_WORKER`] = never within the build.
     #[serde(default = "no_next_keeping_worker")]
     pub upkeep_next_worker_turn: i32,
+    /// **WHICH KEEPING TOOLS THIS SITE IS SHORT OF, BY NAME** — one
+    /// [`crate::state::population::KitToeLineState`] per tool the site's keeping claimed this turn,
+    /// summed over the crews keeping it. Short is `filled < required`, and
+    /// `upkeep_tools_short` is exactly *"some line is short"*. Empty = the keeping claimed no tool.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
     /// **Is there anything here to neglect?** `false` for a wild patch (both improvement meters at
     /// zero), which is most of them. Read this before [`Self::neglect_grace_remaining`].
     #[serde(default)]
@@ -1964,6 +1979,13 @@ pub struct DepositState {
     /// the build's own pace; [`NO_NEXT_KEEPING_WORKER`] = never within the build.
     #[serde(default = "no_next_keeping_worker")]
     pub upkeep_next_worker_turn: i32,
+    /// **WHICH KEEPING TOOLS THIS SITE IS SHORT OF, BY NAME** — one
+    /// [`crate::state::population::KitToeLineState`] per tool the site's keeping claimed this turn,
+    /// summed over the crews keeping it. Short is `filled < required`, and
+    /// `upkeep_tools_short` is exactly *"some line is short"*. Empty = the keeping claimed no tool.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub upkeep_toe: Vec<crate::state::population::KitToeLineState>,
     /// `false` = **nothing at risk here** (a working on either free floor, which declares no
     /// upkeep). Read this before the countdown beside it.
     pub has_neglect_grace: bool,
@@ -2063,6 +2085,7 @@ impl Default for DepositState {
             upkeep_workers_needed: 0,
             upkeep_workers_at_completion: 0,
             upkeep_next_worker_turn: NO_NEXT_KEEPING_WORKER,
+            upkeep_toe: Vec::new(),
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
             // Same rule one field over: `0` renders as a finished build.

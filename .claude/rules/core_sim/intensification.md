@@ -1199,6 +1199,24 @@ lists).
 `docs/plan_site_crews.md` §4 — **`upkeepHands`** (`float`, the hands the crew spent keeping, summed
 across bands) and **`upkeepToolsShort`** (`bool`, the keeping held fewer tools than it planned for).
 
+**`upkeepToe:[KitToeLine{itemId, required, filled}]` names which tools** — one line per tool the
+site's keeping claimed this turn, the take row's `kitToe` shape. The source stamps the lines
+(`upkeep_toe`, cleared on `upkeep_supplied`'s cycle) through `components::merge_keeping_tool_lines`,
+**per `(faction, item)`**, summed over one people's crews. Absent where the keeping claimed no tool.
+Pinned by `build_queue::a_hoe_short_kept_patch_names_the_hoes_it_is_short_of` (a patch whose band
+holds no hoes publishes `hoes required 1.8 filled 0`; the paid control reads filled).
+
+> ⛔ **BOTH ARE VIEWER-SCOPED — EACH VIEWER GETS ITS OWN PEOPLE'S LINES, AND THE FLAG IS READ OFF
+> THEM.** A rival's lines would publish its tool stock, and the mark is a statement about the
+> viewer's own crew. The capture filters on the line's `faction` (`snapshot::subsistence::
+> upkeep_toe_lines`) and derives `upkeepToolsShort` from the same filtered lines
+> (`viewer_keeping_tools_short`), so the two cannot disagree. **The flag used to be a per-source bool
+> OR-ed across every band**, which marked a viewer short because a rival's crew was — the same leak;
+> the source no longer stores a flag at all. A patch carrying lines is never a viewer-invariant row
+> (`patch_row_is_viewer_invariant`), so a multi-seat memo cannot share one viewer's lines with
+> another. Pinned on the encoded frame for both viewers by
+> `frame_is_viewer_scoped::a_site_kept_by_two_peoples_publishes_each_viewer_only_its_own_keeping_tools`.
+
 - **`upkeepDemand` follows `corralYield`'s rule: always meaningful, never a sentinel.** A rung with no
   upkeep publishes an honest `0`.
 - **IT ANSWERS FOR THE RUNG THE SOURCE IS ON, WHICH IS WHY A QUOTE CANNOT READ IT** — see "A price

@@ -3680,3 +3680,62 @@ fn a_site_keeping_more_than_one_hand_leaves_the_builder_short() {
          required {required}, filled {filled}"
     );
 }
+
+/// **A site's keeping-tool line on the encoded frame** — `(required, filled)` for `item`, `None`
+/// where the site's keeping claimed none of it.
+fn published_keeping_tool(app: &App, patch: UVec2, item: &str) -> Option<(f32, f32)> {
+    published(app, patch, |row| {
+        row.upkeepToe()
+            .into_iter()
+            .flatten()
+            .find(|line| line.itemId() == Some(item))
+            .map(|line| (line.required(), line.filled()))
+    })
+}
+
+/// No hoes at all for the keeping site, one for the band with them.
+const NO_HOES: u32 = 0;
+
+/// # ⛔ A SITE SHORT OF ITS KEEPING TOOL NAMES THE TOOL
+///
+/// A kept patch whose band holds no hoes publishes `upkeepToe` = `hoes required N filled 0`, and
+/// `upkeepToolsShort` is exactly *"some line is short"*. The control — the same site paid its whole
+/// claim — publishes the line filled and the flag clear, so neither half passes on a dead field.
+#[test]
+fn a_hoe_short_kept_patch_names_the_hoes_it_is_short_of() {
+    let (app, _band, patch) = a_build_head_beside_its_kept_site(KeptBuildHead {
+        hoes: NO_HOES,
+        builders: ONE_BUILDER,
+        crew: PLAYED_SITE_CREW,
+        build_mark: SourcePriority::Normal,
+        fraction_built: MOSTLY_BUILT,
+    });
+    let (required, filled) = published_keeping_tool(&app, patch, SHARED_TOOL)
+        .expect("the kept patch's keeping claims hoes");
+    assert!(
+        required > 0.0 && filled < required,
+        "the site names the hoes it is short of — required {required}, filled {filled}"
+    );
+    assert!(
+        published(&app, patch, |row| row.upkeepToolsShort()),
+        "the flag is exactly \"some line is short\""
+    );
+
+    let (app, _band, patch) = a_build_head_beside_its_kept_site(KeptBuildHead {
+        hoes: HOES_FOR_A_SHORT_BAND,
+        builders: ONE_BUILDER,
+        crew: PLAYED_SITE_CREW,
+        build_mark: SourcePriority::Normal,
+        fraction_built: MOSTLY_BUILT,
+    });
+    let (required, filled) = published_keeping_tool(&app, patch, SHARED_TOOL)
+        .expect("the kept patch's keeping claims hoes");
+    assert!(
+        filled >= required,
+        "the site paid its whole claim reads filled — required {required}, filled {filled}"
+    );
+    assert!(
+        !published(&app, patch, |row| row.upkeepToolsShort()),
+        "a site with no short line does not read short"
+    );
+}

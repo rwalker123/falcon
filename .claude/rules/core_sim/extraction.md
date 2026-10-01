@@ -712,7 +712,7 @@ Nobody built them, so there is nothing to hold.
   share of its stamped `upkeep_demanded` by crew across bands, the tools are the rung's requirement
   (the axe on felling and coppice, `stone_dressing` on the quarry) claimed per planned keeping
   hand at the row's priority, and `DepositSource::upkeep_supplied` / `upkeep_hands` /
-  `upkeep_tools_short` are stamped for the capture.
+  `upkeep_toe` (per people, read off for the viewer's `upkeepToolsShort`) are stamped for the capture.
 - **The quote reads the same split** — `extraction::crew_keep_hands` / `crew_keeping_issue` and
   `deposit_crew_quote` strike the cut on the hands the keeping leaves, and
   `prospective_deposit_gear` reserves the keeping's tools first.

@@ -274,14 +274,14 @@ fn clear_the_keeping_scratch(app: &mut App) {
     for herd in &mut app.world.resource_mut::<HerdRegistry>().herds {
         herd.upkeep_supplied = core_sim::NO_UPKEEP_DEMAND;
         herd.upkeep_hands = core_sim::NO_HANDS;
-        herd.upkeep_tools_short = false;
+        herd.upkeep_toe.clear();
         herd.upkeep_demanded = None;
     }
     let mut patches = app.world.resource_mut::<core_sim::ForageRegistry>();
     for patch in patches.patches.values_mut() {
         patch.upkeep_supplied = core_sim::NO_UPKEEP_DEMAND;
         patch.upkeep_hands = core_sim::NO_HANDS;
-        patch.upkeep_tools_short = false;
+        patch.upkeep_toe.clear();
         patch.upkeep_demanded = None;
     }
 }

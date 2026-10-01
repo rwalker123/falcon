@@ -16,14 +16,16 @@
 //! satisfies an in-process assertion, and the published artifact is the thing that leaks.
 
 use bevy::prelude::*;
+use core_sim::FactionId;
 
 mod faction_support;
 
 use core_sim::{
     publish_baseline_snapshot, run_turn, CommandEventEntry, CommandEventKind, CommandEventLog,
     DiscoveredSites, DiscoveryProgressLedger, FactionInventory, ForageRegistry, GreatDiscoveryId,
-    GreatDiscoveryLedger, GreatDiscoveryRecord, GreatDiscoveryRegistry, KnowledgeLedger,
-    KnowledgeLedgerEntry, Scalar, SnapshotHistory, VisibilityLedger, CULTIVATION_DISCOVERY_ID,
+    GreatDiscoveryLedger, GreatDiscoveryRecord, GreatDiscoveryRegistry, KeepingToolLine,
+    KnowledgeLedger, KnowledgeLedgerEntry, Scalar, SnapshotHistory, ViewerFaction,
+    VisibilityLedger, CULTIVATION_DISCOVERY_ID,
 };
 use faction_support::{world_with, HOME, ONE_RIVAL, RIVAL};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
@@ -765,5 +767,114 @@ fn victory_progress_is_the_viewers_own_and_the_winner_is_public() {
         winner.faction(),
         RIVAL.0,
         "a winner is public, and it is the faction that actually achieved it"
+    );
+}
+
+/// The keeping tool both peoples' crews claim on the shared patch.
+const KEEPING_TOOL: &str = "hoes";
+
+/// What each people's crews claimed and were handed — the home people short, the rival paid in
+/// full, so whose lines reached a frame shows in both the lines and the flag read off them.
+const HOME_REQUIRED: f32 = 1.8;
+const HOME_FILLED: f32 = 0.0;
+const RIVAL_REQUIRED: f32 = 2.0;
+const RIVAL_FILLED: f32 = 2.0;
+
+/// **One forage patch's keeping-tool lines and flag in the frame published to `viewer`.**
+fn keeping_tools_seen_by(
+    app: &mut App,
+    viewer: FactionId,
+    tile: UVec2,
+) -> (Vec<(String, f32, f32)>, bool) {
+    app.world.insert_resource(ViewerFaction(viewer));
+    publish_baseline_snapshot(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope =
+        fb::root_as_envelope(bytes.as_ref()).expect("the snapshot encodes to a valid envelope");
+    let row = envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .subsistence()
+        .and_then(|section| section.foragePatches())
+        .expect("the frame carries forage patches")
+        .iter()
+        .find(|row| row.x() == tile.x && row.y() == tile.y)
+        .expect("the patch is in the frame");
+    let lines = row
+        .upkeepToe()
+        .into_iter()
+        .flatten()
+        .map(|line| {
+            (
+                line.itemId().unwrap_or_default().to_string(),
+                line.required(),
+                line.filled(),
+            )
+        })
+        .collect();
+    (lines, row.upkeepToolsShort())
+}
+
+/// # ⛔ A SITE KEPT BY TWO PEOPLES PUBLISHES EACH VIEWER ONLY ITS OWN KEEPING-TOOL LINES
+///
+/// Summed across factions the line would publish a rival's tool stock, and the flag beside it
+/// would mark the viewer short because a *rival's* crew was. Each viewer reads its own people's
+/// line and a flag read off that line alone. Fog is off so the tile is visible to both and only the
+/// people filter can be what separates the two frames.
+#[test]
+fn a_site_kept_by_two_peoples_publishes_each_viewer_only_its_own_keeping_tools() {
+    let mut app = world_with(ONE_RIVAL, |config| config.fog_enabled = false);
+    let tile = {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let mut candidates: Vec<UVec2> = registry.patches.keys().copied().collect();
+        candidates.sort_unstable_by_key(|tile| (tile.y, tile.x));
+        let tile = *candidates.first().expect("the map seeds forage patches");
+        registry
+            .patches
+            .get_mut(&tile)
+            .expect("the patch is there")
+            .upkeep_toe = vec![
+            KeepingToolLine {
+                faction: HOME,
+                item: KEEPING_TOOL.to_string(),
+                required: HOME_REQUIRED,
+                filled: HOME_FILLED,
+            },
+            KeepingToolLine {
+                faction: RIVAL,
+                item: KEEPING_TOOL.to_string(),
+                required: RIVAL_REQUIRED,
+                filled: RIVAL_FILLED,
+            },
+        ];
+        tile
+    };
+
+    let (home_lines, home_short) = keeping_tools_seen_by(&mut app, HOME, tile);
+    assert_eq!(
+        home_lines,
+        vec![(KEEPING_TOOL.to_string(), HOME_REQUIRED, HOME_FILLED)],
+        "the home viewer reads its own line and nothing of the rival's"
+    );
+    assert!(
+        home_short,
+        "the home people's crews were short, so its flag is up"
+    );
+
+    let (rival_lines, rival_short) = keeping_tools_seen_by(&mut app, RIVAL, tile);
+    assert_eq!(
+        rival_lines,
+        vec![(KEEPING_TOOL.to_string(), RIVAL_REQUIRED, RIVAL_FILLED)],
+        "the rival viewer reads its own line and nothing of the home people's"
+    );
+    assert!(
+        !rival_short,
+        "the rival's crews were paid in full, so the home people's shortage does not reach its flag"
     );
 }

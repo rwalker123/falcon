@@ -1535,7 +1535,7 @@ fn one_kept_turn(app: &mut App, band: Entity, coord: UVec2) -> KeptTurn {
         keep_hands: patch.upkeep_hands,
         supplied: patch.upkeep_supplied,
         demand: patch.upkeep_demanded.unwrap_or_default(),
-        tools_short: patch.upkeep_tools_short,
+        tools_short: patch.upkeep_toe.iter().any(|line| line.is_short()),
         food: app
             .world
             .get::<PopulationCohort>(band)

@@ -384,7 +384,7 @@ fn a_far_kept_herds_caravan_forecast_is_what_its_party_lands_after_keeping() {
         let herd = &mut app.world.resource_mut::<HerdRegistry>().herds[0];
         herd.upkeep_supplied = core_sim::NO_UPKEEP_DEMAND;
         herd.upkeep_hands = core_sim::NO_HANDS;
-        herd.upkeep_tools_short = false;
+        herd.upkeep_toe.clear();
         herd.upkeep_demanded = Some(bill);
     };
     let mut saw_the_road = false;

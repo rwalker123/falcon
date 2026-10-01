@@ -271,11 +271,11 @@ pub struct DepositSource {
     /// struck less. Published as `upkeepHands`. Accumulates beside [`Self::upkeep_supplied`] and is
     /// cleared on its cycle.
     pub upkeep_hands: f32,
-    /// **SOME CREW KEEPING THIS SOURCE WAS SHORT OF ITS KEEPING TOOLS** — the band-wide settlement
-    /// filled less than the site's claim (`docs/plan_site_crews.md` §2.3), so its crew kept with
-    /// more of its own hands. The row's `ⓘ`, published as `upkeepToolsShort`; cleared on
-    /// [`Self::upkeep_supplied`]'s cycle.
-    pub upkeep_tools_short: bool,
+    /// **WHICH KEEPING TOOLS THE CREWS KEEPING THIS SOURCE WERE SHORT OF, BY NAME** — one
+    /// [`crate::components::KeepingToolLine`] per `(faction, tool)` claimed, summed over that
+    /// people's crews. Published as `upkeepToe`, a viewer's own lines only, and the row's
+    /// `upkeepToolsShort` is read off them; cleared on `upkeep_supplied`'s cycle.
+    pub upkeep_toe: Vec<crate::components::KeepingToolLine>,
     /// **CONSECUTIVE TURNS THE KEEPING WENT UNMET.** Reset outright by any turn it was met, so it is
     /// a run rather than a lifetime budget. The bleed applies only while it **exceeds** the at-risk
     /// rung's `upkeep.grace_turns` — a crew re-tasked for a season does not cost the working.
@@ -367,7 +367,7 @@ impl DepositSource {
             upkeep_demanded: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_hands: NO_HANDS_ON_THE_DEPOSIT,
-            upkeep_tools_short: false,
+            upkeep_toe: Vec::new(),
             neglect_turns: NEGLECT_NONE,
             last_take: NO_TAKE_THIS_TURN,
             last_floor: NOBODY_ASKED_FOR_A_FLOOR,
@@ -1962,7 +1962,7 @@ pub fn advance_deposits(
         // since the last pass"*.
         source.upkeep_supplied = NO_UPKEEP_DEMAND;
         source.upkeep_hands = NO_HANDS_ON_THE_DEPOSIT;
-        source.upkeep_tools_short = false;
+        source.upkeep_toe.clear();
         source.last_take = NO_TAKE_THIS_TURN;
         source.last_floor = NOBODY_ASKED_FOR_A_FLOOR;
         source.build_blocked_reason = BuildGate::Open;

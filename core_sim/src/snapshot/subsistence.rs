@@ -582,6 +582,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
         fallback_party,
         build_kits,
         upkeep_kits,
+        viewer,
         ..
     } = inputs;
     let width = grid_size.x.max(1);
@@ -1373,7 +1374,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // **WHAT THE HERD'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
                 // §2.2) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.
                 upkeep_hands: herd.map_or(crate::fauna::NO_HANDS, |herd| herd.upkeep_hands),
-                upkeep_tools_short: herd.is_some_and(|herd| herd.upkeep_tools_short),
+                // **Which keeping tools the VIEWER's crews were short of, by name**, and the flag
+                // read off those same lines.
+                upkeep_tools_short: herd
+                    .is_some_and(|herd| viewer_keeping_tools_short(&herd.upkeep_toe, viewer)),
+                upkeep_toe: herd
+                    .map_or_else(Vec::new, |herd| upkeep_toe_lines(&herd.upkeep_toe, viewer)),
             }
         })
         .collect()
@@ -1485,6 +1491,7 @@ impl WildRowMemo {
 /// | the patch has **no owner** | the wild-ground substitution — an unowned patch has no improvement to withhold, so `improvement_is_legible` is true for every viewer |
 /// | it carries **no build estimate** | the withheld-build substitution, which only ever replaces a patch that has one |
 /// | **nobody** has it queued or worked | the two membership indices, which are built from *the viewer's own* bands and reach the build countdown and the withheld build scratch |
+/// | it carries **no keeping-tool lines** | `upkeepToe` / `upkeepToolsShort`, which publish each viewer its own people's lines only |
 ///
 /// The third is asked of **every faction's** allocations rather than of the viewer's, and that is
 /// the whole point of it: a tile a rival queued this turn is a row that differs between viewers
@@ -1497,6 +1504,8 @@ fn patch_row_is_viewer_invariant(
 ) -> bool {
     patch.owner.is_none()
         && !patch.has_build_estimate()
+        // A people's keeping-tool lines are published to that people alone (`upkeep_toe_lines`).
+        && patch.upkeep_toe.is_empty()
         && !queued_by_anyone.patch_is_queued(patch.tile)
         && !worked_by_anyone.patch_is_worked(patch.tile)
 }
@@ -1976,7 +1985,10 @@ pub(crate) fn snapshot_forage_patches(
             // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT THIS TURN** (`docs/plan_site_crews.md`
             // §2.1) — stamped by the labour pass beside `upkeep_supplied`, reported not re-derived.
             upkeep_hands: patch.upkeep_hands,
-            upkeep_tools_short: patch.upkeep_tools_short,
+            // **Which keeping tools the VIEWER's crews were short of, by name**, and the flag read
+            // off those same lines.
+            upkeep_tools_short: viewer_keeping_tools_short(&patch.upkeep_toe, viewer),
+            upkeep_toe: upkeep_toe_lines(&patch.upkeep_toe, viewer),
             // **WHAT THE GROUND HOLDS** — the tile's own `K` with no rung gain in it, the
             // ungained twin of `carrying_capacity` above and the denominator every upkeep figure
             // on this row is quoted per. **The reading already resolved once above**, never a
@@ -2677,6 +2689,35 @@ fn rung_material_pile(ladder: &LadderConfig, rung: RungKey) -> Vec<MaterialPayof
         .map(|(material_id, amount)| MaterialPayoff {
             material_id: material_id.to_string(),
             amount,
+        })
+        .collect()
+}
+
+/// **`upkeepToolsShort`, read off the viewer's own [`upkeep_toe_lines`]** — exactly *"some line is
+/// short"*, so the flag and the lines cannot disagree and neither speaks for a rival's crew.
+pub(crate) fn viewer_keeping_tools_short(
+    lines: &[crate::components::KeepingToolLine],
+    viewer: FactionId,
+) -> bool {
+    lines
+        .iter()
+        .any(|line| line.faction == viewer && line.is_short())
+}
+
+/// ⛔ **A SOURCE'S KEEPING-TOOL LINES, ON THE WIRE — THE VIEWER'S OWN ONLY** — `upkeepToe`, item
+/// ids only: the client resolves each to its roster display name. A rival's lines would publish its
+/// tool stock, and the mark is a statement about the viewer's own crew, so they are not sent.
+pub(crate) fn upkeep_toe_lines(
+    lines: &[crate::components::KeepingToolLine],
+    viewer: FactionId,
+) -> Vec<sim_schema::KitToeLineState> {
+    lines
+        .iter()
+        .filter(|line| line.faction == viewer)
+        .map(|line| sim_schema::KitToeLineState {
+            item_id: line.item.clone(),
+            required: line.required,
+            filled: line.filled,
         })
         .collect()
 }

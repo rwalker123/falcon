@@ -126,6 +126,7 @@ pub(crate) fn deposit_states<'a>(
                 };
                 Some(deposit_row(
                     source,
+                    viewer,
                     tile,
                     capacity,
                     ladder,
@@ -187,6 +188,8 @@ fn deposit_regrowth_samples(
 #[allow(clippy::too_many_arguments)] // the row's own inputs, plus the capture tick the forecast is dated from
 fn deposit_row(
     source: &DepositSource,
+    // **Who is looking** — the keeping-tool lines are that people's own only.
+    viewer: FactionId,
     ground: &Tile,
     capacity: f32,
     ladder: &LadderConfig,
@@ -316,7 +319,13 @@ fn deposit_row(
         // **WHAT THE WORKING'S OWN `extract` CREW SPENT KEEPING IT THIS TURN**
         // (`docs/plan_site_crews.md` §2.5) — stamped by the labour pass beside `upkeep_supplied`.
         upkeep_hands: source.upkeep_hands,
-        upkeep_tools_short: source.upkeep_tools_short,
+        // **Which keeping tools the VIEWER's crews were short of, by name**, and the flag read off
+        // those same lines.
+        upkeep_tools_short: crate::snapshot::subsistence::viewer_keeping_tools_short(
+            &source.upkeep_toe,
+            viewer,
+        ),
+        upkeep_toe: crate::snapshot::subsistence::upkeep_toe_lines(&source.upkeep_toe, viewer),
         // **THE TAKE CREW'S DEFAULT KIT** (#663) — through the one function `assign_labor` stores a
         // no-kit row's kit with, so the picker's `(default)` is the kit the turn will arm. A fact
         // about the roster and the working's branch, not about any band, so it rides every row the

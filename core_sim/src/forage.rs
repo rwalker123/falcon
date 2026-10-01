@@ -361,11 +361,11 @@ pub struct ForagePatch {
     /// struck less. Published as `upkeepHands`. Accumulates beside [`Self::upkeep_supplied`] and is
     /// cleared on its cycle.
     pub upkeep_hands: f32,
-    /// **SOME CREW KEEPING THIS SOURCE WAS SHORT OF ITS KEEPING TOOLS** — the band-wide settlement
-    /// filled less than the site's claim (`docs/plan_site_crews.md` §2.3), so its crew kept with
-    /// more of its own hands. The row's `ⓘ`, published as `upkeepToolsShort`; cleared on
-    /// [`Self::upkeep_supplied`]'s cycle.
-    pub upkeep_tools_short: bool,
+    /// **WHICH KEEPING TOOLS THE CREWS KEEPING THIS SOURCE WERE SHORT OF, BY NAME** — one
+    /// [`crate::components::KeepingToolLine`] per `(faction, tool)` claimed, summed over that
+    /// people's crews. Published as `upkeepToe`, a viewer's own lines only, and the row's
+    /// `upkeepToolsShort` is read off them; cleared on `upkeep_supplied`'s cycle.
+    pub upkeep_toe: Vec<crate::components::KeepingToolLine>,
     /// **WHAT THE STAND WAS BEFORE THIS TURN'S REGROWTH** — the plant twin of
     /// `Herd::biomass_before_regrowth`, re-stamped at the top of every `regrow_patch` so it is never
     /// more than one turn old. Sim-side only; the take's growth-share backstop is its one reader.
@@ -584,7 +584,7 @@ impl ForagePatch {
             neglect_turns: NEGLECT_NONE,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_hands: crate::fauna::NO_HANDS,
-            upkeep_tools_short: false,
+            upkeep_toe: Vec::new(),
             upkeep_demanded: None,
             upkeep_materials_demanded: BTreeMap::new(),
             upkeep_materials_supplied: BTreeMap::new(),
@@ -3466,7 +3466,7 @@ pub fn advance_cultivation(
         // demand again unless somebody restates it.
         patch.upkeep_supplied = NO_UPKEEP_DEMAND;
         patch.upkeep_hands = crate::fauna::NO_HANDS;
-        patch.upkeep_tools_short = false;
+        patch.upkeep_toe.clear();
         patch.upkeep_demanded = None;
         // **The material half rides the same cycle**, and for the same reason: it is this turn's
         // bill and this turn's payment, so next turn's shortfall is the whole demand again unless a

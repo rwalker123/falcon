@@ -384,7 +384,7 @@ fn a_low_groundwork_row_loses_the_one_chisel_to_a_normal_one() {
 }
 
 /// **A band holding two quarries with ONE set of stone-dressing gear**, each row at its given rank.
-/// Returns each working's `upkeep_tools_short` after one turn.
+/// Returns whether each working's keeping read short of a tool after one turn.
 fn two_quarries_and_one_chisel(ranks: [SourcePriority; 2]) -> [bool; 2] {
     const ONE_CHISEL: u32 = 1;
     const A_TAKE_CREW: u32 = 1;
@@ -423,7 +423,9 @@ fn two_quarries_and_one_chisel(ranks: [SourcePriority; 2]) -> [bool; 2] {
         registry
             .source(tiles[index], &materials[index])
             .expect("the seated working survives the turn")
-            .upkeep_tools_short
+            .upkeep_toe
+            .iter()
+            .any(|line| line.is_short())
     })
 }
 
@@ -538,7 +540,9 @@ fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
         .resource::<DepositRegistry>()
         .source(quarry_tile, &material)
         .expect("the seated working survives the turn")
-        .upkeep_tools_short;
+        .upkeep_toe
+        .iter()
+        .any(|line| line.is_short());
     PavingTurn {
         builders_armed,
         quarry_short,
@@ -549,7 +553,7 @@ fn a_queued_paving_and_a_quarry(build_mark: SourcePriority) -> PavingTurn {
 struct PavingTurn {
     /// Stone-dressing units the builders' claim was settled (`PoolToeLine::filled`).
     builders_armed: f32,
-    /// The quarry crew kept without its tool (`DepositSource::upkeep_tools_short`).
+    /// The quarry crew kept without its tool (`DepositSource::upkeep_toe`).
     quarry_short: bool,
 }
 
@@ -558,7 +562,7 @@ struct SharedToolTurn {
     road_supplied: f32,
     /// The quarry crew's hands spent keeping it (`DepositSource::upkeep_hands`).
     quarry_hands: f32,
-    /// Its keeping-tool claim went unfilled (`DepositSource::upkeep_tools_short`).
+    /// Its keeping-tool claim went unfilled (`DepositSource::upkeep_toe`).
     quarry_tools_short: bool,
 }
 
@@ -636,7 +640,7 @@ fn a_band_keeping_a_paved_road_and_a_quarry(quarry_rank: SourcePriority) -> Shar
     SharedToolTurn {
         road_supplied,
         quarry_hands: quarry.upkeep_hands,
-        quarry_tools_short: quarry.upkeep_tools_short,
+        quarry_tools_short: quarry.upkeep_toe.iter().any(|line| line.is_short()),
     }
 }
 

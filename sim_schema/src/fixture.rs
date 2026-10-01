@@ -666,6 +666,15 @@ fn seed_snapshot() -> WorldSnapshot {
         herd.build_material_cost = rows();
         herd.upkeep_material_demand = rows();
         herd.upkeep_material_supplied = rows();
+        // **WHICH KEEPING TOOLS THE SITE IS SHORT OF** — spelled out on `kit_toe`'s rule: keyed by
+        // item, and a duplicate item on one site is not something the server can emit.
+        herd.upkeep_toe = ["hoes", "crook"]
+            .iter()
+            .map(|item| KitToeLineState {
+                item_id: (*item).to_string(),
+                ..Default::default()
+            })
+            .collect();
         // …and the per-rung PRE-COMMIT quote pair, which is a different question from the stamped
         // bill above and therefore a different pair of nested repeated fields.
         herd.tame_upkeep_material_demand = rows();
@@ -760,6 +769,15 @@ fn seed_snapshot() -> WorldSnapshot {
         patch.build_material_cost = rows();
         patch.upkeep_material_demand = rows();
         patch.upkeep_material_supplied = rows();
+        // **WHICH KEEPING TOOLS THE SITE IS SHORT OF** — spelled out on `kit_toe`'s rule: keyed by
+        // item, and a duplicate item on one site is not something the server can emit.
+        patch.upkeep_toe = ["hoes", "crook"]
+            .iter()
+            .map(|item| KitToeLineState {
+                item_id: (*item).to_string(),
+                ..Default::default()
+            })
+            .collect();
         // …and the per-rung PRE-COMMIT quote pair — see the herd twin.
         patch.cultivation_upkeep_material_demand = rows();
         patch.field_upkeep_material_demand = rows();
@@ -850,6 +868,15 @@ fn seed_snapshot() -> WorldSnapshot {
         deposit.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
         // **The kits the working offers** — a `[string]`, seeded for the same reason.
         deposit.offered_kit_ids = rows();
+        // **WHICH KEEPING TOOLS THE SITE IS SHORT OF** — spelled out on `kit_toe`'s rule: keyed by
+        // item, and a duplicate item on one site is not something the server can emit.
+        deposit.upkeep_toe = ["hoes", "crook"]
+            .iter()
+            .map(|item| KitToeLineState {
+                item_id: (*item).to_string(),
+                ..Default::default()
+            })
+            .collect();
     }
 
     // --- knowledge -------------------------------------------------------
