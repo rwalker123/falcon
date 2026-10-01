@@ -2256,6 +2256,7 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_split_send("band_panel_split_ready", true)
+	await _assert_split_card_fits_through_stepper()
 
 	# Under the NEW band's floor. The Send is DISABLED WITH ITS REASON, never hidden: a control that
 	# vanishes teaches nothing, where a greyed one naming the worker floor teaches the rule the player
@@ -25342,3 +25343,96 @@ func _assert_site_tools_are_named() -> void:
 
 ## The generic tool wording the sweep must not find once names are loaded.
 const SITE_TOOLS_GENERIC_NEEDLES := ["short of tools", "More tools would"]
+
+
+## The split sheet's stepper presses the card-fit guard walks: up, up, up, down, down, up, down, down.
+const SPLIT_FIT_PRESSES := [1, 1, 1, -1, -1, 1, -1, -1]
+## How far the tile card's drawn height may sit from its content's combined minimum.
+const SPLIT_FIT_TOLERANCE := 1.0
+
+## ⛔ **THE TILE CARD FITS ITS CONTENT AFTER EVERY SHEET REBUILD** — the split sheet's worker stepper
+## pressed up and down by REAL clicks; after each, the card's drawn height must equal its content's
+## combined minimum (±1px), and the drawer's scroll must be sized to its body. Reported from play: one
+## press grew a band of nothing under the sheet.
+func _assert_split_card_fits_through_stepper() -> void:
+	if _is_headless():
+		return
+	var card := _hud._selectioncard._tile_panel as Control
+	var scroll := _hud._drawer._subject_scroll as ScrollContainer
+	var body := _hud._drawer._subject_body as Control
+	for step in range(SPLIT_FIT_PRESSES.size() + 1):
+		if step > 0:
+			var sheet := _verb_sheet()
+			var press: Button = null
+			if sheet != null:
+				if int(SPLIT_FIT_PRESSES[step - 1]) > 0:
+					press = _find_stepper_plus(sheet)
+				else:
+					for b in sheet.find_children("*", "Button", true, false):
+						if (b as Button).text == HudWorkVocab.STEPPER_MINUS_FACE:
+							press = b as Button
+			if press == null:
+				_fail("split card fit — step %d found no stepper button to press" % step)
+				return
+			await _drive_click(_canvas_to_window(press.get_global_rect().get_center()))
+			await _settle()
+			await _settle()
+		var count := _hud._bandpanel._split_workers
+		var card_h := card.size.y
+		var card_min := card.get_combined_minimum_size().y
+		var scroll_h := scroll.size.y
+		var scroll_min := scroll.custom_minimum_size.y
+		var body_min := body.get_combined_minimum_size().y
+		print("band_panel_preview: split card fit — step %d workers %d: card %.0f (min %.0f), scroll %.0f (custom min %.0f), body min %.0f"
+			% [step, count, card_h, card_min, scroll_h, scroll_min, body_min])
+		if step == 4:
+			await _save("band_panel_split_fit_up")
+		_assert_band_panel("split card fit — step %d (%d workers): the card is its content's height (card %.0f, min %.0f)"
+				% [step, count, card_h, card_min],
+			absf(card_h - card_min) <= SPLIT_FIT_TOLERANCE)
+		_assert_band_panel("split card fit — step %d (%d workers): the drawer is its body's height (scroll %.0f, body %.0f)"
+				% [step, count, scroll_h, body_min],
+			absf(scroll_h - body_min) <= SPLIT_FIT_TOLERANCE)
+	await _assert_drawer_fit_survives_an_unsettled_rebuild()
+
+## ⛔ **THE RACE A REAL CLICK RUNS, STAGED ON PURPOSE.** An OS click lands in the frame's INPUT step,
+## so the rebuild it triggers adds fresh wrapping Labels that have no width until the end-of-frame
+## container sort — and the drawer's fit, resuming on that same frame's `process_frame`, measured them
+## one word per line (a ~2000px body). A harness click goes through `push_input` from the PROCESS step,
+## after which the sort runs first, so it never reproduces it. This stages it exactly: a callback
+## connected to `process_frame` AHEAD of the fit's own wait adds a wrapping sentence to the body in
+## the frame the fit resumes in. The drawer must still settle to its body's real height.
+func _assert_drawer_fit_survives_an_unsettled_rebuild() -> void:
+	var scroll := _hud._drawer._subject_scroll as ScrollContainer
+	var body := _hud._drawer._subject_body as VBoxContainer
+	var injected: Array[Label] = []
+	var inject := func() -> void:
+		var late := HudWidgets.alloc_hint_label(HudComposeVocab.SPLIT_BAND_AFTER_NOTE)
+		body.add_child(late)
+		injected.append(late)
+	get_tree().process_frame.connect(inject, CONNECT_ONE_SHOT)
+	_hud._drawer.fit_subject_drawer(true)
+	# The tallest the drawer was SIZED to on any frame of the settle — a transient applied for even
+	# one frame is the card jumping by a screenful and back, which is the reported defect's flash.
+	var tallest := 0.0
+	for _i in range(SPLIT_FIT_SETTLE_FRAMES):
+		await get_tree().process_frame
+		tallest = maxf(tallest, scroll.custom_minimum_size.y)
+	var settled := body.get_combined_minimum_size().y
+	print("band_panel_preview: split card fit — unsettled rebuild: scroll %.0f (custom min %.0f), body %.0f"
+		% [scroll.size.y, scroll.custom_minimum_size.y, settled])
+	_assert_band_panel("split card fit — a rebuild measured mid-layout still settles to the body (scroll %.0f, body %.0f)"
+			% [scroll.custom_minimum_size.y, settled],
+		absf(scroll.custom_minimum_size.y - settled) <= SPLIT_FIT_TOLERANCE)
+	_assert_band_panel("split card fit — …and was never sized to the unsettled measurement, not for a frame (tallest %.0f, body %.0f)"
+			% [tallest, settled],
+		tallest <= settled + SPLIT_FIT_TOLERANCE)
+	for label in injected:
+		body.remove_child(label)
+		label.queue_free()
+	_hud._drawer.fit_subject_drawer(true)
+	await _settle()
+	await _settle()
+
+## Frames the race guard waits for the drawer to settle — the fit's own frame plus a margin.
+const SPLIT_FIT_SETTLE_FRAMES := 6

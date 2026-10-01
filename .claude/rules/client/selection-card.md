@@ -327,6 +327,31 @@ the host before showing it again.
   `BandPanelController.note_selection_tile` before rendering; a verb whose anchor differs is closed and
   its armed pick with it. The per-snapshot restate (`reapply_selection`) does not call it.
 
+## ⛔ THE DRAWER FIT MEASURES AFTER THE FRAME'S SORT, NEVER BEFORE IT
+
+Reported from play: stepping the Split sheet's workers 4 → 5 grew the tile card a band of empty space
+under its last line. **The mechanism:** an OS click lands in the frame's INPUT step, so the sheet
+rebuild it triggers adds fresh wrapping Labels (`alloc_hint_label`) that have no width until the
+END-of-frame container sort. `fit_subject_drawer` resumed on that same frame's `process_frame` —
+which fires BEFORE the deferred flush — and read the body one word per line (≈1600px against a real
+574), then sized the drawer's scroll to `min(that, the dock's room)`. The settle that followed arrived
+as a second request while the fit was in flight, which the fit DROPPED, so whether the card ever came
+back depended on frame timing.
+
+- **The fit now awaits `process_frame` AND THEN `RenderingServer.frame_pre_draw`**, which fires after
+  the flush: every Label added that frame has its width and its real height when it is read.
+- **A request mid-flight is folded in, not dropped** — the measurement is taken after it, and a FORCED
+  one (the dock's room moved) keeps its force (`_subject_fit_force_requested`).
+- **A harness click cannot reproduce the race** (`push_input` runs from the PROCESS step, so the sort
+  already happened). `band_panel_preview._assert_drawer_fit_survives_an_unsettled_rebuild` stages it
+  exactly — a callback connected to `process_frame` ahead of the fit's own wait adds a wrapping
+  sentence in the frame the fit resumes in — and asserts the drawer is NEVER sized past its settled
+  body, not for a frame (the old fit sized it 707 over a 574 body).
+  `_assert_split_card_fits_through_stepper` also walks the stepper up and down by real clicks and
+  checks card height = its combined minimum and drawer = its body after every press.
+- Every band verb's sheet mounts in this one drawer (`_mount_verb_form`), so the one fit covers them
+  all.
+
 ## The roster row's leading MARK is a node, and the patch path must SWAP it (issue #439)
 
 A land / herd row used to fuse its glyph into the name (`_roster_name_label("%s %s" % [glyph, name])`).
