@@ -1718,6 +1718,10 @@ const WORK_ROW_UNDER_KEPT_TOOLS_NOTE := "This ground is slipping — its crew is
 ## keeping-tool claim, so its crew kept with more of its own hands.
 const WORK_ROW_UNDER_HERDED_TOOLS_NOTE := "Animals drifting off — its crew is short of tools."
 
+## …and the two NAMED, where the site's `upkeep_toe` lines and the roster's names say which tools.
+const WORK_ROW_UNDER_KEPT_TOOLS_NAMED_FORMAT := "This ground is slipping — its crew is short of %s."
+const WORK_ROW_UNDER_HERDED_TOOLS_NAMED_FORMAT := "Animals drifting off — its crew is short of %s."
+
 ## RETIRED — **`WORK_ROW_UNDER_KEPT_TOOLTIP` AND `WORK_ROW_UNDER_HERDED_TOOLTIP`**, a four-sentence
 ## hover each (*"Under-kept — an improved patch is held out of the band's AGRICULTURE pool, not by its
 ## gatherers, so this row's + will not stop the slide. …"*). They explained the MODEL — which pool
@@ -1949,12 +1953,15 @@ static func _worst_material_shortfall(demand: Array[Dictionary],
 ## cheaper remedy of the two: an arriving tool lifts a hand the pool has ALREADY committed from the
 ## bare rate to the equipped one, where a new worker is a whole body.
 static func under_kept_note(kind: String, material_note: String = "",
-        tools_short: bool = false) -> String:
+        tools_short: bool = false, tools_named: String = "") -> String:
     if material_note != "":
         return material_note
     if tools_short:
-        return WORK_ROW_UNDER_HERDED_TOOLS_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
-            else WORK_ROW_UNDER_KEPT_TOOLS_NOTE
+        var hunt := kind == SourceForecast.LABOR_KIND_HUNT
+        if tools_named != "":
+            return (WORK_ROW_UNDER_HERDED_TOOLS_NAMED_FORMAT if hunt
+                else WORK_ROW_UNDER_KEPT_TOOLS_NAMED_FORMAT) % tools_named
+        return WORK_ROW_UNDER_HERDED_TOOLS_NOTE if hunt else WORK_ROW_UNDER_KEPT_TOOLS_NOTE
     return WORK_ROW_UNDER_HERDED_NOTE if kind == SourceForecast.LABOR_KIND_HUNT \
         else WORK_ROW_UNDER_KEPT_NOTE
 
@@ -1974,8 +1981,8 @@ static func under_kept_note_severity(material_note: String = "") -> String:
 ## whichever term came up short.
 static func under_kept_tooltip(kind: String, rung_word: String = "",
         grace: int = UNDER_KEPT_NO_COUNTDOWN, material_note: String = "",
-        tools_short: bool = false) -> String:
-    var note := under_kept_note(kind, material_note, tools_short)
+        tools_short: bool = false, tools_named: String = "") -> String:
+    var note := under_kept_note(kind, material_note, tools_short, tools_named)
     if rung_word == "" or grace == UNDER_KEPT_NO_COUNTDOWN:
         return note
     var countdown := UNDER_KEPT_LOST_NOW % rung_word
@@ -3812,8 +3819,12 @@ static func site_keeping_is_short(kept: float, demand: float) -> bool:
 
 ## **THE KEEPING HOVER** — `""` on a site with nothing to say. A short site LEADS with the claim the
 ## `⚠` makes; both marks then state the tending line; the tools sentence closes a tools-short site.
+##
+## `tools_named` NAMES the short keeping tools (`toe_short_item_names` over the site's `upkeep_toe` and
+## the roster's names): `Short of hoes.` / `More hoes would speed this up.` — the generic sentences
+## only while the roster has not arrived.
 static func site_keeping_hint(tending: Dictionary, kept: float, demand: float,
-        tools_short: bool) -> String:
+        tools_short: bool, tools_named: String = "") -> String:
     var short := site_keeping_is_short(kept, demand)
     if not short and not tools_short:
         return ""
@@ -3822,7 +3833,11 @@ static func site_keeping_hint(tending: Dictionary, kept: float, demand: float,
         lines.append(TENDING_SHORT_FORMAT % tending_workers(int(tending.get("now", 0))))
     lines.append(tending_text(tending))
     if tools_short:
-        lines.append(SITE_KEEPING_TOOLS_SHORT if short else SITE_KEEPING_TOOLS_INFO)
+        if tools_named != "":
+            lines.append((POOL_TOOLS_SHORT_WARN_FORMAT if short else POOL_TOOLS_SHORT_INFO_FORMAT)
+                % tools_named)
+        else:
+            lines.append(SITE_KEEPING_TOOLS_SHORT if short else SITE_KEEPING_TOOLS_INFO)
     return "\n".join(lines)
 
 ## **THE KEEPING MARK** — `⚠` short, else `ⓘ` tools short, else `""`.

@@ -757,6 +757,12 @@ pub(crate) fn herds_to_array(
         //                          the row's `ⓘ` where the work is still covered.
         let _ = dict.insert("upkeep_hands", f64::from(herd.upkeepHands()));
         let _ = dict.insert("upkeep_tools_short", herd.upkeepToolsShort());
+        // **…AND WHICH TOOLS** — the site's keeping-tool table, the lines `upkeep_tools_short` is
+        // derived from, so the hover can NAME the short tool.
+        let _ = dict.insert(
+            "upkeep_toe",
+            &crate::dict::population::kit_toe_to_array(herd.upkeepToe()),
+        );
         array.push(&dict.to_variant());
     }
     array
@@ -1419,6 +1425,10 @@ pub(crate) fn forage_patches_to_array(
         // **WHAT THIS PATCH'S OWN CREW SPENT KEEPING IT** — the herd block's pair; see there.
         let _ = dict.insert("upkeep_hands", f64::from(patch.upkeepHands()));
         let _ = dict.insert("upkeep_tools_short", patch.upkeepToolsShort());
+        let _ = dict.insert(
+            "upkeep_toe",
+            &crate::dict::population::kit_toe_to_array(patch.upkeepToe()),
+        );
         // THE BUILD CREWS ARE RETIRED with `crew_needed` (docs/plan_standing_upkeep.md section
         // 2.2). They floored the compose sheet's worker cap because that cap was inverted out of the
         // TAKE and a building crew was paid a dipped take, so a 25-turn improvement asked for FEWER

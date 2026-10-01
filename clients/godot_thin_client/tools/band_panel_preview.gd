@@ -24899,6 +24899,8 @@ func _render_work_sections_states() -> void:
 				== HudWorkVocab.SITE_KEEPING_TOOLS_MARK
 			and tools_node.tooltip_text == tools_hover_want)
 
+	await _assert_site_tools_are_named()
+
 	# ---- THE INSPECTOR on a KEPT source: its bill under the take picker, at its worst case ---------
 	_open_work_inspector_for_tile(QUEUE_SECOND_PATCH)
 	await _settle()
@@ -25273,3 +25275,70 @@ func _assert_standing_rung_is_plain() -> void:
 			buttons.is_empty() and not inks.has(HudStyle.SIGNAL))
 		return
 	_fail("standing rung — the open track drew no `where you are` row")
+
+
+## ⛔ **A SITE'S SHORT KEEPING TOOLS ARE NAMED** once the equipment roster's names are in hand — off the
+## site's own `upkeep_toe` lines. The kept row's `ⓘ` hover ends `More hoes would speed this up.`; the
+## under-kept row (tools short too) states `…its crew is short of hoes.` as its note and `Short of
+## hoes.` on its `⚠` hover. **And the sweep**: with names loaded, no text on the Work tab says
+## *short of tools* or *More tools*.
+func _assert_site_tools_are_named() -> void:
+	_hud.update_equipment_config(_kit_toe_equipment_config())
+	var patches := _sections_patches(true)
+	for patch_variant in patches:
+		var patch: Dictionary = patch_variant
+		var at := Vector2i(int(patch.get("x", -1)), int(patch.get("y", -1)))
+		if at == QUEUE_SECOND_PATCH or at == QUEUE_THIRD_PATCH:
+			patch["upkeep_tools_short"] = true
+			patch["upkeep_toe"] = [_kit_toe_line(POOL_TOE_BUILDERS_ITEM, KIT_TOE_CLAIMED,
+				KIT_TOE_SHORT_FILLED)]
+	_set_forage_patches(patches)
+	_push_bands([_sections_band_fixture()])
+	await _settle()
+	await _save("band_panel_work_sections_tools_named")
+	var hoes := POOL_TOE_BUILDERS_ITEM_NAME.to_lower()
+	var kept_row := _sections_row(HudWorkVocab.WORK_ROW_PLANT_FORMAT % [QUEUE_SECOND_PATCH.x,
+		QUEUE_SECOND_PATCH.y])
+	var kept_mark := _find_meta_control(kept_row, HudWorkVocab.SITE_KEEPING_MARK_META) \
+		if kept_row != null else null
+	var info_want := HudWorkVocab.POOL_TOOLS_SHORT_INFO_FORMAT % hoes
+	_assert_band_panel("site tools — the kept row's `ⓘ` hover names the tool: ends `%s` (got \"%s\")"
+			% [info_want, "" if kept_mark == null else kept_mark.tooltip_text.replace("\n", " | ")],
+		kept_mark != null and kept_mark.tooltip_text.ends_with(info_want))
+	var short_row := _sections_row(HudWorkVocab.WORK_ROW_PLANT_FORMAT % [QUEUE_THIRD_PATCH.x,
+		QUEUE_THIRD_PATCH.y])
+	var short_mark := _find_meta_control(short_row, HudWorkVocab.SITE_KEEPING_MARK_META) \
+		if short_row != null else null
+	var warn_want := HudWorkVocab.POOL_TOOLS_SHORT_WARN_FORMAT % hoes
+	_assert_band_panel("site tools — the under-kept row's `⚠` hover names it: ends `%s` (got \"%s\")"
+			% [warn_want, "" if short_mark == null else short_mark.tooltip_text.replace("\n", " | ")],
+		short_mark != null and short_mark.tooltip_text.ends_with(warn_want))
+	var note_want := HudWorkVocab.WORK_ROW_UNDER_KEPT_TOOLS_NAMED_FORMAT % hoes
+	var note := ""
+	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0):
+		var model: Dictionary = model_variant
+		if Vector2i(int(model.get("x", -1)), int(model.get("y", -1))) == QUEUE_THIRD_PATCH:
+			note = String(model.get("note", ""))
+	_assert_band_panel("site tools — …and its work-row note names it: `%s` (got \"%s\")" % [note_want, note],
+		note == note_want)
+	# THE SWEEP — every Label text and every hover under the panel.
+	var generic: Array[String] = []
+	for node in _panel.find_children("*", "Control", true, false):
+		var control := node as Control
+		var texts := [control.tooltip_text]
+		if control is Label:
+			texts.append((control as Label).text)
+		for text in texts:
+			for needle in SITE_TOOLS_GENERIC_NEEDLES:
+				if String(text).contains(needle) and not generic.has(String(text)):
+					generic.append(String(text))
+	_assert_band_panel("site tools — with names loaded, nothing on the Work tab says a generic tools line (found %s)"
+			% [generic],
+		generic.is_empty())
+	_hud.update_equipment_config(JSON.stringify({}))
+	_set_forage_patches(_sections_patches(true))
+	_push_bands([_sections_band_fixture()])
+	await _settle()
+
+## The generic tool wording the sweep must not find once names are loaded.
+const SITE_TOOLS_GENERIC_NEEDLES := ["short of tools", "More tools would"]

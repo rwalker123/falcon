@@ -2706,6 +2706,7 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         HudDepositVocab.ladder_next_entry(ladder, deposit)) \
         if HudDepositVocab.is_queued(deposit) else ""
     line.add_child(_build_site_keeping_mark(kept, demand, tools_short,
+        _site_short_tool_names(deposit) if tools_short else "",
         HudWorkVocab.tending_of(deposit, HudComposeVocab.BARE_FORECAST_PREFIX, rung_after)))
     var ready := RungGates.deposit_rung_ready(deposit, ladder, _player_knowledge(),
         _topbar.knowledge_labels() if _topbar != null else {}, cutters)
@@ -2846,7 +2847,7 @@ func _build_site_crew_line(text: String,
 ## **THE ROW'S KEEPING MARK** — `⚠` when the site's crew keeps less than it owes, else `ⓘ` where its
 ## keeping tools came up short, else an empty reserved slot. The hover states the tending in whole
 ## workers and turns (`HudWorkVocab.site_keeping_hint`), and names the tools. PASS, so the row's own click still reaches the row.
-func _build_site_keeping_mark(kept: float, demand: float, tools_short: bool,
+func _build_site_keeping_mark(kept: float, demand: float, tools_short: bool, tools_named: String,
         tending: Dictionary) -> Label:
     var glyph := HudWorkVocab.site_keeping_mark(kept, demand, tools_short)
     var mark := Label.new()
@@ -2855,7 +2856,7 @@ func _build_site_keeping_mark(kept: float, demand: float, tools_short: bool,
     mark.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     mark.add_theme_color_override("font_color",
         HudStyle.WARN if glyph == HudWorkVocab.SITE_KEEPING_SHORT_MARK else HudStyle.INK_DIM)
-    mark.tooltip_text = HudWorkVocab.site_keeping_hint(tending, kept, demand, tools_short)
+    mark.tooltip_text = HudWorkVocab.site_keeping_hint(tending, kept, demand, tools_short, tools_named)
     mark.mouse_filter = Control.MOUSE_FILTER_PASS if glyph != "" else Control.MOUSE_FILTER_IGNORE
     return mark
 
@@ -3156,6 +3157,12 @@ var _item_display_names: Dictionary = {}
 
 func set_item_display_names(names: Dictionary) -> void:
     _item_display_names = names
+
+## A SITE's short keeping tools, named — off its own `upkeep_toe` lines and the roster's names, `""`
+## while the roster has not arrived (the generic sentence stands).
+func _site_short_tool_names(source: Dictionary) -> String:
+    return HudWorkVocab.toe_short_item_names(
+        SourceForecast.upkeep_toe(source, HudComposeVocab.BARE_FORECAST_PREFIX), _item_display_names)
 
 ## **IS THIS QUEUE ENTRY THE ONE THE BUILDERS' TOOL SHORTFALL IS ON** — the queue HEAD, and only
 ## where the builders pool's settled TOE is short.
@@ -5774,6 +5781,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var kept := float(model.get("keep_kept", SourceForecast.NO_UPKEEP_DEMAND))
     var demand := float(model.get("keep_demand", SourceForecast.NO_UPKEEP_DEMAND))
     line.add_child(_build_site_keeping_mark(kept, demand, bool(model.get("keep_tools_short", false)),
+        String(model.get("keep_tools_named", "")),
         model.get("tending", {}) as Dictionary))
     HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
         func(n: int) -> void: _emit_work_assign(band, model, n), true)
@@ -7007,6 +7015,9 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # read off the source the row is about, never off a band-wide pool.
         var tools_short := SourceForecast.upkeep_tools_short(rung_source,
             HudComposeVocab.BARE_FORECAST_PREFIX)
+        # …and WHICH tools, off the site's own `upkeep_toe` lines and the roster's names. The bool
+        # stays the gate (it is the viewer-scoped verdict); the lines only name what it says.
+        var tools_named := _site_short_tool_names(rung_source) if tools_short else ""
         # **WHAT THE SITE'S CREW KEPT AGAINST WHAT IT OWES, AND HOW MANY HANDS THAT TOOK** — the row's
         # site-crew line and its keeping mark read these three off the wire and derive nothing.
         var keep_state := SourceForecast.upkeep_state(rung_source,
@@ -7029,7 +7040,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 DetailFormat.rung_badge_word(SourceForecast.at_risk_rung(
                     rung_source, HudComposeVocab.BARE_FORECAST_PREFIX, source_kind)),
                 int(upkeep["grace"]) if bool(upkeep.get("at_risk", false)) else 0, material_note,
-                tools_short)
+                tools_short, tools_named)
         # **THE KEEPING SHORTFALL FLIES THE ROW'S OWN KEEPING MARK** (`_build_site_keeping_mark`), so
         # the marks run adds a `⚠` only where the loss is a missing GOOD with the work account paid —
         # the one at-risk case the keeping mark does not state.
@@ -7043,7 +7054,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # can: an overstaffed TAKE crew on a source nobody keeps is an ordinary state. They are not
             # equal in weight, so the slot is not first-come: the overstaff note says some hands bring
             # nothing home, and this one says the ground or the flock is being lost.
-            note = HudWorkVocab.under_kept_note(kind, material_note, tools_short)
+            note = HudWorkVocab.under_kept_note(kind, material_note, tools_short, tools_named)
             note_severity = HudWorkVocab.under_kept_note_severity(material_note)
         # **AND THE ROW FLIES A MARK OF ITS OWN FOR IT** — a KIT, never a second ⚠. The two hazards
         # have opposite remedies (the bench against the stepper), so one glyph for both would make a
@@ -7100,7 +7111,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # ⚠ answer to it rather than to the work account alone.
             "at_risk": at_risk,
             "keep_kept": keep_kept, "keep_demand": keep_demand, "keep_hands": keep_hands,
-            "keep_tools_short": tools_short, "rung_word": rung_word,
+            "keep_tools_short": tools_short, "keep_tools_named": tools_named, "rung_word": rung_word,
             # **THE SITE'S TENDING IN WHOLE WORKERS AND TURNS** — the `⚠` hover and the inspector's
             # bill both render it. The rung after the build is the DECLARED destination, `""` while no
             # build is in flight here.

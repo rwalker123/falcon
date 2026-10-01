@@ -8,6 +8,26 @@ use crate::dict::campaign::{opening_kit_defaults_to_array, opening_material_defa
 use crate::dict::economy::fragment_to_dict;
 use crate::dict::fixed64_to_f64;
 
+/// **ONE TABLE OF EQUIPMENT** — `[{item_id, required, filled}]`, one dict per `KitToeLine`, `[]` when
+/// the vector is absent or empty (nothing claimed). Shared by a take row's `kit_toe` and a site's
+/// `upkeep_toe` (patch, herd, deposit), which carry the one line shape. SHORT is `filled < required`;
+/// `required` is never 0.
+pub(crate) fn kit_toe_to_array(
+    lines: Option<Vector<'_, ForwardsUOffset<fb::KitToeLine<'_>>>>,
+) -> VarArray {
+    let mut out = VarArray::new();
+    if let Some(lines) = lines {
+        for line in lines.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("item_id", line.itemId().unwrap_or_default());
+            let _ = row.insert("required", f64::from(line.required()));
+            let _ = row.insert("filled", f64::from(line.filled()));
+            out.push(&row.to_variant());
+        }
+    }
+    out
+}
+
 pub(crate) fn demographics_to_array(
     states: Vector<'_, ForwardsUOffset<fb::PopulationDemographicsState<'_>>>,
 ) -> VarArray {
@@ -886,17 +906,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `filled < required` on any line. **AN EMPTY ARRAY CLAIMS NOTHING**, so nothing can be
             // short: hands the row does not claim kit for work bare BY DESIGN, which is why
             // `kit_workers_holding < workers` no longer means short. `required` is never 0.
-            let mut kit_toe = VarArray::new();
-            if let Some(lines) = assignment.kitToe() {
-                for line in lines.iter() {
-                    let mut row = VarDictionary::new();
-                    let _ = row.insert("item_id", line.itemId().unwrap_or_default());
-                    let _ = row.insert("required", f64::from(line.required()));
-                    let _ = row.insert("filled", f64::from(line.filled()));
-                    kit_toe.push(&row.to_variant());
-                }
-            }
-            let _ = entry.insert("kit_toe", &kit_toe);
+            let _ = entry.insert("kit_toe", &kit_toe_to_array(assignment.kitToe()));
             // **HOW MANY HANDS THIS QUARRY CAN USE, FIGHT INCLUDED** — the crew beyond which more
             // hunters add nothing, and the sim's own answer rather than an input to a client
             // quotient. It is the plateau of `fauna::hunt_crew_take_curve`, the SAME curve the

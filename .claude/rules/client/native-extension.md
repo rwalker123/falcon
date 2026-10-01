@@ -613,6 +613,11 @@ pools left (`docs/plan_site_crews.md` §2.4) — the same spelling `LaborAssignm
 a pool line joins its lines on a string it already holds. `pool_crew` likewise carries `roadwork`
 alone.
 
+**A SITE CARRIES ITS KEEPING-TOOL TABLE, `upkeep_toe`** — the same `{item_id, required, filled}`
+line shape on every patch, herd and deposit dict (`kit_toe_to_array`, shared with `kit_toe`), `[]`
+where the site claims no tool. `MapView` crosses the patch's onto `tile_info` as `patch_upkeep_toe`,
+redacted under fog with the rest of the live keeping state.
+
 **A TAKE ROW CARRIES ITS OWN TABLE, `kit_toe`** — `LaborAssignment.kitToe` decoded onto each labor
 assignment as an `Array` of `{item_id, required, filled}`, one line per item the row's kit CLAIMS,
 always inserted (`[]` when the row claims nothing). It is the row's per-item shortage: short is any

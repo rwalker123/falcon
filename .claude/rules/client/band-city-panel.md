@@ -2803,9 +2803,13 @@ in work units), so the hint is the only place a pool's holdings are named; the i
   `*_LINE` forms stand only where the roster has not arrived. **The queue HEAD names the same tools**
   off the same lines (`_builders_short_tool_names`): its amber second line `◆ builders short of hoes`
   (`build_queue_tools_text`), its hover (`build_queue_tools_tooltip`) and its open strip's detail
-  line. **A SITE's keeping-tool shortfall stays generic** (`Short of tools.` on the keeping mark, *its
-  crew is short of tools* on the work-row note): the wire states it as one bool per site
-  (`upkeep_tools_short`), with no item to name.
+  line. **A SITE's keeping tools are named the same way**, off the site's own `upkeep_toe` lines
+  (`BandPanelController._site_short_tool_names`): the keeping mark's hover ends `Short of hoes.` /
+  `More hoes would speed this up.` (`site_keeping_hint`'s `tools_named`), and the work-row note and
+  its hover read `…its crew is short of hoes.` (`WORK_ROW_UNDER_*_TOOLS_NAMED_FORMAT`, through
+  `under_kept_note` / `under_kept_tooltip`). `upkeep_tools_short` stays the GATE — the lines only name
+  what it says. With the roster's names loaded nothing on the Work tab says *short of tools*
+  (`band_panel_preview._assert_site_tools_are_named` sweeps every label and hover).
 - **…AND ITS TOOL LINE NAMES THE JOB, NOT THE POOL** — `POOL_TOOLS_SHORT_BUILDERS_LINE`, *The top job
   in the queue is short of tools.*, chosen by `pool_tools_short_line`'s `kind` argument whatever the
   work reading. The builders' tool claim is the queue HEAD entry's alone (`docs/plan_pool_toe.md`

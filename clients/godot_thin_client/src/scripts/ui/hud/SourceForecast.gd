@@ -1349,6 +1349,9 @@ const FORECAST_UPKEEP_SHORTFALL_KEY := "upkeep_shortfall"
 # filling less than this site's keeping-tool claim — the row's `ⓘ` where the work is still covered.
 const FORECAST_UPKEEP_HANDS_KEY := "upkeep_hands"
 const FORECAST_UPKEEP_TOOLS_SHORT_KEY := "upkeep_tools_short"
+## …and the SITE's keeping-tool table, `[{item_id, required, filled}]` (`[]` where the site claims no
+## tool) — the lines `upkeep_tools_short` is derived from, read to NAME the short tool.
+const FORECAST_UPKEEP_TOE_KEY := "upkeep_toe"
 # **WHAT THIS SOURCE'S KEEPING IS WORTH IN HANDS** — `ceil(demand / PER_WORKER_OUTPUT)`, beside the
 # take activity's `SourceYield.workersNeeded` (hands to haul the offer). It is a SIZE, not a staffing
 # order: nobody is assigned here any more, so it reads as *this much of the band's keeping pool*.
@@ -5090,6 +5093,11 @@ static func upkeep_hands(src: Dictionary, prefix: String) -> float:
 ## Was this site's keeping-tool claim filled less than in full? (`FORECAST_UPKEEP_TOOLS_SHORT_KEY`)
 static func upkeep_tools_short(src: Dictionary, prefix: String) -> bool:
     return bool(src.get(prefix + FORECAST_UPKEEP_TOOLS_SHORT_KEY, false))
+
+## The site's keeping-tool table — `[]` where it claims none.
+static func upkeep_toe(src: Dictionary, prefix: String) -> Array:
+    var lines: Variant = src.get(prefix + FORECAST_UPKEEP_TOE_KEY, [])
+    return lines if lines is Array else []
 
 ## **THE PILE THE RUNG ABOVE THIS SOURCE SWALLOWS TO RAISE** — one row per good, `[]` when the wire
 ## quotes none. See `FORECAST_BUILD_MATERIAL_COST_KEY`: it prices exactly ONE rung, so a caller may

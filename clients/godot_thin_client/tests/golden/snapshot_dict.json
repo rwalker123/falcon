@@ -591,6 +591,18 @@
       "upkeep_next_worker_turn": 26,
       "upkeep_shortfall": 109.129997,
       "upkeep_supplied": 40.529999,
+      "upkeep_toe": [
+        {
+          "filled": 17.940001,
+          "item_id": "hoes",
+          "required": 32.41
+        },
+        {
+          "filled": 39.110001,
+          "item_id": "crook",
+          "required": 110.779999
+        }
+      ],
       "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 34,
       "upkeep_workers_needed": 83
@@ -628,6 +640,18 @@
       "upkeep_next_worker_turn": 121,
       "upkeep_shortfall": 73.75,
       "upkeep_supplied": 45.66,
+      "upkeep_toe": [
+        {
+          "filled": 4.42,
+          "item_id": "hoes",
+          "required": 36.029999
+        },
+        {
+          "filled": 33.93,
+          "item_id": "crook",
+          "required": 15.93
+        }
+      ],
       "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 171,
       "upkeep_workers_needed": 112
@@ -665,6 +689,18 @@
       "upkeep_next_worker_turn": 92,
       "upkeep_shortfall": 11.28,
       "upkeep_supplied": 78.470001,
+      "upkeep_toe": [
+        {
+          "filled": 75.410004,
+          "item_id": "hoes",
+          "required": 22.370001
+        },
+        {
+          "filled": 98.449997,
+          "item_id": "crook",
+          "required": 34.529999
+        }
+      ],
       "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 128,
       "upkeep_workers_needed": 125
@@ -1233,6 +1269,18 @@
       "upkeep_next_worker_turn": 74,
       "upkeep_shortfall": 85.980003,
       "upkeep_supplied": 28.360001,
+      "upkeep_toe": [
+        {
+          "filled": 96.389999,
+          "item_id": "hoes",
+          "required": 50.639999
+        },
+        {
+          "filled": 30.42,
+          "item_id": "crook",
+          "required": 111.769997
+        }
+      ],
       "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 58,
       "upkeep_workers_needed": 99,
@@ -1586,6 +1634,18 @@
       "upkeep_next_worker_turn": 89,
       "upkeep_shortfall": 34.380001,
       "upkeep_supplied": 37.41,
+      "upkeep_toe": [
+        {
+          "filled": 101.349998,
+          "item_id": "hoes",
+          "required": 6.64
+        },
+        {
+          "filled": 92.860001,
+          "item_id": "crook",
+          "required": 35.0
+        }
+      ],
       "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 51,
       "upkeep_workers_needed": 48,
@@ -1939,6 +1999,18 @@
       "upkeep_next_worker_turn": 92,
       "upkeep_shortfall": 101.790001,
       "upkeep_supplied": 78.580002,
+      "upkeep_toe": [
+        {
+          "filled": 105.660004,
+          "item_id": "hoes",
+          "required": 23.879999
+        },
+        {
+          "filled": 90.18,
+          "item_id": "crook",
+          "required": 95.160004
+        }
+      ],
       "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 48,
       "upkeep_workers_needed": 133,
@@ -2381,6 +2453,18 @@
       "upkeep_next_worker_turn": 13,
       "upkeep_shortfall": 10.37,
       "upkeep_supplied": 24.889999,
+      "upkeep_toe": [
+        {
+          "filled": 6.19,
+          "item_id": "hoes",
+          "required": 110.139999
+        },
+        {
+          "filled": 92.279999,
+          "item_id": "crook",
+          "required": 91.910004
+        }
+      ],
       "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 111,
       "upkeep_workers_needed": 156,
@@ -2617,6 +2701,18 @@
       "upkeep_next_worker_turn": 134,
       "upkeep_shortfall": 8.97,
       "upkeep_supplied": 47.07,
+      "upkeep_toe": [
+        {
+          "filled": 103.860001,
+          "item_id": "hoes",
+          "required": 67.760002
+        },
+        {
+          "filled": 36.169998,
+          "item_id": "crook",
+          "required": 39.720001
+        }
+      ],
       "upkeep_tools_short": true,
       "upkeep_workers_at_completion": 102,
       "upkeep_workers_needed": 119,
@@ -2853,6 +2949,18 @@
       "upkeep_next_worker_turn": 175,
       "upkeep_shortfall": 75.959999,
       "upkeep_supplied": 46.810001,
+      "upkeep_toe": [
+        {
+          "filled": 87.360001,
+          "item_id": "hoes",
+          "required": 18.9
+        },
+        {
+          "filled": 9.96,
+          "item_id": "crook",
+          "required": 93.360001
+        }
+      ],
       "upkeep_tools_short": false,
       "upkeep_workers_at_completion": 37,
       "upkeep_workers_needed": 134,

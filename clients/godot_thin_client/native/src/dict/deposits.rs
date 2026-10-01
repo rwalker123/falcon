@@ -211,6 +211,10 @@ pub(crate) fn deposits_to_array(
         // settlement filled less than the site's keeping-tool claim.
         let _ = dict.insert("upkeep_hands", f64::from(deposit.upkeepHands()));
         let _ = dict.insert("upkeep_tools_short", deposit.upkeepToolsShort());
+        let _ = dict.insert(
+            "upkeep_toe",
+            &crate::dict::population::kit_toe_to_array(deposit.upkeepToe()),
+        );
         // --- THE ESCAPEMENT FLOOR AND THE CURVE IT IS DRAGGED ON (issue #650) -------------------
         // ⛔ **THE SOURCE-LEVEL `floor` IS GONE FROM THE WIRE, AND NOTHING HERE MAY RE-DERIVE ONE.**
         // It published where this turn's crews stopped, deepest-first across the bands cutting the

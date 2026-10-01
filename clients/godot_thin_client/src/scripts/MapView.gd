@@ -565,6 +565,8 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# …and how many of the SITE'S OWN CREW the keeping took this turn, and whether its keeping tools
 	# came up short (`docs/plan_site_crews.md` §2.2) — a settlement of this turn's hands, so live state.
 	"patch_upkeep_hands", "patch_upkeep_tools_short",
+	# …and WHICH keeping tools — the site's table of equipment those two are derived from.
+	"patch_upkeep_toe",
 	# …and the keeping line's two forecasts — the workers once the in-flight rung is done and the turn
 	# the next whole worker is needed — the same live keeping state, redacted with it.
 	"patch_upkeep_workers_at_completion", "patch_upkeep_next_worker_turn",
@@ -3667,6 +3669,9 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_upkeep_next_worker_turn"] = int(patch.get("upkeep_next_worker_turn",
 			HudWorkVocab.UPKEEP_NO_NEXT_WORKER_TURN))
 		info["patch_upkeep_tools_short"] = bool(patch.get("upkeep_tools_short", false))
+		# …and the keeping-tool table it is derived from (`[{item_id, required, filled}]`), so a
+		# surface can NAME the short tool.
+		info["patch_upkeep_toe"] = patch.get("upkeep_toe", [])
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
 		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the
