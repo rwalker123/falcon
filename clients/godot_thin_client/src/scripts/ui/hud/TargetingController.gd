@@ -8,7 +8,7 @@ extends RefCounted
 ## **THE TARGET COMES LAST (issue #529).** A verb that composes a sheet fills it in on its band's own
 ## drawer, and the sheet's send ARMS the pick with the sheet's values captured as a `commit` Callable. The
 ## valid click resolves the target and calls it, which sends the order — so the click is the commit,
-## exactly as Move's click is. A Deny / Trade pick also carries a `hover` Callable that states, in the
+## exactly as Move's click is. A Deny pick also carries a `hover` Callable that states, in the
 ## banner, what a click on the hex under the pointer would commit to (`note_hover`).
 ##
 ## Built on the LegendController / TurnOrbController / SelectionCardController / DrawerComposeController /
@@ -305,7 +305,7 @@ func banner_tooltip() -> String:
 		return ""
 	return _targeting_banner.tooltip_text
 
-## MapView reported the hex under the pointer (`{}` off the map). An armed Deny / Trade pick re-states
+## MapView reported the hex under the pointer (`{}` off the map). An armed Deny pick re-states
 ## its banner for it.
 func note_hover(tile_info: Dictionary) -> void:
 	_hovered_tile_info = tile_info
@@ -408,20 +408,16 @@ func _current_targeting_info() -> Dictionary:
 		var pos: Array = Array(band.get("pos", []))
 		var ox := int(pos[0]) if pos.size() == 2 else int(band.get("current_x", -1))
 		var oy := int(pos[1]) if pos.size() == 2 else int(band.get("current_y", -1))
-		var trade := String(_pending_verb_pick.get(VERB_PICK_MISSION_KEY, "")) \
-			== HudComposeVocab.COMPOSE_MISSION_TRADE
-		var info := {
+		# Scout is the only verb that arms a TILE pick: Trade's destination is the open sheet's passive
+		# pre-selection below, and its Send commits to it.
+		return {
 			"active": true,
-			"command": VERB_PICK_COMMAND_TRADE if trade else VERB_PICK_COMMAND_SCOUT,
+			"command": VERB_PICK_COMMAND_SCOUT,
 			"need": "tile",
 			"origin_x": ox,
 			"origin_y": oy,
 			"context_label": HudFormat.band_name(band),
 		}
-		# The Trade pick rings the bands it would accept — the same set the sheet highlights unarmed.
-		if trade:
-			info[TARGETING_HIGHLIGHT_TILES_KEY] = live_tie_tiles(band)
-		return info
 	if not _pending_pick_quarry.is_empty():
 		var band: Dictionary = _pending_pick_quarry.get("band", {})
 		var pos: Array = Array(band.get("pos", []))
@@ -625,15 +621,7 @@ func _try_verb_pick(tile_info: Dictionary) -> void:
 	var y := int(tile_info.get("y", -1))
 	if x < 0 or y < 0:
 		return
-	var band: Dictionary = _pending_verb_pick.get(VERB_PICK_BAND_KEY, {})
 	var target := {PICK_TILE_KEY: Vector2i(x, y)}
-	if String(_pending_verb_pick.get(VERB_PICK_MISSION_KEY, "")) == HudComposeVocab.COMPOSE_MISSION_TRADE:
-		var destination := trade_destination_at(band, x, y)
-		if destination == HudConst.NO_BAND_ID:
-			# The quarry pick's rule for a miss: say so and stay armed.
-			_note_sink.call(HudComposeVocab.TRADE_PICK_MISS_TITLE, HudComposeVocab.TRADE_PICK_MISS_TEXT)
-			return
-		target[PICK_DESTINATION_KEY] = destination
 	_commit_pick(_pending_verb_pick, target, _pick_note_title_for(
 		String(_pending_verb_pick.get(VERB_PICK_MISSION_KEY, ""))))
 
@@ -652,7 +640,7 @@ func _commit_pick(pending: Dictionary, target: Dictionary, title: String) -> voi
 
 ## The durable `band_id` of a band `band` holds a LIVE tie with, standing on (x, y) — or
 ## `HudConst.NO_BAND_ID`. The candidates are exactly the shipment sheet's: `connections_for_band`,
-## live ties only.
+## live ties only. What the Trade sheet's pre-selection click resolves.
 func trade_destination_at(band: Dictionary, x: int, y: int) -> int:
 	var tie := tie_at(band, x, y)
 	if tie.is_empty() or not HudBandLaborState.tie_is_live(tie):
@@ -662,8 +650,7 @@ func trade_destination_at(band: Dictionary, x: int, y: int) -> int:
 ## The tie `band` holds with a band standing on (x, y), live or parked, `{}` where none stands — a live
 ## tie ahead of a parked one on a shared hex. A tied band still in the roster is found where it stands;
 ## one that is not is found where the tie last saw it, which is the only position the client has for it.
-## What the Trade pick commits to and what its hover states are both read off this, so the banner cannot
-## name a band the click would not resolve.
+## The Trade sheet's pre-selection click resolves through this (`trade_destination_at`).
 func tie_at(band: Dictionary, x: int, y: int) -> Dictionary:
 	var parked: Dictionary = {}
 	for tie_variant in _band_labor.connections_for_band(int(band.get("band_id", HudConst.NO_BAND_ID))):

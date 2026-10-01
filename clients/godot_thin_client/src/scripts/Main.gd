@@ -468,7 +468,7 @@ func _ready() -> void:
         if map_view.has_signal("tile_hovered") and hud != null and hud.has_method("show_tooltip"):
             if not map_view.is_connected("tile_hovered", Callable(hud, "show_tooltip")):
                 map_view.connect("tile_hovered", Callable(hud, "show_tooltip"))
-        # …and the hex under the pointer feeds an armed Deny / Trade pick's banner.
+        # …and the hex under the pointer feeds an armed Deny pick's banner.
         if map_view.has_signal("tile_hovered") and hud != null and hud.has_method("notify_hex_hovered"):
             if not map_view.is_connected("tile_hovered", Callable(hud, "notify_hex_hovered")):
                 map_view.connect("tile_hovered", Callable(hud, "notify_hex_hovered"))

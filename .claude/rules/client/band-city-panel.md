@@ -6280,15 +6280,15 @@ party launches from the herd drawer's sheet.
   `_trade_destination`) and sends and selects nothing; another highlighted target replaces it. The sheet
   then shows a read-only `Prey` / `To` row (`HudWidgets.build_read_only_field`) with a `✕`
   (`HudWidgets.FIELD_CLEAR_META`, `_build_field_clear_button`) that clears it, and its Send COMMITS
-  straight away — no pick — through the same `_commit_denial` / `_commit_trade` the armed click uses.
+  straight away — no pick — through `_commit_denial` / `_commit_trade`.
   Both targets are re-resolved live every render and dropped when the herd leaves the snapshot or the
   tie parks, and both are reset with the verb.
-- **With no target, the send arms the pick; the click commits** (`_build_verb_send`). Scout's send, and
-  Deny and Trade's when no target is set, is a toggle that arms `TargetingController.begin_verb_pick` /
-  `begin_pick_quarry` with the sheet's values captured in a `commit` Callable — `_commit_denial` /
-  `_commit_trade`, and Scout's `send_expedition_to` — and, for Deny and Trade, a `hover` Callable
-  (`_deny_hover_detail` / `_trade_hover_detail`) that states in the banner what a click on the hovered
-  hex would commit to. The sheet stays open with its send drawn `armed`
+- **With no target, Scout's and Deny's send arms the pick; the click commits** (`_build_verb_send`).
+  It is a toggle that arms `TargetingController.begin_verb_pick` / `begin_pick_quarry` with the
+  sheet's values captured in a `commit` Callable — `_commit_denial`, and Scout's `send_expedition_to`
+  — and, for Deny, a `hover` Callable (`_deny_hover_detail`) that states in the banner what a click on
+  the hovered hex would commit to. **Trade's send has no pick**: with no destination it is greyed with
+  its reason ("ONE ROW PER GOOD"). The sheet stays open with its send drawn `armed`
   (`HudComposeVocab.VERB_SEND_ARMED_STYLE`), and re-arms on every render while armed, so an edit made
   while the pick is up is what the click sends. Split's button commits `split_band` itself. The labels
   stay `Send scouting party` / `Send Denial Raid` / `Send shipment`.
@@ -6842,28 +6842,23 @@ The porters walk it there and come home. A unit of food weighs 1.0, hay 0.5, goo
   with the REMEMBERED sighting and its `≈` walk on the value's hover; unpicked, `Pick a band on the
   map` in WARN with no `READ_ONLY_FIELD_META`.
 
-> **What this supersedes in the sections below:** the armed trade pick and its hover banner (the
-> `_trade_hover_detail` producer is gone), a manifest row per PILE with its rating on the face, the
+> **What this supersedes in the sections below:** a manifest row per PILE with its rating on the face, the
 > `Max` button and its two hints, the `Mass ▰▰▱` meter, and an over-cap manifest disabling the Send.
 > The tie gate, the remembered-position keystone, the typed field's rules, the floors and the three
 > mass terms below all stand.
 
 ### THE TIE IS THE GATE, AND THE PICK TEACHES IT RATHER THAN ENFORCING IT SILENTLY
 
-A shipment has one site: its subject is a band, reached on the map — pre-selected while the sheet is
-open, or by the armed pick's click — and the herd drawer's hunting-party branch has nothing to stay in
-step with. Both resolve only a band the sender holds a LIVE tie to
+A shipment has one site: its subject is a band, reached on the map — pre-selected by a click while
+the sheet is open — and the herd drawer's hunting-party branch has nothing to stay in step with. The
+click resolves only a band the sender holds a LIVE tie to
 (`TargetingController.trade_destination_at` over `HudBandLaborState.connections_for_band`, keyed on the
 durable `band_id`, and `tie_is_live`), because `ConnectionLedger::get(..).strength > NO_TIE` is what the
 sim gates the launch on.
 
-- **A PARKED tie (strength 0) is named in the hover with its reason** (`COMPOSE_DESTINATION_PARKED_REASON`)
-  **and refused at the click** (`TRADE_PICK_MISS_TEXT`), the pick staying armed. Zero means *"we know
-  such a people exist and have no current dealings"*, and the thing the player has to learn is that the
-  TIE is what gates trade. The hover and the click both read `TargetingController.tie_at`, so the
-  banner cannot name a band the click would not resolve.
-- **Only LIVE ties are highlighted** (`TargetingController.live_tie_tiles`, the ring set the sheet and
-  the armed pick both draw), so a parked tie's band is never offered as a pre-selection.
+- **Only LIVE ties are ringed** (`TargetingController.live_tie_tiles`), so a PARKED tie's band
+  (strength 0 — *"we know such a people exist and have no current dealings"*) is never offered, and a
+  click on it sets nothing.
 - **The `📦 Trade` verb is gated on IDLE WORKERS and never on the ties**; a sender with no live tie
   gets `COMPOSE_DESTINATION_NO_TIES` on the sheet over a visible-and-disabled send, since no click could
   be accepted.
@@ -6875,7 +6870,7 @@ sim gates the launch on.
 
 A connection can only ever grant `Discovered` (`.claude/rules/core_sim/connections.md`), so
 `lastSeen{X,Y,Turn}` is where the subject WAS and nothing may render it as a live position. The `To`
-row and the Trade pick's hover banner both state it through `_trade_destination_notes` — the sighting
+row's hover states it through `_trade_destination_notes` — the sighting
 and its turn in those words, and the walk
 quoted from it wears a **`≈`** and the clause *"if they are still there"*. A remembered band behaves
 exactly like a remembered herd, which every player has already been taught by a herd that moved.

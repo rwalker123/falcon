@@ -1235,7 +1235,7 @@ const VERB_FORM_HEADER_FORMAT := "%s · from %s"
 ## `armed` is the HUD's own face for "an action awaiting its target or its cancellation".
 const VERB_SEND_STYLE := "primary"
 const VERB_SEND_ARMED_STYLE := "armed"
-## **THE HOVER BANNER** (issue #529): over a hex a click would commit to, an armed Deny / Trade pick's
+## **THE HOVER BANNER** (issue #529): over a hex a click would commit to, an armed Deny pick's
 ## banner reads `DENY Saltmarch → Wild Boar · <verdict>` — the arrow, then the target and what is known
 ## about it, joined by the middle dot. A hex holding several eligible herds names the first and counts
 ## the rest, because the click opens the chooser that tells them apart.
@@ -1260,15 +1260,10 @@ const COMPOSE_PREY_CHOICES_TOOLTIP := "Another herd shares this hex — choose w
 ## The row's `✕`: clear the prey, after which the send arms the herd pick instead.
 const COMPOSE_PREY_CLEAR_TOOLTIP := "Clear the prey — Send then asks for a herd on the map."
 
-## A shipment pick that landed on no band this one is tied to. Said, and the pick stays armed —
-## the prey pick's rule for a click on a hex with no huntable herd.
-const TRADE_PICK_MISS_TITLE := "Trade"
-const TRADE_PICK_MISS_TEXT := "No band this camp is tied to stands there — click a trading partner."
-
 const COMPOSE_TITLE_TRADE := "Load a shipment"
 
 ## The send's hover text. It names the one thing that gates the verb — a live tie — because a player
-## whose bands have met nobody has no destination the Trade pick will take, and must be told why.
+## whose bands have met nobody has no band to pick on the map, and must be told why.
 const SEND_TRADE_EXPEDITION_HINT := "Detach a party to carry food and materials to another band you have a tie with."
 
 const SEND_TRADE_EXPEDITION_BUTTON := "Send shipment"
@@ -1277,20 +1272,13 @@ const SEND_TRADE_EXPEDITION_BUTTON := "Send shipment"
 ## read-only. `To` rather than `Destination`: the key shares `COMPOSE_FIELD_KEY_WIDTH` with the rest of
 ## the field stack, and the short word leaves the name its share of the row.
 const COMPOSE_FIELD_DESTINATION := "To"
-## The row's `✕`: clear the destination, after which the send arms the pick instead.
-const COMPOSE_DESTINATION_CLEAR_TOOLTIP := "Clear the destination — Send then asks for a band on the map."
+## The row's `✕`: clear the destination, after which the Send waits for another band to be picked.
+const COMPOSE_DESTINATION_CLEAR_TOOLTIP := "Clear the destination, then pick another band on the map."
 
-## **WHY A SHIPMENT CANNOT BE ARMED, WHEN IT CANNOT.** A band holding no live tie has nobody the pick
-## could accept, so the sheet states the gate in the sim's own terms rather than arming a pick that
-## refuses every click.
+## **WHY A SHIPMENT HAS NOWHERE TO GO, WHEN IT HAS NOT.** A band holding no live tie has no band the
+## map could ring, so the sheet states the gate in the sim's own terms.
 const COMPOSE_DESTINATION_NO_TIES := "This band knows no other band yet. Ties form by standing where you can see each other."
 
-
-## **A PARKED TIE IS NAMED, WITH THIS AS ITS REASON — never hidden.** The Trade pick's hover banner
-## states it over a parked tie's band. Strength `0` means *"we know such a people exist and have no
-## current dealings"*, which is a different statement from having never met them, and it is the thing
-## the player has to learn: the TIE is what gates trade.
-const COMPOSE_DESTINATION_PARKED_REASON := "no current tie — nothing can flow"
 
 
 ## **THE REMEMBERED POSITION, WORDED AS ONE.** A connection grants `Discovered` and never `Seen`

@@ -961,7 +961,7 @@ func notify_targeting_click(tile_info: Dictionary) -> void:
         return
     _targeting.try_dispatch(tile_info)
 
-## The hex under the pointer (`MapView.tile_hovered`, relayed by `Main`): an armed Deny or Trade pick
+## The hex under the pointer (`MapView.tile_hovered`, relayed by `Main`): an armed Deny pick
 ## states what a click there would commit to in its banner. Reflective delegator, reached BY NAME.
 func notify_hex_hovered(tile_info: Dictionary) -> void:
     _targeting.note_hover(tile_info)

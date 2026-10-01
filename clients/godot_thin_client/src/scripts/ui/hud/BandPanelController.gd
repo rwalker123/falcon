@@ -8841,11 +8841,8 @@ func _commit_trade(band: Dictionary, destination: int, workers: int, cargo: Arra
 
 ## The Trade send when it cannot be pressed, showing its own reason — the "visible and disabled with
 ## its reason" convention this zone uses everywhere, in one place because the shipment form reaches it
-## from three dead ends (no live tie, no stores, an unsendable manifest). A pick armed for a manifest
-## that has since become unsendable comes down with it.
+## from three dead ends (no live tie, no stores, an unsendable manifest).
 func _blocked_trade_send(reason: String) -> Button:
-    if _targeting.is_verb_pick_armed(HudComposeVocab.COMPOSE_MISSION_TRADE):
-        _targeting.disarm_verb_picks()
     return _blocked_send_button(HudComposeVocab.SEND_TRADE_EXPEDITION_BUTTON, reason)
 
 ## A send that cannot be pressed, showing its own reason.
