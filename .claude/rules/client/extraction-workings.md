@@ -771,9 +771,10 @@ match the band's own `extract` row (`DrawerComposeController._composed_standing_
 pool is the row's idle rule too — `source_crew_pool_extract` is `effective_idle` plus the effective
 crew here (`labor-ui.md` → "THE SHEET'S `+` AND THE ROW'S `+` READ ONE CEILING").
 
-⛔ **NEVER `workers_needed` FOR THE ROW'S `+`.** It was, for one release: `_workings_roster_max_useful`
-took `worked_crew_ceiling`, which reads `workers_needed` first. On an `extract` row that field is the
-take inverted and clamped into `[1, crew]`, so the `+` died as soon as the crew cut anything.
+⛔ **NEVER `workers_needed` FOR THE ROW'S `+`.** It was, for one release:
+`_workings_roster_max_useful` took `worked_crew_ceiling` (retired), which read `workers_needed`
+first. On an `extract` row that field is the take inverted and clamped into `[1, crew]`, so the `+`
+died as soon as the crew cut anything.
 
 ### ⛔ THE CREW NOUN IS PER BRANCH, NEVER PER RUNG
 
@@ -1321,8 +1322,9 @@ re-derives it. On the food webs the ceiling is the sim's `workers_needed` where 
 `max_useful_workers` as the fallback. ⛔ **A working's ceiling is `published_useful_cutters` and never
 `workers_needed`**: on an `extract` row that field is the take inverted and clamped into
 `[1, crew]`, so it can never exceed the crew standing there and an overstaffed reading on it could
-never fire. `labor-ui.md` → "The cap note and the waste hazard are two questions of one ceiling"
-holds the predicate's own rules.
+never fire. The drawer's standing summary under `Assign foresters ▸` quotes the same number in its
+overstaff note (`DrawerComposeController._overstaff_note_ceiling`). `labor-ui.md` → "The cap note and
+the waste hazard are two questions of one ceiling" holds the predicate's own rules.
 
 ⛔ **`hazard_clause` RANKS THE TWO, IT DOES NOT JOIN THEM.** Its signature is
 `hazard_clause(deposit, cutters = CUTTERS_UNSTATED, useful = CUTTERS_UNCAPPED)`: a working at risk

@@ -192,9 +192,9 @@ func run(harness) -> void:
 	var wasted_model := {"has_yield": true, "workers": 2, "workers_needed": 0,
 		"actual_yield": 0.30, "sustainable_yield": 0.30, "wasted_yield": 0.75, "overdraws": false}
 	var wasted_forage := SourceForecast.source_yield_readout(
-		wasted_model, SourceForecast.LABOR_KIND_FORAGE)
+		wasted_model, SourceForecast.LABOR_KIND_FORAGE, SourceForecast.MAX_USEFUL_UNBOUNDED)
 	var wasted_hunt := SourceForecast.source_yield_readout(
-		wasted_model, SourceForecast.LABOR_KIND_HUNT)
+		wasted_model, SourceForecast.LABOR_KIND_HUNT, SourceForecast.MAX_USEFUL_UNBOUNDED)
 	# **THE CLAIM IS ABOUT THE WASTE NOTE, NOT ABOUT AN EMPTY CHANNEL.** `muted_note` is a shared
 	# small-print slot — the forecast's BAND rides it too since §6.4 — so an `== ""` here would start
 	# failing on a patch that merely reports a stochastic take, i.e. for a reason this assertion has

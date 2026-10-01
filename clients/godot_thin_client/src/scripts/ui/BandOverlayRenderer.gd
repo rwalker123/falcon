@@ -1265,28 +1265,20 @@ func _food_attention_text(src: Dictionary, source_kind: String) -> String:
 ## the source is not on the map at all (a herd that left the visible fauna set prices no ceiling, and
 ## a row must never flag waste it cannot measure).
 ##
-## ⛔ **THE CEILING IS THE SIM'S `workers_needed` FIRST** (`SourceForecast.worked_crew_ceiling`), the
-## same number and the same predicate the work board's row asks — the row and the panel are joined by
-## a leader line on screen, so two readings of *how many hands this source can use* would be a
-## disagreement the player sees in one glance. It read the client's closed-form `max_useful_workers`
-## alone, which omits the keeping hands a worked site carries, so a wild Harvest whose sim answer was
-## its own crew of 3 read `⚠ overstaffed` here while the board, on `workers_needed`, said nothing.
-## The client's ceiling is the fallback only where the wire publishes no answer.
-##
-## ⛔ **THE HUNT ARM CARRIES THE SIM'S PUBLISHED PLATEAU ONTO THE FORECAST, exactly as the work board
-## does.** Without it `max_useful_workers` falls through to the closed form, which divides by a reach
-## carrying no attack and no defense, and a fight-bound quarry reads a ceiling the compose sheet's own
-## curve disagrees with. The forage arm deliberately does not — its `0` is a structural *does not
-## apply*, never *no crew is useful here*.
+## ⛔ **THE CEILING IS THE ROW'S OWN `+` CEILING** (`SourceForecast.worked_row_ceiling`) — the number
+## the work board's `+`, its overstaff note and its `⚠ overstaffed` clause are all struck at, so the
+## row and the panel (joined by a leader line on screen) cannot disagree about how many hands this
+## source can use. A forage row's is the sim's `workers_needed`, a hunt row's its
+## `hunt_useful_workers`, each with the client's closed form only where the wire is silent. It read
+## `workers_needed` on both webs, which on a hunt row is the take the crew RAN inverted — so a crew
+## the board's `+` still offered a hand to read `⚠ overstaffed` here.
 static func food_overstaffed_text(entry: Dictionary, src: Dictionary, source_kind: String) -> String:
 	if src.is_empty():
 		return ""
-	var forecast := SourceForecast.forecast_inputs(src, source_kind,
-		HudComposeVocab.BARE_FORECAST_PREFIX, _entry_floor(entry))
-	if source_kind == SourceForecast.SOURCE_KIND_HERD:
-		forecast = SourceForecast.with_published_useful_crew(forecast, entry)
+	var labor_kind := SourceForecast.LABOR_KIND_HUNT \
+		if source_kind == SourceForecast.SOURCE_KIND_HERD else SourceForecast.LABOR_KIND_FORAGE
 	return HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
-		SourceForecast.worked_crew_ceiling(entry, SourceForecast.max_useful_workers(forecast)))
+		SourceForecast.worked_row_ceiling(labor_kind, entry, src))
 
 ## The row order: attention descending, then realized yield descending, then the KEY ascending. The
 ## key tie-break is what makes it TOTAL — two calm rows at identical yields would otherwise be free

@@ -5902,25 +5902,24 @@ flag anywhere on this panel.
 ```
 
 `overstaffed` is `HudDepositVocab.overstaffed_clause(workers, useful)` over
-`SourceForecast.crew_is_wasted` (through `worked_crew_ceiling`, the map list's own number),
-measured against the SAME ceiling the row's `+` gate is struck at — `SourceForecast.worked_row_ceiling`
-through `crew_cap_state`, the one reader the compose sheet also calls on this row — so the ceiling is
-resolved once per arm and spent twice.
+`SourceForecast.crew_is_wasted`, measured against the SAME ceiling the row's `+` gate is struck at —
+`SourceForecast.worked_row_ceiling` through `crew_cap_state`, the one reader the compose sheet and
+the map list also call on this row — so the ceiling is resolved once per arm and spent twice.
 
-⛔ **AND IT IS A FALLBACK, NOT A SECOND VOICE.** `workers_needed` is published on all three webs now,
-and where it answers `source_yield_readout` already states the condition in FIGURES on the row's face,
-so the clause is gated off it:
+⛔ **AND IT IS A FALLBACK, NOT A SECOND VOICE.** Where the wire published the row's ceiling,
+`source_yield_readout` already states the condition in FIGURES on the row's face, so the clause is
+gated off the one test that decides it:
 
 ```gdscript
-var overstaffed := "" if int(m.get("workers_needed", 0)) > 0 \
+var overstaffed := "" if published_ceiling != SourceForecast.MAX_USEFUL_UNBOUNDED \
     else HudDepositVocab.overstaffed_clause(workers, useful)
 ```
 
 `note` and `overstaffed` are therefore **mutually exclusive by construction** and the flag is raised
 by whichever one spoke — a row can never carry both, which would be one condition wearing two
-spellings. The client's ceiling answers exactly one state: `workers_needed == 0`, the rehydrated
-save's *unknown*. `labor-ui.md` → "The cap note and the waste hazard are two questions of one ceiling"
-holds why the sim's number is also the better one.
+spellings. The closed form answers exactly one state: no published ceiling, the rehydrated save's
+*unknown*. `labor-ui.md` → "EVERY SURFACE ASKS ONE PREDICATE ON ONE NUMBER PER WEB" holds which
+number each web's ceiling is.
 
 **The clause also rides the row's TOOLTIP**, because a mark the player cannot read is not a fix: the
 `+` gate's own note is empty on a band with no idle hands, which is exactly the band that has to move

@@ -1420,6 +1420,31 @@ func _curve_worker_cap(useful: int, assignable: int) -> Dictionary:
 ## composes that; a moved floor or another kit is a question the row has not been asked, and the
 ## sheet's curve answers it. Reported from play: a one-forester deadfall's row greyed its `+` while
 ## the sheet on the same tile offered two.
+## **THE CEILING THE STANDING SUMMARY'S OVERSTAFF NOTE QUOTES** — the row's own `+` ceiling where the
+## wire published it, the Work board's number, so the drawer's second line and the board row read one
+## figure: `worked_row_published_ceiling` over the LIVE source on a food row (the bare patch, or the
+## herd from the world list — herds migrate), `published_useful_cutters` on a working.
+func _overstaff_note_ceiling(assignment: Dictionary, kind: String) -> int:
+    if kind == HudConst.LABOR_KIND_EXTRACT:
+        return HudDepositVocab.published_useful_cutters(assignment)
+    var src: Dictionary = _band_labor.forage_patch_lookup().get(Vector2i(
+        int(assignment.get("target_x", -1)), int(assignment.get("target_y", -1))), {}) \
+        if kind == SourceForecast.LABOR_KIND_FORAGE \
+        else _band_labor.find_world_herd(String(assignment.get("fauna_id", "")))
+    return SourceForecast.worked_row_published_ceiling(kind, assignment, src)
+
+## **THE KIT THE BAND'S OWN ROW ON THIS SOURCE CARRIES**, or `NO_KIT_ID` where it has none — the
+## sheet's kit SEED, beside the crew, floor and take selection it already seeded from that row.
+## ⛔ **IT IS WHAT MAKES "COMPOSING THE BAND'S OWN ROW" THE DEFAULT.** The sheet's `+` reads the row's
+## published ceiling only while the composed kit matches the row's (`_composed_standing_row`), and the
+## seed used to be the JOB's default: a crew sent out on any other kit opened a sheet that composed
+## something else, so its `+` fell back to the curve and could disagree with the row's. Read off the
+## EFFECTIVE worker map, the one `_composed_standing_row` compares against, so a pending re-kit counts.
+## `NO_KIT_ID` resolves to the source's own default exactly as the old reset did.
+func _standing_kit_id(band: Dictionary, key: String) -> String:
+    var row: Dictionary = _band_labor.effective_worker_map(band).get(key, {})
+    return String(row.get(KitRoster.ROW_KIT_ID_KEY, KitRoster.NO_KIT_ID))
+
 func _composed_standing_row(row: Dictionary, composed_floor: float, kit_id: String) -> Dictionary:
     if row.is_empty():
         return {}
@@ -2890,6 +2915,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # the only crew this sheet composes is the take.
         _compose.seed_hunt(staffed if staffed > 0 else HudConst.WORKER_STEP,
             _band_labor.floor_for_hunt(band, herd_id), standing_improvement)
+        # **AND THE KIT SEEDS FROM THE ROW** — see `_standing_kit_id`.
+        _compose.set_hunt_kit_id(_standing_kit_id(band,
+            _band_labor.pending_key(SourceForecast.LABOR_KIND_HUNT, -1, -1, herd_id)))
     # The effective (pending-aware) standing crew, which the commit's unassign/no-op test reads below.
     var current := _band_labor.effective_hunt_workers(band, herd_id)
     # Which band supplies the hunters (above the worker stepper, so it reads "which band → how many
@@ -3685,6 +3713,9 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             _band_labor.floor_for_forage(band, x, y), standing_improvement,
             _band_labor.species_for_forage(band, x, y),
             _band_labor.take_species_for_forage(band, x, y))
+        # **AND THE KIT SEEDS FROM THE ROW** — see `_standing_kit_id`.
+        _compose.set_forage_kit_id(_standing_kit_id(band,
+            _band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE, x, y, "")))
     # **THE TAKE SELECTION, resolved ONCE for the whole sheet** — the chips render it, the take side of
     # the sheet is composed against it and the commit sends it. Resolved here, above every reading, for
     # the reason the cap is: a readout composed against one selection beside chips drawn from another
@@ -5513,6 +5544,9 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         # band's order; and on ground nobody has opened it reads `0`, which is *strip it bare*.
         _compose.seed_deposit(staffed if staffed > 0 else HudConst.WORKER_STEP,
             _band_labor.floor_for_extract(band, tile.x, tile.y, material))
+        # **AND THE KIT SEEDS FROM THE ROW** — see `_standing_kit_id`.
+        _compose.set_deposit_kit_id(_standing_kit_id(band, _band_labor.pending_key(
+            HudConst.LABOR_KIND_EXTRACT, tile.x, tile.y, "", material)))
     var current := _band_labor.effective_extract_workers(band, tile.x, tile.y, material)
     var crew_pool := _band_labor.source_crew_pool_extract(band, tile.x, tile.y, material)
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
@@ -6158,7 +6192,8 @@ func _standing_summary_model(assignment: Dictionary, kind: String, noun: String,
     # `overdraws`, `workers_needed`, `wasted_yield` — is read straight off the assignment the sim sent.
     var m := assignment.duplicate()
     m["has_yield"] = assignment.has("actual_yield")
-    var readout := SourceForecast.source_yield_readout(m, kind)
+    var readout := SourceForecast.source_yield_readout(m, kind,
+        _overstaff_note_ceiling(assignment, kind))
     var floor := float(assignment.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     var mark := HudDepositVocab.floor_mark(working, floor) \
         if kind == HudConst.LABOR_KIND_EXTRACT \

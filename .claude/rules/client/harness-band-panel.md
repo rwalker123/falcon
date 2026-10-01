@@ -2982,3 +2982,14 @@ frame waits a second `_settle` because `WorkInspectorDialog.refit` fits over two
 put-down, the click opens the inspector, its `Stop keeping this road` is keyed to the row's tile, a
 real viewport click on it sends `abandon 0 road <x> <y>`, and the card closes. `command_guard`'s
 `_drive_road_abandon` reaches the verb the same way — a click on the row, then the card's put-down.
+
+## The two-slot claim moved to the BASKET row (one overstaff number per web)
+
+`_assert_kit_short_notes`' *"…beside the STAFFING note"* claim rode the short HUNT row on its
+`workers_needed`. A hunt row's overstaff note now quotes the `+`'s own ceiling (`hunt_useful_workers`,
+`labor-ui.md` → "EVERY SURFACE ASKS ONE PREDICATE ON ONE NUMBER PER WEB"), which that herd's row does
+not price, so the hunt row honestly carries no staffing note. The claim now rides the basket-short
+FORAGE row, whose site crew (`KIT_BASKET_SHORT_NEEDED` = 2) is one short of its crew: on forage
+`workers_needed` IS the ceiling, so the row is overstaffed and short of baskets in one frame. It also
+asserts the kit note is non-empty, or the claim would pass on a row that lost it. Measured: exit 0,
+1500 `PASS`.

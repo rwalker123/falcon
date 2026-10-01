@@ -6009,19 +6009,6 @@ static func crew_is_wasted(workers: int, useful: int) -> bool:
         return false
     return workers > useful
 
-## **THE ONE CEILING A WORKED ROW IS JUDGED OVERSTAFFED AGAINST** — the sim's `workers_needed` where
-## the wire publishes it (the most hands that still help on this source, keeping hands included,
-## crew-independent), else `fallback_useful`, the client's own reading for a rehydrated save's
-## *unknown* (`0`). Every surface that says a worked crew is overstaffed — the work board's note and
-## clause, the map's band source list, the workings roster — asks `worked_crew_is_wasted` on this
-## number, so no two of them can answer differently for one row.
-static func worked_crew_ceiling(entry: Dictionary, fallback_useful: int) -> int:
-    var needed := int(entry.get("workers_needed", PUBLISHED_NO_USEFUL_CREW))
-    return needed if needed > PUBLISHED_NO_USEFUL_CREW else fallback_useful
-
-static func worked_crew_is_wasted(entry: Dictionary, fallback_useful: int) -> bool:
-    return crew_is_wasted(int(entry.get("workers", 0)), worked_crew_ceiling(entry, fallback_useful))
-
 ## ⛔ **THE `+` CEILING OF A WORKED FOOD ROW — ONE PRODUCER, READ BY THE ROW AND BY ITS SHEET.**
 ## `kind` is the row's labor kind, `entry` its assignment (the worker map's copy or the wire's), `src`
 ## the LIVE source it works — the bare-keyed forage patch, or the herd from the world list (herds
@@ -6037,14 +6024,34 @@ static func worked_crew_is_wasted(entry: Dictionary, fallback_useful: int) -> bo
 ## the Work row — reported from play on a deadfall wood. Where the sheet composes something else (a
 ## moved floor, another kit, another take selection) the published figure answers a question nobody
 ## asked, and the sheet's curve keeps its job.
+##
+## ⛔ **AND IT IS THE NUMBER THE ROW IS JUDGED OVERSTAFFED AGAINST, ON EVERY SURFACE.** The overstaff
+## note (`source_yield_readout`'s `overstaff_ceiling`), the work board's `⚠ overstaffed` clause and the
+## map's band source list all read this — one predicate (`crew_is_wasted`) on the number the `+` is
+## struck at. The hunt warning read the row's `workers_needed` while its `+` read
+## `hunt_useful_workers`; those are different numbers (the take this crew RAN, inverted, against the
+## most hands that would still help), so a crew the `+` allowed could read overstaffed.
 static func worked_row_ceiling(kind: String, entry: Dictionary, src: Dictionary) -> int:
+    return max_useful_workers(_worked_row_forecast(kind, entry, src))
+
+## The same ceiling **where the WIRE published it**, else `MAX_USEFUL_UNBOUNDED` — the overstaff
+## NOTE's argument. The note quotes the figure, so it speaks only for the sim's own number; where the
+## wire is silent (a rehydrated save) the board's `⚠ overstaffed` clause answers on the closed form
+## instead, and the two are exclusive by this one test.
+static func worked_row_published_ceiling(kind: String, entry: Dictionary, src: Dictionary) -> int:
+    var forecast := _worked_row_forecast(kind, entry, src)
+    if forecast.has(FORECAST_SITE_CREW_KEY) or forecast.has(FORECAST_PUBLISHED_USEFUL_CREW_KEY):
+        return max_useful_workers(forecast)
+    return MAX_USEFUL_UNBOUNDED
+
+static func _worked_row_forecast(kind: String, entry: Dictionary, src: Dictionary) -> Dictionary:
     var floor := clamp_floor(float(entry.get("floor", DEFAULT_HARVEST_FLOOR)))
     if kind == LABOR_KIND_FORAGE:
-        return max_useful_workers(with_published_site_crew(
+        return with_published_site_crew(
             forecast_inputs(src, SOURCE_KIND_FORAGE, BARE_SOURCE_PREFIX, floor),
-            int(entry.get("workers_needed", PUBLISHED_NO_USEFUL_CREW))))
-    return max_useful_workers(with_published_useful_crew(
-        forecast_inputs(src, SOURCE_KIND_HERD, BARE_SOURCE_PREFIX, floor), entry))
+            int(entry.get("workers_needed", PUBLISHED_NO_USEFUL_CREW)))
+    return with_published_useful_crew(
+        forecast_inputs(src, SOURCE_KIND_HERD, BARE_SOURCE_PREFIX, floor), entry)
 
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling, the party's
 ## reach), scaled by the acting band's output multiplier (the sim exports the forecast at 1.0).
@@ -6145,7 +6152,14 @@ static func expected_yield_account(forecast: Dictionary, workers: int, band: Dic
 ##     a source can be overstaffed while perfectly sustainable, or overdrawn while fully used.
 ## Parts are empty when the source carries no confirmed data (pending assign), so
 ## the row degrades to bare rather than asserting a wrong state.
-static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
+##
+## ⛔ **`overstaff_ceiling` IS REQUIRED: the row's own `+` ceiling where the wire published it**
+## (`worked_row_published_ceiling` on a food row, `HudDepositVocab.published_useful_cutters` on a
+## working), `MAX_USEFUL_UNBOUNDED` for no claim. The note read `workers_needed` itself, which on a
+## hunt row and a working is the take this crew RAN, inverted — never more than the crew — so it could
+## call a crew overstaffed whom the `+` beside it still offered a hand to. A defaulted argument would
+## put that second number back silently.
+static func source_yield_readout(m: Dictionary, kind: String, overstaff_ceiling: int) -> Dictionary:
     var label_suffix := ""
     var warn := false
     var tooltip := ""
@@ -6250,13 +6264,12 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # say from growing a dangling separator on the surfaces that join this suffix.
         var components := yield_components(rate, fodder_rate, zero_account, material_rows)
         label_suffix = "" if components == "" else " " + components
-    # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
-    # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
+    # Overstaffing: the crew is bigger than the row's own `+` ceiling, so the hands past it produce
+    # nothing here. An unpublished ceiling (`MAX_USEFUL_UNBOUNDED`) makes no claim.
     var note := ""
     var workers := int(m.get("workers", 0))
-    var needed := int(m.get("workers_needed", 0))
-    if needed > PUBLISHED_NO_USEFUL_CREW and worked_crew_is_wasted(m, MAX_USEFUL_UNBOUNDED):
-        note = OVERSTAFF_NOTE_FORMAT % [needed, workers]
+    if crew_is_wasted(workers, overstaff_ceiling):
+        note = OVERSTAFF_NOTE_FORMAT % [overstaff_ceiling, workers]
         tooltip = OVERSTAFF_TOOLTIP if tooltip == "" \
             else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP
     # UNDERSTAFFING: `wasted_yield` is food the source offered that the crew could not collect — the

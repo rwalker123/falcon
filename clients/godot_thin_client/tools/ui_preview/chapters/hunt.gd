@@ -3164,7 +3164,8 @@ func _overdraw_is_the_wires_answer() -> void:
 				% [str(derived), str(wire_answer)], derived != bool(wire_answer))
 		# (1) THE TILE CARD'S TOOLTIP AND THE DRAWER'S STANDING SUMMARY — one producer, the one the
 		#     reported tooltip came out of.
-		var readout := SourceForecast.source_yield_readout(row, SourceForecast.LABOR_KIND_HUNT)
+		var readout := SourceForecast.source_yield_readout(row, SourceForecast.LABOR_KIND_HUNT,
+			SourceForecast.MAX_USEFUL_UNBOUNDED)
 		h._assert_hud("the worked-row readout flies the wire's ⚠ (%s)" % str(wire_answer),
 			bool(readout["warn"]) == bool(wire_answer))
 		# (2) THE MAP BADGE — the same row, through the renderer's own reader, since a plate is drawn

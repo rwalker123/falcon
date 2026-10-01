@@ -29,7 +29,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 15
+const EXPECTED_CHECKPOINTS := 34
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -75,7 +75,20 @@ const WOOD_PER_WORKER := 2.0
 ## disables both — the sheet used to count the wire's idle there and offer it anyway.
 const CREW_AT_CAP := 0
 const CREW_BELOW_CAP := -1
+const CREW_ABOVE_CAP := 1
 const NO_PENDING_SPEND := 0
+
+## The row's `workers_needed` in the overstaff block — the sim's inversion of the take this crew RAN,
+## held BELOW every crew the block stages. On a hunt row and a working that field is never the `+`'s
+## ceiling, so a reader that still took it would call a crew the `+` offers a hand to overstaffed.
+const INVERTED_TAKE_CREW := 1
+
+## What the overstaff note says, whatever its figures — the needle for its absence.
+const OVERSTAFF_NOTE_NEEDLE := "bring anything home"
+
+## The crew nouns the drawer's standing summary is asked with (any noun does — the claim is the note).
+const HUNT_SUMMARY_NOUN := "hunters"
+const WOOD_SUMMARY_NOUN := "foresters"
 
 
 func run(harness) -> void:
@@ -87,6 +100,8 @@ func run(harness) -> void:
 	await _assert_case("below the cap", CREW_BELOW_CAP, NO_PENDING_SPEND, true)
 	await _assert_case("below the cap, the last free hand spent by a pending edit", CREW_BELOW_CAP,
 		PARITY_IDLE, false)
+	await _assert_kit_seeded_from_row(herd)
+	await _assert_overstaffed_reads_the_plus_ceiling(herd)
 	# Back to the state every other chapter runs in.
 	h._hud.close_compose_sheet()
 	h._hud.update_deposits([])
@@ -188,6 +203,108 @@ func _sheet_plus_enabled(web: String, herd: Dictionary) -> bool:
 		return false
 	return not plus.disabled
 
+## ⛔ **THE SHEET OPENS ON THE KIT THE BAND'S OWN ROW CARRIES**, so composing the band's own row is
+## the default and the two `+`s agree out of the box. The rows here name a kit that is NOT the
+## source's default: a sheet seeded with the default would compose another kit, fall back to its own
+## curve, and could disagree with the row. Asked AT the cap, where that fallback shows — and the kit is
+## reset before each open, so the seed has to win over a reset rather than over nothing.
+##
+## Forage and hunt only: this harness's roster offers a working no kit but its own default.
+func _assert_kit_seeded_from_row(herd: Dictionary) -> void:
+	var ceilings := _ceilings(herd)
+	var kits := {
+		"forage": _other_kit(KitRoster.JOB_FORAGE, {}),
+		"hunt": _other_kit(KitRoster.JOB_HUNT, herd),
+	}
+	h._assert_hud("kit seed — premise: each food web offers a kit besides its default (%s)" % str(kits),
+		String(kits["forage"]) != "" and String(kits["hunt"]) != "")
+	var band := _parity_band(int(ceilings["forage"]), int(ceilings["hunt"]),
+		int(ceilings["extract"]), {"forage": {"kit_id": kits["forage"]}, "hunt": {"kit_id": kits["hunt"]}})
+	h._hud.update_band_alerts([band])
+	await h._settle()
+	var live: Dictionary = h._hud._band_labor.player_band_by_entity(PARITY_ENTITY)
+	for web in ["forage", "hunt"]:
+		var row_plus := _row_plus_enabled(web, live)
+		var sheet_plus := await _sheet_plus_enabled(web, herd)
+		var composed: String = h._hud._compose.forage_kit_id() if web == "forage" \
+			else h._hud._compose.hunt_kit_id()
+		h._assert_hud("kit seed — %s: the sheet opens on the row's kit, not the default (got %s, want %s)"
+				% [web, composed, String(kits[web])],
+			composed == String(kits[web]))
+		h._assert_hud("kit seed — %s: at the cap on that kit the two `+`s agree (row %s, sheet %s)"
+				% [web, _face(row_plus), _face(sheet_plus)],
+			row_plus == sheet_plus and not row_plus)
+
+## ⛔ **ONE NUMBER PER WEB: THE OVERSTAFF WARNING IS STRUCK AT THE `+`'s CEILING.** The rows publish a
+## `workers_needed` (the take inverted) BELOW the crew. One crew below the cap the `+` is live and NO
+## surface may call the crew overstaffed — the board row's note, its hover clause, the map list and the
+## drawer's standing summary; one crew above it, every one of them does and the `+` is dead. Hunt and
+## a working; forage's ceiling IS its `workers_needed`, so it cannot part from itself.
+func _assert_overstaffed_reads_the_plus_ceiling(herd: Dictionary) -> void:
+	var ceilings := _ceilings(herd)
+	var hunt_cap := int(ceilings["hunt"])
+	var wood_cap := int(ceilings["extract"])
+	for offset in [CREW_BELOW_CAP, CREW_ABOVE_CAP]:
+		var over: bool = offset == CREW_ABOVE_CAP
+		var label := "above the cap" if over else "below the cap"
+		var band := _parity_band(int(ceilings["forage"]), hunt_cap + offset, wood_cap + offset, {
+			"hunt": {"workers_needed": INVERTED_TAKE_CREW},
+			"extract": {"workers_needed": INVERTED_TAKE_CREW}})
+		h._hud.update_band_alerts([band])
+		await h._settle()
+		var live: Dictionary = h._hud._band_labor.player_band_by_entity(PARITY_ENTITY)
+		var rows: Array = band["labor_assignments"]
+		var hunt_model := _work_model(live, SourceForecast.LABOR_KIND_HUNT)
+		var board_note := String(hunt_model.get("note", ""))
+		var board_tip := String(hunt_model.get("tooltip", ""))
+		var map_clause := BandOverlayRenderer.food_overstaffed_text(rows[1], herd,
+			SourceForecast.SOURCE_KIND_HERD)
+		var hunt_summary := String(h._hud._drawercompose._standing_summary_model(rows[1],
+			SourceForecast.LABOR_KIND_HUNT, HUNT_SUMMARY_NOUN).get("note", ""))
+		var wood_summary := String(h._hud._drawercompose._standing_summary_model(rows[2],
+			HudConst.LABOR_KIND_EXTRACT, WOOD_SUMMARY_NOUN, _parity_wood()).get("note", ""))
+		var hunt_note := SourceForecast.OVERSTAFF_NOTE_FORMAT % [hunt_cap, hunt_cap + offset]
+		var wood_note := SourceForecast.OVERSTAFF_NOTE_FORMAT % [wood_cap, wood_cap + offset]
+		h._assert_hud("overstaff (%s) — hunt: the board row's `+` is %s" % [label,
+				"dead" if over else "live"],
+			bool(hunt_model.get("can_add", false)) == not over)
+		h._assert_hud("overstaff (%s) — hunt: the board note quotes the `+`'s ceiling (got \"%s\")"
+				% [label, board_note],
+			board_note == hunt_note if over else not board_note.contains(OVERSTAFF_NOTE_NEEDLE))
+		h._assert_hud("overstaff (%s) — hunt: the board row never wears the clause beside the note" % label,
+			not board_tip.contains(HudDepositVocab.OVERSTAFFED_WORD))
+		h._assert_hud("overstaff (%s) — hunt: the map list agrees (got \"%s\")" % [label, map_clause],
+			(map_clause != "") == over)
+		h._assert_hud("overstaff (%s) — hunt: the drawer summary agrees (got \"%s\")"
+				% [label, hunt_summary],
+			hunt_summary == hunt_note if over else not hunt_summary.contains(OVERSTAFF_NOTE_NEEDLE))
+		h._assert_hud("overstaff (%s) — working: the drawer summary agrees (got \"%s\")"
+				% [label, wood_summary],
+			wood_summary == wood_note if over else not wood_summary.contains(OVERSTAFF_NOTE_NEEDLE))
+		h._assert_hud("overstaff (%s) — working: the Groundwork `+` is %s" % [label,
+				"dead" if over else "live"],
+			_row_plus_enabled("extract", live) == not over)
+
+## The work board's model for one food web on this band.
+func _work_model(band: Dictionary, kind: String) -> Dictionary:
+	var idle := int(h._hud._band_labor.effective_idle(band))
+	for model_variant in h._hud._bandpanel._work_source_models(band, idle):
+		var model: Dictionary = model_variant
+		if String(model.get("kind", "")) == kind:
+			return model
+	h._fail("parity — the band's %s row is not on the work board" % kind)
+	return {}
+
+## A kit the sheet would let a player pick on this source that is NOT the one it resolves with
+## nothing picked, or `""` where the job offers none.
+func _other_kit(job: String, source: Dictionary) -> String:
+	var default_kit := _resolved_kit(job, source)
+	for kit_variant in KitRoster.kits_for_job(h._hud._band_labor.kits(), job):
+		var kit_id := String((kit_variant as Dictionary).get(KitRoster.KIT_ID_KEY, ""))
+		if kit_id != default_kit and _resolve(job, source, kit_id) == kit_id:
+			return kit_id
+	return ""
+
 func _face(enabled: bool) -> String:
 	return "live" if enabled else "dead"
 
@@ -234,7 +351,10 @@ func _parity_wood() -> Dictionary:
 ## and `working_age` exactly the crews plus `PARITY_IDLE`, so `effective_idle` and the wire's
 ## `idle_workers` agree on a settled frame. Each row names the kit the sheet resolves for that source
 ## with nothing picked — the row's own composition, which is what the sheet opens on.
-func _parity_band(forage_crew: int, hunt_crew: int, wood_crew: int) -> Dictionary:
+##
+## `extras` merges per-web keys onto that web's row (`{"hunt": {"kit_id": …}}`).
+func _parity_band(forage_crew: int, hunt_crew: int, wood_crew: int,
+		extras: Dictionary = {}) -> Dictionary:
 	var band := BandFx.band_fixture()
 	band["entity"] = PARITY_ENTITY
 	band.erase("band_id")
@@ -262,19 +382,26 @@ func _parity_band(forage_crew: int, hunt_crew: int, wood_crew: int) -> Dictionar
 			"kit_id": _resolved_kit(KitRoster.JOB_EXTRACT, _parity_wood()),
 			HudDepositVocab.ASSIGNMENT_USEFUL_CUTTERS_KEY: WOOD_USEFUL_CUTTERS},
 	]
+	var webs := ["forage", "hunt", "extract"]
+	for i in webs.size():
+		(band["labor_assignments"][i] as Dictionary).merge(extras.get(webs[i], {}), true)
 	return band
 
 ## The kit a sheet resolves for a source with nothing picked — the sheets' own call, so the row the
 ## fixture states is the row the sheet composes.
 func _resolved_kit(job: String, source: Dictionary) -> String:
+	return _resolve(job, source, KitRoster.NO_KIT_ID)
+
+## What the sheet's own resolution makes of `picked` on this source.
+func _resolve(job: String, source: Dictionary, picked: String) -> String:
 	var kits: Array = h._hud._band_labor.kits()
 	if job == KitRoster.JOB_EXTRACT:
 		kits = KitRoster.extract_kits_for_working(kits, source)
 	if job == KitRoster.JOB_HUNT:
 		return KitRoster.resolve_selection(kits, job, h._hud._band_labor.default_kit_id(job),
-			KitRoster.NO_KIT_ID, source, HudComposeVocab.BARE_FORECAST_PREFIX)
+			picked, source, HudComposeVocab.BARE_FORECAST_PREFIX)
 	if job == KitRoster.JOB_EXTRACT:
 		return KitRoster.resolve_selection(kits, job, h._hud._band_labor.default_kit_id(job),
-			KitRoster.NO_KIT_ID, source)
+			picked, source)
 	return KitRoster.resolve_selection(kits, job, h._hud._band_labor.default_kit_id(job),
-		KitRoster.NO_KIT_ID)
+		picked)

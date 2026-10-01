@@ -1045,7 +1045,7 @@ func _spread_rate_assignment(kind: String, overdraws: bool) -> Dictionary:
 func _assert_readout_names_both_rates() -> void:
 	var forage := SourceForecast.source_yield_readout(
 		_spread_rate_assignment(SourceForecast.LABOR_KIND_FORAGE, false),
-		SourceForecast.LABOR_KIND_FORAGE)
+		SourceForecast.LABOR_KIND_FORAGE, SourceForecast.MAX_USEFUL_UNBOUNDED)
 	# (0) THE FIXTURE REALLY IS THE REGIME. Every other canned row in this harness collapses the two
 	# onto one number, and on such a row every claim below passes with the word restored.
 	h._assert_hud("the fixture's two published rates really do differ (%s vs %s)"
@@ -1068,7 +1068,7 @@ func _assert_readout_names_both_rates() -> void:
 	# here rather than above.
 	var hunt := SourceForecast.source_yield_readout(
 		_spread_rate_assignment(SourceForecast.LABOR_KIND_HUNT, true),
-		SourceForecast.LABOR_KIND_HUNT)
+		SourceForecast.LABOR_KIND_HUNT, SourceForecast.MAX_USEFUL_UNBOUNDED)
 	var hunt_tooltip := SourceForecast.YIELD_TOOLTIP_RATES_FORMAT % [
 		SourceForecast.format_signed(READOUT_REALIZED_RATE),
 		SourceForecast.format_signed(READOUT_ACTUAL_RATE)] \
@@ -2154,7 +2154,8 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("forage_fodder_standing")
 	var fodder_readout := SourceForecast.source_yield_readout(
-		_fodder_field_assignment(), SourceForecast.LABOR_KIND_FORAGE)
+		_fodder_field_assignment(), SourceForecast.LABOR_KIND_FORAGE,
+		SourceForecast.MAX_USEFUL_UNBOUNDED)
 	# EQUALITY, not `contains`: half the claim is what the suffix must NOT also say. A `+0.00 /turn`
 	# leading it is exactly the reading this arc removed, and a containment test passes with it there.
 	h._assert_hud("a fodder-only source's readout states its feed rate ALONE (got \"%s\")"

@@ -3417,7 +3417,7 @@ merged with the work party, not summed from either side.
 
 ## `chapters/crew_cap_parity.gd` — the sheet's `+` and the row's `+` agree
 
-**Appended LAST in `CHAPTERS`**, PNG-less, `EXPECTED_CHECKPOINTS` **15** — RE-MEASURED, not summed.
+**Appended LAST in `CHAPTERS`**, PNG-less, `EXPECTED_CHECKPOINTS` **34** — RE-MEASURED, not summed.
 The behaviour is `labor-ui.md`'s → "THE SHEET'S `+` AND THE ROW'S `+` READ ONE CEILING"; what belongs
 here is the shape of the drive.
 
@@ -3449,4 +3449,21 @@ their rows** (`hunt.gd`'s `_delivered_oracle_band`, the panel-band roster and it
 `workings.gd`'s worked quarry). Each is corrected rather than worked around: a band no server can send
 was being priced on the wire's number, and the sheet now reads the overlay's.
 
-**A clean run is 460 frames / 2448 `PASS`, exit 0 — RE-MEASURED windowed.**
+**TWO MORE BLOCKS RIDE THE SAME BAND.**
+
+- **The kit seed** (`_assert_kit_seeded_from_row`): the forage and hunt rows name a kit that is NOT
+  the source's default (`_other_kit`, through the sheet's own resolution). Each sheet is opened after
+  its composed kit is reset, so the seed must win over a reset. The claims are that the sheet opens on
+  the row's kit and that the two `+`s agree at the cap on it. A working is left out: this harness's
+  roster offers a working no kit but its own default.
+- **The overstaff number** (`_assert_overstaffed_reads_the_plus_ceiling`): the hunt row and the
+  working publish a `workers_needed` of 1, below every crew staged. One below the cap, the `+` is live
+  and no surface says overstaffed: the board note, its hover clause, the map list and both drawer
+  summaries. One above it, the `+` is dead and each says so, the note quoting the ceiling (`only 3 of
+  4`). Forage is left out because its ceiling IS its `workers_needed`.
+
+**Sabotage-verified.** Seeding `NO_KIT_ID` fails the two kit equalities and the forage at-cap parity
+(the hunt curve coincides again). Restoring `workers_needed` as the note's number fails the six note
+claims, and as the map list's fails the map claim alone.
+
+**A clean run is 460 frames / 2467 `PASS`, exit 0 — RE-MEASURED windowed.**

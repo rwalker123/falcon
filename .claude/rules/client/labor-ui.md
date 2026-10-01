@@ -1855,21 +1855,28 @@ crew* wherever it is computed.
 
 ### THE CAP NOTE AND THE WASTE HAZARD ARE TWO QUESTIONS OF ONE CEILING
 
-> #### ⛔ EVERY SURFACE ASKS ONE PREDICATE ON ONE NUMBER — `worked_crew_is_wasted`
+> #### ⛔ EVERY SURFACE ASKS ONE PREDICATE ON ONE NUMBER PER WEB — the `+`'s own ceiling
 >
-> A worked row is overstaffed iff `SourceForecast.worked_crew_is_wasted(entry, fallback)`:
-> `crew_is_wasted(workers, worked_crew_ceiling(entry, fallback))`, the ceiling being the sim's
-> `workers_needed` wherever it is published (keeping hands included, crew-independent) and the
-> client's `max_useful_workers` only for a rehydrated save's `0`. The work board's sim note
-> (`source_yield_readout`) and `⚠ overstaffed` clause and the map's band source list
-> (`BandOverlayRenderer.food_overstaffed_text`) read it on the two FOOD webs.
+> A worked row is overstaffed iff `crew_is_wasted(workers, ceiling)`, and the ceiling is the number
+> its `+` is struck at:
 >
-> ⛔ **A WORKING IS THE EXCEPTION: its ceiling is `published_useful_cutters`, never
-> `workers_needed`.** On an `extract` row `workers_needed` is the take inverted and clamped into
-> `[1, crew]`, so it can never exceed the crew standing there: a `+` gated on it goes dead the moment
-> the crew takes anything. That is what greyed a one-forester deadfall's `+` on the Work tab beside a
-> sheet offering a second hand. The Groundwork row (`_workings_roster_max_useful`) and the map
-> list's extract arm both read `useful_cutters` directly.
+> | web | ceiling | reader |
+> |---|---|---|
+> | forage | `workers_needed` (keeping included) | `SourceForecast.worked_row_ceiling` |
+> | hunt | `hunt_useful_workers` | `SourceForecast.worked_row_ceiling` |
+> | extract | `useful_cutters` | `HudDepositVocab.published_useful_cutters` |
+>
+> The client's closed form answers a food row only where the wire is silent. The board row's note
+> (`source_yield_readout`), its `⚠ overstaffed` clause, the map's band source list
+> (`BandOverlayRenderer.food_overstaffed_text` and its extract arm), the drawer's standing summary
+> (`DrawerComposeController._overstaff_note_ceiling`) and the Groundwork row all read it.
+>
+> ⛔ **`workers_needed` IS THE `+`'s CEILING ON FORAGE ALONE.** On a hunt row and a working it is the
+> take the crew RAN, inverted — on a working clamped into `[1, crew]` — so it can never exceed the
+> crew standing there. Read as a ceiling it greyed a one-forester deadfall's `+` beside a sheet
+> offering a second hand; read as the overstaff number it called a hunt crew overstaffed while its
+> `+` still offered a hand. `source_yield_readout`'s `overstaff_ceiling` is therefore a REQUIRED
+> argument: a default that read the row's own `workers_needed` would put the second number back.
 >
 > **Reported from play:** a wild Harvest (crew 3, `workers_needed` 3) read `⚠ overstaffed` on the map
 > while the board said nothing and capped its `+` at 3. The list divided the closed-form take ceiling
@@ -1911,25 +1918,21 @@ so the work board's row hover, the map source list's `ATTENTION_OVERSTAFFED` cla
 roster's value cell all route through `HudDepositVocab.overstaffed_clause` — one spelling, or the
 player learns three marks for one state.
 
-**IT IS A FALLBACK, NOT A SECOND VOICE — THE WIRE'S ANSWER WINS WHERE IT HAS ONE.**
-`LaborAssignment.workersNeeded` is the sim's post-hoc overstaffing telemetry, published on **all three
-webs** (`systems::labor`'s `Extract` arm fills `SourceYield::workers_needed` beside its `overdraws`),
-and `source_yield_readout` already states it in FIGURES on the row's face through
-`OVERSTAFF_NOTE_FORMAT` — *only 2 of 5 bring anything home*. A `⚠ overstaffed` beside that is one
-condition wearing two spellings. So `_work_source_models` gates the clause:
+**ONE NUMBER, TWO SPELLINGS, NEVER BOTH.** Where the wire published the row's ceiling,
+`source_yield_readout` states the condition in FIGURES through `OVERSTAFF_NOTE_FORMAT` — *only 3 of 5
+bring anything home*, the ceiling first. Where it is silent the `⚠ overstaffed` clause answers on the
+closed form. `SourceForecast.worked_row_published_ceiling` is the one test: it answers the ceiling
+where the wire published it and `MAX_USEFUL_UNBOUNDED` where it did not, so `_work_source_models`
+passes it to the readout and gates the clause on it:
 
 ```gdscript
-var overstaffed := "" if int(m.get("workers_needed", 0)) > 0 \
+var overstaffed := "" if published_ceiling != SourceForecast.MAX_USEFUL_UNBOUNDED \
     else HudDepositVocab.overstaffed_clause(workers, useful)
 ```
 
 The two terms of the row's `attention` bool are therefore **mutually exclusive by construction**, and
-the flag is raised by whichever one spoke.
-
-**PREFERRING THE SIM IS PREFERRING THE BETTER NUMBER, not merely the first one.** It inverts the take
-that actually ran; the client divides by the ceiling the stepper caps at. The two are free to differ,
-and only the sim's can quantify. The client's ceiling answers exactly one state — `workers_needed ==
-0`, the rehydrated save's *unknown* — which is the arm
+the flag is raised by whichever one spoke. The closed form answers exactly one state — no published
+ceiling, the rehydrated save's *unknown* — which is the arm
 `band_panel_preview._assert_a_crew_bigger_than_its_source_is_flagged` stages; the published arm is the
 A/B beside it (`_assert_the_wire_s_answer_silences_the_client_s`), which asserts **both halves**: the
 face carries the sim's figures AND the hover carries no `⚠ overstaffed`. One half alone is not the
@@ -4482,6 +4485,13 @@ the sim's "most hands that still help" (`docs/plan_site_crews.md` §4):
 
 `BandPanelController._work_source_models` gates its rows on that reader through
 `SourceForecast.crew_cap_state`, the body `source_worker_cap_state` now delegates to.
+
+⛔ **AND THE SHEET OPENS ON THAT ROW.** On a source the band already works, the seed takes the row's
+crew, floor, take selection AND kit (`DrawerComposeController._standing_kit_id`, off the effective
+worker map so a pending re-kit counts). The kit used to seed from the job's default, so a crew sent
+out on any other kit opened a sheet composing something else, and its `+` fell back to the curve. A
+player who then picks another kit gets the curve, which is the rule below. A band with no row seeds
+`NO_KIT_ID`, which resolves to the source's own default as the old reset did.
 
 **THE SHEET READS THE ROW'S FIGURE ONLY WHILE IT COMPOSES THAT ROW.**
 `DrawerComposeController._composed_standing_row` hands back the band's own row (the effective worker

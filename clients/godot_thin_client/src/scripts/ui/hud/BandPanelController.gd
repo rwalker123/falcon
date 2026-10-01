@@ -2778,7 +2778,8 @@ func _working_yield_text(band: Dictionary, model: Dictionary, deposit: Dictionar
         String(model["material"]))
     var parts: Array[String] = []
     if bool(assignment.get("has_yield", false)):
-        var yld := SourceForecast.source_yield_readout(assignment, HudConst.LABOR_KIND_EXTRACT)
+        var yld := SourceForecast.source_yield_readout(assignment, HudConst.LABOR_KIND_EXTRACT,
+            HudDepositVocab.published_useful_cutters(assignment))
         var accounts := SourceForecast.yield_components(0.0, 0.0,
             SourceForecast.row_zero_account(assignment, HudConst.LABOR_KIND_EXTRACT),
             yld.get("material_rows", []))
@@ -6788,7 +6789,6 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # one spending the pool.
         if workers <= 0 and not pending and not queued_keys.has(String(key)):
             continue
-        var yld := SourceForecast.source_yield_readout(m, kind)
         var x := int(m.get("x", -1))
         var y := int(m.get("y", -1))
         var herd_id := String(m.get("herd_id", ""))
@@ -6878,20 +6878,19 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # ceiling, so the over-assignment cannot be made there; what lands here is the GROUND MOVING
         # UNDER A STANDING CREW — a patch drawn down, a herd thinned — which no stepper can gate.
         #
-        # ⛔ **BUT IT IS A FALLBACK, NOT A SECOND VOICE — THE WIRE'S ANSWER WINS WHERE IT HAS ONE.**
-        # `workers_needed` is the sim's own inversion of the take this crew actually ran, and it is
-        # published on ALL THREE webs now (the `Extract` arm fills it beside its `overdraws`). Where
-        # it is known, `SourceForecast.source_yield_readout` already states it in FIGURES on this
-        # row's face — *only 2 of 5 bring anything home* — and a `⚠ overstaffed` beside it is one
-        # condition wearing two spellings, which teaches the player two marks for one thing. So this
-        # client-side ceiling answers ONLY where the wire is silent: `workers_needed == 0`, the
-        # rehydrated save's *unknown*. The two also measure differently — the sim inverts the take
-        # that happened, this divides by the ceiling the stepper caps at — so preferring the sim is
-        # preferring the better number as well as the only one that can quantify.
+        # ⛔ **ONE NUMBER, TWO SPELLINGS, NEVER BOTH.** Where the wire published this row's ceiling
+        # the readout's NOTE states the condition in figures — *only 3 of 5 bring anything home* — on
+        # the `+`'s own number (`worked_row_published_ceiling`); where it is silent (a rehydrated
+        # save) the `⚠ overstaffed` clause answers on the closed form `useful` resolved above. One
+        # test decides which, so a row never wears both marks. Both used to read `workers_needed`,
+        # which on a hunt row is the take this crew RAN inverted rather than the `+`'s
+        # `hunt_useful_workers`, so a crew the `+` allowed could read overstaffed.
+        var published_ceiling := SourceForecast.worked_row_published_ceiling(kind, m,
+            patch if kind == SourceForecast.LABOR_KIND_FORAGE else live_herd)
+        var yld := SourceForecast.source_yield_readout(m, kind, published_ceiling)
         var overstaffed := "" \
-            if int(m.get("workers_needed", 0)) > SourceForecast.PUBLISHED_NO_USEFUL_CREW \
-            else HudDepositVocab.overstaffed_clause(workers,
-                SourceForecast.worked_crew_ceiling(m, useful))
+            if published_ceiling != SourceForecast.MAX_USEFUL_UNBOUNDED \
+            else HudDepositVocab.overstaffed_clause(workers, useful)
         var note := String(yld.get("note", ""))
         # **THE NOTE'S SEVERITY IS MODEL STATE, NOT A RENDER-SITE CONSTANT** (§2.7). It was a
         # hard-coded `HudStyle.WARN` at both this board's inspector and the drawer's twin, which is

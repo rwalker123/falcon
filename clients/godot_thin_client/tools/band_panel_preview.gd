@@ -4579,10 +4579,14 @@ const KIT_SHORT_WORK_CREW := 4
 ## workers in fractions — and a whole one here so the rendered figures are the fixture's own and the
 ## apportionment is not what is under test.
 const KIT_SHORT_WORK_ARMED := 2.0
-## …and how many of them bring anything home, which is the OTHER note. It is deliberately short of
-## the crew as well: the row is understaffed AND short of kits at once, which is the whole reason
-## `kit_note` is a slot of its own rather than sharing `note`.
+## The sim's inversion of that row's take. It is NOT the overstaff note's number on a hunt row —
+## that is the `+`'s own ceiling (`hunt_useful_workers`), which this herd's row does not price — so the
+## hunt row carries no staffing note; the two-slot claim rides the BASKET row below.
 const KIT_SHORT_WORK_NEEDED := 3
+## The basket-short FORAGE row's published site crew, one short of its crew: on a forage row
+## `workers_needed` IS the `+`'s ceiling, so the row is overstaffed AND short of baskets at once, which
+## is the whole reason `kit_note` is a slot of its own rather than sharing `note`.
+const KIT_BASKET_SHORT_NEEDED := 2
 const KIT_COVERED_WORK_HERD_ID := "game_deer_79"
 const KIT_COVERED_WORK_CREW := 3
 ## The itemless row's crew. The sim hands a `none` kit back the row's WHOLE head count on purpose, so
@@ -4617,9 +4621,9 @@ func _kit_short_band_fixture() -> Dictionary:
 			SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: KIT_TOE_CLAIMED,
 			SourceForecast.ASSIGNMENT_KIT_TOE_KEY: [
 				_kit_toe_line(KIT_TOE_BASKETS, KIT_TOE_CLAIMED, KIT_TOE_CLAIMED)]},
-		# SHORT of ONE item — `Short of baskets`.
+		# SHORT of ONE item — `Short of baskets` — and one hand over its site crew.
 		{"kind": "forage", "workers": KIT_COVERED_WORK_CREW,
-			"workers_needed": KIT_COVERED_WORK_CREW, "floor": 0.5,
+			"workers_needed": KIT_BASKET_SHORT_NEEDED, "floor": 0.5,
 			"target_x": KIT_BASKET_SHORT_TILE.x, "target_y": KIT_BASKET_SHORT_TILE.y,
 			"actual_yield": 0.30, "sustainable_yield": 0.30,
 			"kit_id": BandFx.KIT_DEFAULT_FORAGE,
@@ -4666,9 +4670,10 @@ func _kit_short_sentence() -> String:
 ## nothing, so a reader that treated coverage as *"is it less than the crew"* without the equality
 ## would flag a row with nothing to be short of.
 ##
-## **AND THE TWO NOTE SLOTS COEXIST ON ONE ROW.** The short row is understaffed as well — 3 of its 4
+## **AND THE TWO NOTE SLOTS COEXIST ON ONE ROW.** The basket row is overstaffed as well — 2 of its 3
 ## bring anything home — so `note` and `kit_note` are both populated in the same frame, which is what
-## says they are two facts and not one slot fought over.
+## says they are two facts and not one slot fought over. (It was the hunt row, on its `workers_needed`;
+## a hunt row's note reads the `+`'s own ceiling now, which this herd's row does not price.)
 func _assert_kit_short_notes() -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	var short_model := {}
@@ -4725,12 +4730,13 @@ func _assert_kit_short_notes() -> void:
 			and not drawn_note.contains(RETIRED_CLAUSE_JOINER))
 	_assert_band_panel("work kit note — …and the row wants attention, which is what the ⚠ chip counts",
 		bool(short_model.get("attention", false)))
-	# **BOTH SLOTS AT ONCE.** `note` is the sim's `workers_needed` telemetry and `kit_note` is the gear;
-	# a row can be understaffed and short of kits in the same turn, and one slot would lose one of them.
+	# **BOTH SLOTS AT ONCE.** `note` is the staffing figure and `kit_note` is the gear; a row can be
+	# overstaffed and short of kits in the same turn, and one slot would lose one of them.
 	_assert_band_panel("work kit note — …beside the STAFFING note, which it did not displace: \"%s\""
-		% String(short_model.get("note", "")),
-		String(short_model.get("note", "")) != ""
-			and String(short_model.get("note", "")) != String(short_model.get("kit_note", "")))
+		% String(basket_model.get("note", "")),
+		String(basket_model.get("note", "")) != ""
+			and String(basket_model.get("kit_note", "")) != ""
+			and String(basket_model.get("note", "")) != String(basket_model.get("kit_note", "")))
 	_assert_band_panel("work kit note — …while the OVER-CREWED row with every claimed hand armed says NOTHING (\"%s\")"
 		% String(covered_model.get("kit_note", "")),
 		String(covered_model.get("kit_note", "")) == "")
@@ -14680,8 +14686,8 @@ func _assert_the_wire_s_answer_silences_the_client_s() -> void:
 	await _settle()
 
 ## GUARD: **THE WORK ROW AND THE MAP'S BAND SOURCE LIST FLAG ONE ROW IDENTICALLY.** Both ask
-## `SourceForecast.worked_crew_is_wasted` on the sim's `workers_needed` (the client's ceiling only where
-## the wire is silent). The board's verdict is its sim note or its `⚠ overstaffed` clause; the list's
+## `SourceForecast.crew_is_wasted` on the row's `+` ceiling (`worked_row_ceiling`: the sim's
+## `workers_needed` on forage, the client's ceiling only where the wire is silent). The board's verdict is its sim note or its `⚠ overstaffed` clause; the list's
 ## is `BandOverlayRenderer.food_overstaffed_text`, called with the SAME assignment and the SAME patch.
 func _assert_board_and_map_list_agree(fixture: Dictionary, case_label: String,
 		want_flagged: bool) -> void:
