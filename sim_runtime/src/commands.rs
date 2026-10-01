@@ -776,6 +776,12 @@ pub struct ForageCrewTakeRow {
     pub take: f32,
     /// **The hands this crew spends keeping the patch**, fractional.
     pub keep_hands: f32,
+    /// **Next turn's take, in provisions, once the rung in flight is finished** — or the next rung
+    /// up where nothing is in flight: the same crew on the finished rung, **its keeping netted** at
+    /// that rung's bill. `0` at the top of the branch. The compose sheet's *once sown / once tended*.
+    pub next_rung_take: f32,
+    /// **The hands this crew would spend keeping the finished rung**, fractional.
+    pub next_rung_keep_hands: f32,
 }
 
 /// The answer to [`ForageCrewTakeQuery`].
@@ -3035,6 +3041,8 @@ impl QueryReplyEnvelope {
                             workers: row.workers,
                             take: row.take,
                             keep_hands: row.keep_hands,
+                            next_rung_take: row.next_rung_take,
+                            next_rung_keep_hands: row.next_rung_keep_hands,
                         })
                         .collect(),
                 })
@@ -3147,6 +3155,8 @@ impl QueryReplyEnvelope {
                             workers: row.workers,
                             take: row.take,
                             keep_hands: row.keep_hands,
+                            next_rung_take: row.next_rung_take,
+                            next_rung_keep_hands: row.next_rung_keep_hands,
                         })
                         .collect(),
                 })
@@ -3586,6 +3596,8 @@ mod tests {
                     workers: 3,
                     take: 1.75,
                     keep_hands: 0.5,
+                    next_rung_take: 0.6,
+                    next_rung_keep_hands: 2.25,
                 }],
             }),
         };

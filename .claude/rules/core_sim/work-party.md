@@ -331,6 +331,16 @@ that crew** (`forecast_query::answer_forage_crew_take` asks it per crew), so the
 one-crew quote are one arithmetic. Seat-gated like the other faction-bearing questions. Pinned by
 `forage_cultivation::a_patchs_crew_curve_is_the_single_crew_answer_at_every_size`.
 
+**Each row also carries `next_rung_take` / `next_rung_keep_hands`** (proto 4 / 5): the same crew on
+the patch once the rung in flight is finished — the next rung up where nothing is in flight — with
+**that rung's keeping netted** (`forecast_query::patch_once_raised`: the meter seated at the rung's
+top on a clone, `K` re-struck at the rung's gain, the bill re-struck at the finished rung). `0` at the
+top of the branch. It is the compose sheet's *once sown / once tended* figure.
+`ForagePatchState.fieldYield` / `tendedYield` are **not** that figure and must not stand in for it:
+they are the rung's crew-blind payoff (`forage::rung_payoff`), so a crew too small to keep a Field
+read `12.48` beside a sheet whose own keeping left it nothing. Pinned beside the next-turn quote by
+`server::tests::a_lapsed_fields_quote_is_what_the_turn_pays_and_once_sown_nets_the_fields_keeping`.
+
 ## Every exit brings everything home, through ONE settle step
 
 **A caravan that ends early must not lose what is on the road.** `systems::stand_down_party` is the

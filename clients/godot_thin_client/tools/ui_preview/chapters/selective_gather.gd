@@ -27,7 +27,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 61
+const EXPECTED_CHECKPOINTS := 72
 
 ## **NEEDLES FOR RETIRED STRINGS, KEPT SO THEY STAY RETIRED.** The forage side of the chip row's
 ## consequence line is gone, all three sentences of it: two restated the selection the chips directly
@@ -44,6 +44,19 @@ const RETIRED_NOTE_FORAGE_LAST_PLANT := "A gather must carry something home"
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const ForageFx := preload("res://tools/ui_preview/fixtures_forage.gd")
+const RungFx := preload("res://tools/ui_preview/fixtures_rung.gd")
+
+## **THE SOW IN FLIGHT ON COMMITTED GROUND** — the playtest sheet (Rushford, Harvest at (44,24)): a
+## Tended Patch already committed to Wild Emmer, its Field meter at 94%.
+const SOW_IN_FLIGHT_METER := 0.94
+const SOW_IN_FLIGHT_PERCENT := 94
+const COMMITTED_CROP_SPECIES := "wild_emmer"
+const COMMITTED_CROP_NAME := "Wild Emmer"
+## What the line must read, spelled out rather than composed through the format under test.
+const COMMITTED_CROP_LINE := "Committed to Wild Emmer — sowing 94%"
+## The two halves of the shipped defect, asserted absent: the false claim and the blank crop name.
+const RETIRED_NOTHING_PICKED := "Nothing picked"
+const BLANK_NAME_TAIL := "committed to ."
 const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
 const Readout := preload("res://tools/ui_preview/readouts.gd")
@@ -359,6 +372,40 @@ func _sheet() -> Node:
 
 
 ## Every species chip on the open sheet, in render order.
+## ⛔ **A SOW IN FLIGHT ON COMMITTED GROUND NAMES ITS CROP.** The crop row read *"Nothing picked —
+## this ground would be committed to ."*: the ground was already committed, so the composition sends
+## no crop and the resolver answers `""`, and the default line formatted that blank. "Nothing picked"
+## was false besides — the crop was chosen turns ago. The line states the committed crop and how far
+## the rung in flight has got, the chip of that crop is lit, and neither half of the defect remains.
+func _assert_committed_ground_names_its_crop() -> void:
+	var tile := ForageFx.sowing_tile_fixture()
+	tile["patch_field_progress"] = SOW_IN_FLIGHT_METER
+	tile["patch_committed_species"] = COMMITTED_CROP_SPECIES
+	tile["patch_committed_display_name"] = COMMITTED_CROP_NAME
+	tile["patch_composition"] = [
+		{"species": COMMITTED_CROP_SPECIES, "role": "staple", "display_name": COMMITTED_CROP_NAME,
+			"share": 1.0, "can_cultivate": true, "can_sow": true}]
+	tile = RungFx.stamp_patch(BaseFx.price_plant_build(tile), HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	h._hud._drawercompose.close_compose_sheet()
+	h._hud._compose.reset_forage_source()
+	h._show_tile(tile)
+	h._compose_forage(tile)
+	await h._settle()
+	await h._save("forage_take_sow_committed")
+	h._assert_hud("committed ground — the crop line names the crop and the Sow's progress (\"%s\")"
+			% COMMITTED_CROP_LINE,
+		_sheet_says(COMMITTED_CROP_LINE))
+	h._assert_hud("…and never says nothing was picked, nor leaves the crop name blank",
+		not _sheet_says(RETIRED_NOTHING_PICKED) and not _sheet_says(BLANK_NAME_TAIL))
+	h._assert_hud("…and the committed crop's chip is the lit one (%s)" % str(_chip_states()),
+		_chip_states().get(COMMITTED_CROP_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED)
+	h._assert_hud("…and the meter really is mid-Sow, or the claims are about another state (%d%%)"
+			% HudFormat.progress_percent(SourceForecast.improvement_progress(tile,
+				HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_SOW)),
+		HudFormat.progress_percent(SourceForecast.improvement_progress(tile,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_SOW))
+			== SOW_IN_FLIGHT_PERCENT)
+
 func _chips() -> Array:
 	var sheet: Node = _sheet()
 	if sheet == null:
@@ -815,6 +862,8 @@ func run(harness) -> void:
 		_chip_states().get(HAY_SPECIES, "") == HudFloraVocab.TAKE_STATE_SELECTED
 			and _chip_states().get(UNQUOTED_SPECIES, "")
 				== HudFloraVocab.TAKE_STATE_UNSELECTED)
+
+	await _assert_committed_ground_names_its_crop()
 
 	# Hand the reference band back, so a chapter appended after this starts where every other one does.
 	h._hud._drawercompose.close_compose_sheet()

@@ -70,7 +70,9 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         QueryPayload::HuntTripForecast(ask) => answer_hunt_trip_forecast(world, ask),
         QueryPayload::DenialRaidForecast(ask) => answer_denial_raid_forecast(world, ask),
         QueryPayload::HuntCrewTake(ask) => answer_hunt_crew_take(world, ask),
-        QueryPayload::WorkPartyForecast(ask) => answer_work_party_forecast(world, ask),
+        QueryPayload::WorkPartyForecast(ask) => {
+            answer_work_party_forecast(world, ask, RungAsked::AsItStands)
+        }
         QueryPayload::DepositCrewTake(ask) => answer_deposit_crew_take(world, ask),
         QueryPayload::ForageCrewTake(ask) => answer_forage_crew_take(world, ask),
         // **Answered by the server, from disk.** The slot list is a question about the filesystem,
@@ -832,16 +834,25 @@ fn answer_forage_crew_take(
             workers,
             floor: ask.floor,
         };
-        match answer_work_party_forecast(world, &one) {
-            QueryReply::WorkPartyForecast(answer) => {
-                per_crew.push(sim_runtime::ForageCrewTakeRow {
-                    workers,
-                    take: answer.take_next_turn,
-                    keep_hands: answer.keep_hands,
-                })
-            }
-            refusal => return refusal,
-        }
+        let (take, keep_hands) =
+            match answer_work_party_forecast(world, &one, RungAsked::AsItStands) {
+                QueryReply::WorkPartyForecast(answer) => (answer.take_next_turn, answer.keep_hands),
+                refusal => return refusal,
+            };
+        // **AND ONCE THE RUNG IS FINISHED** — the same crew's take and keeping on the finished
+        // rung, its bill netted exactly as today's is: the compose sheet's *once sown* figure.
+        let (next_rung_take, next_rung_keep_hands) =
+            match answer_work_party_forecast(world, &one, RungAsked::NextRung) {
+                QueryReply::WorkPartyForecast(answer) => (answer.take_next_turn, answer.keep_hands),
+                refusal => return refusal,
+            };
+        per_crew.push(sim_runtime::ForageCrewTakeRow {
+            workers,
+            take,
+            keep_hands,
+            next_rung_take,
+            next_rung_keep_hands,
+        });
     }
     QueryReply::ForageCrewTake(sim_runtime::ForageCrewTakeReply { per_crew })
 }
@@ -1018,7 +1029,45 @@ const MAX_CREW_TAKE_WORKERS: u32 = 1_000;
 ///
 /// It fights at the **base** tuning, like the crew-take curve and unlike the raid sheet: a party is
 /// the band's own people hunting their range, not a detached expedition.
-fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -> QueryReply {
+/// **WHICH RUNG A FORAGE ASK IS PRICED ON** — the patch as it stands, or as it will stand once the
+/// rung in flight (or, with none, the next rung up) is finished: the compose sheet's *once sown /
+/// once tended* figure ([`sim_runtime::ForageCrewTakeRow::next_rung_take`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RungAsked {
+    AsItStands,
+    NextRung,
+}
+
+/// **THE PATCH ONCE THE RUNG IT IS CLIMBING IS FINISHED** — the rung in flight, or the next one up
+/// where nothing is in flight, seated at that rung's top on a clone, at the capacity the rung buys
+/// ([`crate::forage::patch_carrying_capacity`]) and with its keeping bill re-struck at that rung
+/// (the stamp cleared, so the bill is the finished rung's, not today's interpolated one). The stand
+/// itself is unchanged: finishing a rung does not grow a crop. `None` at the top of the branch.
+fn patch_once_raised(
+    patch: &crate::forage::ForagePatch,
+    ladder: &crate::intensification::LadderConfig,
+    forage: &crate::labor_config::ForageLaborConfig,
+    tile_capacity: Option<f32>,
+) -> Option<crate::forage::ForagePatch> {
+    let standing = patch.standing();
+    let rung = standing.raising.or_else(|| standing.held.above())?;
+    let (base, width) = crate::forage::patch_rung_span(patch, rung, ladder);
+    let mut raised = patch.clone();
+    raised.set_ladder_position(base + width, ladder);
+    raised.upkeep_demanded = None;
+    raised.carrying_capacity = crate::forage::patch_carrying_capacity(
+        crate::forage::patch_land_capacity(patch, tile_capacity),
+        &raised,
+        forage,
+    );
+    Some(raised)
+}
+
+fn answer_work_party_forecast(
+    world: &mut World,
+    ask: &WorkPartyForecastQuery,
+    rung_asked: RungAsked,
+) -> QueryReply {
     if !floor_is_valid(ask.floor) {
         return query_failure(query_error::INVALID_FLOOR);
     }
@@ -1122,6 +1171,24 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 .cloned()
             else {
                 return query_failure(query_error::UNKNOWN_PATCH);
+            };
+            // **The patch once its rung is finished**, where the ask wants that figure. A patch at
+            // the top of its branch has no rung to finish and answers nothing taken.
+            let patch = match rung_asked {
+                RungAsked::AsItStands => patch,
+                RungAsked::NextRung => {
+                    let tile_capacity = world
+                        .resource::<crate::resources::TileRegistry>()
+                        .index(tile.x, tile.y)
+                        .and_then(|entity| world.get::<crate::components::Tile>(entity))
+                        .map(|ground| crate::forage::tile_forage_capacity(&labor.forage, ground));
+                    match patch_once_raised(&patch, &ladder, &labor.forage, tile_capacity) {
+                        Some(raised) => raised,
+                        None => {
+                            return QueryReply::WorkPartyForecast(WorkPartyForecastReply::default())
+                        }
+                    }
+                }
             };
             let take = crate::components::TakeSelection::from_keys(take_species);
             (

@@ -613,6 +613,14 @@ const TAKE_ROW_LABEL_SINGLE := "Crop"
 const TAKE_NOTE_CULTIVATE_NARROWED_FORMAT := "%s weeds the rest out of the ground."
 const TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT := "Nothing picked — this ground would be committed to %s."
 
+# **THE GROUND IS ALREADY COMMITTED — say to what, and how far the rung in flight has got.** A patch
+# that already carries a crop (`patch_committed_species`) sends no crop on the next commit, so the
+# resolver answers `""` for it — and the DEFAULT line above, handed that `""`, read *"Nothing picked —
+# this ground would be committed to ."* on a Tended Patch of Wild Emmer 94% into its Sow. Reported
+# from play. "Nothing picked" was false as well as blank: the crop was chosen turns ago.
+# `%s` the crop's display name, `%s` the rung's participle (lowercased), `%d` the rung's meter.
+const TAKE_NOTE_COMMITTED_FORMAT := "Committed to %s — %s %d%%"
+
 # **THE NUMBERS FOR A NARROWED CREW ARE COMPOSED FROM THE WIRE'S PER-SPECIES RATES.**
 # `provisionsPerBiomass` on the patch is the BASKET AVERAGE, which is why this sheet once sat still
 # when a chip was ticked; `compositionProvisionsPerBiomass` and its fodder twin state the same

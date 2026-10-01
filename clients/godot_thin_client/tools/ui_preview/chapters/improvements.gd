@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 210
+const EXPECTED_CHECKPOINTS := 213
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -131,6 +131,13 @@ const FERAL_FIELD_METER := 0.9997586
 ## `HudFormat.progress_percent`, because that is the producer under test and an expectation asked of
 ## it could only agree with itself.
 const FERAL_FIELD_PERCENT := 99
+
+## The retired face's word, asserted ABSENT from the unqueued row — a chapter literal because the
+## const that spelled it is gone with it.
+const RETIRED_LAPSED_WORD := "Lapsed"
+
+## A meter losing work on the unqueued rung — any positive rate; the mark's trigger is the sign.
+const UNQUEUED_ROT_PER_TURN := 0.5
 
 ## …and the percent a GENUINELY complete meter still prints, which is the half that makes flooring
 ## safe. `clampf` pins a source publishing `>= 1.0` to exactly 1.0, so `100%` stays reachable — at a
@@ -308,7 +315,7 @@ func _rung_value_markup(value: String, hex: String) -> String:
 ##
 ## **THE ENTRY IS AT THE HEAD OF A QUEUE, and that is now part of what the shape MEANS.** `-1` forks
 ## on the queue position: an entry still in a queue whose gate refuses is `⚠ Stalled`, and the same
-## `-1` on a source no band has queued is `⚠ Lapsed` (`_rung_value_lapsed` below). A dict that left
+## `-1` on a source no band has queued is `N% built · not queued` (`_rung_value_lapsed` below). A dict that left
 ## the position absent would default to the sentinel and quietly move every claim here onto the other
 ## side of that fork.
 func _rung_value_for_turns(turns: int) -> String:
@@ -1698,12 +1705,34 @@ func run(harness) -> void:
 	# source to 1.0, so `100%` is still reachable — at a true completion and nowhere else.
 	h._assert_hud("…while a genuinely complete meter still prints 100% — the clamp is what allows it",
 		HudFormat.progress_percent(SourceForecast.BUILD_METER_FULL) == COMPLETE_METER_PERCENT)
-	# **THE WORD, ON THE CARD, IN THE HAZARD INK.** It is a loss the player has already taken, so it
-	# wears the mark; the tint falls out of the mark rather than being painted on separately.
-	var lapsed_value := HudSelectionVocab.RUNG_LAPSED_FORMAT % [
-		HudSelectionVocab.RUNG_HAZARD_GLYPH, FERAL_FIELD_PERCENT]
-	h._assert_hud("the stranded Field row states LAPSED, marked and in WARN ink",
-		feral_row.contains(_rung_value_markup(lapsed_value, HudStyle.WARN_HEX)))
+	# **THE FACTS, ON THE CARD, IN THE NEUTRAL INK.** It read `⚠ Lapsed 99%`, a word nobody could
+	# read and a mark on a meter that is not moving (this fixture's rot is zero). It states how much is
+	# built and that no band is building it; the mark is the ROTTING twin's alone (below).
+	var lapsed_value := HudSelectionVocab.RUNG_UNQUEUED_FORMAT % FERAL_FIELD_PERCENT
+	h._assert_hud("the stranded Field row states `%s`, unmarked and in neutral ink" % lapsed_value,
+		feral_row.contains(_rung_value_markup(lapsed_value, HudStyle.INK_HEX)))
+	h._assert_hud("…and the retired word and its mark are gone from that row",
+		not Readout.detail_excerpt(feral_row, HudFloraVocab.FIELD_ROW).contains(RETIRED_LAPSED_WORD)
+			and not Readout.detail_excerpt(feral_row, HudFloraVocab.FIELD_ROW).contains(
+				HudSelectionVocab.RUNG_HAZARD_GLYPH))
+	# **THE MARK IS EARNED BY ROT, AND ONLY BY ROT.** The same patch with its meter losing work: the
+	# rotting twin, marked, in the DANGER ink every meter going backwards wears, and its own hover.
+	var rotting := feral.duplicate(true)
+	rotting[HudComposeVocab.FORAGE_FORECAST_PREFIX + SourceForecast.FORECAST_METER_ROT_KEY] = \
+		UNQUEUED_ROT_PER_TURN
+	var rotting_value := DetailFormat.rung_row_value(rotting, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		SourceForecast.IMPROVEMENT_SOW, SourceForecast.SOURCE_KIND_FORAGE,
+		DetailFormat.field_built_label(), false, FERAL_FIELD_METER, SourceForecast.BUILD_CREW_NONE,
+		SourceForecast.IMPROVEMENT_NONE)
+	var rotting_want := HudSelectionVocab.RUNG_UNQUEUED_ROTTING_FORMAT % [
+		HudSelectionVocab.RUNG_HAZARD_GLYPH, FERAL_FIELD_PERCENT,
+		HudSelectionVocab.RUNG_ROTTING_PHRASE]
+	h._assert_hud("…while the same rung LOSING work wears the mark, red (got \"%s\")" % rotting_value,
+		rotting_value == rotting_want
+			and DetailFormat.rung_value_hex(rotting_value, "") == HudStyle.DANGER_HEX)
+	h._assert_hud("…and its hover says it is losing work, where the stable one's does not",
+		_lapsed_hover(rotting_value) == HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP
+			and _lapsed_hover(lapsed_value) == HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP)
 	# **AND THE NEGATIVE THAT NAMES THE DEFECT.** `⚠ Stalled 100%` is exactly what shipped, so both
 	# halves of it must be absent from this frame.
 	h._assert_hud("…and NOT *Stalled*, which names builders standing on it and a gate that refuses",
@@ -1724,7 +1753,7 @@ func run(harness) -> void:
 	# **THE HOVER CARRIES THE SENTENCE, the mark being two words on a ~245px card.** It has to say the
 	# work survived and where the click is, or the word names a loss without a remedy.
 	h._assert_hud("the lapsed row's hover states the part-built rung, the banked work and the re-queue",
-		_lapsed_hover(lapsed_value) == HudSelectionVocab.RUNG_LAPSED_TOOLTIP)
+		_lapsed_hover(lapsed_value) == HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP)
 	# ⛔ **AND IT NAMES NO CAUSE, which is a claim about every row this hover is registered on.**
 	# `DetailFormat.note_lapsed_hover` mounts it on `HUSBANDRY_ROW` and `CORRAL_ROW` as well as the two
 	# plant rows, and it opened *"The ground went feral…"* — ground a HERD does not have. The three
@@ -1732,8 +1761,10 @@ func run(harness) -> void:
 	# where nothing went feral at all. The word `Lapsed` is right in all three; a cause would be a
 	# guess, so the sentence asserts none.
 	h._assert_hud("…and it blames no cause it cannot know — no ground, no feralness, on a hover herds share",
-		not HudSelectionVocab.RUNG_LAPSED_TOOLTIP.to_lower().contains("feral")
-			and not HudSelectionVocab.RUNG_LAPSED_TOOLTIP.to_lower().contains("ground"))
+		not HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP.to_lower().contains("feral")
+			and not HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP.to_lower().contains("ground")
+			and not HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP.to_lower().contains("feral")
+			and not HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP.to_lower().contains("ground"))
 	h._assert_hud("…and a row that is NOT lapsed registers no such hover",
 		_lapsed_hover(_rung_value_for_turns(SourceForecast.BUILD_TURNS_NO_ESTIMATE)) == "")
 

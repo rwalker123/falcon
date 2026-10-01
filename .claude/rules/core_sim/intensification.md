@@ -1144,7 +1144,17 @@ upkeep_supplied += keep_hands × keep_rate          // stamped on the source, su
   keeping was issued.
 - **A forecast reads the same split** — `systems::prospective_keep_hands(equipment, band_kit, rung,
   demand, crew)` is the pre-settlement reading the seed and the previews use, so a quote on the
-  hands the keeping leaves is the take the turn pays. `fauna::herd_crew_keeping` /
+  hands the keeping leaves is the take the turn pays. ⛔ **It is the turn's own split, uncontended**:
+  the hands planned as if equipped, issued the tools the band holds for them
+  (`prospective_keeping_issue`), the keeping struck at the rate those units give
+  (`keeping_rate_from`). It was the shed's all-or-nothing reading (`keeping_need_the_band_can_arm`),
+  which prices every keeper bare when the band holds fewer tools than the plan, while the turn issues
+  what it has and arms that many. Reported on a lapsed Field with one hoe against a 3.9 bill: the
+  sheet quoted 0.15 food at crew 4 (3.9 keeping) and the turn paid 0.32 (3.2 keeping) — and the
+  take-kit claim, which reads this same function, left the turn's spare gatherers basketless; it
+  pays 1.00 now and the quote says 1.00. The SHED keeps the all-or-nothing reading on purpose (it
+  must never thin a hand the keeping needs). Pinned by `server::tests::
+  a_lapsed_fields_quote_is_what_the_turn_pays_and_once_sown_nets_the_fields_keeping`. `fauna::herd_crew_keeping` /
   `forage::patch_crew_keeping` resolve a site's `(rung, bill)` once for every reader, and
   `fauna::crew_keep_hands` turns a crew into its keeping hands. **Every compose-sheet quote nets it**:
   the hunt crew curve's row `w` takes with `w − keep_hands(w)` (`HuntCrewCurveInputs::keeping`, which

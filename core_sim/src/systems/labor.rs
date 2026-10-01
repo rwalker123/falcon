@@ -2397,13 +2397,21 @@ fn keeping_need_the_band_can_arm(
     toe_worker_need(rate, demand)
 }
 
-/// **THE HANDS A CREW OF `crew` WOULD SPEND KEEPING ONE SITE** — the assign-time seed's reading
-/// (`docs/plan_site_crews.md` §2.1), so a quote for a kept site is struck on the hands left to
-/// collect with, as the turn's take is.
+/// **THE HANDS A CREW OF `crew` WOULD SPEND KEEPING ONE SITE** — the assign-time seed's and every
+/// quote's reading (`docs/plan_site_crews.md` §2.1), so a quote for a kept site is struck on the
+/// hands left to collect with, as the turn's take is.
 ///
-/// It is the pre-settlement reading ([`keeping_need_the_band_can_arm`]) capped at the crew, for the
-/// whole of the site's `demand`: a seed prices one band's row and cannot see the other bands'
-/// crews the turn shares a bill across.
+/// ⛔ **IT IS THE TURN'S OWN SPLIT, UNCONTENDED** — [`site_keeping`] run on the one site: the hands
+/// planned as if equipped, issued the tools the band holds for them
+/// ([`prospective_keeping_issue`]), and the keeping struck at the rate those units give
+/// ([`keeping_rate_from`]). It was the shed's all-or-nothing reading
+/// ([`keeping_need_the_band_can_arm`]): a band holding fewer tools than the plan priced *every*
+/// keeper bare, while the turn issues the tools it has and arms that many. Reported from play on a
+/// patch whose band held one hoe for a bill of 3.9: the sheet quoted `0.15` food next turn at crew 4
+/// (every keeper bare, 3.9 keeping) and the turn paid `0.32` (one keeper armed, 3.2 keeping).
+///
+/// It prices the whole of the site's `demand` and the band's whole stock: a quote prices one band's
+/// row and cannot see the other bands' crews the turn shares a bill across.
 pub fn prospective_keep_hands(
     equipment: &crate::equipment_config::EquipmentConfig,
     band_kit: &BandEquipment,
@@ -2419,16 +2427,19 @@ pub fn prospective_keep_hands(
         demand,
     )
     .min(crew as f32);
-    keeping_need_the_band_can_arm(
-        equipment,
-        band_kit,
-        &toe,
-        branch,
-        Some(&key),
-        demand,
-        planned,
-    )
-    .min(crew as f32)
+    let issue = prospective_keeping_issue(equipment, band_kit, rung, demand, crew);
+    let fill = ToeFill {
+        hands: planned,
+        need: planned,
+        kit: toe.kit().clone(),
+        required: Vec::new(),
+        units: issue
+            .into_iter()
+            .map(|(item, units)| (std::sync::Arc::from(item.as_str()), units))
+            .collect(),
+    };
+    let rate = keeping_rate_from(equipment, band_kit, &fill, branch, Some(&key));
+    toe_worker_need(rate.per_worker, demand).min(crew as f32)
 }
 
 /// **THE KEEPING TOOLS A CREW OF `crew` WOULD BE ISSUED ON ONE SITE** — per tool its rung serves,

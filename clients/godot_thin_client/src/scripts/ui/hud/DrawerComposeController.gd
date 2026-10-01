@@ -1627,12 +1627,18 @@ func _wordless_take_model(notes: Array[String]) -> Dictionary:
 ## **The chips themselves do not**: both modes draw one selected pill per chosen plant, because that
 ## is the whole of what a chip has to say, and the difference between them — picking one clears the
 ## other — is a thing the pills already show as it happens.
+##
+## `ground_committed` is the crop the PATCH is already committed to (`patch_committed_species`), `""`
+## on ground that is not; `rung_percent` is the composed rung's own meter. On committed ground the lit
+## chip and the line are that crop: the composition sends none there, so `_compose.forage_species()`
+## is `""` and would light nothing and name nothing.
 func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
         selection: PackedStringArray, single_pick: bool,
-        crop_is_default: bool, crop_rung: String, rebuild: Callable) -> void:
+        crop_is_default: bool, crop_rung: String, rebuild: Callable,
+        ground_committed: String, rung_percent: int) -> void:
     if basket.is_empty():
         return
-    var committed := _compose.forage_species()
+    var committed := ground_committed if ground_committed != "" else _compose.forage_species()
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_child(HudWidgets.alloc_section_label(
@@ -1654,7 +1660,7 @@ func _mount_take_chips(target: VBoxContainer, basket: Array[Dictionary],
     # zero-height hint still spends the block's separation, so the chips would sit over a gap that
     # nothing draws in. `""` is the whole of the forage answer now (`_take_consequence_note`).
     var consequence := _take_consequence_note(single_pick, crop_is_default, crop_rung, committed,
-        basket)
+        basket, ground_committed != "", rung_percent)
     if consequence != "":
         block.add_child(HudWidgets.alloc_hint_label(consequence))
     # **THE IDLE WARNING IS NOT WRITTEN HERE, AND NOT BECAUSE IT WAS DROPPED.** It is the crew
@@ -1732,10 +1738,18 @@ func _take_chip_state(species: String, selection: PackedStringArray, single_pick
 ## sentence — shown when the last remaining plant was unticked — was verbosity over a fact a player
 ## discovers by pressing the chip. The refusal is still ENFORCED in `ComposeState`; it is simply
 ## silent, and the chips are not greyed to announce it.
+##
+## ⛔ **AN EMPTY CROP NAMES NOTHING, AND NO LINE IS DRAWN AROUND IT.** Each branch formats a crop name
+## into a sentence; a `""` there renders a sentence ending on a blank (`…committed to .`), so a branch
+## with no name to state answers `""` and the sheet mounts no line.
 func _take_consequence_note(single_pick: bool, crop_is_default: bool,
-        crop_rung: String, committed: String, basket: Array[Dictionary]) -> String:
-    if not single_pick:
+        crop_rung: String, committed: String, basket: Array[Dictionary],
+        ground_is_committed: bool, rung_percent: int) -> String:
+    if not single_pick or committed == "":
         return ""
+    if ground_is_committed:
+        return HudFloraVocab.TAKE_NOTE_COMMITTED_FORMAT % [_take_display_name(committed, basket),
+            HudComposeVocab.improvement_running_label(crop_rung).to_lower(), rung_percent]
     if crop_is_default:
         return HudFloraVocab.TAKE_NOTE_CULTIVATE_DEFAULT_FORMAT % _take_display_name(
             committed, basket)
@@ -3970,7 +3984,10 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     _mount_take_chips(target, basket, take_selection, single_pick,
         crop_is_default, crop_rung,
         func() -> void:
-            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
+        committed_species if is_committed else "",
+        HudFormat.progress_percent(SourceForecast.improvement_progress(tile_info,
+            HudComposeVocab.FORAGE_FORECAST_PREFIX, crop_rung)))
     # **THE WORK PARTY, PAST THE APRON** — the hunt sheet's section on the plant web, asked with the
     # take selection the chips above just stated (empty = the whole basket), so narrowing the take
     # re-prices what arrives home. It is AFTER the chips because the take is part of its question.

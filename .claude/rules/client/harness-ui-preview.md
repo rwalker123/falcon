@@ -3467,3 +3467,23 @@ was being priced on the wire's number, and the sheet now reads the overlay's.
 claims, and as the map list's fails the map claim alone.
 
 **A clean run is 460 frames / 2467 `PASS`, exit 0 — RE-MEASURED windowed.**
+
+## The unqueued rung and the committed crop line
+
+**`improvements.gd`'s feral-Field block** asserts the row reads `99% built · not queued`, unmarked
+and in neutral ink, with the retired `Lapsed` word and its mark absent. Beside it, the same patch with
+`meter_rot_per_turn` set asserts the rotting twin: marked, red, and its own hover. The stable and the
+rotting readings are a pair, since a face that always or never marks passes one of them.
+`EXPECTED_CHECKPOINTS` is **213**, re-measured.
+
+**`selective_gather.gd`'s `forage_take_sow_committed`** is the playtest sheet: a Tended Patch
+committed to Wild Emmer with its Sow at 94%. The crop line must read `Committed to Wild Emmer — sowing
+94%`, spelled out in the chapter. It must not say `Nothing picked` or leave the name blank, the
+committed crop's chip must be the lit one, and the meter is asserted mid-Sow as a precondition.
+`EXPECTED_CHECKPOINTS` is **72**, re-measured.
+
+**Sabotage-verified.** Passing `""` as the ground's crop fails the line and the lit-chip claims. The
+blank-name negative stays green, because an empty name now draws no line at all. Marking every
+unqueued rung fails the neutral-ink and no-mark claims.
+
+**A clean run is 461 frames / 2474 `PASS`, exit 0 — RE-MEASURED windowed.**

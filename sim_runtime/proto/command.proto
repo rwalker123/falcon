@@ -1070,6 +1070,12 @@ message ForageCrewTakeRow {
   float take = 2;
   // THE HANDS THIS CREW SPENDS KEEPING THE PATCH, fractional - `workers - keep_hands` gather.
   float keep_hands = 3;
+  // NEXT TURN'S TAKE ONCE THE RUNG IN FLIGHT IS FINISHED (or the next rung up where nothing is in
+  // flight), in provisions: the same crew on the finished rung, ITS KEEPING NETTED at that rung's
+  // bill. The compose sheet's "once sown / once tended" figure. 0 at the top of the branch.
+  float next_rung_take = 4;
+  // The hands this crew would spend keeping the finished rung, fractional.
+  float next_rung_keep_hands = 5;
 }
 
 // The answer to `ForageCrewTakeQuery`.

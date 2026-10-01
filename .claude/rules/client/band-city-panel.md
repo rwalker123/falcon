@@ -7171,7 +7171,7 @@ ring caret's offer test.
 title `Label` that was already there, so the strip's reservation does not move; the label CLIPS, this
 zone's standing rule, and the clause is appended rather than given its own child precisely so it is
 the first thing to go. `DetailFormat.standing_rung_face` routes through **`rung_row_value`**, the same
-fork the tile card's rung row goes through — so the hazard mark, `slipping`/`drifting`, `Lapsed`,
+fork the tile card's rung row goes through — so the hazard mark, `slipping`/`drifting`, `not queued`,
 `Held`, `Reverting` and the floored percent all arrive already decided, and the two surfaces cannot
 word one rung differently. It takes **no `declared_rung` and no `build_crew`**: both are countdown
 terms and a STANDING rung returns on `rung_row_value`'s first branch, so accepting them would

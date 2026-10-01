@@ -7923,6 +7923,15 @@ gatherer leaves the plants nobody picked standing, a cultivator weeds them out. 
 cultivate-with-nothing-picked line NAMES the crop the game would settle on, because silence there is
 the game choosing for the player without saying so.
 
+⛔ **ON GROUND ALREADY COMMITTED, THE LINE STATES THE COMMITMENT.** `Committed to Wild Emmer —
+sowing 94%` (`TAKE_NOTE_COMMITTED_FORMAT`): the crop off `patch_committed_species`, the participle and
+meter of the rung in flight. A committed patch sends no crop on the next commit, so
+`_resolve_crop_selection` answers `""` there — and the default line, handed that `""`, read *"Nothing
+picked — this ground would be committed to ."* on a Tended Patch of Wild Emmer mid-Sow. Reported from
+play; "Nothing picked" was false as well as blank. `_mount_take_chips` takes the ground's crop
+(`ground_committed`), so the lit chip is that crop too, and `_take_consequence_note` answers `""` for
+any branch with no name to format — a crop sentence never ends on a blank.
+
 **WHETHER THE CROP WAS CHOSEN OR SETTLED IS THE MODEL'S TO REMEMBER.** `resolve_forage_species`
 writes its answer back every render, so from the second render on the player's pick and the game's
 default are the same string and a before-and-after comparison reads every settled crop as a chosen

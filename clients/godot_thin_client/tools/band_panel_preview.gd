@@ -22517,12 +22517,11 @@ func _assert_repair_card_states_no_countdown() -> void:
 		SourceForecast.IMPROVEMENT_CULTIVATE, SourceForecast.SOURCE_KIND_FORAGE,
 		DetailFormat.cultivation_built_label(), true, REPAIR_FULL_PROGRESS,
 		SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
-	# **THE SENTINEL THIS SHAPE RENDERS IS `Lapsed`, NOT `Stalled`.** The fixture's own note says it:
-	# nothing queued and no builders, which is the queue-position half of `build_sentinel_value`'s
-	# `-1` fork. *Stalled* is the same `-1` on an entry a band still holds, and the two want opposite
-	# remedies — clear the gate, against queue the job again.
-	var lapsed := HudSelectionVocab.RUNG_LAPSED_FORMAT % [
-		HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
+	# **THE SENTINEL THIS SHAPE RENDERS IS THE UNQUEUED FACE, NOT `Stalled`.** The fixture's own note
+	# says it: nothing queued and no builders, which is the queue-position half of
+	# `build_sentinel_value`'s `-1` fork. *Stalled* is the same `-1` on an entry a band still holds,
+	# and the two want opposite remedies — clear the gate, against queue the job again.
+	var lapsed := HudSelectionVocab.RUNG_UNQUEUED_FORMAT % percent
 	var stalled := HudSelectionVocab.RUNG_STALLED_FORMAT % [
 		HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
 	_assert_band_panel("the eroded rung's card row states its BADGE, not the sim's `-1` (got \"%s\")"

@@ -19184,6 +19184,166 @@ mod tests {
         );
     }
 
+    /// How far along the Field leg the reported patch's meter stood — `94%` on the tile card.
+    const LAPSED_FIELD_FRACTION: f32 = 0.94;
+    /// A Field leg seated at its top: the finished rung the once-sown figure is quoted at.
+    const FINISHED_FIELD_FRACTION: f32 = 1.0;
+    /// The reported crew on the patch.
+    const LAPSED_CREW: u32 = 4;
+    /// The band held one hoe — fewer than its keeping plans for, more than none.
+    const ONE_HOE: u32 = 1;
+    /// The band the lapsed-Field scene answers its queries for.
+    const LAPSED_BAND_ID: u64 = 7;
+    /// The kit the forage row resolves when the command names none.
+    const GATHERING_KIT: &str = "gathering";
+
+    /// **A TENDED PATCH CARRYING A FIELD LEG AT `fraction`, NO QUEUE ENTRY, WORKED BY A BAND WITH ONE
+    /// HOE** — the Rushford scene: the Field was sown and went feral, so its meter stands part-built
+    /// with nothing queued, and the keeping bills the interpolated Field rate. The patch stands at its
+    /// capacity so the take is labor-bound and regrowth moves nothing across the turn.
+    fn lapsed_field_scene(fraction: f32) -> (bevy::prelude::App, Entity, UVec2) {
+        let mut app = build_test_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        let tile = seed_tile_grid(&mut app, coord);
+        let land = forage_carrying_capacity(&app);
+        seed_patch_with_biomass(&mut app, coord, land, EcologyPhase::Thriving);
+        // **The tile is one tender-load**, so the keeping bills the ladder's own per-load rates —
+        // the reported tile's footing, where a tended patch owes 2 work and a Field 4.
+        let one_load = {
+            let mut labor = (*app.world.resource::<LaborConfigHandle>().get()).clone();
+            labor.forage.cultivation.capacity_per_tender = land;
+            labor
+        };
+        app.world
+            .resource_mut::<LaborConfigHandle>()
+            .replace(std::sync::Arc::new(one_load));
+        {
+            let ladder = app.world.resource::<LadderConfigHandle>().get();
+            let forage = app
+                .world
+                .resource::<LaborConfigHandle>()
+                .get()
+                .forage
+                .clone();
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).expect("the scene's patch");
+            let (base, width) = core_sim::patch_rung_span(patch, RungKey::PlantField, &ladder);
+            patch.set_ladder_position(base + width * fraction, &ladder);
+            patch.owner = Some(faction);
+            patch.carrying_capacity = core_sim::patch_carrying_capacity(land, patch, &forage);
+        }
+        let band = spawn_idle_band(&mut app, faction, tile);
+        let equipment = core_sim::EquipmentConfig::builtin();
+        let hoe_tier = equipment
+            .item("hoes")
+            .expect("the roster ships hoes")
+            .default_tier()
+            .id
+            .clone();
+        let mut ledger = BandEquipment::start_stocked_for(
+            &core_sim::EquipmentConfig::for_a_stocked_fixture(),
+            BAND_WORKING_AGE as f32,
+        );
+        ledger.restore_batches("hoes", Vec::new());
+        ledger.stock("hoes", ONE_HOE, &hoe_tier, None);
+        app.world
+            .entity_mut(band)
+            .insert((BandId(LAPSED_BAND_ID), ledger));
+        assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, LAPSED_CREW);
+        (app, band, coord)
+    }
+
+    /// The forage crew-take curve the compose sheet asks, at crews `1..=LAPSED_CREW`.
+    fn lapsed_field_curve(
+        app: &mut bevy::prelude::App,
+        coord: UVec2,
+    ) -> Vec<sim_runtime::ForageCrewTakeRow> {
+        match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::ForageCrewTake(sim_runtime::ForageCrewTakeQuery {
+                faction_id: 0,
+                band_id: LAPSED_BAND_ID,
+                x: coord.x,
+                y: coord.y,
+                take_species: Vec::new(),
+                kit_id: GATHERING_KIT.to_string(),
+                floor: SUSTAIN_FLOOR,
+                max_workers: LAPSED_CREW,
+            }),
+        ) {
+            QueryReply::ForageCrewTake(reply) => reply.per_crew,
+            other => panic!("the forage crew ask must be answered with a curve: {other:?}"),
+        }
+    }
+
+    /// ⛔ **THE SHEET'S NEXT TURN IS WHAT THE TURN PAYS, AND ITS ONCE SOWN NETS THE FIELD'S KEEPING**
+    /// (reported from play on Rushford's lapsed Field). One hoe against a keeping plan that wants
+    /// several: the turn issues the hoe and keeps with one armed hand and the rest bare. The quote
+    /// priced every keeper bare — the shed's all-or-nothing reading — so it kept with more hands and
+    /// took less than the turn did, and the take-kit claim struck on that reading left the turn's
+    /// spare gatherers basketless. Now:
+    ///
+    /// - the quote's keep hands and take at crew 4 are the turn's own;
+    /// - the once-sown figure at crew 4 is the take the same crew makes on the FINISHED Field — its
+    ///   whole bill netted — not the rung's crew-blind payoff, so a crew that cannot cover the Field's
+    ///   keeping is quoted nothing.
+    #[test]
+    fn a_lapsed_fields_quote_is_what_the_turn_pays_and_once_sown_nets_the_fields_keeping() {
+        /// Float slack on hand counts and the fixed-point food store.
+        const QUOTE_EPSILON: f32 = 1e-3;
+        let crew = LAPSED_CREW as usize - 1;
+        let (mut app, band, coord) = lapsed_field_scene(LAPSED_FIELD_FRACTION);
+        let quote = lapsed_field_curve(&mut app, coord)[crew].clone();
+        resolve_labor(&mut app);
+        let (kept_with, tools_short) = {
+            let patch = app.world.resource::<ForageRegistry>().patch(coord).unwrap();
+            (
+                patch.upkeep_hands,
+                patch.upkeep_toe.iter().any(|line| line.is_short()),
+            )
+        };
+        assert!(
+            tools_short && kept_with > 0.0 && kept_with < LAPSED_CREW as f32,
+            "fixture: one hoe leaves the keeping short of tools and a part of the crew taking \
+             (kept with {kept_with})"
+        );
+        assert!(
+            (quote.keep_hands - kept_with).abs() < QUOTE_EPSILON,
+            "the quote keeps with the turn's hands: quoted {}, the turn kept with {kept_with}",
+            quote.keep_hands
+        );
+        let paid = source_actual(&app, band);
+        assert!(
+            (quote.take - paid).abs() < QUOTE_EPSILON,
+            "next turn's quote is what the turn pays: quoted {}, paid {paid}",
+            quote.take
+        );
+
+        let (mut finished, _, finished_coord) = lapsed_field_scene(FINISHED_FIELD_FRACTION);
+        let on_the_field = lapsed_field_curve(&mut finished, finished_coord)[crew].clone();
+        assert!(
+            (quote.next_rung_take - on_the_field.take).abs() < QUOTE_EPSILON
+                && (quote.next_rung_keep_hands - on_the_field.keep_hands).abs() < QUOTE_EPSILON,
+            "once sown is the take this crew makes on the finished Field: quoted {} keeping {}, \
+             the Field gives {} keeping {}",
+            quote.next_rung_take,
+            quote.next_rung_keep_hands,
+            on_the_field.take,
+            on_the_field.keep_hands
+        );
+        assert!(
+            quote.next_rung_keep_hands > quote.keep_hands && quote.next_rung_take < quote.take,
+            "the finished Field bills more keeping than the part-built meter, so the same crew \
+             takes less once sown: {quote:?}"
+        );
+        let lone = lapsed_field_curve(&mut app, coord)[0].clone();
+        assert_eq!(
+            lone.next_rung_take, 0.0,
+            "a lone hand spends itself keeping the Field and takes nothing once sown: {lone:?}"
+        );
+    }
+
     /// **Hunt.** Same seed-before-the-turn guarantee on the animal side. The seed is the herd's
     /// **steady** sustainable rate (`hunt_forecast` drops the transient `hunt_credit` term), so it is
     /// exactly `hunt_source_yield_preview` — the two are the same forecast object, and this pins that

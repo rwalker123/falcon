@@ -1505,8 +1505,23 @@ static func rung_row_value(src: Dictionary, prefix: String, improvement: String,
             return HudSelectionVocab.RUNG_REVERTING_FORMAT % [
                 HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
         return HudSelectionVocab.RUNG_HELD_FORMAT % percent
-    return build_countdown_value(SourceForecast.build_turns_remaining(src, prefix),
-        build_crew, percent, SourceForecast.build_queue_position(src, prefix))
+    return unqueued_rung_value(src, prefix, kind, improvement, percent,
+        build_countdown_value(SourceForecast.build_turns_remaining(src, prefix),
+            build_crew, percent, SourceForecast.build_queue_position(src, prefix)))
+
+## **THE UNQUEUED RUNG'S MARK, WHERE IT IS EARNED.** `value` is the countdown face; on the unqueued
+## state it is swapped for the rotting twin when the source's meter is losing work AND that meter is
+## this rung's (`at_risk_rung`, newest first — the rung the published rot is about). Every other value
+## passes through. The rot is the sim's (`meterRotPerTurn`), never derived here.
+static func unqueued_rung_value(src: Dictionary, prefix: String, kind: String, improvement: String,
+        percent: int, value: String) -> String:
+    if value != HudSelectionVocab.RUNG_UNQUEUED_FORMAT % percent:
+        return value
+    if SourceForecast.meter_rot_per_turn(src, prefix) <= SourceForecast.NO_METER_ROT \
+            or SourceForecast.at_risk_rung(src, prefix, kind) != improvement:
+        return value
+    return HudSelectionVocab.RUNG_UNQUEUED_ROTTING_FORMAT % [HudSelectionVocab.RUNG_HAZARD_GLYPH,
+        percent, HudSelectionVocab.RUNG_ROTTING_PHRASE]
 
 ## **THE BADGE OF ONE RUNG, BY ITS IMPROVEMENT KEY** — the four `*_built_label` helpers behind one
 ## lookup, so a caller holding a rung key rather than a row can ask for its face without re-spelling
@@ -1564,10 +1579,10 @@ static func standing_rung_face(src: Dictionary, prefix: String, kind: String) ->
     return rung_row_value(src, prefix, improvement, kind, label, true, progress,
         SourceForecast.BUILD_CREW_NONE, SourceForecast.IMPROVEMENT_NONE)
 
-## **THE LAPSED ROW'S OWN SENTENCE, on the hover of the row carrying a rung nobody is building.**
-## `⚠ Lapsed 99%` is two words on a ~245px card and the state needs three facts — what the state IS,
+## **THE UNQUEUED ROW'S OWN SENTENCE, on the hover of the row carrying a rung nobody is building.**
+## `99% built · not queued` is short and the state needs three facts — what the state IS,
 ## that the banked work survives, and the one click that resumes it — so the words go where there is
-## room for them (`HudSelectionVocab.RUNG_LAPSED_TOOLTIP`, which names no CAUSE, and says there why).
+## room for them (`HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP`, which names no CAUSE, and says there why).
 ##
 ## ⛔ **IT TAKES THE COMPOSED VALUE, NEVER THE SOURCE, so the verdict is reached exactly once.**
 ## `build_sentinel_value` already forked on the countdown, the meter and the queue position; a hover
@@ -1582,9 +1597,11 @@ static func standing_rung_face(src: Dictionary, prefix: String, kind: String) ->
 ##
 ## Silent on every value that is not lapsed, and silent for a caller passing no context.
 static func note_lapsed_hover(ctx: Context, row_key: String, value: String) -> void:
-    if ctx == null or not value.contains(HudSelectionVocab.RUNG_LAPSED_WORD):
+    if ctx == null or not value.contains(HudSelectionVocab.RUNG_UNQUEUED_PHRASE):
         return
-    ctx.row_tooltips[row_key] = HudSelectionVocab.RUNG_LAPSED_TOOLTIP
+    ctx.row_tooltips[row_key] = HudSelectionVocab.RUNG_UNQUEUED_ROTTING_TOOLTIP \
+        if value.contains(HudSelectionVocab.RUNG_ROTTING_PHRASE) \
+        else HudSelectionVocab.RUNG_UNQUEUED_TOOLTIP
 
 ## **THE REMEDY, ON THE HOVER OF THE ROW THAT IS SLIPPING** — the whole of what replaced the `At risk:`
 ## row and its indented instruction. Registers `HudWorkVocab.under_kept_tooltip_for_source` against the
@@ -1884,7 +1901,7 @@ static func build_sentinel_value(turns: int, build_crew: int, percent: int,
     if turns == SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED:
         return HudSelectionVocab.RUNG_QUEUED_FORMAT % percent
     # **AND `-1` FORKS ONCE MORE, ON WHETHER ANY BAND STILL HAS THE SOURCE QUEUED** — the lapsed
-    # rung (`HudSelectionVocab.RUNG_LAPSED_FORMAT`). A build queue entry retires the turn its
+    # rung (`HudSelectionVocab.RUNG_UNQUEUED_FORMAT`). A build queue entry retires the turn its
     # destination rung completes, so a rung that then goes feral loses its meter's last sliver with
     # no entry left to carry it: work banked, `-1` on the countdown, and
     # `NOT_IN_ANY_BUILD_QUEUE` on the position. Measured on the patch at (78, 20) — sown on tick 88,
@@ -1903,8 +1920,10 @@ static func build_sentinel_value(turns: int, build_crew: int, percent: int,
     if turns == SourceForecast.BUILD_TURNS_NO_ESTIMATE:
         if percent > BUILD_PERCENT_EMPTY \
                 and queue_position == SourceForecast.NOT_IN_ANY_BUILD_QUEUE:
-            return HudSelectionVocab.RUNG_LAPSED_FORMAT % [
-                HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
+            # ⛔ **NO MARK HERE.** Nothing in these four terms says the meter is moving, and a stable
+            # part-built rung is not going wrong — `rung_row_value` adds the mark where the source's
+            # own `meterRotPerTurn` says it is losing work (`unqueued_rung_value`).
+            return HudSelectionVocab.RUNG_UNQUEUED_FORMAT % percent
         return HudSelectionVocab.RUNG_STALLED_FORMAT % [
             HudSelectionVocab.RUNG_HAZARD_GLYPH, percent]
     return ""

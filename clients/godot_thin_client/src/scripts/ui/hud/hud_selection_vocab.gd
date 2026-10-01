@@ -385,7 +385,14 @@ const RUNG_REVERTING_FORMAT := "%s Reverting %d%%"
 # is the silence this whole family exists to remove).
 const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 
-# **HAZARD: THE RUNG LAPSED — work banked, NOBODY on it, and no queue entry that could pick it up.**
+# ⛔ **THIS STATE READ `⚠ Lapsed 94%`, AND NOBODY COULD SAY WHAT THAT MEANT** — reported from play on
+# a Field 94% sown under a Tended Patch, with the maintainer unable to read it either. The word named
+# no fact a player can check, and the mark said *something is going wrong* about a meter that was
+# stable. It now states the two facts the wire carries (`94% built · not queued`), with the mark ONLY
+# where the meter is actually losing work (`meterRotPerTurn > 0`). The history below is why the state
+# has its own face at all; the word and the unconditional mark are what was retired.
+#
+# **THE RUNG NOBODY HAS QUEUED — work banked, NOBODY on it, and no queue entry that could pick it up.**
 # The sim's `-1` again, but on a source that is in no band's build queue at all
 # (`SourceForecast.NOT_IN_ANY_BUILD_QUEUE`) with a meter that is not empty. Its own word, because the
 # player has silently lost what the rung was paying and nothing will recover it until they act.
@@ -410,12 +417,22 @@ const RUNG_STALLED_FORMAT := "%s Stalled %d%%"
 # documented above as *builders are on it and the meter is not moving anyway* — a live entry whose
 # gate refuses. Nobody is on this one and no entry exists, so the two states want opposite remedies:
 # a stall wants the gate cleared, a lapse wants the job queued again.
-const RUNG_LAPSED_FORMAT := "%s Lapsed %d%%"
+#
+# ⛔ **WHETHER THE RUNG WAS ONCE FINISHED IS NOT ON THE WIRE**, so the face cannot say *Field lost*.
+# The same three conjuncts are met by a Field that went feral a hair short of full, by a cancelled
+# queue entry with work banked, and by a Sow nobody ever queued. What every one of them shares is
+# what the face states: how much is built, and that no band is building it.
+const RUNG_UNQUEUED_FORMAT := "%d%% built · not queued"
 
-# The word `RUNG_LAPSED_FORMAT` puts on the row, named once so the hover that explains the state can
-# be routed off the value the row already composed rather than re-deriving the verdict beside it —
-# the same shape `RUNG_ROTTING_PHRASE` has for the tint rule.
-const RUNG_LAPSED_WORD := "Lapsed"
+# …and the same state where the meter IS losing work every turn — the one case that earns the mark.
+# It carries `RUNG_ROTTING_PHRASE`, so `DetailFormat.rung_value_hex` paints it red as it paints every
+# meter going backwards.
+const RUNG_UNQUEUED_ROTTING_FORMAT := "%s %d%% built · not queued, %s"
+
+# The phrase both faces carry, named once so the hover that explains the state is routed off the
+# value the row already composed rather than re-deriving the verdict beside it — the same shape
+# `RUNG_ROTTING_PHRASE` has for the tint rule.
+const RUNG_UNQUEUED_PHRASE := "not queued"
 
 # **THE HOVER, because the mark is two words on a ~245px card.** It states the STATE, that the work is
 # not lost, and the one click that resumes it — the register `WORK_ROW_READY_TRACK_TOOLTIP` set for
@@ -429,7 +446,10 @@ const RUNG_LAPSED_WORD := "Lapsed"
 # conjuncts (`build_turns` at the wire's `-1`, a meter above empty, no entry) with nothing having gone
 # wrong at all. The word `Lapsed` is right in every one of them; only a cause would be a guess, so the
 # sentence states what IS and what to do and asserts nothing about how it got here.
-const RUNG_LAPSED_TOOLTIP := "This rung is part-built and no band has it queued. The work already banked is still here — re-queue the job from the work row's build face to pick it back up."
+const RUNG_UNQUEUED_TOOLTIP := "Part of this rung is built, but no band has the job queued, so nobody is building it. The work already banked stays — re-queue the job from the work row's build face to pick it back up."
+
+# The rotting twin's hover: the same three facts, plus the one that earned the mark.
+const RUNG_UNQUEUED_ROTTING_TOOLTIP := "Part of this rung is built, but no band has the job queued, so nobody is building it — and it is losing some of that work every turn. Re-queue the job from the work row's build face to pick it back up."
 
 # **NOT A HAZARD: THE SIM HAS NOT LOOKED AT THIS ENTRY YET**
 # (`SourceForecast.BUILD_TURNS_NOT_YET_ESTIMATED`, the wire's own `-5`,

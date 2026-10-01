@@ -612,7 +612,7 @@ FAILURE state leads with `HudSelectionVocab.RUNG_HAZARD_GLYPH`:
 | under the rot, staffed or not | `⚠ ∞ turns, losing ground (42%)` | the work already bought is going BACK — so it is RED, not amber |
 | built, and the keeping pool is short | `🌾 Tended 92% ⚠` | the rung is HELD and slipping, which no build crew fixes |
 | **the band's builders are ON it and its own gate refuses** | **`⚠ Blocked 96% — your builders are held here`**, over an indented remedy | **the hands are staffed and STUCK** — see below |
-| **the rung LAPSED — work banked, nobody on it, and no queue entry left** | **`⚠ Lapsed 99%`**, with the re-queue sentence on its hover | **nobody is on it at all**, so *Stalled* names the wrong situation and *Held* the wrong mood — see below |
+| **part-built, nobody on it, and no queue entry left** | **`99% built · not queued`**, unmarked; **`⚠ 99% built · not queued, losing ground`** in red where `meterRotPerTurn > 0` | **nobody is on it at all**, so *Stalled* names the wrong situation — see below |
 
 > #### ⛔ THE BLOCKED ROW NAMES THE REMEDY, AND THE REMEDY IS THE KEEPING ROLE (§4.6b)
 >
@@ -686,8 +686,21 @@ word on saying so.
 
 > #### ⛔ `-1` IS TWO STATES, AND THE QUEUE POSITION IS WHAT SEPARATES THEM
 >
-> **A LAPSED RUNG IS THE SAME `-1` ON A SOURCE NO BAND HAS QUEUED** — `RUNG_LAPSED_FORMAT`,
-> `⚠ Lapsed 99%`. Measured in play at tile (78, 20): a Field completed on tick 88 and went feral on
+> ⛔ **THIS STATE READ `⚠ Lapsed 99%` AND NOBODY COULD SAY WHAT IT MEANT** — reported from play on
+> a Field 94% sown under a Tended Patch, the maintainer unable to read it either. The word named no
+> fact a player can check, and the mark said *something is going wrong* about a meter that was
+> stable. It now states the two facts the wire carries — `RUNG_UNQUEUED_FORMAT`, `94% built · not
+> queued` — and earns the mark ONLY where the meter is losing work: `DetailFormat.unqueued_rung_value`
+> swaps in `RUNG_UNQUEUED_ROTTING_FORMAT` (red, through `RUNG_ROTTING_PHRASE`) when the source's
+> `meterRotPerTurn > 0` and the at-risk meter is this rung's. This reverses the earlier reading that a
+> stable lapse wears the mark because the payoff is already lost: that loss is a fact about the
+> standing rung, which the row above states, and not something going wrong with this meter.
+>
+> ⛔ **"WAS THIS RUNG EVER FINISHED" IS NOT ON THE WIRE**, so the face cannot say *Field lost*. The
+> three conjuncts below are met by a Field gone feral a hair short of full, by a cancelled queue entry
+> with work banked, and by a Sow nobody ever queued; what all three share is what the face states.
+>
+> **AN UNQUEUED RUNG IS THE SAME `-1` ON A SOURCE NO BAND HAS QUEUED.** Measured in play at tile (78, 20): a Field completed on tick 88 and went feral on
 > tick 89 (*"untended, the ground is reverting"*), which dropped the standing rung back to
 > `plant:tended`. **A build queue entry retires the turn its destination rung completes**, so the
 > feral turn found nothing left to carry the meter: at tick 93 the patch still held 49.612 of 49.624
@@ -701,7 +714,7 @@ word on saying so.
 > staffing and a client guessing from a crew disagreed with its own compose sheet.
 >
 > **THE THIRD CONJUNCT IS WHAT KEEPS A NEVER-STARTED RUNG OUT.** An untouched rung sits at `0%` in no
-> queue too, and calling that *Lapsed* would announce the loss of a payoff the player never had.
+> queue too, and has nothing built to report.
 >
 > **NEITHER NEIGHBOURING WORD FITS, AND BOTH WERE CHECKED.** `RUNG_REVERTING_FORMAT` is a rung its
 > keeping does NOT cover, actively slipping — this one published `upkeepShortfall 0` and
@@ -710,18 +723,19 @@ word on saying so.
 > mark** for that reason — the neutral would be the reassuring reading of a loss already taken.
 >
 > **THE HOVER IS WHERE THE REMEDY LIVES**, the mark being two words on a ~245px card:
-> `RUNG_LAPSED_TOOLTIP` states that the rung is part-built with nobody on it, that the banked work
-> survives, and that re-queuing from the work row's build face picks it back up. It is routed off the
-> value the row already composed (`DetailFormat.note_lapsed_hover`), not re-derived — one verdict, one
-> producer.
+> `RUNG_UNQUEUED_TOOLTIP` states that the rung is part-built with nobody on it, that the banked work
+> survives, and that re-queuing from the work row's build face picks it back up;
+> `RUNG_UNQUEUED_ROTTING_TOOLTIP` adds that it is losing work every turn. Both are routed off the
+> value the row already composed (`DetailFormat.note_lapsed_hover`, keyed on `RUNG_UNQUEUED_PHRASE`),
+> not re-derived — one verdict, one producer.
 >
 > ⛔ **IT NAMES NO CAUSE, and it opened with one for a release.** *"The ground went feral and lost
 > this rung"* is a PLANT-web sentence on a hover `note_lapsed_hover` also registers on `HUSBANDRY_ROW`
 > and `CORRAL_ROW` — a herd part-way through a Tame with nobody queued was told about ground it does
 > not have. And a feral field is only one of the ways in: **cancelling** a queue entry with work
 > banked satisfies the same three conjuncts (`build_turns` at `-1`, a meter above empty, no entry)
-> with nothing having gone feral at all. The WORD is right in every case; only the cause was a guess,
-> so the sentence states the state and the remedy and asserts nothing about how the rung got there.
+> with nothing having gone feral at all. The FACTS are right in every case; only the cause was a
+> guess, so the sentence states the state and the remedy and asserts nothing about how it got there.
 
 ### `100%` MEANS DONE, SO `HudFormat.progress_percent` FLOORS
 
