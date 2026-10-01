@@ -3080,7 +3080,39 @@ fn a_marked_build_sharing_the_tillage(
     keepers: u32,
     build_mark: SourcePriority,
 ) -> (App, Entity, UVec2) {
-    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    a_build_head_beside_its_kept_site(KeptBuildHead {
+        hoes,
+        builders: BUILDERS,
+        crew: keepers,
+        build_mark,
+        fraction_built: MOSTLY_BUILT,
+    })
+}
+
+/// **ONE BAND, ONE PATCH, ITS BUILD AT THE QUEUE HEAD** — every term the tool settlement reads, stated.
+struct KeptBuildHead {
+    /// Units of the one tillage tool the band owns.
+    hoes: u32,
+    /// The builders pool, all of it standing on the head entry.
+    builders: u32,
+    /// The patch row's crew — the site crew that keeps the patch before it collects.
+    crew: u32,
+    /// The head entry's own Build mark.
+    build_mark: SourcePriority,
+    /// How far up the tended rung's meter the patch is seated, as a share of its cost.
+    fraction_built: f32,
+}
+
+/// [`a_marked_build_sharing_the_tillage`] with every term a parameter, resolved through one turn.
+fn a_build_head_beside_its_kept_site(head: KeptBuildHead) -> (App, Entity, UVec2) {
+    let KeptBuildHead {
+        hoes,
+        builders,
+        crew: keepers,
+        build_mark,
+        fraction_built,
+    } = head;
+    let (mut app, band, sources) = world_with_a_queue(ONE_SOURCE, builders);
     let staffed: u32 = {
         let mut allocation = app
             .world
@@ -3135,7 +3167,7 @@ fn a_marked_build_sharing_the_tillage(
         registry
             .patch_mut(sources[0])
             .expect("the fixture patch is there")
-            .set_ladder_position(cost * MOSTLY_BUILT, &ladder);
+            .set_ladder_position(cost * fraction_built, &ladder);
     }
     resolve_a_turn(&mut app);
     (app, band, sources[0])
@@ -3535,5 +3567,116 @@ fn a_band_that_is_not_short_arms_both_pools_in_full() {
         (filled - HOES_FOR_EVERY_HAND as f32).abs() < 1e-4,
         "the pool and the site's keeping together are issued exactly the band's stock of hoes: \
          got {filled} against {HOES_FOR_EVERY_HAND}"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// (16) A KEPT SITE AND ITS BUILD, SHARING ONE STOCK OF HOES
+// ---------------------------------------------------------------------------------------------
+
+/// **The played band's builders pool** — one hand on the queue head.
+const ONE_BUILDER: u32 = 1;
+
+/// **The played site crew** — three on the patch the head entry is building.
+const PLAYED_SITE_CREW: u32 = 3;
+
+/// **Where the played Cultivate stood** — 18% of the tended rung's meter, so its keeping bill is a
+/// fraction of one hand.
+const PLAYED_FRACTION_BUILT: f32 = 0.18;
+
+/// **The hoes the builders' TOE line asked for and was paid**, off the published table.
+fn builders_hoes(app: &App, band: Entity) -> (f32, f32) {
+    let allocation = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation");
+    allocation
+        .last_pool_toe
+        .iter()
+        .find(|line| line.pool == core_sim::KitJob::Builders && line.item.as_str() == SHARED_TOOL)
+        .map(|line| (line.required, line.filled))
+        .expect("the builders bid for the head's hoes")
+}
+
+/// **The hoes the site crew was issued for its keeping**, summed over its lines.
+fn keeping_hoes(app: &App, band: Entity, patch: UVec2) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .last_keeping_issued
+        .iter()
+        .filter(|issue| {
+            issue.source == BuildSource::Patch(patch) && issue.item.as_str() == SHARED_TOOL
+        })
+        .map(|issue| issue.units)
+        .sum()
+}
+
+/// **The played Hazelbank case, settled with two hoes in hand: nothing is short.** The site's
+/// keeping at 18% plans a fraction of a hand, which bids one whole hoe; the one builder bids the
+/// other. Both claims are paid, the builders' TOE line is filled and the site does not read short.
+#[test]
+fn two_hoes_arm_one_builder_and_a_site_keeping_a_fraction_of_a_hand() {
+    let (app, band, patch) = a_build_head_beside_its_kept_site(KeptBuildHead {
+        hoes: HOES_FOR_A_SHORT_BAND,
+        builders: ONE_BUILDER,
+        crew: PLAYED_SITE_CREW,
+        build_mark: SourcePriority::Normal,
+        fraction_built: PLAYED_FRACTION_BUILT,
+    });
+    let hands = published(&app, patch, |row| row.upkeepHands());
+    assert!(
+        hands > 0.0 && hands < 1.0,
+        "precondition: the 18% keeping takes a fraction of one hand — got {hands}"
+    );
+    let issued = keeping_hoes(&app, band, patch);
+    assert_eq!(
+        issued,
+        hands.ceil(),
+        "the site bids one whole hoe for its fraction of a hand, never one per crew hand"
+    );
+    let (required, filled) = builders_hoes(&app, band);
+    assert_eq!(
+        (required, filled),
+        (ONE_BUILDER as f32, ONE_BUILDER as f32),
+        "the builder's hoe is the one the keeping left on the shelf"
+    );
+    assert!(
+        !published(&app, patch, |row| row.upkeepToolsShort()),
+        "a site whose keeping hoe was issued does not read short of tools"
+    );
+}
+
+/// **The same band with the meter near the top: a genuine shortage still flags.** The bill now
+/// plans more than one keeping hand, so the site's whole-hoe bid takes both hoes (keeping is
+/// served before building inside one tier) and the builder's TOE line reads short.
+#[test]
+fn a_site_keeping_more_than_one_hand_leaves_the_builder_short() {
+    let (app, band, patch) = a_build_head_beside_its_kept_site(KeptBuildHead {
+        hoes: HOES_FOR_A_SHORT_BAND,
+        builders: ONE_BUILDER,
+        crew: PLAYED_SITE_CREW,
+        build_mark: SourcePriority::Normal,
+        fraction_built: MOSTLY_BUILT,
+    });
+    let hands = published(&app, patch, |row| row.upkeepHands());
+    assert!(
+        hands > 1.0,
+        "precondition: near the top of the rung the keeping takes more than one hand — got {hands}"
+    );
+    let issued = keeping_hoes(&app, band, patch);
+    assert_eq!(
+        issued, HOES_FOR_A_SHORT_BAND as f32,
+        "the site's whole-hoe bid takes the band's whole stock"
+    );
+    assert!(
+        !published(&app, patch, |row| row.upkeepToolsShort()),
+        "the site was paid in full, so it does not read short"
+    );
+    let (required, filled) = builders_hoes(&app, band);
+    assert!(
+        filled < required,
+        "the builder's claim lost the settlement and its TOE line reads short — \
+         required {required}, filled {filled}"
     );
 }

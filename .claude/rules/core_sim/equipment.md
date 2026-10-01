@@ -842,6 +842,16 @@ collection rate was then deleted outright, see "Carry is carry". The defect and 
 > ahead of the shed's early exits like every other per-turn ledger. The capture holds no claim lists
 > and could only strike a second answer, free to disagree with the tools the work was priced at.
 >
+> ⛔ **A TOOL CRAFTED THIS TURN IS IN THE LEDGER AND NOT IN THE SETTLEMENT.** `advance_crafting`
+> runs after `advance_labor_allocation` in the Population chain, so on the turn a bench finishes a
+> unit the published `kitItemConditions.count` already counts it while `poolToe` (and every site's
+> `upkeepToolsShort`) was struck against the stock before it. A frame can therefore read two hoes
+> beside a builders line filled `0` of `1`; the next turn's settlement issues the new unit. Played on
+> a saved band (two `fair` hoes, one builder on a Normal Cultivate head at 18%, a Normal site crew of
+> three): the craft turn read builders `0/1`, the turn after `1/1`, and the site was issued its one
+> hoe on both. `build_queue::two_hoes_arm_one_builder_and_a_site_keeping_a_fraction_of_a_hand` pins
+> the settled answer.
+>
 > ⛔ **A LINE EXISTS ONLY WHERE `required > 0`, AND A FILLED LINE KEEPS ITS ROW.** A pool that wants
 > nothing of an item has no row at all; a pool whose requirement was met keeps its row with
 > `filled == required`. The distinction is the readout: a surface shows no tool line when every line
