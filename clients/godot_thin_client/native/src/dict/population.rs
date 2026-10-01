@@ -881,6 +881,22 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                 "kit_workers_holding",
                 f64::from(assignment.kitWorkersHolding()),
             );
+            // **THIS TAKE ROW'S TABLE OF EQUIPMENT** — one `{item_id, required, filled}` line per
+            // item its kit claims, the per-item shortage the row's kit mark reads. SHORT is
+            // `filled < required` on any line. **AN EMPTY ARRAY CLAIMS NOTHING**, so nothing can be
+            // short: hands the row does not claim kit for work bare BY DESIGN, which is why
+            // `kit_workers_holding < workers` no longer means short. `required` is never 0.
+            let mut kit_toe = VarArray::new();
+            if let Some(lines) = assignment.kitToe() {
+                for line in lines.iter() {
+                    let mut row = VarDictionary::new();
+                    let _ = row.insert("item_id", line.itemId().unwrap_or_default());
+                    let _ = row.insert("required", f64::from(line.required()));
+                    let _ = row.insert("filled", f64::from(line.filled()));
+                    kit_toe.push(&row.to_variant());
+                }
+            }
+            let _ = entry.insert("kit_toe", &kit_toe);
             // **HOW MANY HANDS THIS QUARRY CAN USE, FIGHT INCLUDED** — the crew beyond which more
             // hunters add nothing, and the sim's own answer rather than an input to a client
             // quotient. It is the plateau of `fauna::hunt_crew_take_curve`, the SAME curve the

@@ -829,14 +829,23 @@ const COVERED_ROW_ARMED := 4.0
 ## row handed in states something else (the free-store reading, which is `0 of 4` — the store is all
 ## out with the two rows); and a row the sheet is not composing — a picker mid-change, whose `kit_id`
 ## is not the kit being rendered — is ignored rather than quoted at the wrong kit.
+## The item the committed row's table is short of.
+const COMMITTED_ROW_SHORT_ITEM := "spears"
+
 func _assert_a_committed_sheet_states_its_own_row() -> void:
 	var roster := BandFx.kit_roster_fixture()
 	var big_game := KitRoster.kit_by_id(roster, BandFx.KIT_ID_BIG_GAME)
 	var band := BandFx.band_fixture()
 	band["kit_item_conditions"] = BandFx.kit_condition_rows(COMMITTED_ROW_STOCK)
+	# The row's TABLE OF EQUIPMENT says it is short — a line it claims was not filled. Without it the
+	# row claims nothing and is not short, whatever `kit_workers_holding` says.
 	var row := {
 		"kit_id": BandFx.KIT_ID_BIG_GAME, "workers": COMMITTED_ROW_CREW,
 		SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: COMMITTED_ROW_ARMED,
+		SourceForecast.ASSIGNMENT_KIT_TOE_KEY: [{
+			HudBandLaborState.POOL_TOE_ITEM_KEY: COMMITTED_ROW_SHORT_ITEM,
+			HudBandLaborState.POOL_TOE_REQUIRED_KEY: float(COMMITTED_ROW_CREW),
+			HudBandLaborState.POOL_TOE_FILLED_KEY: COMMITTED_ROW_ARMED}],
 	}
 	var committed := KitRoster.tier_hint(roster, big_game, band, KitRoster.JOB_HUNT,
 		COMMITTED_ROW_CREW, row)

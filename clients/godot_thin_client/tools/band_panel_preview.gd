@@ -1574,6 +1574,7 @@ func _ready() -> void:
 	# The inspector is opened on the SHORT row, because the full pair is drawn in the KITS section
 	# beside the picker that chose the kit and the board row carries only the hover and the ⚠.
 	_set_world_herds(_herd_fixtures())
+	_hud.update_equipment_config(_kit_toe_equipment_config())
 	_push_bands([_kit_short_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -1590,6 +1591,7 @@ func _ready() -> void:
 	# which asks the same questions of the drawn label minus the line-count floor.
 	_assert_kit_short_note_ink(_kit_short_sentence())
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
+	_hud.update_equipment_config(JSON.stringify({}))
 
 	# THE RUNG-READY MARK ON THE WORK BOARD (issue #412) — the panel twin of the map badge. Three rows,
 	# and the CONTRAST is what the frame is for: a tended patch on willing ground offers `⌃▦`, a fully
@@ -4535,6 +4537,42 @@ func _material_short_band_fixture() -> Dictionary:
 ## (`_herd_fixtures`), so the board renders against the same quarry every other frame in this file
 ## does and nothing about the herds is part of the claim.
 const KIT_SHORT_WORK_HERD_ID := "game_deer_07"
+
+## ---- THE ROWS' TABLES OF EQUIPMENT (`kit_toe`) ---------------------------------------------------
+const KIT_TOE_SPEARS := "spears"
+const KIT_TOE_SLED := "sled"
+const KIT_TOE_BASKETS := "baskets"
+## The equipment roster's display names for the three — what the notes name them by.
+const KIT_TOE_ITEM_NAMES := {
+	KIT_TOE_SPEARS: "Spears",
+	KIT_TOE_SLED: "Sleds",
+	KIT_TOE_BASKETS: "Baskets",
+}
+## Units a line claims, and what a SHORT line was handed.
+const KIT_TOE_CLAIMED := 1.0
+const KIT_TOE_SHORT_FILLED := 0.0
+## The over-crewed covered row's tile and its crew-independent `workers_needed` — far above the crew,
+## which no surface may state as a bare number.
+const KIT_COVERED_WORK_TILE := Vector2i(71, 18)
+const KIT_COVERED_WORK_NEEDED := 47
+## …and the basket-short row's tile.
+const KIT_BASKET_SHORT_TILE := Vector2i(72, 18)
+
+func _kit_toe_line(item: String, required: float, filled: float) -> Dictionary:
+	return {HudBandLaborState.POOL_TOE_ITEM_KEY: item,
+		HudBandLaborState.POOL_TOE_REQUIRED_KEY: required,
+		HudBandLaborState.POOL_TOE_FILLED_KEY: filled}
+
+## The equipment roster the kit-note frames resolve item names through — `items` alone.
+func _kit_toe_equipment_config() -> String:
+	var items := {}
+	for id in KIT_TOE_ITEM_NAMES:
+		items[id] = {"display_name": KIT_TOE_ITEM_NAMES[id]}
+	items[POOL_TOE_BUILDERS_ITEM] = {"display_name": POOL_TOE_BUILDERS_ITEM_NAME}
+	return JSON.stringify({HudLoadoutVocab.CONFIG_ITEMS_KEY: items})
+
+## The builders' short tool's roster name in that fixture.
+const POOL_TOE_BUILDERS_ITEM_NAME := "Hoes"
 const KIT_SHORT_WORK_CREW := 4
 ## Two of that row's four hunters are outfitted. A FLOAT, as the wire carries it — coverage counts
 ## workers in fractions — and a whole one here so the rendered figures are the fixture's own and the
@@ -4557,18 +4595,36 @@ func _kit_short_band_fixture() -> Dictionary:
 	band["entity"] = 957
 	band["id"] = "Band 23"
 	band["labor_assignments"] = [
+		# SHORT of TWO items — the natural-join case: `Short of spears and sleds`.
 		{"kind": "hunt", "workers": KIT_SHORT_WORK_CREW,
 			"workers_needed": KIT_SHORT_WORK_NEEDED, "floor": 0.5,
 			"fauna_id": KIT_SHORT_WORK_HERD_ID, "target_x": 70, "target_y": 17,
 			"actual_yield": 0.46, "sustainable_yield": 0.46,
 			"kit_id": BandFx.KIT_DEFAULT_HUNT,
-			SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: KIT_SHORT_WORK_ARMED},
+			SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: KIT_SHORT_WORK_ARMED,
+			SourceForecast.ASSIGNMENT_KIT_TOE_KEY: [
+				_kit_toe_line(KIT_TOE_SPEARS, KIT_TOE_CLAIMED, KIT_TOE_SHORT_FILLED),
+				_kit_toe_line(KIT_TOE_SLED, KIT_TOE_CLAIMED, KIT_TOE_SHORT_FILLED)]},
+		# ⛔ **OVER-CREWED, AND EVERY CLAIMED HAND ARMED** — `kit_workers_holding` is well under the
+		# crew (hands the row does not claim kit for work bare by design), but its one claimed line is
+		# FILLED. The head-count comparison would mark it; the table says it is not short.
 		{"kind": "forage", "workers": KIT_COVERED_WORK_CREW,
-			"workers_needed": KIT_COVERED_WORK_CREW, "floor": 0.5,
-			"target_x": 71, "target_y": 18,
+			"workers_needed": KIT_COVERED_WORK_NEEDED, "floor": 0.5,
+			"target_x": KIT_COVERED_WORK_TILE.x, "target_y": KIT_COVERED_WORK_TILE.y,
 			"actual_yield": 0.48, "sustainable_yield": 0.48,
 			"kit_id": BandFx.KIT_DEFAULT_FORAGE,
-			SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: float(KIT_COVERED_WORK_CREW)},
+			SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: KIT_TOE_CLAIMED,
+			SourceForecast.ASSIGNMENT_KIT_TOE_KEY: [
+				_kit_toe_line(KIT_TOE_BASKETS, KIT_TOE_CLAIMED, KIT_TOE_CLAIMED)]},
+		# SHORT of ONE item — `Short of baskets`.
+		{"kind": "forage", "workers": KIT_COVERED_WORK_CREW,
+			"workers_needed": KIT_COVERED_WORK_CREW, "floor": 0.5,
+			"target_x": KIT_BASKET_SHORT_TILE.x, "target_y": KIT_BASKET_SHORT_TILE.y,
+			"actual_yield": 0.30, "sustainable_yield": 0.30,
+			"kit_id": BandFx.KIT_DEFAULT_FORAGE,
+			SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY: KIT_TOE_SHORT_FILLED,
+			SourceForecast.ASSIGNMENT_KIT_TOE_KEY: [
+				_kit_toe_line(KIT_TOE_BASKETS, KIT_TOE_CLAIMED, KIT_TOE_SHORT_FILLED)]},
 		{"kind": "hunt", "workers": KIT_NONE_WORK_CREW,
 			"workers_needed": KIT_NONE_WORK_CREW, "floor": 0.5,
 			"fauna_id": KIT_COVERED_WORK_HERD_ID, "target_x": 64, "target_y": 11,
@@ -4593,9 +4649,11 @@ const RETIRED_CLAUSE_TERMINATOR := "."
 ## and asserts nothing. It is also what pins *"one phrasing wherever gear runs short"*: this is the
 ## compose sheets' and the role cards' `KIT_SHORTFALL_FORMAT`, filled here by hand.
 func _kit_short_sentence() -> String:
-	var covered := HudComposeVocab.KIT_SHORTFALL_FORMAT % [int(KIT_SHORT_WORK_ARMED),
-		KIT_SHORT_WORK_CREW, KitRoster.display_name_for_id(BandFx.kit_roster_fixture(),
-			BandFx.KIT_DEFAULT_HUNT) + HudComposeVocab.KIT_SHORTFALL_PLURAL_SUFFIX]
+	# ⛔ **THE ROW NAMES ITS SHORT ITEMS** off the roster's display names, joined naturally — composed
+	# here from the fixture's own names, never through `toe_short_item_names`.
+	var covered := HudWorkVocab.KIT_SHORT_ITEMS_FORMAT % (
+		String(KIT_TOE_ITEM_NAMES[KIT_TOE_SPEARS]).to_lower() + HudWorkVocab.NATURAL_LIST_FINAL
+		+ String(KIT_TOE_ITEM_NAMES[KIT_TOE_SLED]).to_lower())
 	# ⛔ **AND NOTHING FOLLOWS IT — no remedy clause, and no trailing period.** It returned
 	# `"%s. %s" % [covered, HudWorkVocab.KIT_SHORT_REMEDY]` until Ray cut the clause; the row states the
 	# bare sentence now, which is the identical line the compose sheets have always drawn.
@@ -4615,6 +4673,7 @@ func _assert_kit_short_notes() -> void:
 	var short_model := {}
 	var covered_model := {}
 	var itemless_model := {}
+	var basket_model := {}
 	for model_variant in _hud._bandpanel._work_source_models(band, 0):
 		var model: Dictionary = model_variant
 		match String(model.get("herd_id", "")):
@@ -4623,14 +4682,31 @@ func _assert_kit_short_notes() -> void:
 			KIT_COVERED_WORK_HERD_ID:
 				itemless_model = model
 			_:
-				if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+				var at := Vector2i(int(model.get("x", -1)), int(model.get("y", -1)))
+				if at == KIT_COVERED_WORK_TILE:
 					covered_model = model
+				elif at == KIT_BASKET_SHORT_TILE:
+					basket_model = model
+	var basket_want := HudWorkVocab.KIT_SHORT_ITEMS_FORMAT \
+		% String(KIT_TOE_ITEM_NAMES[KIT_TOE_BASKETS]).to_lower()
+	_assert_band_panel("work kit note — a row with a short BASKET line reads `%s` (got \"%s\")"
+			% [basket_want, String(basket_model.get("kit_note", ""))],
+		String(basket_model.get("kit_note", "")) == basket_want)
+	# ⛔ **`workers_needed` IS CREW-INDEPENDENT AND MAY DWARF THE CREW** — 47 on a 3-hand patch. It
+	# drives the `+` gate and the overstaffed note and nothing else; no surface states it bare.
+	var needed_text := str(KIT_COVERED_WORK_NEEDED)
+	var covered_surfaces := "%s|%s|%s|%s" % [String(covered_model.get("label", "")),
+		String(covered_model.get("tooltip", "")), String(covered_model.get("note", "")),
+		String(covered_model.get("muted_note", ""))]
+	_assert_band_panel("work kit note — the row's crew-independent `workers_needed` (%s) is stated nowhere on it"
+			% needed_text,
+		not covered_surfaces.contains(needed_text))
 	if short_model.is_empty() or covered_model.is_empty() or itemless_model.is_empty():
 		_fail("work kit note — the board is missing one of the three rows (short %d, covered %d, itemless %d)"
 			% [short_model.size(), covered_model.size(), itemless_model.size()])
 		return
 	var want := _kit_short_sentence()
-	_assert_band_panel("work kit note — the short row states its OWN published pair: \"%s\" (got \"%s\")"
+	_assert_band_panel("work kit note — the short row NAMES its two short items, joined naturally: \"%s\" (got \"%s\")"
 		% [want, String(short_model.get("kit_note", ""))],
 		String(short_model.get("kit_note", "")) == want)
 	# ⛔ **AND NOTHING FOLLOWS THE COUNT.** The retired claim was *"THE REMEDY NAMES THE BENCH, NOT THE
@@ -4654,7 +4730,7 @@ func _assert_kit_short_notes() -> void:
 		% String(short_model.get("note", "")),
 		String(short_model.get("note", "")) != ""
 			and String(short_model.get("note", "")) != String(short_model.get("kit_note", "")))
-	_assert_band_panel("work kit note — …while the fully covered row says NOTHING (\"%s\")"
+	_assert_band_panel("work kit note — …while the OVER-CREWED row with every claimed hand armed says NOTHING (\"%s\")"
 		% String(covered_model.get("kit_note", "")),
 		String(covered_model.get("kit_note", "")) == "")
 	_assert_band_panel("work kit note — …and so does the row on the kit that carries nothing (\"%s\")"
@@ -4695,7 +4771,7 @@ func _assert_kit_short_marks() -> void:
 			KIT_COVERED_WORK_HERD_ID:
 				itemless_marks = String(model.get("marks", ""))
 			_:
-				if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
+				if Vector2i(int(model.get("x", -1)), int(model.get("y", -1))) == KIT_COVERED_WORK_TILE:
 					covered_marks = String(model.get("marks", ""))
 	_assert_band_panel("work kit mark — the short row flies a KIT mark on line one (\"%s\")"
 		% short_marks, short_marks.contains(HudWorkVocab.KIT_SHORT_MARK))
@@ -16238,6 +16314,19 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_band_panel("head tools — …and the Builders card names the top job: \"%s\" (got \"%s\")"
 			% [HudWorkVocab.POOL_TOOLS_SHORT_BUILDERS_LINE, builders.get("gear", "")],
 		String(builders.get("gear", "")) == HudWorkVocab.POOL_TOOLS_SHORT_BUILDERS_LINE)
+	# ⛔ **WITH THE ROSTER'S NAMES IN HAND IT NAMES THE SHORT TOOL** — named as the cause, never counted.
+	_hud.update_equipment_config(_kit_toe_equipment_config())
+	_hud._bandpanel.rerender()
+	await _settle()
+	var named_want := HudWorkVocab.POOL_TOOLS_SHORT_BUILDERS_FORMAT % POOL_TOE_BUILDERS_ITEM_NAME.to_lower()
+	var named := _pool_card_answers(HudWorkVocab.ROLE_NAME_BUILDERS)
+	_assert_band_panel("head tools — …naming the short tool: \"%s\" (got \"%s\")"
+			% [named_want, named.get("gear", "")],
+		String(named.get("gear", "")) == named_want)
+	await _save("band_panel_queue_head_tools_named")
+	_hud.update_equipment_config(JSON.stringify({}))
+	_hud._bandpanel.rerender()
+	await _settle()
 	# THE HEAD'S STRIP OPEN: the row goes back to ONE line and the strip's detail line LEADS with the
 	# sentence instead — one statement in either state, never both.
 	_hud._bandpanel._toggle_queue_settings(_queue_entry_key(false))

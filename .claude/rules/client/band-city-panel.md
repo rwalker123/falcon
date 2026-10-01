@@ -2796,6 +2796,11 @@ in work units), so the hint is the only place a pool's holdings are named; the i
   tools before idle, and `POOL_CARD_IDLE_META` still carries the idle sentence.
 - **The Builders card is never work-short** (`_build_pools_block` passes it no `cover`), so a builders
   pool short of tools always takes the `ⓘ`.
+- **THE TOOL LINES NAME THE SHORT TOOLS** — `Short of hoes.` / `More hoes would speed this up.` / `The
+  top job in the queue is short of earthmoving tools.` (`POOL_TOOLS_SHORT_*_FORMAT`), off the pool's
+  `pool_toe` lines with `filled < required` and the equipment roster's display names
+  (`pool_tools_short_line`'s `item_names`). Named as the cause, never COUNTED (#716). The unnamed
+  `*_LINE` forms stand only where the roster has not arrived.
 - **…AND ITS TOOL LINE NAMES THE JOB, NOT THE POOL** — `POOL_TOOLS_SHORT_BUILDERS_LINE`, *The top job
   in the queue is short of tools.*, chosen by `pool_tools_short_line`'s `kind` argument whatever the
   work reading. The builders' tool claim is the queue HEAD entry's alone (`docs/plan_pool_toe.md`
@@ -5701,6 +5706,29 @@ up, the rung-in-progress `◎60%` mark beside it, and the BUILDERS note in the s
 
 
 ## THE ROW SAYS WHEN ITS GEAR DOES NOT REACH ITS CREW — `kit_note`, a slot of its own
+
+> ### ⛔ SHORT IS THE ROW'S TABLE OF EQUIPMENT, AND THE NOTE NAMES THE ITEMS
+>
+> A take row's kit is short where its own `kit_toe` (`[{item_id, required, filled}]`, one line per
+> item the kit CLAIMS) has any line with `filled < required` (`KitRoster.row_toe_is_short`, through
+> `HudWorkVocab.pool_toe_row_is_short` — the pool lines' own test, the keys being one spelling). An
+> absent or empty table claims nothing and is never short. **`kit_workers_holding < workers` is NOT
+> the test any more**: hands the row does not claim kit for work bare BY DESIGN, so the comparison
+> flagged every over-crewed row falsely. The compose sheet's committed-row line gates on the same
+> table.
+>
+> The note NAMES the short items — `Short of baskets`, `Short of spears and sleds`
+> (`HudWorkVocab.KIT_SHORT_ITEMS_FORMAT`, `toe_short_item_names`, `natural_list`) — each by its
+> equipment-roster display name lower-cased, off `StartingLoadoutController.item_display_names()`
+> (the parsed `equipment_config_json`'s `items`), pushed to the panel by `HudLayer` with the roster
+> (`BandPanelController.set_item_display_names`). Never an item name in code, never a count. Where
+> the roster has not arrived the count sentence below stands. The `◆` mark is drawn on the same test.
+>
+> **`workers_needed` is crew-independent** and can dwarf the crew (47 on a 3-hand patch). It drives
+> the `+` gate and the overstaffed note only, and no surface states it bare —
+> `band_panel_work_kit_short` asserts the 47 appears nowhere on its row.
+>
+> The paragraphs below describe the head-count reading this replaced.
 
 Reported from play: a band outfitted with four trapping kits staffed two hunt rows of four — Rabbit
 Warren and Wild Fowl, both resolving `trapping` — so each row arms two of its four hunters. **The

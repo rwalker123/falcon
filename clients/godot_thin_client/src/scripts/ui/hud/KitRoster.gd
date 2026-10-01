@@ -1654,7 +1654,10 @@ static func shortfall_line(kits: Array, kit: Dictionary, band: Dictionary, job: 
 	# **CASE 1 — THE SHEET IS DESCRIBING THE COMMITTED PARTY**, so the sim's own answer for it wins and
 	# nothing here re-derives anything.
 	if not committed.is_empty() and _describes_the_committed_party(crew, committed):
-		if int(committed[ROW_COVERAGE_SHORT_KEY]) <= 0:
+		# ⛔ **SHORT IS THE ROW'S TABLE OF EQUIPMENT, NOT `held < crew`.** Hands the row does not
+		# claim kit for work bare by design, so a row whose every CLAIMED line is filled is not short
+		# however many of its hands hold nothing (`row_toe_is_short`).
+		if int(committed[ROW_COVERAGE_SHORT_KEY]) <= 0 or not row_toe_is_short(row):
 			return ""
 		return shortfall_sentence(kit, int(committed[ROW_COVERAGE_HELD_KEY]),
 			int(committed[ROW_COVERAGE_CREW_KEY]))
@@ -1840,6 +1843,12 @@ const ROW_KIT_ID_KEY := "kit_id"
 ##
 ## An ABSENT key is silence, not a zero: a pending (optimistic) row publishes none, because a `+`
 ## re-cuts the band's whole ledger and the settled pair describes a staffing that no longer exists.
+## **IS THIS TAKE ROW SHORT OF ANY ITEM ITS KIT CLAIMS?** — any `kit_toe` line with `filled <
+## required`. An absent or empty table claims nothing, so it is never short.
+static func row_toe_is_short(row: Dictionary) -> bool:
+	var lines: Variant = row.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, [])
+	return lines is Array and HudWorkVocab.pool_toe_is_short(lines as Array)
+
 static func row_coverage(row: Dictionary) -> Dictionary:
 	if not row.has(SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY):
 		return {}

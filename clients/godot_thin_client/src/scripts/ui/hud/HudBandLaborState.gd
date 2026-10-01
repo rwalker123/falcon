@@ -1033,6 +1033,10 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY):
 			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY] = \
 				float((a as Dictionary)[SourceForecast.ASSIGNMENT_KIT_WORKERS_HOLDING_KEY])
+		# …and its TABLE OF EQUIPMENT, which is what decides whether it is short at all.
+		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_KIT_TOE_KEY):
+			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_KIT_TOE_KEY] = \
+				(a as Dictionary)[SourceForecast.ASSIGNMENT_KIT_TOE_KEY]
 		# **AND THE WORK PARTY** (`docs/plan_civilization_steps.md` §One work party) — the nine keys
 		# that say where this row's workers are standing when it is not where the band is. Copied
 		# VERBATIM and as a SET: **this map is a hand-listed allowlist**, so a key not copied here

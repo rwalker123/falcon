@@ -876,6 +876,11 @@ const ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY := "hunt_useful_workers"
 # branch. An ABSENT key is the third reading — *this row states no coverage* — which is a hand-built
 # fixture or an optimistic row, never the decoder, and which every readout treats as silence.
 const ASSIGNMENT_KIT_WORKERS_HOLDING_KEY := "kit_workers_holding"
+## **THE ROW'S TABLE OF EQUIPMENT** — `[{item_id, required, filled}]`, one line per item its kit
+## CLAIMS. Short is any line with `filled < required`; an empty or absent list claims nothing and is
+## never short. Hands the row does not claim kit for work bare BY DESIGN, so `kit_workers_holding <
+## workers` is not a shortfall test.
+const ASSIGNMENT_KIT_TOE_KEY := "kit_toe"
 # **THE WORK PARTY, ON A LABOR ASSIGNMENT** (`docs/plan_civilization_steps.md` §One work party) —
 # the ten keys the decoder writes for a row whose source is past the band's own apron. They ride the
 # work-row map (`HudBandLaborState.effective_worker_map`) and are read in exactly ONE place,

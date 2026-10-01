@@ -613,6 +613,11 @@ pools left (`docs/plan_site_crews.md` §2.4) — the same spelling `LaborAssignm
 a pool line joins its lines on a string it already holds. `pool_crew` likewise carries `roadwork`
 alone.
 
+**A TAKE ROW CARRIES ITS OWN TABLE, `kit_toe`** — `LaborAssignment.kitToe` decoded onto each labor
+assignment as an `Array` of `{item_id, required, filled}`, one line per item the row's kit CLAIMS,
+always inserted (`[]` when the row claims nothing). It is the row's per-item shortage: short is any
+line with `filled < required`. `required` is never `0`.
+
 **IT SUPERSEDES THE POOL ROW'S `kit_id`, WHICH THE SIM NOW PUBLISHES EMPTY.** A pool's tools follow
 from each SITE's own rung, and a Roadwork pool keeping a dirt road and a paved road wants two of
 them at once — one more than a kit id has room for. So a pool row's `kit_id` is `""` and its

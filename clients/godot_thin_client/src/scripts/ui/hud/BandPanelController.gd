@@ -3148,7 +3148,14 @@ func _pool_card_mark(glyph: String, ink: Color) -> Label:
 func _pool_tools_short_line(band: Dictionary, kind: String, effective: Dictionary,
         work_short: bool) -> String:
     return HudWorkVocab.pool_tools_short_line(_pool_toe_settled_rows(band, kind, effective),
-        work_short, kind)
+        work_short, kind, _item_display_names)
+
+## `{item_id: display_name}` off the equipment roster, pushed by `HudLayer` with the roster. The kit
+## and tool lines name the short ITEMS by these.
+var _item_display_names: Dictionary = {}
+
+func set_item_display_names(names: Dictionary) -> void:
+    _item_display_names = names
 
 ## **IS THIS QUEUE ENTRY THE ONE THE BUILDERS' TOOL SHORTFALL IS ON** — the queue HEAD, and only
 ## where the builders pool's settled TOE is short.
@@ -7308,13 +7315,24 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
 ##
 ## `KitRoster.shortfall_sentence` composes the figures, so this row and the compose sheet that
 ## staffed it state one shortfall in one wording.
+##
+## ⛔ **SHORT IS THE ROW'S OWN TABLE OF EQUIPMENT (`kit_toe`), NOT `kit_workers_holding < workers`.**
+## Hands the row does not claim kit for work bare BY DESIGN, so the head-count comparison flags every
+## over-crewed row falsely. A row is short where any CLAIMED item's line has `filled < required`, and
+## the note NAMES those items — `Short of baskets`, `Short of spears and sleds` — off the equipment
+## roster's display names, never counting them. An absent table claims nothing and says nothing.
 func _work_row_kit_note(row: Dictionary) -> String:
-    var coverage := KitRoster.row_coverage(row)
-    if coverage.is_empty() or int(coverage[KitRoster.ROW_COVERAGE_SHORT_KEY]) <= 0:
+    if not KitRoster.row_toe_is_short(row):
         return ""
+    var names := HudWorkVocab.toe_short_item_names(
+        row.get(SourceForecast.ASSIGNMENT_KIT_TOE_KEY, []) as Array, _item_display_names)
+    if names != "":
+        return HudWorkVocab.kit_short_note(HudWorkVocab.KIT_SHORT_ITEMS_FORMAT % names)
+    # The roster has not named the items yet — the sentence the compose sheet states, off the counts.
+    var coverage := KitRoster.row_coverage(row)
     var kit := KitRoster.kit_by_id(_band_labor.kits(),
         String(row.get("kit_id", KitRoster.NO_KIT_ID)))
-    if kit.is_empty():
+    if coverage.is_empty() or kit.is_empty():
         return ""
     return HudWorkVocab.kit_short_note(KitRoster.shortfall_sentence(kit,
         int(coverage[KitRoster.ROW_COVERAGE_HELD_KEY]),

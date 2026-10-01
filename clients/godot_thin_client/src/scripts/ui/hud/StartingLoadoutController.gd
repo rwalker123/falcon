@@ -263,6 +263,20 @@ func set_equipment_config(json: Variant) -> void:
 	if is_expanded():
 		render()
 
+## **EVERY EQUIPMENT ITEM'S DISPLAY NAME, `{item_id: display_name}`** — off the `items` table of the
+## equipment roster this controller already parses, the same names the crafting surfaces show. `{}`
+## before the roster has arrived.
+func item_display_names() -> Dictionary:
+	var names := {}
+	var items: Variant = _equipment_config.get(HudLoadoutVocab.CONFIG_ITEMS_KEY, {})
+	if items is Dictionary:
+		for id in (items as Dictionary).keys():
+			var entry: Variant = (items as Dictionary)[id]
+			if entry is Dictionary:
+				names[String(id)] = String((entry as Dictionary).get(
+					HudLoadoutVocab.KIT_DISPLAY_NAME_KEY, ""))
+	return names
+
 ## The recipe book — the ONE source of a recipe's input costs and work value. The picker never
 ## re-derives a cost from anywhere else.
 func set_recipes(recipes: Variant) -> void:

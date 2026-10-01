@@ -102,6 +102,8 @@ const SUPPLY_UNITS_KEY := "units"
 
 ## The `kits` array inside the parsed `equipment_config_json`.
 const CONFIG_KITS_KEY := "kits"
+## …and the `items` table, `{item_id: {display_name, …}}`.
+const CONFIG_ITEMS_KEY := "items"
 const KIT_ID_KEY := "id"
 const KIT_DISPLAY_NAME_KEY := "display_name"
 const KIT_JOBS_KEY := "jobs"

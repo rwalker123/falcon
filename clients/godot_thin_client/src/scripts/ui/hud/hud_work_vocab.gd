@@ -1351,12 +1351,58 @@ static func pool_toe_is_short(lines: Array) -> bool:
 ## *the builders are short of tools* and *the top job is short of tools* are one fact, and only the
 ## second tells the player where to look. The head queue row states the same fact on its hover and as
 ## its amber `◆` second line (`BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT`).
-static func pool_tools_short_line(lines: Array, work_short: bool, kind: String = "") -> String:
+##
+## **IT NAMES THE SHORT TOOLS** (maintainer decision): `item_names` is `{item_id: display_name}` off the
+## equipment roster, and the line reads `Short of hoes.` / `More hoes would speed this up.` / `The top
+## job in the queue is short of earthmoving tools.` — the tools NAMED as the cause and never COUNTED
+## (#716's rule). Where `item_names` is empty the unnamed forms stand.
+static func pool_tools_short_line(lines: Array, work_short: bool, kind: String = "",
+        item_names: Dictionary = {}) -> String:
     if not pool_toe_is_short(lines):
         return ""
+    var short := toe_short_item_names(lines, item_names)
+    if short == "":
+        if kind == HudConst.LABOR_KIND_BUILDERS:
+            return POOL_TOOLS_SHORT_BUILDERS_LINE
+        return POOL_TOOLS_SHORT_WARN_LINE if work_short else POOL_TOOLS_SHORT_INFO_LINE
     if kind == HudConst.LABOR_KIND_BUILDERS:
-        return POOL_TOOLS_SHORT_BUILDERS_LINE
-    return POOL_TOOLS_SHORT_WARN_LINE if work_short else POOL_TOOLS_SHORT_INFO_LINE
+        return POOL_TOOLS_SHORT_BUILDERS_FORMAT % short
+    return (POOL_TOOLS_SHORT_WARN_FORMAT if work_short else POOL_TOOLS_SHORT_INFO_FORMAT) % short
+
+## The named forms of the three lines above.
+const POOL_TOOLS_SHORT_WARN_FORMAT := "Short of %s."
+const POOL_TOOLS_SHORT_INFO_FORMAT := "More %s would speed this up."
+const POOL_TOOLS_SHORT_BUILDERS_FORMAT := "The top job in the queue is short of %s."
+
+## **A TAKE ROW'S KIT NOTE** — the row's own `kit_toe` read the same way: `Short of baskets`, `Short of
+## spears and sleds`. It is the 🎒 mark's hover and the inspector's KITS line.
+const KIT_SHORT_ITEMS_FORMAT := "Short of %s"
+
+## **THE SHORT ITEMS OF A TABLE OF EQUIPMENT, NAMED AND JOINED** — every line with `filled <
+## required` (`pool_toe_row_is_short`, which reads a take row's `kit_toe` line as readily as a pool's:
+## the keys are one spelling), in the table's own order, each named by its roster display name
+## lower-cased, joined naturally (`a`, `a and b`, `a, b and c`). `""` where nothing is short, or where
+## `item_names` names none of them.
+static func toe_short_item_names(lines: Array, item_names: Dictionary) -> String:
+    var names: Array[String] = []
+    for row_variant in lines:
+        if not (row_variant is Dictionary) or not pool_toe_row_is_short(row_variant):
+            continue
+        var id := String((row_variant as Dictionary).get(HudBandLaborState.POOL_TOE_ITEM_KEY, ""))
+        var name := String(item_names.get(id, "")).strip_edges().to_lower()
+        if name != "" and not names.has(name):
+            names.append(name)
+    return natural_list(names)
+
+## `a` / `a and b` / `a, b and c`.
+const NATURAL_LIST_SEPARATOR := ", "
+const NATURAL_LIST_FINAL := " and "
+
+static func natural_list(parts: Array[String]) -> String:
+    if parts.size() <= 1:
+        return "" if parts.is_empty() else parts[0]
+    return NATURAL_LIST_SEPARATOR.join(PackedStringArray(parts.slice(0, parts.size() - 1))) \
+        + NATURAL_LIST_FINAL + parts[parts.size() - 1]
 
 const WORK_ROW_MARKS_WIDTH := 20.0
 

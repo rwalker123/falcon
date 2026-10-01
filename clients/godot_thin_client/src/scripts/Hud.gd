@@ -1318,6 +1318,8 @@ func update_opening_loadout(state: Variant) -> void:
 ## the sim publishing a second copy of a list it already sends.
 func update_equipment_config(config_json: Variant) -> void:
     _loadout.set_equipment_config(config_json)
+    # The item NAMES ride to the Band panel, whose kit and tool lines name the short items.
+    _bandpanel.set_item_display_names(_loadout.item_display_names())
 
 ## Open / close the OPENING LOADOUT picker. Reached BY NAME from the preview harnesses, which stand
 ## the panel up without a live campaign — the `open_crafting_panel` idiom.
