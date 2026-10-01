@@ -48,9 +48,13 @@ holding one more resident band. **The path is the player's because the handler p
 every band verb did nothing**: pressing a verb jumped the map back to the band's hex, which was
 re-clicked as the selected hex, cycled the selection onto the land, and closed the verb the press had
 just opened (`map-renderers.md` → "A JUMP TO THE SELECTED HEX IS NOT A RE-CLICK"). The probe fails on
-that by name — *the verb closed as it opened* — before the command is ever built. **The stepper and
-confirm are pressed by signal**: on a fresh game the outfitting card floats over the sheet's right
-column, and whether a pointer reaches them there is a layout question this probe does not own. **The assertion is the EFFECT, not the send**: a `true`
+that by name — *the verb closed as it opened* — before the command is ever built. **Every press is a
+REAL viewport click** — the verb, each stepper `+`, the confirm. On a fresh game the outfit card opens
+itself over the sheet's right column, and a band verb puts it away to its pill
+(`starting-loadout.md` → "A BAND VERB PUTS THE CARD AWAY"), so the probe asserts the card was up
+before Split and at its pill after, that each `+` click RAISES the count (a click the card swallowed
+would not), and that a real click on the pill brings the card back. **The assertion is the EFFECT,
+not the send**: a `true`
 from `_send_runtime_command` only means the frame reached the socket, which was the case throughout
 both regressions. The band count changing is the only thing that says the world obeyed. A failure
 means the command never reached the seated link, or the server refused it — the dropped-seat

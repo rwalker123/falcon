@@ -466,6 +466,14 @@ func collapse() -> void:
 		return
 	_panel.collapse()
 
+## **A BAND VERB OPENED — put the card away the way its own Done/✕ does** (`_on_dismissed` →
+## `collapse`), so the verb's sheet is not covered. Only the EXPANDED card yields: a card already at its
+## pill, or a surface with no window open, is left exactly as it is. Nothing is lost — every pick was
+## sent as it was made (`_send_order`) — and the pill reopens it.
+func collapse_for_verb() -> void:
+	if is_expanded():
+		collapse()
+
 ## The whole surface goes. Every window has shut, or the world was rebuilt.
 func close() -> void:
 	if _panel != null and is_instance_valid(_panel):

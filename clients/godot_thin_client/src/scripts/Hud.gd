@@ -826,6 +826,9 @@ func _ready() -> void:
     # …and the orb's loadout row has to bring that picker back, the knowledge row's hand-over one
     # line up, for the same reason.
     _turnorb.set_starting_loadout_panel(_loadout)
+    # A band verb opening puts the outfitting card away, as its own Done/✕ would, so the verb's sheet
+    # is never under it. The Band panel announces the verb; it does not reach the card itself.
+    _bandpanel.band_verb_opened.connect(func(_mission: String) -> void: _loadout.collapse_for_verb())
     # The band/expedition attention producers + orb jump-routing. Constructed AFTER `_bandpanel` (its
     # expedition/pen jumps reuse the panel's own focus paths) and handed the ONE retained helper,
     # `_herd_label_for_id`. It emits its OWN `alert_focus_requested`, relayed onto the HudLayer signal

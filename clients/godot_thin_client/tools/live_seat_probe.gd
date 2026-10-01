@@ -267,15 +267,24 @@ func _run() -> void:
 ## **SELECT THE BAND BY ITS HEX, PRESS SPLIT IN ITS CARD, AND COMPOSE THE SHEET** — the player's path
 ## end to end. `false` (with a named failure) where any step does not happen.
 ##
-## The hex click is `MapView.handle_hex_click`, the function a real left click on the map calls. The
-## verb press goes through the viewport (`Viewport.push_input`), so the button is reached by hit test
-## as a player's click would be. The sheet's stepper and confirm are pressed by signal: the opening
-## outfit card floats over the sheet's right-hand column on a fresh game, and whether a pointer
-## reaches them there is a layout question this probe does not own.
+## Every press is a REAL click: the hex is `MapView.handle_hex_click`, the function a real left click on
+## the map calls, and the verb, the stepper's `+` and the confirm all go through the viewport
+## (`Viewport.push_input`), so each is reached by hit test as a player's click would be.
+##
+## ⛔ **THE OUTFIT CARD MUST GET OUT OF THE WAY.** On a fresh game the opening outfit card opens itself
+## and floats over the sheet's right-hand column, where the stepper's `+` and the confirm are. A band
+## verb opening puts the card away the way its own Done/✕ does (`StartingLoadoutController
+## .collapse_for_verb`), leaving its reopen pill. So this asserts the card was up before Split, at its
+## pill after it, that every `+` click RAISES the count (a click the card swallowed would not), and that
+## the pill brings the card back.
 func _split_through_the_ui(band: Dictionary, workers: int) -> bool:
 	var hud: Node = _main.get("hud")
 	var map_view: Node = _main.get("map_view")
+	var loadout: Object = hud.call("starting_loadout_panel")
 	var entity := int(band.get(ENTITY_KEY, NO_ENTITY))
+	if loadout == null or not bool(loadout.call("is_expanded")):
+		_fail("the opening outfit card is not up on this fresh game, so the probe cannot show a band verb puts it away")
+		return false
 	map_view.call("handle_hex_click", int(band.get(CURRENT_X_KEY, NO_TILE)),
 		int(band.get(CURRENT_Y_KEY, NO_TILE)), MOUSE_BUTTON_LEFT)
 	await _frames(UI_SETTLE_FRAMES)
@@ -290,20 +299,44 @@ func _split_through_the_ui(band: Dictionary, workers: int) -> bool:
 		_fail(("pressing Split in the band's card opened no sheet — the verb closed as it opened. "
 			+ "The jump back to the band's hex must not move the selection off the band"))
 		return false
+	if bool(loadout.call("is_expanded")) or not bool(loadout.call("is_open")):
+		_fail(("pressing Split did not put the outfit card away to its pill (expanded=%s open=%s) — "
+			+ "it still covers the sheet's stepper and confirm") % [
+			loadout.call("is_expanded"), loadout.call("is_open")])
+		return false
+	print("%s: Split put the outfit card away to its pill" % TAG)
 	for _i in range(SPLIT_STEPPER_MAX_PRESSES):
-		if _stepper_count(hud) >= workers:
+		var count := _stepper_count(hud)
+		if count >= workers:
 			break
 		var plus := _stepper_plus(hud)
 		if plus == null:
 			break
-		plus.pressed.emit()
+		_press_through_viewport(plus)
 		await _frames(UI_SETTLE_FRAMES)
+		if _stepper_count(hud) <= count:
+			_fail(("a real click on the split sheet's `+` did not raise the count (still %d) — "
+				+ "something is covering it") % count)
+			return false
 	var confirm := _split_confirm(hud)
 	if confirm == null or confirm.disabled:
 		_fail("the split sheet never offered an enabled `%s` at %d workers (stepper reads %d)" % [
 			HudComposeVocab.SPLIT_BAND_BUTTON, workers, _stepper_count(hud)])
 		return false
-	confirm.pressed.emit()
+	print("%s: the split sheet's `+` took %d real click(s)" % [TAG, _stepper_count(hud)])
+	_press_through_viewport(confirm)
+	await _frames(UI_SETTLE_FRAMES)
+	# **AND THE CARD COMES BACK THE NORMAL WAY** — its reopen pill, by a real click.
+	var pill: Control = (loadout.call("panel") as Object).get("_pill") as Control
+	if pill == null or not pill.is_visible_in_tree():
+		_fail("the outfit card left no reopen pill after Split, so it cannot be brought back")
+		return false
+	_press_through_viewport(pill)
+	await _frames(UI_SETTLE_FRAMES)
+	if not bool(loadout.call("is_expanded")):
+		_fail("a real click on the outfit card's reopen pill did not bring the card back")
+		return false
+	print("%s: the outfit card reopened from its pill" % TAG)
 	return true
 
 

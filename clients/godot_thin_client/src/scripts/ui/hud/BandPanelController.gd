@@ -157,6 +157,11 @@ signal crafting_requested(band: Dictionary)
 ## The header's `▲` was pressed — open the knowledge screen. **It carries no subject**, unlike the
 ## `⚒` beside it: knowledge is per-FACTION, so there is nothing for this relay to resolve.
 signal knowledge_requested
+## A band verb was dispatched (Move, Scout, Deny, Trade, Split) — its sheet or its pick is about to
+## take the player's attention. Relayed to HudLayer, which puts the floating OUTFIT card away
+## (`StartingLoadoutController.collapse_for_verb`) so it cannot cover the sheet; the two controllers
+## never talk to each other directly.
+signal band_verb_opened(mission: String)
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _band_labor: HudBandLaborState = null
@@ -9439,6 +9444,7 @@ func dispatch_verb(mission: String, band: Dictionary) -> void:
     var live := _band_labor.player_band_by_entity(int(band.get("entity", -1)))
     if live.is_empty():
         live = band
+    band_verb_opened.emit(mission)
     if mission == HudComposeVocab.VERB_MISSION_MOVE:
         _targeting.begin_move_band(live)
         rerender()
