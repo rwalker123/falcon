@@ -572,8 +572,12 @@ func run(harness) -> void:
 		_knowledge(KNOWLEDGE_UNLEARNED), _knowledge_labels(), LADDER_CUTTERS)
 	h._assert_hud("…while a body big enough for one is refused on the CRAFT instead (%s)"
 			% _row_face(stone_rows, HudDepositVocab.RUNG_KEY_QUARRY),
-		_row_face(stone_rows, HudDepositVocab.RUNG_KEY_QUARRY).contains(
-			HudDepositVocab.GATE_SHORT_NEEDS_CRAFT_FORMAT % CATALOG_QUARRYING_LABEL))
+		_row_face(stone_rows, HudDepositVocab.RUNG_KEY_QUARRY)
+			== HudWorkVocab.RUNG_LOCKED_FACE_FORMAT % CATALOG_QUARRYING_LABEL)
+	h._assert_hud("…and its hover leads with how to unlock it, naming the craft (%s)"
+			% _row_tooltip(stone_rows, HudDepositVocab.RUNG_KEY_QUARRY),
+		_row_tooltip(stone_rows, HudDepositVocab.RUNG_KEY_QUARRY).begins_with(
+			HudWorkVocab.RUNG_LOCKED_LEARN_FORMAT.split("%s")[0] + CATALOG_QUARRYING_LABEL))
 	# **THE REMEDY NAMES THE RUNG THAT *TEACHES* THE CRAFT**, looked up through `earns_knowledge` and
 	# never inferred from `requires_rung`.
 	h._assert_hud("…and the remedy names the rung that TEACHES it (%s)"

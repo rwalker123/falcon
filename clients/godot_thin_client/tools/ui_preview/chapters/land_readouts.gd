@@ -2013,10 +2013,21 @@ func run(harness) -> void:
 		# ⛔ **ONE REFUSAL ON THE ROW.** Both built rungs are gated on the craft AND on the ground, and
 		# each states the craft: the ground gate names a rung the ladder is already displaying two
 		# lines up, so it is the refusal worth least on a line that holds one clause.
-		h._assert_hud("a refused rung leads with its PRICE and states ONE refusal, the nearest",
+		h._assert_hud("a refused rung is a `🔒` naming ONE blocker, the nearest — `%s` / `%s` (got `%s` / `%s`)"
+				% [ROW_DIRT_GATED_FACE, ROW_PAVED_GATED_FACE,
+					gated_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""),
+					gated_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, "")],
 			String(gated_faces.get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, "")) == ROW_DIRT_GATED_FACE
 				and String(gated_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
 					== ROW_PAVED_GATED_FACE)
+		# ⛔ **AND IT IS A DISABLED BUTTON, not a line of text** — blocked, and not a press.
+		h._assert_hud("…drawn as a DISABLED button, never an enabled one",
+			_road_ladder_locked_button(HudRouteVocab.RUNG_KEY_DIRT_ROAD) != null
+				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_DIRT_ROAD) == null)
+		var gated_tip := String(_road_ladder_tooltips().get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
+		h._assert_hud("…whose hover says how to unlock it, `%s`, and quotes the price, `%s` (\"%s\")"
+				% [ROW_DIRT_GATED_UNLOCK, ROW_DIRT_GATED_PRICE_TIP, gated_tip.replace("\n", " | ")],
+			gated_tip.begins_with(ROW_DIRT_GATED_UNLOCK) and gated_tip.contains(ROW_DIRT_GATED_PRICE_TIP))
 		# ⛔ **AND THE WORD `locked` IS NOWHERE ON THE CARD.** A row reading `locked` above a reason
 		# said it twice; the reason alone IS the state.
 		h._assert_hud("no row anywhere on the ladder says `%s`" % LADDER_LOCKED_WORD,
@@ -2256,7 +2267,7 @@ func run(harness) -> void:
 			not String(_road_ladder_faces().get(HudRouteVocab.RUNG_KEY_DIRT_ROAD, ""))
 				.contains(LADDER_UPKEEP_WORD))
 		# …and the rung ABOVE it is untouched, which is what says only the row being built swaps.
-		h._assert_hud("…while the rung above it still quotes its price, `%s`" % ROW_PAVED_GATED_FACE,
+		h._assert_hud("…while the rung above it is still its own `🔒`, `%s`" % ROW_PAVED_GATED_FACE,
 			String(_road_ladder_faces().get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
 				== ROW_PAVED_GATED_FACE)
 		await h._save("road_ladder_declared")
@@ -2377,7 +2388,7 @@ func run(harness) -> void:
 		# band-naming rule, the same one the tile card's `Upkeep:` row above it uses, so a road's
 		# keeper cannot be called two different things on one card. **It OUTRANKS the craft gate**:
 		# no amount of learning helps a tile that is already somebody else's job.
-		h._assert_hud("…and the ROW leads with the price and names the band whose job it is",
+		h._assert_hud("…and the ROW's `🔒` names the band whose job it is",
 			String(taken_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, "")) == ROW_PAVED_TAKEN_FACE)
 		h._assert_hud("…with what has to happen first on the hover",
 			taken_tip.contains(TIP_ANOTHER_KEEPER))
@@ -2430,7 +2441,7 @@ func run(harness) -> void:
 			String(keeper_states.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
 					== RungLadder.STATE_LOCKED
 				and _road_ladder_row_button(HudRouteVocab.RUNG_KEY_PAVED_ROAD) == null)
-		h._assert_hud("…and the ROW asks for a band in three words, beside the price",
+		h._assert_hud("…and the ROW's `🔒` asks for a band in three words",
 			String(keeper_faces.get(HudRouteVocab.RUNG_KEY_PAVED_ROAD, ""))
 				== ROW_PAVED_NO_BAND_FACE)
 		h._assert_hud("…with WHY on the hover, since whoever builds a road keeps it",
@@ -2722,12 +2733,17 @@ const ROW_TRAIL_FACE := "30% · wearing in"
 ## `DetailFormat.format_work_units` rounds to ONE, which prints the config's `0.45` as `0.5` and its
 ## `0.95` as `1.0` — an 11% lie about the figure the player is deciding against. An expectation
 ## written to the one-decimal spelling would pass a client that had gone back to it.
-const ROW_DIRT_GATED_FACE := "300 work · 0.45/turn upkeep · needs Roadbuilding"
-const ROW_PAVED_GATED_FACE := "800 work · 0.95/turn upkeep · needs Paving"
+## ⛔ **A LOCKED ROW'S FACE IS ITS `🔒` AND ITS BLOCKER** — the craft's NAME off the ladder's roster,
+## or the nearest refusal's own short clause — and the price moved to its HOVER (`ROW_*_GATED_TIP`).
+const ROW_DIRT_GATED_FACE := "🔒 Roadbuilding"
+const ROW_PAVED_GATED_FACE := "🔒 Paving"
 ## …the keeper pair, which outrank the craft — no amount of learning helps a tile that is taken, and
 ## picking a band is the one gate on the card closed with a click.
-const ROW_PAVED_TAKEN_FACE := "800 work · 0.95/turn upkeep · Brackwater keeps it"
-const ROW_PAVED_NO_BAND_FACE := "800 work · 0.95/turn upkeep · pick a band"
+const ROW_PAVED_TAKEN_FACE := "🔒 Brackwater keeps it"
+const ROW_PAVED_NO_BAND_FACE := "🔒 pick a band"
+## …and the locked rows' hovers: how to unlock, then the price the face stopped printing.
+const ROW_DIRT_GATED_UNLOCK := "Learn Roadbuilding to raise this to a Dirt Road."
+const ROW_DIRT_GATED_PRICE_TIP := "300 work to build, 0.45 work a turn to keep."
 ## …and a BUILDABLE rung nobody has started, whose price is the button and which has no refusal to
 ## state beside it. **It states no DURATION at all**, and that is deliberate rather than an omission:
 ## the estimate was divided by the acting band's CURRENT builders and ignored the queue the press
@@ -3072,12 +3088,9 @@ func _road_ladder_faces() -> Dictionary:
 	var out: Dictionary = {}
 	for control in _collect_meta(h._hud, HudWorkVocab.RUNG_TRACK_RUNG_META, []):
 		var key := String(control.get_meta(HudWorkVocab.RUNG_TRACK_RUNG_META))
-		for child in control.get_children():
-			if child is Button:
-				out[key] = (child as Button).text
-			elif child is Label and (child as Label).horizontal_alignment \
-					== HORIZONTAL_ALIGNMENT_RIGHT:
-				out[key] = (child as Label).text
+		var faces := _collect_meta(control, HudWorkVocab.RUNG_TRACK_FACE_META, [])
+		if not faces.is_empty():
+			out[key] = (faces[0] as Label).text
 	return out
 
 ## ⛔ **EACH ROW'S HOVER, keyed by rung** — where every clause the row stopped printing now lives. A
@@ -3136,7 +3149,17 @@ func _road_ladder_row_button(rung_key: String) -> Button:
 		if String(control.get_meta(HudWorkVocab.RUNG_TRACK_RUNG_META)) != rung_key:
 			continue
 		for child in control.get_children():
-			if child is Button:
+			if child is Button and not (child as Button).disabled:
+				return child as Button
+	return null
+
+## …and a LOCKED rung's DISABLED button, `null` where the rung is not a locked button.
+func _road_ladder_locked_button(rung_key: String) -> Button:
+	for control in _collect_meta(h._hud, HudWorkVocab.RUNG_TRACK_RUNG_META, []):
+		if String(control.get_meta(HudWorkVocab.RUNG_TRACK_RUNG_META)) != rung_key:
+			continue
+		for child in control.get_children():
+			if child is Button and (child as Button).disabled:
 				return child as Button
 	return null
 

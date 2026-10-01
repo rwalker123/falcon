@@ -101,6 +101,9 @@ const ROW_HOLD_ASIDES_KEY := "hold_asides"
 ## merely offered without re-reading the queue and the meter for itself. Absent means `false`; only
 ## `route_track` writes it, and only on an ordered rung.
 const ROW_ROUTE_BUILDING_KEY := "route_building"
+## A LOCKED row's blocker — the craft's name, or the refusal's own short clause — as its `🔒` states
+## it.
+const ROW_BLOCKER_KEY := "blocker"
 
 ## One aside's two fields. `warn` picks the ink at render (`build_aside`), so the producer decides
 ## severity and the renderer never sniffs the text for it.
@@ -154,7 +157,7 @@ const CROP_SIM_PICKS := ""
 ## what the stall warning weighs a rung's pile against. `{}` (the default) simply drops that aside: a
 ## caller with no band in hand states the price and not the shortfall, which is the honest half.
 static func track(kind: String, source: Dictionary, prefix: String, improvement: String,
-        knowledge: Dictionary, band: Dictionary = {}) -> Array[Dictionary]:
+        knowledge: Dictionary, band: Dictionary = {}, labels: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var source_kind := SourceForecast.source_kind_for_labor(kind)
     var branch := SourceForecast.rung_branch_for_kind(source_kind)
@@ -204,7 +207,11 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
             continue
         # A rung ABOVE the standing one. Its own refusal first, then whatever refused below it.
         var reasons := _rung_refusals(kind, source, prefix, verb, gates)
+        # The rung that bars this one from below, by its bare word — `""` when this rung's refusal is
+        # its own. The locked face names it (`Tended Patch first`).
+        var blocked_below := ""
         if reasons.is_empty() and not blocking_row.is_empty():
+            blocked_below = DetailFormat.rung_badge_word(String(blocking_row[ROW_IMPROVEMENT_KEY]))
             reasons = [HudFloraVocab.GATE_REASON_PATH_BLOCKED_FORMAT % [
                 String(blocking_row[ROW_NAME_KEY]),
                 String((blocking_row[ROW_REASONS_KEY] as Array)[0])]]
@@ -220,6 +227,10 @@ static func track(kind: String, source: Dictionary, prefix: String, improvement:
         if not reasons.is_empty():
             row[ROW_STATE_KEY] = STATE_LOCKED
             row[ROW_REASONS_KEY] = reasons
+            # The rung as the unlock sentence names it — the bare word (`Field`), not the row's glyphed
+            # name, which reads `a ▦ Field` in a sentence.
+            _lock_row(row, _track_lock(kind, source, prefix, verb, reasons, knowledge, labels,
+                DetailFormat.rung_badge_word(verb), blocked_below), _track_figure(row))
             if blocking_row.is_empty():
                 blocking_row = row
         elif index == destination:
@@ -459,8 +470,9 @@ static func route_track(road: Dictionary, ladder: Array[Dictionary], knowledge: 
         # ⛔ **ONE REFUSAL ON THE ROW AND ALL OF THEM IN THE HOVER**, and never the word `locked`
         # beside a reason that already is the state.
         row[ROW_STATE_KEY] = STATE_LOCKED
-        row[ROW_FACE_KEY] = HudRouteVocab.ROAD_LADDER_FACE_FORMAT % [
-            figure, RungGates.route_row_refusal(refusals)]
+        _lock_row(row, _record_lock(RungGates.route_row_refusal_record(refusals),
+            String(row[ROW_NAME_KEY])),
+            "" if HudRouteVocab.catalog_upkeep(entry) >= SourceForecast.UPKEEP_WORK_MIN else figure)
         # **A REFUSED RUNG STATES ITS PILE TOO** — `track()`'s own rule one branch over: a rung the
         # ladder refuses today is still a rung the player is planning toward, and a price hidden
         # behind a refusal is a price nobody can plan against. No stall clause here: the draw is a
@@ -692,13 +704,15 @@ static func _route_tooltip(entry: Dictionary, refusals: Array, road: Dictionary,
     lines.append_array(RungGates.route_tooltip_refusals(refusals))
     return HudRouteVocab.ROAD_LADDER_TIP_SEPARATOR.join(lines)
 
-## **THE TRACK AS CONTROLS** — one row per rung, a `Button` where the rung may be picked and a `Label`
-## where it may not.
+## **THE TRACK AS CONTROLS** — one row per rung (`_build_row`): an enabled button where the rung may be
+## picked, a DISABLED button with its `🔒` and blocker where it is locked, and a plain line for the
+## banked rungs and the one the source stands on.
 ##
-## **THE SHAPE IS THE STATEMENT**, this client's standing rule for the improvement control: a button
-## is a CHOICE, and a banked rung, the rung you stand on and an unmet prerequisite are all FACTS. A
-## greyed button on a locked rung would offer an act the sim refuses, one press away from a job that
-## queues and then blocks.
+## **THE SHAPE IS THE STATEMENT**: a button is a rung that could be ordered, and its being disabled is
+## the statement that it cannot be yet. ⛔ It was a plain text line for a while, on the reasoning that
+## *"a greyed button on a locked rung would offer an act the sim refuses"* — reported from play, the
+## locked rung then read as ordinary text and nothing on it said *blocked*. A disabled button offers no
+## act: it does not press.
 ##
 ## `on_pick` takes the row's improvement VERB — the destination, which is what the command carries.
 ## **THE RENDERER IS SHARED WITH THE ROUTE BRANCH, AND ONLY THE HEADING IS WIDENED.** `track` was not:
@@ -719,19 +733,10 @@ static func build_track(rows: Array[Dictionary], on_pick: Callable,
     title.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_TITLE_FONT_SIZE)
     column.add_child(title)
     for row in rows:
+        # **A RUNG'S PRICE IS INSIDE ITS OWN BUTTON** — what it eats to raise, what the shelf will not
+        # cover, what it costs to hold — so a pile can never float under the list belonging to no
+        # rung in particular. A locked rung's REASONS are its hover (`_lock_row`), the `🔒` the row.
         column.add_child(_build_row(row, on_pick))
-        # **THE ORDER IS THE SENTENCE**: why it is refused (when it is), what it eats to raise, what
-        # the shelf will not cover, then what it costs to hold — the refusal first because a player
-        # reads *may I* before *what does it cost*, and the standing bill last because it is the half
-        # of the commitment that outlives the build.
-        for reason in (row.get(ROW_REASONS_KEY, []) as Array):
-            column.add_child(build_aside(String(reason)))
-        for aside in (row.get(ROW_BUILD_ASIDES_KEY, []) as Array):
-            column.add_child(build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
-                bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
-        for aside in (row.get(ROW_HOLD_ASIDES_KEY, []) as Array):
-            column.add_child(build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
-                bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
     return column
 
 ## **THE RING'S OWN SMALL CARD — what another ring eats to raise, what it costs to hold, and where it
@@ -794,69 +799,214 @@ static func build_ring_card(row: Dictionary, on_declare: Callable) -> VBoxContai
     line[ROW_SELECTABLE_KEY] = true
     line[ROW_REASONS_KEY] = [] as Array[String]
     column.add_child(_build_row(line, func(_verb: String) -> void: on_declare.call()))
-    for aside in (row.get(ROW_BUILD_ASIDES_KEY, []) as Array):
-        column.add_child(build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
-            bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
-    for aside in (row.get(ROW_HOLD_ASIDES_KEY, []) as Array):
-        column.add_child(build_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
-            bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
     return column
 
-## One rung's line: its name on the left, its state or its price on the right.
+## **ONE RUNG'S LINE — a FACT or a BUTTON, and the shape is the statement.**
+##
+## - The rungs BELOW the standing one and the one it STANDS on (and a rung nobody orders) are FACTS: a
+##   plain line, its name on the left and its state on the right, with no button chrome — the standing
+##   rung in plain INK, never the SIGNAL a press wears, so `where you are` does not read as a link.
+## - Every rung that could be ordered is a BUTTON-styled row (`_build_rung_button`): ENABLED where it
+##   may be picked — a press sends exactly what the row sent before — and DISABLED where it is locked,
+##   its right-hand side the `🔒` and the blocker in WARN and its hover the way to unlock it
+##   (`_lock_row`). A locked rung is still a rung the player plans toward, so it is drawn as the button
+##   it will become rather than as text that reads like any other line.
+##
+## ⛔ **THE ROW'S PRICE IS INSIDE THE ROW.** What the rung eats to raise, what the shelf will not cover
+## and what it costs to hold render as quiet lines INSIDE the button (`_row_aside`), so a pile can never
+## float under the list belonging to no rung in particular.
 static func _build_row(row: Dictionary, on_pick: Callable) -> Control:
     var state := String(row.get(ROW_STATE_KEY, ""))
+    var locked := state == STATE_LOCKED
     var selectable := bool(row.get(ROW_SELECTABLE_KEY, false)) and on_pick.is_valid()
+    if selectable or locked:
+        return _build_rung_button(row, on_pick, locked)
     var line := HBoxContainer.new()
-    line.set_meta(HudWorkVocab.RUNG_TRACK_ROW_META, String(row.get(ROW_IMPROVEMENT_KEY, "")))
-    line.set_meta(HudWorkVocab.RUNG_TRACK_STATE_META, state)
-    # …and the rung KEY beside them, which is the only handle unique on the ROUTE branch: two of its
-    # rungs declare no verb at all, so the meta above cannot tell them apart.
-    line.set_meta(HudWorkVocab.RUNG_TRACK_RUNG_META, String(row.get(ROW_RUNG_KEY, "")))
+    _stamp_row(line, row, state)
     var tint := _state_color(state)
+    line.add_child(_row_name_label(row, tint))
+    var value := Label.new()
+    value.text = _row_face(row, state)
+    value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    # The standing rung's STATE word is quiet beside its plain name — a marker, not a figure.
+    value.add_theme_color_override("font_color",
+        HudStyle.INK_DIM if state == STATE_STANDING else tint)
+    value.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE)
+    value.set_meta(HudWorkVocab.RUNG_TRACK_FACE_META, value.text)
+    # ⛔ **IGNORE, so the hover falls through to the LINE that carries the tooltip.** A Label that
+    # swallowed the pointer would answer with its own empty tooltip and show nothing.
+    value.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(value)
+    return line
+
+## The row's three handles — the improvement, the state and the rung key (the only handle unique on
+## the ROUTE branch, two of whose rungs declare no verb) — and its hover.
+static func _stamp_row(node: Control, row: Dictionary, state: String) -> void:
+    node.set_meta(HudWorkVocab.RUNG_TRACK_ROW_META, String(row.get(ROW_IMPROVEMENT_KEY, "")))
+    node.set_meta(HudWorkVocab.RUNG_TRACK_STATE_META, state)
+    node.set_meta(HudWorkVocab.RUNG_TRACK_RUNG_META, String(row.get(ROW_RUNG_KEY, "")))
+    node.tooltip_text = String(row.get(ROW_TOOLTIP_KEY, ""))
+
+static func _row_name_label(row: Dictionary, ink: Color) -> Label:
     var name := Label.new()
     name.text = String(row.get(ROW_NAME_KEY, ""))
     name.clip_text = true
     name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     name.custom_minimum_size = Vector2(float(row.get(ROW_NAME_WIDTH_KEY,
         HudWorkVocab.RUNG_TRACK_NAME_WIDTH)), 0.0)
-    name.add_theme_color_override("font_color", tint)
+    name.add_theme_color_override("font_color", ink)
     name.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE)
     name.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(name)
-    var face := _row_face(row, state)
-    # **THE HOVER GOES ON THE LINE AND ON THE FACE BOTH.** A `Button` is `MOUSE_FILTER_STOP` and
-    # answers a hover with its OWN tooltip, so a tooltip left only on the row would never show over
-    # the one control the pointer is actually aiming at.
-    var hover := String(row.get(ROW_TOOLTIP_KEY, ""))
-    line.tooltip_text = hover
-    if not selectable:
-        var value := Label.new()
-        value.text = face
-        value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-        value.add_theme_color_override("font_color", tint)
-        value.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE)
-        # ⛔ **IGNORE, so the hover falls through to the LINE that carries the tooltip.** A Label
-        # that swallowed the pointer would answer with its own empty tooltip and show nothing.
-        value.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        line.add_child(value)
-        return line
-    var pick := Button.new()
-    pick.text = face
-    pick.focus_mode = Control.FOCUS_NONE
-    pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    HudStyle.apply_button(pick, "ghost")
-    # The board's own row treatment — the default button chrome is nearly two lines tall, which on a
-    # three-rung track is half the card.
-    HudWidgets.compact(pick, HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
-    # AFTER `apply_button`, which writes its own `font_color`: a rung already on the chosen path keeps
-    # the cyan that says so, and the hover brightening stays as the affordance.
-    pick.add_theme_color_override("font_color", tint)
-    pick.tooltip_text = hover
+    return name
+
+## **THE RUNG AS A BUTTON.** A `PanelContainer` holds two children over one rect: a ghost `Button` that
+## is the hit area and the chrome (FIRST, so it draws beneath), and the content — name, face and the
+## price lines — on top with `MOUSE_FILTER_IGNORE`, so every click lands on the button. The container
+## sizes to its content, which a `Button` cannot do for children of its own.
+static func _build_rung_button(row: Dictionary, on_pick: Callable, locked: bool) -> PanelContainer:
+    var state := String(row.get(ROW_STATE_KEY, ""))
+    var cell := PanelContainer.new()
+    _stamp_row(cell, row, state)
+    cell.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
     var verb := String(row.get(ROW_IMPROVEMENT_KEY, ""))
-    pick.pressed.connect(func() -> void: on_pick.call(verb))
-    line.add_child(pick)
-    return line
+    var pick := Button.new()
+    pick.focus_mode = Control.FOCUS_NONE
+    pick.disabled = locked
+    pick.tooltip_text = cell.tooltip_text
+    pick.set_meta(HudWorkVocab.RUNG_TRACK_BUTTON_META, verb)
+    HudStyle.apply_button(pick, "ghost")
+    if not locked:
+        pick.pressed.connect(func() -> void: on_pick.call(verb))
+    cell.add_child(pick)
+    var inner := MarginContainer.new()
+    inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    for side in ["margin_left", "margin_right"]:
+        inner.add_theme_constant_override(side, HudWorkVocab.RUNG_TRACK_BUTTON_PADDING_H)
+    for side in ["margin_top", "margin_bottom"]:
+        inner.add_theme_constant_override(side, HudWorkVocab.RUNG_TRACK_BUTTON_PADDING_V)
+    cell.add_child(inner)
+    var column := VBoxContainer.new()
+    column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    column.add_theme_constant_override("separation", 0)
+    inner.add_child(column)
+    var line := HBoxContainer.new()
+    line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    column.add_child(line)
+    var tint := _state_color(state)
+    line.add_child(_row_name_label(row, HudStyle.INK_DIM if locked else tint))
+    var face := Label.new()
+    face.text = _row_face(row, state)
+    face.clip_text = true
+    face.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    face.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    face.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    face.add_theme_color_override("font_color", HudStyle.WARN if locked else tint)
+    face.add_theme_font_size_override("font_size", HudWorkVocab.RUNG_TRACK_ROW_FONT_SIZE)
+    face.set_meta(HudWorkVocab.RUNG_TRACK_FACE_META, face.text)
+    face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(face)
+    # The price, in the sentence's order: what it eats to raise and whether the shelf carries it, then
+    # what it costs to hold — the standing bill last because it outlives the build.
+    for key in [ROW_BUILD_ASIDES_KEY, ROW_HOLD_ASIDES_KEY]:
+        for aside in (row.get(key, []) as Array):
+            column.add_child(_row_aside(String((aside as Dictionary).get(RUNG_ASIDE_TEXT_KEY, "")),
+                bool((aside as Dictionary).get(RUNG_ASIDE_WARN_KEY, false))))
+    return cell
+
+## One price line INSIDE a rung's button — `build_aside`'s register, wrapping to the button's width
+## rather than to the card's, and transparent to the pointer so the press lands on the button.
+static func _row_aside(text: String, warn: bool) -> Label:
+    var label := build_aside(text, warn)
+    # ⛔ **A WIDTH, NOT ZERO.** A wrapping Label with no minimum width is measured at zero — one word a
+    # line — and the card is fitted to that height before the row has its real width, leaving it tall
+    # and mostly empty. The card's width less the button's own inner padding is what the line gets.
+    label.custom_minimum_size = Vector2(HudWorkVocab.RUNG_TRACK_WIDTH
+        - 2.0 * float(HudWorkVocab.RUNG_TRACK_BUTTON_PADDING_H), 0.0)
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    return label
+
+## **A LOCKED ROW'S `🔒` AND HOVER**, from a `{blocker, unlock}` lock (`_record_lock` / `_track_lock`).
+## The face becomes the lock and the blocker; the hover leads with how to unlock it, then `figure` (the
+## work/upkeep figures where the producer's own hover does not already state them), then whatever hover
+## the producer composed.
+const LOCK_BLOCKER_KEY := "blocker"
+const LOCK_UNLOCK_KEY := "unlock"
+
+static func _lock_row(row: Dictionary, lock: Dictionary, figure: String) -> void:
+    var blocker := String(lock.get(LOCK_BLOCKER_KEY, ""))
+    if blocker == "":
+        blocker = HudWorkVocab.RUNG_TRACK_STATE_LOCKED
+    row[ROW_BLOCKER_KEY] = blocker
+    row[ROW_FACE_KEY] = HudWorkVocab.RUNG_LOCKED_FACE_FORMAT % blocker
+    var lines: Array[String] = []
+    for text in [String(lock.get(LOCK_UNLOCK_KEY, "")), figure,
+            String(row.get(ROW_TOOLTIP_KEY, ""))]:
+        if text != "":
+            lines.append(text)
+    row[ROW_TOOLTIP_KEY] = HudWorkVocab.RUNG_LOCKED_TIP_SEPARATOR.join(lines)
+
+## The lock off a ROUTE or DEPOSIT refusal record — the craft's NAME where the record carries one
+## (`GATE_NAME_KEY`), with `Learn <craft> to raise this to <rung>.` leading the hover; otherwise the
+## record's own short clause, with its sentence as the hover.
+static func _record_lock(record: Dictionary, rung_name: String) -> Dictionary:
+    var name := String(record.get(HudRouteVocab.GATE_NAME_KEY, ""))
+    var long := String(record.get(HudRouteVocab.GATE_LONG_KEY, ""))
+    if name != "":
+        return {LOCK_BLOCKER_KEY: name, LOCK_UNLOCK_KEY: HudWorkVocab.RUNG_LOCKED_TIP_SEPARATOR.join(
+            PackedStringArray([HudWorkVocab.RUNG_LOCKED_LEARN_FORMAT % [name,
+                HudWorkVocab.tending_rung_phrase(rung_name)], long]))}
+    return {LOCK_BLOCKER_KEY: String(record.get(HudRouteVocab.GATE_SHORT_KEY, "")),
+        LOCK_UNLOCK_KEY: long}
+
+## The lock on a PLANT or ANIMAL rung. **The face is always a SHORT clause** — a gate reason is a
+## sentence, and a sentence after the `🔒` elides to `This animal will n…`. In order:
+##
+## - barred from BELOW → `<rung> first`;
+## - an OUTRIGHT bar (the species or the ground will never take this rung) → `can't be tamed` /
+##   `can't be penned` per the rung, `not for this animal` on a rung the table does not name, and the
+##   plant twin `nothing here grows to it`;
+## - the rung's own CRAFT missing → the craft's display name off the ladder's knowledge roster
+##   (`labels`, through `RungGates.RUNG_KNOWLEDGE_TRACKS`), with `Learn <craft> to raise this to <a
+##   rung>.` leading the hover — `needs a craft` where the roster has not named it;
+## - otherwise the rung's SOURCE gate → `tame it first` on an animal, `ground won't take seed` on a
+##   plant.
+##
+## Every reason sentence follows in the hover, so nothing the face shortened is lost.
+static func _track_lock(kind: String, source: Dictionary, prefix: String, verb: String,
+        reasons: Array[String], knowledge: Dictionary, labels: Dictionary,
+        rung_name: String, blocked_below: String = "") -> Dictionary:
+    var lines: Array[String] = []
+    var hunt := kind == SourceForecast.LABOR_KIND_HUNT
+    var blocker := ""
+    if blocked_below != "":
+        blocker = HudFloraVocab.GATE_SHORT_PATH_BLOCKED_FORMAT % blocked_below
+    elif _outright_bar(kind, source, prefix, verb) != "":
+        blocker = String(HudFloraVocab.GATE_SHORT_NEVER_BY_RUNG.get(verb,
+            HudFloraVocab.GATE_SHORT_NOT_FOR_THIS_ANIMAL)) if hunt \
+            else HudFloraVocab.GATE_SHORT_CROP_CANNOT_CLIMB
+    elif RungGates.knowledge_gate_unmet(verb, knowledge):
+        var craft := String(labels.get(String(RungGates.RUNG_KNOWLEDGE_TRACKS.get(verb, "")), "")) \
+            .strip_edges()
+        if craft != "":
+            blocker = craft
+            lines.append(HudWorkVocab.RUNG_LOCKED_LEARN_FORMAT % [craft,
+                HudWorkVocab.tending_rung_phrase(rung_name)])
+        else:
+            blocker = HudFloraVocab.GATE_SHORT_NEEDS_CRAFT_UNNAMED
+    else:
+        blocker = HudFloraVocab.GATE_SHORT_HERD_UNTAMED if hunt \
+            else HudFloraVocab.GATE_SHORT_GROUND_REFUSES
+    lines.append_array(reasons)
+    return {LOCK_BLOCKER_KEY: blocker,
+        LOCK_UNLOCK_KEY: HudWorkVocab.RUNG_LOCKED_TIP_SEPARATOR.join(lines)}
+
+## A plant or animal rung's work figure for its locked hover, `""` where the wire prices no job.
+static func _track_figure(row: Dictionary) -> String:
+    var work := float(row.get(ROW_WORK_KEY, WORK_UNKNOWN))
+    if work <= WORK_UNKNOWN:
+        return ""
+    return HudWorkVocab.RUNG_TRACK_COST_UNDATED_FORMAT % DetailFormat.format_work_units(work)
 
 ## An aside beneath a row, in the quiet ink a gate reason takes everywhere else in this client — used
 ## for a locked rung's REASON, for a crop row's own price-and-payoff FACE, and for the two PRICE
@@ -1323,7 +1473,9 @@ static func _state_word(state: String) -> String:
 static func _state_color(state: String) -> Color:
     match state:
         STATE_BANKED: return HudStyle.INK_FAINT
-        STATE_STANDING: return HudStyle.SIGNAL
+        # **THE RUNG YOU STAND ON IS A PLAIN MARKER**, never the SIGNAL a press wears — it read as a
+        # link. Its words say where you are; the ink only has to not invite a click.
+        STATE_STANDING: return HudStyle.INK
         STATE_PATH: return HudStyle.SIGNAL_DEEP
         STATE_TARGET: return HudStyle.SIGNAL
         STATE_LOCKED: return HudStyle.INK_DIM
@@ -1588,8 +1740,9 @@ static func deposit_track(deposit: Dictionary, ladder: Array[Dictionary], knowle
         # ⛔ **ONE REFUSAL ON THE ROW AND ALL OF THEM IN THE HOVER**, and never the word `locked`
         # beside a reason that already is the state.
         row[ROW_STATE_KEY] = STATE_LOCKED
-        row[ROW_FACE_KEY] = HudDepositVocab.DEPOSIT_LADDER_FACE_FORMAT % [
-            figure, RungGates.deposit_row_refusal(refusals)]
+        _lock_row(row, _record_lock(RungGates.deposit_row_refusal_record(refusals),
+            String(row[ROW_NAME_KEY])),
+            "" if HudDepositVocab.catalog_upkeep(entry) >= SourceForecast.UPKEEP_WORK_MIN else figure)
         # **A REFUSED RUNG STATES ITS PILE TOO** — a rung the track refuses today is still one the
         # player is planning toward, and a price hidden behind a refusal is a price nobody can plan
         # against. **No stall clause**: the shelf is weighed against a build that is not happening.

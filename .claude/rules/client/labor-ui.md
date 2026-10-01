@@ -8088,6 +8088,42 @@ much of its assigned crew the bill consumes.
 - **The idle clause is its own line from its own composer** (`upkeep_pool_idle_line`) rather than a
   clause welded onto the coverage sentence, so `HudFormat.join_tooltip_lines` can drop it alone.
 
+## ⛔ EVERY LADDER CARD'S RUNGS ARE BUTTONS, AND A LOCKED ONE READS AS BLOCKED
+
+One row builder (`RungLadder._build_row`) draws every improvement ladder card — the plant and animal
+track (`track`), the workings (`deposit_track`), the road card (`route_track`) and the ring card:
+
+- **A rung that could be ordered is a button-styled row** (`_build_rung_button`): a `PanelContainer`
+  holding a ghost `Button` (the hit area and chrome, first so it draws beneath) and the content over it
+  with `MOUSE_FILTER_IGNORE` — name left, face right (`RUNG_TRACK_FACE_META`), then the rung's price
+  lines. **Buildable → enabled**, its press the same `on_pick(verb)` as before. **Locked → DISABLED**,
+  its face `🔒 <blocker>` in WARN (`RUNG_LOCKED_FACE_FORMAT`).
+- **The blocker comes from the data the card already holds.** A craft refusal names the craft by its
+  display name — on the route and deposit branches off the refusal record's `GATE_NAME_KEY` (set by
+  `RungGates._route_craft_refusal` / `_deposit_craft_refusal` from the ladder's knowledge roster); on
+  the plant/animal branch off `RungGates.RUNG_KNOWLEDGE_TRACKS` and the same roster (`knowledge_labels`,
+  `track()`'s `labels`). **Every other refusal states a SHORT clause, never a sentence** — a sentence
+  after the `🔒` elides (`This animal will n…`). Route and deposit records carry their own short form
+  (`🔒 pick a band`, `🔒 no crew`, `🔒 too small`); the plant/animal gates are sentences, so
+  `RungLadder._track_lock` picks a `HudFloraVocab.GATE_SHORT_*` clause by KIND: barred from below
+  (`Tended Patch first`), an outright species/ground bar (`can't be tamed` / `can't be penned` per the
+  rung, `not for this animal` on an unnamed one, `nothing here grows to it` on a plant), an unnamed
+  craft (`needs a craft`), or the source gate (`tame it first`, `ground won't take seed`). The
+  sentence stays the hover.
+- **The locked hover says how to unlock it, then the figures.** `Learn <craft> to raise this to <a
+  rung>.` (`RUNG_LOCKED_LEARN_FORMAT`, the rung through `tending_rung_phrase`) where a craft blocks,
+  then every refusal sentence, then the work/upkeep figure where the producer's own hover does not
+  already state it (`_lock_row`).
+- **A rung's material cost is inside its own button** — the pile, the stall warning and the standing
+  bill are quiet lines in the button's content (`_row_aside`, given the card's width less the button's
+  padding, or a wrapping label measured at zero width fits the card to one word a line). Nothing
+  floats under the list.
+- **The banked rungs and the one the source stands on are plain markers**: no button, the standing
+  rung's name in INK and `where you are` in INK_DIM — never the SIGNAL a press wears.
+- ⛔ This replaced the rule that a locked rung is a plain text line because *"a greyed button would
+  offer an act the sim refuses"*: reported from play, the locked rung then read as ordinary text and
+  nothing on it said blocked. A disabled button offers no act.
+
 ## THE `⌃` TRACK'S PRICE ASIDES, and the work row's third shortfall (`docs/plan_standing_upkeep.md` §2.7)
 
 **WORK WAS NEVER THE WHOLE PRICE.** A rung costs hands *and* goods that go INTO the thing and stay

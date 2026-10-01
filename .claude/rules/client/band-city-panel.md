@@ -2337,8 +2337,10 @@ split) need two claims.
 A site's crew keeps it before it collects, so the Agriculture, Husbandry and Groundwork POOLS are
 retired and each patch, herd and working is staffed on its OWN row. The Work zone
 (`BandPanelController._fill_work_zone_column`) is the work head over five collapsible SECTIONS, in
-this order, each headed `TITLE · N on work` with a collapse control (a filled `▼` open, `▶` folded)
-as the head's first child:
+this order, each headed by its fold control (a filled `▼` open, `▶` folded) and its NAME — nothing
+else; the `N on work` readout is retired, the hands being on each section's own steppers. The one
+head-level warning kept is BUILD QUEUE's `⚠` (`BUILD_QUEUE_NO_BUILDERS_MARK`, WARN, the pool's hover)
+while something is queued and no builder is on it:
 
 | section | holds | always drawn? |
 |---|---|---|

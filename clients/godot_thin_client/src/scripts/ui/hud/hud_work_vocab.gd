@@ -3294,6 +3294,30 @@ const RUNG_TRACK_GAP := 4.0
 
 const RUNG_TRACK_TITLE := "TAKE IT TO…"
 
+## ---- A RUNG IS A BUTTON, AND A LOCKED ONE READS AS BLOCKED ---------------------------------------
+##
+## Every rung above the one the source stands on is a button-styled row (`RungLadder._build_row`): a
+## buildable rung an ENABLED button, a locked one a DISABLED button whose right-hand side is the lock
+## and the blocker in WARN — `🔒 Roadbuilding` — and whose hover says how to unlock it. The rung the
+## source stands on, and the rungs below it, are plain markers.
+const RUNG_LOCKED_FACE_FORMAT := "🔒 %s"
+
+## The hover's first line on a rung locked on a CRAFT — the craft's display name off the ladder's own
+## knowledge roster, then the rung as the `once it's …` clause says it (`tending_rung_phrase`).
+const RUNG_LOCKED_LEARN_FORMAT := "Learn %s to raise this to %s."
+
+## The joiner between a locked rung's hover lines.
+const RUNG_LOCKED_TIP_SEPARATOR := "\n"
+
+## The rung button's inner padding — the content sits inside the button's own border.
+const RUNG_TRACK_BUTTON_PADDING_H := 6
+const RUNG_TRACK_BUTTON_PADDING_V := 2
+
+## Handles: the rung's right-hand face Label (valued its text), and the row's Button (valued the
+## improvement it would send).
+const RUNG_TRACK_FACE_META := &"rung_track_face"
+const RUNG_TRACK_BUTTON_META := &"rung_track_button"
+
 const RUNG_TRACK_TITLE_FONT_SIZE := ZONE_HEAD_FONT_SIZE
 
 const RUNG_TRACK_ROW_FONT_SIZE := 12
@@ -3562,9 +3586,8 @@ const WORK_SECTION_TITLES := {
     WORK_SECTION_GROUNDWORK: "Groundwork",
 }
 
-## Every section head's readout — the hands this section's controls spend: the builders pool on the
-## queue, the Roadwork pool on the roads, and the summed crews of the site rows on the three webs.
-const WORK_SECTION_READOUT_FORMAT := "%d on work"
+## The BUILD QUEUE head's one warning mark — something is queued and no builder is on it.
+const BUILD_QUEUE_NO_BUILDERS_MARK := UPKEEP_POOL_SHORT_MARK
 
 ## The collapse control, the head's FIRST child: a ghost Button carrying a DRAWN filled triangle
 ## (`DisclosureTriangle` — `▼` open, `▶` folded), centred in the button by geometry. It replaced the

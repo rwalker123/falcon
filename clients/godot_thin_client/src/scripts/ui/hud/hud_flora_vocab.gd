@@ -100,6 +100,32 @@ const GATE_REASON_CROP_CANNOT_CLIMB_FORMAT := "Nothing growing here can be taken
 # the destination.
 const GATE_REASON_PATH_BLOCKED_FORMAT := "%s must be raised first: %s"
 
+# ---- THE SHORT CLAUSE A LOCKED LADDER RUNG SHOWS (`RungLadder._track_lock`) -----------------------
+#
+# The gate reasons above are SENTENCES, and a rung button has room for a clause after its `🔒`; a
+# sentence there elides to `This animal will n…`. So every kind of plant/animal refusal has a short
+# clause here for the button's face, and the sentence stays the hover. A craft refusal states the
+# craft's own NAME instead (off the ladder's knowledge roster), and only falls back to the unnamed
+# clause where the roster has not named it.
+const GATE_SHORT_NEVER_TAMED := "can't be tamed"
+const GATE_SHORT_NEVER_PENNED := "can't be penned"
+## An outright animal bar on a rung this table does not name.
+const GATE_SHORT_NOT_FOR_THIS_ANIMAL := "not for this animal"
+## The plant twin: nothing growing on this ground can climb to the rung.
+const GATE_SHORT_CROP_CANNOT_CLIMB := "nothing here grows to it"
+const GATE_SHORT_NEEDS_CRAFT_UNNAMED := "needs a craft"
+## Corral needs the herd fully tamed first.
+const GATE_SHORT_HERD_UNTAMED := "tame it first"
+## Sow needs ground that will take seed.
+const GATE_SHORT_GROUND_REFUSES := "ground won't take seed"
+## A rung barred by a rung below it, named by that rung's word.
+const GATE_SHORT_PATH_BLOCKED_FORMAT := "%s first"
+## The outright bars, keyed on the rung they refuse.
+const GATE_SHORT_NEVER_BY_RUNG := {
+    "tame": GATE_SHORT_NEVER_TAMED,
+    "corral": GATE_SHORT_NEVER_PENNED,
+}
+
 # **THE PATCH-ECOLOGY GATE REASON IS GONE** ("Patch is Stressed — ease workers off and let it regrow
 # to Thriving"), with `GATE_PHASE_UNKNOWN_LABEL`, the "not Thriving" phrase it fell back to on a
 # redacted tile. No rung on either web gates on a source's health: a crew drawing the ground down

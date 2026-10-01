@@ -1526,6 +1526,9 @@ const GATE_ROW_PRIORITY := [
 const GATE_KIND_KEY := "kind"
 const GATE_SHORT_KEY := "short"
 const GATE_LONG_KEY := "long"
+## …and, on a CRAFT refusal, the craft's display name alone (`""` where the roster has not named it) —
+## what a locked rung's `🔒` states.
+const GATE_NAME_KEY := "name"
 
 ## The GROUND gate — `requires_rung`. A road cannot be built on bare ground because of it: a dirt road
 ## wants a trail beneath it and a trail is worn in only by traffic.

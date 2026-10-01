@@ -1952,22 +1952,20 @@ func _work_section_items(band: Dictionary, models: Array, extract_models: Array,
         var nodes: Array = []
         for model in rows:
             nodes.append(_build_work_row(band, model as Dictionary))
-        _append_work_section(items, spec[0], _build_work_section_head(spec[0],
-            _work_crew_sum(rows)), nodes)
+        _append_work_section(items, spec[0], _build_work_section_head(spec[0]), nodes)
     var roadwork := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
     var roster_drawn := mini(roster_models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
     if _roadwork_section_shows(roster_models, roster_unseen, queued, roadwork):
         _append_work_section(items, HudWorkVocab.WORK_SECTION_ROADWORK,
-            _build_roadwork_head(roadwork, roster_models.size() - roster_drawn),
+            _build_roadwork_head(roster_models.size() - roster_drawn),
             [_build_roadwork_block(band, roster_models, roster_unseen)])
     if not extract_models.is_empty():
         var nodes: Array = []
         for model in extract_models:
             nodes.append(_build_extract_row(band, model as Dictionary))
         _append_work_section(items, HudWorkVocab.WORK_SECTION_GROUNDWORK,
-            _build_work_section_head(HudWorkVocab.WORK_SECTION_GROUNDWORK,
-                _work_crew_sum(extract_models)), nodes)
+            _build_work_section_head(HudWorkVocab.WORK_SECTION_GROUNDWORK), nodes)
     if models.is_empty() and extract_models.is_empty():
         var hint := HudWidgets.alloc_hint_label(HudWorkVocab.WORK_EMPTY_HINT)
         hint.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
@@ -1986,13 +1984,6 @@ func _roadwork_section_shows(roster_models: Array, roster_unseen: bool, queued: 
         if String((model as Dictionary).get("kind", "")) == HudConst.LABOR_KIND_ROADWORK:
             return true
     return false
-
-## The hands a site section's rows spend — its head's `N on work`.
-func _work_crew_sum(rows: Array) -> int:
-    var total := 0
-    for model in rows:
-        total += int((model as Dictionary).get("workers", 0))
-    return total
 
 ## Append one section: a gap (not before the first), its head with the collapse chevron installed, and
 ## its body unless the section is folded. The gap and the head keep with what follows them, so a
@@ -2014,10 +2005,11 @@ func _append_work_section(items: Array, key: StringName, head: HBoxContainer,
     for node in body:
         items.append(_work_item(node as Control))
 
-## A site section's head — `AGRICULTURE · 5 on work`.
-func _build_work_section_head(key: StringName, on_work: int) -> HBoxContainer:
-    return HudWidgets.zone_head(String(HudWorkVocab.WORK_SECTION_TITLES[key]),
-        HudWorkVocab.WORK_SECTION_READOUT_FORMAT % on_work)
+## A section's head — the fold triangle (installed by `_append_work_section`) and the section's NAME,
+## nothing else. ⛔ **THE `N on work` READOUT IS RETIRED**: the hands a section spends are on its own
+## steppers one row down, and a count beside the name read as one more thing to reconcile.
+func _build_work_section_head(key: StringName) -> HBoxContainer:
+    return HudWidgets.zone_head(String(HudWorkVocab.WORK_SECTION_TITLES[key]), "")
 
 ## **THE COLLAPSE CHEVRON, THE HEAD'S FIRST CHILD.** A `Button`, so it consumes its own press and a
 ## head that is also the queue's or the roster's `+N more` door keeps that door behaviour untouched.
@@ -2212,29 +2204,28 @@ func _build_work_head(band: Dictionary, models: Array, income: float,
         head.move_child(output_item, head.get_child_count() - 2)
     return head
 
-## The BUILD QUEUE section's head — `BUILD QUEUE · 3 on work`, the builders pool's head count.
+## The BUILD QUEUE section's head — its name, and nothing else while the queue is funded.
 ##
-## **THE ZERO-BUILDERS STATE STILL SPEAKS**, in the WARN ink on the readout, wherever something is
-## queued: a Cultivate that is not progressing with nothing on any surface saying why was the play
-## report the old `⚠ No builders` note answered. The stepper that fixes it is the Builders line one row
-## down, so the head names the count rather than repeating the remedy.
+## **THE ZERO-BUILDERS STATE STILL SPEAKS**, as the head's one warning mark (`BUILD_QUEUE_NO_BUILDERS_MARK`
+## in WARN, with the pool's hover), wherever something is queued: a Cultivate that is not progressing
+## with nothing on any surface saying why was the play report the old `⚠ No builders` note answered.
+## The stepper that fixes it is the Builders row one line down.
 ##
 ## **THE HEAD IS STILL THE EXPANSION'S DOOR** — `+N more ▾` over the cap, `Show less ▴` expanded — and
 ## the section's collapse chevron is installed beside it by `_append_work_section`.
 func _build_build_queue_head(band: Dictionary, builders: int, remaining: int) -> HBoxContainer:
     var queued_any := not _band_labor.build_queue_keys(band).is_empty()
+    var unfunded := builders <= 0 and queued_any
     var head := HudWidgets.zone_head(
         String(HudWorkVocab.WORK_SECTION_TITLES[HudWorkVocab.WORK_SECTION_BUILD_QUEUE]),
-        HudWorkVocab.WORK_SECTION_READOUT_FORMAT % builders, null,
-        HudStyle.WARN if builders <= 0 and queued_any else HudStyle.INK_DIM,
+        HudWorkVocab.BUILD_QUEUE_NO_BUILDERS_MARK if unfunded else "", null, HudStyle.WARN,
         HudWorkVocab.BUILD_QUEUE_BUILDERS_TOOLTIP)
     _make_queue_head_a_toggle(head, remaining)
     return head
 
-## The ROADWORK section's head — `ROADWORK · 2 on work`, the pool's head count, carrying the road
-## roster's `+N more` door.
-func _build_roadwork_head(on_work: int, remaining: int) -> HBoxContainer:
-    var head := _build_work_section_head(HudWorkVocab.WORK_SECTION_ROADWORK, on_work)
+## The ROADWORK section's head — its name, carrying the road roster's `+N more` door.
+func _build_roadwork_head(remaining: int) -> HBoxContainer:
+    var head := _build_work_section_head(HudWorkVocab.WORK_SECTION_ROADWORK)
     _make_roster_head_a_toggle(head, HudConst.LABOR_KIND_ROADWORK, remaining)
     return head
 
@@ -3931,9 +3922,7 @@ func _build_roster_expanded(band: Dictionary, models: Array, unseen: bool) -> VB
     block.add_theme_constant_override("separation", 0)
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    var roadwork := int(_band_labor.effective_role_workers(
-        band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
-    block.add_child(_build_roadwork_head(roadwork, ZONE_NOTHING_HIDDEN))
+    block.add_child(_build_roadwork_head(ZONE_NOTHING_HIDDEN))
     var pool_line := _build_roadwork_pool_line(band, unseen)
     block.add_child(pool_line)
     var chrome := HudWorkVocab.ROADWORK_ROSTER_HEAD_HEIGHT + pool_line.custom_minimum_size.y
@@ -5303,7 +5292,8 @@ func _open_rung_track(band: Dictionary, model: Dictionary, anchor: Control) -> v
     # pile against what this band actually holds, which is the one thing on that card the SOURCE
     # cannot answer for.
     var rows := RungLadder.track(kind, source, HudComposeVocab.BARE_FORECAST_PREFIX,
-        String(model.get("improvement", "")), _player_knowledge(), band)
+        String(model.get("improvement", "")), _player_knowledge(), band,
+        _topbar.knowledge_labels() if _topbar != null else {})
     # ⛔ **UNREACHABLE BY CONSTRUCTION, AND IT SAYS SO RATHER THAN RETURNING IN SILENCE.** The slot
     # that reaches here is a `Button` only for a rung ON OFFER or a rung UNDER WAY, and both admit a
     # rung through `RungGates.rung_has_room` — which is `not improvement_is_done`, the very test

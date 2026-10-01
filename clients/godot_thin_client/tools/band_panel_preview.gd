@@ -10678,7 +10678,11 @@ func _track_band_fixture(build_job: String = SourceForecast.IMPROVEMENT_NONE) ->
 ## REAL `⌃`, and every claim is read off the card's own metas rather than its text: every face here is
 ## composed at render time, so a text match would only confirm the string the assertion had assumed.
 func _assert_rung_track_at_rest() -> void:
+	# The ladder's knowledge roster, so a locked rung can NAME its craft (`knowledge_labels`); cleared
+	# again below, the states after this one being authored against an empty roster.
+	_hud.update_ladder_knowledge(_track_knowledge_roster())
 	if not await _open_rung_track_from_mark("the wild patch"):
+		_hud.update_ladder_knowledge([])
 		return
 	var states := _rung_track_states()
 	_assert_band_panel("track — the card draws the WHOLE plant branch, locked rung included (%s)"
@@ -10693,15 +10697,29 @@ func _assert_rung_track_at_rest() -> void:
 	_assert_band_panel("track — …and the Field rung LOCKED rather than hidden (%s)"
 		% String(states.get(SourceForecast.IMPROVEMENT_SOW, "")),
 		String(states.get(SourceForecast.IMPROVEMENT_SOW, "")) == RungLadder.STATE_LOCKED)
-	# **THE SHAPE IS THE STATEMENT** — a button is a CHOICE and an unmet prerequisite is a FACT, so a
-	# locked rung carries no control at all rather than a greyed one offering an act the sim refuses.
-	_assert_band_panel("track — the open rung is pressable and the locked one is not",
+	# **A LOCKED RUNG IS A DISABLED BUTTON** — it reads as blocked rather than as one more line of text
+	# — and the open one an enabled button.
+	_assert_band_panel("track — the open rung is an enabled button and the locked one a DISABLED one",
 		_rung_track_row(SourceForecast.IMPROVEMENT_CULTIVATE) != null
-			and _rung_track_row(SourceForecast.IMPROVEMENT_SOW) == null)
-	# **AND THE LOCKED ROW SAYS WHY**, in the same gate reason every other surface states.
-	_assert_band_panel("track — …and the lock states the KNOWLEDGE that is missing",
-		_has_label_containing(_hud,
+			and _rung_track_row(SourceForecast.IMPROVEMENT_SOW) == null
+			and _rung_track_locked_button(SourceForecast.IMPROVEMENT_SOW) != null)
+	_assert_locked_rung_names_its_requirement(SourceForecast.IMPROVEMENT_SOW,
+		HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION)
+	# **AND THE LOCKED ROW SAYS WHY**, in the same gate reason every other surface states — on its hover.
+	_assert_band_panel("track — …and the lock's hover states the KNOWLEDGE that is missing",
+		String(_rung_track_tooltips().get(SourceForecast.IMPROVEMENT_SOW, "")).contains(
 			HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT.split(" %d")[0]))
+	# **THE RUNG THE PATCH STANDS ON IS A PLAIN MARKER**, never link-blue.
+	_assert_standing_rung_is_plain()
+	await _save("band_panel_rung_track_locked")
+	_hud.update_ladder_knowledge([])
+
+## The SEED SELECTION craft's display name in the track's knowledge-roster fixture.
+const TRACK_SEED_SELECTION_NAME := "Seed Selection"
+
+func _track_knowledge_roster() -> Array:
+	return [{"knowledge_id": HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION,
+		"display_name": TRACK_SEED_SELECTION_NAME}]
 
 ## **THE BANKED RUNG — the receipt-not-discount property, rendered.** The patch stands on Tended, so
 ## the rung beneath it is bought and paid for: it states its STATE and no figure at all, and the fifty
@@ -10816,7 +10834,8 @@ func _assert_rung_track_names_every_offer() -> void:
 	var track := RungLadder.build_track(rows, func(_rung: String) -> void: pass)
 	var pressable: Array[Button] = []
 	_collect_buttons_typed(track, pressable)
-	var blank := pressable.filter(func(button: Button): return button.text.strip_edges().is_empty())
+	pressable = pressable.filter(func(button: Button): return not button.disabled)
+	var blank := pressable.filter(func(button: Button): return _button_row_face(button).strip_edges().is_empty())
 	_assert_band_panel("track — every pressable rung renders a face (%d of %d blank)"
 		% [blank.size(), pressable.size()],
 		pressable.size() == offered.size() and blank.is_empty())
@@ -11414,9 +11433,10 @@ func _assert_ring_card_prices_the_ring() -> void:
 	# can answer today: `corral_work_cost` is published at every position, so a card that lost this face
 	# would be the one-click button again under a heading.
 	var face := HudWorkVocab.RUNG_TRACK_COST_UNDATED_FORMAT % DetailFormat.format_work_units(RING_PRICE_WORK)
+	var row_face := "" if row == null else _button_row_face(row)
 	_assert_band_panel("ring card — …and that row states what the ring costs in WORK: \"%s\" (got \"%s\")"
-			% [face, "<none>" if row == null else row.text],
-		row != null and row.text == face)
+			% [face, "<none>" if row == null else row_face],
+		row != null and row_face == face)
 	# **AND WHAT HOLDING THE WIDER PEN COSTS, IN BOTH CURRENCIES.** Composed from the format and the
 	# fixture's own numbers, never through `_hold_price_asides`, or the claim would agree with the
 	# producer by construction.
@@ -11554,12 +11574,30 @@ func _open_rung_track_named(needle: String) -> bool:
 ## **THE OPEN DESTINATION TRACK'S ROW FOR ONE RUNG** — the `Button` a press would send, or `null`.
 ## Searched from `_hud` rather than from `_panel`: the track is a `PopupPanel` parented into the HUD
 ## CanvasLayer, which is the whole reason it costs the work zone nothing.
+## A rung button's FACE — the right-hand Label its row carries beside it (`RUNG_TRACK_FACE_META`);
+## the button itself has no text, being the hit area under the row's content.
+func _button_row_face(button: Button) -> String:
+	var face := _find_meta_control(button.get_parent(), HudWorkVocab.RUNG_TRACK_FACE_META) as Label
+	return "" if face == null else face.text
+
+## A LOCKED rung's button is DISABLED and is not a press, so it answers `null` here exactly as a fact
+## row does — `_rung_track_locked_button` is the reader for the disabled one.
 func _rung_track_row(improvement: String) -> Button:
 	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
 		if String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META)) != improvement:
 			continue
 		for child in control.get_children():
-			if child is Button:
+			if child is Button and not (child as Button).disabled:
+				return child as Button
+	return null
+
+## …and a LOCKED rung's disabled button, `null` where the row is not a locked button.
+func _rung_track_locked_button(improvement: String) -> Button:
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		if String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META)) != improvement:
+			continue
+		for child in control.get_children():
+			if child is Button and (child as Button).disabled:
 				return child as Button
 	return null
 
@@ -11569,7 +11607,7 @@ func _rung_track_top_row() -> Button:
 	var top: Button = null
 	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
 		for child in control.get_children():
-			if child is Button:
+			if child is Button and not (child as Button).disabled:
 				top = child as Button
 	return top
 
@@ -11580,12 +11618,9 @@ func _rung_track_faces() -> Dictionary:
 	var out: Dictionary = {}
 	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
 		var key := String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META))
-		for child in control.get_children():
-			if child is Button:
-				out[key] = (child as Button).text
-			elif child is Label and (child as Label).horizontal_alignment \
-					== HORIZONTAL_ALIGNMENT_RIGHT:
-				out[key] = (child as Label).text
+		var face := _find_meta_control(control, HudWorkVocab.RUNG_TRACK_FACE_META) as Label
+		if face != null:
+			out[key] = face.text
 	return out
 
 ## **THE CROP STEP'S ROWS, as `species -> Button`** — `{}` while the card is showing rungs, which is
@@ -11727,6 +11762,19 @@ func _assert_ready_mark_declares() -> void:
 		if row == null:
 			_fail("declare — the ⌃ on `%s` opened no selectable track row" % label)
 			continue
+		# The ANIMAL ladder's card, as drawn — the one ladder kind no other frame shows.
+		if label.contains("Wild Boar"):
+			await _save("band_panel_rung_track_herd")
+			# ⛔ **A SPECIES THAT CAN NEVER TAKE A RUNG GETS A SHORT CLAUSE**, never the sentence elided
+			# to `This animal will n…` — the sentence is its hover.
+			var boar_face := String(_rung_track_faces().get(SourceForecast.IMPROVEMENT_CORRAL, ""))
+			var boar_tip := String(_rung_track_tooltips().get(SourceForecast.IMPROVEMENT_CORRAL, ""))
+			var boar_want := HudWorkVocab.RUNG_LOCKED_FACE_FORMAT % HudFloraVocab.GATE_SHORT_NEVER_PENNED
+			_assert_band_panel("herd track — a never-penned species' Corral rung reads `%s` (\"%s\")"
+					% [boar_want, boar_face],
+				boar_face == boar_want)
+			_assert_band_panel("herd track — …with the whole sentence on its hover (\"%s\")" % boar_tip,
+				boar_tip.contains(HudFloraVocab.GATE_REASON_SPECIES_NEVER_PENNED))
 		var seen: Array = []
 		var sink := func(payload: Dictionary) -> void: seen.append(payload)
 		_hud.improvement_requested.connect(sink)
@@ -17829,9 +17877,15 @@ func _assert_the_row_opens_the_rung_track(rows: Array[Control]) -> void:
 			HudDepositVocab.deposit_ladder(_deposit_rung_catalog()),
 			HudDepositVocab.RUNG_KEY_QUARRY))
 		var quarry_face := String(faces.get(WORKINGS_QUARRY_VERB, ""))
-		_assert_band_panel("…and the quarry above it LEADS with its pile and its standing bill — `%s` (\"%s\")"
-				% [priced, quarry_face],
-			quarry_face.begins_with(priced))
+		var quarry_tip := String(_rung_track_tooltips().get(WORKINGS_QUARRY_VERB, ""))
+		var quarry_work := DetailFormat.format_work_units(HudDepositVocab.catalog_work_cost(
+			HudDepositVocab.ladder_entry_of(HudDepositVocab.deposit_ladder(_deposit_rung_catalog()),
+				HudDepositVocab.RUNG_KEY_QUARRY)))
+		# An OPEN quarry leads its face with the price; a LOCKED one's face is its `🔒` and the price
+		# is in its hover.
+		_assert_band_panel("…and the quarry above it states its price — on its face `%s` or in its hover (\"%s\" / \"%s\")"
+				% [priced, quarry_face, quarry_tip],
+			quarry_face.begins_with(priced) or quarry_tip.contains(quarry_work))
 		_assert_band_panel("…quoting no turns estimate on a rung nobody has ordered (\"%s\")"
 				% quarry_face,
 			not quarry_face.contains(WORKINGS_TURNS_ESTIMATE_MARK))
@@ -17925,16 +17979,18 @@ func _assert_a_crewless_working_says_so() -> void:
 	_assert_band_panel("…and its quarry row is refused for want of a CREW — `%s` (\"%s\")"
 			% [HudDepositVocab.GATE_SHORT_NO_CREW, quarry_face],
 		quarry_face.contains(HudDepositVocab.GATE_SHORT_NO_CREW))
-	_assert_band_panel("…leading with its pile all the same, so the price is still plannable (\"%s\")"
-			% quarry_face,
-		quarry_face.begins_with(HudDepositVocab.deposit_ladder_price_face(
+	var crew_tip := String(_rung_track_tooltips().get(WORKINGS_QUARRY_VERB, ""))
+	_assert_band_panel("…its price still in its hover, so it is still plannable (\"%s\")" % crew_tip,
+		crew_tip.contains(DetailFormat.format_work_units(HudDepositVocab.catalog_work_cost(
 			HudDepositVocab.ladder_entry_of(
 				HudDepositVocab.deposit_ladder(_deposit_rung_catalog()),
-				HudDepositVocab.RUNG_KEY_QUARRY))))
-	# **AND IT IS A `Label`, NOT A GREYED BUTTON** — the shape is the statement, and a press the sim
-	# would refuse must not be reachable at all.
-	_assert_band_panel("…and no press is offered on it, the shape being the statement",
-		_rung_track_row(WORKINGS_QUARRY_VERB) == null)
+				HudDepositVocab.RUNG_KEY_QUARRY)))))
+	# **AND IT IS A DISABLED BUTTON** — it reads as blocked, and it does not press.
+	_assert_band_panel("…and it is a DISABLED button, which offers no press",
+		_rung_track_row(WORKINGS_QUARRY_VERB) == null
+			and _rung_track_locked_button(WORKINGS_QUARRY_VERB) != null)
+	_assert_band_panel("…whose face is the `🔒` and the blocker (\"%s\")" % quarry_face,
+		quarry_face == HudWorkVocab.RUNG_LOCKED_FACE_FORMAT % HudDepositVocab.GATE_SHORT_NO_CREW)
 	# **THE HOVER NAMES THE REMEDY IN THE BRANCH'S OWN CREW NOUN** — *put diggers on it* on a rock,
 	# never one word for both branches. It is the whole of what makes this refusal explicable, and it
 	# is read off the ROW's `tooltip_text` rather than off the card's labels: a locked rung carries its
@@ -20814,13 +20870,12 @@ func _assert_build_queue_dates_ascend() -> void:
 			% (seen[-1] if not seen.is_empty() else ""),
 		not seen.is_empty() and seen[-1] == expected[-1])
 
-## The BUILD QUEUE section: its head counts the builders pool (`N on work`), and the Builders LINE
-## beneath it states the kit the PLANT head entry prices at.
+## The BUILD QUEUE section: its head is the section's NAME and carries no `on work` count, and the
+## Builders LINE beneath it states the kit the PLANT head entry prices at.
 func _assert_build_queue_head_readout() -> void:
 	var head := _work_section_head(HudWorkVocab.WORK_SECTION_BUILD_QUEUE)
-	var readout := HudWorkVocab.WORK_SECTION_READOUT_FORMAT % QUEUE_BUILDERS
-	_assert_band_panel("…and its section head counts the builders pool — \"%s\"" % readout,
-		head != null and _has_label_containing(head, readout))
+	_assert_band_panel("…and its section head carries no `%s` count" % WORK_SECTION_RETIRED_READOUT_WORDS,
+		head != null and not _has_label_containing(head, WORK_SECTION_RETIRED_READOUT_WORDS))
 	var kit_face := KitRoster.display_name_for_id(_hud._band_labor.kits(), BandFx.KIT_ID_TILLAGE)
 	var line := _find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS)
 	_assert_band_panel("…and the Builders line states the PLANT head's own kit — \"%s\"" % kit_face,
@@ -24601,10 +24656,15 @@ func _render_work_sections_states() -> void:
 	# the road crew — a road crew with nothing to keep is a control with no subject.
 	_assert_band_panel("work sections — …and no ROADWORK head on a band holding no road",
 		_work_section_head(HudWorkVocab.WORK_SECTION_ROADWORK) == null)
-	var agri_head := _work_section_head(HudWorkVocab.WORK_SECTION_AGRICULTURE)
-	var agri_readout := HudWorkVocab.WORK_SECTION_READOUT_FORMAT % agri_workers
-	_assert_band_panel("work sections — AGRICULTURE's head reads `%s`, its rows' summed crews" % agri_readout,
-		agri_head != null and _has_label_containing(agri_head, agri_readout))
+	# ⛔ **NO SECTION HEAD STATES `N on work`** — a head is the fold triangle and the section's name.
+	var counted: Array = []
+	for key in HudWorkVocab.WORK_SECTION_TITLES.keys():
+		var section_head := _work_section_head(key)
+		if section_head != null and _has_label_containing(section_head, WORK_SECTION_RETIRED_READOUT_WORDS):
+			counted.append(String(key))
+	_assert_band_panel("work sections — no section head states `%s` (found on %s)"
+			% [WORK_SECTION_RETIRED_READOUT_WORDS, counted],
+		counted.is_empty() and agri_workers > 0)
 	_assert_band_panel("work sections — …and no GROUNDWORK head on a band holding no working",
 		_work_section_head(HudWorkVocab.WORK_SECTION_GROUNDWORK) == null)
 	_assert_band_panel("work sections — the retired pool cards are gone: no Agriculture or Husbandry pool line",
@@ -25059,3 +25119,52 @@ func _assert_section_triangle_centred(state: String, button: Button, expanded: b
 			% [state, box.size.x, box.size.y],
 		box.size.x >= HudWorkVocab.WORK_SECTION_CHEVRON_WIDTH
 			and box.size.y >= HudWorkVocab.WORK_SECTION_CHEVRON_HEIGHT)
+
+
+## The retired section-head readout's words (`%d on work`), held here because no shipped string spells
+## them any more — the absence claims assert no head carries them.
+const WORK_SECTION_RETIRED_READOUT_WORDS := "on work"
+
+
+## ⛔ **A LOCKED RUNG NAMES WHAT IT NEEDS** — its face is `🔒 <craft>` in WARN, the craft's display
+## name off the ladder's own knowledge roster (`knowledge_labels`), and its hover leads with how to
+## learn it. Where the roster names no such craft the face falls back to the gate's own reason, which
+## this states rather than skips.
+func _assert_locked_rung_names_its_requirement(improvement: String, knowledge_track: String) -> void:
+	var labels: Dictionary = _hud._topbar.knowledge_labels() if _hud._topbar != null else {}
+	var craft := String(labels.get(knowledge_track, ""))
+	var faces := _rung_track_faces()
+	var face := String(faces.get(improvement, ""))
+	var tip := String(_rung_track_tooltips().get(improvement, ""))
+	print("band_panel_preview: locked rung %s — face \"%s\", craft \"%s\", hover \"%s\""
+		% [improvement, face, craft, tip.replace("\n", " | ")])
+	_assert_band_panel("locked rung (%s) — its face leads with the `🔒` (\"%s\")" % [improvement, face],
+		face.begins_with(HudWorkVocab.RUNG_LOCKED_FACE_FORMAT.split("%s")[0]))
+	if craft != "":
+		_assert_band_panel("locked rung (%s) — …and names the requirement `%s` (\"%s\")"
+				% [improvement, craft, face],
+			face == HudWorkVocab.RUNG_LOCKED_FACE_FORMAT % craft)
+		_assert_band_panel("locked rung (%s) — …and its hover says how to unlock it (\"%s\")"
+				% [improvement, tip],
+			tip.contains(HudWorkVocab.RUNG_LOCKED_LEARN_FORMAT.split("%s")[0] + craft))
+	var face_label: Label = null
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		if String(control.get_meta(HudWorkVocab.RUNG_TRACK_ROW_META)) == improvement:
+			face_label = _find_meta_control(control, HudWorkVocab.RUNG_TRACK_FACE_META) as Label
+	_assert_band_panel("locked rung (%s) — …in the WARN ink" % improvement,
+		face_label != null and face_label.get_theme_color(FONT_COLOR_THEME_KEY) == HudStyle.WARN)
+
+## ⛔ **THE RUNG THE SOURCE STANDS ON IS A PLAIN MARKER** — no button, and no SIGNAL ink on either half.
+func _assert_standing_rung_is_plain() -> void:
+	for control in _collect_meta_controls(_hud, HudWorkVocab.RUNG_TRACK_ROW_META, []):
+		if String(control.get_meta(HudWorkVocab.RUNG_TRACK_STATE_META)) != RungLadder.STATE_STANDING:
+			continue
+		var buttons := control.find_children("*", "Button", true, false)
+		var inks: Array = []
+		for label in control.find_children("*", "Label", true, false):
+			inks.append((label as Label).get_theme_color(FONT_COLOR_THEME_KEY))
+		_assert_band_panel("standing rung — a plain marker: no button, no link ink (%d buttons, inks %s)"
+				% [buttons.size(), inks],
+			buttons.is_empty() and not inks.has(HudStyle.SIGNAL))
+		return
+	_fail("standing rung — the open track drew no `where you are` row")
