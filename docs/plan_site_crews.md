@@ -59,7 +59,7 @@ take         = the source's ordinary take, run on take_hands
   a hand is the remedy.
 - **It is not the retired `maintain` trap.** That crew also kept first, but the old test was binary,
   so 2 hands on a 5-work pen bought nothing. Rot is now `(shortfall / demand) × rate`, so they slow
-  the decay by two-fifths, and the row says `keeps 2 of 5 ⚠` beside the stepper that fixes it.
+  the decay by two-fifths, and the row's `⚠` sits beside the stepper that fixes it.
 - **The rates carry over unchanged, and they were set for shared keepers.** A Field owes 4 work a
   turn, so 4 bare hands hold it and harvest nothing. A pool could spread its keepers across every
   site a band held; a site crew keeps only its own. So the upkeep rates are retuned after this
@@ -160,10 +160,16 @@ keeping.
 shows roads with their own crews, this document wins: Roadwork is a pool.
 
 - **One spinner per site.** The row's crew stepper is the only staffing control for that site. Its
-  second line says where the work goes: `Tended patch · keeps 2 of 2 · 1 harvesting`.
-- **Marks on the row:** `⚠` when the crew keeps less than the demand, with the work-units sentence in
-  the hover; `ⓘ More tools would speed this up.` when the keeping tools are short but the work is
-  covered.
+  second line is the rung alone; the Priority and Build marks sit on a line of their own.
+- **Covered keeping says nothing.** No numbers in work units and no fractional people on screen.
+- **Marks on the row:** `⚠` when the crew keeps less than the demand; `ⓘ More tools would speed this
+  up.` when the keeping tools are short but the work is covered. The hover, and the source
+  inspector, read in whole workers and turns: `Tending: 2 workers now · another needed around turn
+  58 · 3 workers once it's a Field`, led by `Short: tending needs N workers, this crew can't cover
+  it.` when short.
+- **Every crew number agrees with the stepper.** The `+` cap, the compose sheet's take preview, its
+  crew pills and its floor verdict read the sim's keeping-aware answers — the whole crew, keeping
+  hands included — never a client-side estimate.
 - **Sections**, each collapsible, header reading `N on work`:
   - **BUILD QUEUE** — a `Builders` line with the pool spinner, then the queue with read-only Build
     marks;
@@ -197,8 +203,12 @@ zero, as `plan_pool_toe.md` §4 did for the pool kit ids. No fallback code.
 
 **Append:**
 
-- per source (patch, herd, working): `upkeepHands:float` — the crew's hands spent keeping, which the
-  row's second line reads; and `upkeepToolsShort:bool` for the `ⓘ`;
+- per source (patch, herd, working): `upkeepHands:float` — the crew's hands spent keeping;
+  `upkeepToolsShort:bool` for the `ⓘ`; `upkeepWorkersAtCompletion:uint` and
+  `upkeepNextWorkerTurn:int` (−1 = never) for the tending line, projected along the build's own pace;
+- per source, the "most hands that still help" figure counts keeping hands (forage `workersNeeded`,
+  `huntUsefulWorkers`, `usefulCutters`), and a `forage_crew_take` query answers a patch's crew curve
+  after keeping, the same shape as the hunt and deposit curves;
 - per build queue entry: `buildPriority` (`high` / `normal` / `low`);
 - command `build_priority <faction_id> <band_id> <x> <y> high|normal|low | build_priority
   <faction_id> <band_id> <herd_id> high|normal|low`, the same shape as `work_priority`.
