@@ -1400,6 +1400,23 @@ func _curve_worker_cap(useful: int, assignable: int) -> Dictionary:
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
+## **A KEPT PATCH'S CREW PILLS NAME THE WHOLE CREW THE STEPPER SETS** — each pill's take target
+## (`crew_to_clear` / `crew_to_hold`, in gathering hands) converted through the patch curve's own
+## `keep_hands` (`SourceForecast.forage_curve_crew_for`), the conversion the cap goes through too, so
+## the pills, the cap note and the stepper are one count. While the curve is in flight neither pill
+## names a crew. An unkept patch passes through: its take hands ARE its crew.
+func _kept_crew_targets(model: Dictionary, kept: bool) -> Dictionary:
+    if not kept or not bool(model.get("known", false)):
+        return model
+    var out := model.duplicate()
+    var ready := String(_forage_live_crew_view.get("state", "")) == ForecastQuery.STATE_READY
+    var per_crew: Array = (_forage_live_crew_view.get("answer", {}) as Dictionary).get("per_crew", [])
+    for key in ["crew_to_clear", "crew_to_hold"]:
+        out[key] = SourceForecast.forage_curve_crew_for(per_crew,
+            int(model.get(key, SourceForecast.NO_CREW_ANSWER))) \
+            if ready else SourceForecast.NO_CREW_ANSWER
+    return out
+
 ## Does this patch owe keeping? The gate on reading its take off the crew curve.
 func _forage_is_kept(tile_info: Dictionary) -> bool:
     return SourceForecast.has_upkeep(SourceForecast.upkeep_state(tile_info,
@@ -3741,10 +3758,11 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # Uniform scaling leaves the stock FRACTION `B/K` untouched, so the curve's shape, the floor's
     # position on it and the phase bands behind it are exactly the whole patch's; what shrinks is the
     # absolute biomass, which is the selected plants' stand and is the number the chips state.
-    var chart_model := SourceForecast.floor_chart_model(_forage_priced_patch(take_tile, band),
+    var chart_model := _kept_crew_targets(SourceForecast.floor_chart_model(
+        _forage_priced_patch(take_tile, band),
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         _compose.forage_floor(), _compose.forage_count(),
-        crew_label.to_lower(), lesson_known)
+        crew_label.to_lower(), lesson_known), kept)
     if bool(chart_model.get("known", false)):
         # The plant twin of the hunt sheet's published refill, and it exists for the narrower half of
         # the same reason: this web asks the query channel nothing, but the seam's `answered` fans out
@@ -3756,12 +3774,12 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             if kept:
                 _drag_forage_crew_take(band, take_tile, Array(_compose.forage_take_species()),
                     _compose.forage_kit_id(), floor, crew_pool)
-            _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
+            _refresh_floor_live(live_hosts, _kept_crew_targets(SourceForecast.floor_chart_model(
                 _forage_priced_patch(_forage_take_source(
                     _live_tile_info(subject_key, tile_info), take_state), band),
                 SourceForecast.SOURCE_KIND_FORAGE,
                 HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(), crew_label.to_lower(),
-                lesson_known),
+                lesson_known), kept),
                 _compose.forage_count())
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:

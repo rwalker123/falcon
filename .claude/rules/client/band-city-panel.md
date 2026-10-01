@@ -2379,7 +2379,8 @@ Tended Patch
   crew kept less than the site owes, `ⓘ` when its keeping tools came up short, else an empty slot. Its
   hover is in WHOLE WORKERS AND TURNS (`HudWorkVocab.site_keeping_hint` over `tending_line`): a short
   site leads `Short: tending needs 2 workers, this crew can't cover it.`, then both marks state
-  `Tending: 2 workers now · another needed around turn 58 · 3 workers when Tended Patch`, and a
+  `Tending: 2 workers now · another needed around turn 58 · 3 workers once it's a Tended Patch` (a noun
+  rung takes `a`/`an`, the two animal states `Pastoral` / `Penned` none — `tending_rung_phrase`), and a
   tools-short site closes with the tools sentence. The `another…` clause drops where the sim's
   `upkeep_next_worker_turn` is `-1` (it is an ABSOLUTE game turn otherwise), the `when…` clause where no build is in flight on the site (the
   rung named is the in-flight build's destination). The three counts are the sim's

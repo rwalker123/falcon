@@ -2762,8 +2762,8 @@ const WORK_INSPECTOR_KIT_KEY_WIDTH := 62.0
 ## one ran seven characters past it and was drawn ELLIPSISED in the frame."*
 
 ## **WHAT THIS SITE COSTS TO STAND, IN WHOLE WORKERS AND TURNS** — the inspector states the site's
-## tending line (`tending_line`: `Tending: 1 worker now · another needed around turn 58 · 2 when
-## Field`), then the goods its keeping swallows, if any: `… · 0.05 hurdles a turn`.
+## tending line (`tending_line`: `Tending: 1 worker now · another needed around turn 58 · 2 workers
+## once it's a Field`), then the goods its keeping swallows, if any: `… · 0.05 hurdles a turn`.
 ##
 ## > ⛔ RETIRED — **`WORK_INSPECT_KITS_UPKEEP_FORMAT`**, `Kept at 1 work · 0.05 hurdles a turn.` It
 ## > priced the keeping in work units, which no player staffs in; the site's crew is counted in whole
@@ -3657,13 +3657,20 @@ static func site_crew_line(rung_word: String) -> String:
 ## ---- TENDING, IN WHOLE WORKERS AND TURNS ----------------------------------------------------------
 ##
 ## What keeping a site costs, stated the way a player staffs it: `Tending: 1 worker now · another
-## needed around turn 58 · 2 when Field`. The three figures are the sim's (`upkeepWorkersNeeded`,
+## needed around turn 58 · 2 workers once it's a Field`. The three figures are the sim's
+## (`upkeepWorkersNeeded`,
 ## `upkeepNextWorkerTurn`, `upkeepWorkersAtCompletion`); nothing here converts work units to hands.
 ## The second clause drops where the sim answers `UPKEEP_NO_NEXT_WORKER_TURN`, the third where no build
 ## is in flight on the site.
 const TENDING_NOW_FORMAT := "Tending: %s now"
 const TENDING_NEXT_FORMAT := "another needed around turn %d"
-const TENDING_AT_COMPLETION_FORMAT := "%s when %s"
+const TENDING_AT_COMPLETION_FORMAT := "%s once it's %s"
+## The rung words that read as a STATE rather than a thing (`once it's Pastoral`), and so take no article.
+const TENDING_RUNG_ADJECTIVES := ["Pastoral", "Penned"]
+## The articles a noun rung takes: `a Field`, `a Tended Patch`, `an …` before a vowel sound.
+const TENDING_ARTICLE_A := "a %s"
+const TENDING_ARTICLE_AN := "an %s"
+const TENDING_VOWELS := "AEIOUaeiou"
 const TENDING_CLAUSE_SEPARATOR := " · "
 ## The short site's lead sentence — the claim the `⚠` makes, before the tending line explains it.
 const TENDING_SHORT_FORMAT := "Short: tending needs %s, this crew can't cover it."
@@ -3675,6 +3682,13 @@ const TENDING_WORKER_MANY := "%d workers"
 const UPKEEP_NO_NEXT_WORKER_TURN := -1
 const UPKEEP_NO_WORKERS_AT_COMPLETION := -1
 
+## **THE RUNG AS THE `once it's …` CLAUSE SAYS IT** — `a Field`, `a Tended Patch`, `a Coppice`,
+## `a Quarry`, `a Felling`, but `Pastoral` and `Penned` bare: those two name a state, not a thing.
+static func tending_rung_phrase(rung: String) -> String:
+    if rung == "" or TENDING_RUNG_ADJECTIVES.has(rung):
+        return rung
+    return (TENDING_ARTICLE_AN if TENDING_VOWELS.contains(rung.left(1)) else TENDING_ARTICLE_A) % rung
+
 static func tending_workers(count: int) -> String:
     return (TENDING_WORKER_ONE if count == 1 else TENDING_WORKER_MANY) % count
 
@@ -3685,7 +3699,8 @@ static func tending_line(now: int, next_turn: int, at_completion: int, rung_afte
     if next_turn != UPKEEP_NO_NEXT_WORKER_TURN:
         clauses.append(TENDING_NEXT_FORMAT % next_turn)
     if rung_after != "" and at_completion != UPKEEP_NO_WORKERS_AT_COMPLETION:
-        clauses.append(TENDING_AT_COMPLETION_FORMAT % [tending_workers(at_completion), rung_after])
+        clauses.append(TENDING_AT_COMPLETION_FORMAT % [tending_workers(at_completion),
+            tending_rung_phrase(rung_after)])
     return TENDING_CLAUSE_SEPARATOR.join(clauses)
 
 ## The four inputs of a tending line, read off one source dict in its own key spelling.

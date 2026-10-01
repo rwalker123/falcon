@@ -2638,6 +2638,44 @@ func run(harness) -> void:
 		one_hand < minf(float(KEPT_CURVE_CREW) * float(kept_forecast["per_worker"]),
 			float(kept_forecast["next_ceiling"])))
 
+	# ⛔ **THE PILLS AND THE CAP NAME THE WHOLE CREW THE STEPPER SETS** — each take target plus the
+	# keeping hands that crew needs, read off the curve's `keep_hands`. The stand-in keeps
+	# `KEPT_CURVE_KEEP_HANDS` at every crew that size or more, so a take target of `t` is a crew of
+	# `t + KEPT_CURVE_KEEP_HANDS` — composed here from the chart's own take targets, never through the
+	# conversion under test.
+	var sheet = h._hud._drawercompose._compose_sheet
+	var take_model := SourceForecast.floor_chart_model(
+		h._hud._drawercompose._forage_priced_patch(kept_priced, h._hud._band_labor.player_band()),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, KEPT_CURVE_CREW, "harvesters", false)
+	var keep_whole := int(ceilf(KEPT_CURVE_KEEP_HANDS))
+	for pill in [[HudWidgets.CREW_TARGET_CLEAR, "crew_to_clear"], [HudWidgets.CREW_TARGET_HOLD, "crew_to_hold"]]:
+		var take_target := int(take_model.get(pill[1], SourceForecast.NO_CREW_ANSWER))
+		var shown := Readout.crew_target_count(sheet, String(pill[0]))
+		h._assert_hud("the `%s` pill names the whole crew — take %d + keeping %d (got %d)"
+				% [pill[0], take_target, keep_whole, shown],
+			take_target > 0 and shown == take_target + keep_whole)
+	var take_useful := SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
+		h._hud._drawercompose._forage_priced_patch(kept_priced, h._hud._band_labor.player_band()),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK))
+	var cap_want := SourceForecast.MAX_USEFUL_NOTE_FORMAT % [take_useful + keep_whole,
+		SourceForecast.MAX_USEFUL_NOUN_MANY]
+	h._assert_hud("…and the cap note names the same whole crew, `%s`" % cap_want,
+		_sheet_has_text(sheet, cap_want))
+
+## Any Label or RichTextLabel under `root` whose text contains `needle`.
+func _sheet_has_text(root: Node, needle: String) -> bool:
+	if root == null:
+		return false
+	if (root is Label and (root as Label).text.contains(needle)) \
+			or (root is RichTextLabel and (root as RichTextLabel).get_parsed_text().contains(needle)):
+		return true
+	for child in root.get_children():
+		if _sheet_has_text(child, needle):
+			return true
+	return false
+
 ## The kept-curve state's crew, and the hands of it the patch's keeping takes.
 const KEPT_CURVE_CREW := 3
 const KEPT_CURVE_KEEP_HANDS := 2.0

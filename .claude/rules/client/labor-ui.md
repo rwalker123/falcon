@@ -1616,8 +1616,13 @@ keeping hands, so a new turn is a new question — and `_drag_forage_crew_take` 
   same hands; there is no other client netting.
 - **While the reply is in flight** the readout states the seam's sentence (`HUNT_TAKE_PENDING`, or the
   refusal) and no take — no fallback arithmetic.
-- **The cap** is the smallest crew on the curve whose gatherers reach the take's own useful count
-  (`SourceForecast.forage_curve_useful`); pending, only the pool caps the stepper.
+- **The cap and both crew pills name the WHOLE crew the stepper sets**: each take target (the take's
+  useful count, `crew_to_clear`, `crew_to_hold`) goes through ONE conversion,
+  `SourceForecast.forage_curve_crew_for` — the smallest curve row whose gatherers (`workers -
+  keep_hands`) reach it — so a pill reading `5 clear it now` is five harvesters of whom two keep. The
+  pills are converted in `_kept_crew_targets`, on the build and on every drag refill. Pending, only the
+  pool caps the stepper and neither pill names a crew. The hunt and deposit pills already walk curves
+  indexed by whole crew, so they needed no conversion.
 - **An unkept patch keeps the closed form** — there is no keeping to take out of the crew.
 - The hunt sheet reads `HuntCrewTake` and the deposit sheet `DepositCrewTake`, both already netted.
 - `ui_preview`'s stand-in (`fixtures_forecast.forage_crew_take_answer`) takes the tile's own

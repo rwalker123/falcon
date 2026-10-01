@@ -24427,6 +24427,13 @@ const SECTIONS_KEEP_WORKERS := 2
 const SECTIONS_NEXT_WORKER_TURN := 58
 const SECTIONS_WORKERS_AT_COMPLETION := 3
 const SECTIONS_ROW_WORKERS := 3
+## Every rung a tending line can name after a build, and how the `once it's …` clause must read it:
+## the plant rungs, the two animal states (adjectives, no article), and the deposit rungs' catalog names.
+const TENDING_RUNG_PHRASES := [
+	["Tended Patch", "a Tended Patch"], ["Field", "a Field"], ["Pastoral", "Pastoral"],
+	["Penned", "Penned"], ["Felling", "a Felling"], ["Coppice", "a Coppice"],
+	["Quarry", "a Quarry"], ["Orchard", "an Orchard"],
+]
 ## The queued build's own mark, deliberately NOT the default, so a pill that ignored the wire and read
 ## `Normal` would fail rather than coincide.
 const SECTIONS_BUILD_PRIORITY := "high"
@@ -24474,7 +24481,7 @@ func _sections_band_fixture() -> Dictionary:
 			var staffed := row.duplicate(true)
 			staffed["workers"] = SECTIONS_ROW_WORKERS
 			# The KEPT patch is being raised to a Field, so its tending line has a rung to name after
-			# the build (`… · 3 workers when Field`); the short one builds nothing.
+			# the build (`… · 3 workers once it's a Field`); the short one builds nothing.
 			staffed["improvement"] = SourceForecast.IMPROVEMENT_SOW if tile == QUEUE_SECOND_PATCH \
 				else SourceForecast.IMPROVEMENT_NONE
 			rows[i] = staffed
@@ -24632,10 +24639,15 @@ func _render_work_sections_states() -> void:
 		QUEUE_SECOND_PATCH.y])
 	var tools_node := _find_meta_control(tools_row, HudWorkVocab.SITE_KEEPING_MARK_META) \
 		if tools_row != null else null
-	var tools_hover_want := "Tending: %d workers now · another needed around turn %d · %d workers when %s\n%s" \
+	var tools_hover_want := "Tending: %d workers now · another needed around turn %d · %d workers once it's a %s\n%s" \
 		% [SECTIONS_KEEP_WORKERS, SECTIONS_NEXT_WORKER_TURN, SECTIONS_WORKERS_AT_COMPLETION,
 			String(HudComposeVocab.IMPROVEMENT_DONE_LABELS[SourceForecast.IMPROVEMENT_SOW]),
 			HudWorkVocab.SITE_KEEPING_TOOLS_INFO]
+	# ⛔ **AND EVERY RUNG READS RIGHT IN THE CLAUSE** — a thing takes its article, a state takes none.
+	for pair in TENDING_RUNG_PHRASES:
+		_assert_band_panel("tending — the `once it's …` clause reads `%s` for %s (got \"%s\")"
+				% [pair[1], pair[0], HudWorkVocab.tending_rung_phrase(String(pair[0]))],
+			HudWorkVocab.tending_rung_phrase(String(pair[0])) == String(pair[1]))
 	_assert_band_panel("site crew — a KEPT row short of its keeping tools flies `%s`, its hover `%s` (got \"%s\")"
 			% [HudWorkVocab.SITE_KEEPING_TOOLS_MARK, tools_hover_want,
 				"" if tools_node == null else tools_node.tooltip_text],

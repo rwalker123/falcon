@@ -5674,23 +5674,28 @@ static func forage_crew_row(per_crew: Array, workers: int) -> Dictionary:
             return row_variant
     return {}
 
-## **A KEPT PATCH'S USEFUL CREW** — the smallest crew on the curve whose GATHERERS (`workers -
-## keep_hands`, the sim's own keeping) reach `take_useful`, the hands the take itself can use.
-## `NO_CREW_ANSWER` when no row on the curve gets there, which leaves the pool as the only cap. It is
-## asked in gatherers rather than off the take's plateau because the curve states provisions only, and
-## a patch paying hay or a material has a take the curve does not plateau on.
-static func forage_curve_useful(per_crew: Array, take_useful: int) -> int:
-    if take_useful == MAX_USEFUL_UNBOUNDED:
+## **THE WHOLE CREW A TAKE TARGET NEEDS ON A KEPT PATCH** — the smallest crew on the curve whose
+## GATHERERS (`workers - keep_hands`, the sim's own keeping at that crew) reach `take_hands`. The one
+## conversion the cap and both crew pills go through, so all three name crews the stepper sets.
+## `NO_CREW_ANSWER` passes through, and answers where no row on the curve gets there; `0` stays `0`.
+static func forage_curve_crew_for(per_crew: Array, take_hands: int) -> int:
+    if take_hands == NO_CREW_ANSWER or take_hands == MAX_USEFUL_UNBOUNDED:
         return NO_CREW_ANSWER
+    if take_hands <= 0:
+        return take_hands
     for row_variant in per_crew:
         if not (row_variant is Dictionary):
             continue
         var row: Dictionary = row_variant
         var workers := int(row.get(CREW_TAKE_WORKERS_KEY, 0))
         if float(workers) - float(row.get(FORAGE_CREW_KEEP_HANDS_KEY, 0.0)) \
-                >= float(take_useful) - CREW_TAKE_REACH_TOLERANCE:
+                >= float(take_hands) - CREW_TAKE_REACH_TOLERANCE:
             return workers
     return NO_CREW_ANSWER
+
+## **A KEPT PATCH'S USEFUL CREW** — the take's own useful count, through `forage_curve_crew_for`.
+static func forage_curve_useful(per_crew: Array, take_useful: int) -> int:
+    return forage_curve_crew_for(per_crew, take_useful)
 
 ## The ceiling the sim published for this source, or `NO_CREW_ANSWER` where it published none — which
 ## is every surface with no assigned row behind it (the compose sheet, which holds the curve itself,

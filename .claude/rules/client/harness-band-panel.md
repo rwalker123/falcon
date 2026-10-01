@@ -2934,7 +2934,7 @@ state a non-default level. Frames: `band_panel_work_sections`, `band_panel_work_
   claim asserts both cap twins gate at the forecast's own ceiling, adding nothing.
 - **The tools-short `ⓘ` hover carries all three tending clauses**: the kept patch is being raised to a
   Field (`improvement: sow` on its row), so it reads `Tending: 2 workers now · another needed around
-  turn 58 · 3 workers when Field`.
+  turn 58 · 3 workers once it's a Field`, and `TENDING_RUNG_PHRASES` pins the article per rung name.
 - **The pills are claimed as a set**: a `Priority` pill on every row, exactly ONE `Build` pill and it
   is on the queued row, and the queue row's `Build:` mark is a `Label`, not a control. Both pills are
   pressed with REAL input (`_drive_click`) and the emitted LINE is read back through `Main`'s own
