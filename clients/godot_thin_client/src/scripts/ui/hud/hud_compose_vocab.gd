@@ -1265,7 +1265,7 @@ const COMPOSE_PREY_CLEAR_TOOLTIP := "Clear the prey — Send then asks for a her
 const TRADE_PICK_MISS_TITLE := "Trade"
 const TRADE_PICK_MISS_TEXT := "No band this camp is tied to stands there — click a trading partner."
 
-const COMPOSE_TITLE_TRADE := "Load a shipment…"
+const COMPOSE_TITLE_TRADE := "Load a shipment"
 
 ## The send's hover text. It names the one thing that gates the verb — a live tie — because a player
 ## whose bands have met nobody has no destination the Trade pick will take, and must be told why.
@@ -1335,36 +1335,17 @@ const COMPOSE_CARGO_READING_FORMAT := "%s: %s"
 
 const COMPOSE_CARGO_READING_SEPARATOR := " · "
 
-## What the band still holds behind a row — **one of the two ceilings a row is bounded by**, stated so
-## the player can see how much of the pile the manifest has taken. The other is the pack, and which of
-## them binds is whichever is smaller (`BandPanelController._trade_row_max`).
-const COMPOSE_CARGO_HELD_FORMAT := "of %s"
-
-## The row's hover text: the WHOLE face — rating included — beside what the band still holds. The
-## face itself clips in a 354px dock column, so this is where a long rating stays readable rather
-## than lost; the row is ellipsed, never truncated away.
-const COMPOSE_CARGO_TOOLTIP_FORMAT := "%s — %s"
-
 ## **HOW MUCH ONE PRESS MOVES.** Whole units, because that is how a shipment is talked about; the
 ## clamp to the ROW's ceiling means a `+` on a 0.6 pile still loads 0.6 rather than refusing, and one
 ## on a 7.35-unit pack remainder lands on 7.3 rather than overshooting — so no fraction is
 ## unreachable and no press composes a load the meter beside it then refuses.
 const COMPOSE_CARGO_STEP := 1.0
 
-## **THE ROW IS A TYPED FIELD BETWEEN THE TWO STEPPERS** (issue #620). A 6-worker party's full hay
-## load is 72 whole-unit presses at the step above, which is not a control — so the amount is a
-## `LineEdit` the player can type into, with the steppers kept beside it for the nudge they are good
-## at and a `Max` button for the one answer nobody wants to spell.
-##
-## ⛔ **A `LineEdit`, NEVER A `SpinBox` and never a custom key-eating control.**
-## `TextEntryFocus.is_text_entry` — the ONE definition of "the player is typing", read by
-## `KeyboardArbiter` — answers `node is LineEdit or node is TextEdit`. A control the arbiter does not
-## recognise leaves every polled gameplay key live while the player types into it: WASD pans the map
-## and the single-letter panel toggles fire, on the keystrokes meant for the number.
-const COMPOSE_CARGO_FIELD_WIDTH := 58.0
-
-## How wide the typed amount may be. A cargo amount is a quantity of a pile, so it needs digits, one
-## point and a sign's worth of slack — never a paragraph.
+## How wide the typed amount may be. **The amount is a `LineEdit`, never a `SpinBox`**
+## (issue #620): `TextEntryFocus.is_text_entry` — the ONE definition of "the player is typing" — answers
+## `node is LineEdit or node is TextEdit`, and a control it does not recognise leaves WASD panning the
+## map on the keystrokes meant for the number. Its drawn width is `TRADE_CARGO_FIELD_WIDTH`. A cargo
+## amount is a quantity of a pile, so it needs digits, one point and a sign's worth of slack.
 const COMPOSE_CARGO_FIELD_MAX_LENGTH := 12
 
 ## **HOW MANY DECIMALS A COMPOSED AMOUNT KEEPS, and it is a FLOOR onto that grid rather than a
@@ -1379,23 +1360,14 @@ const COMPOSE_CARGO_AMOUNT_DECIMALS := 1
 ## there would read as a fudge rather than as the mass expression's own first term.
 const COMPOSE_CARGO_FOOD_CARRY_WEIGHT := 1.0
 
-## The `Max` button's face and its three readings. **A disabled button that explains itself beats an
-## enabled one that does nothing**, so the two dead states carry WHICH of the two caps stopped them:
-## the row is already at the largest amount that fits, or there is no room (or nothing held) at all.
-const COMPOSE_CARGO_MAX_FACE := "Max"
-const COMPOSE_CARGO_MAX_HINT := "Load the most of this that will still fit."
-const COMPOSE_CARGO_MAX_AT_CAP_HINT := "Already carrying the most of this that will fit."
-const COMPOSE_CARGO_MAX_NO_ROOM_HINT := "No room for this — take something off, or send more hands."
-## The cargo `−` greyed on an empty row. (The `+` greys on the row's ceiling and reuses the two `Max`
-## hints above, which name the same two causes.)
+## The cargo `−` greyed on an empty row. (The `+` and `All` grey on the ceiling and say which cap —
+## `TRADE_CARGO_ALL_LOADED_REASON` or `TRADE_PACK_FULL_REASON`.)
 const COMPOSE_CARGO_NONE_PACKED_REASON := "None of this is packed yet."
-## How wide the `Max` face sits. Wider than a stepper's button because it carries a WORD.
-const COMPOSE_CARGO_MAX_BUTTON_WIDTH := 42.0
 
 ## The typed field's hover text — the three keys that act on it, because none of them is visible.
 const COMPOSE_CARGO_FIELD_HINT := "Type an amount and press Enter. Esc puts the last one back."
 
-## The live mass meter — `▰▰▰▱▱ 30 / 40`. **Every number in it comes off the wire**
+## The pack meter (`TRADE_PACK_CARRIED_FORMAT`). **Every number in it comes off the wire**
 ## (`expedition_trade_per_worker_carry` × the party for the cap;
 ## `expedition_trade_fodder_carry_weight` on the hay and `expedition_trade_material_carry_weight` on
 ## the material total for the mass), never a literal: the sim refuses an over-cap manifest naming
@@ -1409,22 +1381,78 @@ const COMPOSE_CARGO_FIELD_HINT := "Type an amount and press Enter. Esc puts the 
 ## and a reader that drops the hay term UNDER-PRICES every manifest with a bale in it: the meter
 ## says it fits and the send is refused, which is the exact failure the material lever ships to
 ## prevent. Pricing is the only thing the three accounts share; nothing on screen sums them.
-const COMPOSE_CARGO_MASS_FORMAT := "%s  %s / %s"
-
-const COMPOSE_CARGO_MASS_CELLS := 10
-
-const COMPOSE_CARGO_MASS_LABEL := "Mass"
-
-## **THE SERVER'S REFUSAL STAYS THE AUTHORITY; these two only stop the player meeting it.** An
-## over-cap manifest and an empty one are both command failures with a reason — the meter and this
-## sentence exist so the send button can say so before it is pressed.
+##
+## **THE SERVER'S REFUSAL STAYS THE AUTHORITY; this only stops the player meeting it.** The sheet fits
+## a load to a smaller party (`_fit_manifest_to_pack`), so an over-cap manifest is a guard the Send
+## keeps rather than a state a player reaches.
 const COMPOSE_CARGO_OVER_CAP_REASON := "Too heavy for this party — add hands or take goods off."
-
-const COMPOSE_CARGO_EMPTY_REASON := "Nothing loaded yet — a shipment carries something."
 
 ## The band holds nothing a shipment could carry. A different statement from an empty manifest: there
 ## is nothing to load, so the rows are absent rather than sitting at zero.
 const COMPOSE_CARGO_NO_STORES := "This band has no food, hay or materials to send."
+
+# ---- THE SHIPMENT SHEET, ONE ROW PER GOOD (the trade sheet rework) -------------------------------
+# See `band-city-panel.md` → "A SHIPMENT IS THE TRADE VERB" → "ONE ROW PER GOOD".
+
+## The `To` row's value: the destination's name, then where it stands from this band.
+const TRADE_DESTINATION_FORMAT := "%s · %s"
+## Where the destination stands — `3 tiles NE`. The distance is to where the tie last SAW them.
+const TRADE_DESTINATION_WHERE_FORMAT := "%d %s %s"
+const TRADE_DESTINATION_TILE_ONE := "tile"
+const TRADE_DESTINATION_TILE_MANY := "tiles"
+## …and the same band standing on this one's own tile, where a distance and a bearing say nothing.
+const TRADE_DESTINATION_HERE := "here"
+## The `To` row with nothing picked yet — in WARN ink, the instruction the Send's reason repeats.
+const TRADE_DESTINATION_NONE := "Pick a band on the map"
+
+## The party stepper's key, and the sentence under it.
+const TRADE_PORTERS_LABEL := "Porters"
+const TRADE_PORTERS_SUB_FORMAT := "%d of %d free workers · each carries %s"
+## The porters' greyed `+`: every free worker is already carrying.
+const TRADE_PORTERS_AT_MAX_REASON := "No more free workers. Take someone off a work row to add a porter."
+
+## The pack meter: its key on the left, `<carried> of <capacity> carried` on the right, a bar below.
+const TRADE_PACK_LABEL := "Pack"
+const TRADE_PACK_CARRIED_FORMAT := "%s of %s carried"
+## How tall the pack bar draws, and how round its ends are.
+const TRADE_PACK_BAR_HEIGHT := 6.0
+const TRADE_PACK_BAR_RADIUS := 3
+## **WHAT COUNTS AS A FULL PACK** — less room left than half the tenth this sheet names amounts in
+## (`COMPOSE_CARGO_AMOUNT_DECIMALS`), i.e. no amount the sheet can name still fits.
+const TRADE_PACK_FULL_EPSILON := 0.05
+## The `+` and `All` hover when the pack is full — the reason they are greyed and what to do.
+const TRADE_PACK_FULL_REASON := "The pack is full. Add a porter to carry more."
+## …and when the row already carries all the band holds of it.
+const TRADE_CARGO_ALL_LOADED_REASON := "All the band holds of this is loaded."
+
+## A good row's second line: what the band holds, how many grades it comes in, and — only where it
+## is not 1 — what one unit of it costs in pack space.
+const TRADE_CARGO_HELD_FORMAT := "%s held"
+const TRADE_CARGO_GRADES_FORMAT := "%d grades"
+const TRADE_CARGO_WEIGHT_FORMAT := "weighs %s each"
+const TRADE_CARGO_SUB_SEPARATOR := " · "
+## One expanded grade line: the grade's own axis readings, then what the band holds of it.
+const TRADE_GRADE_FORMAT := "%s · %s"
+## **THE CONTROLS ARE LIGHT, SO THE NAME GETS THE WIDTH** — a cargo line's controls sit this close,
+## and its typed amount is this narrow, so a good's name and its second line read whole in the tile
+## card's ~240px column rather than wrapping under four full-size controls.
+const TRADE_CARGO_CONTROL_SEPARATION := 2
+const TRADE_CARGO_FIELD_WIDTH := 44.0
+## The `All` link: load as much of the good as the pack holds, best grade first.
+const TRADE_CARGO_ALL_FACE := "All"
+const TRADE_CARGO_ALL_HINT := "Load as much as the pack holds, best grade first."
+## The grade disclosure's two hovers.
+const TRADE_GRADES_SHOW_TOOLTIP := "Show the grades, to load them by hand."
+const TRADE_GRADES_HIDE_TOOLTIP := "Hide the grades."
+
+## The Send's reasons, one per failed condition, in the order the prototype states them.
+const TRADE_SEND_NEEDS_DESTINATION := "Pick a band on the map to trade with."
+const TRADE_SEND_NEEDS_CARGO := "Load something first."
+const TRADE_SEND_REASON_SEPARATOR := " "
+
+## The sheet's closing line. The weights are the sim's own levers, so the sentence is COMPOSED from
+## them (`food`, `hay`, `goods` per unit) rather than claiming a ratio a config edit could break.
+const TRADE_SHEET_HINT_FORMAT := "The porters walk it there and come home. A unit of food weighs %s, hay %s, goods %s."
 
 const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 

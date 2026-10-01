@@ -1214,6 +1214,22 @@ a sentence is a string — a frame shows a plausible verdict whichever clock it 
 
 ## `chapters/trade.gd` — the cargo picker and a shipment in flight (arc #527, issue #517)
 
+> #### THE SHEET IS ONE ROW PER GOOD NOW, AND THE CHAPTER WAS RE-AIMED WITH IT
+>
+> `band-city-panel.md` → "ONE ROW PER GOOD". `EXPECTED_CHECKPOINTS` **144**, RE-MEASURED. Frames
+> added: `trade_cargo_grades_open` (the hide's two grades, best first) and `trade_sheet_prototype`
+> (the approved prototype's own band, goods and numbers, for the side-by-side). `trade_cargo_over_cap`
+> is now **`trade_cargo_fit_to_pack`** — a smaller party trims the load bottom up rather than greying
+> the Send. `trade_hover_destination` is **retired** with the armed trade pick: the destination is a
+> click on a ringed band while the sheet is open, and the remembered sighting rides the `To` row's
+> hover. The claims that are this rework's: the opening sheet's two Send reasons, one row per good in
+> order with no row for a stone pile held at zero, the hide's sub-line by EQUALITY, collapsed grades
+> and a single-grade good with no disclosure, best grade first on `+` / spill / `−`, a full pack
+> greying `+` and `All` with its reason, and the sent cargo and command line equal to the per-pile
+> manifest's. Lines are found by `CARGO_ROW_KEY_META` and their own Labels, case-insensitively; a
+> good's main line also carries `CARGO_GOOD_ROW_META`. **Sabotage-verified** by reversing the grade
+> order: the four best-first claims fail, and the pack-clamp claims after them cascade.
+
 **Sits after `crafting_bench` in `CHAPTERS`** — it was appended last when it landed, and
 `selective_gather`, `knowledge_panel` and `supply_network` have followed it since, which is exactly
 the case the release note at the end of this paragraph exists for. **Seventeen frames and one hundred

@@ -1016,6 +1016,11 @@ const CARGO_CONTROL_MINUS := "minus"
 const CARGO_CONTROL_FIELD := "field"
 const CARGO_CONTROL_PLUS := "plus"
 const CARGO_CONTROL_MAX := "max"
+## A cargo GOOD's main line (the material's own row, over its grade lines) — `CARGO_ROW_KEY_META`
+## is on it too, valued the good's key; a grade line carries that meta alone, valued its pile's key.
+const CARGO_GOOD_ROW_META := "cargo_good_row"
+## The grade disclosure on a cargo good, valued the good's key.
+const CARGO_GRADES_TOGGLE_META := "cargo_grades_toggle"
 
 ## The "send a shipment" CONFIRM button, as `Button` meta (arc #527) — its own handle rather than the
 ## hunt one's, because the shipment form reaches it from FIVE branches (no ties, no destination

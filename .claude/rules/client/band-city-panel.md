@@ -6784,6 +6784,70 @@ whose payload holds a cargo LIST. That is the `send_denial_raid_requested` prece
 other party verb's payload could express gets its own signal, and `Main.format_send_trade_expedition`
 is its own builder for the same reason.
 
+### ONE ROW PER GOOD — the sheet is the approved prototype
+
+The sheet follows the maintainer-approved prototype (`trade_sheet.html`), top to bottom:
+
+```
+TRADE · FROM FIRBROOK
+Load a shipment                                  ✕
+To       Rushford · 3 tiles NE                   ✕     (or `Pick a band on the map`, WARN)
+Porters                                  [−] 1 [+]
+1 of 2 free workers · each carries 6.0
+Pack                                 0.0 of 6.0 carried
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ (WARN when full)
+CARGO
+  Food    77.7 held                  [−][ 0.0][+] All
+  Hay     6.0 held · weighs 0.5 each [−][ 0.0][+] All
+▸ Bone    8.5 held · 4 grades        [−][ 0.0][+] All
+[ Send shipment ]
+Pick a band on the map to trade with. Load something first.   (WARN, also the Send's hover)
+The porters walk it there and come home. A unit of food weighs 1.0, hay 0.5, goods 1.0.
+```
+
+- **One row per GOOD** (`_trade_cargo_goods`): Food, Hay, then each material in the order the band
+  first lists it. A material the band holds none of has no row. The row's name is the material id
+  capitalised; its second line is `<held> held`, `· N grades` when there is more than one, and
+  `· weighs X each` only when one unit is not one unit of pack space.
+- **The manifest underneath is unchanged — one amount per PILE.** `_trade_cargo_rows` and
+  `_trade_manifest_lines` are untouched, so the command a loaded sheet sends is the one it always sent
+  for the same cargo (`trade.gd`'s `_assert_the_command_is_unchanged`).
+- **A good loads BEST GRADE FIRST.** Its piles are ordered by their readings' VALUES, axis by axis in
+  declared order, highest first (`_trade_batch_sorts_before`) — the sim's numbers, no client table of
+  grade words. A good's amount is dealt over its piles in that order (`_write_cargo`), so `+` and
+  `All` take the best and `−` gives back the worst.
+- **Grades are collapsed by default** behind the Work tab's drawn `DisclosureTriangle`
+  (`HudWidgets.CARGO_GRADES_TOGGLE_META`). An open good lists one line per grade, the whole axis text
+  WRAPPING rather than eliding, each with its own `−` / amount / `+` and no `All`. A good of one grade
+  draws a same-width spacer instead. Which goods are open (`_trade_open_goods`) resets with the verb.
+- **The controls are light so the name gets the width**: `TRADE_CARGO_CONTROL_SEPARATION` and the
+  narrow `TRADE_CARGO_FIELD_WIDTH` keep a good's name and second line whole in the tile card's column;
+  `All` is an inline link (`CARGO_CONTROL_MAX` meta).
+- **A full pack greys every `+` and `All`** with `TRADE_PACK_FULL_REASON`; a row already carrying all
+  the band holds greys them with `TRADE_CARGO_ALL_LOADED_REASON` (`_cargo_add_blocked_reason`, off the
+  same ceiling the control clamps to). The bar draws WARN once less room is left than half the tenth
+  the sheet names amounts in (`TRADE_PACK_FULL_EPSILON`).
+- **Fewer porters TRIM the load; they do not refuse it** (`_fit_manifest_to_pack`, every render): the
+  goods give back from the last row up, each worst grade first, floored onto the tenth, until the pack
+  holds it. The over-cap Send reason stays as a guard and is unreachable in play.
+- **Porters** is the party stepper (`TRADE_PORTERS_LABEL`), its `+` greyed at the idle count with
+  `TRADE_PORTERS_AT_MAX_REASON`; the line under it is `N of M free workers · each carries X`, X the
+  sim's resolved `expedition_trade_per_worker_carry`.
+- **The Send waits for a destination and a load**, each a clause of its hover and of the WARN line
+  under it (`TRADE_SEND_NEEDS_DESTINATION`, `TRADE_SEND_NEEDS_CARGO`). **There is no armed pick on this
+  sheet**: the destination is set by a click on a ringed band while the sheet is open, and the Send
+  commits to it. The weights line is composed from the three carry levers, never typed.
+- **The `To` row is always drawn**: the picked band named as the cycler names it, then
+  `N tiles <bearing>` to where the tie last saw it (`_trade_destination_where`, `compass_bearing`),
+  with the REMEMBERED sighting and its `≈` walk on the value's hover; unpicked, `Pick a band on the
+  map` in WARN with no `READ_ONLY_FIELD_META`.
+
+> **What this supersedes in the sections below:** the armed trade pick and its hover banner (the
+> `_trade_hover_detail` producer is gone), a manifest row per PILE with its rating on the face, the
+> `Max` button and its two hints, the `Mass ▰▰▱` meter, and an over-cap manifest disabling the Send.
+> The tie gate, the remembered-position keystone, the typed field's rules, the floors and the three
+> mass terms below all stand.
+
 ### THE TIE IS THE GATE, AND THE PICK TEACHES IT RATHER THAN ENFORCING IT SILENTLY
 
 A shipment has one site: its subject is a band, reached on the map — pre-selected while the sheet is

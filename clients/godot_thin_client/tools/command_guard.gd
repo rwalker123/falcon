@@ -666,7 +666,7 @@ const BUILD_ORDER_POSITION := 2
 ## whole-unit step cannot reach. What is under test is the AMOUNT the client then spells, so a drive
 ## that wrote the manifest directly would test its own arithmetic instead of the sheet's.
 ##
-## The destination is the click the sheet's send arms — on where the tie last saw the band, the only
+## The destination is the map click the open sheet rings — on where the tie last saw the band, the only
 ## position the client holds for a band it is tied to but does not command.
 func _drive_send_trade_expedition() -> void:
 	_hud._selection.clear()
@@ -698,9 +698,11 @@ func _drive_send_trade_expedition() -> void:
 	# formatter off an exact holding, and one already floored by the sheet.
 	await _load_pile_with_max(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL)
 	await _load_whole_pile(TRADE_HIDE_MATERIAL)
-	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "trade verb sheet")
-	await _settle()
+	# **THE DESTINATION IS PICKED ON THE MAP FIRST, AND THE SEND IS THE ORDER.** The open sheet rings
+	# every live tie's band, a click on one sets the destination, and only then is the Send live.
 	_hud.notify_targeting_click({"x": DESTINATION_LAST_SEEN_X, "y": DESTINATION_LAST_SEEN_Y})
+	await _settle()
+	_press_meta_button(_hud.allocation_panel, HudWidgets.SEND_TRADE_CONFIRM_META, "trade verb sheet")
 	await _settle()
 
 ## Press one cargo row's `+` until the pile is loaded whole — the button DISABLES at the ceiling, which
@@ -748,20 +750,30 @@ func _load_pile_with_max(needle: String) -> void:
 ## what a fourth control broke** (issue #620): the walk found the new `Max` button and pressed it
 ## believing it was the `+`, which loads a whole pile per press and reports nothing. A meta is the
 ## only handle that survives a control joining the row.
+##
+## The match is a GOOD's main line (`CARGO_GOOD_ROW_META`) whose name contains `needle`, case
+## insensitively — a material good is named `Hide` where its id is `hide`.
 func _cargo_control(root: Node, needle: String, control: String) -> Button:
-	if root is HBoxContainer and (root as HBoxContainer).has_meta(HudWidgets.CARGO_ROW_KEY_META):
-		var row := root as HBoxContainer
-		if row.get_child_count() > 0 and row.get_child(0) is Label \
-				and (row.get_child(0) as Label).text.contains(needle):
-			for child in row.get_children():
-				if child is Button and String(child.get_meta(
-						HudWidgets.CARGO_CONTROL_META, "")) == control:
-					return child as Button
+	if root is HBoxContainer and (root as HBoxContainer).has_meta(HudWidgets.CARGO_GOOD_ROW_META) \
+			and _names_good(root, needle):
+		for child in root.get_children():
+			if child is Button and String(child.get_meta(
+					HudWidgets.CARGO_CONTROL_META, "")) == control:
+				return child as Button
 	for child in root.get_children():
 		var found := _cargo_control(child, needle, control)
 		if found != null:
 			return found
 	return null
+
+## Does a good's main line carry a Label naming `needle`?
+func _names_good(root: Node, needle: String) -> bool:
+	for child in root.get_children():
+		if child is Label and (child as Label).text.findn(needle) >= 0:
+			return true
+		if not (child is Button) and _names_good(child, needle):
+			return true
+	return false
 
 ## Push the band through a REAL MapView and click its hex, so the HUD's selected unit is the marker
 ## `_rebuild_unit_markers` built — not the cohort dict the snapshot path holds.

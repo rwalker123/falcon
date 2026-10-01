@@ -17,7 +17,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 122
+const EXPECTED_CHECKPOINTS := 144
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const Q := preload("res://tools/ui_preview/node_query.gd")
@@ -155,8 +155,12 @@ const TYPED_ZERO := 0.0
 ## The other two piles this block drives, spelled as the sheet composes their faces — the
 ## `EXCELLENT_HIDE_ROW` convention, so a reworded row fails here rather than silently matching
 ## nothing.
-const FAIR_HIDE_ROW := "hide · tough: fair · supple: good"
-const BONE_ROW := "bone · dense: excellent · long: fair"
+const FAIR_HIDE_ROW := "tough: fair · supple: good"
+const BONE_ROW := "Bone"
+## The hide GOOD's own line — its name, which is the material's id capitalised.
+const HIDE_GOOD := "Hide"
+## The excellent-hide pile's GRADE line, best of the two.
+const EXCELLENT_HIDE_GRADE := "tough: excellent · supple: poor"
 
 ## What the in-flight party is carrying, and the pack it fills. The cap is the SHIPMENT lever's
 ## product (4 × 10), which is what the sim publishes on a trade party's `expeditionCarryCap`.
@@ -229,11 +233,9 @@ func run(harness) -> void:
 	h._assert_hud("…and no destination on it — no band named, no picker",
 		not _sheet_text().contains(NEIGHBOUR_DISPLAY_NAME)
 			and _find_option_button(_parties_zone()) == null)
-	# **A MATERIAL ROW SHOWS ITS RATING.** Two piles of `hide` are two rows and are not the same
-	# thing; the assertion names the rating so a row that dropped it cannot pass.
-	h._assert_hud("a material row names the pile's rating, not just its material",
-		_sheet_text().contains(EXCELLENT_HIDE_ROW))
+	await _assert_opening_sheet()
 	await _load_reference_manifest()
+	await _assert_best_grade_first()
 	await h._save("trade_cargo_loaded")
 	# The meter reads the sim's own expression — food + fodder_carry_weight × fodder
 	# + material_carry_weight × Σ materials — against party × the pack lever, composed here from the
@@ -249,65 +251,28 @@ func run(harness) -> void:
 				and (meter as Label).text.contains(
 					HudCraftingVocab.BATCH_AMOUNT_FORMAT % expected_cap))
 	var live_send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
-	h._assert_hud("a manifest under the cap can be sent",
-		live_send is Button and not (live_send as Button).disabled)
+	# Under the cap the load raises no objection: the only thing the Send still waits for is a band.
+	h._assert_hud("a manifest under the cap leaves the Send waiting on the destination alone",
+		live_send is Button and (live_send as Button).tooltip_text
+			== HudComposeVocab.TRADE_SEND_NEEDS_DESTINATION)
 
-	# **STATE — THE SEND ARMS THE DESTINATION PICK, AND THE HOVER STATES WHAT IS KNOWN.** The sheet
-	# stays up with its send drawn armed; over the tied neighbour the banner names the band and what is
-	# REMEMBERED of where it is — the lines the retired `To` row carried — and over a parked tie it
-	# gives the reason no shipment can flow.
-	_press_send()
-	await h._settle()
-	h._assert_hud("the send arms the destination pick and leaves the sheet open",
-		h._hud.is_targeting_active() and _verb_form() != null)
-	var armed_send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
-	h._assert_hud("…with the send drawn armed",
-		armed_send is Button and (armed_send as Button).button_pressed)
-	h._hud.notify_hex_hovered(_tile_info(NEIGHBOUR_LAST_SEEN))
-	await h._settle()
-	await h._save("trade_hover_destination")
-	var banner: String = h._hud._targeting.banner_text()
-	h._assert_hud("hovering the tied band names it in the banner (%s)" % banner,
-		banner.contains("%s %s" % [HudComposeVocab.VERB_HOVER_ARROW, NEIGHBOUR_DISPLAY_NAME]))
-	# THE KEYSTONE, RENDERED: the position under the destination is where they WERE, and it says so.
-	h._assert_hud("…with its position worded as REMEMBERED, not live",
-		banner.contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
-			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, NEIGHBOUR_LAST_SEEN_TURN]))
-	h._assert_hud("…and the walk quoted from it approximate", banner.contains(TRADE_APPROXIMATE_MARK))
-	h._hud.notify_hex_hovered(_tile_info(PARKED_LAST_SEEN))
-	await h._settle()
-	h._assert_hud("hovering a PARKED tie's band gives the reason nothing can flow (%s)"
-			% h._hud._targeting.banner_text(),
-		h._hud._targeting.banner_text().contains(HudComposeVocab.COMPOSE_DESTINATION_PARKED_REASON))
-	# **A PARKED TIE IS NOT A DESTINATION**: a click on where it was last seen commits nothing and the
-	# pick stays armed — the same rule the herd pick applies to a hex with no herd on it.
-	var caught: Array[Dictionary] = []
-	var record := func(payload: Dictionary) -> void: caught.append(payload)
-	h._hud.send_trade_expedition_requested.connect(record)
+	# **THE SEND WAITS FOR A DESTINATION, AND SAYS SO.** Loaded but with no band picked, the Send is
+	# greyed with ONE reason — the destination's — on its hover and under it.
+	var waiting_send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META) as Button
+	h._assert_hud("a loaded sheet with no destination cannot be sent, and says why (\"%s\")"
+			% (waiting_send.tooltip_text if waiting_send != null else "<none>"),
+		waiting_send != null and waiting_send.disabled
+			and waiting_send.tooltip_text == HudComposeVocab.TRADE_SEND_NEEDS_DESTINATION)
+	h._assert_hud("…and the same reason is written under the button",
+		_send_reason_text() == HudComposeVocab.TRADE_SEND_NEEDS_DESTINATION)
+	# **A PARKED TIE IS NOT A DESTINATION**: a click on where it was last seen sets nothing — the ring
+	# never offered it.
 	h._hud.notify_targeting_click(_tile_info(PARKED_LAST_SEEN))
 	await h._settle()
-	h._assert_hud("a click on a PARKED tie is refused — nothing sent, the pick still armed",
-		caught.is_empty() and h._hud.is_targeting_active())
-	# **THE CLICK COMMITS.** On the live tie it sends ONE shipment carrying the captured party and
-	# manifest, the sheet closes, and neither the selection nor the panel's subject moves off the
-	# sender — a targeting click selects nothing.
-	h._hud.notify_targeting_click(_tile_info(NEIGHBOUR_LAST_SEEN))
-	h._hud.send_trade_expedition_requested.disconnect(record)
+	h._assert_hud("a click on a PARKED tie's band sets no destination",
+		Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META) == null)
+	h._hud.close_verb_form()
 	await h._settle()
-	h._assert_hud("a click on the live tie sends ONE shipment (%d sent)" % caught.size(),
-		caught.size() == 1)
-	if caught.size() == 1:
-		h._assert_hud("…to that band, with the captured party",
-			int(caught[0]["destination_band_id"]) == int(_neighbour_band().get("band_id", -1))
-				and int(caught[0]["party_workers"]) == TRADE_PARTY_WORKERS)
-	h._assert_hud("…and the pick is down and the sheet closed",
-		not h._hud.is_targeting_active() and _verb_form() == null)
-	h._assert_hud("…while the selection and the Band panel both stay on the SENDER",
-		int(h._hud._selection.unit().get("entity", -1)) == SHIPPER_ENTITY
-			and int(h._hud._band_labor.panel_band().get("entity", -1)) == SHIPPER_ENTITY)
-	h._hud.notify_hex_hovered({})
-	h._assert_hud("…and the tie highlight goes with the closed sheet",
-		not h._hud._targeting.is_preselect_on())
 
 	# **STATE — THE DESTINATION PRE-SELECTED ON THE MAP.** While the sheet is open, armed or not, the
 	# map rings every band tied LIVE to the sender — the neighbour, never the parked tie — and a click
@@ -333,9 +298,12 @@ func run(harness) -> void:
 	var to_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
 	h._assert_hud("a click on the ringed band sets the destination — the To row names it",
 		to_row != null and _collect_text(to_row).contains(NEIGHBOUR_DISPLAY_NAME))
-	h._assert_hud("…with where it was last seen worded as REMEMBERED",
-		_sheet_text().contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
+	# THE KEYSTONE: the position under the destination is where they WERE, and its hover says so.
+	h._assert_hud("…with where it was last seen worded as REMEMBERED, on its hover",
+		_destination_tooltip().contains(HudComposeVocab.COMPOSE_DESTINATION_REMEMBERED_FORMAT % [
 			NEIGHBOUR_LAST_SEEN.x, NEIGHBOUR_LAST_SEEN.y, NEIGHBOUR_LAST_SEEN_TURN]))
+	h._assert_hud("…and the walk quoted from it approximate", _destination_tooltip().contains(
+		TRADE_APPROXIMATE_MARK))
 	h._assert_hud("…sending nothing and moving neither the selection nor the panel",
 		preselect_sent.is_empty()
 			and int(h._hud._selection.unit().get("entity", -1)) == SHIPPER_ENTITY
@@ -357,6 +325,8 @@ func run(harness) -> void:
 	h._assert_hud("the Send with a destination sends ONE shipment to it (%d sent)" % preselect_sent.size(),
 		preselect_sent.size() == 1 and int(preselect_sent[0]["destination_band_id"])
 			== int(_neighbour_band().get("band_id", -1)))
+	if preselect_sent.size() == 1:
+		_assert_the_command_is_unchanged(preselect_sent[0])
 	h._assert_hud("…arming no pick and closing the sheet",
 		not h._hud.is_targeting_active() and _verb_form() == null)
 
@@ -421,22 +391,42 @@ func run(harness) -> void:
 			and not (hay_meter as Label).text.contains(
 				HudCraftingVocab.BATCH_AMOUNT_FORMAT % expected_mass))
 	var hay_send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
-	h._assert_hud("a three-account manifest under the cap can still be sent",
-		hay_send is Button and not (hay_send as Button).disabled)
+	h._assert_hud("a three-account manifest under the cap raises no objection of its own",
+		hay_send is Button and (hay_send as Button).tooltip_text
+			== HudComposeVocab.TRADE_SEND_NEEDS_DESTINATION)
 
-	# **STATE — THE SAME MANIFEST OVER THE CAP.** The party shrinks to one worker, so the cap falls to
-	# 10 against a mass of 23 and the send refuses BEFORE the server has to. The refusal is the
-	# client's courtesy; the server's own remains the authority.
+	# **STATE — FEWER PORTERS TRIM THE LOAD, BOTTOM UP.** The party shrinks to one worker, so the cap
+	# falls to 10 under a 23-mass manifest. The sheet fits it: the LAST good gives back first, so the
+	# hide and then the hay go before the food does, and the food stops at exactly the cap.
 	_set_party(OVER_CAP_PARTY_WORKERS)
 	await h._settle()
-	await h._save("trade_cargo_over_cap")
-	var over_send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META)
-	h._assert_hud("an over-cap manifest cannot be sent",
-		over_send is Button and (over_send as Button).disabled)
-	h._assert_hud("…and the sheet says which way to fix it",
-		_sheet_text().contains(HudComposeVocab.COMPOSE_CARGO_OVER_CAP_REASON))
+	await h._save("trade_cargo_fit_to_pack")
+	var small_cap := float(OVER_CAP_PARTY_WORKERS) * TRADE_PER_WORKER_CARRY
+	h._assert_hud("a smaller party trims the load to the pack rather than refusing it",
+		_meter_text() == HudComposeVocab.TRADE_PACK_CARRIED_FORMAT % [
+			HudCraftingVocab.BATCH_AMOUNT_FORMAT % small_cap,
+			HudCraftingVocab.BATCH_AMOUNT_FORMAT % small_cap])
+	h._assert_hud("…the last goods first — the hide and the hay are given back whole",
+		_cargo_field_text(HIDE_GOOD) == _typed(0.0)
+			and _cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL) == _typed(0.0))
+	h._assert_hud("…and the food, first on the list, keeps what still fits",
+		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) == _typed(small_cap))
+	h._assert_hud("…and the over-cap refusal never appears",
+		not _sheet_text().contains(HudComposeVocab.COMPOSE_CARGO_OVER_CAP_REASON))
+	# **A FULL PACK GREYS EVERY `+` AND `All`, SAYING SO** — the food's though the band holds 84 of it.
+	h._assert_hud("a full pack greys the food's `+`, saying the pack is full",
+		_cargo_control_reason(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, HudWidgets.CARGO_CONTROL_PLUS)
+			== HudComposeVocab.TRADE_PACK_FULL_REASON)
+	h._assert_hud("…and its `All`, the same way",
+		_cargo_control_reason(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, HudWidgets.CARGO_CONTROL_MAX)
+			== HudComposeVocab.TRADE_PACK_FULL_REASON)
+	h._assert_hud("…and the bar draws full",
+		bool(_pack_bar_full()))
+	h._assert_hud("…while the food's `−` stays live", not _cargo_control_is_disabled(
+		HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, HudWidgets.CARGO_CONTROL_MINUS))
 
 	await _run_typed_cargo_states()
+	await _render_prototype_scene()
 
 	# **STATE — THE FOOD LINE WITH A TRANSFER IN IT.** Not a trade readout: the supply network moves
 	# food between neighbouring larders every turn, so any co-networked band carries these two terms.
@@ -601,6 +591,13 @@ func _run_typed_cargo_states() -> void:
 	# it is settled first, exactly as it is before the manifest is priced anywhere else on this sheet.
 	_set_party(TRADE_PARTY_WORKERS)
 	await h._settle()
+	# The fit gave the hay and the hide back; the typed states are measured against the full manifest.
+	_load(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL, LOADED_FODDER)
+	await h._settle()
+	_load(HIDE_GOOD, LOADED_HIDE)
+	await h._settle()
+	# The fair-hide pile is typed into on its own GRADE line, so the hide's grades are opened.
+	await _open_grades(HIDE_GOOD)
 
 	# **STATE — AN AMOUNT TYPED AND TAKEN.** The plain reading, before any refusal: 8.1 food fits both
 	# caps, so what the player typed is what the row carries and what the meter prices.
@@ -657,8 +654,8 @@ func _run_typed_cargo_states() -> void:
 	# floors its ceiling, and 9 is over the pile either way, so a client whose `row_max` is the
 	# headroom alone still lands this row on something plausible — while `Max` stays enabled forever,
 	# offering an amount the band does not have and answering the press with nothing.
-	h._assert_hud("…and Max on a row holding all the band has is disabled, saying that is why",
-		_cargo_max_is_disabled_with(BONE_ROW, HudComposeVocab.COMPOSE_CARGO_MAX_AT_CAP_HINT))
+	h._assert_hud("…and All on a row holding all the band has is disabled, saying that is why",
+		_cargo_max_is_disabled_with(BONE_ROW, HudComposeVocab.TRADE_CARGO_ALL_LOADED_REASON))
 	var held_clamped_mass := _fixture_mass(TYPED_FOOD, LOADED_FODDER,
 		LOADED_HIDE + SHIPPER_BONE_HELD)
 	h._assert_hud("…and the meter prices the clamped row, not the typed one",
@@ -681,8 +678,9 @@ func _run_typed_cargo_states() -> void:
 		_cargo_field_text(FAIR_HIDE_ROW) != _typed(SHIPPER_FAIR_HIDE_HELD))
 	h._assert_hud("…and the ceiling is FLOORED onto the tenth, never rounded up past the cap",
 		_cargo_field_text(FAIR_HIDE_ROW) != _typed(_round_tenth(hide_headroom)))
-	h._assert_hud("…and Max on the row that just reached its ceiling is disabled, saying so",
-		_cargo_max_is_disabled_with(FAIR_HIDE_ROW, HudComposeVocab.COMPOSE_CARGO_MAX_AT_CAP_HINT))
+	h._assert_hud("…and the grade's `+`, at the ceiling the pack set, is disabled saying so",
+		_cargo_control_reason(FAIR_HIDE_ROW, HudWidgets.CARGO_CONTROL_PLUS)
+			== HudComposeVocab.TRADE_PACK_FULL_REASON)
 	var cap_clamped_mass := _fixture_mass(TYPED_FOOD, LOADED_FODDER,
 		LOADED_HIDE + SHIPPER_BONE_HELD + hide_room)
 	h._assert_hud("…and the meter prices the clamped row against the pack it nearly fills",
@@ -713,15 +711,14 @@ func _run_typed_cargo_states() -> void:
 		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) != _typed(SHIPPER_PROVISIONS))
 	h._assert_hud("…which takes the manifest back to exactly the pack's cap",
 		_meter_text().contains(HudCraftingVocab.BATCH_AMOUNT_FORMAT % _trade_cargo_cap()))
-	# **THE TWO DEAD `Max` STATES, SIDE BY SIDE ON ONE FRAME, EACH SAYING WHICH CAP KILLED IT.** The
-	# food row sits AT the ceiling it just reached; the emptied hay row has no pack space left at all.
-	# A single disabled-with-one-message button would satisfy neither claim.
-	h._assert_hud("…and the button that did it is now disabled, at the ceiling it just reached",
+	# **THE TWO DEAD `All` STATES, SIDE BY SIDE ON ONE FRAME, EACH SAYING WHICH CAP KILLED IT.** The
+	# food row sits at the pack's ceiling; the bone row holds every unit the band has. A single
+	# disabled-with-one-message link would satisfy neither claim.
+	h._assert_hud("…and the link that did it is now disabled, the pack being full",
 		_cargo_max_is_disabled_with(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
-			HudComposeVocab.COMPOSE_CARGO_MAX_AT_CAP_HINT))
-	h._assert_hud("…while Max on a row with no pack space left says THAT instead",
-		_cargo_max_is_disabled_with(HudComposeVocab.COMPOSE_CARGO_FODDER_LABEL,
-			HudComposeVocab.COMPOSE_CARGO_MAX_NO_ROOM_HINT))
+			HudComposeVocab.TRADE_PACK_FULL_REASON))
+	h._assert_hud("…while All on a row carrying all the band holds says THAT instead",
+		_cargo_max_is_disabled_with(BONE_ROW, HudComposeVocab.TRADE_CARGO_ALL_LOADED_REASON))
 
 	# **STATE — A TYPED VALUE THEN A STEPPER PRESS, WITHOUT ENTER IN BETWEEN** (the reported defect).
 	# The press is a REAL pointer gesture, because what broke is the ORDER the engine runs things in
@@ -783,11 +780,9 @@ func _run_typed_cargo_states() -> void:
 		_cargo_field_text(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) != _typed(
 			pack_room - overshoot + HudComposeVocab.COMPOSE_CARGO_STEP))
 	h._assert_hud("…leaving the pack full rather than overfull",
-		_meter_text().contains(HudComposeVocab.COMPOSE_CARGO_MASS_FORMAT % [
-			HudFormat.meter_bar(HudConst.PROGRESS_PERCENT_SCALE,
-				HudComposeVocab.COMPOSE_CARGO_MASS_CELLS),
+		_meter_text() == HudComposeVocab.TRADE_PACK_CARRIED_FORMAT % [
 			HudCraftingVocab.BATCH_AMOUNT_FORMAT % _trade_cargo_cap(),
-			HudCraftingVocab.BATCH_AMOUNT_FORMAT % _trade_cargo_cap()]))
+			HudCraftingVocab.BATCH_AMOUNT_FORMAT % _trade_cargo_cap()] and _pack_bar_full())
 	h._assert_hud("…and `+` is now dead because the PACK is full, though the band holds far more",
 		_cargo_control_is_disabled(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL,
 			HudWidgets.CARGO_CONTROL_PLUS))
@@ -917,9 +912,6 @@ const TRADE_APPROXIMATE_MARK := "≈"
 ## is an ABSENCE and there is no producer to read it from on this path.
 const TRADE_ABSENT_ORDERS_KEY := "Orders:"
 
-## The excellent-hide pile's row face, composed exactly as the sheet composes it, so the rating
-## assertion and the row it is about cannot drift.
-const EXCELLENT_HIDE_ROW := "hide · tough: excellent · supple: poor"
 
 ## What the neighbour is called on EVERY surface, and it is resolved the same way on each: the
 ## picker, the parties row and the drawer's `Bound for` all join `HudBandLaborState.band_label_for_id`
@@ -966,7 +958,7 @@ func _load_reference_manifest() -> void:
 	await h._settle()
 	_load(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL, LOADED_FOOD)
 	await h._settle()
-	_load(EXCELLENT_HIDE_ROW, LOADED_HIDE)
+	_load(HIDE_GOOD, LOADED_HIDE)
 	await h._settle()
 
 ## Press the shipment sheet's send — the REAL button, found by its meta.
@@ -1108,20 +1100,297 @@ func _load(needle: String, amount: float) -> void:
 ## **IT USED TO WALK THE ROW POSITIONALLY** — the `+` was "the last child" — which the typed field and
 ## its `Max` broke the moment they joined the row (issue #620): the walk found `Max` and pressed it
 ## believing it was the `+`. A meta is the only handle that survives a control being added.
+##
+## A line is a good's main line (named for the material) or a grade line under it (named for its
+## grade); either is matched on its own Labels, case-insensitively.
 func _cargo_control(root: Node, needle: String, control: String) -> Control:
-	if root is HBoxContainer and (root as HBoxContainer).has_meta(HudWidgets.CARGO_ROW_KEY_META):
-		var row := root as HBoxContainer
-		if row.get_child_count() > 0 and row.get_child(0) is Label \
-				and (row.get_child(0) as Label).text.contains(needle):
-			for child in row.get_children():
-				if child is Control and String((child as Control).get_meta(
-						HudWidgets.CARGO_CONTROL_META, "")) == control:
-					return child as Control
+	if root is HBoxContainer and (root as HBoxContainer).has_meta(HudWidgets.CARGO_ROW_KEY_META) \
+			and _line_names(root, needle):
+		for child in root.get_children():
+			if child is Control and String((child as Control).get_meta(
+					HudWidgets.CARGO_CONTROL_META, "")) == control:
+				return child as Control
 	for child in root.get_children():
 		var found := _cargo_control(child, needle, control)
 		if found != null:
 			return found
 	return null
+
+## Does a cargo line carry a Label naming `needle`? Its controls are not searched.
+func _line_names(root: Node, needle: String) -> bool:
+	for child in root.get_children():
+		if child is Label and (child as Label).text.findn(needle) >= 0:
+			return true
+		if not (child is Button) and not (child is LineEdit) and _line_names(child, needle):
+			return true
+	return false
+
+## The hover reason one control of a line carries, `""` for a live or missing one.
+func _cargo_control_reason(needle: String, control: String) -> String:
+	var node := _cargo_control(_parties_zone(), needle, control)
+	return (node as Control).tooltip_text if node is Control and node is BaseButton \
+		and (node as BaseButton).disabled else ""
+
+## Is the pack bar drawn full?
+func _pack_bar_full() -> bool:
+	var bar := Q.find_meta_node(_parties_zone(), BandPanelController.TRADE_PACK_BAR_META)
+	return bar != null and bool(bar.get_meta(BandPanelController.TRADE_PACK_BAR_META, false))
+
+## The reason line under a greyed Send, `""` when there is none.
+func _send_reason_text() -> String:
+	var why := Q.find_meta_node(_parties_zone(), BandPanelController.TRADE_SEND_REASON_META)
+	return (why as Label).text if why is Label else ""
+
+## The picked `To` row's value hover — where the remembered sighting and its walk ride.
+func _destination_tooltip() -> String:
+	var row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	if row == null or row.get_child_count() == 0:
+		return ""
+	for child in row.get_children():
+		if child is Label and (child as Label).tooltip_text != "":
+			return (child as Label).tooltip_text
+	return ""
+
+## Open one good's grades with a REAL pointer gesture on its disclosure, and settle.
+func _open_grades(good_needle: String) -> void:
+	var toggle := _grades_toggle(good_needle)
+	h._assert_hud("the %s good offers a grade disclosure" % good_needle, toggle != null)
+	if toggle == null:
+		return
+	var viewport: Viewport = h.get_viewport()
+	var point := InputProbe.canvas_to_window(viewport, h.get_window(),
+		toggle.get_global_rect().get_center())
+	InputProbe.hover(viewport, point)
+	await h.get_tree().process_frame
+	InputProbe.press_left(viewport, point)
+	InputProbe.release_left(viewport, point)
+	await h._settle()
+
+## The disclosure on the good whose line names `good_needle`, or `null`.
+func _grades_toggle(good_needle: String) -> Button:
+	for line in _good_lines(_parties_zone(), []):
+		if _line_names(line, good_needle):
+			for child in (line as Node).get_children():
+				if child is Button and (child as Button).has_meta(
+						HudWidgets.CARGO_GRADES_TOGGLE_META):
+					return child as Button
+	return null
+
+## Every good's main line under `root`, in list order.
+func _good_lines(root: Node, out: Array) -> Array:
+	if root is HBoxContainer and (root as HBoxContainer).has_meta(HudWidgets.CARGO_GOOD_ROW_META):
+		out.append(root)
+	for child in root.get_children():
+		_good_lines(child, out)
+	return out
+
+## The names of every good on the cargo list, in list order.
+func _good_names() -> Array[String]:
+	var names: Array[String] = []
+	for line in _good_lines(_parties_zone(), []):
+		for child in (line as Node).get_children():
+			if child is VBoxContainer and (child as VBoxContainer).get_child_count() > 0 \
+					and (child as VBoxContainer).get_child(0) is Label:
+				names.append(((child as VBoxContainer).get_child(0) as Label).text)
+	return names
+
+## A good's second line (`20.2 held · 2 grades · weighs 2.0 each`).
+func _good_subline(good_needle: String) -> String:
+	for line in _good_lines(_parties_zone(), []):
+		if not _line_names(line, good_needle):
+			continue
+		for child in (line as Node).get_children():
+			if child is VBoxContainer and (child as VBoxContainer).get_child_count() > 1:
+				return ((child as VBoxContainer).get_child(1) as Label).text
+	return ""
+
+## **THE OPENING SHEET** — no destination, nothing loaded, every good collapsed. The Send states BOTH
+## its reasons; the hide good states its held total, its grade count and its weight; a material the
+## band holds none of draws no row; a good of one grade draws no disclosure; and no grade text is on
+## the sheet until a good is opened.
+func _assert_opening_sheet() -> void:
+	var send := Q.find_meta_node(_parties_zone(), HudWidgets.SEND_TRADE_CONFIRM_META) as Button
+	var both := HudComposeVocab.TRADE_SEND_REASON_SEPARATOR.join(PackedStringArray([
+		HudComposeVocab.TRADE_SEND_NEEDS_DESTINATION, HudComposeVocab.TRADE_SEND_NEEDS_CARGO]))
+	h._assert_hud("the empty sheet's Send is greyed with BOTH reasons (\"%s\")"
+			% (send.tooltip_text if send != null else "<none>"),
+		send != null and send.disabled and send.tooltip_text == both)
+	h._assert_hud("…and writes both under it", _send_reason_text() == both)
+	h._assert_hud("the To row asks for a band, in warning ink",
+		Q.find_meta_node(_parties_zone(), BandPanelController.TRADE_DESTINATION_UNSET_META) != null
+			and _sheet_text().contains(HudComposeVocab.TRADE_DESTINATION_NONE))
+	h._assert_hud("one row per GOOD, in list order — food, hay, then each material held (%s)"
+			% str(_good_names()),
+		str(_good_names()) == str(["Food", "Hay", "Hide", "Bone", "Wood"]))
+	h._assert_hud("…a material the band holds none of draws no row",
+		not _good_names().has("Stone"))
+	var hide_held := SHIPPER_FAIR_HIDE_HELD + SHIPPER_EXCELLENT_HIDE_HELD
+	h._assert_hud("the hide good states its held total, its grades and its weight (%s)"
+			% _good_subline(HIDE_GOOD),
+		_good_subline(HIDE_GOOD) == HudComposeVocab.TRADE_CARGO_SUB_SEPARATOR.join(PackedStringArray([
+			HudComposeVocab.TRADE_CARGO_HELD_FORMAT % (HudCraftingVocab.BATCH_AMOUNT_FORMAT % hide_held),
+			HudComposeVocab.TRADE_CARGO_GRADES_FORMAT % 2,
+			HudComposeVocab.TRADE_CARGO_WEIGHT_FORMAT
+				% (HudCraftingVocab.BATCH_AMOUNT_FORMAT % TRADE_MATERIAL_CARRY_WEIGHT)])))
+	h._assert_hud("…the food states no weight, one unit being one unit of pack (%s)"
+			% _good_subline(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL),
+		_good_subline(HudComposeVocab.COMPOSE_CARGO_FOOD_LABEL) == HudComposeVocab.TRADE_CARGO_HELD_FORMAT
+			% (HudCraftingVocab.BATCH_AMOUNT_FORMAT % SHIPPER_PROVISIONS))
+	h._assert_hud("the grades are collapsed — no grade text on the sheet",
+		not _sheet_text().contains(EXCELLENT_HIDE_GRADE))
+	h._assert_hud("…a good of several grades offers the disclosure, one of a single grade does not",
+		_grades_toggle(HIDE_GOOD) != null and _grades_toggle("Wood") == null
+			and _grades_toggle(BONE_ROW) == null)
+	await _open_grades(HIDE_GOOD)
+	await h._save("trade_cargo_grades_open")
+	h._assert_hud("opening the hide shows both grades, BEST FIRST, with the full axis text",
+		_sheet_text().find(EXCELLENT_HIDE_GRADE) >= 0
+			and _sheet_text().find(EXCELLENT_HIDE_GRADE) < _sheet_text().find(FAIR_HIDE_ROW))
+	await _open_grades(HIDE_GOOD)
+	h._assert_hud("…and pressing it again folds them", not _sheet_text().contains(EXCELLENT_HIDE_GRADE))
+
+## **BEST GRADE FIRST.** The reference manifest loaded 4 onto the hide GOOD; with its grades open, the
+## excellent pile carries all 4 and the fair none. Three more presses spill past the excellent pile's
+## 6 into the fair one, and a `−` on the good gives back the WORST first. The good is put back at 4.
+func _assert_best_grade_first() -> void:
+	await _open_grades(HIDE_GOOD)
+	h._assert_hud("the good's `+` loaded the BEST grade first (%s / %s)"
+			% [_cargo_field_text(EXCELLENT_HIDE_GRADE), _cargo_field_text(FAIR_HIDE_ROW)],
+		_cargo_field_text(EXCELLENT_HIDE_GRADE) == _typed(LOADED_HIDE)
+			and _cargo_field_text(FAIR_HIDE_ROW) == _typed(0.0))
+	_load(HIDE_GOOD, SPILL_PRESSES)
+	await h._settle()
+	h._assert_hud("…and spills into the next grade only once the best is exhausted (%s / %s)"
+			% [_cargo_field_text(EXCELLENT_HIDE_GRADE), _cargo_field_text(FAIR_HIDE_ROW)],
+		_cargo_field_text(EXCELLENT_HIDE_GRADE) == _typed(SHIPPER_EXCELLENT_HIDE_HELD)
+			and _cargo_field_text(FAIR_HIDE_ROW)
+				== _typed(LOADED_HIDE + SPILL_PRESSES - SHIPPER_EXCELLENT_HIDE_HELD))
+	_unload(HIDE_GOOD, SPILL_PRESSES)
+	await h._settle()
+	h._assert_hud("…and a `−` on the good gives back the WORST grade first (%s / %s)"
+			% [_cargo_field_text(EXCELLENT_HIDE_GRADE), _cargo_field_text(FAIR_HIDE_ROW)],
+		_cargo_field_text(EXCELLENT_HIDE_GRADE) == _typed(LOADED_HIDE)
+			and _cargo_field_text(FAIR_HIDE_ROW) == _typed(0.0))
+	await _open_grades(HIDE_GOOD)
+
+## How many presses take the hide past its best pile — enough to spill, short of the pack.
+const SPILL_PRESSES := 3.0
+
+## Press a good's `−` `amount / step` times.
+func _unload(needle: String, amount: float) -> void:
+	var presses := int(round(amount / HudComposeVocab.COMPOSE_CARGO_STEP))
+	for i in presses:
+		var minus := _cargo_control(_parties_zone(), needle, HudWidgets.CARGO_CONTROL_MINUS)
+		if minus == null or (minus as Button).disabled:
+			break
+		(minus as Button).emit_signal("pressed")
+
+## **THE COMMAND IS THE ONE THE SHEET ALWAYS SENT FOR THIS CARGO** — one line per PILE, in the band's
+## own pile order, the food first: 12 food and 4 of the excellent hide, which is where the good's `+`
+## put them. Asserted on the payload's cargo AND on the line `Main` formats from it.
+func _assert_the_command_is_unchanged(payload: Dictionary) -> void:
+	var want := [
+		{"id": HudConst.STORE_ITEM_PROVISIONS, "is_material": false, "amount": LOADED_FOOD},
+		{"id": "hide", "is_material": true, "amount": LOADED_HIDE},
+	]
+	var got: Array = payload.get("cargo", [])
+	h._assert_hud("the shipment's cargo is one line per pile, best hide first (%s)" % str(got),
+		str(got) == str(want))
+	# …and the LINE is the one the per-pile manifest formats to: the same payload carrying the pile
+	# list spelled out above, through `Main`'s own formatter.
+	var line := String(MAIN_SCRIPT.format_send_trade_expedition(payload).get("line", ""))
+	var today := payload.duplicate(true)
+	today["cargo"] = want
+	var want_line := String(MAIN_SCRIPT.format_send_trade_expedition(today).get("line", ""))
+	h._assert_hud("…and the command line is today's (%s)" % line,
+		line != "" and line == want_line and line.contains("material hide"))
+
+## **THE PROTOTYPE'S OWN SCENE** — the band, goods and numbers of the approved trade-sheet prototype:
+## 1 porter of 2 free at 6 a porter, Rushford picked 3 tiles NE, Food 77.7, Hay 6 at half weight,
+## Bone / Fibre / Hide in grades, Wood in one, and no Stone. Rendered for the side-by-side; its one
+## claim is the To row, which no other state composes from a bearing.
+func _render_prototype_scene() -> void:
+	h._hud.close_verb_form()
+	var band := _prototype_band()
+	var rushford := BandFx.band_fixture()
+	rushford["name"] = PROTOTYPE_DEST_NAME
+	rushford["id"] = PROTOTYPE_DEST_NAME
+	rushford["entity"] = PROTOTYPE_DEST_ENTITY
+	rushford = BandFx.with_band_id(rushford)
+	rushford["pos"] = [PROTOTYPE_DEST_TILE.x, PROTOTYPE_DEST_TILE.y]
+	rushford["labor_assignments"] = []
+	h._hud.update_band_alerts([band, rushford])
+	h._hud.update_connections([{
+		"observer_band_id": int(band["band_id"]),
+		"subject_band_id": int(rushford["band_id"]),
+		"strength": TIE_STRENGTH_LIVE,
+		"last_seen_x": PROTOTYPE_DEST_TILE.x, "last_seen_y": PROTOTYPE_DEST_TILE.y,
+		"last_seen_turn": NEIGHBOUR_LAST_SEEN_TURN, "last_contact_turn": NEIGHBOUR_LAST_SEEN_TURN,
+		"first_contact_turn": NEIGHBOUR_LAST_SEEN_TURN,
+	}])
+	h._hud.show_unit_selection(band)
+	await h._settle()
+	var verb := _verb_button(HudComposeVocab.VERB_TRADE)
+	if verb != null:
+		verb.emit_signal("pressed")
+	await h._settle()
+	h._hud.notify_targeting_click(_tile_info(PROTOTYPE_DEST_TILE))
+	await h._settle()
+	await h._save("trade_sheet_prototype")
+	var to_row := Q.find_meta_node(_parties_zone(), HudWidgets.READ_ONLY_FIELD_META)
+	h._assert_hud("the To row names the band and where it stands (%s)" % _collect_text(to_row).strip_edges(),
+		to_row != null and _collect_text(to_row).contains(HudComposeVocab.TRADE_DESTINATION_FORMAT % [
+			PROTOTYPE_DEST_NAME, PROTOTYPE_DEST_WHERE]))
+	h._hud.close_verb_form()
+	h._hud.update_connections(_connections())
+	h._hud.update_band_alerts([_shipper_band(), _neighbour_band()])
+	await h._settle()
+
+const PROTOTYPE_BAND_ENTITY := 984
+const PROTOTYPE_DEST_ENTITY := 985
+const PROTOTYPE_BAND_NAME := "Firbrook"
+const PROTOTYPE_DEST_NAME := "Rushford"
+const PROTOTYPE_BAND_TILE := Vector2i(40, 20)
+const PROTOTYPE_DEST_TILE := Vector2i(42, 18)
+## What the To row must say of that tile from that band — the prototype's `3 tiles NE`.
+const PROTOTYPE_DEST_WHERE := "3 tiles NE"
+const PROTOTYPE_PER_PORTER := 6.0
+const PROTOTYPE_MATERIAL_WEIGHT := 1.0
+const PROTOTYPE_IDLE := 2
+
+func _prototype_band() -> Dictionary:
+	var band := BandFx.band_fixture()
+	band["name"] = PROTOTYPE_BAND_NAME
+	band["id"] = PROTOTYPE_BAND_NAME
+	band["entity"] = PROTOTYPE_BAND_ENTITY
+	band = BandFx.with_band_id(band)
+	band["pos"] = [PROTOTYPE_BAND_TILE.x, PROTOTYPE_BAND_TILE.y]
+	band["stores"] = {"provisions": 77.7}
+	band["fodder_store"] = 6.0
+	band["idle_workers"] = PROTOTYPE_IDLE
+	# The free-worker count is DERIVED from the head count less every staffed hand, so the fixture
+	# states a working age equal to the idle it means.
+	band["working_age"] = PROTOTYPE_IDLE
+	band["labor_assignments"] = []
+	band["expedition_trade_per_worker_carry"] = PROTOTYPE_PER_PORTER
+	band["expedition_trade_material_carry_weight"] = PROTOTYPE_MATERIAL_WEIGHT
+	band["expedition_trade_fodder_carry_weight"] = TRADE_FODDER_CARRY_WEIGHT
+	band["material_batches"] = [
+		_batch("bone", 2.9, [["dense", 0.9, "excellent"]]),
+		_batch("bone", 3.8, [["dense", 0.7, "good"]]),
+		_batch("bone", 1.2, [["dense", 0.5, "fair"]]),
+		_batch("bone", 0.6, [["dense", 0.3, "poor"]]),
+		_batch("fibre", 2.9, [["fineness", 0.9, "excellent"], ["strength", 0.7, "good"]]),
+		_batch("fibre", 0.6, [["fineness", 0.7, "good"], ["strength", 0.7, "good"]]),
+		_batch("fibre", 5.7, [["fineness", 0.5, "fair"], ["strength", 0.5, "fair"]]),
+		_batch("fibre", 1.1, [["fineness", 0.5, "fair"], ["strength", 0.3, "poor"]]),
+		_batch("hide", 1.2, [["toughness", 0.7, "good"], ["suppleness", 0.5, "fair"]]),
+		_batch("hide", 9.0, [["toughness", 0.5, "fair"], ["suppleness", 0.7, "good"]]),
+		_batch("hide", 5.7, [["toughness", 0.5, "fair"], ["suppleness", 0.5, "fair"]]),
+		_batch("wood", 4.0, [["straightness", 0.5, "fair"]]),
+		_batch("stone", 0.0, [["hardness", 0.5, "fair"]]),
+	]
+	return band
 
 ## The band that sends the shipment. Its stores are what the manifest is drawn from, and its two
 ## shipment levers are what the mass meter is drawn against.
@@ -1164,8 +1433,13 @@ func _shipper_batches() -> Array:
 	return [
 		_batch("hide", SHIPPER_FAIR_HIDE_HELD,
 			[["tough", 0.45, "fair"], ["supple", 0.58, "good"]]),
-		_batch("hide", 6.0, [["tough", 0.90, "excellent"], ["supple", 0.15, "poor"]]),
+		_batch("hide", SHIPPER_EXCELLENT_HIDE_HELD,
+			[["tough", 0.90, "excellent"], ["supple", 0.15, "poor"]]),
 		_batch("bone", SHIPPER_BONE_HELD, [["dense", 0.82, "excellent"], ["long", 0.35, "fair"]]),
+		# One grade of wood — a good with no disclosure — and a STONE pile the band holds none of,
+		# which must draw no row at all.
+		_batch("wood", SHIPPER_WOOD_HELD, [["straight", 0.50, "fair"]]),
+		_batch("stone", 0.0, [["hard", 0.50, "fair"]]),
 	]
 
 ## The BONE pile, named because the typed-clamp state above is measured against it: it is small
@@ -1175,6 +1449,12 @@ const SHIPPER_BONE_HELD := 3.1
 ## …and the FAIR-hide pile, which is the case the other way round: large enough that the PACK is what
 ## clamps a large typed amount into it, on a ceiling that is not a whole tenth.
 const SHIPPER_FAIR_HIDE_HELD := 14.2
+
+## …the EXCELLENT-hide pile, the best grade the reference manifest's hide is loaded from.
+const SHIPPER_EXCELLENT_HIDE_HELD := 6.0
+
+## …and one grade of wood, the good that offers no disclosure.
+const SHIPPER_WOOD_HELD := 4.0
 
 func _batch(material_id: String, amount: float, readings: Array) -> Dictionary:
 	var rows: Array = []
