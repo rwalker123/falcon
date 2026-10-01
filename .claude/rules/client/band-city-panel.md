@@ -2382,11 +2382,17 @@ column and its second line at their line-two column (measured on the drawn nodes
 `band_panel_preview._assert_roadwork_and_queue_share_the_site_columns`):
 
 - **Road rows are site rows** (`_build_roadwork_roster_row` on `_site_row_shell`): the road mark
-  (`ROADWORK_ROSTER_ICON`), the locator as the title in INK (`ROADWORK_ROSTER_NAME_META`), the `✕` at
-  the right; line two `road_row_value` in DANGER when the keeping is short, INK_DIM otherwise
-  (`ROADWORK_ROSTER_VALUE_META`), the stripe DANGER with it; and the `Build` pill line only while a road
-  build is queued on it (`roadwork_roster_row_height(queued)`). A click on the row jumps the map to
-  the road.
+  (`ROADWORK_ROSTER_ICON`), the locator as the title in INK (`ROADWORK_ROSTER_NAME_META`); line two
+  `road_row_value` in DANGER when the keeping is short, INK_DIM otherwise
+  (`ROADWORK_ROSTER_VALUE_META`), the stripe DANGER with it; and the `Build` pill line only while a
+  road build is queued on it (`roadwork_roster_row_height(queued)`).
+- **No site row carries a `✕`; a click opens its INSPECTOR, which holds the put-down.** A harvest or
+  hunt row's card has `Unassign`; a GROUNDWORK row's (`_build_working_inspector`) has `Stop holding this
+  working`; a road row's (`_build_road_inspector`, reserving `_road_inspector_height`) has the head
+  (mark, locator, state), `Jump to source` and `Stop keeping this road` — the road ladder card's own
+  label and hover, keyed `ROADWORK_ROSTER_ABANDON_META` to the tile, sending `abandon <f> road <x> <y>`
+  through `_emit_road_abandon` → `road_abandon_requested`. The roster models carry the card's `key` /
+  `kind` / `x` / `y`, and `_find_work_model` searches site, workings and road models alike.
 - **The fund-mode pick and the unseen line are the Road crew row's own lines** (`_build_pool_line`'s
   `extras`): the Spread/Priority pair at `ALLOC_SECTION_FONT_SIZE` and the "kept out of sight" hint,
   each in the row's line-two indent and charged to the row's reservation. The road block's height is

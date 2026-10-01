@@ -17677,14 +17677,35 @@ func _assert_the_roadwork_roster_names_its_roads() -> void:
 			+ "the section's own line (found %s)") % [stepper_faces],
 		stepper_faces.is_empty())
 
-	# ---- THE DROP, THROUGH REAL INPUT, ON THE ROW'S OWN TILE -------------------------------------
+	# ---- THE DROP, THROUGH THE ROW'S INSPECTOR, ON THE ROW'S OWN TILE -----------------------------
 	# **THE SAME `abandon` PATH THE ROAD LADDER'S BUTTON TAKES**, and no second command builder: the
-	# roster's signal is relayed onto `HudLayer.abandon_requested` exactly as the drawer's is.
-	var drop := _find_meta_control(rows[0], HudWorkVocab.ROADWORK_ROSTER_ABANDON_META) as Button
-	_assert_band_panel("every roster row carries a `%s` that puts the road down"
-			% HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH,
-		drop != null)
-	if drop != null:
+	# roster's signal is relayed onto `HudLayer.abandon_requested` exactly as the drawer's is. ⛔ **NO
+	# ROW CARRIES A `✕`** — a click on the row opens its inspector, where every site row's put-down is.
+	var row_drops: Array = []
+	for road_row in rows:
+		if _find_meta_control(road_row, HudWorkVocab.ROADWORK_ROSTER_ABANDON_META) != null:
+			row_drops.append(road_row.get_meta(HudWorkVocab.ROADWORK_ROSTER_ABANDON_META, null))
+	_assert_band_panel("no road ROW carries the put-down, which is its inspector's (found %d)"
+			% row_drops.size(),
+		row_drops.is_empty())
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	rows[0].gui_input.emit(click)
+	await _settle()
+	# The card fits to its content over two frames (`WorkInspectorDialog.refit`).
+	await _settle()
+	await _save("band_panel_roadwork_inspector")
+	var drop := _find_meta_control(_hud, HudWorkVocab.ROADWORK_ROSTER_ABANDON_META) as Button
+	_assert_band_panel("a click on a road row opens its inspector, whose put-down is keyed to the row's tile",
+		drop != null and drop.get_meta(HudWorkVocab.ROADWORK_ROSTER_ABANDON_META) == ROSTER_NEAR_TILE)
+	if drop == null:
+		_hud._bandpanel.close_work_inspector()
+		await _settle()
+	else:
+		_assert_band_panel("…labelled for the ACT — `%s` (\"%s\")"
+				% [HudRouteVocab.ROAD_LADDER_ABANDON_LABEL, drop.text],
+			drop.text == HudRouteVocab.ROAD_LADDER_ABANDON_LABEL)
 		# ⛔ **AND ITS HOVER STATES THE ROAD ALONE.** The `✕` sends the ROAD form, which puts down the
 		# road and nothing else on the hex (`docs/plan_site_crews.md` §2.4), so the retired *"the
 		# foraging goes down with it"* warning must not come back.
@@ -17704,10 +17725,12 @@ func _assert_the_roadwork_roster_names_its_roads() -> void:
 			else String(MAIN_SCRIPT.format_abandon(seen[0] as Dictionary).get("line", ""))
 		var wanted_line := "abandon %d road %d %d" % [HudConst.PLAYER_FACTION_ID,
 			ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y]
-		print("band_panel_preview: roadwork roster drop -> %s" % line)
+		print("band_panel_preview: roadwork inspector put-down -> %s" % line)
 		_assert_band_panel("…and pressing it sends `%s` for that row's OWN tile (got \"%s\")"
 				% [wanted_line, line],
 			line == wanted_line)
+		_assert_band_panel("…and the press closes the inspector",
+			not _hud._bandpanel.is_work_inspector_open())
 
 	# ---- CASE 2: A BILL WITH NOTHING IN SIGHT ----------------------------------------------------
 	# ⛔ **THE ROSTER CAN HONESTLY BE SHORTER THAN THE POOL.** Road rows are fog-filtered; the pool

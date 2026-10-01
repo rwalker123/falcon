@@ -829,6 +829,16 @@ func _find_button_by_text(node: Node, face: String) -> Button:
 			return found
 	return null
 
+## The first Control under `node` carrying `meta` — a row, not a button.
+func _find_meta_control_in(node: Node, meta: String) -> Control:
+	if node is Control and node.has_meta(meta):
+		return node as Control
+	for child in node.get_children():
+		var found := _find_meta_control_in(child, meta)
+		if found != null:
+			return found
+	return null
+
 func _find_meta_button(node: Node, meta: String) -> Button:
 	if node is Button and node.has_meta(meta):
 		return node
@@ -1028,10 +1038,19 @@ func _drive_road_abandon() -> void:
 	_panel.set_active_tab(BandCityPanel.ZONE_WORK)
 	_hud._bandpanel.rerender()
 	await _settle()
-	var drop := _find_meta_button(_panel, HudWorkVocab.ROADWORK_ROSTER_ABANDON_META)
+	# The put-down is the road row's INSPECTOR action: a click on the row opens the card.
+	var road_row := _find_meta_control_in(_panel, HudWorkVocab.ROADWORK_ROSTER_ROW_META)
+	if road_row == null:
+		_fail("abandon: the roadwork roster drew no row for a road this band keeps, so the verb has no emitter to drive")
+		return
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	road_row.gui_input.emit(click)
+	await _settle()
+	var drop := _find_meta_button(_hud, HudWorkVocab.ROADWORK_ROSTER_ABANDON_META)
 	if drop == null:
-		_fail("abandon: the roadwork roster drew no `%s` for a road this band keeps, so the verb has no emitter to drive"
-			% HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH)
+		_fail("abandon: a click on the road row opened no inspector put-down, so the verb has no emitter to drive")
 		return
 	drop.pressed.emit()
 	await _settle()

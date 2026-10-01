@@ -746,14 +746,16 @@ an id-first filter hands the whole free floor to whichever band holds it. Rows s
 ascending, tie-broken by tile, so the order is stable frame to frame — an unstable sort would move
 the `✕` a player was aiming at.
 
-**Row click → `alert_focus_requested(x, y)`**, the same signal `jump_to_band_entity` uses. A road IS
-its tile, so there is no band-style entity resolution to do. The row is a site row — icon, the locator
-as its title, `road_row_value` on line two, the `Build` pill line while a road build is queued
-(`band-city-panel.md` → "EVERY ROW ON THE WORK TAB SHARES THE SITE ROWS' COLUMNS").
+**Row click → its INSPECTOR**, the work board's card cut to a road (`_build_road_inspector`): `Jump
+to source` (`alert_focus_requested(x, y)` — a road IS its tile, so there is no entity resolution) and
+the put-down. The row is a site row — icon, the locator as its title, `road_row_value` on line two, the
+`Build` pill line while a road build is queued — and carries no `✕` (`band-city-panel.md` → "EVERY
+ROW ON THE WORK TAB SHARES THE SITE ROWS' COLUMNS").
 
-### The `✕` is the EXISTING abandon path, and it must not be quieter than the tile card
+### The put-down is the EXISTING abandon path, and it must not be quieter than the tile card
 
-The row's `✕` emits `BandPanelController.road_abandon_requested`, which `HudLayer` relays onto
+The road inspector's `Stop keeping this road` (it was the row's `✕` until site rows lost theirs)
+emits `BandPanelController.road_abandon_requested` (`_emit_road_abandon`), which `HudLayer` relays onto
 `abandon_requested` → `Main.format_abandon` → `abandon <faction> road <x> <y>`. That is the **same**
 command path `DrawerComposeController.road_abandon_requested` already takes, and a second builder was
 deliberately not written: two emitters converging on one relay is what stops the verb's grammar

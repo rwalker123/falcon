@@ -2977,3 +2977,8 @@ paired negative: the same band holding no road draws no ROADWORK section and no 
 `band_panel_workings_inspector` is the GROUNDWORK row's click: the inspector opens, its put-down is
 keyed to the row's `(tile, material)`, and the press sends `abandon_working` and closes the card. The
 frame waits a second `_settle` because `WorkInspectorDialog.refit` fits over two frames.
+
+`band_panel_roadwork_inspector` is the road row's click, the same shape: no road row carries the
+put-down, the click opens the inspector, its `Stop keeping this road` is keyed to the row's tile, a
+real viewport click on it sends `abandon 0 road <x> <y>`, and the card closes. `command_guard`'s
+`_drive_road_abandon` reaches the verb the same way — a click on the row, then the card's put-down.

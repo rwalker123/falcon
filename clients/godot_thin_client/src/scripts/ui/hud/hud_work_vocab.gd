@@ -2257,15 +2257,7 @@ const ROADWORK_ROSTER_UNSEEN_LINE := "The roads this band keeps are not in sight
 ## build queue's own ceiling one block down, so the two lists cap alike.
 const ROADWORK_ROSTER_ROWS_MAX := 3
 
-## The drop. Same `✕`, same steady full-opacity DANGER ink and same no-confirm rule as the build
-## queue's withdrawal and the parties zone's recall — a destructive single-item control reads as one.
-const ROADWORK_ROSTER_ABANDON_GLYPH := "✕"
 
-## **AND ITS COLUMN IS THE ONE-GLYPH BUTTON COLUMN** (the queue withdrawal's, until that took words),
-## for the identical measured reason: `HudWidgets.compact`
-## squeezes the type size and the VERTICAL padding only, so the ghost button keeps the side margins
-## `HudStyle` authored and a 22px reservation is 10px under what the glyph draws.
-const ROADWORK_ROSTER_ABANDON_WIDTH := BUILD_QUEUE_GLYPH_BUTTON_WIDTH
 
 ## The block's stable handle, valued the number of road rows it drew — so a harness can say *this
 ## band's roster has N rows* rather than *a roster exists somewhere in the zone*.
@@ -2274,7 +2266,9 @@ const ROADWORK_ROSTER_BLOCK_META := "roadwork_roster_block"
 ## One row, valued its road's own TILE — the roster's only identity, and what the `✕` beside it names.
 const ROADWORK_ROSTER_ROW_META := "roadwork_roster_row"
 
-## The `✕` on a row, valued that row's tile for the same reason.
+## ⛔ **A ROAD ROW CARRIES NO `✕`** — putting a road down is its INSPECTOR's action (a click on the row
+## opens it), where every other site row's put-down lives. This is that action's handle, valued the
+## road's tile.
 const ROADWORK_ROSTER_ABANDON_META := "roadwork_roster_abandon"
 
 ## The muted case-2 line, so its presence is assertable rather than inferred from a row count.

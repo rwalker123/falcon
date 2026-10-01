@@ -1902,7 +1902,7 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
     _sort_work_models(models)
     # Drop an inspector pinned to a source that has left the board.
     # A GROUNDWORK row opens the same card, so the search spans its models too.
-    var inspected := _find_work_model(models + extract_models, _work_open_key)
+    var inspected := _find_work_model(models + extract_models + roster_models, _work_open_key)
     if inspected.is_empty():
         _work_open_key = ""
     _work_inspected = inspected
@@ -2444,6 +2444,11 @@ func _roadwork_roster_models(band: Dictionary) -> Array:
             "tile": tile,
             "distance": distance,
             "locator": _roadwork_roster_locator(distance, camp, tile),
+            # The work inspector's handles — the road opens the same card a harvest row does.
+            "kind": HudConst.LABOR_KIND_ROADWORK,
+            "key": _band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK, tile.x, tile.y, ""),
+            "x": tile.x,
+            "y": tile.y,
         })
     models.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
         if int(a["distance"]) != int(b["distance"]):
@@ -2481,9 +2486,10 @@ func _roadwork_roster_unseen(band: Dictionary, visible: int) -> bool:
     return SourceForecast.has_upkeep(_band_labor.roadwork_pool_state(band))
 
 ## **ONE ROAD'S ROW — a site row** (`_site_row_shell`): the road's mark in the icon column, its
-## locator as the title (`2 tiles SE`, one ink), the `✕` that puts it down at the right; line two its
-## rung and state; and the `Build` pill line only while a road build is queued on it — a road has no
-## crew, so no stepper and no `Priority`. A click on the row jumps the map to the road.
+## locator as the title (`2 tiles SE`, one ink); line two its rung and state; and the `Build` pill line
+## only while a road build is queued on it — a road has no crew, so no stepper and no `Priority`.
+## **A click on the row opens its INSPECTOR** (`_build_road_inspector`), which carries `Jump to source`
+## and the put-down — so the row carries no `✕`, every site row's rule.
 ##
 ## ⛔ **LINE TWO IS `HudRouteVocab.road_row_value`, VERBATIM.** It already composes
 ## `Dirt road · 25% to paved · ⚠ washing out` for the tile card and the map's own readout, so the three
@@ -2495,7 +2501,8 @@ func _build_roadwork_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     var short := HudRouteVocab.is_keeping_short(road)
     var key := _band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK, tile.x, tile.y, "")
     var queued := _band_labor.build_queue_keys(band).has(key)
-    var shell := _site_row_shell(HudWorkVocab.roadwork_roster_row_height(queued), false,
+    var shell := _site_row_shell(HudWorkVocab.roadwork_roster_row_height(queued),
+        String(model.get("key", "")) == _work_open_key,
         HudStyle.DANGER if short else Color(0.0, 0.0, 0.0, 0.0))
     var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
     var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
@@ -2505,7 +2512,7 @@ func _build_roadwork_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
     row.gui_input.connect(func(event: InputEvent) -> void:
         if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-            emit_signal("alert_focus_requested", tile.x, tile.y))
+            _toggle_work_inspector(String(model.get("key", ""))))
     line.add_child(HudWidgets.build_marker_icon(null, HudWorkVocab.ROADWORK_ROSTER_ICON,
         HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
     var title := Label.new()
@@ -2518,7 +2525,6 @@ func _build_roadwork_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
     title.mouse_filter = Control.MOUSE_FILTER_IGNORE
     title.set_meta(HudWorkVocab.ROADWORK_ROSTER_NAME_META, title.text)
     line.add_child(title)
-    line.add_child(_build_roadwork_roster_abandon_button(band, tile))
     col.add_child(_build_working_yield_line(
         HudRouteVocab.road_row_value(road, _band_labor.road_queue_tiles()),
         HudStyle.DANGER if short else HudStyle.INK_DIM, HudWorkVocab.ROADWORK_ROSTER_VALUE_META))
@@ -2530,32 +2536,17 @@ func _build_roadwork_roster_row(band: Dictionary, model: Dictionary) -> PanelCon
         }, false))
     return row
 
-## **THE DROP — the same `abandon <faction> <x> <y>` the road ladder's own button sends, and no second
-## command path.**
-##
-## ⛔ **AND IT SAYS WHAT ELSE GOES DOWN.** `abandon` names a FACTION AND A PLACE and carries no band
-## token: it drops every band-of-that-faction's holding on that tile, a forage assignment there
-## included. The tile card warns about this in a second line; a roster invites BULK use, so it must
-## not be quieter about the same consequence — the warning rides the tooltip, which is where it fits.
-func _build_roadwork_roster_abandon_button(band: Dictionary, tile: Vector2i) -> Button:
-    var drop := Button.new()
-    drop.set_meta(HudWorkVocab.ROADWORK_ROSTER_ABANDON_META, tile)
-    drop.text = HudWorkVocab.ROADWORK_ROSTER_ABANDON_GLYPH
-    drop.focus_mode = Control.FOCUS_NONE
-    drop.tooltip_text = HudRouteVocab.ROAD_LADDER_ABANDON_TOOLTIP
-    drop.custom_minimum_size = Vector2(HudWorkVocab.ROADWORK_ROSTER_ABANDON_WIDTH, 0.0)
-    HudStyle.apply_button(drop, "ghost")
-    HudWidgets.compact(drop, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
-    drop.add_theme_color_override("font_color", HudStyle.DANGER)
-    # **NO CONFIRM** — the single-item idiom the queue withdrawal and the parties recall already use.
-    drop.pressed.connect(func() -> void:
-        emit_signal("road_abandon_requested", {
-            "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-            "x": tile.x,
-            "y": tile.y,
-            "road": true,
-        }))
-    return drop
+## **PUT A ROAD DOWN — the same `abandon <faction> road <x> <y>` the road ladder's own button sends**,
+## through `road_abandon_requested`, and no second command path. ⛔ The ROAD form names the road alone:
+## it drops this band's keeping of that road and nothing else on the hex, so the hover is the ladder's
+## own drop sentence and states no second consequence.
+func _emit_road_abandon(band: Dictionary, tile: Vector2i) -> void:
+    emit_signal("road_abandon_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "x": tile.x,
+        "y": tile.y,
+        "road": true,
+    })
 
 ## **WHICH WORKINGS THIS BAND IS HOLDING** — one entry per working it can see and has a crew row on,
 ## nearest first (arc #583). The roadwork roster's twin, and every rule there applies unchanged.
@@ -5930,6 +5921,8 @@ func _work_row_stripe_color(model: Dictionary) -> Color:
 func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContainer:
     if String(model.get("kind", "")) == HudConst.LABOR_KIND_EXTRACT:
         return _build_working_inspector(band, model)
+    if String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK:
+        return _build_road_inspector(band, model)
     var strip := PanelContainer.new()
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     var reserved := _work_inspector_height(model)
@@ -6153,6 +6146,65 @@ func _build_working_inspector(band: Dictionary, model: Dictionary) -> PanelConta
     actions.add_child(put_down)
     col.add_child(actions)
     return strip
+
+## **A ROAD ROW'S INSPECTOR — the work board's card, cut to a road.** The head (the road's mark, its
+## locator and its state) and the two pure actions: `Jump to source`, and PUTTING THE ROAD DOWN
+## (`ROAD_LADDER_ABANDON_LABEL`, the road ladder card's own words and hover) where a harvest row has
+## `Unassign`. A road has no crew, so there is no PRIORITY section; its `Build` mark is the row's pill.
+func _build_road_inspector(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var tile: Vector2i = model["tile"]
+    var road: Dictionary = model["road"]
+    var strip := PanelContainer.new()
+    strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var reserved := _road_inspector_height()
+    strip.custom_minimum_size = Vector2(0.0, reserved)
+    strip.set_meta(HudWorkVocab.WORK_INSPECTOR_META, reserved)
+    strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
+    var col := VBoxContainer.new()
+    col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
+    strip.add_child(col)
+    var head := HBoxContainer.new()
+    head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    head.add_child(HudWidgets.build_marker_icon(null, HudWorkVocab.ROADWORK_ROSTER_ICON,
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
+    var title := Label.new()
+    title.text = String(model.get("locator", "")) + HudWorkVocab.WORK_INSPECT_RUNG_SEPARATOR \
+        + HudRouteVocab.road_row_value(road, _band_labor.road_queue_tiles())
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    title.clip_text = true
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    head.add_child(title)
+    var close := Button.new()
+    close.text = HudWorkVocab.INSPECTOR_CLOSE_GLYPH
+    close.focus_mode = Control.FOCUS_NONE
+    close.tooltip_text = HudWorkVocab.INSPECTOR_CLOSE_TOOLTIP
+    HudStyle.apply_button(close, "ghost")
+    HudWidgets.compact(close, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.INSPECTOR_CLOSE_PADDING_V)
+    close.pressed.connect(func() -> void: _toggle_work_inspector(String(model.get("key", ""))))
+    head.add_child(close)
+    col.add_child(head)
+    _build_work_inspector_rule(col)
+    var actions := HBoxContainer.new()
+    actions.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
+    actions.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_JUMP, HudStyle.INK,
+        func() -> void: emit_signal("alert_focus_requested", tile.x, tile.y)))
+    var gap := Control.new()
+    gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    actions.add_child(gap)
+    var put_down := HudWidgets.build_inline_link(HudRouteVocab.ROAD_LADDER_ABANDON_LABEL,
+        HudStyle.DANGER, func() -> void:
+            close_work_inspector()
+            _emit_road_abandon(band, tile))
+    put_down.tooltip_text = HudRouteVocab.ROAD_LADDER_ABANDON_TOOLTIP
+    put_down.set_meta(HudWorkVocab.ROADWORK_ROSTER_ABANDON_META, tile)
+    actions.add_child(put_down)
+    col.add_child(actions)
+    return strip
+
+## The road card's reservation — the base (head, actions, gaps, padding) and the rule over the actions.
+func _road_inspector_height() -> float:
+    return HudWorkVocab.WORK_INSPECTOR_HEIGHT + HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
 
 ## The working card's reservation — the base (head, actions, gaps, padding), PRIORITY, and the rule
 ## over the actions: `_build_working_inspector`'s children, term for term.
@@ -6506,6 +6558,8 @@ func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -
 func _work_inspector_height(model: Dictionary) -> float:
     if String(model.get("kind", "")) == HudConst.LABOR_KIND_EXTRACT:
         return _working_inspector_height()
+    if String(model.get("kind", "")) == HudConst.LABOR_KIND_ROADWORK:
+        return _road_inspector_height()
     var height := HudWorkVocab.WORK_INSPECTOR_HEIGHT
     # **EACH NOTE IS ONE LINE PLUS WHATEVER IT WRAPS TO** (§4.9 item 12d's third pass). The four prose
     # lines on this card WRAP now rather than eliding — see `_work_inspector_wrap_overflow` for why the
