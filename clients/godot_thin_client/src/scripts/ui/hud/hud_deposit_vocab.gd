@@ -607,6 +607,15 @@ static func overstaffed_clause(workers: int, useful: int) -> String:
 static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = [],
 		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED) -> String:
 	var clauses: Array[String] = [ladder_rung_name(ladder, rung_of(deposit))]
+	clauses.append_array(deposit_row_qualifiers(deposit, ladder, cutters, useful))
+	return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
+
+## **THE VALUE'S QUALIFIERS WITHOUT ITS RUNG** — everything `deposit_row_value` says after the rung,
+## as clauses. The Work tab's GROUNDWORK row states the rung on its own second line and these on its
+## yield line, so the rung is said once and every other clause still reaches the row.
+static func deposit_row_qualifiers(deposit: Dictionary, ladder: Array[Dictionary] = [],
+		cutters: int = CUTTERS_UNSTATED, useful: int = CUTTERS_UNCAPPED) -> Array[String]:
+	var clauses: Array[String] = []
 	# ⛔ **UNTOUCHED GROUND STATES WHAT IT IS AND STOPS.** Every clause below this line describes
 	# something being DONE to a working — a rung rising, a seam being cut faster than it grows, a
 	# runway burning down, a bill going unpaid — and on ground nobody has opened each of them would
@@ -614,7 +623,7 @@ static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = [
 	# put here today would work at, which is the honest half of the line.
 	if is_unopened(deposit):
 		clauses.append(DEPOSIT_UNOPENED_WORD)
-		return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
+		return clauses
 	var progress := progress_clause(deposit, ladder)
 	if progress != "":
 		clauses.append(progress)
@@ -627,7 +636,7 @@ static func deposit_row_value(deposit: Dictionary, ladder: Array[Dictionary] = [
 	var hazard := hazard_clause(deposit, cutters, useful)
 	if hazard != "":
 		clauses.append(hazard)
-	return DEPOSIT_CLAUSE_SEPARATOR.join(clauses)
+	return clauses
 
 ## **HAS THIS BAND TAKEN ITS HANDS OFF A WORKING IT STILL HOLDS?** — the one test the idle clause and
 ## the idle hover are both decided by, so a row and its own tooltip cannot answer it two ways.

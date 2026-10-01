@@ -2534,6 +2534,7 @@ func _ready() -> void:
 	await _render_empty_work_zone_states()
 	# The Work tab's sections, its site crews and its two priority marks (`docs/plan_site_crews.md`).
 	await _render_work_sections_states()
+	await _render_work_sections_all_five()
 
 	await _render_work_party_states()
 
@@ -4041,9 +4042,9 @@ const UPKEEP_MODE_BUTTON_COUNT := 2
 const RETIRED_UPKEEP_MODE_NOTE_META := "upkeep_mode_note"
 
 ## How many cards the POOLS block carries — Agriculture, Husbandry, Roadwork, Builders. **Roadwork is
-## the fourth** (arc #532), and it is what forced the block's own stepper and title metrics
-## (`HudWorkVocab.POOL_STEPPER_*` / `POOL_CARD_NAME_FONT_SIZE`): four cards had to fit a strip that is
-## 356px on the left dock, and at the shared widths they wanted 466.
+## the fourth** (arc #532), and it is what forced the block's own (since retired) stepper and title
+## metrics: four cards had to fit a strip that is 356px on the left dock, and at the shared widths they
+## wanted 466.
 ##
 ## ⛔ **AND IT STAYS FOUR — the `quarrywork` pool got NO CARD** (arc #583). At the trimmed metrics a
 ## card's own minimum is **83px** (printed by `_assert_pool_cards_are_level` below), so five abreast
@@ -17984,7 +17985,14 @@ func _assert_a_working_can_be_put_down() -> void:
 		hover.contains(HudDepositVocab.DEPOSIT_REVERTING_TIP_FORMAT
 			% HudDepositVocab.reverting_value(_walked_away_workings_row())))
 	await _assert_the_roster_drop_puts_one_working_down(walked)
-	await _assert_the_ladder_offers_the_put_down(walked)
+	# The put-down re-rendered the zone, so the row is read off the fresh board.
+	_hud._bandpanel.rerender()
+	await _settle()
+	var fresh := _workings_rows_drawn()
+	if fresh.size() < 2:
+		_fail("the walked-away board lost its rows after the inspector's put-down")
+		return
+	await _assert_the_ladder_offers_the_put_down(fresh[1])
 	# **THE BOARD GOES BACK**, so the states after this one run against the roster's own fixture — the
 	# `_restore_workings_roster_fixture` idiom applied at the state that narrowed it.
 	_hud.update_deposits(_workings_rows())
@@ -17992,17 +18000,31 @@ func _assert_a_working_can_be_put_down() -> void:
 	_hud._bandpanel.rerender()
 	await _settle()
 
-## ⛔ **THE ROSTER'S `✕` — the one-click drop, and the hover that must not under-state it.**
-## roads.md: *"a one-click destructive action that under-states what it destroys is worse in a roster
-## than on a card: a roster invites bulk use."* So the claim is BOTH halves of the card's own hover,
+## ⛔ **THE ROW'S INSPECTOR PUTS IT DOWN — the harvest row's `Unassign` placement, and the hover that
+## must not under-state it.** A CLICK on the row opens the card; the put-down is its labelled action,
+## keyed to the working's own (tile, material). The claim is BOTH halves of the ladder card's hover,
 ## and the line is asserted by EQUALITY.
 func _assert_the_roster_drop_puts_one_working_down(row: Control) -> void:
-	var drop := _find_meta_control(row, HudWorkVocab.WORKINGS_ROSTER_ABANDON_META) as Button
-	_assert_band_panel("the walked-away row carries the `%s` that puts it down"
-			% HudWorkVocab.WORKINGS_ROSTER_ABANDON_GLYPH,
-		drop != null)
+	var key := String(row.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META))
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	row.gui_input.emit(click)
+	await _settle()
+	# The card fits to its content over two frames (`WorkInspectorDialog.refit`).
+	await _settle()
+	await _save("band_panel_workings_inspector")
+	var drop := _find_meta_control(_hud, HudWorkVocab.WORKINGS_ROSTER_ABANDON_META) as Button
+	_assert_band_panel("a click on the walked-away row opens its inspector, whose put-down is keyed to it (%s)"
+			% key,
+		drop != null and String(drop.get_meta(HudWorkVocab.WORKINGS_ROSTER_ABANDON_META)) == key)
 	if drop == null:
+		_hud._bandpanel.close_work_inspector()
+		await _settle()
 		return
+	_assert_band_panel("…labelled for the ACT — `%s` (\"%s\")"
+			% [HudDepositVocab.WORKING_ABANDON_LABEL, drop.text],
+		drop.text == HudDepositVocab.WORKING_ABANDON_LABEL)
 	var deposit := _walked_away_workings_row()
 	_assert_band_panel("…whose hover names what it destroys, the banked work included (\"%s\")"
 			% drop.tooltip_text,
@@ -18013,7 +18035,9 @@ func _assert_the_roster_drop_puts_one_working_down(row: Control) -> void:
 	var line := await _drive_working_abandon(drop)
 	var wanted := "abandon_working %d %d %d %s" % [HudConst.PLAYER_FACTION_ID,
 		ROSTER_NEAR_TILE.x, ROSTER_NEAR_TILE.y, WORKINGS_WOOD]
-	print("band_panel_preview: workings roster drop -> %s" % line)
+	print("band_panel_preview: workings inspector put-down -> %s" % line)
+	_assert_band_panel("…and the press closes the inspector",
+		not _hud._bandpanel.is_work_inspector_open())
 	_assert_band_panel(("…and pressing it sends `%s`, naming that row's TILE and its MATERIAL — never "
 			+ "the rock beside it and never a bare `abandon` (got \"%s\")") % [wanted, line],
 		line == wanted)
@@ -18476,12 +18500,21 @@ func _workings_band_fixture(demand: float) -> Dictionary:
 				[ROSTER_NEAR_TILE, WORKINGS_STONE, WORKINGS_CUTTERS],
 				[ROSTER_FAR_TILE, WORKINGS_STONE, WORKINGS_NO_CUTTERS]]:
 			var tile: Vector2i = held[0]
+			# A crewed row carries what it took last turn — `material_yield`, the wire's own shape —
+			# so the GROUNDWORK row's yield line has a take to state.
+			var crewed := int(held[2]) > 0
 			rows.append({
 				"kind": HudConst.LABOR_KIND_EXTRACT, "workers": int(held[2]),
 				"target_x": tile.x, "target_y": tile.y, "fauna_id": "",
 				"material": String(held[1]),
+				"has_yield": crewed,
+				"material_yield": [{"material_id": String(held[1]),
+					"amount": WORKINGS_CREW_TAKE}] if crewed else [],
 			})
 	return band
+
+## What a crewed working's row took last turn, in its own material.
+const WORKINGS_CREW_TAKE := 0.3
 
 ## ---- THE CREW THAT OUTGREW ITS GROUND, ON THE GROUNDWORK ROSTER --------------------------------
 ##
@@ -18663,20 +18696,23 @@ func _workings_rows_drawn() -> Array[Control]:
 	return _collect_meta_controls(_panel, HudWorkVocab.WORKINGS_ROSTER_ROW_META, [])
 
 func _workings_row_name(row: Control) -> String:
-	for child in row.find_children("*", "Button", true, false):
-		return (child as Button).text
-	return ""
+	var name := _find_meta_control(row, HudWorkVocab.WORKINGS_ROW_NAME_META)
+	return "" if name == null else (name as Label).text
 
+## A GROUNDWORK row's YIELD line — what the crew takes, then every clause the working's value states
+## after its rung. The rung is the row's second line (`_workings_row_rung`).
 func _workings_row_value(row: Control) -> String:
-	for child in row.find_children("*", "Label", true, false):
-		return (child as Label).text
-	return ""
+	var line := _find_meta_control(row, HudWorkVocab.WORK_ROW_ACCOUNTS_META)
+	return "" if line == null else (line as Label).text
+
+## …and its RUNG line, the row's second.
+func _workings_row_rung(row: Control) -> String:
+	var line := _find_meta_control(row, HudWorkVocab.SITE_CREW_LINE_META)
+	return "" if line == null else (line as Label).text
 
 ## …and that same cell's HOVER, which is where every figure the one line cannot carry went.
 func _workings_row_tooltip(row: Control) -> String:
-	for child in row.find_children("*", "Label", true, false):
-		return (child as Label).tooltip_text
-	return ""
+	return row.tooltip_text
 
 func _assert_the_workings_roster_names_its_workings() -> void:
 	# **THE DEPOSIT CRAFTS ARE LEARNED FOR THIS BLOCK, and that is what makes the ladder PRESSABLE.**
@@ -18761,15 +18797,35 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	# of it, so an expectation composed against `[]` would compare a display name with a raw wire key
 	# and fail for a reason that has nothing to do with the reuse being claimed.
 	var ladder := HudDepositVocab.deposit_ladder(_deposit_rung_catalog())
-	var wanted := HudDepositVocab.deposit_row_value(wood, ladder)
+	# ⛔ **THE RUNG IS SAID ONCE, ON LINE TWO**, and the YIELD line carries every other clause the
+	# value states — `deposit_row_qualifiers`, the value's own tail — so nothing the value said is lost.
+	var rung := _workings_row_rung(rows[1])
+	var rung_want := HudWorkVocab.site_crew_line(HudDepositVocab.ladder_rung_name(ladder,
+		HudDepositVocab.rung_of(wood)))
+	_assert_band_panel("…its second line is the rung alone — `%s` (got \"%s\")" % [rung_want, rung],
+		rung == rung_want)
 	var got := _workings_row_value(rows[1])
-	_assert_band_panel("…and its value is `deposit_row_value` verbatim — `%s` (got \"%s\")"
-			% [wanted, got], got == wanted)
+	var tail := HudDepositVocab.DEPOSIT_CLAUSE_SEPARATOR.join(
+		HudDepositVocab.deposit_row_qualifiers(wood, ladder))
+	_assert_band_panel("…and its yield line carries the value's clauses after the rung — `%s` (got \"%s\")"
+			% [tail, got], tail != "" and got.contains(tail))
+	# …and it LEADS with what this band's crew takes, a rate in the working's material.
+	var take := SourceForecast.PICKER_MATERIAL_PRODUCT_FORMAT % [
+		SourceForecast.format_signed(WORKINGS_CREW_TAKE), WORKINGS_WOOD] \
+		+ SourceForecast.YIELD_PER_TURN_SUFFIX
+	_assert_band_panel("…leading with the crew's take, `%s` (got \"%s\")" % [take, got],
+		got.begins_with(take))
+	_assert_band_panel("…which never repeats the rung (\"%s\")" % got,
+		not got.contains(HudDepositVocab.ladder_rung_name(ladder, HudDepositVocab.rung_of(wood))))
 	# **AND THE RUNG IS NAMED BY THE WIRE**, never by a retired client table: the negative is the raw
 	# key, which is exactly what a roster with no catalog behind it prints.
 	_assert_band_panel("…naming the rung by the CATALOG's own word rather than its wire key (\"%s\")"
-			% got,
-		got.contains("Felling") and not got.contains(HudDepositVocab.RUNG_KEY_FELLING))
+			% rung,
+		rung.contains("Felling") and not rung.contains(HudDepositVocab.RUNG_KEY_FELLING))
+	# **THE NAME IS ONE INK** — it names the working; it is no longer a jump link in the SIGNAL ink.
+	var name_label := _find_meta_control(rows[1], HudWorkVocab.WORKINGS_ROW_NAME_META) as Label
+	_assert_band_panel("…its name is one plain INK label, not a link",
+		name_label != null and name_label.get_theme_color(FONT_COLOR_THEME_KEY) == HudStyle.INK)
 	# ⛔ **THE §7 FORK, READ OFF TWO ROWS OF ONE ROSTER.** The renewing seam states the over-cut word
 	# and the finite one a runway — the pair, since either alone passes on a composer that says the
 	# same thing about both.
@@ -18799,18 +18855,15 @@ func _assert_the_workings_roster_names_its_workings() -> void:
 	_assert_band_panel("…and every ROW carries its own crew stepper, one `−` and one `+` each (%s)"
 			% [steppers],
 		steppers == [2, 2, 2])
-	# ⛔ **AND THE `✕` IS ON EVERY ROW, KEYED TO ITS OWN WORKING** (issue #650). A `✕` is none of the
-	# three controls that rule forbids: it names no crew and staffs nobody. It is asserted PRESENT here
-	# and asserted to carry the WORKING's own handle rather than the road roster's, because a roster
-	# reaching for `abandon` would emit a verb that drops a forage assignment on the same hex instead.
+	# ⛔ **AND NO ROW CARRIES A `✕`** — putting a working down is its INSPECTOR's action, the harvest
+	# row's `Unassign` placement (`_assert_the_roster_drop_puts_one_working_down`).
 	var drops: Array = []
 	for row in rows:
 		var control := _find_meta_control(row, HudWorkVocab.WORKINGS_ROSTER_ABANDON_META)
 		if control != null:
 			drops.append(String(control.get_meta(HudWorkVocab.WORKINGS_ROSTER_ABANDON_META)))
-	_assert_band_panel(("…while every row DOES carry a `%s`, keyed to its own (tile, material) — %s "
-			+ "against the rows %s") % [HudWorkVocab.WORKINGS_ROSTER_ABANDON_GLYPH, drops, keys],
-		drops == keys)
+	_assert_band_panel("…and no ROW carries the put-down, which is its inspector's (got %s)" % [drops],
+		drops.is_empty())
 	_assert_band_panel("…and never the ROAD roster's own drop, whose verb names a place rather than a working",
 		_find_meta_control(rows[0], HudWorkVocab.ROADWORK_ROSTER_ABANDON_META) == null)
 	# **AND THE HEAD IS THE POOL**, asserted on this state because it is the one with a live shortfall.
@@ -18920,9 +18973,8 @@ func _assert_a_working_flags_the_crew_that_outgrew_it() -> void:
 ## A roster row's value cell INK — the fork `HudDepositVocab.deposit_value_color` drives, read off the
 ## drawn label rather than recomputed, so the claim is about what the row shows.
 func _workings_row_value_color(row: Control) -> Color:
-	for child in row.find_children("*", "Label", true, false):
-		return (child as Label).get_theme_color("font_color")
-	return Color.TRANSPARENT
+	var line := _find_meta_control(row, HudWorkVocab.WORK_ROW_ACCOUNTS_META)
+	return Color.TRANSPARENT if line == null else (line as Label).get_theme_color("font_color")
 
 ## ⛔ **RESERVED >= DRAWN ON A ZONE BLOCK'S HEAD, PRINTED — for all three of them.** Each block
 ## declares its own minimum from its own height function, and the HEAD term of that expression is a
@@ -24522,9 +24574,13 @@ func _render_work_sections_states() -> void:
 		if String(model.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE:
 			agri_workers += int(model.get("workers", 0))
 	for key in [HudWorkVocab.WORK_SECTION_BUILD_QUEUE, HudWorkVocab.WORK_SECTION_AGRICULTURE,
-			HudWorkVocab.WORK_SECTION_HUSBANDRY, HudWorkVocab.WORK_SECTION_ROADWORK]:
+			HudWorkVocab.WORK_SECTION_HUSBANDRY]:
 		_assert_band_panel("work sections — the `%s` section head is drawn" % String(key),
 			_work_section_head(key) != null)
+	# ⛔ **AND NO ROADWORK SECTION ON A BAND HOLDING NO ROAD** with no road build queued and nobody on
+	# the road crew — a road crew with nothing to keep is a control with no subject.
+	_assert_band_panel("work sections — …and no ROADWORK head on a band holding no road",
+		_work_section_head(HudWorkVocab.WORK_SECTION_ROADWORK) == null)
 	var agri_head := _work_section_head(HudWorkVocab.WORK_SECTION_AGRICULTURE)
 	var agri_readout := HudWorkVocab.WORK_SECTION_READOUT_FORMAT % agri_workers
 	_assert_band_panel("work sections — AGRICULTURE's head reads `%s`, its rows' summed crews" % agri_readout,
@@ -24533,9 +24589,12 @@ func _render_work_sections_states() -> void:
 		_work_section_head(HudWorkVocab.WORK_SECTION_GROUNDWORK) == null)
 	_assert_band_panel("work sections — the retired pool cards are gone: no Agriculture or Husbandry pool line",
 		_find_pool_card("Agriculture") == null and _find_pool_card("Husbandry") == null)
-	_assert_band_panel("work sections — …while the Builders and Roadwork lines each carry a stepper",
+	_assert_band_panel("work sections — …while the Builders row carries a stepper, and no Road crew row draws",
 		_find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS) != null
-			and _find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK) != null)
+			and _find_stepper_plus(_find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS)) != null
+			and _find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK) == null)
+	_assert_pool_row_is_a_site_row(HudWorkVocab.ROLE_NAME_BUILDERS,
+		HudWorkVocab.POOL_ICON_BUILDERS, HudWorkVocab.BUILDERS_POOL_SUBLINE)
 
 	# ---- ONE SPINNER PER SITE: the rung line, and the keeping mark's hover in whole workers ----------
 	var tended_word := String(HudComposeVocab.IMPROVEMENT_DONE_LABELS[SourceForecast.IMPROVEMENT_CULTIVATE])
@@ -24753,3 +24812,138 @@ const KEEPING_CAP_SIM_CREW := 3
 const KEEPING_CAP_IDLE := 1
 const KEEPING_CAP_PER_WORKER := 0.10
 const KEEPING_CAP_CEILING := 0.20
+
+## ⛔ **A POOL ROW IS DRAWN EXACTLY LIKE A SITE ROW** — the site rows' indent and stepper column, the
+## icon in their icon column, the title at their type and INK, and a muted second line saying what the
+## hands do. Asserted against a DRAWN site row, so the claim is *the columns line up*, not *the code
+## passed the same constant*.
+func _assert_pool_row_is_a_site_row(role_name: String, icon: String, subline: String) -> void:
+	var pool := _find_pool_card(role_name)
+	var site: Control = null
+	for row in _work_board_rows():
+		site = row
+		break
+	_assert_band_panel("pool row `%s` — precondition: the row and a site row are both drawn" % role_name,
+		pool != null and site != null)
+	if pool == null or site == null:
+		return
+	var title: Label = null
+	var glyph: Label = null
+	for child in pool.find_children("*", "Label", true, false):
+		var label := child as Label
+		if label.text == role_name:
+			title = label
+		elif label.text == icon:
+			glyph = label
+	_assert_band_panel("pool row `%s` — wears its icon `%s` before its title" % [role_name, icon],
+		glyph != null and title != null
+			and glyph.get_global_rect().position.x < title.get_global_rect().position.x)
+	# INK — or WARN on a SHORT pool, the amber that has to keep meaning *something is being lost*.
+	var ink := HudStyle.WARN if bool(pool.get_meta(BandPanelController.POOL_CARD_SHORT_META, false)) \
+		else HudStyle.INK
+	_assert_band_panel("pool row `%s` — its title is a site row's type, in its state's ink" % role_name,
+		title != null
+			and title.get_theme_font_size(&"font_size") == HudWorkVocab.WORK_ROW_FONT_SIZE
+			and title.get_theme_color(FONT_COLOR_THEME_KEY) == ink)
+	var sub := _find_meta_control(pool, HudWorkVocab.WORK_POOL_SUBLINE_META) as Label
+	_assert_band_panel("pool row `%s` — its muted second line says `%s` (got \"%s\")"
+			% [role_name, subline, "" if sub == null else sub.text],
+		sub != null and sub.text.begins_with(subline)
+			and sub.get_theme_color(FONT_COLOR_THEME_KEY) == HudStyle.INK_DIM)
+	var pool_plus := _find_stepper_plus(pool)
+	var site_plus := _find_stepper_plus(site)
+	var pool_x := -1.0 if pool_plus == null else pool_plus.get_global_rect().end.x
+	var site_x := -1.0 if site_plus == null else site_plus.get_global_rect().end.x
+	print("band_panel_preview: pool row %s — `+` right edge %.1f, site row's %.1f, icon x %.1f / %.1f"
+		% [role_name, pool_x, site_x, -1.0 if glyph == null else glyph.get_global_rect().position.x,
+			_site_row_icon_x(site)])
+	_assert_band_panel("pool row `%s` — its stepper sits in the site rows' column (`+` ends at %.1f, theirs %.1f)"
+			% [role_name, pool_x, site_x],
+		pool_plus != null and site_plus != null and is_equal_approx(pool_x, site_x))
+	_assert_band_panel("pool row `%s` — …and its icon in their icon column" % role_name,
+		glyph != null and is_equal_approx(glyph.get_global_rect().position.x, _site_row_icon_x(site)))
+
+## The x a drawn site row's icon starts at — its first line's first child.
+func _site_row_icon_x(site: Control) -> float:
+	for child in site.find_children("*", "HBoxContainer", true, false):
+		var line := child as HBoxContainer
+		if line.get_child_count() > 0 and line.get_parent() is VBoxContainer:
+			return (line.get_child(0) as Control).get_global_rect().position.x
+	return -1.0
+
+## ⛔ **ALL FIVE SECTIONS AT ONCE** — the sections band holding roads it keeps (so ROADWORK draws, with
+## its `Road crew` row) and workings (so GROUNDWORK draws): the one frame where every section, both pool
+## rows and a groundwork row can be read against each other.
+func _render_work_sections_all_five() -> void:
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	_hud.update_intensification([_workings_knowledge_row()])
+	_hud.update_deposit_rungs(_deposit_rung_catalog())
+	_hud.update_deposits(_workings_rows())
+	_hud.update_route_rungs(_road_queue_catalog())
+	_hud.update_road_network(_roster_roads())
+	_set_world_herds(_herd_fixtures())
+	_set_forage_patches(_sections_patches(false))
+	var band := _sections_band_fixture()
+	band["roadwork_demand"] = ROSTER_ROADWORK_DEMAND
+	band["roadwork_supplied"] = ROSTER_ROADWORK_SUPPLIED
+	band["roadwork_shortfall"] = ROSTER_ROADWORK_SHORTFALL
+	var rows: Array = band["labor_assignments"]
+	rows.append({
+		"kind": HudConst.LABOR_KIND_ROADWORK, "workers": ROSTER_ROADWORK_WORKERS,
+		"target_x": -1, "target_y": -1, "fauna_id": "",
+	})
+	for held in [[ROSTER_NEAR_TILE, WORKINGS_WOOD, WORKINGS_CUTTERS],
+			[ROSTER_FAR_TILE, WORKINGS_STONE, WORKINGS_NO_CUTTERS]]:
+		var tile: Vector2i = held[0]
+		rows.append({
+			"kind": HudConst.LABOR_KIND_EXTRACT, "workers": int(held[2]),
+			"target_x": tile.x, "target_y": tile.y, "fauna_id": "",
+			"material": String(held[1]),
+		})
+	_push_bands([band])
+	_hud._bandpanel.rerender()
+	await _settle()
+	await _save("band_panel_work_sections_all_five")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	for key in [HudWorkVocab.WORK_SECTION_BUILD_QUEUE, HudWorkVocab.WORK_SECTION_AGRICULTURE,
+			HudWorkVocab.WORK_SECTION_HUSBANDRY, HudWorkVocab.WORK_SECTION_ROADWORK,
+			HudWorkVocab.WORK_SECTION_GROUNDWORK]:
+		_assert_band_panel("all five sections — the `%s` section head is drawn" % String(key),
+			_work_section_head(key) != null)
+	var road_crew := _find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK)
+	_assert_band_panel("all five sections — the ROADWORK section's pool row is named `%s`, with a stepper"
+			% HudWorkVocab.ROLE_NAME_ROADWORK,
+		road_crew != null and _find_stepper_plus(road_crew) != null)
+	_assert_band_panel("all five sections — …and the section itself is still headed `%s`"
+			% String(HudWorkVocab.WORK_SECTION_TITLES[HudWorkVocab.WORK_SECTION_ROADWORK]),
+		String(HudWorkVocab.WORK_SECTION_TITLES[HudWorkVocab.WORK_SECTION_ROADWORK]) == "Roadwork")
+	_assert_pool_row_is_a_site_row(HudWorkVocab.ROLE_NAME_ROADWORK,
+		HudWorkVocab.POOL_ICON_ROAD_CREW, HudWorkVocab.ROAD_CREW_POOL_SUBLINE)
+	# **THE ROAD CREW KEEPS ITS TOE MARK AND HOVER** — this band's roads are short of keeping, so the
+	# row flies the `⚠` and its hover carries the coverage sentence.
+	var answers := _pool_card_answers(HudWorkVocab.ROLE_NAME_ROADWORK)
+	_assert_band_panel("all five sections — the short road crew still flies its `%s` (glyphs %s)"
+			% [HudWorkVocab.UPKEEP_POOL_SHORT_MARK, answers.get("glyphs", [])],
+		bool(answers.get("mark", false))
+			and (answers.get("glyphs", []) as Array).has(HudWorkVocab.UPKEEP_POOL_SHORT_MARK))
+	# **A GROUNDWORK ROW IS A SITE ROW**: its icon is the material's, in the site rows' icon column.
+	var working: Control = null
+	for row in _workings_rows_drawn():
+		working = row
+		break
+	_assert_band_panel("all five sections — a groundwork row is drawn", working != null)
+	if working != null:
+		var site: Control = null
+		for row in _work_board_rows():
+			site = row
+			break
+		var icon_x := _site_row_icon_x(working)
+		_assert_band_panel("all five sections — the groundwork row's icon sits in the site rows' icon column (%.1f vs %.1f)"
+				% [icon_x, -1.0 if site == null else _site_row_icon_x(site)],
+			site != null and is_equal_approx(icon_x, _site_row_icon_x(site)))
+	_restore_workings_roster_fixture()
+	_restore_road_queue_fixture()
+	_hud._bandpanel.rerender()
+	await _settle()

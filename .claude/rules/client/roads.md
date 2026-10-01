@@ -622,12 +622,15 @@ queued."*
 
 `docs/plan_site_crews.md` §2.4. Roadwork is the one keeping pool left — a road has no crew of its own
 to put on it — so it keeps a band-wide stepper. The Work tab's ROADWORK section draws, top down: the
-head (`ROADWORK · N on work`, carrying the roster's `+N more` door), the pool's own line (`Roadwork`,
-the one-slot `⚠` / `ⓘ` mark with the coverage, tool and idle sentences on its hover, and the
-stepper), the Spread/Priority pick wherever the road bill is live (`_build_upkeep_mode_row`, which
+head (`ROADWORK · N on work`, carrying the roster's `+N more` door), the pool's own row (`Road crew`,
+drawn as a site row — `band-city-panel.md` → "THE WORK TAB IS FIVE SECTIONS" — with the one-slot `⚠` /
+`ⓘ` mark, the coverage, tool and idle sentences on its hover, and the stepper), the Spread/Priority
+pick wherever the road bill is live (`_build_upkeep_mode_row`, which
 reads the road bill alone), the unseen line, and the roads it keeps. A road row carries a `Build`
 pill only while a road build is queued on it (`build_priority … road <x> <y>`) and never a `Priority`
 pill — a road has no crew. Its `✕` sends `abandon <f> road <x> <y>`, the bare tile being the patch.
+The section draws only where the band has a road to keep, a road build queued, or a road crew still
+staffed (`_roadwork_section_shows`).
 
 The POOLS block, its row of four cards and their shared metrics are retired, so the card-width
 measurements in the next two sections are the record of a layout that no longer draws. The roster
@@ -651,8 +654,8 @@ escape a bill that follows them regardless.
 > The route coverage sentence (`UPKEEP_POOL_COVERAGE_ROUTE_FORMAT`) once said *"the roads this band
 > stands on"* after the hint above it had been corrected — one model, two strings, one of them wrong.
 > Every pool now shares ONE coverage format, `UPKEEP_POOL_COVERAGE_FORMAT` (`Supplies %s of %s work a
-> turn.`), which names no holdings and no queue, so `ROADWORK_ROLE_HINT` (`Roadwork workers maintain
-> built roads.`) is the only place the catchment is worded. The figure still carries no queued term:
+> turn.`), which names no holdings and no queue, so `ROADWORK_ROLE_HINT` (`The road crew maintains the
+> roads this band built.`) is the only place the catchment is worded. The figure still carries no queued term:
 > the road pool's `asked` is the cohort's published `roadwork_demand` verbatim, not summed from the
 > fog-filtered road rows.
 

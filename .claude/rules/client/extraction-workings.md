@@ -967,13 +967,31 @@ arrangement and are kept as the record of why each control read the way it did.
 The Work tab's GROUNDWORK section draws one row per held working
 (`BandPanelController._build_extract_row`), after the section head `GROUNDWORK · N on work`:
 
-- **Line one**: the material-led name (a jump link), the value cell (`deposit_row_value`, with its
-  whole account on the hover), the site's keeping mark (`⚠` kept < owed, `ⓘ` tools short), the `⌃`
-  that opens the ladder track, the crew stepper and the `✕`.
+It is a harvest row's shape on the same frame (`_site_row_shell`), so its icon, title and stepper sit
+in the site rows' columns:
+
+- **Line one**: the material's mark (`FoodIcons.for_material`), the name `Wood · 2 tiles SE` in one
+  INK (`WORKINGS_ROW_NAME_META` — no longer a jump link, and never followed by the rung), the site's
+  keeping mark (`⚠` kept < owed, `ⓘ` tools short), the `⌃` that opens the ladder track, and the crew
+  stepper at the site rows' default metric. The row's hover is `_workings_roster_tooltip`.
 - **Line two**: the rung the working stands on — `Coppice`, `Gathering` — and nothing else; covered
   keeping says nothing and no head count is stated (`band-city-panel.md` → "A site row is four lines").
   The keeping mark's hover is the whole-worker tending line.
-- **Line three**: the `Priority` and `Build` pills, on a line of their own (`EXTRACT_ROW_HEIGHT`).
+- **Line three, the YIELD** (`_working_yield_text`, meta `WORK_ROW_ACCOUNTS_META`): what this band's
+  crew took — its own `extract` row through `SourceForecast.source_yield_readout`, `+0.30 wood /turn`,
+  only where the row `has_yield` — then `HudDepositVocab.deposit_row_qualifiers` (everything
+  `deposit_row_value` says AFTER the rung: the build in flight, idle, over-cut or runway, the hazard),
+  then the floor where the ground renews. Its ink is `deposit_value_color`, WARN on a hazard, and the
+  row's stripe goes WARN with it.
+- **Line four**: the `Priority` and `Build` pills, on a line of their own. `EXTRACT_ROW_HEIGHT` is a
+  site row's height with no party block; a far working's party block stays on the row's hover.
+- **A click on the row opens its INSPECTOR** — the work board's card, cut to a working
+  (`_build_working_inspector`, reserving `_working_inspector_height`): the head (mark, name, rung),
+  PRIORITY, and the actions `Jump to source` and `Stop holding this working` — the put-down, in
+  DANGER, keyed `WORKINGS_ROSTER_ABANDON_META` to the `(tile, material)`, with the ladder card's hover,
+  sent through the one `_emit_working_abandon`. **The row carries no `✕`**: a harvest row's `Unassign`
+  is an inspector action for the mis-click reason, and the put-down is the same placement. The ladder
+  card keeps its own put-down row.
 - **The stepper re-sends the compose sheet's command with the count moved**: `assign_labor <f> <b>
   extract <x> <y> <material> [floor] <n>`, the material in the species slot, this band's own floor
   on ground that renews and no floor (`FLOOR_UNNAMED`) on ground that does not, and the row's kit
@@ -984,8 +1002,8 @@ The Work tab's GROUNDWORK section draws one row per held working
   PATCH on that hex (`band-city-panel.md` → "EVERY SITE VERB SPELLS ITS SOURCE ONE WAY").
 - **A queued working build has a queue row** (`_deposit_queue_models`), so it can be reordered and
   withdrawn from the BUILD QUEUE block in the material form.
-- **A crew of zero keeps nothing**, and the row's hover says so (`DEPOSIT_IDLE_TIP`); the `✕`'s hover
-  states what holding it still means (`WORKING_ABANDON_WHY`) rather than a shared bill.
+- **A crew of zero keeps nothing**, and the row's hover says so (`DEPOSIT_IDLE_TIP`); the put-down's
+  hover states what holding it still means (`WORKING_ABANDON_WHY`) rather than a shared bill.
 
 ## THE `Groundwork` POOL, AND WHAT A FIFTH CARD COST
 
@@ -1213,7 +1231,7 @@ The verb has **two surfaces, the road's pair one branch over**:
 
 | surface | control | where |
 |---|---|---|
-| the WORKINGS ROSTER row | a DANGER `✕`, no confirm | `BandPanelController._build_workings_roster_abandon_button` |
+| the GROUNDWORK row's INSPECTOR | `Stop holding this working`, DANGER, in the actions row | `BandPanelController._build_working_inspector` |
 | the deposit LADDER card | `Stop holding this working`, the BOTTOM row under the rungs | `BandPanelController._build_working_abandon_row` |
 
 ⛔ **BOTH EMIT `working_abandon_requested` THROUGH ONE `_emit_working_abandon`, AND THAT IS roads.md's

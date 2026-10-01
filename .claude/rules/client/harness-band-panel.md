@@ -2963,3 +2963,17 @@ state that pins a 1080-high canvas fails its pin and the dock-row walk stalls in
 site-crews arc was measured on a temporary copy with those pins at 900 and the dock-row and
 interface-scale walks skipped — 188 frames / 1326 `: PASS` / 401 `assert OK`, exit 0 — which is not
 comparable to the full-walk tally above.
+
+## The Work tab's five sections in ONE frame, and the pool rows as site rows
+
+`band_panel_work_sections_all_five` (`_render_work_sections_all_five`) stands the sections band up
+with roads it keeps and two workings, so BUILD QUEUE, AGRICULTURE, HUSBANDRY, ROADWORK and GROUNDWORK
+all draw at once. `_assert_pool_row_is_a_site_row` measures each pool row against a DRAWN harvest row
+— the `+`'s right edge and the icon's x equal to theirs, the title at `WORK_ROW_FONT_SIZE` in its
+state's ink (WARN on the short road crew), and the muted second line — so the claim is that the
+columns line up, not that the code passed the same constant. `band_panel_work_sections` is the
+paired negative: the same band holding no road draws no ROADWORK section and no `Road crew` row.
+
+`band_panel_workings_inspector` is the GROUNDWORK row's click: the inspector opens, its put-down is
+keyed to the row's `(tile, material)`, and the press sends `abandon_working` and closes the card. The
+frame waits a second `_settle` because `WorkInspectorDialog.refit` fits over two frames.

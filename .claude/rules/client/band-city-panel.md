@@ -2340,10 +2340,10 @@ head's first child:
 
 | section | holds | always drawn? |
 |---|---|---|
-| BUILD QUEUE | the `Builders` pool line (stepper, kit face, TOE mark), then the queue rows | yes |
+| BUILD QUEUE | the `Builders` pool row (stepper, kit face, TOE mark), then the queue rows | yes |
 | AGRICULTURE | one row per forage source | only with a forage row |
 | HUSBANDRY | one row per hunt source | only with a hunt row |
-| ROADWORK | the `Roadwork` pool line, the Spread/Priority pick where the road bill is live, then the roads kept | yes |
+| ROADWORK | the `Road crew` pool row, the Spread/Priority pick where the road bill is live, then the roads kept | with a road (below) |
 | GROUNDWORK | one row per held working (`extraction-workings.md`) | only with a working |
 
 - **The sections ARE the filter.** The Gathering chips, the pager and the paged board's capacity
@@ -2356,10 +2356,24 @@ head's first child:
   place. Without a panel (the no-dock host) the columns are returned bare.
 - **A folded section keeps its head** (`WORK_SECTION_COLLAPSED_META`) and draws no body.
   `_collapsed_sections` is zone MODE, so it survives a band change.
-- **The pool lines keep the retired cards' readings** (`_build_pool_line`): the one-slot mark (`⚠`
-  work short in WARN, else `ⓘ` in `INK_DIM` for tools short or a spare hand), the role hint, coverage,
-  tool and idle sentences on the line's hover, and the same three metas the cards carried. The
-  Builders line is never work-short; it states the kit the queue head prices at.
+- **ROADWORK draws where the band has roads to keep** (`_roadwork_section_shows`): a kept road it can
+  see, road keeping owed out of sight, a road build in its queue — or a road crew still staffed, so a
+  band whose last road went never strands hands on a stepper it cannot reach. BUILD QUEUE always draws.
+- **A pool row is drawn exactly like a site row** (`_build_pool_line` on `_site_row_shell`, the frame
+  `_build_work_row` and the GROUNDWORK rows share): the same backing, stripe column and indent, an icon
+  in the icon column (`🔨` Builders, `🛤` Road crew — `POOL_ICON_*`), the title at `WORK_ROW_FONT_SIZE`
+  in INK (WARN when pending or short), the stepper at the site rows' default metric so it lands in
+  their column, and a muted line two saying what the hands do (`BUILDERS_POOL_SUBLINE` /
+  `ROAD_CREW_POOL_SUBLINE`, meta `WORK_POOL_SUBLINE_META`; the Builders' kit face follows it). Drawn
+  bold and flush-left, the two lines read as the head of the NEXT section. `WORK_POOL_LINE_HEIGHT` is
+  `WORK_ROW_TWO_LINE_HEIGHT`. The pool stepper's narrow metric (`POOL_STEPPER_*`) is retired with the
+  four-card row that needed it.
+- **The pool rows keep the retired cards' readings**: the one-slot mark (`⚠` work short in WARN, else
+  `ⓘ` in `INK_DIM` for tools short or a spare hand), the role hint, coverage, tool and idle sentences
+  on the row's hover, and the same three metas the cards carried, on the row node. The Builders row is
+  never work-short.
+- **The road pool's row is `Road crew`** (`ROLE_NAME_ROADWORK`) and its section stays `ROADWORK`: the
+  row names the hands, the section the work.
 
 ### A site row is four lines
 

@@ -1894,7 +1894,8 @@ func _fill_work_zone_column(col: VBoxContainer, band: Dictionary) -> void:
         return
     _sort_work_models(models)
     # Drop an inspector pinned to a source that has left the board.
-    var inspected := _find_work_model(models, _work_open_key)
+    # A GROUNDWORK row opens the same card, so the search spans its models too.
+    var inspected := _find_work_model(models + extract_models, _work_open_key)
     if inspected.is_empty():
         _work_open_key = ""
     _work_inspected = inspected
@@ -1911,10 +1912,11 @@ func _work_item(node: Control, keep_with_next: bool = false) -> Dictionary:
     return {WORK_ITEM_NODE: node, WORK_ITEM_HEIGHT: node.custom_minimum_size.y,
         WORK_ITEM_KEEP: keep_with_next}
 
-## **THE FIVE SECTIONS, AS PLACEABLE ITEMS, IN THE SPEC'S ORDER.** BUILD QUEUE and ROADWORK always
-## draw — each carries its pool's stepper, and a stepper at zero is a live control rather than
-## furniture — while AGRICULTURE, HUSBANDRY and GROUNDWORK draw only where the band has a row on that
-## web. A band working nothing also gets the board's own empty hint, after the two pool sections.
+## **THE FIVE SECTIONS, AS PLACEABLE ITEMS, IN THE SPEC'S ORDER.** BUILD QUEUE always draws — it
+## carries the builders' stepper, and a stepper at zero is a live control rather than furniture.
+## ROADWORK draws where the band has roads to keep (`_roadwork_section_shows`); AGRICULTURE, HUSBANDRY
+## and GROUNDWORK draw only where the band has a row on that web. A band working nothing also gets the
+## board's own empty hint, after the sections.
 func _work_section_items(band: Dictionary, models: Array, extract_models: Array, queued: Array,
         roster_models: Array, roster_unseen: bool) -> Array:
     var items: Array = []
@@ -1943,9 +1945,10 @@ func _work_section_items(band: Dictionary, models: Array, extract_models: Array,
     var roadwork := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
     var roster_drawn := mini(roster_models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)
-    _append_work_section(items, HudWorkVocab.WORK_SECTION_ROADWORK,
-        _build_roadwork_head(roadwork, roster_models.size() - roster_drawn),
-        [_build_roadwork_block(band, roster_models, roster_unseen)])
+    if _roadwork_section_shows(roster_models, roster_unseen, queued, roadwork):
+        _append_work_section(items, HudWorkVocab.WORK_SECTION_ROADWORK,
+            _build_roadwork_head(roadwork, roster_models.size() - roster_drawn),
+            [_build_roadwork_block(band, roster_models, roster_unseen)])
     if not extract_models.is_empty():
         var nodes: Array = []
         for model in extract_models:
@@ -1958,6 +1961,19 @@ func _work_section_items(band: Dictionary, models: Array, extract_models: Array,
         hint.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
         items.append(_work_item(hint))
     return items
+
+## **DOES THE ROADWORK SECTION DRAW?** Where the band holds a road (a kept road it can see, or road
+## keeping it owes out of sight) or has a road build queued — a road crew with nothing to keep is a
+## control with no subject. **And where the road crew still has hands on it**, so a band whose last road
+## went never strands workers on a stepper it cannot reach to take them off.
+func _roadwork_section_shows(roster_models: Array, roster_unseen: bool, queued: Array,
+        road_crew: int) -> bool:
+    if not roster_models.is_empty() or roster_unseen or road_crew > 0:
+        return true
+    for model in queued:
+        if String((model as Dictionary).get("kind", "")) == HudConst.LABOR_KIND_ROADWORK:
+            return true
+    return false
 
 ## The hands a site section's rows spend — its head's `N on work`.
 func _work_crew_sum(rows: Array) -> int:
@@ -2239,17 +2255,18 @@ func _build_roadwork_block(band: Dictionary, models: Array, unseen: bool) -> VBo
 ## **THE BUILDERS ARE NEVER WORK-SHORT**, so no `cover` is passed: they fund a QUEUE one entry at a
 ## time, and an entry that is not being built is not being lost. They CAN be short of tools, which is
 ## the info mark and the builders' own tool sentence (`POOL_TOOLS_SHORT_BUILDERS_LINE`).
-func _build_builders_pool_line(band: Dictionary) -> HBoxContainer:
+func _build_builders_pool_line(band: Dictionary) -> PanelContainer:
     var effective := _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)
     var kit_face := KitRoster.display_name_for_id(_band_labor.kits(),
         _role_kit_id(band, HudConst.LABOR_KIND_BUILDERS))
     return _build_pool_line(band, HudWorkVocab.ROLE_NAME_BUILDERS, HudWorkVocab.BUILDERS_ROLE_HINT,
-        HudConst.LABOR_KIND_BUILDERS, effective, {}, kit_face)
+        HudConst.LABOR_KIND_BUILDERS, effective, {}, HudWorkVocab.POOL_ICON_BUILDERS,
+        HudWorkVocab.BUILDERS_POOL_SUBLINE, kit_face)
 
 ## **THE ROADWORK LINE** — the band's one remaining keeping pool, with the cohort's own published
 ## `{supplied, demand, shortfall}` as its cover (the road rows are fog-filtered, so summing them would
 ## understate a bill the band certainly owes).
-func _build_roadwork_pool_line(band: Dictionary) -> HBoxContainer:
+func _build_roadwork_pool_line(band: Dictionary) -> PanelContainer:
     var road_pool := _band_labor.roadwork_pool_state(band)
     var cover := {
         HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: float(road_pool.get("supplied",
@@ -2261,11 +2278,13 @@ func _build_roadwork_pool_line(band: Dictionary) -> HBoxContainer:
     }
     return _build_pool_line(band, HudWorkVocab.ROLE_NAME_ROADWORK, HudWorkVocab.ROADWORK_ROLE_HINT,
         HudConst.LABOR_KIND_ROADWORK,
-        _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK), cover)
+        _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK), cover,
+        HudWorkVocab.POOL_ICON_ROAD_CREW, HudWorkVocab.ROAD_CREW_POOL_SUBLINE)
 
-## **ONE POOL, ONE LINE** — the retired pool CARD's reading on a single row: its name, an optional quiet
-## detail, the one-slot mark, and the stepper, with the role's description, the coverage sentence, the
-## tool sentence and the idle reading on the line's hover.
+## **ONE POOL, ONE SITE-SHAPED ROW** — the retired pool CARD's reading drawn exactly like a site row:
+## its icon, its name, the one-slot mark and the stepper on line one, what its hands do (and an optional
+## quiet detail) on the muted line two, with the role's description, the coverage sentence, the tool
+## sentence and the idle reading on the row's hover.
 ##
 ## **THE MARK KEEPS THE CARD'S ONE-SLOT RULE** (issues #715, #716): `⚠` in WARN when the pool does not
 ## cover what it is asked for, else the `ⓘ` in `INK_DIM` when its tools came up short or a worker is
@@ -2275,7 +2294,8 @@ func _build_roadwork_pool_line(band: Dictionary) -> HBoxContainer:
 ## **THE STEPPER SENDS NO `kit` TOKEN**, `_build_role_card`'s expression: `_commanded_role_kit_id`
 ## answers `NO_KIT_ID` on the builders branch deliberately, and the roadwork pool names no kit.
 func _build_pool_line(band: Dictionary, role_name: String, hint: String, kind: String,
-        effective: Dictionary, cover: Dictionary, detail: String = "") -> HBoxContainer:
+        effective: Dictionary, cover: Dictionary, icon: String, subline: String,
+        detail: String = "") -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(cover)
@@ -2285,17 +2305,25 @@ func _build_pool_line(band: Dictionary, role_name: String, hint: String, kind: S
         bool(cover.get(HudWorkVocab.POOL_COVERAGE_SETTLED_SHORT_KEY, false)))
     var wants_idle_mark := not is_short and idle_line != ""
     var wants_info_mark := not is_short and (tool_line != "" or idle_line != "")
-    var line := HBoxContainer.new()
-    line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_POOL_LINE_HEIGHT)
-    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    line.set_meta(HudWorkVocab.WORK_POOL_LINE_META, kind)
-    line.set_meta(POOL_CARD_SHORT_META, is_short)
-    line.set_meta(HudWorkVocab.POOL_CARD_TOOL_SHORT_META, tool_line)
-    line.set_meta(HudWorkVocab.POOL_CARD_IDLE_META, idle_line if wants_idle_mark else "")
-    line.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line, tool_line, idle_line])
-    line.mouse_filter = Control.MOUSE_FILTER_PASS
+    # **A SITE ROW'S SHELL** — the backing, the stripe column and the two-line column a harvest row
+    # draws in, so the pool's icon, title and stepper land in the site rows' own columns.
+    var shell := _site_row_shell(HudWorkVocab.WORK_POOL_LINE_HEIGHT, false,
+        HudStyle.WARN if is_short else (HudStyle.SIGNAL if pending else Color(0.0, 0.0, 0.0, 0.0)))
+    var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
+    var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
+    row.set_meta(HudWorkVocab.WORK_POOL_LINE_META, kind)
+    row.set_meta(POOL_CARD_SHORT_META, is_short)
+    row.set_meta(HudWorkVocab.POOL_CARD_TOOL_SHORT_META, tool_line)
+    row.set_meta(HudWorkVocab.POOL_CARD_IDLE_META, idle_line if wants_idle_mark else "")
+    row.tooltip_text = HudFormat.join_tooltip_lines([hint, coverage_line, tool_line, idle_line])
+    row.mouse_filter = Control.MOUSE_FILTER_PASS
+    line.add_child(HudWidgets.build_marker_icon(null, icon, HudWorkVocab.WORK_ROW_ICON_WIDTH,
+        HudWorkVocab.WORK_ROW_FONT_SIZE))
     var title := Label.new()
     title.text = role_name
+    title.clip_text = true
+    title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     # A PENDING edit and a SHORT pool are both WARN news; the info mark leaves the title calm, because
     # the amber has to keep meaning *something is being lost*.
@@ -2303,37 +2331,58 @@ func _build_pool_line(band: Dictionary, role_name: String, hint: String, kind: S
         HudStyle.WARN if pending or is_short else HudStyle.INK)
     title.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(title)
-    if detail != "":
-        var quiet := Label.new()
-        quiet.text = detail
-        quiet.clip_text = true
-        quiet.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-        quiet.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
-        quiet.add_theme_color_override("font_color", HudStyle.INK_DIM)
-        quiet.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        line.add_child(quiet)
     if is_short:
         line.add_child(_pool_card_mark(HudWorkVocab.UPKEEP_POOL_SHORT_MARK, HudStyle.WARN))
     elif wants_info_mark:
         line.add_child(_pool_card_mark(HudWorkVocab.UPKEEP_POOL_IDLE_MARK, HudStyle.INK_DIM))
-    var spacer := Control.new()
-    spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(spacer)
     var commanded_kit_id := _commanded_role_kit_id(band, kind) if _role_states_a_kit(kind) \
         else KitRoster.NO_KIT_ID
-    var stepper := HBoxContainer.new()
-    stepper.add_theme_constant_override("separation", HudWorkVocab.POOL_STEPPER_SEPARATION)
-    HudWidgets.add_stepper_controls(stepper, workers, _band_labor.effective_idle(band) > 0,
+    HudWidgets.add_stepper_controls(line, workers, _band_labor.effective_idle(band) > 0,
         func(n: int) -> void: _emit_assign_labor(
             band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
-            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id), true, {
-        HudWidgets.STEPPER_METRIC_BUTTON_WIDTH: HudWorkVocab.POOL_STEPPER_BUTTON_WIDTH,
-        HudWidgets.STEPPER_METRIC_VALUE_WIDTH: HudWorkVocab.POOL_STEPPER_VALUE_WIDTH,
-        HudWidgets.STEPPER_METRIC_PADDING_H: HudWorkVocab.POOL_STEPPER_PADDING_H,
-    })
-    line.add_child(stepper)
-    return line
+            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id), true)
+    # **LINE TWO SAYS WHAT THE HANDS DO**, in the rung line's quiet register — and the builders' kit
+    # face after it, where the retired one-line form had it beside the title.
+    var second := subline if detail == "" \
+        else HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(PackedStringArray([subline, detail]))
+    (shell[SITE_ROW_SHELL_COLUMN] as VBoxContainer).add_child(
+        _build_site_crew_line(second, HudWorkVocab.WORK_POOL_SUBLINE_META))
+    return row
+
+## The keys of `_site_row_shell`'s answer.
+const SITE_ROW_SHELL_ROW := "row"
+const SITE_ROW_SHELL_COLUMN := "column"
+const SITE_ROW_SHELL_LINE := "line"
+
+## **A SITE ROW'S SHELL** — the `PanelContainer` with the work-row backing, the full-height severity
+## stripe, the two-line column, and line one inside it — `_build_work_row`'s own frame, for the rows
+## that must line up with it (the pool rows and the GROUNDWORK rows).
+func _site_row_shell(height: float, open: bool, stripe_color: Color) -> Dictionary:
+    var row := PanelContainer.new()
+    row.custom_minimum_size = Vector2(0.0, height)
+    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(open))
+    var body := HBoxContainer.new()
+    body.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    body.mouse_filter = Control.MOUSE_FILTER_PASS
+    row.add_child(body)
+    var stripe := ColorRect.new()
+    stripe.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_STRIPE_WIDTH, 0.0)
+    stripe.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    stripe.color = stripe_color
+    stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    body.add_child(stripe)
+    var col := VBoxContainer.new()
+    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    col.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
+    col.mouse_filter = Control.MOUSE_FILTER_PASS
+    body.add_child(col)
+    var line := HBoxContainer.new()
+    line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    line.mouse_filter = Control.MOUSE_FILTER_PASS
+    col.add_child(line)
+    return {SITE_ROW_SHELL_ROW: row, SITE_ROW_SHELL_COLUMN: col, SITE_ROW_SHELL_LINE: line}
 
 ## **WHICH ROADS THIS BAND IS PAYING FOR** — one entry per kept road it can see, nearest first.
 ##
@@ -2527,15 +2576,6 @@ func _workings_roster_models(band: Dictionary) -> Array:
         return String(a["material"]) < String(b["material"]))
     return models
 
-## One roster row: which working it is, where it is, and what state it is in.
-##
-## ⛔ **THE VALUE CELL IS `HudDepositVocab.deposit_row_value`, VERBATIM** — the same composer the tile
-## card's working block states its line with, so the card and the roster cannot disagree about a
-## working's state and the §7 fork is taken once. The row's INK is that composer's own answer too
-## (`deposit_value_color`), keyed on the hazard mark it puts there rather than on a second test.
-##
-## **THE NAME JUMPS AND THE REST DROPS**, the road roster's split: a working IS its tile, so the jump
-## is `alert_focus_requested` on its own coordinates with no entity resolution.
 ## **THE ROSTER ROW'S HOVER** — `HudDepositVocab.deposit_roster_tooltip`, then, on a FAR working, the
 ## same party block a far forage or hunt row draws on the work board (`HudWorkVocab.party_block_lines`)
 ## and what arrives home, in the working's own MATERIAL. There is nothing special about a far wood or
@@ -2586,19 +2626,20 @@ func _extract_source_models(band: Dictionary) -> Array:
         models.append(model)
     return models
 
-## **ONE WORKING'S ROW — the same two-line shape a harvest or hunt row has.** Line one is the working's
-## name (a jump link), its state, the `⌃` that opens its ladder, the crew stepper and the `✕`; line two
-## is the site crew's own line, `Coppice · keeps 1 of 1 · 2 cutting`.
+## **ONE WORKING'S ROW — a harvest or hunt row's shape** (the site rows' shell, `_site_row_shell`).
+## Line one is the icon (the MATERIAL's mark), the name (`Wood · 2 tiles SE`, one ink — it names the
+## working, the rung is line two's), the keeping mark, the `⌃` that opens its ladder and the crew
+## stepper; line two is the rung it stands on; line three its YIELD (`_working_yield_text`); line four
+## the `Priority` and (while a working build is queued here) `Build` pills.
+##
+## **A CLICK ON THE ROW OPENS ITS INSPECTOR**, as a harvest row's does — and that card is where the
+## working is PUT DOWN (`_build_working_inspector`), so the row carries no `✕`.
 ##
 ## ⛔ **THE STEPPER IS THE WORKING'S OWN CREW**, and it re-sends the compose sheet's command with the
 ## count moved: `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`, the material in the
 ## species slot, the floor this band's row already carries on ground that renews and NO floor on ground
 ## that does not (`FLOOR_UNNAMED`, the sheet's own sentinel), and the row's kit restated so a `+` never
-## re-kits a crew. The Groundwork POOL that used to hold these sites is retired.
-##
-## **BOTH MARKS, ON THEIR OWN LINE UNDER THE ROW** (`docs/plan_site_crews.md` §2.4 as amended):
-## `Priority` always and `Build` while a working build is queued here, each sent in the material form
-## `<x> <y> <material>` — the bare tile is the patch on that hex (`Main.site_address`).
+## re-kits a crew.
 func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var tile: Vector2i = model["tile"]
     var deposit: Dictionary = model["deposit"]
@@ -2606,30 +2647,32 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var ladder := _deposit_ladder()
     var cutters := int(model.get("workers", 0))
     var useful := _workings_roster_max_useful(band, model)
-    var row := PanelContainer.new()
+    var key := String(model.get("key", ""))
+    var value_ink := HudDepositVocab.deposit_value_color(deposit, ladder, cutters, useful)
+    var shell := _site_row_shell(HudWorkVocab.EXTRACT_ROW_HEIGHT, key == _work_open_key,
+        HudStyle.WARN if value_ink == HudStyle.WARN else Color(0.0, 0.0, 0.0, 0.0))
+    var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
+    var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
+    var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
     row.set_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META, "%d,%d:%s" % [tile.x, tile.y, material])
-    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.EXTRACT_ROW_HEIGHT)
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
-    var col := VBoxContainer.new()
-    col.add_theme_constant_override("separation", HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
-    row.add_child(col)
-    var line := HBoxContainer.new()
-    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
-    col.add_child(line)
-    line.add_child(HudWidgets.build_inline_link(String(model["name"]), HudStyle.SIGNAL,
-        func() -> void: emit_signal("alert_focus_requested", tile.x, tile.y)))
-    var value := Label.new()
-    value.text = HudDepositVocab.deposit_row_value(deposit, ladder, cutters, useful)
-    value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    value.add_theme_color_override("font_color",
-        HudDepositVocab.deposit_value_color(deposit, ladder, cutters, useful))
-    value.clip_text = true
-    value.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    HudWidgets.set_label_tooltip(value, _workings_roster_tooltip(band, model, cutters))
-    line.add_child(value)
+    row.mouse_filter = Control.MOUSE_FILTER_STOP
+    row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    row.tooltip_text = _workings_roster_tooltip(band, model, cutters)
+    row.gui_input.connect(func(event: InputEvent) -> void:
+        if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+            _toggle_work_inspector(key))
+    line.add_child(HudWidgets.build_marker_icon(null, FoodIcons.for_material(material),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
+    var title := Label.new()
+    title.text = String(model["name"])
+    title.clip_text = true
+    title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    title.add_theme_color_override("font_color", HudStyle.INK)
+    title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    title.set_meta(HudWorkVocab.WORKINGS_ROW_NAME_META, title.text)
+    line.add_child(title)
     var kept := HudDepositVocab.upkeep_supplied_of(deposit)
     var demand := HudDepositVocab.upkeep_demand_of(deposit)
     var tools_short := SourceForecast.upkeep_tools_short(deposit, HudComposeVocab.BARE_FORECAST_PREFIX)
@@ -2664,21 +2707,60 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var kit_id := String(assignment.get("kit_id", KitRoster.NO_KIT_ID))
     var can_add := _band_labor.effective_idle(band) > 0 \
         and (useful == HudDepositVocab.CUTTERS_UNCAPPED or cutters < useful)
-    var stepper := HBoxContainer.new()
-    stepper.add_theme_constant_override("separation", HudWorkVocab.POOL_STEPPER_SEPARATION)
-    HudWidgets.add_stepper_controls(stepper, cutters, can_add,
+    HudWidgets.add_stepper_controls(line, cutters, can_add,
         func(n: int) -> void: _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, n,
-            tile.x, tile.y, "", floor, material, SourceForecast.IMPROVEMENT_NONE, kit_id), true, {
-        HudWidgets.STEPPER_METRIC_BUTTON_WIDTH: HudWorkVocab.POOL_STEPPER_BUTTON_WIDTH,
-        HudWidgets.STEPPER_METRIC_VALUE_WIDTH: HudWorkVocab.POOL_STEPPER_VALUE_WIDTH,
-        HudWidgets.STEPPER_METRIC_PADDING_H: HudWorkVocab.POOL_STEPPER_PADDING_H,
-    })
-    line.add_child(stepper)
-    line.add_child(_build_workings_roster_abandon_button(band, deposit))
+            tile.x, tile.y, "", floor, material, SourceForecast.IMPROVEMENT_NONE, kit_id), true)
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
         rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD)))
+    col.add_child(_build_working_yield_line(_working_yield_text(band, model, deposit, ladder,
+        cutters, useful, floor), value_ink))
     col.add_child(_build_pill_line(band, model, true))
     return row
+
+## **THE GROUNDWORK ROW'S YIELD LINE** — what this band's crew takes (`+0.30 wood /turn`, off the band's
+## own `extract` row through `SourceForecast.source_yield_readout`, the harvest row's accounts
+## composer), then every clause the working's value states after its rung
+## (`HudDepositVocab.deposit_row_qualifiers` — the build in flight, idle, over-cut or runway, the
+## hazard), then the floor where the ground renews. The rung itself is line two's.
+func _working_yield_text(band: Dictionary, model: Dictionary, deposit: Dictionary,
+        ladder: Array[Dictionary], cutters: int, useful: int, floor: float) -> String:
+    var tile: Vector2i = model["tile"]
+    var assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y,
+        String(model["material"]))
+    var parts: Array[String] = []
+    if bool(assignment.get("has_yield", false)):
+        var yld := SourceForecast.source_yield_readout(assignment, HudConst.LABOR_KIND_EXTRACT)
+        var accounts := SourceForecast.yield_components(0.0, 0.0,
+            SourceForecast.row_zero_account(assignment, HudConst.LABOR_KIND_EXTRACT),
+            yld.get("material_rows", []))
+        # A material term carries no rate suffix of its own (`+0.30 wood`); this line is a RATE, so it
+        # takes the food headline's ` /turn`.
+        if accounts != "":
+            parts.append(accounts + SourceForecast.YIELD_PER_TURN_SUFFIX)
+    parts.append_array(HudDepositVocab.deposit_row_qualifiers(deposit, ladder, cutters, useful))
+    if floor != SourceForecast.FLOOR_UNNAMED:
+        parts.append(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(floor))
+    return HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(parts)
+
+## The yield line itself — the accounts line's indent and quiet type, its ink the working value's own
+## (`deposit_value_color`: WARN where it carries a hazard). It elides and states its whole self on its
+## hover; PASS, so the row's own click still reaches the row.
+func _build_working_yield_line(text: String, ink: Color) -> MarginContainer:
+    var margin := MarginContainer.new()
+    margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    margin.add_theme_constant_override("margin_left", HudWorkVocab.WORK_ROW_ACCOUNTS_INDENT)
+    var label := Label.new()
+    label.text = text
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label.add_theme_color_override("font_color", ink)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    HudWidgets.set_label_tooltip(label, text)
+    label.mouse_filter = Control.MOUSE_FILTER_PASS
+    label.set_meta(HudWorkVocab.WORK_ROW_ACCOUNTS_META, text)
+    margin.add_child(label)
+    return margin
 
 ## **THE ROW'S PRIORITY MARKS** (`docs/plan_site_crews.md` §2.4 as amended): `Priority` where the row
 ## has a crew to rank (a harvest, hunt or working row — never a road), and `Build` only while its site
@@ -2713,7 +2795,8 @@ func _build_pill_line(band: Dictionary, model: Dictionary, with_priority: bool) 
 
 ## **THE ROW'S RUNG LINE** — the rung the site stands on, indented onto the name's column in the
 ## accounts' quiet register. It ELIDES and states its whole self on its hover.
-func _build_site_crew_line(text: String) -> MarginContainer:
+func _build_site_crew_line(text: String,
+        meta: StringName = HudWorkVocab.SITE_CREW_LINE_META) -> MarginContainer:
     var margin := MarginContainer.new()
     margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2731,7 +2814,7 @@ func _build_site_crew_line(text: String) -> MarginContainer:
     label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     HudWidgets.set_label_tooltip(label, text)
     label.mouse_filter = Control.MOUSE_FILTER_PASS
-    label.set_meta(HudWorkVocab.SITE_CREW_LINE_META, text)
+    label.set_meta(meta, text)
     line.add_child(label)
     return margin
 
@@ -2785,119 +2868,6 @@ func _commit_build_priority(band: Dictionary, model: Dictionary, level: String) 
         "road": bool(model.get("road", false)),
         "level": HudWorkVocab.work_priority_of(level),
     })
-
-func _build_workings_roster_row(band: Dictionary, model: Dictionary) -> PanelContainer:
-    var tile: Vector2i = model["tile"]
-    var deposit: Dictionary = model["deposit"]
-    var ladder := _deposit_ladder()
-    var row := PanelContainer.new()
-    row.set_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META,
-        "%d,%d:%s" % [tile.x, tile.y, String(model["material"])])
-    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
-    var line := HBoxContainer.new()
-    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    row.add_child(line)
-    var jump := HudWidgets.build_inline_link(String(model["name"]), HudStyle.SIGNAL,
-        func() -> void: emit_signal("alert_focus_requested", tile.x, tile.y))
-    line.add_child(jump)
-    var value := Label.new()
-    # ⛔ **THE CREW IS AN ARGUMENT, AND THIS IS THE ONE SURFACE THAT KNOWS IT** (issue #650). A
-    # `deposits` row publishes no crew — a working is held by whichever band has an `extract` row on
-    # the `(tile, material)` pair — so *has this band taken its hands off it* is a question only the
-    # roster can ask, and the composer answers `CUTTERS_UNSTATED` for every caller that cannot.
-    var cutters := _workings_roster_cutters(band, model)
-    # **AND THE CEILING THAT CREW IS MEASURED AGAINST**, which is the second thing a `deposits` row
-    # cannot state: it is THIS band's own `extract` row's published cap, at its own kit and floor, so
-    # the clause and the compose sheet's stepper are read off one rule. See `_workings_roster_max_useful`.
-    var useful := _workings_roster_max_useful(band, model)
-    value.text = HudDepositVocab.deposit_row_value(deposit, ladder, cutters, useful)
-    value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    value.add_theme_color_override("font_color",
-        HudDepositVocab.deposit_value_color(deposit, ladder, cutters, useful))
-    value.clip_text = true
-    value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    # **THE FIGURES THE ONE-LINE CELL CANNOT CARRY RIDE ITS HOVER** — the take pair or the runway, the
-    # standing bill, the neglect COUNTDOWN, and what a crew of zero does NOT stop. All of them live on
-    # this surface and no other: this is the block whose own head staffs the pool that would stop the
-    # slide, and whose own rows carry the control that ends the bill.
-    HudWidgets.set_label_tooltip(value, _workings_roster_tooltip(band, model, cutters))
-    line.add_child(value)
-    # ⛔ **THE DECLARING MARK, AND THE FIRST OF THE ROW'S TWO CONTROLS.** The hands that CUT a working
-    # are the tile card's compose sheet and the hands that HOLD it are this block's own head; what a
-    # row can answer is *take it further up its ladder* — the same question the work board's `⌃`
-    # answers one block down, opened with the same card — and *stop holding it at all*, which is the
-    # `✕` appended after this one.
-    #
-    # ⛔ **IT RENDERS ONLY WHERE A PRESS COULD LAND — `RungGates.deposit_rung_ready`, which is the
-    # FORAGE AND HUNT ROWS' OWN PREDICATE (`RungGates.next_rung_ready`) asked of a working's ladder.**
-    # It was `RungLadder.has_track`, which answers *is any row above the standing rung* — true of a
-    # rung refused on its craft — so a `Wood · Deadfall` row on the free floor wore a declaring mark
-    # for a `felling` the faction had not learned, beside a `Hunt Forest Grouse` row on the same board
-    # correctly wearing none. Reported from play; the whole reasoning is on that predicate.
-    #
-    # **The CREW gate is forgiven by it and the mark still draws at zero cutters**, which is the one
-    # case where the press really is available and the card is the surface that names the remedy.
-    var ready := RungGates.deposit_rung_ready(deposit, ladder, _player_knowledge(),
-        _topbar.knowledge_labels() if _topbar != null else {},
-        _workings_roster_cutters(band, model))
-    if not ready.is_empty():
-        var track_btn := Button.new()
-        # **THE MARK IS THE CHEVRON PLUS THE READY RUNG'S OWN POLICY GLYPH** (`⌃⛏`), the work board's
-        # ready slot verbatim: the chevron is load-bearing, since a bare glyph reads as *done* rather
-        # than *available*.
-        #
-        # **THE GLYPH IS THE READY ENTRY'S, NOT `ladder_next_entry`'S.** They coincide on a linear
-        # branch and part the moment they do not, and naming a rung the press cannot reach is the
-        # defect this gate exists to remove, one register in.
-        track_btn.text = HudWorkVocab.WORK_ROW_READY_FORMAT % FoodIcons.for_policy(
-            HudDepositVocab.catalog_verb(ready))
-        track_btn.focus_mode = Control.FOCUS_NONE
-        track_btn.tooltip_text = HudWorkVocab.WORKINGS_ROSTER_TRACK_TOOLTIP
-        track_btn.set_meta(HudWorkVocab.WORKINGS_ROSTER_TRACK_META,
-            String(row.get_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META)))
-        track_btn.custom_minimum_size = Vector2(HudWorkVocab.WORKINGS_ROSTER_TRACK_WIDTH, 0.0)
-        HudStyle.apply_button(track_btn, "ghost")
-        HudWidgets.compact(track_btn, HudWorkVocab.WORK_ROW_FONT_SIZE,
-            HudWorkVocab.WORK_PAGER_PADDING_V)
-        track_btn.add_theme_color_override("font_color", HudStyle.SIGNAL)
-        track_btn.pressed.connect(func() -> void:
-            _open_deposit_track(band, deposit, _workings_roster_cutters(band, model), track_btn))
-        line.add_child(track_btn)
-    line.add_child(_build_workings_roster_abandon_button(band, deposit))
-    return row
-
-## **THE DROP — `abandon_working <faction> <x> <y> <material>`, and the same emitter the ladder card's
-## put-down row uses** (issue #650). Two controls, one `_emit_working_abandon`, one relay: a second
-## command path would be a second place for the verb's grammar to drift, which is the road pair's own
-## finding arriving one branch over.
-##
-## ⛔ **IT IS UNGATED, BECAUSE MEMBERSHIP IS THE GATE.** This roster lists exactly the workings this
-## band has an `extract` row on, so every row it draws is a holding this band can put down — the road
-## roster's *"offered only where the keeper is in the player's roster"* stated in the one place a
-## working's keeper is knowable.
-##
-## ⛔ **AND ITS HOVER IS THE LADDER CARD'S, VERBATIM.** roads.md: *"a one-click destructive action that
-## under-states what it destroys is worse in a roster than on a card: a roster invites bulk use."* So
-## the roster gets the whole hover rather than a shorter one — what it drops, and why a player would
-## want that.
-func _build_workings_roster_abandon_button(band: Dictionary, deposit: Dictionary) -> Button:
-    var drop := Button.new()
-    drop.set_meta(HudWorkVocab.WORKINGS_ROSTER_ABANDON_META, "%d,%d:%s" % [
-        HudDepositVocab.tile_of(deposit).x, HudDepositVocab.tile_of(deposit).y,
-        HudDepositVocab.material_of(deposit)])
-    drop.text = HudWorkVocab.WORKINGS_ROSTER_ABANDON_GLYPH
-    drop.focus_mode = Control.FOCUS_NONE
-    drop.tooltip_text = HudDepositVocab.working_abandon_tooltip(deposit)
-    drop.custom_minimum_size = Vector2(HudWorkVocab.WORKINGS_ROSTER_ABANDON_WIDTH, 0.0)
-    HudStyle.apply_button(drop, "ghost")
-    HudWidgets.compact(drop, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
-    drop.add_theme_color_override("font_color", HudStyle.DANGER)
-    # **NO CONFIRM** — the single-item idiom the queue withdrawal, the parties recall and the road
-    # roster's own drop already use.
-    drop.pressed.connect(func() -> void: _emit_working_abandon(band, deposit))
-    return drop
 
 ## ⛔ **THE TAKE CREW ON ONE WORKING — the CREW gate's whole input, and the one thing the `deposits`
 ## row cannot state.** A working publishes no crew; it is held by whichever band has an `extract` row
@@ -3123,7 +3093,7 @@ func _pool_card_mark(glyph: String, ink: Color) -> Label:
     var mark := Label.new()
     mark.text = glyph
     mark.set_meta(HudWorkVocab.WORK_ROW_MARKS_META, glyph)
-    mark.add_theme_font_size_override("font_size", HudWorkVocab.POOL_CARD_NAME_FONT_SIZE)
+    mark.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     mark.add_theme_color_override("font_color", ink)
     mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
     return mark
@@ -5920,6 +5890,8 @@ func _work_row_stripe_color(model: Dictionary) -> Color:
 ## `custom_minimum_size`, and `_work_inspector_height` still answers for both — what moved is who pays.
 ## `_sync_work_inspector_dialog` is the only caller.
 func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContainer:
+    if String(model.get("kind", "")) == HudConst.LABOR_KIND_EXTRACT:
+        return _build_working_inspector(band, model)
     var strip := PanelContainer.new()
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     var reserved := _work_inspector_height(model)
@@ -6071,6 +6043,84 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
             _emit_work_assign(band, model, 0)))
     col.add_child(actions)
     return strip
+
+## **A GROUNDWORK ROW'S INSPECTOR — the same card a harvest row opens, cut to what a working has.**
+## The head (the material's mark, the name and the rung), PRIORITY, and the two pure actions: `Jump to
+## source`, and PUTTING THE WORKING DOWN where a harvest row has `Unassign` — the labelled version of
+## the `✕` the row used to carry, so a destructive control never sits a comma from the `−` stepper.
+##
+## ⛔ **PUT DOWN, NOT UNASSIGN.** A crew of zero is the row's own stepper and is *"stop cutting"*: the
+## holding and its bill survive it. `abandon_working` is what ends the bill, so it is the action here,
+## sent through the ONE emitter the ladder card's put-down row uses (`_emit_working_abandon`), its hover
+## the ladder card's own (`working_abandon_tooltip`).
+##
+## No POLICY section: a working's floor is set on its compose sheet, where the forecast that justifies
+## it renders. `_working_inspector_height` is this card's reservation, term for term.
+func _build_working_inspector(band: Dictionary, model: Dictionary) -> PanelContainer:
+    var deposit: Dictionary = model["deposit"]
+    var strip := PanelContainer.new()
+    strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var reserved := _working_inspector_height()
+    strip.custom_minimum_size = Vector2(0.0, reserved)
+    strip.set_meta(HudWorkVocab.WORK_INSPECTOR_META, reserved)
+    strip.add_theme_stylebox_override("panel", HudStyle.work_inspector_stylebox())
+    var col := VBoxContainer.new()
+    col.add_theme_constant_override("separation", HudWorkVocab.ZONE_BLOCK_SEPARATION)
+    strip.add_child(col)
+    var head := HBoxContainer.new()
+    head.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    head.add_child(HudWidgets.build_marker_icon(null,
+        FoodIcons.for_material(String(model.get("material", ""))),
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
+    var title := Label.new()
+    title.text = String(model.get("name", ""))
+    var rung_name := HudDepositVocab.ladder_rung_name(_deposit_ladder(),
+        HudDepositVocab.rung_of(deposit))
+    if rung_name != "":
+        title.text += HudWorkVocab.WORK_INSPECT_RUNG_SEPARATOR + rung_name
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    title.clip_text = true
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    head.add_child(title)
+    var close := Button.new()
+    close.text = HudWorkVocab.INSPECTOR_CLOSE_GLYPH
+    close.focus_mode = Control.FOCUS_NONE
+    close.tooltip_text = HudWorkVocab.INSPECTOR_CLOSE_TOOLTIP
+    HudStyle.apply_button(close, "ghost")
+    HudWidgets.compact(close, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.INSPECTOR_CLOSE_PADDING_V)
+    close.pressed.connect(func() -> void: _toggle_work_inspector(String(model.get("key", ""))))
+    head.add_child(close)
+    col.add_child(head)
+    _build_work_inspector_section(col, HudWorkVocab.WORK_INSPECT_PRIORITY)
+    col.add_child(HudWidgets.build_work_priority_picker(func(level: String) -> void:
+        _commit_work_priority(band, model, level),
+        String(model.get("priority", HudWorkVocab.WORK_PRIORITY_NORMAL))))
+    _build_work_inspector_rule(col)
+    var actions := HBoxContainer.new()
+    actions.add_theme_constant_override("separation", HudWorkVocab.COMPOSITION_KEY_SEPARATION)
+    actions.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_JUMP, HudStyle.INK,
+        func() -> void: _focus_work_source(model)))
+    var gap := Control.new()
+    gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    actions.add_child(gap)
+    var tile := HudDepositVocab.tile_of(deposit)
+    var put_down := HudWidgets.build_inline_link(HudDepositVocab.WORKING_ABANDON_LABEL,
+        HudStyle.DANGER, func() -> void:
+            close_work_inspector()
+            _emit_working_abandon(band, deposit))
+    put_down.tooltip_text = HudDepositVocab.working_abandon_tooltip(deposit)
+    put_down.set_meta(HudWorkVocab.WORKINGS_ROSTER_ABANDON_META, "%d,%d:%s" % [tile.x, tile.y,
+        HudDepositVocab.material_of(deposit)])
+    actions.add_child(put_down)
+    col.add_child(actions)
+    return strip
+
+## The working card's reservation — the base (head, actions, gaps, padding), PRIORITY, and the rule
+## over the actions: `_build_working_inspector`'s children, term for term.
+func _working_inspector_height() -> float:
+    return HudWorkVocab.WORK_INSPECTOR_HEIGHT + HudWorkVocab.WORK_INSPECTOR_PRIORITY_SECTION_HEIGHT \
+        + HudWorkVocab.WORK_INSPECTOR_ACTIONS_RULE_HEIGHT
 
 ## A SECTION HEADER — the hairline, then the dim uppercase word — in the Band panel's own vocabulary
 ## rather than a style invented for this card: `HudWidgets.alloc_section_label` is what the allocation
@@ -6416,6 +6466,8 @@ func _commit_work_priority(band: Dictionary, model: Dictionary, level: String) -
 ## height and the drawn height one answer; a paraphrase (`has("note")` for `note != ""`, say) reserves
 ## for a child that does not draw or misses one that does, and both fail silently.
 func _work_inspector_height(model: Dictionary) -> float:
+    if String(model.get("kind", "")) == HudConst.LABOR_KIND_EXTRACT:
+        return _working_inspector_height()
     var height := HudWorkVocab.WORK_INSPECTOR_HEIGHT
     # **EACH NOTE IS ONE LINE PLUS WHATEVER IT WRAPS TO** (§4.9 item 12d's third pass). The four prose
     # lines on this card WRAP now rather than eliding — see `_work_inspector_wrap_overflow` for why the

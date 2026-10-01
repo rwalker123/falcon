@@ -383,10 +383,10 @@ static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, 
 ## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
 ## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
 ##
-## **THE METRIC IS A PARAMETER SINCE FOUR POOL CARDS HAD TO SHARE ONE ROW** (arc #532). `metric` is
-## `{button_width, value_width, padding_h}`; anything it omits falls back to the shared
-## `WORKER_STEPPER_*` widths, so every existing caller renders byte-identically. The pool cards hand
-## `HudWorkVocab.POOL_STEPPER_*` — see that block for why the WORK zone had no row to give instead.
+## **THE METRIC IS A PARAMETER** for a surface short of width (the starting-loadout picker's rows).
+## `metric` is `{button_width, value_width, padding_h}`; anything it omits falls back to the shared
+## `WORKER_STEPPER_*` widths. The Work tab's pool rows and site rows all take the defaults, which is what
+## puts every stepper on that tab in one column.
 static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact_chrome: bool = false, metric: Dictionary = {}) -> void:
     var button_width := float(metric.get(STEPPER_METRIC_BUTTON_WIDTH,
         HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH))

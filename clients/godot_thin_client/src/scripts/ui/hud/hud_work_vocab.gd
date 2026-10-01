@@ -14,23 +14,6 @@ const WORKER_STEPPER_VALUE_WIDTH := 32.0
 
 const WORKER_STEPPER_SEPARATION := 6
 
-## ⛔ **THE POOL CARDS' OWN STEPPER METRIC, and it exists because FOUR pools have to share ONE row**
-## (arc #532). At the widths above a pool card's floor is ~112px, so four wanted 466px of a WORK zone
-## box that is 382 on the bottom dock and 356 on the left. The two ways to buy that width both cost a
-## ROW — and the zone has none: split 3 + 1 the block wanted 420px of a 358px box, i.e. a build queue
-## drawing nothing. So the width comes out of the CONTROL.
-##
-## **IT IS A SECOND METRIC, NOT A RETUNING OF THE FIRST.** The WORKFORCE zone's Scout and Warrior
-## cards sit TWO to a row and have width to spare; narrowing their steppers would shrink a control
-## for no reason. These four are the ones with the problem, so these four are the ones that pay.
-##
-## The horizontal trim is the load-bearing half: `HudStyle` pads a button 11px each side, which alone
-## floors it near 30px whatever `custom_minimum_size` says — the same reason the build queue's
-## reorder arrows opt into `HudWidgets.compact`'s `padding_h`.
-const POOL_STEPPER_BUTTON_WIDTH := 19.0
-const POOL_STEPPER_VALUE_WIDTH := 27.0
-const POOL_STEPPER_SEPARATION := 3
-const POOL_STEPPER_PADDING_H := 4
 
 # The two stepper FACES. One spelling, because two stepper families now draw them — the worker/party
 # steppers (`HudWidgets.add_stepper_controls`) and the shipment manifest's per-row cargo stepper,
@@ -510,11 +493,13 @@ const ROLE_NAME_WARRIOR := "Warrior"
 ## a site's own crew keeps it before it collects from it, so a patch, a herd and a working have ONE
 ## staffing control — the row's crew stepper. The three names survive only as WORK-TAB SECTION titles
 ## (`WORK_SECTION_TITLES`), which group the rows by web; they name no role and no stepper.
-const ROLE_NAME_ROADWORK := "Roadwork"
+## **THE POOL LINE IS `Road crew`; THE SECTION STAYS `ROADWORK`.** The line names the HANDS (a crew,
+## beside `Builders`), the section names the WORK they and the road rows under them are about.
+const ROLE_NAME_ROADWORK := "Road crew"
 
 ## A road tile's keeper is the band that BUILT it, wherever that band now stands
 ## (`route_keeping_claims` never reads the band's position), so the hint says *built*.
-const ROADWORK_ROLE_HINT := "Roadwork workers maintain built roads."
+const ROADWORK_ROLE_HINT := "The road crew maintains the roads this band built."
 
 ## **THE BUILDING ROLE** (`docs/plan_standing_upkeep.md` §2.5) — the third band-level pool, and the
 ## card that replaced the per-source BUILDERS stepper the compose sheet used to carry.
@@ -712,12 +697,6 @@ const UPKEEP_MODE_COMMAND_MESSAGE_FALLBACK := "Keeping split set to %s."
 const ROLE_CARD_SEPARATION := 6
 
 const ROLE_CARD_NAME_FONT_SIZE := 12
-
-## …and the POOL cards' own, which is smaller (arc #532). A fourth pool card has to fit the same
-## fixed strip, so at the shared 12 the widest name — `Agriculture` — became the card's floor and
-## four of them ran 42px past the left dock's 356px box. See `POOL_STEPPER_*` for the other half of
-## the squeeze and for why the block could not gain a row instead.
-const POOL_CARD_NAME_FONT_SIZE := 10
 
 ## Two lines of hint at ALLOC_SECTION_FONT_SIZE, so the two cards stay the same height whatever the
 ## hint wraps to.
@@ -2352,6 +2331,9 @@ const ROADWORK_ROSTER_HEAD_HEIGHT := 22.0
 ## differ only in that first word, which is exactly why it leads.
 const WORKINGS_ROSTER_NAME_FORMAT := "%s · %s"
 
+## The GROUNDWORK row's name label, valued its text.
+const WORKINGS_ROW_NAME_META := &"workings_row_name"
+
 ## One row, valued its working's `(tile, material)` — the roster's identity, and the pair a tile-only
 ## meta could not tell apart.
 const WORKINGS_ROSTER_ROW_META := "workings_roster_row"
@@ -2376,22 +2358,12 @@ const WORKINGS_ROSTER_TRACK_TOOLTIP := "Take this ground further up its ladder."
 ## whichever glyph the row happens to carry.
 const WORKINGS_ROSTER_TRACK_WIDTH := 22.0
 
-## ⛔ **THE DROP — the row's `✕`, and it is the ROADWORK ROSTER'S OWN GLYPH AND COLUMN** (issue
-## #650). A destructive single-item control reads as ONE thing in this client — the build queue's
-## withdrawal, the parties zone's recall, the road roster's drop — so a second glyph or a second width
-## here would make a working's put-down look like a different kind of act from a road's.
-##
-## **It is not the per-row prohibition being broken.** roads.md forbids a stepper, a crew count and a
-## kit picker on a ROW, because a per-working worker count would re-introduce the per-tile work row
-## `docs/plan_standing_upkeep.md` §4.13b retired. A `✕` is none of the three: it names no crew and
-## staffs nobody, and the road roster beside it has carried one since arc #532.
-const WORKINGS_ROSTER_ABANDON_GLYPH := ROADWORK_ROSTER_ABANDON_GLYPH
-const WORKINGS_ROSTER_ABANDON_WIDTH := ROADWORK_ROSTER_ABANDON_WIDTH
-
-## …and its stable handle, valued the row's own `(tile, material)` — the pair the emitted line names,
-## so a harness can say *this working's drop* rather than *a drop somewhere in the block*. Its own
-## constant rather than the road's, because a scan for the road's `✕` is what asserts the road roster
-## draws one and must not find these.
+## ⛔ **A GROUNDWORK ROW CARRIES NO `✕`** — putting a working down is the row's INSPECTOR action (a
+## click on the row opens it), where a harvest or hunt row's `Unassign` lives: a destructive control a
+## comma from the `−` stepper is a mis-click hazard, and the labelled version names what it drops.
+## This is that action's stable handle, valued the working's own `(tile, material)` — the pair the
+## emitted line names. Its own constant rather than the road's, because a scan for the road roster's
+## `✕` must not find it.
 const WORKINGS_ROSTER_ABANDON_META := "workings_roster_abandon"
 
 ## …and the LADDER CARD's own put-down row, which sends the identical command from the other of the
@@ -3627,14 +3599,27 @@ const WORK_SECTIONS_SCROLL_NAME := "WorkSections"
 ## the queue and the roads, the `+N more` door), which is what sets the row.
 const WORK_SECTION_HEAD_HEIGHT := 22.0
 
-## ---- A POOL'S OWN LINE: `Builders` and `Roadwork` ------------------------------------------------
+## ---- A POOL'S OWN ROW: `Builders` and `Road crew` -----------------------------------------------
 ##
-## The two band-wide pools left are each ONE LINE at the top of their own section — name, mark,
-## stepper — where they were cards in a four-card row. **Builders and Roadwork keep their TOE
-## behaviour** (the `⚠` / `ⓘ` mark and the hover), read through the same `_pool_tools_short_line` /
-## `upkeep_pool_is_short` / `upkeep_pool_idle_line` the cards used.
+## The two band-wide pools left are each ONE ROW at the top of their own section, drawn EXACTLY like a
+## site row — the same indent, icon column, title type and stepper column, and a muted second line
+## saying what the hands do. Drawn as a bold flush-left line they read as the head of the NEXT section.
+## **Both keep their TOE behaviour** (the `⚠` / `ⓘ` mark and the hover), read through the same
+## `_pool_tools_short_line` / `upkeep_pool_is_short` / `upkeep_pool_idle_line` the cards used.
 const WORK_POOL_LINE_META := &"work_pool_line"
-const WORK_POOL_LINE_HEIGHT := WORK_ROW_HEIGHT
+## Line one and the muted second line — a site row's own two-line height.
+const WORK_POOL_LINE_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT
+
+## Each pool's icon, in the site rows' icon column.
+const POOL_ICON_BUILDERS := "🔨"
+const POOL_ICON_ROAD_CREW := "🛤"
+
+## Each pool's second line — what its hands do, in the site rows' quiet register.
+const BUILDERS_POOL_SUBLINE := "Works the top job in the queue"
+const ROAD_CREW_POOL_SUBLINE := "Keeps the band's roads"
+
+## The second line's handle, valued its text.
+const WORK_POOL_SUBLINE_META := &"work_pool_subline"
 
 ## ---- ONE SPINNER PER SITE: the row's second line (`docs/plan_site_crews.md` §2.1, §3) -----------
 ##
@@ -3812,8 +3797,9 @@ static func site_row_height(party_lines: int) -> float:
         + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
         + WORK_ROW_PILL_LINE_HEIGHT
 
-## A GROUNDWORK row's height: line one, the rung line, then the pill line.
-const EXTRACT_ROW_HEIGHT := WORK_ROW_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
+## A GROUNDWORK row's height — a site row's with no party block: line one, the rung line, the yield
+## line, then the pill line.
+const EXTRACT_ROW_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
     + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
     + WORK_ROW_PILL_LINE_HEIGHT
 
