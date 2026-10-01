@@ -1297,6 +1297,12 @@ message WorkPartyForecastReply {
   // The 1-based turn the first load lands at home (1 = next turn). 0 = none within the forecast
   // horizon - not "immediately".
   uint32 first_load_turn = 6;
+  // NEXT TURN'S TAKE AT THE SOURCE by the asked crew, AFTER KEEPING (docs/plan_site_crews.md) - food
+  // off a herd or a patch, the material's own units off a deposit, struck on the hands the site's
+  // keeping leaves. Before any walk: what a far crew takes lands home later (`rate_home`).
+  float take_next_turn = 7;
+  // The hands the asked crew spends keeping the site, fractional - `workers - keep_hands` take.
+  float keep_hands = 8;
 }
 
 // A query the server declined to answer. `reason` is a machine-readable snake_case token

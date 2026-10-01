@@ -1000,7 +1000,7 @@ const WORK_INSPECTOR_KITS_SECTION_HEIGHT := WORK_INSPECTOR_SECTION_HEAD_HEIGHT \
     + WORK_COMPACT_PICKER_LINE_HEIGHT
 
 ## …and what the SITE'S BILL costs ON TOP of that floor: the one line that states what this site is
-## billed per turn (`WORK_INSPECT_KITS_UPKEEP_FORMAT`), where it is billed at all.
+## billed per turn (the tending line, `tending_line`), where it is billed at all.
 ##
 ## ⛔ **IT WAS `WORK_INSPECTOR_KITS_UPKEEP_HEIGHT` AND CARRIED A CONTROL LINE TOO.** The retired
 ## reading: *"BOTH ARE GATED ON ONE ANSWER AND THE PAIR IS INDIVISIBLE. An Upkeep picker with no bill
@@ -1233,7 +1233,8 @@ static func party_block_lines(party: Dictionary, crew_noun: String,
 
 ## ⛔ **THE ROW'S GEAR MARK — A MARK OF ITS OWN, NOT A SECOND ⚠.** A row short of GEAR and a row
 ## short of HANDS have opposite remedies (the bench against the stepper — and adding hands to a
-## kit-short row makes it WORSE, the ledger being cut pro-rata by head count), and a board that flew
+## kit-short row makes it WORSE when its tier is short — the items settle by the rows' Priority, High
+## first, and inside a short tier each added hand takes from a fixed share), and a board that flew
 ## one glyph for both makes the player hover every marked row to find out which it is — the very discovery problem the whole arc was reported for. Reported from
 ## play: *"Each individual work tile should also tell me if it is missing kits."*
 ##
@@ -1812,9 +1813,9 @@ static func note_color(severity: String) -> Color:
 # clause at all.
 #
 # ⛔ **WHAT IT COST, stated because it is a real loss.** That clause was the ONLY place the row said
-# that adding workers makes a kit shortfall **worse** rather than better: the band's ledger is cut
-# pro-rata by head count, so each hand added to a short row takes a smaller share and more of the crew
-# ends up bare-handed. **That is the very distinction the note's ink rule is built on** — see
+# that adding workers makes a kit shortfall **worse** rather than better: the band's items settle by the
+# rows' Priority, High first, and inside a tier that is short each hand added to a row takes from a
+# fixed share, so more of the crew ends up bare-handed. **That is the very distinction the note's ink rule is built on** — see
 # `KIT_SHORT_SEVERITY` below, which still draws the gear register apart from the hands register in
 # colour. Nothing states it in WORDS now, and no shorter replacement was invented: the number alone is
 # what was asked for.
@@ -2744,7 +2745,7 @@ const WORK_INSPECTOR_KIT_KEY_WIDTH := 62.0
 ## > *"deliberately not the role's name (`Agriculture` / `Husbandry`) … naming a band ROLE here would
 ## > read as a control over that role's pool"*, which was the right call for a control and is moot
 ## > without one. The card still states what the site is billed — see
-## > `WORK_INSPECT_KITS_UPKEEP_FORMAT` — and that line is a READOUT, so it names no key at all.
+## > `tending_line` — and that line is a READOUT, so it names no key at all.
 
 ## ⛔ RETIRED — **`WORK_INSPECT_KITS_HINT`**, which read *"\"No kit\" is a real choice — the site worked
 ## bare-handed."* and sat under the pair on every kitted row. **It said nothing the section needed and
@@ -2752,7 +2753,7 @@ const WORK_INSPECTOR_KIT_KEY_WIDTH := 62.0
 ## site with no standing rung to keep, and this line stood under it explaining that going without a
 ## tool was fine — an answer to a question that was itself the defect. The `none` rule went BACK into
 ## the two tooltips it was taken out of, which is where a per-control caveat belongs; what the line\'s
-## slot carries now is `WORK_INSPECT_KITS_UPKEEP_FORMAT`, the site\'s actual bill, which is the fact an
+## slot carries now is the tending line (`tending_line`), the site\'s actual bill, which is the fact an
 ## Upkeep picker is meaningless without.
 ##
 ## The measurement in its own retired note stays true of its replacement and is why the format below
@@ -2760,23 +2761,17 @@ const WORK_INSPECTOR_KIT_KEY_WIDTH := 62.0
 ## preference: that sentence is the longest this card renders on one line, and the first draft of this
 ## one ran seven characters past it and was drawn ELLIPSISED in the frame."*
 
-## **WHAT THIS SITE IS BILLED TO STAND, PER TURN — the one thing the Upkeep picker cannot be read
-## without.** `Kept at 1 work · 0.05 hurdles a turn.` It draws with the Upkeep row and only with it, so
-## the picker and the bill it speeds arrive together or not at all.
+## **WHAT THIS SITE COSTS TO STAND, IN WHOLE WORKERS AND TURNS** — the inspector states the site's
+## tending line (`tending_line`: `Tending: 1 worker now · another needed around turn 58 · 2 when
+## Field`), then the goods its keeping swallows, if any: `… · 0.05 hurdles a turn`.
 ##
-## ⛔ **IT STATES THE TERMS AND NOT THE RUNG WORD, because the card\'s HEAD LINE already states the
-## rung** (`Hunt Aurochs · 🐄 Corralled 100%`, through `DetailFormat.standing_rung_face`). One rung
-## worded twice on one card is how two surfaces come to disagree about one source, and the head line
-## is the producer this card already asks — so what is missing here is the PRICE, which no line on the
-## card said at all.
+## > ⛔ RETIRED — **`WORK_INSPECT_KITS_UPKEEP_FORMAT`**, `Kept at 1 work · 0.05 hurdles a turn.` It
+## > priced the keeping in work units, which no player staffs in; the site's crew is counted in whole
+## > workers, so that is what the card says.
 ##
-## **PRESENT TENSE, DELIBERATELY.** The terms are the source\'s STAMPED bill
-## (`SourceForecast.upkeep_state`\'s `demand` and `upkeep_material_demand`), which answers *what is
-## this source billed right now* — the question this line asks. It is NOT the per-rung
-## `build_upkeep_demand` quote, which answers *what would a rung cost to hold* for a rung nobody has
-## started; that producer\'s own ⛔ forbids reading one as the other, and on a source mid-climb the two
-## disagree by design.
-const WORK_INSPECT_KITS_UPKEEP_FORMAT := "Kept at %s a turn."
+## ⛔ **IT STATES NO RUNG WORD FOR THE STANDING RUNG, because the card's HEAD LINE already does**
+## (`DetailFormat.standing_rung_face`). The one rung it names is the one an in-flight build lands on.
+const WORK_INSPECT_KITS_UPKEEP_GOODS_FORMAT := "%s a turn"
 
 ## ⛔ **THE `none` RULE IS BACK IN BOTH TOOLTIPS, WHICH IS WHERE IT CAME FROM.** It was moved out to a
 ## shared hint line for one slice; that line is retired above, and a caveat about what ONE control\'s
@@ -3643,44 +3638,77 @@ const WORK_POOL_LINE_HEIGHT := WORK_ROW_HEIGHT
 
 ## ---- ONE SPINNER PER SITE: the row's second line (`docs/plan_site_crews.md` §2.1, §3) -----------
 ##
-## A site's crew keeps it first and collects with the rest, so the row's second line says where the
-## work goes: `Tended Patch · keeps 2 of 2 · 1 harvesting`. A site that owes nothing drops the middle
-## clause: `Wild · 3 harvesting`.
-const SITE_CREW_KEEPS_FORMAT := "%s · keeps %s of %s · %s %s"
-const SITE_CREW_FREE_FORMAT := "%s · %s %s"
-
-## The take verb per web — what the hands not spent keeping are doing.
-const SITE_CREW_VERB_HARVEST := "harvesting"
-const SITE_CREW_VERB_HUNT := "hunting"
-const SITE_CREW_VERB_CUT := "cutting"
+## The row's second line names the rung the site STANDS on (`Tended Patch`, `Wild`, `Coppice`) and
+## nothing else. **It carries no keeping figure and no head count**: covered keeping says nothing, a
+## short one is the `⚠` beside the stepper with its sentence on the hover, and the yield line below
+## already says what the take produces. A split of the crew into keepers and takers is a fraction of a
+## person on most turns, and no readout states a fraction of a person.
 
 ## The rung word of a source standing on no improvement.
 const SITE_CREW_RUNG_WILD := "Wild"
 
-## A hand count or a work figure reads as a WHOLE number when it is within this of one, else to one
-## decimal: `keeps 2 of 2`, `keeps 1.5 of 4`, `0.5 harvesting`.
-const SITE_CREW_WHOLE_TOLERANCE := 0.05
-const SITE_CREW_DECIMAL_FORMAT := "%.1f"
-
 ## The line's handle, valued the text it drew.
 const SITE_CREW_LINE_META := &"work_row_site_crew"
 
-## One figure on the site-crew line: whole within `SITE_CREW_WHOLE_TOLERANCE`, else one decimal.
-static func site_crew_amount(value: float) -> String:
-    var v := maxf(value, 0.0)
-    var whole := roundf(v)
-    if absf(v - whole) <= SITE_CREW_WHOLE_TOLERANCE:
-        return str(int(whole))
-    return SITE_CREW_DECIMAL_FORMAT % v
+## **THE ROW'S SECOND LINE** — the one composer: the standing rung's word.
+static func site_crew_line(rung_word: String) -> String:
+    return rung_word
 
-## **THE ROW'S SECOND LINE** — the one composer. `demand` below `SourceForecast.UPKEEP_WORK_MIN` is a
-## site that owes nothing, and states the take alone.
-static func site_crew_line(rung_word: String, kept: float, demand: float, take_hands: float,
-        verb: String) -> String:
-    if demand < SourceForecast.UPKEEP_WORK_MIN:
-        return SITE_CREW_FREE_FORMAT % [rung_word, site_crew_amount(take_hands), verb]
-    return SITE_CREW_KEEPS_FORMAT % [rung_word, site_crew_amount(kept),
-        site_crew_amount(demand), site_crew_amount(take_hands), verb]
+## ---- TENDING, IN WHOLE WORKERS AND TURNS ----------------------------------------------------------
+##
+## What keeping a site costs, stated the way a player staffs it: `Tending: 1 worker now · another
+## needed around turn 58 · 2 when Field`. The three figures are the sim's (`upkeepWorkersNeeded`,
+## `upkeepNextWorkerTurn`, `upkeepWorkersAtCompletion`); nothing here converts work units to hands.
+## The second clause drops where the sim answers `UPKEEP_NO_NEXT_WORKER_TURN`, the third where no build
+## is in flight on the site.
+const TENDING_NOW_FORMAT := "Tending: %s now"
+const TENDING_NEXT_FORMAT := "another needed around turn %d"
+const TENDING_AT_COMPLETION_FORMAT := "%s when %s"
+const TENDING_CLAUSE_SEPARATOR := " · "
+## The short site's lead sentence — the claim the `⚠` makes, before the tending line explains it.
+const TENDING_SHORT_FORMAT := "Short: tending needs %s, this crew can't cover it."
+## `1 worker` / `2 workers`.
+const TENDING_WORKER_ONE := "%d worker"
+const TENDING_WORKER_MANY := "%d workers"
+## The sim's *no further worker is coming* answer on `upkeepNextWorkerTurn`, and the absent reading of
+## `upkeepWorkersAtCompletion`.
+const UPKEEP_NO_NEXT_WORKER_TURN := -1
+const UPKEEP_NO_WORKERS_AT_COMPLETION := -1
+
+static func tending_workers(count: int) -> String:
+    return (TENDING_WORKER_ONE if count == 1 else TENDING_WORKER_MANY) % count
+
+## **THE TENDING LINE** — `rung_after` is the rung an in-flight build lands the site on, `""` where none
+## is in flight.
+static func tending_line(now: int, next_turn: int, at_completion: int, rung_after: String) -> String:
+    var clauses: Array[String] = [TENDING_NOW_FORMAT % tending_workers(maxi(now, 0))]
+    if next_turn != UPKEEP_NO_NEXT_WORKER_TURN:
+        clauses.append(TENDING_NEXT_FORMAT % next_turn)
+    if rung_after != "" and at_completion != UPKEEP_NO_WORKERS_AT_COMPLETION:
+        clauses.append(TENDING_AT_COMPLETION_FORMAT % [tending_workers(at_completion), rung_after])
+    return TENDING_CLAUSE_SEPARATOR.join(clauses)
+
+## The four inputs of a tending line, read off one source dict in its own key spelling.
+const TENDING_NOW_KEY := "upkeep_workers_needed"
+const TENDING_NEXT_TURN_KEY := "upkeep_next_worker_turn"
+const TENDING_AT_COMPLETION_KEY := "upkeep_workers_at_completion"
+
+## **A SOURCE'S TENDING, AS ONE DICT** — `{now, next_turn, at_completion, rung_after}`, the shape the
+## row's `⚠` hover and the source inspector both render through `tending_line`.
+static func tending_of(src: Dictionary, prefix: String, rung_after: String) -> Dictionary:
+    return {
+        "now": int(src.get(prefix + TENDING_NOW_KEY, 0)),
+        "next_turn": int(src.get(prefix + TENDING_NEXT_TURN_KEY, UPKEEP_NO_NEXT_WORKER_TURN)),
+        "at_completion": int(src.get(prefix + TENDING_AT_COMPLETION_KEY,
+            UPKEEP_NO_WORKERS_AT_COMPLETION)),
+        "rung_after": rung_after,
+    }
+
+static func tending_text(tending: Dictionary) -> String:
+    return tending_line(int(tending.get("now", 0)),
+        int(tending.get("next_turn", UPKEEP_NO_NEXT_WORKER_TURN)),
+        int(tending.get("at_completion", UPKEEP_NO_WORKERS_AT_COMPLETION)),
+        String(tending.get("rung_after", "")))
 
 ## ---- THE ROW'S KEEPING MARK: `⚠` short, `ⓘ` short of tools ---------------------------------------
 ##
@@ -3688,38 +3716,31 @@ static func site_crew_line(rung_word: String, kept: float, demand: float, take_h
 ## fully filled (`upkeep_tools_short`) — the work is covered and more tools would only free hands.
 const SITE_KEEPING_SHORT_MARK := UPKEEP_POOL_SHORT_MARK
 const SITE_KEEPING_TOOLS_MARK := UPKEEP_POOL_IDLE_MARK
-const SITE_KEEPING_SHORT_FORMAT := "Needs %s work a turn to stay %s. Getting %s."
 const SITE_KEEPING_TOOLS_SHORT := POOL_TOOLS_SHORT_WARN_LINE
 const SITE_KEEPING_TOOLS_INFO := POOL_TOOLS_SHORT_INFO_LINE
 
 ## The mark's handle, valued the glyph it drew (`""` on a row with nothing to say).
 const SITE_KEEPING_MARK_META := &"work_row_keeping_mark"
 
-## What the hover says of a rung: `a Field`, `a Tended Patch`, `Pastoral`, `Penned`. A noun takes an
-## article and the two animal states are adjectives, so the phrase is a table rather than a format.
-const SITE_KEEPING_RUNG_PHRASES := {
-    SourceForecast.IMPROVEMENT_CULTIVATE: "a Tended Patch",
-    SourceForecast.IMPROVEMENT_SOW: "a Field",
-    SourceForecast.IMPROVEMENT_TAME: "Pastoral",
-    SourceForecast.IMPROVEMENT_CORRAL: "Penned",
-}
-
-## A deposit rung is a noun off the catalog (`Coppice`, `Quarry`), so it takes the article.
-const SITE_KEEPING_NOUN_PHRASE_FORMAT := "a %s"
-
 ## Is the crew keeping less than its site owes? The one test the mark and the hover fork on.
 static func site_keeping_is_short(kept: float, demand: float) -> bool:
     return demand >= SourceForecast.UPKEEP_WORK_MIN \
         and demand - kept >= SourceForecast.UPKEEP_WORK_MIN
 
-## **THE KEEPING HOVER** — `""` on a site with nothing to say.
-static func site_keeping_hint(rung_phrase: String, kept: float, demand: float,
+## **THE KEEPING HOVER** — `""` on a site with nothing to say. A short site LEADS with the claim the
+## `⚠` makes; both marks then state the tending line; the tools sentence closes a tools-short site.
+static func site_keeping_hint(tending: Dictionary, kept: float, demand: float,
         tools_short: bool) -> String:
-    if site_keeping_is_short(kept, demand):
-        var line := SITE_KEEPING_SHORT_FORMAT % [DetailFormat.format_work_units(demand),
-            rung_phrase, DetailFormat.format_work_units(kept)]
-        return line + " " + SITE_KEEPING_TOOLS_SHORT if tools_short else line
-    return SITE_KEEPING_TOOLS_INFO if tools_short else ""
+    var short := site_keeping_is_short(kept, demand)
+    if not short and not tools_short:
+        return ""
+    var lines: Array[String] = []
+    if short:
+        lines.append(TENDING_SHORT_FORMAT % tending_workers(int(tending.get("now", 0))))
+    lines.append(tending_text(tending))
+    if tools_short:
+        lines.append(SITE_KEEPING_TOOLS_SHORT if short else SITE_KEEPING_TOOLS_INFO)
+    return "\n".join(lines)
 
 ## **THE KEEPING MARK** — `⚠` short, else `ⓘ` tools short, else `""`.
 static func site_keeping_mark(kept: float, demand: float, tools_short: bool) -> String:
@@ -3757,8 +3778,8 @@ static func work_priority_pill_text(format: String, level: String) -> String:
     return format % String(WORK_PRIORITY_FACES.get(work_priority_of(level),
         WORK_PRIORITY_FACES[WORK_PRIORITY_NORMAL]))
 
-## The site-crew line's height: the crew text beside the two pills, so a compact pill's at
-## `ALLOC_SECTION_FONT_SIZE` — taller than a bare note line, which is why `site_row_height` charges it.
+## The PILL line's height — the row's own line under the rest, carrying `Priority` and `Build`: a
+## compact pill at `ALLOC_SECTION_FONT_SIZE`, taller than a bare note line.
 const WORK_ROW_PILL_LINE_HEIGHT := 18.0
 
 ## The pills' side padding — they are text-only ghost buttons in a line that is short of width.
@@ -3768,12 +3789,21 @@ const WORK_ROW_PILL_PADDING_H := 4
 ## It is set on the site's row, where the `Build` pill cycles it.
 const BUILD_QUEUE_ROW_BUILD_MARK_META := &"build_queue_row_build_mark"
 
-## **A SITE ROW'S HEIGHT** — line one, the site-crew line carrying the two priority pills, the
-## accounts line and its party block. The crew line is a compact pill's height, which is taller than a
-## bare note line, so it is charged at the pill's.
+## **A SITE ROW'S HEIGHT** — line one, the rung line, the accounts line and its party block, then the
+## PILL line under them all: `Priority` and `Build` have a line of their own, so neither the rung line
+## nor the accounts line is ever cut short to seat a pill.
 static func site_row_height(party_lines: int) -> float:
     return work_row_height(party_lines) + float(TWO_LINE_STEPPER_SEPARATION) \
-        + maxf(WORK_ROW_PILL_LINE_HEIGHT, WORK_INSPECTOR_NOTE_LINE_HEIGHT)
+        + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
+        + WORK_ROW_PILL_LINE_HEIGHT
+
+## A GROUNDWORK row's height: line one, the rung line, then the pill line.
+const EXTRACT_ROW_HEIGHT := WORK_ROW_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
+    + WORK_INSPECTOR_NOTE_LINE_HEIGHT + float(TWO_LINE_STEPPER_SEPARATION) \
+    + WORK_ROW_PILL_LINE_HEIGHT
+
+## The pill line's handle.
+const WORK_ROW_PILL_LINE_META := &"work_row_pill_line"
 
 ## **ONE BUILD QUEUE ROW** — its line and the second line carrying the entry's `Build:` mark.
 const BUILD_QUEUE_ROW_HEIGHT := WORK_ROW_HEIGHT + BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT

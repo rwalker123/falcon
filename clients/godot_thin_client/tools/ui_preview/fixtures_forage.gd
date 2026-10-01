@@ -318,6 +318,11 @@ const IMPROVEMENT_STANCE_FRAME_FORAGERS := 2
 ## — and `workers_needed` then blended that count with the rung's `crew_needed`. Both terms are
 ## retired: the count is `ceil(0.96 / 0.32)` and the build's hands are their own allocation.
 const CULTIVATE_SIM_WORKERS_NEEDED := 3
+## …and the sim's `workers_needed` for the SITE's whole crew: the take's hands plus the reference
+## patch's whole-worker keeping count (`patch_upkeep_workers_needed`), keeping first
+## (`docs/plan_site_crews.md`).
+const CULTIVATE_SIM_KEEP_WORKERS := 2
+const CULTIVATE_SIM_SITE_CREW := CULTIVATE_SIM_WORKERS_NEEDED + CULTIVATE_SIM_KEEP_WORKERS
 
 ## A CROP-PICKER ROW by the plant it names. A row's face is `<name> <share>% · <payoff>×`, whose share
 ## and payoff digits are the fixture's business and change whenever a basket is retuned, so the row is

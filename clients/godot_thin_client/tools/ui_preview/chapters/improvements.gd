@@ -283,11 +283,12 @@ const TURNS_DRAG_FLOOR := SourceForecast.FLOOR_PRESET_VALUES[SourceForecast.FLOO
 const NO_BUILD_GEAR := {}
 
 ## The take the sheet quotes on `improvement_build_crew`: the crew clamps to the sim's own
-## `workers_needed` (3), and 3 × 0.32 = 0.96 — exactly the food-peak ceiling, i.e. the crew that
-## saturates the patch. **It is the PLAIN take, and that is the frame's subject now**: a Cultivate is
-## running beside it and takes nothing off what these gatherers carry (`docs/plan_standing_upkeep.md`
-## §2.2), where the retired dip would have quoted a quarter of it.
-const BUILD_CREW_UNDIPPED_TAKE := "0.96"
+## `workers_needed` (5 — the take's 3 plus the site's 2 keeping hands), which saturates the patch; the
+## headline is next turn's room, so it reads the regrowth-lifted `1.01` rather than the 0.96 standing
+## ceiling. **It is the PLAIN take, and that is the frame's subject now**: a Cultivate is running beside
+## it and takes nothing off what these gatherers carry (`docs/plan_standing_upkeep.md` §2.2), where the
+## retired dip would have quoted a quarter of it.
+const BUILD_CREW_UNDIPPED_TAKE := "1.01"
 
 ## One rung row's rendered VALUE CELL — `[color=#HEX]<value>[/color]`, exactly as
 ## `DetailFormat.detail_bbcode` emits it. Word and tint in ONE needle, because a rung's failure states

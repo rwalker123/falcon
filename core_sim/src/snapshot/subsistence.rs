@@ -109,6 +109,21 @@ const WIRE_NEUTRAL_DISPERSION: f32 = 1.0;
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
 /// [`GRAZE_PHASE_NONE`] — the zero/default, so an absent pasture can never be misread as a healthy one.
+/// **The keeping line's forecast as the wire states it** — whole workers at completion, and the
+/// game turn the next whole worker is needed ([`sim_runtime::NO_NEXT_KEEPING_WORKER`] where never
+/// within the build). `current_turn` is the tick the frame is captured at, so a forecast
+/// `turns_to_next_worker` turns out lands on `current_turn + turns`.
+pub(crate) fn keeping_forecast_wire(
+    forecast: crate::intensification::KeepingForecast,
+    current_turn: u64,
+) -> (u32, i32) {
+    let next = forecast
+        .turns_to_next_worker
+        .and_then(|turns| i32::try_from(current_turn.saturating_add(u64::from(turns))).ok())
+        .unwrap_or(sim_runtime::NO_NEXT_KEEPING_WORKER);
+    (forecast.workers_at_completion, next)
+}
+
 pub(crate) fn graze_phase_code(patch: Option<&GrazePatch>) -> u8 {
     match patch.map(|patch| patch.ecology_phase) {
         None => GRAZE_PHASE_NONE,
@@ -451,6 +466,9 @@ pub(crate) struct QuotedParty {
 ///
 /// **The list is FOG-FILTERED for the viewer faction** — see [`HerdSnapshotInputs::herd_is_visible`].
 pub(crate) struct HerdSnapshotInputs<'a> {
+    /// **The tick this frame is captured at** — the base the keeping forecast's next-worker turn is
+    /// dated from ([`keeping_forecast_wire`]).
+    pub(crate) current_turn: u64,
     pub(crate) telemetry: &'a HerdTelemetry,
     pub(crate) registry: &'a HerdRegistry,
     pub(crate) fauna: &'a FaunaConfig,
@@ -550,6 +568,7 @@ impl HerdSnapshotInputs<'_> {
 
 pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdTelemetryState> {
     let HerdSnapshotInputs {
+        current_turn,
         telemetry,
         registry,
         fauna,
@@ -653,6 +672,30 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             // counter). A herd the registry cannot resolve has nothing at risk to report.
             let neglect_grace =
                 herd.and_then(|herd| crate::fauna::herd_neglect_grace_remaining(herd, ladder));
+            // **The keeping line's forecast** — off the same (possibly withheld) herd, so a rival's
+            // build pace never reaches the row.
+            let herd_keeping = herd.map_or(
+                (
+                    NO_CREW_ON_THIS_ACTIVITY,
+                    sim_runtime::NO_NEXT_KEEPING_WORKER,
+                ),
+                |herd| {
+                    keeping_forecast_wire(
+                        crate::intensification::keeping_forecast(
+                            crate::fauna::herd_keeping_basis(herd, fauna, ladder),
+                            herd.ladder_position(),
+                            crate::intensification::BuildPace::in_flight(&herd.build_legs),
+                            |position| {
+                                let mut at = herd.clone();
+                                at.upkeep_demanded = None;
+                                at.set_ladder_position(position, ladder);
+                                crate::fauna::herd_keeping_basis(&at, fauna, ladder)
+                            },
+                        ),
+                        current_turn,
+                    )
+                },
+            );
             // **The herd's own ecology — the rung's, not the wild block's.** `herd_ecology` picks
             // wild / pastoral / pen, and it is the seam `refresh_ecology_phase` classifies the
             // `ecology_phase` word with, so the bands below cannot describe a different source than
@@ -1079,6 +1122,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 upkeep_workers_needed: herd.map_or(NO_CREW_ON_THIS_ACTIVITY, |herd| {
                     crate::fauna::herd_upkeep_workers_needed(herd, fauna, ladder)
                 }),
+                // **THE KEEPING LINE'S TWO FORECASTS** (`docs/plan_site_crews.md`) — the same bill,
+                // projected along the in-flight leg's own pace to the rung's top.
+                upkeep_workers_at_completion: herd_keeping.0,
+                upkeep_next_worker_turn: herd_keeping.1,
                 // **The neglect countdown**, resolved through the *same* `herd_keeping_rung` seam
                 // `advance_husbandry` gates the shed on, so the wire can never count down a grace
                 // against a rung the sim is not applying. `None` = a wild herd: nobody's to keep, so
@@ -1474,6 +1521,9 @@ pub(crate) fn snapshot_forage_patches(
     // **The live keeping kit per worked source**, on the same rule one account over. See
     // [`WorkedSources`].
     upkeep_kits: &WorkedSources,
+    // **The tick this frame is captured at** — the keeping forecast's next-worker turn is dated
+    // from it ([`keeping_forecast_wire`]).
+    current_turn: u64,
     // ⛔ **WHO IS LOOKING, AND WHAT THEY HAVE SEEN.** A patch row is a fact about a TILE, and tiles
     // are published whole — the client fogs the map from `visibility_raster`. What is *not* a fact
     // about the tile is the improvement standing on it: who tends it and how far along their
@@ -1494,6 +1544,22 @@ pub(crate) fn snapshot_forage_patches(
     // below can wrap it *without* the single-audience path paying for the wrapper: with no memo the
     // call is the whole of the map body, exactly as before.
     let derive_row = |patch: &ForagePatch| -> ForagePatchState {
+        let patch_keeping = |patch: &ForagePatch, tile_capacity: f32| {
+            keeping_forecast_wire(
+                crate::intensification::keeping_forecast(
+                    crate::forage::patch_keeping_basis(patch, ladder, tile_capacity, forage),
+                    patch.ladder_position(),
+                    crate::intensification::BuildPace::in_flight(&patch.build_legs),
+                    |position| {
+                        let mut at = patch.clone();
+                        at.upkeep_demanded = None;
+                        at.set_ladder_position(position, ladder);
+                        crate::forage::patch_keeping_basis(&at, ladder, tile_capacity, forage)
+                    },
+                ),
+                current_turn,
+            )
+        };
         // ⛔ **IS THE IMPROVEMENT ON THIS TILE THE VIEWER'S TO READ?**
         //
         // Yours always is, and an untended patch has no improvement to hide. A *rival's* is
@@ -1985,6 +2051,10 @@ pub(crate) fn snapshot_forage_patches(
                 tile_capacity,
                 forage,
             ),
+            // **THE KEEPING LINE'S TWO FORECASTS** (`docs/plan_site_crews.md`) — the same bill,
+            // projected along the in-flight leg's own pace to the rung's top.
+            upkeep_workers_at_completion: patch_keeping(patch, tile_capacity).0,
+            upkeep_next_worker_turn: patch_keeping(patch, tile_capacity).1,
             // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
             // `advance_cultivation` bleeds through — so the wire counts down against the rung
             // that will actually revert, not one the patch merely stands on. `None` = a wild

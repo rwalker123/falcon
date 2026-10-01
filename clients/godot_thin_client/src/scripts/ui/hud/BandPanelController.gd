@@ -2596,9 +2596,9 @@ func _extract_source_models(band: Dictionary) -> Array:
 ## that does not (`FLOOR_UNNAMED`, the sheet's own sentinel), and the row's kit restated so a `+` never
 ## re-kits a crew. The Groundwork POOL that used to hold these sites is retired.
 ##
-## **BOTH MARKS, ON THE CREW LINE** (`docs/plan_site_crews.md` §2.4 as amended): `Priority` always and
-## `Build` while a working build is queued here, each sent in the material form `<x> <y> <material>` —
-## the bare tile is the patch on that hex (`Main.site_address`).
+## **BOTH MARKS, ON THEIR OWN LINE UNDER THE ROW** (`docs/plan_site_crews.md` §2.4 as amended):
+## `Priority` always and `Build` while a working build is queued here, each sent in the material form
+## `<x> <y> <material>` — the bare tile is the patch on that hex (`Main.site_address`).
 func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var tile: Vector2i = model["tile"]
     var deposit: Dictionary = model["deposit"]
@@ -2608,7 +2608,7 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var useful := _workings_roster_max_useful(band, model)
     var row := PanelContainer.new()
     row.set_meta(HudWorkVocab.WORKINGS_ROSTER_ROW_META, "%d,%d:%s" % [tile.x, tile.y, material])
-    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_TWO_LINE_HEIGHT)
+    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.EXTRACT_ROW_HEIGHT)
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
     var col := VBoxContainer.new()
@@ -2634,8 +2634,12 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var demand := HudDepositVocab.upkeep_demand_of(deposit)
     var tools_short := SourceForecast.upkeep_tools_short(deposit, HudComposeVocab.BARE_FORECAST_PREFIX)
     var rung_name := HudDepositVocab.ladder_rung_name(ladder, HudDepositVocab.rung_of(deposit))
+    # The rung a queued working build lands this site on, `""` while nothing is queued here.
+    var rung_after := HudDepositVocab.catalog_display_name(
+        HudDepositVocab.ladder_next_entry(ladder, deposit)) \
+        if HudDepositVocab.is_queued(deposit) else ""
     line.add_child(_build_site_keeping_mark(kept, demand, tools_short,
-        HudWorkVocab.SITE_KEEPING_NOUN_PHRASE_FORMAT % rung_name))
+        HudWorkVocab.tending_of(deposit, HudComposeVocab.BARE_FORECAST_PREFIX, rung_after)))
     var ready := RungGates.deposit_rung_ready(deposit, ladder, _player_knowledge(),
         _topbar.knowledge_labels() if _topbar != null else {}, cutters)
     if not ready.is_empty():
@@ -2671,13 +2675,9 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     })
     line.add_child(stepper)
     line.add_child(_build_workings_roster_abandon_button(band, deposit))
-    var take_hands := maxf(float(cutters) - SourceForecast.upkeep_hands(deposit,
-        HudComposeVocab.BARE_FORECAST_PREFIX), 0.0)
-    var crew_line := _build_site_crew_line(HudWorkVocab.site_crew_line(
-        rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD, kept, demand,
-        take_hands, HudWorkVocab.SITE_CREW_VERB_CUT))
-    _add_priority_pills(crew_line.get_child(0) as HBoxContainer, band, model, true)
-    col.add_child(crew_line)
+    col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
+        rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD)))
+    col.add_child(_build_pill_line(band, model, true))
     return row
 
 ## **THE ROW'S PRIORITY MARKS** (`docs/plan_site_crews.md` §2.4 as amended): `Priority` where the row
@@ -2696,9 +2696,23 @@ func _add_priority_pills(line: HBoxContainer, band: Dictionary, model: Dictionar
             HudWorkVocab.WORK_ROW_BUILD_PILL_META, HudWorkVocab.WORK_ROW_BUILD_PILL_TOOLTIP,
             func(level: String) -> void: _commit_build_priority(band, model, level)))
 
-## **THE SITE CREW'S LINE** — where this row's hands go: keeping first, then the take. Indented onto the
-## name's column in the accounts' quiet register. The text is an `HBoxContainer`'s first child so a work
-## row can hang its priority pills after it; it ELIDES and states its whole self on its hover.
+## **THE ROW'S PILL LINE** — `Priority` and, while a build is queued, `Build`, on a line of their own
+## under the row, so neither pill takes width from a line of text above it.
+func _build_pill_line(band: Dictionary, model: Dictionary, with_priority: bool) -> MarginContainer:
+    var margin := MarginContainer.new()
+    margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    margin.add_theme_constant_override("margin_left", HudWorkVocab.WORK_ROW_ACCOUNTS_INDENT)
+    margin.set_meta(HudWorkVocab.WORK_ROW_PILL_LINE_META, true)
+    var line := HBoxContainer.new()
+    line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
+    margin.add_child(line)
+    _add_priority_pills(line, band, model, with_priority)
+    return margin
+
+## **THE ROW'S RUNG LINE** — the rung the site stands on, indented onto the name's column in the
+## accounts' quiet register. It ELIDES and states its whole self on its hover.
 func _build_site_crew_line(text: String) -> MarginContainer:
     var margin := MarginContainer.new()
     margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2722,10 +2736,10 @@ func _build_site_crew_line(text: String) -> MarginContainer:
     return margin
 
 ## **THE ROW'S KEEPING MARK** — `⚠` when the site's crew keeps less than it owes, else `ⓘ` where its
-## keeping tools came up short, else an empty reserved slot. The hover says how much work the rung
-## needs and how much it got, and names the tools. PASS, so the row's own click still reaches the row.
+## keeping tools came up short, else an empty reserved slot. The hover states the tending in whole
+## workers and turns (`HudWorkVocab.site_keeping_hint`), and names the tools. PASS, so the row's own click still reaches the row.
 func _build_site_keeping_mark(kept: float, demand: float, tools_short: bool,
-        rung_phrase: String) -> Label:
+        tending: Dictionary) -> Label:
     var glyph := HudWorkVocab.site_keeping_mark(kept, demand, tools_short)
     var mark := Label.new()
     mark.text = glyph
@@ -2733,7 +2747,7 @@ func _build_site_keeping_mark(kept: float, demand: float, tools_short: bool,
     mark.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     mark.add_theme_color_override("font_color",
         HudStyle.WARN if glyph == HudWorkVocab.SITE_KEEPING_SHORT_MARK else HudStyle.INK_DIM)
-    mark.tooltip_text = HudWorkVocab.site_keeping_hint(rung_phrase, kept, demand, tools_short)
+    mark.tooltip_text = HudWorkVocab.site_keeping_hint(tending, kept, demand, tools_short)
     mark.mouse_filter = Control.MOUSE_FILTER_PASS if glyph != "" else Control.MOUSE_FILTER_IGNORE
     return mark
 
@@ -5743,26 +5757,19 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var kept := float(model.get("keep_kept", SourceForecast.NO_UPKEEP_DEMAND))
     var demand := float(model.get("keep_demand", SourceForecast.NO_UPKEEP_DEMAND))
     line.add_child(_build_site_keeping_mark(kept, demand, bool(model.get("keep_tools_short", false)),
-        String(model.get("rung_phrase", ""))))
+        model.get("tending", {}) as Dictionary))
     HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
         func(n: int) -> void: _emit_work_assign(band, model, n), true)
-    # **LINE TWO SAYS WHERE THE HANDS GO** — `Tended Patch · keeps 2 of 2 · 1 harvesting`: keeping
-    # first, the take with what is left. The take is the crew less the hands the sim spent keeping
-    # (`upkeepHands`), off the wire.
-    var take_hands := maxf(float(model.get("workers", 0))
-        - float(model.get("keep_hands", SourceForecast.NO_UPKEEP_DEMAND)), 0.0)
-    var crew_line := _build_site_crew_line(HudWorkVocab.site_crew_line(
-        String(model.get("rung_word", HudWorkVocab.SITE_CREW_RUNG_WILD)), kept, demand, take_hands,
-        HudWorkVocab.SITE_CREW_VERB_HUNT if String(model.get("kind", "")) \
-            == SourceForecast.LABOR_KIND_HUNT else HudWorkVocab.SITE_CREW_VERB_HARVEST))
-    # **TWO PRIORITY MARKS, AFTER THE CREW LINE** (`docs/plan_site_crews.md` §2.4). `Priority` ranks
-    # the site crew's claim on scarce tools and goods and is on every row; `Build` ranks a QUEUED
-    # build's claim and is on a row only while its site has a build queued. Each CYCLES on a press.
-    # **ON THIS LINE AND NOT THE ACCOUNTS'**: the accounts line is measured to hold the four-cash-crop
-    # worst case whole, and a pill beside it took that below its own width; the crew line is short.
-    _add_priority_pills(crew_line.get_child(0) as HBoxContainer, band, model, true)
-    col.add_child(crew_line)
+    # **LINE TWO NAMES THE RUNG THE SITE STANDS ON**, and nothing else: covered keeping says nothing,
+    # a short one is the `⚠` above, and the accounts line below says what the take produces.
+    col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
+        String(model.get("rung_word", HudWorkVocab.SITE_CREW_RUNG_WILD)))))
     col.add_child(_build_work_row_accounts(model))
+    # **TWO PRIORITY MARKS, ON THEIR OWN LINE UNDER THE ROW** (`docs/plan_site_crews.md` §2.4).
+    # `Priority` ranks the site crew's claim on scarce tools and goods and is on every row; `Build`
+    # ranks a QUEUED build's claim and is on a row only while its site has a build queued. A line of
+    # their own, so neither the rung line nor the accounts line is cut short to seat them.
+    col.add_child(_build_pill_line(band, model, true))
     return row
 
 ## LINE TWO — every account this source pays, in full, then the floor, indented onto the name's column.
@@ -6251,8 +6258,14 @@ func _work_inspector_upkeep_terms(model: Dictionary) -> Array[String]:
 ## compositions of one sentence are two answers to *how tall is this line*, and the difference comes
 ## off the bottom of the card.
 func _work_inspector_upkeep_bill(model: Dictionary) -> String:
-    return HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_FORMAT % HudWorkVocab \
-        .RUNG_TRACK_PRICE_SEPARATOR.join(_work_inspector_upkeep_terms(model))
+    var text := HudWorkVocab.tending_text(model.get("tending", {}) as Dictionary)
+    var goods: Array[String] = []
+    for term in model.get("upkeep_material_terms", []) as Array:
+        goods.append(String(term))
+    if goods.is_empty():
+        return text
+    return text + HudWorkVocab.TENDING_CLAUSE_SEPARATOR + HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_GOODS_FORMAT \
+        % HudWorkVocab.RUNG_TRACK_PRICE_SEPARATOR.join(goods)
 
 ## **THE COLUMN A WRAPPED NOTE REALLY LAYS OUT IN** — the dialog's content width less the inspector
 ## card's own horizontal padding, which are the only two things between the card's outer edge and the
@@ -6922,8 +6935,14 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "at_risk": at_risk,
             "keep_kept": keep_kept, "keep_demand": keep_demand, "keep_hands": keep_hands,
             "keep_tools_short": tools_short, "rung_word": rung_word,
-            "rung_phrase": String(HudWorkVocab.SITE_KEEPING_RUNG_PHRASES.get(standing,
-                HudWorkVocab.SITE_KEEPING_NOUN_PHRASE_FORMAT % rung_word)),
+            # **THE SITE'S TENDING IN WHOLE WORKERS AND TURNS** — the `⚠` hover and the inspector's
+            # bill both render it. The rung after the build is the DECLARED destination, `""` while no
+            # build is in flight here.
+            "tending": HudWorkVocab.tending_of(rung_source, HudComposeVocab.BARE_FORECAST_PREFIX,
+                String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(destination_rung, ""))
+                    if not building.is_empty() else ""),
+            "upkeep_material_terms": RungLadder.upkeep_material_terms(
+                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             "build_queued": queued_keys.has(String(key)),
             "build_priority": _band_labor.build_priority_for_key(band, String(key)),
             "note": note, "note_severity": note_severity,
@@ -7123,9 +7142,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
 ## to report, which is most of them.
 ##
 ## **THE SIM'S OWN PAIR, NEVER A CLIENT DIVISION** (`LaborAssignment.kitWorkersHolding` over the
-## `workers` beside it). The band's ledger is cut ONCE, pro-rata by head count over every row reaching
-## for each item, so two rows naming `trapping` against four traps arm two hunters each — an answer
-## that depends on the rows BESIDE this one and that no item count on this row could reproduce.
+## `workers` beside it). The band's ledger is cut ONCE over every row reaching for each item, settled
+## by the rows' Priority — High first — with the largest remainder deciding only inside a short tier,
+## so what one row holds depends on the rows BESIDE it and their marks, which no item count on this
+## row could reproduce.
 ##
 ## Silent in four states, each for its own reason:
 ## - **NOT SHORT** — the rule, and the same test states it for an ITEMLESS kit: the sim hands `none`

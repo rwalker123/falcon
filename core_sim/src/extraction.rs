@@ -357,6 +357,12 @@ pub struct DepositSource {
     /// makes *"live-queued and still cleared"* mean *"queued since the last pass"*.
     #[serde(default = "not_in_any_build_queue")]
     pub build_queue_position: i32,
+    /// **THE RUNG IN FLIGHT, AS A PACE** — the in-flight leg of the entry that dated this working,
+    /// stamped beside the countdown by the chain pass and cleared with it. What the keeping line's
+    /// forecast walks the meter along ([`crate::intensification::keeping_forecast`]); a working
+    /// carries no leg list, so this is the one leg the forecast needs.
+    #[serde(default)]
+    pub build_pace: Option<crate::intensification::BuildPace>,
 }
 
 /// The serde default of [`DepositSource::build_queue_position`] — *"no pass has placed this
@@ -388,6 +394,7 @@ impl DepositSource {
             build_blocked_reason: BuildGate::Open,
             build_turns_remaining: None,
             build_queue_position: crate::intensification::NOT_IN_ANY_BUILD_QUEUE,
+            build_pace: None,
         }
     }
 
@@ -1906,6 +1913,7 @@ pub fn advance_deposits(
         source.build_blocked_reason = BuildGate::Open;
         source.build_turns_remaining = None;
         source.build_queue_position = crate::intensification::NOT_IN_ANY_BUILD_QUEUE;
+        source.build_pace = None;
         let measure = deposit_measure(source, ground, &config);
         source.upkeep_demanded = Some(deposit_upkeep_demand(source, measure, &ladder));
         // ## 4 — the renewal, once per working, at that same post-decay position.

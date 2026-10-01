@@ -2917,14 +2917,21 @@ cap and must carry nothing, the pair's negative half.
 
 `_render_work_sections_states`, run straight after `_render_empty_work_zone_states`. One board carries
 every row shape the sections introduce: a WILD queued patch (owes nothing), a Tended Patch its crew
-keeps in full (`keeps 2 of 2 · 1 harvesting`), a Tended Patch its crew keeps SHORT, the reference hunt
+keeps in full, a Tended Patch its crew keeps SHORT, the reference hunt
 row, and one queued build whose own mark is `high` so the pill and the queue's read-only mark both
 state a non-default level. Frames: `band_panel_work_sections`, `band_panel_work_sections_tools_short`,
 `band_panel_work_sections_collapsed`.
 
-- **Every expected string is composed from the FORMAT and the fixture's own numbers**, never through
-  `site_crew_line` / `site_keeping_hint`: the kept line, the free line, the short hover
-  (`Needs 2 work a turn to stay a Tended Patch. Getting 1.`) and the tools `ⓘ` hover.
+- **Every expected string is composed from the fixture's own numbers**, never through
+  `site_crew_line` / `site_keeping_hint`: line two is the rung ALONE (`Tended Patch`, `Wild`), the
+  short hover is `Short: tending needs 2 workers, this crew can't cover it.` over `Tending: 2 workers
+  now · another needed around turn 58`, and the tools `ⓘ` hover is that tending line plus the tools
+  sentence.
+- **The pills sit on the row's own pill line** (`WORK_ROW_PILL_LINE_META`), never beside the rung line.
+- **`_assert_site_crew_is_whole_workers` is the keeping-cap claim**: a forecast whose take is useful up
+  to 2 hands and whose keeping takes 1 whole worker caps at 3, a crew of 2 can still add a hand, 3
+  cannot, and a kept patch's `upkeep_workers_needed` reaches the forecast. The herder-floor frame's twin
+  claim is re-aimed the same way: both cap twins gate at take-useful + the herd's keeping hands.
 - **The pills are claimed as a set**: a `Priority` pill on every row, exactly ONE `Build` pill and it
   is on the queued row, and the queue row's `Build:` mark is a `Label`, not a control. Both pills are
   pressed with REAL input (`_drive_click`) and the emitted LINE is read back through `Main`'s own
@@ -2943,7 +2950,7 @@ unseen cases, the roster DOOR's workings frames, the Gathering filter state
 (`band_panel_rung_ready_filter`), the chips claims on the empty work zone, and the board-capacity
 probes (`_probe_work_board_layout`). The workings roster claims were re-aimed at the GROUNDWORK
 section: every row now carries its own crew stepper, and `_assert_groundwork_site_crew_lines` reads
-each row's `cutting` line. A block's HEAD is found through `_block_head`: the Work tab's section
+each row's rung line (no head count) and its pill line. A block's HEAD is found through `_block_head`: the Work tab's section
 head on the collapsed path, the block's own first child when expanded. Every queue row is
 `BUILD_QUEUE_ROW_HEIGHT` tall, and `WIDE_DOCK_QUEUE_ROWS` is `BUILD_QUEUE_ROWS_MAX`, the zone scrolling
 rather than trading queue rows for board rows.

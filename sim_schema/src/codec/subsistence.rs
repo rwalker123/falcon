@@ -615,6 +615,8 @@ fn create_herds<'a>(
                 upkeepSupplied: herd.upkeep_supplied,
                 upkeepShortfall: herd.upkeep_shortfall,
                 upkeepWorkersNeeded: herd.upkeep_workers_needed,
+                upkeepWorkersAtCompletion: herd.upkeep_workers_at_completion,
+                upkeepNextWorkerTurn: herd.upkeep_next_worker_turn,
                 // **The PRE-COMMIT rate** — appended last (append-only wire). `upkeepDemand` above
                 // is what the KEEPING rung bills today; these are what each rung would cost to
                 // hold, so a sheet quoting a Tame on an unstarted herd nets a rate rather than
@@ -845,6 +847,8 @@ fn create_forage_patches<'a>(
                 upkeepSupplied: patch.upkeep_supplied,
                 upkeepShortfall: patch.upkeep_shortfall,
                 upkeepWorkersNeeded: patch.upkeep_workers_needed,
+                upkeepWorkersAtCompletion: patch.upkeep_workers_at_completion,
+                upkeepNextWorkerTurn: patch.upkeep_next_worker_turn,
                 // **The PRE-COMMIT rate** — appended last (append-only wire), the plant twin of the
                 // herd's pair: `upkeepDemand` above is what the AT-RISK rung bills today, and these
                 // are what each rung would cost to hold, so a sheet quoting a Cultivate on a wild
@@ -1222,6 +1226,8 @@ fn create_deposits<'a>(
                     upkeepSupplied: deposit.upkeep_supplied,
                     upkeepShortfall: deposit.upkeep_shortfall,
                     upkeepWorkersNeeded: deposit.upkeep_workers_needed,
+                    upkeepWorkersAtCompletion: deposit.upkeep_workers_at_completion,
+                    upkeepNextWorkerTurn: deposit.upkeep_next_worker_turn,
                     hasNeglectGrace: deposit.has_neglect_grace,
                     neglectGraceRemaining: deposit.neglect_grace_remaining,
                     buildTurnsRemaining: deposit.build_turns_remaining,
@@ -1269,6 +1275,8 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
         upkeep_supplied: deposit.upkeepSupplied(),
         upkeep_shortfall: deposit.upkeepShortfall(),
         upkeep_workers_needed: deposit.upkeepWorkersNeeded(),
+        upkeep_workers_at_completion: deposit.upkeepWorkersAtCompletion(),
+        upkeep_next_worker_turn: deposit.upkeepNextWorkerTurn(),
         has_neglect_grace: deposit.hasNeglectGrace(),
         neglect_grace_remaining: deposit.neglectGraceRemaining(),
         build_turns_remaining: deposit.buildTurnsRemaining(),
@@ -1523,6 +1531,8 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         upkeep_supplied: herd.upkeepSupplied(),
         upkeep_shortfall: herd.upkeepShortfall(),
         upkeep_workers_needed: herd.upkeepWorkersNeeded(),
+        upkeep_workers_at_completion: herd.upkeepWorkersAtCompletion(),
+        upkeep_next_worker_turn: herd.upkeepNextWorkerTurn(),
         has_neglect_grace: herd.hasNeglectGrace(),
         neglect_grace_remaining: herd.neglectGraceRemaining(),
         provisions_per_biomass: herd.provisionsPerBiomass(),
@@ -1612,6 +1622,8 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         upkeep_supplied: patch.upkeepSupplied(),
         upkeep_shortfall: patch.upkeepShortfall(),
         upkeep_workers_needed: patch.upkeepWorkersNeeded(),
+        upkeep_workers_at_completion: patch.upkeepWorkersAtCompletion(),
+        upkeep_next_worker_turn: patch.upkeepNextWorkerTurn(),
         has_neglect_grace: patch.hasNeglectGrace(),
         neglect_grace_remaining: patch.neglectGraceRemaining(),
         provisions_per_biomass: patch.provisionsPerBiomass(),

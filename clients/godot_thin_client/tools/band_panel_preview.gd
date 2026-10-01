@@ -3721,22 +3721,22 @@ func _assert_work_inspector_fits(where: String) -> void:
 ## expectation re-derived through the code under test agrees with it by construction.
 const KIT_NONE_FACE := "No kit"
 
-## The `Kept at … a turn.` line the KITS section draws beside its Upkeep picker, or `null`. Found by
-## its FORMAT's fixed prefix rather than by a meta, so a card that drew the sentence with no terms in
-## it is still found and still fails the emptiness half of the claim.
+## The `Tending: …` line the KITS section draws for a site that owes keeping, or `null`. Found by its
+## FORMAT's fixed prefix rather than by a meta, so a card that drew the line with no workers in it is
+## still found and still fails the emptiness half of the claim.
 func _kits_upkeep_bill_label() -> Label:
 	return _find_label_prefixed(_work_inspector_root(), _kits_upkeep_bill_prefix())
 
-## The literal head of `WORK_INSPECT_KITS_UPKEEP_FORMAT`, so the search does not depend on what the
-## terms are — which is exactly what the wild/kept fork changes.
+## The literal head of `HudWorkVocab.TENDING_NOW_FORMAT`, so the search does not depend on the
+## counts — which is exactly what the wild/kept fork changes.
 func _kits_upkeep_bill_prefix() -> String:
-	return HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_FORMAT.split("%s")[0]
+	return HudWorkVocab.TENDING_NOW_FORMAT.split("%s")[0]
 
-## The sentence with NO terms in it — what a bill composed from an empty list would read. Never a
-## legal render; it is the degenerate string the liveness claim above excludes.
-func _kits_upkeep_bill_face(terms: Array[String]) -> String:
-	return HudWorkVocab.WORK_INSPECT_KITS_UPKEEP_FORMAT % HudWorkVocab \
-		.RUNG_TRACK_PRICE_SEPARATOR.join(terms)
+## The line with NOBODY in it — what a tending line composed from an absent count would read. Never a
+## legal render on a site that owes keeping; it is the degenerate string the liveness claim excludes.
+func _kits_upkeep_bill_face(_terms: Array[String]) -> String:
+	return HudWorkVocab.tending_line(0, HudWorkVocab.UPKEEP_NO_NEXT_WORKER_TURN,
+		HudWorkVocab.UPKEEP_NO_WORKERS_AT_COMPLETION, "")
 
 func _find_label_prefixed(node: Node, prefix: String) -> Label:
 	if node is Label and (node as Label).text.begins_with(prefix):
@@ -4021,6 +4021,11 @@ const WORST_CASE_INSPECTOR_KIT_NOTE := "2 of 4 Trapping kits available"
 ## …and the standing bill that makes the KITS section draw its Upkeep row and the line under it. Both
 ## currencies, because the worst case is the shape that states both terms.
 const WORST_CASE_INSPECTOR_UPKEEP_TERMS: Array[String] = ["1 work", "0.05 hurdles"]
+## The tending line with every clause drawn and plural counts, and the good its keeping swallows.
+const WORST_CASE_INSPECTOR_TENDING := {
+	"now": 2, "next_turn": 158, "at_completion": 3, "rung_after": "Tended Patch",
+}
+const WORST_CASE_INSPECTOR_UPKEEP_GOODS: Array[String] = ["0.05 hurdles"]
 ## …and the muted line, also long enough to wrap: the worst case is the shape where EVERY prose line
 ## takes its second row, and a card that reserved for one wrap and drew three is exactly the failure
 ## the measured term exists to make impossible.
@@ -11951,32 +11956,32 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 		_fail("no Hunt work row for %s" % herd_id)
 		return
 	# The twins, asked the same question about the same herd. `_forecast_worker_cap` is given an
-	# assignable count above both candidate ceilings so its answer IS the usefulness ceiling and not a
-	# labor bound; `source_worker_cap_state` is probed on either side of that ceiling.
+	# assignable count well above the ceiling so its answer IS the usefulness ceiling and not a labor
+	# bound; `source_worker_cap_state` is probed on either side of that ceiling.
+	#
+	# ⛔ **THE CEILING IS THE TAKE'S USEFUL CREW PLUS THE SITE'S KEEPING HANDS** (`docs/plan_site_crews.md`).
+	# The keepers are the site's own crew now — they keep first and collect with the rest — so the `+`
+	# reaches `take-useful + upkeepWorkersNeeded`, where it used to stop at the take alone while a
+	# separate pool answered for the keepers.
 	var herd := _hud._band_labor.find_world_herd(herd_id)
 	var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
-	# **NO FLOOR ARGUMENT ON EITHER TWIN.** `herd_crew_floor` and `useful_floor` are retired: the crew
-	# they named is the band's husbandry pool's, answered by that role card and not by this stepper.
-	var compose_cap := int(_hud._drawercompose._forecast_worker_cap(
-		forecast, HERDER_FLOOR_HERDERS_NEEDED + 1)["cap"])
-	var row_below: bool = bool(SourceForecast.source_worker_cap_state(
-		forecast, HERDER_FLOOR_TAKE_USEFUL - 1, 1)["can_add"])
-	var row_at: bool = bool(SourceForecast.source_worker_cap_state(
-		forecast, HERDER_FLOOR_TAKE_USEFUL, 1)["can_add"])
-	if compose_cap != HERDER_FLOOR_TAKE_USEFUL:
-		_fail("the compose stepper caps at %d, not the take-useful %d"
-			% [compose_cap, HERDER_FLOOR_TAKE_USEFUL])
-	elif compose_cap >= HERDER_FLOOR_HERDERS_NEEDED:
-		_fail(("the take cap still reaches the keeper crew (%d >= %d) — those hands "
-			+ "belong to the maintain allocation") % [compose_cap, HERDER_FLOOR_HERDERS_NEEDED])
+	var keep := int(herd.get("upkeep_workers_needed", 0))
+	var ceiling := HERDER_FLOOR_TAKE_USEFUL + keep
+	var compose_cap := int(_hud._drawercompose._forecast_worker_cap(forecast, ceiling + 1)["cap"])
+	var row_below: bool = bool(SourceForecast.source_worker_cap_state(forecast, ceiling - 1, 1)["can_add"])
+	var row_at: bool = bool(SourceForecast.source_worker_cap_state(forecast, ceiling, 1)["can_add"])
+	if keep <= 0:
+		_fail("the herder-floor herd owes no whole keeping worker, so the claim would prove nothing")
+	elif compose_cap != ceiling:
+		_fail("the compose stepper caps at %d, not the take-useful %d plus the keeping %d"
+			% [compose_cap, HERDER_FLOOR_TAKE_USEFUL, keep])
 	elif not (row_below and not row_at):
-		_fail(("the worked row does not gate at the take-useful %d "
-			+ "(can_add below=%s, at=%s)") % [HERDER_FLOOR_TAKE_USEFUL, row_below, row_at])
+		_fail(("the worked row does not gate at take-useful + keeping %d "
+			+ "(can_add below=%s, at=%s)") % [ceiling, row_below, row_at])
 	else:
-		print(("band_panel_preview: assert OK — both cap twins gate at the take-useful %d, "
-			+ "below the keeper crew of %d the keeping row now answers for")
-			% [HERDER_FLOOR_TAKE_USEFUL, HERDER_FLOOR_HERDERS_NEEDED])
+		print(("band_panel_preview: assert OK — both cap twins gate at the take-useful %d plus the "
+			+ "site's %d keeping hands") % [HERDER_FLOOR_TAKE_USEFUL, keep])
 
 ## The countdown's own verb, as a LITERAL — the sentence it opens (`Domesticated is lost in 3 turns.`)
 ## is the WORK BOARD's alone, so this needle is asserted PRESENT on the row's hover and ABSENT on the
@@ -23462,10 +23467,10 @@ func _render_kits_upkeep_gate_states() -> void:
 	# on the one rung in the game that also eats hurdles is the half-reading `rung_is_at_risk`'s own ⛔
 	# records shipping once already.
 	var kept_bill := _kits_upkeep_bill_label()
-	_assert_band_panel("band_panel_work_kits_kept_herd: …and that bill names the GOOD as well as the work (\"%s\")"
+	_assert_band_panel("band_panel_work_kits_kept_herd: …and that bill names the GOOD as well as the tending (\"%s\")"
 			% ("<none>" if kept_bill == null else kept_bill.text),
 		kept_bill != null and kept_bill.text.contains(MATERIAL_SHORT_GOOD)
-			and kept_bill.text.contains(HudWorkVocab.RUNG_TRACK_HOLD_WORK_TERM.replace("%s", "")))
+			and kept_bill.text.begins_with(_kits_upkeep_bill_prefix()))
 	_hud._bandpanel.close_work_inspector()
 	await _settle()
 
@@ -24324,6 +24329,9 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 	# terms list IS the model's field: `RungLadder.upkeep_price_terms` composed it once, and a fixture
 	# that re-derived it through the code under test would agree with it by construction.
 	model["upkeep_price_terms"] = WORST_CASE_INSPECTOR_UPKEEP_TERMS
+	# …and the tending line at its LONGEST — all three clauses, and a good after them.
+	model["tending"] = WORST_CASE_INSPECTOR_TENDING
+	model["upkeep_material_terms"] = WORST_CASE_INSPECTOR_UPKEEP_GOODS
 	# **AND THE ROW'S GEAR DOES NOT REACH ITS CREW**, which is the KITS section's OTHER conditional
 	# line and is charged apart from the Upkeep pair above (`WORK_INSPECTOR_KITS_SHORTFALL_HEIGHT`).
 	# Without it staged, the reservation would sit BELOW the documented ceiling and the excess-lines
@@ -24415,10 +24423,14 @@ func _assert_work_inspector_worst_case_fits(where: String) -> void:
 # have a non-default level to state.
 
 ## The kept and the short patches' bill, what the short one's crew kept, and the hands the sim spent
-## keeping. `keeps 2 of 2 · 1 harvesting` is the kept row's whole line at `SECTIONS_ROW_WORKERS`.
+## keeping — plus the sim's whole-worker tending figures: the workers keeping takes now, the turn the
+## next is needed, and the workers it will take at the rung an in-flight build lands on.
 const SECTIONS_KEEP_DEMAND := 2.0
 const SECTIONS_KEEP_SHORT_SUPPLIED := 1.0
 const SECTIONS_KEEP_HANDS := 2.0
+const SECTIONS_KEEP_WORKERS := 2
+const SECTIONS_NEXT_WORKER_TURN := 58
+const SECTIONS_WORKERS_AT_COMPLETION := 3
 const SECTIONS_ROW_WORKERS := 3
 ## The queued build's own mark, deliberately NOT the default, so a pill that ignored the wire and read
 ## `Normal` would fail rather than coincide.
@@ -24436,6 +24448,9 @@ func _sections_tended_patch(tile: Vector2i, supplied: float, tools_short: bool) 
 		"upkeep_supplied": supplied,
 		"upkeep_shortfall": maxf(SECTIONS_KEEP_DEMAND - supplied, 0.0),
 		"upkeep_hands": SECTIONS_KEEP_HANDS,
+		"upkeep_workers_needed": SECTIONS_KEEP_WORKERS,
+		"upkeep_next_worker_turn": SECTIONS_NEXT_WORKER_TURN,
+		"upkeep_workers_at_completion": SECTIONS_WORKERS_AT_COMPLETION,
 		"upkeep_tools_short": tools_short,
 		"has_neglect_grace": supplied < SECTIONS_KEEP_DEMAND,
 		"neglect_grace_remaining": 3,
@@ -24517,7 +24532,7 @@ func _render_work_sections_states() -> void:
 		_find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS) != null
 			and _find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK) != null)
 
-	# ---- ONE SPINNER PER SITE: the site-crew line --------------------------------------------------
+	# ---- ONE SPINNER PER SITE: the rung line, and the keeping mark's hover in whole workers ----------
 	var tended_word := String(HudComposeVocab.IMPROVEMENT_DONE_LABELS[SourceForecast.IMPROVEMENT_CULTIVATE])
 	var kept_row := _sections_row(HudWorkVocab.WORK_ROW_PLANT_FORMAT % [QUEUE_SECOND_PATCH.x,
 		QUEUE_SECOND_PATCH.y])
@@ -24525,38 +24540,32 @@ func _render_work_sections_states() -> void:
 		QUEUE_THIRD_PATCH.y])
 	var wild_row := _sections_row(HudWorkVocab.WORK_ROW_PLANT_FORMAT % [QUEUE_HEAD_PATCH.x,
 		QUEUE_HEAD_PATCH.y])
-	var kept_want := HudWorkVocab.SITE_CREW_KEEPS_FORMAT % [tended_word, "2", "2", "1",
-		HudWorkVocab.SITE_CREW_VERB_HARVEST]
+	# ⛔ Covered keeping says NOTHING and no row states a fraction of a person: line two is the rung.
 	var kept_line: Variant = _sections_row_meta(kept_row, HudWorkVocab.SITE_CREW_LINE_META)
-	_assert_band_panel("site crew — a KEPT row reads `%s` (got \"%s\")" % [kept_want, str(kept_line)],
-		kept_line != null and String(kept_line) == kept_want)
+	_assert_band_panel("site crew — a KEPT row's second line is its rung alone, `%s` (got \"%s\")"
+			% [tended_word, str(kept_line)],
+		kept_line != null and String(kept_line) == tended_word)
 	_assert_band_panel("site crew — …and flies no keeping mark",
 		String(_sections_row_meta(kept_row, HudWorkVocab.SITE_KEEPING_MARK_META)) == "")
-	var wild_workers := 0
-	for model_variant in _hud._bandpanel._work_source_models(band, 0):
-		var model: Dictionary = model_variant
-		if int(model.get("x", -1)) == QUEUE_HEAD_PATCH.x and int(model.get("y", -1)) == QUEUE_HEAD_PATCH.y:
-			wild_workers = int(model.get("workers", 0))
-	var wild_want := HudWorkVocab.SITE_CREW_FREE_FORMAT % [HudWorkVocab.SITE_CREW_RUNG_WILD,
-		str(wild_workers), HudWorkVocab.SITE_CREW_VERB_HARVEST]
 	var wild_line: Variant = _sections_row_meta(wild_row, HudWorkVocab.SITE_CREW_LINE_META)
-	_assert_band_panel("site crew — a site that owes nothing states the take alone, `%s` (got \"%s\")"
-			% [wild_want, str(wild_line)],
-		wild_line != null and String(wild_line) == wild_want)
-	# ⛔ The hover is composed from the FORMAT and the fixture's own numbers, never through the
-	# producer it is checking.
+	_assert_band_panel("site crew — a site that owes nothing reads `%s` (got \"%s\")"
+			% [HudWorkVocab.SITE_CREW_RUNG_WILD, str(wild_line)],
+		wild_line != null and String(wild_line) == HudWorkVocab.SITE_CREW_RUNG_WILD)
+	# ⛔ The hover is composed from the FORMATS and the fixture's own numbers, never through the
+	# producer it is checking. The short patch has no build in flight, so the `when …` clause is absent.
 	var short_mark: Variant = _sections_row_meta(short_row, HudWorkVocab.SITE_KEEPING_MARK_META)
 	_assert_band_panel("site crew — a SHORT row flies `%s` (got \"%s\")"
 			% [HudWorkVocab.SITE_KEEPING_SHORT_MARK, str(short_mark)],
 		short_mark != null and String(short_mark) == HudWorkVocab.SITE_KEEPING_SHORT_MARK)
-	var short_hover_want := HudWorkVocab.SITE_KEEPING_SHORT_FORMAT % [
-		DetailFormat.format_work_units(SECTIONS_KEEP_DEMAND), "a " + tended_word,
-		DetailFormat.format_work_units(SECTIONS_KEEP_SHORT_SUPPLIED)]
+	var workers_face := "%d workers" % SECTIONS_KEEP_WORKERS
+	var short_hover_want := "Short: tending needs %s, this crew can't cover it.\nTending: %s now · another needed around turn %d" \
+		% [workers_face, workers_face, SECTIONS_NEXT_WORKER_TURN]
 	var short_node := _find_meta_control(short_row, HudWorkVocab.SITE_KEEPING_MARK_META) \
 		if short_row != null else null
 	_assert_band_panel("site crew — …whose hover says `%s` (got \"%s\")"
 			% [short_hover_want, "" if short_node == null else short_node.tooltip_text],
 		short_node != null and short_node.tooltip_text == short_hover_want)
+	_assert_site_crew_is_whole_workers()
 
 	# ---- TWO PRIORITY MARKS: `Priority` on every row, `Build` only where a build is queued ----------
 	var rows := _work_board_rows()
@@ -24564,6 +24573,15 @@ func _render_work_sections_states() -> void:
 	_assert_band_panel("pills — every work row carries a `Priority` pill (%d pills, %d rows)"
 			% [priority_pills.size(), rows.size()],
 		not rows.is_empty() and priority_pills.size() == rows.size())
+	# ⛔ **ON A LINE OF THEIR OWN** — never beside the rung line or the accounts, which they used to cut.
+	var on_own_line := not priority_pills.is_empty()
+	for pill in priority_pills:
+		var host := pill.get_parent().get_parent() if pill.get_parent() != null else null
+		if host == null or not host.has_meta(HudWorkVocab.WORK_ROW_PILL_LINE_META) \
+				or _find_meta_control(host, HudWorkVocab.SITE_CREW_LINE_META) != null:
+			on_own_line = false
+	_assert_band_panel("pills — …each on the row's own pill line, never beside the rung line",
+		on_own_line)
 	var build_pills := _collect_meta_controls(_panel, HudWorkVocab.WORK_ROW_BUILD_PILL_META, [])
 	var build_face := HudWorkVocab.work_priority_pill_text(HudWorkVocab.WORK_ROW_BUILD_PILL_FORMAT,
 		SECTIONS_BUILD_PRIORITY)
@@ -24616,11 +24634,14 @@ func _render_work_sections_states() -> void:
 		QUEUE_SECOND_PATCH.y])
 	var tools_node := _find_meta_control(tools_row, HudWorkVocab.SITE_KEEPING_MARK_META) \
 		if tools_row != null else null
-	_assert_band_panel("site crew — a KEPT row short of its keeping tools flies `%s` with `%s`"
-			% [HudWorkVocab.SITE_KEEPING_TOOLS_MARK, HudWorkVocab.SITE_KEEPING_TOOLS_INFO],
+	var tools_hover_want := "Tending: %d workers now · another needed around turn %d\n%s" \
+		% [SECTIONS_KEEP_WORKERS, SECTIONS_NEXT_WORKER_TURN, HudWorkVocab.SITE_KEEPING_TOOLS_INFO]
+	_assert_band_panel("site crew — a KEPT row short of its keeping tools flies `%s`, its hover `%s` (got \"%s\")"
+			% [HudWorkVocab.SITE_KEEPING_TOOLS_MARK, tools_hover_want,
+				"" if tools_node == null else tools_node.tooltip_text],
 		tools_node != null and String(tools_node.get_meta(HudWorkVocab.SITE_KEEPING_MARK_META))
 				== HudWorkVocab.SITE_KEEPING_TOOLS_MARK
-			and tools_node.tooltip_text == HudWorkVocab.SITE_KEEPING_TOOLS_INFO)
+			and tools_node.tooltip_text == tools_hover_want)
 
 	# ---- THE INSPECTOR on a KEPT source: its bill under the take picker, at its worst case ---------
 	_open_work_inspector_for_tile(QUEUE_SECOND_PATCH)
@@ -24674,16 +24695,62 @@ func _render_work_sections_states() -> void:
 	_push_bands([_band_fixture()])
 	await _settle()
 
-## The GROUNDWORK rows' own crew lines: every working states where its hands go, in the extract web's
-## verb, and never a pool's name.
+## The GROUNDWORK rows' own rung lines: every working names the rung it stands on and states no head
+## count, and carries its pills on a line of their own.
 func _assert_groundwork_site_crew_lines(rows: Array[Control]) -> void:
 	var lines: Array = []
+	var pill_lines := 0
 	for row in rows:
 		var node := _find_meta_control(row, HudWorkVocab.SITE_CREW_LINE_META)
 		lines.append("" if node == null else String(node.get_meta(HudWorkVocab.SITE_CREW_LINE_META)))
+		if _find_meta_control(row, HudWorkVocab.WORK_ROW_PILL_LINE_META) != null:
+			pill_lines += 1
 	var every := not lines.is_empty()
 	for line in lines:
-		if not String(line).contains(HudWorkVocab.SITE_CREW_VERB_CUT):
+		if String(line) == "" or String(line).contains("·") or String(line).contains("cutting"):
 			every = false
-	_assert_band_panel("groundwork — every working states its site crew in the extract verb, `%s` (%s)"
-			% [HudWorkVocab.SITE_CREW_VERB_CUT, lines], every)
+	_assert_band_panel("groundwork — every working's second line is its rung alone, no head count (%s)"
+			% [lines], every)
+	_assert_band_panel("groundwork — …and every working carries its pill line (%d of %d)"
+			% [pill_lines, rows.size()], pill_lines == rows.size() and not rows.is_empty())
+
+## ⛔ **THE `+` COUNTS THE KEEPING HANDS** (reported from play: a Harvest under a Cultivate, crew 2,
+## tending taking one whole worker, one idle worker — and the `+` dead). The row's cap is the take's
+## useful crew PLUS the sim's whole-worker keeping count, so a crew staffed exactly at the take's
+## useful hands can still add one for the keeping, and not one past it.
+func _assert_site_crew_is_whole_workers() -> void:
+	# A priced forecast, shaped as `forecast_inputs` returns one: a take useful up to
+	# `ceil(KEEPING_CAP_CEILING / KEEPING_CAP_PER_WORKER)` hands, and one whole worker of keeping.
+	var bare_forecast := {"known": true, "per_worker": KEEPING_CAP_PER_WORKER,
+		"ceiling": KEEPING_CAP_CEILING}
+	var take := SourceForecast.take_useful_workers(bare_forecast)
+	if take == SourceForecast.MAX_USEFUL_UNBOUNDED:
+		_fail("keeping cap — the forecast prices no useful crew, so the claim would prove nothing")
+		return
+	var forecast := bare_forecast.duplicate()
+	forecast[SourceForecast.FORECAST_KEEP_CREW_KEY] = KEEPING_CAP_WORKERS
+	var useful := SourceForecast.max_useful_workers(forecast)
+	_assert_band_panel("keeping cap — the useful crew is the take's %d plus the keeping's %d (got %d)"
+			% [take, KEEPING_CAP_WORKERS, useful], useful == take + KEEPING_CAP_WORKERS)
+	var at_take := SourceForecast.source_worker_cap_state(forecast, take, KEEPING_CAP_IDLE)
+	_assert_band_panel("keeping cap — a crew at the take's useful %d can still add a hand for the keeping"
+			% take, bool(at_take.get("can_add", false)))
+	var at_full := SourceForecast.source_worker_cap_state(forecast, take + KEEPING_CAP_WORKERS,
+		KEEPING_CAP_IDLE)
+	_assert_band_panel("keeping cap — …and not one past take + keeping (%d)" % (take + KEEPING_CAP_WORKERS),
+		not bool(at_full.get("can_add", true)))
+	# …and the keeping count reaches the forecast off the SOURCE's own wire field, which is the wiring
+	# the two claims above take for granted.
+	var wired := SourceForecast.forecast_inputs(
+		_sections_tended_patch(QUEUE_SECOND_PATCH, SECTIONS_KEEP_DEMAND, false),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.DEFAULT_HARVEST_FLOOR)
+	_assert_band_panel("keeping cap — …and a kept patch carries its `upkeep_workers_needed` onto the forecast (%d)"
+			% int(wired.get(SourceForecast.FORECAST_KEEP_CREW_KEY, -1)),
+		int(wired.get(SourceForecast.FORECAST_KEEP_CREW_KEY, -1)) == SECTIONS_KEEP_WORKERS)
+
+## The keeping claim's whole worker, the band's one idle hand, and a take useful up to two hands.
+const KEEPING_CAP_WORKERS := 1
+const KEEPING_CAP_IDLE := 1
+const KEEPING_CAP_PER_WORKER := 0.10
+const KEEPING_CAP_CEILING := 0.20

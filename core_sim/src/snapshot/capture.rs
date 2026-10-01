@@ -3587,6 +3587,7 @@ pub fn capture_snapshot(
                 .filter_map(|(_, _, allocation, ..)| allocation),
         );
         let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
+            current_turn: tick.0,
             telemetry: &herds,
             registry: &herd_registry,
             fauna: &fauna_config,
@@ -3667,6 +3668,7 @@ pub fn capture_snapshot(
             &extraction_config,
             &equipment_config,
             &build_kit_ids,
+            tick.0,
             deposit_tiles.iter().copied(),
         );
         let demographics_state = snapshot_demographics(&population_states);
@@ -3690,6 +3692,7 @@ pub fn capture_snapshot(
             &flora_quotes,
             &build_kit_ids,
             &upkeep_kit_ids,
+            tick.0,
             viewer,
             &visibility_ledger,
             config.fog_enabled,

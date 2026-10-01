@@ -866,10 +866,10 @@ const ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY := "hunt_useful_workers"
 # three spears and no sled field ZERO stalking kits; `DetailFormat.KIT_ITEM_WORKERS_HOLDING_KEY` is
 # the per-ITEM reading, which is where a readout goes to name WHICH thing is missing.
 #
-# ⛔ **NO CLIENT MAY RE-DERIVE IT FROM THE ITEM COUNTS.** The band's ledger is cut once, pro-rata by
-# head count over every row reaching for each item, so two rows naming `trapping` against four traps
-# each get two — an answer that depends on the rows BESIDE this one and that nothing on this row
-# carries.
+# ⛔ **NO CLIENT MAY RE-DERIVE IT FROM THE ITEM COUNTS.** The band's ledger is cut once over every row
+# reaching for each item, settled by the rows' Priority — High first — with the largest remainder
+# deciding only inside a tier that is short, so what one row holds depends on the rows BESIDE it and
+# their marks, which nothing on this row carries.
 #
 # **IT RIDES PRESENCE-SENSITIVELY, and `== workers` is the equality that means *nothing to be short
 # of***: that is what an itemless kit (`none`) publishes on purpose, so no reader needs a `none`
@@ -4093,6 +4093,11 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     return {
         "per_worker": per_worker,
         "ceiling": ceiling,
+        # **THE HANDS THIS SITE'S KEEPING TAKES** (`upkeepWorkersNeeded`, whole workers), which the
+        # site's own crew spends before it takes anything (`docs/plan_site_crews.md`). Read by
+        # `max_useful_workers`, which adds it to the take's useful crew — see `FORECAST_KEEP_CREW_KEY`.
+        FORECAST_KEEP_CREW_KEY: maxi(int(src.get(prefix + FORECAST_UPKEEP_CREW_KEY, NO_UPKEEP_CREW)),
+            NO_UPKEEP_CREW),
         # **THE COVERAGE BLOCK, CARRIED VERBATIM.** `max_useful_workers` re-solves the crew from these
         # rather than dividing by `per_worker`, which is the average over the crew this source was
         # priced for and therefore cannot answer a question about a different crew. Absent on any
@@ -5692,7 +5697,22 @@ static func party_readout(row: Dictionary) -> Dictionary:
 static func party_is_posted(party: Dictionary) -> bool:
     return bool(party.get(PARTY_PRESENT_KEY, false))
 
+## ⛔ **THE USEFUL CREW IS THE TAKE'S USEFUL HANDS PLUS THE KEEPING'S** (`docs/plan_site_crews.md`).
+## A site's crew keeps it before it collects, so a Tended Patch whose keeping takes one whole worker
+## and whose take is useful up to two can use three — capped on the take alone, the `+` went dead at
+## two with the band's idle worker standing by (reported from play on a Harvest under a Cultivate).
+## The keeping count is the sim's own whole-worker answer (`upkeepWorkersNeeded`), carried on the
+## forecast as `FORECAST_KEEP_CREW_KEY`; an unbounded take stays unbounded.
+const FORECAST_KEEP_CREW_KEY := "keep_crew"
+
 static func max_useful_workers(forecast: Dictionary) -> int:
+    var take := take_useful_workers(forecast)
+    if take == MAX_USEFUL_UNBOUNDED:
+        return take
+    return take + maxi(int(forecast.get(FORECAST_KEEP_CREW_KEY, NO_UPKEEP_CREW)), NO_UPKEEP_CREW)
+
+## The TAKE's useful crew alone — the hands past which the take stops rising.
+static func take_useful_workers(forecast: Dictionary) -> int:
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
     # ON THE AXIS THE SPECIES PAYS (issue #337): a wolf's food per-worker and ceiling are both 0, so

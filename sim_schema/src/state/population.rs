@@ -306,6 +306,10 @@ pub struct LaborAssignmentState {
     /// unpublished. A client-side quotient therefore divides by the fightless engagement reach and
     /// reads high — 2.3× on a Wild Aurochs. **Read this field; do not re-derive it.**
     ///
+    /// **It counts the crew's keeping hands** (`docs/plan_site_crews.md` §2.2): each crew size on the
+    /// curve hunts with the hands its keeping leaves, so the plateau is the whole crew — add nothing
+    /// for keeping.
+    ///
     /// **The domain is this source's own crew pool** — the hands already on the row plus the band's
     /// idle ones, the same domain the compose sheet asks its curve over. A curve still rising at the
     /// top of that pool reports the pool itself: *every hand this band has is still buying take*.
@@ -420,7 +424,9 @@ pub struct LaborAssignmentState {
     /// **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the plateau of the
     /// deposit crew curve over this row's crew pool (its workers plus the band's idle hands), at the
     /// row's own kit and floor, read by the compose sheet's `curve_useful_cutters` rule: the smallest
-    /// crew whose take reaches the curve's best within `0.1%`. **The pool** while the take is still
+    /// crew whose take reaches the curve's best within `0.1%`. **It counts the crew's keeping hands**
+    /// (`docs/plan_site_crews.md` §2.5): each crew size cuts with the hands its keeping leaves, so the
+    /// plateau is the whole crew — add nothing for keeping. **The pool** while the take is still
     /// rising at the last crew, **`1`** where the curve pays nothing, **`0`** on a non-extract row
     /// and on a row with no pool. Derived at capture.
     #[serde(default)]

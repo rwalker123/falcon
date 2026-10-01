@@ -9643,6 +9643,9 @@ fn publish_build_chain(
                     .map(|leg| crate::intensification::PublishedBuildLeg {
                         leg: *leg,
                         turns: published,
+                        // Not dated, so no pace to walk the keeping along.
+                        starts_after: None,
+                        work_per_turn: quote.balance,
                     })
                     .collect()
             });
@@ -9800,6 +9803,9 @@ fn leg_chain(
         .legs
         .iter()
         .map(|leg| {
+            // **Where this leg starts** — the running sum before it adds its own span, so the pace
+            // the keeping forecast walks is the countdown's own.
+            let starts = cumulative;
             let turns = match carried {
                 Some(value) => value,
                 None => {
@@ -9825,7 +9831,13 @@ fn leg_chain(
                     }
                 }
             };
-            crate::intensification::PublishedBuildLeg { leg: *leg, turns }
+            let dated = matches!(turns, Some(crate::intensification::BuildTurns::Turns(_)));
+            crate::intensification::PublishedBuildLeg {
+                leg: *leg,
+                turns,
+                starts_after: dated.then_some(starts),
+                work_per_turn: quote.balance,
+            }
         })
         .collect()
 }
@@ -9961,6 +9973,7 @@ fn publish_entry(
                         turns: &mut working.build_turns_remaining,
                         reason: &mut working.build_blocked_reason,
                         position: &mut working.build_queue_position,
+                        pace: &mut working.build_pace,
                     },
                     &answer,
                 );
@@ -10613,6 +10626,7 @@ struct CountdownSlots<'a> {
     turns: &'a mut Option<BuildTurns>,
     reason: &'a mut BuildGate,
     position: &'a mut i32,
+    pace: &'a mut Option<crate::intensification::BuildPace>,
 }
 
 /// The answer [`BuildEstimateSlots`] carries.
@@ -10669,6 +10683,9 @@ impl<K: Eq + std::hash::Hash> BuildEstimateClaims<K> {
             // answers pretending to be one.
             *slots.reason = answer.reason;
             *slots.position = answer.position;
+            // **And the pace of the rung in flight** — the keeping forecast's input, off the same
+            // winning entry the date came from.
+            *slots.pace = crate::intensification::BuildPace::in_flight(&answer.legs);
         }
     }
 

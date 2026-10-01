@@ -63,7 +63,8 @@ sheets read the band's WHOLE store of four against their own crew of four and ca
 covered. One band's gear, counted twice, on the two surfaces the player staffs from.
 
 `LaborAssignment.kitWorkersHolding` is the sim's own per-row answer (the `min` over the kit's items
-of that row's share, cut pro-rata by head count from one band-wide budget), and `shortfall_line`
+of that row's share of one band-wide budget, settled by the rows' Priority — High first — with the
+largest remainder deciding only inside a short tier), and `shortfall_line`
 takes it in two arms:
 
 **THE STEPPER DECIDES WHICH ARM ANSWERS.** Two cases, and the test between them is
@@ -7349,14 +7350,16 @@ site's keeping tools follow from its rung.
   was sound; the LINE was not. It read *"\"No kit\" is a real choice — the site worked bare-handed."*
   and drew under an Upkeep picker that, on a wild source, should never have been there — explaining
   that going toolless was fine for a site with nothing to keep. What its slot carries now is
-  `WORK_INSPECT_KITS_UPKEEP_FORMAT`, the site's own standing bill; a caveat about what ONE control's
+  the tending line (`HudWorkVocab.tending_line`), the site's own standing bill; a caveat about what ONE control's
   `No kit` entry means is per-control and lives in that control's tooltip. **The width measurement
   survives its subject and is why the replacement is short**: *"the hint is shorter than
   `WORK_PRIORITY_HINT` as a MEASUREMENT — that sentence is the longest this card renders on one line,
   and the first draft of this one ran seven characters past it and drew ellipsised."*
-- **`WORK_INSPECT_KITS_UPKEEP_FORMAT` ("Kept at %s a turn.") is composed from the STAMPED pair.**
-  `RungLadder.upkeep_price_terms` joins `upkeepDemand` (work) and `upkeepMaterialDemand` (goods) into
-  terms — `Kept at 1 work · 0.05 hurdles a turn.` — and its EMPTINESS is the gate on the keeping row,
+- **The keeping row is the site's TENDING line, in whole workers and turns** (`tending_line`, off the
+  sim's `upkeep_workers_needed` / `upkeep_next_worker_turn` / `upkeep_workers_at_completion`), then
+  the goods (`RungLadder.upkeep_material_terms`): `Tending: 1 worker now · 0.05 hurdles a turn`. The
+  retired `Kept at 1 work · 0.05 hurdles a turn.` priced the work in units nobody staffs in.
+  `RungLadder.upkeep_price_terms` over the STAMPED pair is still the gate — its EMPTINESS is the gate on the keeping row,
   which is that line ALONE since `docs/plan_pool_toe.md` §3 retired the picker above it.
   It is deliberately NOT `build_upkeep_demand`'s per-rung quote: that answers *what would a rung cost
   to hold* for a rung nobody has started, this answers *what is this source billed right now*, and

@@ -1391,6 +1391,117 @@ fn a_completed_cultivation_announces_once_and_clears_every_bands_verb() {
 /// How many times the feed log announced `needle`. The player-facing half of the completion seam:
 /// the event log is what the notification system reads, so a duplicate there is a duplicate on
 /// screen.
+/// ⛔ **A KEPT PATCH'S NEXT-TURN TAKE IS QUOTED ON THE HANDS ITS KEEPING LEAVES**
+/// (`docs/plan_site_crews.md` §2.1) — `WorkPartyForecastReply::take_next_turn`, the figure the
+/// compose sheet previews instead of pricing every worker as a gatherer. On a tended patch whose
+/// bill costs [`KEEPING_HANDS`] whole hands, a crew of [`CREW`] is quoted exactly what a crew
+/// [`KEEPING_HANDS`] smaller takes off the same patch kept for nothing, and the reply names the
+/// hands it spends keeping.
+#[test]
+fn a_kept_patchs_next_turn_take_is_quoted_on_the_hands_its_keeping_leaves() {
+    use sim_runtime::{QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartySource};
+    /// Whole hands the stated bill costs.
+    const KEEPING_HANDS: u32 = 2;
+    /// The crew asked about.
+    const CREW: u32 = 5;
+    /// A probe bill, to read the rate one keeping hand works at off the seam itself.
+    const PROBE_BILL: f32 = 1.0;
+    /// A bill of nothing — the same tended patch, unkept.
+    const NO_BILL: f32 = 0.0;
+    /// The asking band's durable id.
+    const ASKING_BAND: u64 = 77_001;
+    /// Float slack on two projections of one take.
+    const SAME_TAKE: f32 = 1e-4;
+
+    let ask = |bill: Option<f32>, workers: u32| {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        seat_tended_patch(&mut app, coord);
+        let band = spawn_forager(&mut app, tile, coord, None);
+        app.world
+            .entity_mut(band)
+            .insert(core_sim::BandId(ASKING_BAND));
+        let equipment = app
+            .world
+            .resource::<core_sim::EquipmentConfigHandle>()
+            .get();
+        let wear = app
+            .world
+            .get::<core_sim::BandEquipment>(band)
+            .cloned()
+            .unwrap_or_default();
+        let held = app
+            .world
+            .resource::<core_sim::ForageRegistry>()
+            .patch(coord)
+            .expect("the seated patch")
+            .standing()
+            .held;
+        // The rate one keeping hand works at, read off the seam: a bill of `KEEPING_HANDS` hands.
+        let rate = PROBE_BILL
+            / core_sim::crew_keep_hands(
+                Some(core_sim::CrewKeeping {
+                    rung: held,
+                    demand: PROBE_BILL,
+                }),
+                &equipment,
+                &wear,
+                CREW,
+            );
+        let demand = bill.unwrap_or(KEEPING_HANDS as f32 * rate);
+        app.world
+            .resource_mut::<core_sim::ForageRegistry>()
+            .patch_mut(coord)
+            .expect("the seated patch")
+            .upkeep_demanded = Some(demand);
+        let reply = core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+                faction_id: 0,
+                band_id: ASKING_BAND,
+                source: WorkPartySource::Forage {
+                    x: coord.x,
+                    y: coord.y,
+                    take_species: Vec::new(),
+                },
+                kit_id: equipment
+                    .default_kit(core_sim::KitJob::Forage)
+                    .id()
+                    .to_string(),
+                workers,
+                floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+            }),
+        );
+        match reply {
+            QueryReply::WorkPartyForecast(answer) => answer,
+            other => panic!("the work-party query must answer with a forecast, got {other:?}"),
+        }
+    };
+    let kept = ask(None, CREW);
+    let smaller_unkept = ask(Some(NO_BILL), CREW - KEEPING_HANDS);
+    let whole_unkept = ask(Some(NO_BILL), CREW);
+    assert!(
+        !kept.posts_a_party,
+        "fixture: the patch is inside the apron"
+    );
+    assert!(
+        whole_unkept.take_next_turn > smaller_unkept.take_next_turn,
+        "liveness: more hands take more off this patch, or the comparison says nothing"
+    );
+    assert!(
+        (kept.take_next_turn - smaller_unkept.take_next_turn).abs() < SAME_TAKE,
+        "the kept crew is quoted what its gathering hands take next turn: {} against {}",
+        kept.take_next_turn,
+        smaller_unkept.take_next_turn
+    );
+    assert!(
+        (kept.keep_hands - KEEPING_HANDS as f32).abs() < SAME_TAKE,
+        "…and the reply names the hands it spends keeping: {}",
+        kept.keep_hands
+    );
+}
+
 fn completion_announcements(app: &App, needle: &str) -> usize {
     app.world
         .resource::<CommandEventLog>()

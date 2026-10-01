@@ -1206,6 +1206,24 @@ across bands) and **`upkeepToolsShort`** (`bool`, the keeping held fewer tools t
 - **`upkeepWorkersNeeded`** is `ceil(demand / PER_WORKER_OUTPUT)`, in bare keepers — the keeping's
   own count. The row's `SourceYield::workersNeeded` counts the **whole** crew needed, keeping hands
   plus take hands (`yield-forecast.md` → "`workers_needed` IS THE ROW'S WHOLE CREW").
+- **The keeping line's two forecasts** (appended, `docs/plan_site_crews.md`), both in
+  `upkeepWorkersNeeded`'s unit so the three read as one line (`intensification::keeping_forecast`):
+  - **`upkeepWorkersAtCompletion`** (`uint`) — whole keepers once the rung **in flight** is
+    finished: the same keeping basis on a clone of the source set to that rung's top. Equal to
+    `upkeepWorkersNeeded` where nothing is in flight.
+  - **`upkeepNextWorkerTurn`** (`int`, a **game turn**, the capture tick plus the forecast) — the
+    first turn whose bill takes one more whole keeper than today's, projecting the meter along the
+    in-flight leg's own pace (`BuildPace`: the leg's `starts_after` on the queue's running sum and
+    the entry's `balance`, so a waiting entry is walked from its chained start). A turn's bill is
+    struck in Logistics off the position the **previous** turn's accrual left, so the step lands
+    one turn after the accrual that crosses it. **`-1`** = never within the build: nothing in
+    flight, the entry is not dated (stalled, rotting, blocked), or no whole-keeper step before it
+    completes.
+  - The pace is the **builder's** state: a patch or herd reads it off its `build_legs` (withheld
+    for a rival's build like every other leg), and a working off `DepositSource::build_pace`, which
+    the chain pass stamps beside its countdown and the row reads only where the viewer's band has it
+    queued. Pinned by `build_queue::a_cultivate_in_flights_keeping_forecast_comes_true_on_the_turn_it_names`,
+    which drives the shipped turn and checks both against the published `upkeepWorkersNeeded`.
 - **All six are transient per-turn scratch on the source**, stamped by `advance_labor_allocation`
   and cleared by the Logistics decay pass (`advance_cultivation` / `advance_husbandry` /
   `advance_deposits`) — exactly `buildTurnsRemaining`'s cycle, and for its reason: they describe

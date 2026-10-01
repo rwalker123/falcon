@@ -120,7 +120,7 @@ fn resolve_ask(
         wear,
         kit,
         other_rows,
-        ..
+        priority,
     } = resolve_quarry_and_kit(world, faction_id, band_id, herd_id, kit_id)?;
     let equipment = world.resource::<EquipmentConfigHandle>().get();
 
@@ -133,13 +133,14 @@ fn resolve_ask(
     // exactly as a committed one does, so a band whose two trapping rows share four traps is quoted
     // the half-armed party the turn will actually pay.
     //
-    // **A detached party carries no mark** — it is not a row — so it is settled at the default rank
-    // beside the band's rows (`docs/plan_site_crews.md` §2.3).
+    // **A party ranks its kit claim at its own row's Priority** — no near/far distinction: the
+    // band's row on this herd where it has one, else the default a new row is given, exactly as a
+    // local prospective crew is settled (`docs/plan_site_crews.md` §2.3).
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
         other_rows,
         &kit,
         party_workers as f32,
-        crate::components::SourcePriority::default(),
+        priority,
     );
     let coverage = equipment.coverage_from_units(
         &kit,
@@ -168,7 +169,8 @@ struct AskedQuarry {
     /// allocation, which is the whole-ledger reading a detached party has always had.
     other_rows: Vec<crate::equipment_config::KittedRow>,
     /// **The rank the band's row on this herd claims its take gear at**, or the default where the
-    /// band works no row there ([`crate::components::LaborAllocation::priority_on`]).
+    /// band works no row there ([`crate::components::LaborAllocation::priority_on`]) — what every
+    /// crew asked about on this herd is settled at, a party included.
     priority: crate::components::SourcePriority,
 }
 
@@ -1226,11 +1228,12 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
         ),
         _ => crate::fauna::crew_keep_hands(keeping, &equipment, &wear, ask.workers),
     };
-    let Some((walk_tiles, walk_turns)) = walk else {
-        // **Inside the apron: the ordinary local row's steady rate**, and nobody walks — struck on
-        // the hands the crew's keeping leaves.
-        let take_hands = ask.workers as f32 - keep_hands;
-        let rate_home = match &asked {
+    // **THE CREW'S TAKE AT THE SOURCE, AFTER KEEPING, OVER `turns`** — the local row's own
+    // projection, struck on the hands the keeping leaves (`docs/plan_site_crews.md` §2.1). The steady
+    // rate inside the apron, and the next turn's take on every source.
+    let take_hands = ask.workers as f32 - keep_hands;
+    let take_at_the_source = |turns: u32| -> f32 {
+        match &asked {
             Asked::Hunt(herd) => {
                 let hunters =
                     pricing.hunters(&equipment, &wear, &combat, intrinsic, herd.body_mass);
@@ -1242,7 +1245,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     output_multiplier,
                     take_hands,
                     ask.floor,
-                    horizon,
+                    turns,
                     // A query answers between turns — the next thing that happens is a regrowth.
                     crate::fauna::ProjectionStart::BeforeRegrowth,
                 )
@@ -1261,7 +1264,7 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                     take_hands,
                     ask.floor,
                     take,
-                    horizon,
+                    turns,
                     crate::fauna::ProjectionStart::BeforeRegrowth,
                 )
             }
@@ -1284,12 +1287,19 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
                 ground,
                 &extraction,
                 &ladder,
-                horizon,
+                turns,
             ),
-        };
+        }
+    };
+    let take_next_turn = take_at_the_source(NEXT_TURN_ONLY);
+    let Some((walk_tiles, walk_turns)) = walk else {
+        // **Inside the apron: the ordinary local row's steady rate**, and nobody walks.
+        let rate_home = take_at_the_source(horizon);
         return QueryReply::WorkPartyForecast(WorkPartyForecastReply {
             posts_a_party: false,
             rate_home,
+            take_next_turn,
+            keep_hands,
             ..WorkPartyForecastReply::default()
         });
     };
@@ -1358,8 +1368,13 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
         walk_turns,
         hunters_on_the_road: forecast.mean_on_the_road,
         first_load_turn: forecast.first_load_turn,
+        take_next_turn,
+        keep_hands,
     })
 }
+
+/// One turn of projection — the next turn's take ([`WorkPartyForecastReply::take_next_turn`]).
+const NEXT_TURN_ONLY: u32 = 1;
 
 /// A refusal, as its token. One constructor so the reply shape cannot drift between the seven
 /// failure paths.

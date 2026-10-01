@@ -714,7 +714,126 @@ pub struct PublishedBuildLeg {
     pub leg: BuildLeg,
     /// `None` is the wire's *"no estimate"*, exactly as the entry's own countdown uses it.
     pub turns: Option<BuildTurns>,
+    /// **Turns before this leg starts banking** — everything above it on the queue's running sum,
+    /// the same sum [`Self::turns`] ends on. `None` where the leg cannot be dated.
+    pub starts_after: Option<u32>,
+    /// **Work this leg banks per turn once it starts** — the entry's `balance` at the full pool
+    /// ([`BuildQuote::balance`]), the pace its countdown was struck at.
+    pub work_per_turn: f32,
 }
+
+/// **THE RUNG IN FLIGHT, AS A PACE** — the first leg with work left, when the queue can date it:
+/// the rung, the work it still owes, when it starts and how fast it banks. What the keeping
+/// forecast projects the meter along ([`keeping_forecast`]), so it moves at exactly the pace
+/// `buildTurnsRemaining` was struck at.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BuildPace {
+    pub rung: RungKey,
+    pub work: f32,
+    pub starts_after: u32,
+    pub work_per_turn: f32,
+}
+
+impl BuildPace {
+    /// The in-flight leg of a dated leg list, or `None` where nothing is in flight or the leg the
+    /// source is on cannot be dated (a stalled, rotting or blocked entry).
+    pub fn in_flight(legs: &[PublishedBuildLeg]) -> Option<BuildPace> {
+        let leg = legs
+            .iter()
+            .find(|published| published.leg.work_remaining > LEG_ALREADY_PAID)?;
+        Some(BuildPace {
+            rung: leg.leg.rung,
+            work: leg.leg.work_remaining,
+            starts_after: leg.starts_after?,
+            work_per_turn: leg.work_per_turn,
+        })
+    }
+}
+
+/// **THE KEEPING LINE'S TWO FORECASTS, IN WHOLE WORKERS** (`docs/plan_site_crews.md`) — what the
+/// site's keeping will take once the rung in flight is finished, and the first turn from now it
+/// needs one more whole worker than it does now. Both are `ceil(demand ÷ PER_WORKER_OUTPUT)`, the
+/// unit `upkeepWorkersNeeded` is quoted in, so the three read as one line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeepingForecast {
+    /// Whole workers once the in-flight rung completes; equal to now where nothing is in flight.
+    pub workers_at_completion: u32,
+    /// Turns from now until the turn whose keeping bill first takes one more whole worker than now,
+    /// or `None` where it does not within the build (nothing in flight, or no whole-worker step
+    /// before completion). A bill is struck in Logistics off the position the previous turn's
+    /// accrual left, so this is one more than the accruals it takes to reach the step.
+    pub turns_to_next_worker: Option<u32>,
+}
+
+/// Whole workers a keeping bill of `demand` takes — [`PER_WORKER_OUTPUT`] per hand, the rate
+/// `upkeepWorkersNeeded` is quoted at.
+pub fn keeping_workers(demand: f32) -> u32 {
+    if demand <= NO_UPKEEP_DEMAND {
+        return 0;
+    }
+    (demand / PER_WORKER_OUTPUT).ceil() as u32
+}
+
+/// **PROJECT THE KEEPING ALONG THE BUILD'S OWN PACE** — `demand_now` is the site's current bill,
+/// `position_now` its ladder position, and `demand_at(position)` the bill the same site would owe
+/// standing at `position` (the caller's keeping basis on a clone). The meter is walked at
+/// `pace.work_per_turn` from turn `pace.starts_after`, capped at the in-flight rung's top — the
+/// countdown's own arithmetic, so the two forecasts agree with `buildTurnsRemaining`.
+///
+/// **The bill never falls as a rung is climbed**, so the first whole-worker step is found by
+/// bisection over the turns to completion.
+pub fn keeping_forecast(
+    demand_now: f32,
+    position_now: f32,
+    pace: Option<BuildPace>,
+    demand_at: impl Fn(f32) -> f32,
+) -> KeepingForecast {
+    let now = keeping_workers(demand_now);
+    let Some(pace) = pace else {
+        return KeepingForecast {
+            workers_at_completion: now,
+            turns_to_next_worker: None,
+        };
+    };
+    let workers_at_completion = keeping_workers(demand_at(position_now + pace.work));
+    if pace.work_per_turn <= BUILD_BALANCE_HOLDS || workers_at_completion <= now {
+        return KeepingForecast {
+            workers_at_completion,
+            turns_to_next_worker: None,
+        };
+    }
+    let banked_by = |turn: u32| {
+        let working = turn.saturating_sub(pace.starts_after) as f32;
+        (pace.work_per_turn * working).min(pace.work)
+    };
+    let finished = pace
+        .starts_after
+        .saturating_add((pace.work / pace.work_per_turn).ceil() as u32);
+    // The fewest further turns of accrual after which the meter's bill takes more whole workers
+    // than now — `0` is possible, because a turn's bill is struck in Logistics off the position the
+    // PREVIOUS turn's accrual left, so the meter can already stand past a step the bill has not yet
+    // been struck at.
+    let (mut low, mut high) = (NO_FURTHER_ACCRUAL, finished);
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if keeping_workers(demand_at(position_now + banked_by(mid))) > now {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    // …and the bill that reads it is struck on the turn AFTER that accrual.
+    KeepingForecast {
+        workers_at_completion,
+        turns_to_next_worker: Some(low + BILL_STRUCK_NEXT_TURN),
+    }
+}
+
+/// No further turn of accrual — the meter as it stands.
+const NO_FURTHER_ACCRUAL: u32 = 0;
+
+/// A turn's keeping bill is struck off the position the turn before it left.
+const BILL_STRUCK_NEXT_TURN: u32 = 1;
 
 /// **A LEG WITH NOTHING LEFT TO PAY** — the `work_remaining` of a rung the source has already
 /// covered. Named because a leg list is built by clamping every rung's span against the position,

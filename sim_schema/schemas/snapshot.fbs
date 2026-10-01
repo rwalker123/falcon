@@ -3508,6 +3508,18 @@ table ForagePatchState {
   //                    covered. `false` where nothing was claimed.
   upkeepHands:float = 0;
   upkeepToolsShort:bool = false;
+  // --- THE KEEPING LINE'S TWO FORECASTS (appended last, docs/plan_site_crews.md) ----------------
+  // Both in WHOLE WORKERS, ceil(demand / PER_WORKER_OUTPUT) - the unit upkeepWorkersNeeded is in, so
+  // the three read as one line.
+  // upkeepWorkersAtCompletion = workers the keeping takes once the rung IN FLIGHT is finished;
+  //                             equal to upkeepWorkersNeeded where no build is in flight.
+  // upkeepNextWorkerTurn      = the game TURN the keeping first needs one more whole worker than
+  //                             now, projecting the meter along the build's own pace (the pace
+  //                             buildTurnsRemaining is struck at; a waiting entry from its chained
+  //                             start). -1 = never within the build: nothing in flight, the build
+  //                             is not dated, or no whole-worker step before it completes.
+  upkeepWorkersAtCompletion:uint = 0;
+  upkeepNextWorkerTurn:int = -1;
 }
 
 // ONE LEG OF A QUEUE ENTRY'S CLIMB (appended) - a rung the entry has still to raise, and what it
@@ -5059,6 +5071,18 @@ table HerdTelemetryState {
   //                    covered. `false` where nothing was claimed.
   upkeepHands:float = 0;
   upkeepToolsShort:bool = false;
+  // --- THE KEEPING LINE'S TWO FORECASTS (appended last, docs/plan_site_crews.md) ----------------
+  // Both in WHOLE WORKERS, ceil(demand / PER_WORKER_OUTPUT) - the unit upkeepWorkersNeeded is in, so
+  // the three read as one line.
+  // upkeepWorkersAtCompletion = workers the keeping takes once the rung IN FLIGHT is finished;
+  //                             equal to upkeepWorkersNeeded where no build is in flight.
+  // upkeepNextWorkerTurn      = the game TURN the keeping first needs one more whole worker than
+  //                             now, projecting the meter along the build's own pace (the pace
+  //                             buildTurnsRemaining is struck at; a waiting entry from its chained
+  //                             start). -1 = never within the build: nothing in flight, the build
+  //                             is not dated, or no whole-worker step before it completes.
+  upkeepWorkersAtCompletion:uint = 0;
+  upkeepNextWorkerTurn:int = -1;
 }
 
 table CommandEventState {
@@ -6710,6 +6734,18 @@ table DepositState {
   //                    covered. `false` where nothing was claimed.
   upkeepHands:float = 0;
   upkeepToolsShort:bool = false;
+  // --- THE KEEPING LINE'S TWO FORECASTS (appended last, docs/plan_site_crews.md) ----------------
+  // Both in WHOLE WORKERS, ceil(demand / PER_WORKER_OUTPUT) - the unit upkeepWorkersNeeded is in, so
+  // the three read as one line.
+  // upkeepWorkersAtCompletion = workers the keeping takes once the rung IN FLIGHT is finished;
+  //                             equal to upkeepWorkersNeeded where no build is in flight.
+  // upkeepNextWorkerTurn      = the game TURN the keeping first needs one more whole worker than
+  //                             now, projecting the meter along the build's own pace (the pace
+  //                             buildTurnsRemaining is struck at; a waiting entry from its chained
+  //                             start). -1 = never within the build: nothing in flight, the build
+  //                             is not dated, or no whole-worker step before it completes.
+  upkeepWorkersAtCompletion:uint = 0;
+  upkeepNextWorkerTurn:int = -1;
 }
 
 // --- Roads: the roads in the ground (arc #532, docs/plan_standing_upkeep.md 4.13b) --------------

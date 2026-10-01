@@ -309,6 +309,74 @@ fn published<T>(
     read(&row)
 }
 
+/// ⛔ **THE KEEPING LINE'S TWO FORECASTS COME TRUE ON THE SHIPPED TURN** (`docs/plan_site_crews.md`).
+/// A Cultivate in flight publishes `upkeepWorkersAtCompletion` and `upkeepNextWorkerTurn`; driving
+/// the real turn forward, the patch's own `upkeepWorkersNeeded` first exceeds today's on exactly
+/// the forecast turn, and reads the forecast count once the rung is finished — so the forecast is
+/// checked against the field the keeping line already shows, not against a re-derivation.
+#[test]
+fn a_cultivate_in_flights_keeping_forecast_comes_true_on_the_turn_it_names() {
+    /// A bound on the turns the fixture may take to finish its Cultivate — a guard, not a guess.
+    const TURNS_TO_FINISH: u32 = 400;
+    /// The wire's "never within the build".
+    const NEVER: i32 = -1;
+
+    let (mut app, _, sources) = world_with_a_queue(ONE_SOURCE, BUILDERS);
+    let patch = sources[0];
+    resolve_a_turn(&mut app);
+    let tick = app.world.resource::<core_sim::SimulationTick>().0 as i32;
+    let now = published(&app, patch, |row| row.upkeepWorkersNeeded());
+    let at_completion = published(&app, patch, |row| row.upkeepWorkersAtCompletion());
+    let next_turn = published(&app, patch, |row| row.upkeepNextWorkerTurn());
+    assert!(
+        published_turns(&app, patch) > 0,
+        "fixture: the Cultivate is in flight and dated"
+    );
+    assert!(
+        at_completion > now,
+        "liveness: the finished tended rung takes more keeping than the sliver built so far \
+         ({at_completion} against {now}), or neither forecast says anything"
+    );
+    assert_ne!(
+        next_turn, NEVER,
+        "…so the keeping steps up a whole worker before the build completes"
+    );
+
+    // Drive the real turn. This harness does not advance the tick, so turn `tick + k` is the k-th
+    // resolve below.
+    let mut stepped_up_on: Option<i32> = None;
+    let mut finished_with: Option<u32> = None;
+    for turn in 1..=TURNS_TO_FINISH as i32 {
+        resolve_a_turn(&mut app);
+        let needed = published(&app, patch, |row| row.upkeepWorkersNeeded());
+        if stepped_up_on.is_none() && needed > now {
+            stepped_up_on = Some(tick + turn);
+        }
+        let cultivated = app
+            .world
+            .resource::<core_sim::ForageRegistry>()
+            .patch(patch)
+            .expect("the fixture patch")
+            .is_cultivated();
+        if cultivated {
+            // The bill that reads the finished rung is struck on the turn after it completes.
+            resolve_a_turn(&mut app);
+            finished_with = Some(published(&app, patch, |row| row.upkeepWorkersNeeded()));
+            break;
+        }
+    }
+    assert_eq!(
+        stepped_up_on,
+        Some(next_turn),
+        "the keeping needs its next whole worker on the turn the forecast named"
+    );
+    assert_eq!(
+        finished_with,
+        Some(at_completion),
+        "…and takes the forecast count once the Cultivate is finished"
+    );
+}
+
 fn published_turns(app: &App, source: UVec2) -> i32 {
     published(app, source, |patch| patch.buildTurnsRemaining())
 }

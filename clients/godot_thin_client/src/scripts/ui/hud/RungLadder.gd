@@ -1015,6 +1015,11 @@ static func upkeep_price_terms(source: Dictionary, prefix: String) -> Array[Stri
             "demand", SourceForecast.NO_UPKEEP_DEMAND)),
         SourceForecast.upkeep_material_demand(source, prefix))
 
+## **THE GOODS HALF OF A SITE'S KEEPING BILL** alone — the work half is stated in whole workers by the
+## tending line (`HudWorkVocab.tending_line`), so only the goods remain to be priced as terms.
+static func upkeep_material_terms(source: Dictionary, prefix: String) -> Array[String]:
+    return _material_term_list(SourceForecast.upkeep_material_demand(source, prefix))
+
 ## The work term and the goods terms of ONE bill, in that order — the shape both price readings take,
 ## so a rate quoted on the track and the same rate quoted on the work board cannot be worded two ways.
 ##

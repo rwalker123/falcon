@@ -2361,25 +2361,40 @@ head's first child:
   tool and idle sentences on the line's hover, and the same three metas the cards carried. The
   Builders line is never work-short; it states the kit the queue head prices at.
 
-### A site row is three lines
+### A site row is four lines
 
 ```
 Harvest (72, 18)        🌾   ♻  ⚠   [−] 3 [+]
-Tended Patch · keeps 1 of 2 · 1 harvesting   [Priority: Normal] [Build: High]
+Tended Patch
 +0.20 /turn · 50% left standing
+[Priority: Normal] [Build: High]
 ```
 
-- **Line two is the site crew's line** (`HudWorkVocab.site_crew_line`): `<Rung> · keeps <kept> of
-  <demand> · <take> harvesting|hunting|cutting`, off the wire's `upkeep_supplied` / `upkeep_demand`
-  and the crew less `upkeep_hands`. A site owing nothing reads `<Rung> · <n> harvesting`. Figures are
-  whole within `SITE_CREW_WHOLE_TOLERANCE` (0.05), otherwise one decimal. The rung word is
-  `IMPROVEMENT_DONE_LABELS` of the standing rung, or `Wild`.
+- **Line two is the rung the site stands on** (`HudWorkVocab.site_crew_line`), and nothing else:
+  `IMPROVEMENT_DONE_LABELS` of the standing rung, a deposit rung's catalog name, or `Wild`. **Covered
+  keeping says nothing and no row states a fraction of a person**: the retired `keeps X of Y · N
+  harvesting` split the crew into keepers and takers, which is a fraction on most turns, and the
+  accounts line below already says what the take produces.
 - **The keeping mark** (`_build_site_keeping_mark`) rides line one after the policy marks: `⚠` when the
-  crew kept less than the site owes, hovering `Needs X work a turn to stay <rung>. Getting Y.` (plus
-  `Short of tools.` when the keeping tools came up short); otherwise `ⓘ` with `More tools would speed
-  this up.` when they did; otherwise an empty slot. The marks run keeps its `⚠` only for a missing
-  GOOD with the work paid, the one at-risk case the keeping mark does not state.
-- **Two priority pills end line two** (`_add_priority_pills`). `Priority: <level>` is on every
+  crew kept less than the site owes, `ⓘ` when its keeping tools came up short, else an empty slot. Its
+  hover is in WHOLE WORKERS AND TURNS (`HudWorkVocab.site_keeping_hint` over `tending_line`): a short
+  site leads `Short: tending needs 2 workers, this crew can't cover it.`, then both marks state
+  `Tending: 2 workers now · another needed around turn 58 · 3 workers when Tended Patch`, and a
+  tools-short site closes with the tools sentence. The `another…` clause drops where the sim's
+  `upkeep_next_worker_turn` is `-1`, the `when…` clause where no build is in flight on the site (the
+  rung named is the in-flight build's destination). The three counts are the sim's
+  (`upkeep_workers_needed` / `upkeep_next_worker_turn` / `upkeep_workers_at_completion`, read by
+  `HudWorkVocab.tending_of`); nothing converts work units to hands. The marks run keeps its `⚠` only
+  for a missing GOOD with the work paid, the one at-risk case the keeping mark does not state.
+- **The `+` counts the keeping hands.** `SourceForecast.max_useful_workers` is the take's useful crew
+  (`take_useful_workers`) PLUS the source's whole-worker keeping count, carried onto every forecast by
+  `forecast_inputs` as `FORECAST_KEEP_CREW_KEY` off `upkeep_workers_needed`. Both cap twins
+  (`source_worker_cap_state` and the compose sheet's `_forecast_worker_cap`) and the overstaffed flag
+  read it, so a site whose keeping takes a whole worker can staff take-useful + keeping hands. Capped on
+  the take alone, a Harvest under a Cultivate with its keeping taking one worker went dead at the take's
+  count with an idle worker standing by.
+- **Two priority pills, on their own line under the row** (`_build_pill_line`, meta
+  `WORK_ROW_PILL_LINE_META`). `Priority: <level>` is on every
   harvest, hunt and GROUNDWORK row and cycles `work_priority` (Normal → High → Low → Normal).
   `Build: <level>` is on a row only while its site has a build in this band's queue, and cycles
   `build_priority` (`build_priority_requested`, relayed by `HudLayer`, formatted by
@@ -2387,9 +2402,9 @@ Tended Patch · keeps 1 of 2 · 1 harvesting   [Priority: Normal] [Build: High]
   is queued on it: a road has no crew, so there is nothing for `Priority` to rank and the server
   refuses `work_priority`'s road form by name.
   Neither writes an optimistic overlay: both marks are captured live, so the new level arrives on the
-  command's own recapture and there is nothing to roll back. The pills are on the crew line rather
-  than the accounts line because the accounts line is measured to hold the four-cash-crop worst case
-  whole. The retired `High priority ·` accounts prefix is what `Priority` replaced.
+  command's own recapture and there is nothing to roll back. A line of their own, so neither the rung
+  line nor the accounts line is ever cut to seat them; `site_row_height` / `EXTRACT_ROW_HEIGHT` charge
+  it. The retired `High priority ·` accounts prefix is what `Priority` replaced.
 - **Every build-queue row is two lines** (`BUILD_QUEUE_ROW_HEIGHT`): the second states the entry's own
   mark READ-ONLY, `Build: Normal` (blank on a pending entry), then `· ◆ builders short of tools` on
   the tool-short head while its strip is closed.
@@ -4796,7 +4811,7 @@ unreserved 106px risk against a 396px box.
              <the rank hint>
  ────────────────────────────────────────
  KITS        Harvesters [Harvesting kit ▾]
-             Kept at 2 work a turn.            ← only where the site OWES upkeep
+             Tending: 2 workers now · …        ← only where the site OWES upkeep
  ────────────────────────────────────────
  Jump to source                  Unassign
 ```
@@ -5649,8 +5664,9 @@ COMPLETE kit, over the row's own `workers`); `_work_row_kit_note` turns it into 
   all three; the compose sheets never carried it.
 
   **What went with the words:** that clause was the ONLY place the row said that adding workers makes
-  a kit shortfall **worse** rather than better — the band's ledger is cut pro-rata by head count, so
-  each hand added to a short row takes a smaller share and more of the crew ends up bare-handed. It
+  a kit shortfall **worse** rather than better — the band's items settle by the rows' Priority, High
+  first, and inside a short tier each hand added to a row takes from a fixed share, so more of the crew
+  ends up bare-handed. It
   is the very gear-against-hands distinction the note's ink rule below is built on, and **nothing
   states it in words now.** No shorter replacement was invented: the number alone is what was asked
   for, and the register survives in the INK and in the row's own `◆` mark.
@@ -7165,9 +7181,11 @@ work half even where the material half is zero — so the gate is a disjunction.
 is empty on every shipped rung but `animal:pen`, which is why reading only the work account would have
 been right today and wrong on the next rung that eats a good.
 
-**The line states the TERMS and not the rung word** (`WORK_INSPECT_KITS_UPKEEP_FORMAT`, *"Kept at %s a
-turn."*) — and it is the whole of what that half of the section draws now: the head line already
-names the rung through `DetailFormat.standing_rung_face`
+**The line states the site's TENDING and not the standing rung** (`HudWorkVocab.tending_line`, then the
+goods its keeping swallows: *"Tending: 1 worker now · 0.05 hurdles a turn"*) — and it is the whole of
+what that half of the section draws now. The retired `Kept at 1 work a turn.` priced the keeping in work
+units no player staffs in. The head line already names the standing rung through
+`DetailFormat.standing_rung_face`
 (`Hunt Aurochs · 🐄 Corralled 100%`), and one rung worded twice on one card is how two surfaces come to
 disagree about one source. On a wild source the head line states no rung at all, which is the same
 verdict read through the other producer — the harness asserts both together.

@@ -93,6 +93,9 @@ pub(crate) fn deposit_states<'a>(
     // capture rather than off the source, because the row's scratch lags a command by a whole turn
     // and the state the countdown separates exists precisely in that frame.
     build_kits: &crate::snapshot::subsistence::QueuedBuildSources,
+    // **The tick this frame is captured at** — the keeping forecast's next-worker turn is dated
+    // from it.
+    current_turn: u64,
     ground: impl Iterator<Item = &'a Tile>,
 ) -> Vec<sim_runtime::DepositState> {
     let mut rows: Vec<sim_runtime::DepositState> = ground
@@ -122,7 +125,14 @@ pub(crate) fn deposit_states<'a>(
                     }
                 };
                 Some(deposit_row(
-                    source, tile, capacity, ladder, config, equipment, build_kits,
+                    source,
+                    tile,
+                    capacity,
+                    ladder,
+                    config,
+                    equipment,
+                    build_kits,
+                    current_turn,
                 ))
             })
         })
@@ -174,6 +184,7 @@ fn deposit_regrowth_samples(
 /// It is one function precisely so the two cannot diverge: an unopened deposit publishes the same
 /// derivations, through the same seams, as a working standing on its branch's free floor. `capacity`
 /// is passed in rather than re-read because the caller struck it to decide the row exists at all.
+#[allow(clippy::too_many_arguments)] // the row's own inputs, plus the capture tick the forecast is dated from
 fn deposit_row(
     source: &DepositSource,
     ground: &Tile,
@@ -182,12 +193,34 @@ fn deposit_row(
     config: &crate::extraction_config::ExtractionConfig,
     equipment: &crate::equipment_config::EquipmentConfig,
     build_kits: &crate::snapshot::subsistence::QueuedBuildSources,
+    current_turn: u64,
 ) -> sim_runtime::DepositState {
     let tile = source.tile;
     let payoff = deposit_payoff(source.standing(), ladder);
     let measure = deposit_measure(source, ground, config);
     let demand = deposit_keeping_basis(source, measure, ladder);
     let grace = deposit_neglect_grace_remaining(source, ladder);
+    let pace = source
+        .build_pace
+        .filter(|_| build_kits.deposit_is_queued(tile, &source.material));
+    let keeping = crate::snapshot::subsistence::keeping_forecast_wire(
+        crate::intensification::keeping_forecast(
+            demand,
+            source.ladder_position(),
+            pace,
+            |position| {
+                let mut at = source.clone();
+                at.upkeep_demanded = None;
+                at.set_ladder_position(
+                    position,
+                    ladder,
+                    pace.map_or(source.standing().held.branch(), |pace| pace.rung.branch()),
+                );
+                deposit_keeping_basis(&at, measure, ladder)
+            },
+        ),
+        current_turn,
+    );
     // **THE GROUND'S OWN RATE, UN-SCALED** — the reading `deposit_effective_floor` forks the crew's
     // floor on and `deposit_runway` forks the readout on. The field published below scales it by the
     // rung; these are two different questions off one number, so it is read once.
@@ -253,6 +286,11 @@ fn deposit_row(
         // broken by a working nobody stamped a shortfall onto.
         upkeep_shortfall: crate::intensification::upkeep_shortfall(demand, source.upkeep_supplied),
         upkeep_workers_needed: deposit_upkeep_workers_needed(source, measure, ladder),
+        // **THE KEEPING LINE'S TWO FORECASTS** (`docs/plan_site_crews.md`) — the same bill, projected
+        // along the in-flight rung's own pace. The pace is the builder's state, so it is read only
+        // where one of the viewer's bands has this working queued — the countdown's own gate.
+        upkeep_workers_at_completion: keeping.0,
+        upkeep_next_worker_turn: keeping.1,
         has_neglect_grace: grace.is_some(),
         neglect_grace_remaining: grace.unwrap_or(NO_NEGLECT_REMAINING),
         // ⛔ **THE COUNTDOWN, THROUGH THE SEAM ALL FOUR BRANCHES GO THROUGH** — so a working cannot

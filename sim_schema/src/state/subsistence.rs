@@ -409,6 +409,14 @@ pub struct HerdTelemetryState {
     /// therefore contradicted this identity for most of a `Tame`.
     #[serde(default)]
     pub upkeep_workers_needed: u32,
+    /// **Whole workers the keeping takes once the rung in flight is finished** — equal to
+    /// `upkeep_workers_needed` where no build is in flight (`docs/plan_site_crews.md`).
+    #[serde(default)]
+    pub upkeep_workers_at_completion: u32,
+    /// **The game turn the keeping first needs one more whole worker than now**, projected along
+    /// the build's own pace; [`NO_NEXT_KEEPING_WORKER`] = never within the build.
+    #[serde(default = "no_next_keeping_worker")]
+    pub upkeep_next_worker_turn: i32,
     /// **Is there anything here to neglect?** `false` for a **wild** herd — nobody's to keep, so it
     /// never sheds and [`Self::neglect_grace_remaining`] means nothing. Read this first, exactly as
     /// [`ForagePatchState::owner`]'s `has_owner` companion is read first.
@@ -1002,6 +1010,8 @@ impl Default for HerdTelemetryState {
             upkeep_supplied: 0.0,
             upkeep_shortfall: 0.0,
             upkeep_workers_needed: 0,
+            upkeep_workers_at_completion: 0,
+            upkeep_next_worker_turn: NO_NEXT_KEEPING_WORKER,
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
             provisions_per_biomass: 0.0,
@@ -1282,6 +1292,14 @@ pub struct ForagePatchState {
     /// what a single worker allocation forced, and each activity answers for itself now.
     #[serde(default)]
     pub upkeep_workers_needed: u32,
+    /// **Whole workers the keeping takes once the rung in flight is finished** — equal to
+    /// `upkeep_workers_needed` where no build is in flight (`docs/plan_site_crews.md`).
+    #[serde(default)]
+    pub upkeep_workers_at_completion: u32,
+    /// **The game turn the keeping first needs one more whole worker than now**, projected along
+    /// the build's own pace; [`NO_NEXT_KEEPING_WORKER`] = never within the build.
+    #[serde(default = "no_next_keeping_worker")]
+    pub upkeep_next_worker_turn: i32,
     /// **Is there anything here to neglect?** `false` for a wild patch (both improvement meters at
     /// zero), which is most of them. Read this before [`Self::neglect_grace_remaining`].
     #[serde(default)]
@@ -1938,6 +1956,14 @@ pub struct DepositState {
     /// Whole keeping hands the bill wants — `ceil(demand / per-worker output)`. `0` for a
     /// working that owes nothing.
     pub upkeep_workers_needed: u32,
+    /// **Whole workers the keeping takes once the rung in flight is finished** — equal to
+    /// `upkeep_workers_needed` where no build is in flight (`docs/plan_site_crews.md`).
+    #[serde(default)]
+    pub upkeep_workers_at_completion: u32,
+    /// **The game turn the keeping first needs one more whole worker than now**, projected along
+    /// the build's own pace; [`NO_NEXT_KEEPING_WORKER`] = never within the build.
+    #[serde(default = "no_next_keeping_worker")]
+    pub upkeep_next_worker_turn: i32,
     /// `false` = **nothing at risk here** (a working on either free floor, which declares no
     /// upkeep). Read this before the countdown beside it.
     pub has_neglect_grace: bool,
@@ -1998,6 +2024,17 @@ pub struct DepositState {
 /// **NO HAND WAS SPENT KEEPING** — `upkeep_hands`' reading on a source nobody keeps.
 pub const NO_UPKEEP_HANDS: f32 = 0.0;
 
+/// **The keeping needs no more whole workers within the build** — the wire's `-1` on
+/// `upkeepNextWorkerTurn`: nothing in flight, the build is not dated, or no whole-worker step
+/// before it completes.
+pub const NO_NEXT_KEEPING_WORKER: i32 = -1;
+
+/// The serde default of `upkeep_next_worker_turn` — [`NO_NEXT_KEEPING_WORKER`], never a `0` that
+/// would read as a turn.
+fn no_next_keeping_worker() -> i32 {
+    NO_NEXT_KEEPING_WORKER
+}
+
 impl Default for DepositState {
     fn default() -> Self {
         Self {
@@ -2024,6 +2061,8 @@ impl Default for DepositState {
             upkeep_supplied: 0.0,
             upkeep_shortfall: 0.0,
             upkeep_workers_needed: 0,
+            upkeep_workers_at_completion: 0,
+            upkeep_next_worker_turn: NO_NEXT_KEEPING_WORKER,
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
             // Same rule one field over: `0` renders as a finished build.

@@ -914,6 +914,9 @@ mod tests {
     const PUBLISHING_SEAT: crate::orders::FactionId = crate::orders::FactionId(0);
 
     use super::*;
+
+    /// The tick these fixtures capture at — no turn has been resolved.
+    const FIXTURE_TURN: u64 = 0;
     // Used only by the fixtures below. They lived at file scope while
     // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
     use crate::components::{
@@ -989,6 +992,7 @@ mod tests {
         // and an empty registry is exactly the "K is frozen" state `settled_capacity` answers for.
         let graze = crate::graze::GrazeRegistry::default();
         herd_snapshot_entries(HerdSnapshotInputs {
+            current_turn: FIXTURE_TURN,
             telemetry,
             registry,
             fauna,
@@ -2355,6 +2359,7 @@ mod tests {
             // Nothing is queued in this fixture, so no patch names a builders kit.
             &crate::snapshot::subsistence::QueuedBuildSources::default(),
             &crate::snapshot::subsistence::WorkedSources::default(),
+            FIXTURE_TURN,
             // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
             // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
             // must not stand between the assertion and the field it is about.
@@ -2419,6 +2424,7 @@ mod tests {
             &FloraQuoteCache::default(),
             &crate::snapshot::subsistence::QueuedBuildSources::default(),
             &crate::snapshot::subsistence::WorkedSources::default(),
+            FIXTURE_TURN,
             // **Fog OFF: this fixture is not about who is looking.** The improvement gate is
             // exercised on the encoded frame in `core_sim/tests/frame_is_viewer_scoped.rs`; here it
             // must not stand between the assertion and the field it is about.
@@ -2959,6 +2965,7 @@ mod tests {
                 &FloraQuoteCache::default(),
                 &crate::snapshot::subsistence::QueuedBuildSources::default(),
                 &crate::snapshot::subsistence::WorkedSources::default(),
+                FIXTURE_TURN,
                 // Fog OFF — see the sibling fixtures above.
                 FactionId(0),
                 &crate::visibility::VisibilityLedger::default(),

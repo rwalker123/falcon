@@ -1662,7 +1662,7 @@ func run(harness) -> void:
 	# patch is capped at `MAX_USEFUL_BARREN` (1) — NOT left UNBOUNDED, which is what an undescribed one
 	# gets and what the old rate-based `known` wrongly handed this state.
 	h._assert_hud("a described-but-empty patch caps workers rather than going unbounded",
-		SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
+		SourceForecast.take_useful_workers(SourceForecast.forecast_inputs(
 			dead_season, SourceForecast.SOURCE_KIND_FORAGE,
 			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK))
 			== SourceForecast.MAX_USEFUL_BARREN)
@@ -1736,8 +1736,11 @@ func run(harness) -> void:
 	var full_hold = Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD)
 	h._assert_hud("a source with no room still admits the crew that HOLDS it — the cap floors on the hold number",
 		full_hold > 0)
+	# …plus the site's keeping hands, which the cap adds on top of the take's (`max_useful_workers`).
+	var full_keep := int(full_patch.get("patch_upkeep_workers_needed", 0))
 	h._assert_hud("the verdict reads the crew the stepper shows, not one the cap is about to clamp away",
-		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == mini(ForageFx.FLOOR_CHART_CREW, full_hold))
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet)
+			== mini(ForageFx.FLOOR_CHART_CREW, full_hold + full_keep))
 
 	# State floor_chart_drawn_down — THE SAME PATCH ALREADY DRAWN DOWN, worked below the food peak.
 	# The stock band is amber (the patch reports Stressed), the floor sits under it, and the projection
@@ -2210,7 +2213,7 @@ func run(harness) -> void:
 	# fixture the issue is named after, in the same frame, because "not barren" is trivially satisfied
 	# by a cap that stopped answering at all.
 	h._assert_hud("…while a patch that pays nothing anywhere still caps at one worker",
-		SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
+		SourceForecast.take_useful_workers(SourceForecast.forecast_inputs(
 			ForageFx.floorify(_dead_season_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX),
 			SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
 			SourceForecast.FLOOR_FOOD_PEAK)) == SourceForecast.MAX_USEFUL_BARREN)
@@ -2338,7 +2341,7 @@ func run(harness) -> void:
 		SourceForecast.FLOOR_FOOD_PEAK)
 	h._assert_hud("…while a patch that pays into no account at all is still capped at one worker",
 		not SourceForecast.pays_any_account(dead_forecast)
-			and SourceForecast.max_useful_workers(dead_forecast)
+			and SourceForecast.take_useful_workers(dead_forecast)
 				== SourceForecast.MAX_USEFUL_BARREN)
 	# (5) …and the sheet quotes the tobacco those tenders bring home, so the cap was widened rather
 	# than the readout silenced.

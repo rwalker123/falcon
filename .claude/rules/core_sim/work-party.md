@@ -50,6 +50,14 @@ A source the band's own hands reach takes **no party at all**, and every number 
 it was before any of this existed. Far work *falls out of* one model instead of sitting beside it
 only while that holds.
 
+**A work party IS its row — no near/far distinction beyond the physics of the walk** (carry, porters
+on the road, the keeping paid only by the hands present). Every feature a local crew has, a party
+has, **Priority included**: its take-kit claim is settled at its row's own rank
+(`BandItemBudget`, `docs/plan_site_crews.md` §2.3), and every forecast that prices a party — the
+caravan (`CaravanPricing`), the trip and denial sheets, the compose query — ranks it at that row's
+Priority, or at the default a new row is given where no row exists yet. Pinned by
+`kit_selection::a_high_party_beats_a_normal_local_row_for_a_scarce_kit`.
+
 `work_party::party_begins_past` is the one place the threshold lives, and it is **`band_work_range`
 for every job**. Hunt gets no longer apron than forage: the retired `hunt_reach` was a patch over the
 wrong model, and a party that follows its herd never roams out of range.
@@ -307,7 +315,11 @@ units per turn.
 
 **The reply** is `posts_a_party`, `rate_home`, `walk_tiles`, `walk_turns`, `hunters_on_the_road` (a
 mean, so a float) and `first_load_turn` (1-based, `0` = none within the horizon) — every walk field
-reads `0` inside the apron.
+reads `0` inside the apron — plus **`take_next_turn`** (next turn's take AT THE SOURCE by the asked
+crew, struck on the hands its keeping leaves, before any walk) and **`keep_hands`** (the fractional
+hands it spends keeping), appended (proto 7 / 8). They are what the compose sheet previews a crew of
+`n` on every web, rather than pricing every worker as a taker; pinned on a patch by
+`forage_cultivation::a_kept_patchs_next_turn_take_is_quoted_on_the_hands_its_keeping_leaves`.
 
 ## Every exit brings everything home, through ONE settle step
 

@@ -838,6 +838,13 @@ pub struct WorkPartyForecastReply {
     pub hunters_on_the_road: f32,
     /// The 1-based turn the first load lands, or `0` for none within the horizon.
     pub first_load_turn: u32,
+    /// **Next turn's take AT THE SOURCE by the asked crew, after keeping** — food off a herd or a
+    /// patch, the material's units off a deposit, by the hands the site's keeping leaves
+    /// (`docs/plan_site_crews.md` §2.1). Before any walk: a far crew's take lands home later.
+    pub take_next_turn: f32,
+    /// **The hands the asked crew spends keeping the site**, fractional — `workers − keep_hands`
+    /// gather, hunt or cut.
+    pub keep_hands: f32,
 }
 
 /// The grid the player is **configuring**, not the one the server is running: the ceiling is a
@@ -2978,6 +2985,8 @@ impl QueryReplyEnvelope {
                     walk_turns: answer.walk_turns,
                     hunters_on_the_road: answer.hunters_on_the_road,
                     first_load_turn: answer.first_load_turn,
+                    take_next_turn: answer.take_next_turn,
+                    keep_hands: answer.keep_hands,
                 })
             }
             QueryReply::SaveOp(reply) => {
@@ -3075,6 +3084,8 @@ impl QueryReplyEnvelope {
                     walk_turns: answer.walk_turns,
                     hunters_on_the_road: answer.hunters_on_the_road,
                     first_load_turn: answer.first_load_turn,
+                    take_next_turn: answer.take_next_turn,
+                    keep_hands: answer.keep_hands,
                 })
             }
             pb::query_reply_envelope::Reply::ListSaves(reply) => QueryReply::ListSaves(
@@ -3498,6 +3509,8 @@ mod tests {
                 walk_turns: 7,
                 hunters_on_the_road: 1.5,
                 first_load_turn: 11,
+                take_next_turn: 12.5,
+                keep_hands: 1.25,
             }),
         };
         let bytes = reply.encode_to_vec().expect("encode");
