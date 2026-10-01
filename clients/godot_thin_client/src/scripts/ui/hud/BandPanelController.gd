@@ -2025,16 +2025,23 @@ func _build_work_section_head(key: StringName, on_work: int) -> HBoxContainer:
 ## rebuild on the press kills any gesture that could start under it (PR #574's autopsy).
 func _install_work_section_chevron(head: HBoxContainer, key: StringName, collapsed: bool) -> void:
     var chevron := Button.new()
-    chevron.text = HudWorkVocab.WORK_SECTION_CHEVRON_CLOSED if collapsed \
-        else HudWorkVocab.WORK_SECTION_CHEVRON_OPEN
     chevron.tooltip_text = HudWorkVocab.WORK_SECTION_CHEVRON_CLOSED_TOOLTIP if collapsed \
         else HudWorkVocab.WORK_SECTION_CHEVRON_OPEN_TOOLTIP
     chevron.focus_mode = Control.FOCUS_NONE
     chevron.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-    chevron.custom_minimum_size = Vector2(HudWorkVocab.WORK_SECTION_CHEVRON_WIDTH, 0.0)
+    chevron.custom_minimum_size = Vector2(HudWorkVocab.WORK_SECTION_CHEVRON_WIDTH,
+        HudWorkVocab.WORK_SECTION_CHEVRON_HEIGHT)
     HudStyle.apply_button(chevron, "ghost")
     HudWidgets.compact(chevron, HudWorkVocab.WORK_ROW_FONT_SIZE, HudWorkVocab.WORK_PAGER_PADDING_V)
-    chevron.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    # **THE TRIANGLE IS DRAWN, NOT TYPED** (`DisclosureTriangle`): laid over the button full-rect and
+    # centred in it by geometry, so it sits dead centre at every interface scale.
+    var triangle := DisclosureTriangle.new()
+    triangle.side = HudWorkVocab.WORK_SECTION_TRIANGLE_SIDE
+    triangle.expanded = not collapsed
+    triangle.color = HudStyle.INK_DIM
+    triangle.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    triangle.set_meta(HudWorkVocab.WORK_SECTION_TRIANGLE_META, not collapsed)
+    chevron.add_child(triangle)
     chevron.set_meta(HudWorkVocab.WORK_SECTION_CHEVRON_META, key)
     chevron.pressed.connect(func() -> void: _toggle_work_section(key))
     head.add_child(chevron)

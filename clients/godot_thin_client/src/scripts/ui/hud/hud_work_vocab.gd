@@ -3566,16 +3566,22 @@ const WORK_SECTION_TITLES := {
 ## queue, the Roadwork pool on the roads, and the summed crews of the site rows on the three webs.
 const WORK_SECTION_READOUT_FORMAT := "%d on work"
 
-## The collapse chevron, the head's FIRST child. ⛔ **Not `▸` / `▾`**: `▸` is the build queue's HEAD
-## marker two rows below this head, and one glyph meaning *folded* on a head and *funded* on a row of
-## the same section is a collision.
-const WORK_SECTION_CHEVRON_OPEN := "⌄"
-const WORK_SECTION_CHEVRON_CLOSED := "›"
+## The collapse control, the head's FIRST child: a ghost Button carrying a DRAWN filled triangle
+## (`DisclosureTriangle` — `▼` open, `▶` folded), centred in the button by geometry. It replaced the
+## `⌄` / `›` glyphs, which sat off-centre in the button by the font's own metrics.
 const WORK_SECTION_CHEVRON_OPEN_TOOLTIP := "Collapse this section."
 const WORK_SECTION_CHEVRON_CLOSED_TOOLTIP := "Expand this section."
 
-## The chevron's square — the compact ghost button's own width at this zone's row type.
+## The chevron's square — the compact ghost button's own width at this zone's row type, and the
+## section head's own height, so the button keeps the hit area and the row height the glyph gave it.
 const WORK_SECTION_CHEVRON_WIDTH := 22.0
+const WORK_SECTION_CHEVRON_HEIGHT := WORK_SECTION_HEAD_HEIGHT
+
+## The drawn triangle's side.
+const WORK_SECTION_TRIANGLE_SIDE := 8.0
+
+## The triangle's handle on its button, valued whether it is drawn open.
+const WORK_SECTION_TRIANGLE_META := &"work_section_triangle"
 
 ## Handles: the head carries its section key; the chevron carries its section key; the section's
 ## outer column carries its key, and whether it is collapsed.

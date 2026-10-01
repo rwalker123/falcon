@@ -24751,6 +24751,7 @@ func _render_work_sections_states() -> void:
 		HudWorkVocab.WORK_SECTION_AGRICULTURE)
 	_assert_band_panel("collapse — the AGRICULTURE head carries its chevron", chevron is Button)
 	if chevron is Button:
+		_assert_section_triangle_centred("open", chevron as Button, true)
 		if _is_headless():
 			(chevron as Button).pressed.emit()
 		else:
@@ -24772,6 +24773,7 @@ func _render_work_sections_states() -> void:
 		var again := _find_meta_control_valued(_panel, HudWorkVocab.WORK_SECTION_CHEVRON_META,
 			HudWorkVocab.WORK_SECTION_AGRICULTURE)
 		if again is Button:
+			_assert_section_triangle_centred("folded", again as Button, false)
 			if _is_headless():
 				(again as Button).pressed.emit()
 			else:
@@ -25022,3 +25024,38 @@ func _row_title_x(site: Control) -> float:
 		if line.get_child_count() > 1 and line.get_parent() is VBoxContainer:
 			return (line.get_child(1) as Control).get_global_rect().position.x
 	return -1.0
+
+
+## The section-head triangle's drawn bounds may sit this far off the button's centre on either axis.
+const SECTION_TRIANGLE_CENTRE_TOLERANCE := 1.0
+
+## ⛔ **THE SECTION HEAD'S TRIANGLE IS CENTRED IN ITS BUTTON, MEASURED OFF THE DRAWN GEOMETRY** — the
+## triangle's bounding box (`DisclosureTriangle.drawn_rect`, through its global transform) against the
+## button's global rect, both axes, ±1px; and it points the right way (`▼` open, `▶` folded: a ▼ is
+## wider than tall, a ▶ taller than wide). The `⌄` / `›` glyphs it replaced sat off-centre by the
+## font's own metrics, which is what this pins.
+func _assert_section_triangle_centred(state: String, button: Button, expanded: bool) -> void:
+	var triangle: DisclosureTriangle = null
+	for child in button.get_children():
+		if child is DisclosureTriangle:
+			triangle = child
+	_assert_band_panel("section triangle (%s) — the chevron draws a DisclosureTriangle and no glyph (text \"%s\")"
+			% [state, button.text],
+		triangle != null and button.text == "")
+	if triangle == null:
+		return
+	var drawn := triangle.get_global_transform() * triangle.drawn_rect()
+	var box := button.get_global_rect()
+	var off := drawn.get_center() - box.get_center()
+	print("band_panel_preview: section triangle (%s) — button %s, triangle %s, centre offset (%.2f, %.2f)"
+		% [state, box, drawn, off.x, off.y])
+	_assert_band_panel("section triangle (%s) — its drawn bounds are centred in the button (offset %.2f, %.2f)"
+			% [state, off.x, off.y],
+		absf(off.x) <= SECTION_TRIANGLE_CENTRE_TOLERANCE and absf(off.y) <= SECTION_TRIANGLE_CENTRE_TOLERANCE)
+	_assert_band_panel("section triangle (%s) — it points %s" % [state, "down" if expanded else "right"],
+		triangle.expanded == expanded
+			and ((drawn.size.x > drawn.size.y) if expanded else (drawn.size.y > drawn.size.x)))
+	_assert_band_panel("section triangle (%s) — the button keeps its hit area (%.0f x %.0f)"
+			% [state, box.size.x, box.size.y],
+		box.size.x >= HudWorkVocab.WORK_SECTION_CHEVRON_WIDTH
+			and box.size.y >= HudWorkVocab.WORK_SECTION_CHEVRON_HEIGHT)
