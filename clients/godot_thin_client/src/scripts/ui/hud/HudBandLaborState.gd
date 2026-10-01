@@ -1747,20 +1747,24 @@ func take_species_for_forage(band: Dictionary, x: int, y: int) -> PackedStringAr
 ## has ONE stepper and this is once again a plain per-activity ceiling — the shape it started as,
 ## reached from the other side.
 ##
-## It reads the published `idleWorkers` — `BandWorkforce::idle()`, every committed hand netted out,
-## the bench included — rather than `effective_idle`, which is the OPTIMISTIC answer carrying the
-## pending overlay. A ceiling composed from that would offer a crew on the strength of a command the
-## server has not acknowledged.
+## ⛔ **IT IS THE WORK ROW'S IDLE RULE — `effective_idle` plus the EFFECTIVE crew here — so the
+## sheet's `+` and the row's `+` gate on one count.** It read the published `idleWorkers` plus the
+## wire crew, on the reasoning that a ceiling built on the optimistic overlay offers a crew on the
+## strength of a command the server has not acknowledged. The row's `+` cannot take that rule — it
+## has to count its own just-pressed edits or repeated presses outrun the band — so the two rules
+## disagreed exactly while an edit was in flight: a `+` pressed on one row left the sheet beside it
+## offering the hand the row had just spent. `effective_idle` nets the bench and every role row the
+## same way `BandWorkforce::idle()` does, so on a settled frame the two readings are equal.
 func source_crew_pool_hunt(band: Dictionary, herd_id: String) -> int:
-	return maxi(int(band.get("idle_workers", 0)) + workers_for_hunt(band, herd_id), 0)
+	return maxi(effective_idle(band) + effective_hunt_workers(band, herd_id), 0)
 
 func source_crew_pool_forage(band: Dictionary, x: int, y: int) -> int:
-	return maxi(int(band.get("idle_workers", 0)) + workers_for_forage(band, x, y), 0)
+	return maxi(effective_idle(band) + effective_forage_workers(band, x, y), 0)
 
 ## …and the deposit twin, keyed through the `(tile, material)` PAIR for `extract_assignment_of`'s
 ## reason: a tile-keyed pool would offer the Wood crew's hands back to the Stone sheet beside it.
 func source_crew_pool_extract(band: Dictionary, x: int, y: int, material: String) -> int:
-	return maxi(int(band.get("idle_workers", 0)) + workers_for_extract(band, x, y, material), 0)
+	return maxi(effective_idle(band) + effective_extract_workers(band, x, y, material), 0)
 
 ## **A RUNG THIS FACTION HAS DECLARED AND PUT NOBODY ON** — the declared verb when every band working
 ## the source has zero builders on it, `IMPROVEMENT_NONE` otherwise. The client half of the

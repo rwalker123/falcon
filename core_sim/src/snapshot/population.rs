@@ -1412,9 +1412,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                     // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — resolved with the coverage
                     // above, off the one budget, so the line and the reach beside it agree.
                     row.kit_toe = row_gear[i].2.clone();
-                    // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the plateau of
-                    // the deposit crew curve over the same pool the hunt row's cap is struck over,
-                    // read by the sheet's own rule. `0` on every non-extract row.
+                    // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the crew
+                    // whose capacity reaches the room above the row's floor, crew-independent
+                    // (`extraction::useful_cutters`). `0` on every non-extract row.
                     if let LaborTarget::Extract { tile, material, .. } = &assignment.target {
                         if let (Some(ground), Some(carry)) = (
                             (build_sources.ground_of)(*tile),
@@ -1434,7 +1434,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                                 assignment,
                                 &kit,
                                 &ground,
-                                assignment.workers.saturating_add(idle_workers),
                                 &carry,
                             );
                         }

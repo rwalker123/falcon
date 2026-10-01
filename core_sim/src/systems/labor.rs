@@ -8901,8 +8901,31 @@ pub fn advance_labor_allocation(
                     } else {
                         take_payoff.yield_per_worker_turn
                     };
+                    // ⛔ **THE CREW THAT REACHES THE ROOM, NOT THE TAKE OVER THE CREW'S AVERAGE
+                    // RATE** — the forage and hunt rule on the deposit web
+                    // ([`crate::extraction::deposit_crew_needed`], `docs/plan_site_crews.md` §4),
+                    // the keep hands folded in once. A crew short of the room reads above itself.
                     yields[idx].workers_needed =
-                        workers_needed_for_take(outcome.taken, per_worker_take, workers);
+                        if outcome.reachable_before > crate::extraction::DEPOSIT_EMPTY {
+                            crate::extraction::deposit_crew_needed(
+                                outcome.reachable_before,
+                                held_rung,
+                                &take_payoff,
+                                &item_budget.reach_coverage_for_source(
+                                    &assignment.target,
+                                    &crew_kit,
+                                    take_hands,
+                                    &band_kit,
+                                    &equipment_cfg,
+                                ),
+                                &equipment_cfg,
+                                &band_kit,
+                                deposit_carry.as_ref(),
+                                keep_hands,
+                            )
+                        } else {
+                            workers_needed_for_take(outcome.taken, per_worker_take, workers)
+                        };
                     // **THE LESSON, on the rung the working STANDS on** — `deadfall` teaches
                     // woodcraft, `felling` conservationism, `gathering` quarrying. Credited once per
                     // source per turn and never per worker, the ladder's own rule.
@@ -9421,14 +9444,18 @@ pub fn advance_labor_allocation(
         // overstaffing signal `workers > workers_needed` has to count both halves. `site_keeping`
         // is index-aligned with `yields` until the lapse removal below.
         //
-        // **A forage row folded its keeping in already** ([`crate::forage::forage_crew_needed`]),
+        // **A forage and an extract row folded their keeping in already**
+        // ([`crate::forage::forage_crew_needed`], [`crate::extraction::deposit_crew_needed`]),
         // rounding once.
         for ((row, keeping), assignment) in yields
             .iter_mut()
             .zip(site_keeping.iter())
             .zip(allocation.assignments.iter())
         {
-            if matches!(assignment.target, LaborTarget::Forage { .. }) {
+            if matches!(
+                assignment.target,
+                LaborTarget::Forage { .. } | LaborTarget::Extract { .. }
+            ) {
                 continue;
             }
             row.workers_needed =

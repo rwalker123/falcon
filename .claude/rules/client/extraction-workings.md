@@ -763,6 +763,18 @@ not apply*) reads as `CUTTERS_UNCAPPED`. **There is no client quotient over the 
 `perWorkerBiomass` left anywhere**: `max_useful_cutters` is deleted, so a geared crew is measured
 against one ceiling on all three surfaces.
 
+⛔ **AND THE SHEET READS THE ROW'S FIGURE WHILE IT COMPOSES THAT ROW.** The curve's plateau and
+`useful_cutters` are the same rule but two evaluations, and they disagreed: a one-forester deadfall's
+Groundwork `+` greyed while the sheet on the same tile offered two. So where the sheet's floor and kit
+match the band's own `extract` row (`DrawerComposeController._composed_standing_row`), its cap is
+`published_useful_cutters` off that row; on any other composition the curve answers. The sheet's crew
+pool is the row's idle rule too — `source_crew_pool_extract` is `effective_idle` plus the effective
+crew here (`labor-ui.md` → "THE SHEET'S `+` AND THE ROW'S `+` READ ONE CEILING").
+
+⛔ **NEVER `workers_needed` FOR THE ROW'S `+`.** It was, for one release: `_workings_roster_max_useful`
+took `worked_crew_ceiling`, which reads `workers_needed` first. On an `extract` row that field is the
+take inverted and clamped into `[1, crew]`, so the `+` died as soon as the crew cut anything.
+
 ### ⛔ THE CREW NOUN IS PER BRANCH, NEVER PER RUNG
 
 The `Harvesters` rule (`labor-ui.md`): *a build in flight does not move the noun*. A crew cutting a
@@ -1304,12 +1316,13 @@ source list's `ATTENTION_OVERSTAFFED` clause and the Groundwork roster's value c
 this one producer — two spellings would teach the player two marks for one state, the standing rule
 `GATE_SHORT_NO_CREW` follows one section down.
 
-The predicate is `SourceForecast.worked_crew_is_wasted` (`workers > ceiling`, strictly, the ceiling
-being the sim's `workers_needed` where published) and nothing here re-derives it; what differs per
-web is only which FALLBACK ceiling is handed in — `max_useful_workers` for the
-food webs, the crew curve's plateau for a working (`curve_useful_cutters` on the sheet,
-`published_useful_cutters` off the committed row). `labor-ui.md` → "The cap note and the waste hazard are
-two questions of one ceiling" holds the predicate's own rules.
+The predicate is `SourceForecast.crew_is_wasted` (`workers > ceiling`, strictly) and nothing here
+re-derives it. On the food webs the ceiling is the sim's `workers_needed` where published, with
+`max_useful_workers` as the fallback. ⛔ **A working's ceiling is `published_useful_cutters` and never
+`workers_needed`**: on an `extract` row that field is the take inverted and clamped into
+`[1, crew]`, so it can never exceed the crew standing there and an overstaffed reading on it could
+never fire. `labor-ui.md` → "The cap note and the waste hazard are two questions of one ceiling"
+holds the predicate's own rules.
 
 ⛔ **`hazard_clause` RANKS THE TWO, IT DOES NOT JOIN THEM.** Its signature is
 `hazard_clause(deposit, cutters = CUTTERS_UNSTATED, useful = CUTTERS_UNCAPPED)`: a working at risk

@@ -3414,3 +3414,39 @@ subtracted.
 **A clean run is 445 frames / 2324 `PASS`, exit 0 — RE-MEASURED windowed** on the band-verbs branch
 merged with the work party, not summed from either side.
 
+
+## `chapters/crew_cap_parity.gd` — the sheet's `+` and the row's `+` agree
+
+**Appended LAST in `CHAPTERS`**, PNG-less, `EXPECTED_CHECKPOINTS` **15** — RE-MEASURED, not summed.
+The behaviour is `labor-ui.md`'s → "THE SHEET'S `+` AND THE ROW'S `+` READ ONE CEILING"; what belongs
+here is the shape of the drive.
+
+**ONE FIXTURE SOURCE FOR BOTH SURFACES.** One band (entity 961) on the food tile carries a forage row,
+a hunt row on a fought herd, and an extract row on the next hex's wood, each published at a ceiling of
+3, each row's `kit_id` the kit the sheet itself resolves (`_resolved_kit`), and two idle hands
+(`PARITY_IDLE`, with `working_age` derived from the crews so the band is internally consistent). Each
+web is asked in three states, and both `+`s must agree in each:
+
+| state | both `+`s |
+|---|---|
+| the crew AT its ceiling | dead |
+| the crew BELOW it, two idle | live |
+| the crew below it, the two idle spent by a pending scout edit | dead |
+
+**Both `+`s are read off rendered controls.** The row's is `can_add` off `_work_source_models` for
+food and the `+` of `_build_extract_row` for a working (`_workings_roster_models` carries no
+`workers`, which made the first cut of this claim pass at the cap on a live `+`); the sheet's is its
+crew row's `+`, opened fresh after `reset_*_source`, so the seed is the row's.
+
+**Sabotage-verified twice, disjointly.** The sheet ignoring the standing row
+(`_composed_standing_row` → `{}`) fails exactly forage and extract AT THE CAP (`row dead, sheet live`).
+The sheet's pool back on the wire's `idle_workers` fails exactly the three PENDING claims. **Hunt does
+not fail the first**: this herd's curve plateau coincides with its published `hunt_useful_workers`,
+so the hunt half guards the idle rule and not the ceiling.
+
+**The idle-rule change exposed four fixtures whose `idle_workers` disagreed with `working_age` minus
+their rows** (`hunt.gd`'s `_delivered_oracle_band`, the panel-band roster and its stale copy;
+`workings.gd`'s worked quarry). Each is corrected rather than worked around: a band no server can send
+was being priced on the wire's number, and the sheet now reads the overlay's.
+
+**A clean run is 460 frames / 2448 `PASS`, exit 0 — RE-MEASURED windowed.**

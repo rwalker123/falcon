@@ -291,7 +291,9 @@ func _delivered_oracle_band() -> Dictionary:
 	return BandFx.with_band_id({
 		"name": "Ashfell", "id": "Ashfell", "entity": 840, "faction": 0, "size": 120,
 		"current_x": 66, "current_y": 10, "pos": [66, 10],
-		"working_age": 30, "idle_workers": 26,
+		# Nobody assigned, so every working-age hand is idle — the sim's invariant, which the sheet's
+		# crew pool reads (`effective_idle`) rather than trusting `idle_workers` beside it.
+		"working_age": 26, "idle_workers": 26,
 		"hunt_reach": 7, "work_range": 2, "max_expedition_party_size": 8,
 		"hunt_per_worker_provisions": 0.8,
 		"output_multiplier": 1.0,
@@ -3408,12 +3410,15 @@ const PANEL_BAND_PICKER_ABSENT := "<no Band: picker>"
 ## distance — the ONLY thing that differs between them is the idle crew, which is precisely what makes
 ## composing for the wrong band visible in the frame.
 func _panel_band_roster() -> Array:
+	# Each band's `working_age` IS its idle crew — nobody assigned — which is the sim's invariant
+	# (`idle_workers == working_age − assigned − bench`) and what the sheet's crew pool reads now
+	# (`HudBandLaborState.source_crew_pool_*`, `effective_idle` plus the crew on the source).
 	return [
 		BandFx.with_band_id({"entity": 841, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
-			"working_age": 14, "idle_workers": PANEL_BAND_PARENT_IDLE, "hunt_reach": 7, "work_range": 2,
+			"working_age": PANEL_BAND_PARENT_IDLE, "idle_workers": PANEL_BAND_PARENT_IDLE, "hunt_reach": 7, "work_range": 2,
 			"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": []}),
 		BandFx.with_band_id({"entity": 842, "faction": 0, "size": 40, "current_x": 67, "current_y": 10,
-			"working_age": 6, "idle_workers": PANEL_BAND_COLONY_IDLE, "hunt_reach": 7, "work_range": 2,
+			"working_age": PANEL_BAND_COLONY_IDLE, "idle_workers": PANEL_BAND_COLONY_IDLE, "hunt_reach": 7, "work_range": 2,
 			"max_expedition_party_size": 8, "activity": "forage", "labor_assignments": []}),
 	]
 
@@ -3422,6 +3427,7 @@ func _panel_band_roster() -> Array:
 func _stale_panel_band() -> Dictionary:
 	var stale: Dictionary = (_panel_band_roster()[PANEL_BAND_COLONY_INDEX - 1] as Dictionary).duplicate(true)
 	stale["idle_workers"] = PANEL_BAND_STALE_IDLE
+	stale["working_age"] = PANEL_BAND_STALE_IDLE
 	return stale
 
 ## The `Band:` picker's rendered FACE. Found STRUCTURALLY — `_build_band_picker` is the only row that

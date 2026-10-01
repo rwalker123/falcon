@@ -2368,6 +2368,11 @@ func _worked_quarry_band_fixture() -> Dictionary:
 		"material_yield": [{"material_id": "stone", "amount": WORKED_QUARRY_TAKE}],
 		"workers_needed": WORKED_QUARRY_CUTTERS,
 	})
+	# ⛔ **THE DIGGERS ARE NEW HANDS, NOT THE BAND'S IDLE ONES** — the sim's own invariant,
+	# `idle_workers == working_age − every assigned hand − the bench`. The compose sheet's crew pool is
+	# `effective_idle` plus the crew here (the Work row's idle rule), so a row appended without its
+	# hands silently spends the band's idle and moves the pool the sheet asks its curve at.
+	band["working_age"] = int(band["working_age"]) + WORKED_QUARRY_CUTTERS
 	return band
 
 ## …the same quarry with NOBODY cutting it: `-2` on the runway and a take of nothing.

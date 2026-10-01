@@ -5903,8 +5903,9 @@ flag anywhere on this panel.
 
 `overstaffed` is `HudDepositVocab.overstaffed_clause(workers, useful)` over
 `SourceForecast.crew_is_wasted` (through `worked_crew_ceiling`, the map list's own number),
-measured against the SAME `max_useful_workers` the row's `+` gate (`source_worker_cap_state`)
-is struck at — so the ceiling is resolved once per arm and spent twice.
+measured against the SAME ceiling the row's `+` gate is struck at — `SourceForecast.worked_row_ceiling`
+through `crew_cap_state`, the one reader the compose sheet also calls on this row — so the ceiling is
+resolved once per arm and spent twice.
 
 ⛔ **AND IT IS A FALLBACK, NOT A SECOND VOICE.** `workers_needed` is published on all three webs now,
 and where it answers `source_yield_readout` already states the condition in FIGURES on the row's face,

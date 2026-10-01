@@ -5961,7 +5961,12 @@ static func max_useful_workers(forecast: Dictionary) -> int:
 ## It lives inside `max_useful_workers`, where both twins pick it up without either caller being
 ## trusted to remember it.
 static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
-    var useful := max_useful_workers(forecast)
+    return crew_cap_state(max_useful_workers(forecast), workers, idle)
+
+## **THE SAME GATE, HANDED THE CEILING RATHER THAN A FORECAST** — what a worked row calls with
+## `worked_row_ceiling`'s answer, so the row's `+` and the compose sheet's (which caps at that same
+## number on the row's own composition) are struck at one ceiling by construction.
+static func crew_cap_state(useful: int, workers: int, idle: int) -> Dictionary:
     var no_idle := "" if idle > 0 else HudWorkVocab.STEPPER_NO_IDLE_REASON
     if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
         return {"can_add": idle > 0, "note": "", "blocked_reason": no_idle}
@@ -6016,6 +6021,30 @@ static func worked_crew_ceiling(entry: Dictionary, fallback_useful: int) -> int:
 
 static func worked_crew_is_wasted(entry: Dictionary, fallback_useful: int) -> bool:
     return crew_is_wasted(int(entry.get("workers", 0)), worked_crew_ceiling(entry, fallback_useful))
+
+## ⛔ **THE `+` CEILING OF A WORKED FOOD ROW — ONE PRODUCER, READ BY THE ROW AND BY ITS SHEET.**
+## `kind` is the row's labor kind, `entry` its assignment (the worker map's copy or the wire's), `src`
+## the LIVE source it works — the bare-keyed forage patch, or the herd from the world list (herds
+## migrate, so never the assignment's launch-time target). The answer is the sim's "most hands that
+## still help" (`docs/plan_site_crews.md` §4): a forage row's `workers_needed`
+## (`with_published_site_crew`), a hunt row's `hunt_useful_workers` (`with_published_useful_crew`),
+## the client's closed form only where the wire is silent. The working's twin is
+## `HudDepositVocab.published_useful_cutters`.
+##
+## ⛔ **THE COMPOSE SHEET CALLS THIS TOO, ON THE ROW'S OWN COMPOSITION**
+## (`DrawerComposeController._composed_standing_row`). It capped on its own curve's plateau while the
+## row capped here, so the same crew on the same ground could read `+` live on the sheet and dead on
+## the Work row — reported from play on a deadfall wood. Where the sheet composes something else (a
+## moved floor, another kit, another take selection) the published figure answers a question nobody
+## asked, and the sheet's curve keeps its job.
+static func worked_row_ceiling(kind: String, entry: Dictionary, src: Dictionary) -> int:
+    var floor := clamp_floor(float(entry.get("floor", DEFAULT_HARVEST_FLOOR)))
+    if kind == LABOR_KIND_FORAGE:
+        return max_useful_workers(with_published_site_crew(
+            forecast_inputs(src, SOURCE_KIND_FORAGE, BARE_SOURCE_PREFIX, floor),
+            int(entry.get("workers_needed", PUBLISHED_NO_USEFUL_CREW))))
+    return max_useful_workers(with_published_useful_crew(
+        forecast_inputs(src, SOURCE_KIND_HERD, BARE_SOURCE_PREFIX, floor), entry))
 
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling, the party's
 ## reach), scaled by the acting band's output multiplier (the sim exports the forecast at 1.0).

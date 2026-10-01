@@ -1026,26 +1026,57 @@ pub const NO_USEFUL_CUTTERS: u32 = 0;
 /// must crew to climb out of it.
 pub const USEFUL_CUTTERS_BARREN: u32 = 1;
 
-/// **HOW CLOSE COUNTS AS THE CURVE'S BEST** — relative, and the client's
-/// `SourceForecast.CREW_TAKE_REACH_TOLERANCE` exactly, because both read the same curve and must agree
-/// about where it stopped rising.
-const USEFUL_CUTTERS_REACH_TOLERANCE: f32 = 0.001;
+/// ⛔ **THE ROW'S WHOLE NEEDED CREW ON A WORKING — ITS `+` CAP** (`docs/plan_site_crews.md` §4),
+/// the forage and hunt rule on the deposit web: the fewest take hands whose capacity, at the units
+/// the row was settled plus the units still on the shelf, reaches `room`
+/// ([`crate::equipment_config::KitCoverage::hands_to_reach`], best-equipped first), plus its keep
+/// hands, rounded up **once**. A hand's capacity is its cut — the rung's bare rate plus its tools'
+/// `deposit_take` on the held rung — capped by what it can carry off ([`DepositCarry`]).
+///
+/// It does not move with the crew, and a crew short of the room reads above itself: another cutter
+/// would cut more.
+#[allow(clippy::too_many_arguments)] // the room, the rung, the coverage and the two rate sources
+pub fn deposit_crew_needed(
+    room: f32,
+    held: RungKey,
+    payoff: &RungExtractionPayoff,
+    reach: &crate::equipment_config::KitCoverage,
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &crate::components::BandEquipment,
+    carry: Option<&DepositCarry>,
+    keep_hands: f32,
+) -> u32 {
+    let held_key = held.wire_key();
+    let per_hand = |kit: &crate::equipment_config::KitChoice| {
+        let cut = payoff.yield_per_worker_turn
+            + equipment.deposit_take_per_worker(kit, band_kit, held.branch(), Some(&held_key));
+        carry.map_or(cut, |carry| {
+            cut.min(carry.crew_carry(
+                equipment.hunt_per_worker_biomass_capacity(carry.haul_baseline, kit, band_kit),
+                crate::equipment_config::ONE_EQUIPPED_HAND,
+            ))
+        })
+    };
+    let bare = per_hand(&equipment.no_kit());
+    (reach.hands_to_reach(room, per_hand, bare) + keep_hands.max(NO_HANDS_ON_THE_DEPOSIT)).ceil()
+        as u32
+}
 
 /// **HOW MANY CUTTERS THIS `extract` ROW'S WORKING CAN USE, GEAR INCLUDED** (#663) — published as
-/// `LaborAssignment.usefulCutters`, so the Work board's overstaffed flag stops where the compose
-/// sheet's `+` does.
+/// `LaborAssignment.usefulCutters`, the row's `+` cap.
 ///
-/// It is the plateau of the **same curve** [`deposit_crew_quote`] answers the sheet with — one quote
-/// per crew size `1..=pool` at the row's stored kit and floor, off the working as next turn finds it
-/// — read by the **same rule** the client reads that curve by (`HudDepositVocab.curve_useful_cutters`):
-/// `best` = the curve's largest take, and the answer is the smallest crew whose take reaches `best`
-/// within [`USEFUL_CUTTERS_REACH_TOLERANCE`]. A curve still rising at its last row answers `pool`
-/// (the client's `CUTTERS_UNCAPPED` reading, since `useful >= rows`); a curve paying nothing at any
-/// size answers [`USEFUL_CUTTERS_BARREN`].
-///
-/// `pool` is the row's own workers plus the band's idle hands — the crew the sheet's stepper can
-/// reach, and the pool `hunt_useful_workers` is struck over.
-#[allow(clippy::too_many_arguments)] // the curve's inputs, plus the ground and the pool
+/// ⛔ **IT IS [`deposit_crew_needed`], CREW-INDEPENDENT — NOT A PLATEAU OVER THE BAND'S POOL.** It
+/// was the smallest crew in `1..=pool` (the row's hands plus the band's idle ones) whose quote
+/// reached the curve's best, so a band with no idle hand published its own crew whatever more
+/// cutters would cut: a deadfall at 585.6 of 600, floored at half, worked by one sledded cutter at
+/// `+0.6` a turn, read `usefulCutters 1` and greyed the `+` while the compose sheet said a second
+/// forester would draw it down. It is now the crew whose capacity reaches the room above the row's
+/// floor, off the working as the next turn finds it ([`renew_deposit`] on a clone), at the units the
+/// row's claim settles plus the spare ones, after its keep hands at its crew — the same rule the
+/// forage and hunt rows' `workersNeeded` follow. The [`deposit_crew_quote`] curve rises up to it,
+/// one hand at a time, and that is the agreement. A working with no room answers
+/// [`USEFUL_CUTTERS_BARREN`].
+#[allow(clippy::too_many_arguments)] // the working's inputs, the rows' claims and the ground
 pub fn useful_cutters(
     equipment: &crate::equipment_config::EquipmentConfig,
     ladder: &LadderConfig,
@@ -1056,15 +1087,16 @@ pub fn useful_cutters(
     assignment: &crate::components::LaborAssignment,
     band_kit: &crate::components::BandEquipment,
     ground: &Tile,
-    pool: u32,
     carry: &DepositCarry,
 ) -> u32 {
-    let crate::components::LaborTarget::Extract { tile, material, .. } = &assignment.target else {
+    let crate::components::LaborTarget::Extract {
+        tile,
+        material,
+        floor,
+    } = &assignment.target
+    else {
         return NO_USEFUL_CUTTERS;
     };
-    if pool == NO_CREW_ON_THE_DEPOSIT {
-        return NO_USEFUL_CUTTERS;
-    }
     let capacity = tile_deposit_capacity(config, material, ground);
     let Some(branch) = deposit_branch(config, material) else {
         return NO_USEFUL_CUTTERS;
@@ -1077,35 +1109,39 @@ pub fn useful_cutters(
         .cloned()
         .unwrap_or_else(|| DepositSource::opening(*tile, material, capacity, branch));
     renew_deposit(&mut working, ground, config, ladder);
-    let kit = assignment.kit_choice(equipment);
-    let takes: Vec<f32> = (1..=pool)
-        .map(|crew| {
-            deposit_crew_quote(
-                equipment,
-                ladder,
-                config,
-                allocation,
-                claims,
-                &assignment.target,
-                &kit,
-                crew,
-                band_kit,
-                &working,
-                ground,
-                carry,
-            )
-            .take
-        })
-        .collect();
-    let best = takes.iter().copied().fold(DEPOSIT_EMPTY, f32::max);
-    if best <= DEPOSIT_EMPTY {
+    let payoff = deposit_payoff(working.standing(), ladder);
+    let room = deposit_reachable(
+        working.stock,
+        capacity,
+        tile_deposit_regrowth(config, material, ground),
+        &payoff,
+        *floor,
+    );
+    if room <= DEPOSIT_EMPTY {
         return USEFUL_CUTTERS_BARREN;
     }
-    let target = best * (1.0 - USEFUL_CUTTERS_REACH_TOLERANCE);
-    takes
-        .iter()
-        .position(|take| *take >= target)
-        .map_or(pool, |index| index as u32 + 1)
+    let crew = assignment.workers;
+    let keep_hands = crew_keep_hands(equipment, band_kit, &working, ground, config, ladder, crew);
+    let reach = allocation
+        .item_budget(equipment, claims)
+        .reach_coverage_for_source(
+            &assignment.target,
+            &assignment.kit_choice(equipment),
+            (crew as f32 - keep_hands).max(NO_HANDS_ON_THE_DEPOSIT),
+            band_kit,
+            equipment,
+        );
+    deposit_crew_needed(
+        room,
+        working.rung(),
+        &payoff,
+        &reach,
+        equipment,
+        band_kit,
+        Some(carry),
+        keep_hands,
+    )
+    .max(USEFUL_CUTTERS_BARREN)
 }
 
 /// **ONE CREW SIZE'S QUOTE ON THE DEPOSIT COMPOSE SHEET** — [`deposit_crew_quote`]'s answer.

@@ -2941,12 +2941,14 @@ func _workings_roster_cutters(band: Dictionary, model: Dictionary) -> int:
 ## geared crew out-cuts. A band with no row here reads `CUTTERS_UNCAPPED`.
 func _workings_roster_max_useful(band: Dictionary, model: Dictionary) -> int:
     var tile: Vector2i = model["tile"]
-    var assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y,
-        String(model["material"]))
-    # The sim's `workers_needed` first (`SourceForecast.worked_crew_ceiling`), the published geared
-    # `useful_cutters` where the wire is silent — the map's band source list reads the same pair.
-    return SourceForecast.worked_crew_ceiling(assignment,
-        HudDepositVocab.published_useful_cutters(assignment))
+    # ⛔ **NEVER `workers_needed` HERE.** On an `extract` row that field is the take INVERTED
+    # (`workers_needed_for_take`, clamped into `[1, crew]`), so it can never exceed the crew already
+    # standing — a `+` gated on it is dead the moment the crew takes anything. That is what greyed a
+    # one-forester deadfall's `+` beside a sheet offering two. `useful_cutters` is the working's
+    # "most hands that still help" (`docs/plan_site_crews.md` §4), the compose sheet reads it on the
+    # row's own composition, and the map's band source list reads it too.
+    return HudDepositVocab.published_useful_cutters(_band_labor.extract_assignment_of(
+        band, tile.x, tile.y, String(model["material"])))
 
 ## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.depositRungs`, per world.
 ## `[]` before any snapshot has arrived, which every consumer renders as *no ladder to show* rather
@@ -6834,15 +6836,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # used to twice over — the take was dipped while a build ran, and the rung's own
             # `crew_needed` floored the count back up — because one crew did both jobs. The build has
             # its own crew now, so the take is the plain one and the count is the plain quotient.
-            var forage_forecast := SourceForecast.forecast_inputs(
-                patch, SourceForecast.SOURCE_KIND_FORAGE,
-                HudComposeVocab.BARE_FORECAST_PREFIX, floor)
             # **THE CAP IS THE SIM'S**: the row's `workers_needed` is the most hands that still help
-            # on this site, keeping included (`docs/plan_site_crews.md`).
-            forage_forecast = SourceForecast.with_published_site_crew(forage_forecast,
-                int(m.get("workers_needed", 0)))
-            useful = SourceForecast.max_useful_workers(forage_forecast)
-            cap = SourceForecast.source_worker_cap_state(forage_forecast, workers, idle)
+            # on this site, keeping included (`docs/plan_site_crews.md`) — read through the ONE
+            # producer the compose sheet reads on this row's own composition, so the two `+`s cannot
+            # strike at two ceilings.
+            useful = SourceForecast.worked_row_ceiling(kind, m, patch)
+            cap = SourceForecast.crew_cap_state(useful, workers, idle)
         else:
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
@@ -6853,9 +6852,6 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             live_herd = _band_labor.find_world_herd(herd_id)
             # The verb is not a term here either (see the forage branch): a crew building a pen is
             # its own allocation, so the hunters' take is the plain one.
-            var hunt_forecast := SourceForecast.forecast_inputs(
-                live_herd, SourceForecast.SOURCE_KIND_HERD,
-                HudComposeVocab.BARE_FORECAST_PREFIX, floor)
             # **NO KEEPER FLOOR ON THIS ROW'S CEILING EITHER** (`docs/plan_standing_upkeep.md` §2.2)
             # — the compose twin dropped the same term. The keepers a managed herd demands are the
             # MAINTAIN allocation, answered by the compose sheet's keeping row and by `maintain`,
@@ -6870,9 +6866,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # every assigned hunt row; carrying it onto the forecast is all it takes for both cap
             # twins to read it. **The forage branch above deliberately does not**: its `0` is a
             # structural *does not apply*, never *no crew is useful here*.
-            hunt_forecast = SourceForecast.with_published_useful_crew(hunt_forecast, m)
-            useful = SourceForecast.max_useful_workers(hunt_forecast)
-            cap = SourceForecast.source_worker_cap_state(hunt_forecast, workers, idle)
+            useful = SourceForecast.worked_row_ceiling(kind, m, live_herd)
+            cap = SourceForecast.crew_cap_state(useful, workers, idle)
         # ⛔ **AND WHETHER THE CREW ALREADY HERE IS BIGGER THAN THE SOURCE CAN USE** — the third web's
         # question, asked on all three now (`SourceForecast.crew_is_wasted`). It is a SECOND reading of
         # the same ceiling the `+` gate above is struck at, and it is not that gate's `note`: the note

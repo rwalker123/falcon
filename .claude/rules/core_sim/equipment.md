@@ -301,8 +301,8 @@ coppice 2.5, quarry 2.2), and a replacement would erase that climb.
 - **Every pre-commit figure comes off one geared curve** — `DepositCrewTakeQuery`
   (`extraction::deposit_crew_quote`: a prospective-row ration of the stored or picked kit, whole,
   beside the band's other rows, less the pools' issue, capped by the crew's carry), and the committed row's
-  `usefulCutters` is that curve's plateau at the row's own kit (`extraction.md` → "The compose
-  sheet asks a crew curve").
+  `usefulCutters` is the crew whose capacity reaches the room, which the curve rises up to
+  (`extraction.md` → "The useful-crew cap is on the row").
 - **Wear is `WearQuantum::DepositTaken`, on the units the holders cut** —
   `extraction::deposit_geared_units` = `taken ×` the equipped workers' share of the crew's
   throughput, `Strike`'s attribution applied to a continuous take. Gauge noun *"units cut"*.

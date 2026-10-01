@@ -1148,10 +1148,11 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# **AND THE WASTE QUESTION, AT THIS ROW'S OWN KIT AND FLOOR** — the sim's published
 				# `useful_cutters`, the same rule the working's compose sheet caps its stepper at, so a
 				# `+` the sheet refused and a row that flags the hands already standing there are one
-				# ceiling, gear included.
+				# ceiling, gear included — the one the Groundwork row's `+` is gated on. Not
+				# `workers_needed`: on this kind that is the take inverted and clamped to the crew, a
+				# different number from the `+` ceiling, and one row is judged against one ceiling.
 				HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
-					SourceForecast.worked_crew_ceiling(entry,
-						HudDepositVocab.published_useful_cutters(entry))),
+					HudDepositVocab.published_useful_cutters(entry)),
 				# **THE WORKING'S OWN MATERIAL RATE, which is what this row HEADLINES** — `food` is
 				# a structural zero here (see the sort key's own note on `_source_row`).
 				_entry_material_rate(entry, material))

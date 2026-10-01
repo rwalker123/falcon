@@ -458,14 +458,25 @@ when the command names none, the seed, and `DepositState.defaultKitId`; `working
 behind `DepositState.offeredKitIds`. `default_kits.extract` and `default_kits.quarrywork` are both
 `none`. See `equipment.md` → "The take axis".
 
-**The useful-crew cap is on the row** — `LaborAssignment.usefulCutters`
-(`extraction::useful_cutters`): the plateau of the deposit crew curve over the row's crew pool (its
-workers plus the band's idle hands) at the row's own kit and floor, read by the compose sheet's own
-rule (`HudDepositVocab.curve_useful_cutters` — the smallest crew whose take reaches the curve's best
-within `0.1%`; the pool while still rising; `1` where the curve pays nothing; `0` off an extract
-row). So the Work board's overstaffed flag and the sheet's `+` stop at one crew, and a band with axes
-stops before the bare `room ÷ perWorkerBiomass` quotient. Pinned by
-`server::tests::useful_cutters_is_the_sheet_curves_plateau_and_gear_lowers_it`. The next rung's
+**The useful-crew cap is on the row** — `LaborAssignment.usefulCutters` (`extraction::useful_cutters`),
+and the row's `workersNeeded` is the same count struck by the turn: **the crew whose capacity
+reaches the room above the row's floor** (`extraction::deposit_crew_needed`), the forage and hunt
+rule (`yield-forecast.md` → "`workers_needed` IS THE ROW'S WHOLE CREW"). Take hands are walked
+best-equipped first over the units the row's claim settles plus the spare ones on the shelf, each at
+its cut (the rung's bare rate plus its tools' `deposit_take` on the held rung) capped by its carry;
+the keep hands at the row's crew are folded in and the sum rounded once. Crew-independent, so a crew
+short of the room reads above itself; `1` where nothing is reachable; `0` off an extract row. A band
+with axes still stops before the bare quotient, because its armed hands cut more each. Pinned by
+`server::tests::useful_cutters_is_the_sheet_curves_plateau_and_gear_lowers_it` and
+`::a_deadfall_above_its_floor_tells_one_cutter_a_second_would_cut_more`.
+
+> ⛔ **IT WAS THE CURVE'S PLATEAU OVER THE BAND'S OWN POOL, AND THE POOL IS WHAT CAPPED IT.** With no
+> idle hand the pool was the crew, so the plateau was the crew whatever another cutter would cut.
+> Played on Firbrook — deadfall 585.6 of 600, floored at half, one sledded cutter at `+0.6` a turn
+> and one sled in the band — the row read `usefulCutters 1` (`2` on the save with one idle hand)
+> and greyed the `+` while the compose sheet said a second forester would draw it down. It reads
+> **958** now: the one sledded hand at `0.6` and the rest bare at `0.3` against `287` of room. The
+> `DepositCrewTake` curve rises one hand at a time up to it, which is the agreement. The next rung's
 geared cut is the crew curve's `next_rung_take` alone; no committed-row field carries it.
 
 **One seam, three readers.** `take_from_deposit` (the turn), `server::seed_source_yield`'s `Extract`

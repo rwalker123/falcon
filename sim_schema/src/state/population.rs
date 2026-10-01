@@ -421,14 +421,11 @@ pub struct LaborAssignmentState {
     /// The number the work row prints.
     #[serde(default)]
     pub net_rate_home: f32,
-    /// **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the plateau of the
-    /// deposit crew curve over this row's crew pool (its workers plus the band's idle hands), at the
-    /// row's own kit and floor, read by the compose sheet's `curve_useful_cutters` rule: the smallest
-    /// crew whose take reaches the curve's best within `0.1%`. **It counts the crew's keeping hands**
-    /// (`docs/plan_site_crews.md` §2.5): each crew size cuts with the hands its keeping leaves, so the
-    /// plateau is the whole crew — add nothing for keeping. **The pool** while the take is still
-    /// rising at the last crew, **`1`** where the curve pays nothing, **`0`** on a non-extract row
-    /// and on a row with no pool. Derived at capture.
+    /// **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the crew whose capacity
+    /// reaches the room above the row's floor: take hands at the units the row's claim settles plus
+    /// the spare ones, best-equipped first, **plus its keep hands**, rounded once
+    /// (`docs/plan_site_crews.md` §4). Crew-independent and not capped by the band's pool. **`1`**
+    /// where nothing is reachable, **`0`** on a non-extract row. Derived at capture.
     #[serde(default)]
     pub useful_cutters: u32,
     /// **WHICH OF THIS ROW'S KIT ITEMS ARE SHORT, BY NAME** (`docs/plan_site_crews.md` §2.3) — one

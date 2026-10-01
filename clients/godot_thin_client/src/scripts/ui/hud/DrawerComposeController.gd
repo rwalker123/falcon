@@ -1410,6 +1410,38 @@ func _curve_worker_cap(useful: int, assignable: int) -> Dictionary:
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
+## **THE BAND'S STANDING ROW, WHEN THIS SHEET COMPOSES EXACTLY IT** — same floor and same kit (the
+## forage caller adds the take selection) — else `{}`. `composed_floor` is `FLOOR_UNNAMED` on a sheet
+## that offers no dial, which a finite working's row is not compared on.
+##
+## ⛔ **IT IS WHAT LETS THE SHEET'S `+` AND THE WORK ROW'S `+` READ ONE CEILING.** The row's figure —
+## a forage row's `workers_needed`, a hunt row's `hunt_useful_workers`, a working's `useful_cutters` —
+## is the sim's answer at the row's OWN floor and kit, so it answers the sheet only while the sheet
+## composes that; a moved floor or another kit is a question the row has not been asked, and the
+## sheet's curve answers it. Reported from play: a one-forester deadfall's row greyed its `+` while
+## the sheet on the same tile offered two.
+func _composed_standing_row(row: Dictionary, composed_floor: float, kit_id: String) -> Dictionary:
+    if row.is_empty():
+        return {}
+    if composed_floor != SourceForecast.FLOOR_UNNAMED and not is_equal_approx(
+            SourceForecast.clamp_floor(float(row.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))),
+            SourceForecast.clamp_floor(composed_floor)):
+        return {}
+    if String(row.get("kit_id", KitRoster.NO_KIT_ID)) != kit_id:
+        return {}
+    return row
+
+## **THE CAP ON THE ROW'S OWN CEILING** — `_forecast_worker_cap`'s two notes, on a number the row
+## already resolved. ⛔ **A ROW CEILING OF ZERO CAPS AT ONE, NOT AT NONE** (`MAX_USEFUL_BARREN`): the
+## sim's `NO_USEFUL_CREW` greys the row's `+` — and the sheet's, at one — but a cap of zero would clamp
+## the staged count to nothing and the commit would silently unassign the crew standing there.
+func _standing_row_cap(useful: int, assignable: int,
+        armed_crew: int = SourceForecast.CREW_TAKE_NO_ARMED_CREW,
+        weapon_item_id: String = "") -> Dictionary:
+    return _useful_worker_cap(SourceForecast.MAX_USEFUL_BARREN
+        if useful == SourceForecast.PUBLISHED_NO_USEFUL_CREW else useful,
+        assignable, armed_crew, weapon_item_id)
+
 ## **A KEPT PATCH'S CREW COUNTS NAME THE WHOLE CREW THE STEPPER SETS** — both pills and the verdict's
 ## crew clause. Each pill's take target
 ## (`crew_to_clear` / `crew_to_hold`, in gathering hands) converted through the patch curve's own
@@ -1821,7 +1853,14 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int,
     # them: a cap sized on the take alone went dead below the count the sim asked for. Those keepers
     # are the MAINTAIN allocation now, with their own stepper and their own ceiling, so flooring the
     # TAKE stepper on them would demand hands that belong to another crew.
-    var useful := SourceForecast.max_useful_workers(forecast)
+    return _useful_worker_cap(SourceForecast.max_useful_workers(forecast), assignable, armed_crew,
+        weapon_item_id)
+
+## `_forecast_worker_cap` on a ceiling already resolved — the one cap and note rule, so the forecast's
+## ceiling and a standing row's (`_standing_row_cap`) are capped and worded identically.
+func _useful_worker_cap(useful: int, assignable: int,
+        armed_crew: int = SourceForecast.CREW_TAKE_NO_ARMED_CREW,
+        weapon_item_id: String = "") -> Dictionary:
     if useful == SourceForecast.MAX_USEFUL_UNBOUNDED or useful >= assignable:
         # Labor-bound below the usefulness ceiling: the `+` capped at idle workers, not at
         # usefulness — name the reason so the cap doesn't read as a silent bug. Exactly staffed
@@ -2954,6 +2993,16 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         int(crew_take_answer.get(SourceForecast.CREW_TAKE_ARMED_KEY,
             SourceForecast.CREW_TAKE_NO_ARMED_CREW)),
         String(crew_take_answer.get(SourceForecast.CREW_TAKE_WEAPON_KEY, "")))
+    # ⛔ **ON THE BAND'S OWN ROW, THE CAP IS THE ROW'S** — see `_standing_row_cap`.
+    var standing := _composed_standing_row(_band_labor.effective_worker_map(band).get(
+            _band_labor.pending_key(SourceForecast.LABOR_KIND_HUNT, herd_x, herd_y, herd_id), {}),
+        _compose.hunt_floor(), kit_id)
+    if not standing.is_empty():
+        capped = _standing_row_cap(SourceForecast.worked_row_ceiling(
+            SourceForecast.LABOR_KIND_HUNT, standing, _band_labor.find_world_herd(herd_id)),
+            assignable, int(crew_take_answer.get(SourceForecast.CREW_TAKE_ARMED_KEY,
+                SourceForecast.CREW_TAKE_NO_ARMED_CREW)),
+            String(crew_take_answer.get(SourceForecast.CREW_TAKE_WEAPON_KEY, "")))
     var cap := int(capped["cap"])
     # Auto-max on a FLOOR click — "give me everything this herd can spare at this floor": the
     # max-useful for that floor (clamped to idle below), which guarantees zero waste + the full rate.
@@ -3762,6 +3811,18 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     else:
         _forage_live_crew_view = {}
         capped = _forecast_worker_cap(forecast, crew_pool)
+    # ⛔ **ON THE BAND'S OWN ROW, THE CAP IS THE ROW'S** — see `_standing_row_cap`. The curve above
+    # still answers the preview lines; it stops answering the `+`.
+    var standing := _composed_standing_row(_band_labor.effective_worker_map(band).get(
+            _band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE, x, y, ""), {}),
+        _compose.forage_floor(), KitRoster.resolve_selection(_band_labor.kits(),
+            KitRoster.JOB_FORAGE, _band_labor.default_kit_id(KitRoster.JOB_FORAGE),
+            _compose.forage_kit_id()))
+    if not standing.is_empty() and _band_labor.take_species_for_forage(band, x, y) \
+            == _compose.forage_take_species():
+        capped = _standing_row_cap(SourceForecast.worked_row_ceiling(
+            SourceForecast.LABOR_KIND_FORAGE, standing,
+            _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})), crew_pool)
     var cap := int(capped["cap"])
     # Auto-max on stance select — "give me everything this patch sustains": jump to the max-useful for
     # the stance (clamped to available below). Only ever set by a stance click, never by a −/+ tick.
@@ -5515,6 +5576,13 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     var useful := HudDepositVocab.CUTTERS_UNCAPPED
     if curve_ready:
         useful = HudDepositVocab.curve_useful_cutters(curve_reply)
+    # ⛔ **ON THE BAND'S OWN ROW, THE CAP IS THE ROW'S** (`_standing_row_cap`): the Groundwork row's
+    # `+` reads `published_useful_cutters` off this same assignment, so the sheet opened on that row's
+    # floor and kit reads it too. A sheet composing another floor or kit keeps the curve.
+    var standing := _composed_standing_row(
+        _band_labor.extract_assignment_of(band, tile.x, tile.y, material), named_floor, kit_id)
+    if not standing.is_empty():
+        useful = HudDepositVocab.published_useful_cutters(standing)
     var capped_by_seam := useful != HudDepositVocab.CUTTERS_UNCAPPED and useful < cap
     if capped_by_seam:
         cap = maxi(useful, 0)

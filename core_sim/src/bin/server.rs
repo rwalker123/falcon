@@ -25924,4 +25924,106 @@ mod tests {
             "only the real submission is logged; the vacant seat's rides the Turn entry"
         );
     }
+
+    /// The playtest deadfall's stock, as a share of its capacity — 585.6 of 600.
+    const PLAYED_DEADFALL_STOCK: f32 = 0.976;
+
+    /// The playtest row's floor — half the wood left standing.
+    const PLAYED_DEADFALL_FLOOR: f32 = 0.5;
+
+    /// The playtest band's sleds: one, so the second cutter works bare.
+    const ONE_SLED: u32 = 1;
+
+    /// The crews the stepper walks: one, raised to two, back to one.
+    const LONE_CUTTER: u32 = 1;
+    const TWO_CUTTERS: u32 = 2;
+
+    /// How far up the compose sheet's curve is asked — well below the reachable crew.
+    const CURVE_CREWS: u32 = 8;
+
+    /// ⛔ **A DEADFALL ABOVE ITS FLOOR TELLS ONE CUTTER THAT A SECOND WOULD CUT MORE** — the Firbrook
+    /// playtest: deadfall at 585.6 of 600, floored at half, one sledded cutter at `+0.6` a turn. The
+    /// row's `usefulCutters` used to be the curve's plateau over the band's own pool, so a band with
+    /// no idle hand read `1` and greyed the `+`. It is now the crew whose capacity reaches the room
+    /// above the floor (`extraction::useful_cutters`), crew-independent: above one, the same at crew
+    /// 1, 2 and 1 again, and the compose sheet's curve rises at every crew below it.
+    #[test]
+    fn a_deadfall_above_its_floor_tells_one_cutter_a_second_would_cut_more() {
+        let mut app = build_test_app();
+        let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+        let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+        let ground = app
+            .world
+            .get::<Tile>(tile)
+            .cloned()
+            .expect("the working's tile");
+        let capacity = core_sim::extraction::tile_deposit_capacity(&extraction, "wood", &ground);
+        let mut working = core_sim::extraction::DepositSource::opening(
+            WORKING,
+            "wood",
+            capacity,
+            core_sim::RungBranch::Forestry,
+        );
+        working.stock = capacity * PLAYED_DEADFALL_STOCK;
+        app.world
+            .resource_mut::<core_sim::DepositRegistry>()
+            .insert(working);
+        let mut ledger = BandEquipment::default();
+        ledger.stock("sled", ONE_SLED, "plain", None);
+        deposit_band_holding(&mut app, tile, ledger);
+        let assign = |app: &mut bevy::prelude::App, crew: u32| {
+            handle_assign_labor(
+                app,
+                FactionId(0),
+                None,
+                "extract".to_string(),
+                crew,
+                Some(WORKING.x),
+                Some(WORKING.y),
+                None,
+                Some("wood".to_string()),
+                Some(PLAYED_DEADFALL_FLOOR),
+                Some("sledding".to_string()),
+                Vec::new(),
+            );
+        };
+        assign(&mut app, LONE_CUTTER);
+        resolve_deposit_turn(&mut app);
+        let at_one = published_wood_row(&mut app).useful_cutters;
+        assert!(
+            at_one > LONE_CUTTER,
+            "a second cutter cuts more off a deadfall above its floor, so the cap invites one \
+             (read {at_one})"
+        );
+
+        // The compose sheet's curve rises at every crew below the cap.
+        let curve = deposit_crew_curve(
+            &mut app,
+            "wood",
+            "sledding",
+            PLAYED_DEADFALL_FLOOR,
+            CURVE_CREWS,
+        );
+        assert!(
+            at_one > CURVE_CREWS,
+            "fixture: the curve is asked below the cap"
+        );
+        for pair in curve.per_crew.windows(2) {
+            assert!(
+                pair[1].take > pair[0].take,
+                "the curve still rises at crew {} — {} after {}",
+                pair[1].workers,
+                pair[1].take,
+                pair[0].take
+            );
+        }
+
+        // The stepper: up to two and back, with no turn between — the cap does not move.
+        assign(&mut app, TWO_CUTTERS);
+        let at_two = published_wood_row(&mut app).useful_cutters;
+        assign(&mut app, LONE_CUTTER);
+        let back_at_one = published_wood_row(&mut app).useful_cutters;
+        assert_eq!(at_two, at_one, "the cap does not move with the crew");
+        assert_eq!(back_at_one, at_one, "stepping back moves nothing");
+    }
 }

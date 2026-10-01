@@ -1490,10 +1490,9 @@ fn workers_needed_cutting_a_drawn_down_wood(crew: u32) -> u32 {
 /// could be told five gatherers were four too many on a patch and never on a stand.
 ///
 /// **Both directions, on one stand, because either alone is weak.** A crew larger than the stand
-/// can use must report **fewer** hands than it holds; a crew the stand keeps busy must report the
-/// **whole** crew. An arm that reported `assigned` unconditionally — which is what
-/// `workers_needed_for_take`'s `clamp(1, assigned)` degenerates to when the take is always
-/// labor-bound — passes the second assertion on its own.
+/// can use must report **fewer** hands than it holds; a crew the stand keeps busy must report
+/// **more** — the crew that reaches the stand, the same number at both sizes. An arm that reported
+/// `assigned` unconditionally fails both.
 #[test]
 fn a_working_says_how_many_of_its_crew_brought_anything_home() {
     let overstaffed = workers_needed_cutting_a_drawn_down_wood(MORE_HANDS_THAN_THE_STAND_CAN_USE);
@@ -1507,10 +1506,17 @@ fn a_working_says_how_many_of_its_crew_brought_anything_home() {
          brought anything home"
     );
 
+    // **A crew the stand keeps busy reads the crew that reaches the room — above itself**, and the
+    // same number the larger crew read: the count is crew-independent (`docs/plan_site_crews.md`
+    // §4, `extraction::deposit_crew_needed`), so another cutter is invited exactly while it cuts more.
     let busy = workers_needed_cutting_a_drawn_down_wood(HANDS_THE_STAND_KEEPS_BUSY);
     assert_eq!(
-        busy, HANDS_THE_STAND_KEEPS_BUSY,
-        "a crew the stand can keep busy is not overstaffed and must report every hand"
+        busy, HANDS_THAT_CARRIED_THE_TAKE,
+        "a crew the stand can keep busy reads the crew that reaches the stand, whatever its size"
+    );
+    assert!(
+        busy > HANDS_THE_STAND_KEEPS_BUSY,
+        "and it is above the busy crew: another cutter would cut more"
     );
 }
 

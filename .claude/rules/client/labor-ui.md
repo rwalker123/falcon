@@ -1860,10 +1860,16 @@ crew* wherever it is computed.
 > A worked row is overstaffed iff `SourceForecast.worked_crew_is_wasted(entry, fallback)`:
 > `crew_is_wasted(workers, worked_crew_ceiling(entry, fallback))`, the ceiling being the sim's
 > `workers_needed` wherever it is published (keeping hands included, crew-independent) and the
-> client's `max_useful_workers` / `published_useful_cutters` only for a rehydrated save's `0`. The
-> work board's sim note (`source_yield_readout`) and `⚠ overstaffed` clause, the map's band source
-> list (`BandOverlayRenderer.food_overstaffed_text` and its extract arm) and the workings roster all
-> read it.
+> client's `max_useful_workers` only for a rehydrated save's `0`. The work board's sim note
+> (`source_yield_readout`) and `⚠ overstaffed` clause and the map's band source list
+> (`BandOverlayRenderer.food_overstaffed_text`) read it on the two FOOD webs.
+>
+> ⛔ **A WORKING IS THE EXCEPTION: its ceiling is `published_useful_cutters`, never
+> `workers_needed`.** On an `extract` row `workers_needed` is the take inverted and clamped into
+> `[1, crew]`, so it can never exceed the crew standing there: a `+` gated on it goes dead the moment
+> the crew takes anything. That is what greyed a one-forester deadfall's `+` on the Work tab beside a
+> sheet offering a second hand. The Groundwork row (`_workings_roster_max_useful`) and the map
+> list's extract arm both read `useful_cutters` directly.
 >
 > **Reported from play:** a wild Harvest (crew 3, `workers_needed` 3) read `⚠ overstaffed` on the map
 > while the board said nothing and capped its `+` at 3. The list divided the closed-form take ceiling
@@ -4453,12 +4459,37 @@ useful — free up idle workers to send more"*. `BUILD_BOUND_NOTE_FORMAT` — th
 sheet's own builders stepper first — is deleted with that stepper: there is one control here, so
 there is one nearer lever, and `_forecast_worker_cap` takes no `build_crew` argument.
 
-**Every clamp reads the wire's `idle_workers`, NOT `HudBandLaborState.effective_idle`.** The two agree
-about the builders now (see below), but they still answer different questions: the sheet's ceiling is
-judged against a REFUSAL the sim makes, and `idleWorkers` IS `BandWorkforce::idle()` — every staffed
-hand across every activity and role, minus the bench — where `effective_idle` is an OPTIMISTIC answer
-carrying the pending overlay. A ceiling composed from the optimistic one would offer a crew on the
-strength of a command the server has not acknowledged.
+⛔ **THE POOL IS `effective_idle` PLUS THE EFFECTIVE CREW HERE — THE WORK ROW'S IDLE RULE.** It read
+the wire's `idle_workers` plus the wire crew, on the reasoning that a ceiling built on the optimistic
+overlay offers a crew on the strength of a command the server has not acknowledged. The row's `+`
+cannot take that rule: it has to count its own just-pressed edits, or repeated presses outrun the
+band. So the two rules disagreed exactly while an edit was in flight — a `+` pressed on one row left
+the sheet beside it offering the hand that row had just spent. `effective_idle` nets the bench and
+every role row as `BandWorkforce::idle()` does, so on a settled frame the two readings are equal.
+**A fixture whose `idle_workers` disagrees with `working_age` minus its rows now changes what the
+sheet offers**, which is why four harness fixtures were corrected with this rule.
+
+### ⛔ THE SHEET'S `+` AND THE ROW'S `+` READ ONE CEILING
+
+The `+` on a compose sheet and the `+` on the Work row for the same source are struck at ONE number,
+the sim's "most hands that still help" (`docs/plan_site_crews.md` §4):
+
+| web | the ceiling | the one reader |
+|---|---|---|
+| forage | the row's `workers_needed`, through `with_published_site_crew` | `SourceForecast.worked_row_ceiling` |
+| hunt | the row's `hunt_useful_workers`, through `with_published_useful_crew` | `SourceForecast.worked_row_ceiling` |
+| extract | the row's `useful_cutters` | `HudDepositVocab.published_useful_cutters` |
+
+`BandPanelController._work_source_models` gates its rows on that reader through
+`SourceForecast.crew_cap_state`, the body `source_worker_cap_state` now delegates to.
+
+**THE SHEET READS THE ROW'S FIGURE ONLY WHILE IT COMPOSES THAT ROW.**
+`DrawerComposeController._composed_standing_row` hands back the band's own row (the effective worker
+map, so a pending edit counts) when the sheet's floor and kit match it — and on forage, its take
+species too. Anything else is a different question: the published figure was struck at the row's
+floor and kit, so on a moved dial it answers something nobody asked, and the sheet's own curve keeps
+its job. `_standing_row_cap` maps `PUBLISHED_NO_USEFUL_CREW` to `MAX_USEFUL_BARREN`: a cap of zero
+would clamp the stepper to `0`, and committing `0` is an unassign.
 
 ### `effective_idle` SUMS `staffed_total`, AND FOR ONE RELEASE IT DID NOT
 

@@ -2247,18 +2247,15 @@ table LaborAssignment {
   // row (whose far working also posts a party). The row's `kind` says which.
   netRateHome:float = 0;
   // --- HOW MANY CUTTERS THIS WORKING CAN USE, WITH THIS BAND'S GEAR (appended last, #663) -----
-  // *** THE CREW BEYOND WHICH MORE HANDS CUT NOTHING MORE THIS TURN. *** The plateau of the SAME
-  // curve `DepositCrewTakeQuery` answers - one quote per crew size over this row's crew pool (its
-  // own workers plus the band's idle hands), at the row's stored kit and floor, geared and capped by
-  // the working's reach - read by the same rule the compose sheet reads that curve by
-  // (`curve_useful_cutters`): the smallest crew whose take reaches the curve's best within a 0.1%
-  // tolerance. So the Work board's overstaffed flag and the sheet's `+` stop at one crew, and a band
-  // with axes stops earlier than the bare `room / perWorkerBiomass` quotient.
+  // *** THE CREW WHOSE CAPACITY REACHES THE ROOM ABOVE THE ROW'S FLOOR. *** Take hands walked
+  // best-equipped first over the units the row's claim settles plus the spare ones, each at its cut
+  // capped by its carry, plus the keep hands at the row's crew, rounded once. CREW-INDEPENDENT and
+  // NOT capped by the band's pool, so a crew short of the room reads above itself (the client's
+  // CUTTERS_UNCAPPED reading once it exceeds the pool). The `DepositCrewTakeQuery` curve rises up to
+  // it. The extract row's `workersNeeded` is the same count, struck by the turn.
   //
-  // == THE POOL when the take is still rising at the last crew (every hand buys take; the client's
-  // CUTTERS_UNCAPPED reading). 1 on a working whose curve pays nothing at any size (CUTTERS_BARREN -
-  // the honest ceiling is one hand, never none). 0 on every non-extract row and on a row with no
-  // crew pool at all. Derived at capture.
+  // 1 on a working with no room above the floor (CUTTERS_BARREN - the honest ceiling is one hand,
+  // never none). 0 on every non-extract row. Derived at capture.
   usefulCutters:uint = 0;
   // --- WHICH OF THIS ROW'S KIT ITEMS ARE SHORT, BY NAME (appended last, #751) ----------------------
   // One line per item this row's kit carries, wherever the row claims any of it: the units it
