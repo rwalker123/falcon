@@ -6004,6 +6004,19 @@ static func crew_is_wasted(workers: int, useful: int) -> bool:
         return false
     return workers > useful
 
+## **THE ONE CEILING A WORKED ROW IS JUDGED OVERSTAFFED AGAINST** — the sim's `workers_needed` where
+## the wire publishes it (the most hands that still help on this source, keeping hands included,
+## crew-independent), else `fallback_useful`, the client's own reading for a rehydrated save's
+## *unknown* (`0`). Every surface that says a worked crew is overstaffed — the work board's note and
+## clause, the map's band source list, the workings roster — asks `worked_crew_is_wasted` on this
+## number, so no two of them can answer differently for one row.
+static func worked_crew_ceiling(entry: Dictionary, fallback_useful: int) -> int:
+    var needed := int(entry.get("workers_needed", PUBLISHED_NO_USEFUL_CREW))
+    return needed if needed > PUBLISHED_NO_USEFUL_CREW else fallback_useful
+
+static func worked_crew_is_wasted(entry: Dictionary, fallback_useful: int) -> bool:
+    return crew_is_wasted(int(entry.get("workers", 0)), worked_crew_ceiling(entry, fallback_useful))
+
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling, the party's
 ## reach), scaled by the acting band's output multiplier (the sim exports the forecast at 1.0).
 static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> float:
@@ -6213,7 +6226,7 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     var note := ""
     var workers := int(m.get("workers", 0))
     var needed := int(m.get("workers_needed", 0))
-    if needed > 0 and workers > needed:
+    if needed > PUBLISHED_NO_USEFUL_CREW and worked_crew_is_wasted(m, MAX_USEFUL_UNBOUNDED):
         note = OVERSTAFF_NOTE_FORMAT % [needed, workers]
         tooltip = OVERSTAFF_TOOLTIP if tooltip == "" \
             else tooltip + TOOLTIP_LINE_SEPARATOR + OVERSTAFF_TOOLTIP

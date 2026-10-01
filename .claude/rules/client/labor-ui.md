@@ -1855,6 +1855,21 @@ crew* wherever it is computed.
 
 ### THE CAP NOTE AND THE WASTE HAZARD ARE TWO QUESTIONS OF ONE CEILING
 
+> #### ⛔ EVERY SURFACE ASKS ONE PREDICATE ON ONE NUMBER — `worked_crew_is_wasted`
+>
+> A worked row is overstaffed iff `SourceForecast.worked_crew_is_wasted(entry, fallback)`:
+> `crew_is_wasted(workers, worked_crew_ceiling(entry, fallback))`, the ceiling being the sim's
+> `workers_needed` wherever it is published (keeping hands included, crew-independent) and the
+> client's `max_useful_workers` / `published_useful_cutters` only for a rehydrated save's `0`. The
+> work board's sim note (`source_yield_readout`) and `⚠ overstaffed` clause, the map's band source
+> list (`BandOverlayRenderer.food_overstaffed_text` and its extract arm) and the workings roster all
+> read it.
+>
+> **Reported from play:** a wild Harvest (crew 3, `workers_needed` 3) read `⚠ overstaffed` on the map
+> while the board said nothing and capped its `+` at 3. The list divided the closed-form take ceiling
+> — which counts no keeping hands — and came out under 3. The board was right.
+> `band_panel_preview`'s `_assert_board_and_map_list_agree` holds both cases on one row.
+
 `SourceForecast.crew_is_wasted(workers, useful)` — `workers > useful`, STRICTLY — is the second
 question asked of `max_useful_workers`, and it is asked BESIDE `source_worker_cap_state` rather than
 inside it. The two read the same number and answer differently:

@@ -1304,8 +1304,9 @@ source list's `ATTENTION_OVERSTAFFED` clause and the Groundwork roster's value c
 this one producer — two spellings would teach the player two marks for one state, the standing rule
 `GATE_SHORT_NO_CREW` follows one section down.
 
-The predicate is `SourceForecast.crew_is_wasted` (`workers > useful`, strictly) and nothing here
-re-derives it; what differs per web is only which ceiling is handed in — `max_useful_workers` for the
+The predicate is `SourceForecast.worked_crew_is_wasted` (`workers > ceiling`, strictly, the ceiling
+being the sim's `workers_needed` where published) and nothing here re-derives it; what differs per
+web is only which FALLBACK ceiling is handed in — `max_useful_workers` for the
 food webs, the crew curve's plateau for a working (`curve_useful_cutters` on the sheet,
 `published_useful_cutters` off the committed row). `labor-ui.md` → "The cap note and the waste hazard are
 two questions of one ceiling" holds the predicate's own rules.

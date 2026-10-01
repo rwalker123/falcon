@@ -14668,9 +14668,64 @@ func _assert_the_wire_s_answer_silences_the_client_s() -> void:
 	# raised. Without this a suppression that also swallowed the attention bool would pass.
 	_assert_band_panel("wire note — …while the row still wants attention, raised by the note term instead",
 		bool(wasted.get("attention", false)))
+	# **THE MAP'S BAND SOURCE LIST FLAGS THE SAME ROW THE SAME WAY**, both directions: over the wire's
+	# answer (the fixture above), and AT it where the client's own ceiling says otherwise — the
+	# playtest row (a wild Harvest whose sim answer was its own crew of 3, read overstaffed on the map).
+	await _assert_board_and_map_list_agree(_cap_demo_band_fixture_with_published_need(),
+		"over the wire's answer", true)
+	await _assert_board_and_map_list_agree(_cap_demo_band_fixture_with_need_at_crew(),
+		"AT the wire's answer, over the client's own ceiling", false)
 	_push_bands([_cap_demo_band_fixture()])
 	_hud._bandpanel.rerender()
 	await _settle()
+
+## GUARD: **THE WORK ROW AND THE MAP'S BAND SOURCE LIST FLAG ONE ROW IDENTICALLY.** Both ask
+## `SourceForecast.worked_crew_is_wasted` on the sim's `workers_needed` (the client's ceiling only where
+## the wire is silent). The board's verdict is its sim note or its `⚠ overstaffed` clause; the list's
+## is `BandOverlayRenderer.food_overstaffed_text`, called with the SAME assignment and the SAME patch.
+func _assert_board_and_map_list_agree(fixture: Dictionary, case_label: String,
+		want_flagged: bool) -> void:
+	_push_bands([fixture])
+	_hud._bandpanel.rerender()
+	await _settle()
+	var model: Dictionary = {}
+	for model_variant in _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0):
+		if Vector2i(int((model_variant as Dictionary).get("x", -1)),
+				int((model_variant as Dictionary).get("y", -1))) == CAP_DEMO_WASTED_TILE:
+			model = model_variant
+	var entry: Dictionary = {}
+	for row_variant in fixture["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE \
+				and Vector2i(int(row["target_x"]), int(row["target_y"])) == CAP_DEMO_WASTED_TILE:
+			entry = row
+	var patch: Dictionary = _hud._band_labor.forage_patch_lookup().get(CAP_DEMO_WASTED_TILE, {})
+	_assert_band_panel("board vs map list (%s) — premise: the row, its assignment and its patch exist"
+			% case_label, not model.is_empty() and not entry.is_empty() and not patch.is_empty())
+	if model.is_empty() or entry.is_empty() or patch.is_empty():
+		return
+	var board := String(model.get("note", "")) != "" \
+		or String(model.get("tooltip", "")).contains(HudDepositVocab.OVERSTAFFED_WORD)
+	var map_text := BandOverlayRenderer.food_overstaffed_text(entry, patch,
+		SourceForecast.SOURCE_KIND_FORAGE)
+	_assert_band_panel(("board vs map list (%s) — %d gatherers, the wire needing %d, the client's "
+			+ "ceiling %d: the board %s and the map list %s, both %s")
+			% [case_label, int(entry.get("workers", 0)), int(entry.get("workers_needed", 0)),
+				_cap_demo_max_useful(CAP_DEMO_WASTED_TILE),
+				"flags it" if board else "is calm", "flags it" if map_text != "" else "is calm",
+				"flagged" if want_flagged else "calm"],
+		board == want_flagged and (map_text != "") == want_flagged)
+
+## The over-crewed patch with the wire's answer AT its crew — the playtest shape: a crew the client's
+## closed-form ceiling calls too big, which the sim (keeping hands included) says it needs.
+func _cap_demo_band_fixture_with_need_at_crew() -> Dictionary:
+	var band := _cap_demo_band_fixture()
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = row_variant
+		if String(row.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE \
+				and Vector2i(int(row["target_x"]), int(row["target_y"])) == CAP_DEMO_WASTED_TILE:
+			row["workers_needed"] = int(row.get("workers", 0))
+	return band
 
 ## The patch this fixture staffs EXACTLY to its ceiling (`ceil(0.30 / 0.10)` = 3 against 3 gatherers)
 ## — the control the over-staffed claim is only meaningful beside.

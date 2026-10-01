@@ -2941,8 +2941,12 @@ func _workings_roster_cutters(band: Dictionary, model: Dictionary) -> int:
 ## geared crew out-cuts. A band with no row here reads `CUTTERS_UNCAPPED`.
 func _workings_roster_max_useful(band: Dictionary, model: Dictionary) -> int:
     var tile: Vector2i = model["tile"]
-    return HudDepositVocab.published_useful_cutters(_band_labor.extract_assignment_of(
-        band, tile.x, tile.y, String(model["material"])))
+    var assignment := _band_labor.extract_assignment_of(band, tile.x, tile.y,
+        String(model["material"]))
+    # The sim's `workers_needed` first (`SourceForecast.worked_crew_ceiling`), the published geared
+    # `useful_cutters` where the wire is silent — the map's band source list reads the same pair.
+    return SourceForecast.worked_crew_ceiling(assignment,
+        HudDepositVocab.published_useful_cutters(assignment))
 
 ## **THE DEPOSIT BRANCHES' CATALOG, as ordered rows** — `SubsistenceSection.depositRungs`, per world.
 ## `[]` before any snapshot has arrived, which every consumer renders as *no ladder to show* rather
@@ -6889,8 +6893,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # rehydrated save's *unknown*. The two also measure differently — the sim inverts the take
         # that happened, this divides by the ceiling the stepper caps at — so preferring the sim is
         # preferring the better number as well as the only one that can quantify.
-        var overstaffed := "" if int(m.get("workers_needed", 0)) > 0 \
-            else HudDepositVocab.overstaffed_clause(workers, useful)
+        var overstaffed := "" \
+            if int(m.get("workers_needed", 0)) > SourceForecast.PUBLISHED_NO_USEFUL_CREW \
+            else HudDepositVocab.overstaffed_clause(workers,
+                SourceForecast.worked_crew_ceiling(m, useful))
         var note := String(yld.get("note", ""))
         # **THE NOTE'S SEVERITY IS MODEL STATE, NOT A RENDER-SITE CONSTANT** (§2.7). It was a
         # hard-coded `HudStyle.WARN` at both this board's inspector and the drawer's twin, which is

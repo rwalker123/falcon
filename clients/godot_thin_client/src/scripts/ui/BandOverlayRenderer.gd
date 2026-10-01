@@ -1072,7 +1072,7 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# about `hide`, so the noun is the only thing naming that account.
 				MARKER_NAMES_NO_MATERIAL, _entry_floor_glyph(entry),
 				_food_attention_text(patch, SourceForecast.SOURCE_KIND_FORAGE),
-				_food_overstaffed_text(entry, patch, SourceForecast.SOURCE_KIND_FORAGE),
+				food_overstaffed_text(entry, patch, SourceForecast.SOURCE_KIND_FORAGE),
 				food)
 		elif kind == LABOR_KIND_HUNT:
 			# Herds MIGRATE, so the herd's LIVE tile is the authority; the assignment's launch-time
@@ -1105,7 +1105,7 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				HUNT_WORKED_COLOR, entry, hunt_rate, 0.0, materials, zero_account,
 				MARKER_NAMES_NO_MATERIAL, _entry_floor_glyph(entry),
 				_food_attention_text(herd, SourceForecast.SOURCE_KIND_HERD),
-				_food_overstaffed_text(entry, herd, SourceForecast.SOURCE_KIND_HERD),
+				food_overstaffed_text(entry, herd, SourceForecast.SOURCE_KIND_HERD),
 				hunt_rate)
 		elif kind == HudConst.LABOR_KIND_EXTRACT:
 			var material := String(entry.get("material", "")).strip_edges()
@@ -1150,7 +1150,8 @@ func compute_source_rows(radius: float, origin: Vector2) -> Array[Dictionary]:
 				# `+` the sheet refused and a row that flags the hands already standing there are one
 				# ceiling, gear included.
 				HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
-					HudDepositVocab.published_useful_cutters(entry)),
+					SourceForecast.worked_crew_ceiling(entry,
+						HudDepositVocab.published_useful_cutters(entry))),
 				# **THE WORKING'S OWN MATERIAL RATE, which is what this row HEADLINES** — `food` is
 				# a structural zero here (see the sort key's own note on `_source_row`).
 				_entry_material_rate(entry, material))
@@ -1263,16 +1264,20 @@ func _food_attention_text(src: Dictionary, source_kind: String) -> String:
 ## the source is not on the map at all (a herd that left the visible fauna set prices no ceiling, and
 ## a row must never flag waste it cannot measure).
 ##
-## **THE CEILING IS `max_useful_workers`, WHICH IS THE WORK BOARD'S AND THE STEPPER'S** — the row and
-## the panel are joined by a leader line on screen, so two readings of *how many hands this source can
-## use* would be a disagreement the player sees in one glance.
+## ⛔ **THE CEILING IS THE SIM'S `workers_needed` FIRST** (`SourceForecast.worked_crew_ceiling`), the
+## same number and the same predicate the work board's row asks — the row and the panel are joined by
+## a leader line on screen, so two readings of *how many hands this source can use* would be a
+## disagreement the player sees in one glance. It read the client's closed-form `max_useful_workers`
+## alone, which omits the keeping hands a worked site carries, so a wild Harvest whose sim answer was
+## its own crew of 3 read `⚠ overstaffed` here while the board, on `workers_needed`, said nothing.
+## The client's ceiling is the fallback only where the wire publishes no answer.
 ##
 ## ⛔ **THE HUNT ARM CARRIES THE SIM'S PUBLISHED PLATEAU ONTO THE FORECAST, exactly as the work board
 ## does.** Without it `max_useful_workers` falls through to the closed form, which divides by a reach
 ## carrying no attack and no defense, and a fight-bound quarry reads a ceiling the compose sheet's own
 ## curve disagrees with. The forage arm deliberately does not — its `0` is a structural *does not
 ## apply*, never *no crew is useful here*.
-func _food_overstaffed_text(entry: Dictionary, src: Dictionary, source_kind: String) -> String:
+static func food_overstaffed_text(entry: Dictionary, src: Dictionary, source_kind: String) -> String:
 	if src.is_empty():
 		return ""
 	var forecast := SourceForecast.forecast_inputs(src, source_kind,
@@ -1280,7 +1285,7 @@ func _food_overstaffed_text(entry: Dictionary, src: Dictionary, source_kind: Str
 	if source_kind == SourceForecast.SOURCE_KIND_HERD:
 		forecast = SourceForecast.with_published_useful_crew(forecast, entry)
 	return HudDepositVocab.overstaffed_clause(int(entry.get("workers", 0)),
-		SourceForecast.max_useful_workers(forecast))
+		SourceForecast.worked_crew_ceiling(entry, SourceForecast.max_useful_workers(forecast)))
 
 ## The row order: attention descending, then realized yield descending, then the KEY ascending. The
 ## key tie-break is what makes it TOTAL — two calm rows at identical yields would otherwise be free
@@ -1605,7 +1610,7 @@ func _entry_floor_glyph(entry: Dictionary) -> String:
 ## than the mark — a working's mark forks on the ground's renewal rate as well as on the floor
 ## (`HudDepositVocab.floor_mark`) — and two readers spelling the same default is how the food webs'
 ## floor and the workings' floor would come to disagree about what an absent field means.
-func _entry_floor(entry: Dictionary) -> float:
+static func _entry_floor(entry: Dictionary) -> float:
 	return float(entry.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
 
 ## **THE BUILD METER, AS AN ARC ON THE SOURCE'S OWN RING** (issue #650, Part 3). Drawn in the badge
