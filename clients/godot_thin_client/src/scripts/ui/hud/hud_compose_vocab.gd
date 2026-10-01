@@ -1027,6 +1027,8 @@ const PARTY_RECALL_SCOUT_LABEL := "scouting"
 ## The split's ONE input, and deliberately NOT `Party`: what is being composed is a band, and the
 ## sheet's whole claim is that it is not sending anyone out.
 const SPLIT_STEPPER_LABEL := "Workers"
+## The split stepper's greyed `+`: every working-age person is already in the new band.
+const SPLIT_AT_MAX_REASON := "That is every worker the band has."
 
 ## What the share works out to, under the stepper. The player is choosing a size, so the size is what
 ## the sheet echoes back.
@@ -1178,19 +1180,37 @@ const VERB_KEY_TOOLTIP := "tooltip"
 ## and the map, so one mission is drawn one way wherever it is spoken about. `⌂` is a symbolic text
 ## glyph and Move has no mark in this client's vocabulary, so both stay text.
 const VERB_KEY_MARK := "mark"
+## What the verb DOES, as the end of a sentence — the clause a disabled verb's reason closes on
+## (`VERB_BLOCKED_NO_IDLE_FORMAT`), so the hover says what the freed hand would be for.
+const VERB_KEY_ACTION := "action"
+
+## **A DISABLED VERB SAYS WHY, AND WHAT TO DO** — the reasons `BandPanelController.verb_block_reasons`
+## returns, one clause per failed condition of the very gate that greys the face. They LEAD the hover
+## (`HudWidgets.disabled_tooltip`); the verb's own name follows them.
+const VERB_BLOCKED_NO_IDLE_FORMAT := "No free workers — take someone off a work row to %s."
+const VERB_BLOCKED_SPLIT_NO_WORKERS := "No working-age people — a new band needs workers to split off."
+const VERB_BLOCKED_NO_BAND := "No band selected — pick one of your bands first."
+const VERB_BLOCKED_NOT_PLAYER := "Not one of your bands — you can only order your own."
+const VERB_BLOCKED_PARTY := "This is a party in the field — select its home band to give orders."
+const VERB_BLOCKED_FACTION_VIEW := "The panel is showing your whole people — open one band to give it orders."
 
 ## The verbs in bar order. Each glyph is its face's fallback when the art does not load.
 const BAND_VERBS := [
     {VERB_KEY_ID: VERB_MOVE, VERB_KEY_MISSION: VERB_MISSION_MOVE,
-        VERB_KEY_GLYPH: "➜", VERB_KEY_TOOLTIP: "Move", VERB_KEY_MARK: "move"},
+        VERB_KEY_GLYPH: "➜", VERB_KEY_TOOLTIP: "Move", VERB_KEY_MARK: "move",
+        VERB_KEY_ACTION: "move it"},
     {VERB_KEY_ID: VERB_SCOUT, VERB_KEY_MISSION: COMPOSE_MISSION_SCOUT,
-        VERB_KEY_GLYPH: "⚑", VERB_KEY_TOOLTIP: "Scout", VERB_KEY_MARK: "scout"},
+        VERB_KEY_GLYPH: "⚑", VERB_KEY_TOOLTIP: "Scout", VERB_KEY_MARK: "scout",
+        VERB_KEY_ACTION: "scout"},
     {VERB_KEY_ID: VERB_DENY, VERB_KEY_MISSION: COMPOSE_MISSION_DENY,
-        VERB_KEY_GLYPH: "💀", VERB_KEY_TOOLTIP: "Deny", VERB_KEY_MARK: "deny"},
+        VERB_KEY_GLYPH: "💀", VERB_KEY_TOOLTIP: "Deny", VERB_KEY_MARK: "deny",
+        VERB_KEY_ACTION: "send a denial party"},
     {VERB_KEY_ID: VERB_TRADE, VERB_KEY_MISSION: COMPOSE_MISSION_TRADE,
-        VERB_KEY_GLYPH: "📦", VERB_KEY_TOOLTIP: "Trade", VERB_KEY_MARK: "trade"},
+        VERB_KEY_GLYPH: "📦", VERB_KEY_TOOLTIP: "Trade", VERB_KEY_MARK: "trade",
+        VERB_KEY_ACTION: "send a trade party"},
     {VERB_KEY_ID: VERB_SPLIT, VERB_KEY_MISSION: COMPOSE_MISSION_SPLIT,
-        VERB_KEY_GLYPH: "⌂", VERB_KEY_TOOLTIP: "Split", VERB_KEY_MARK: "split"},
+        VERB_KEY_GLYPH: "⌂", VERB_KEY_TOOLTIP: "Split", VERB_KEY_MARK: "split",
+        VERB_KEY_ACTION: "found a new band"},
 ]
 
 ## The descriptor whose MISSION is `mission`, or `{}`.
@@ -1366,6 +1386,9 @@ const COMPOSE_CARGO_MAX_FACE := "Max"
 const COMPOSE_CARGO_MAX_HINT := "Load the most of this that will still fit."
 const COMPOSE_CARGO_MAX_AT_CAP_HINT := "Already carrying the most of this that will fit."
 const COMPOSE_CARGO_MAX_NO_ROOM_HINT := "No room for this — take something off, or send more hands."
+## The cargo `−` greyed on an empty row. (The `+` greys on the row's ceiling and reuses the two `Max`
+## hints above, which name the same two causes.)
+const COMPOSE_CARGO_NONE_PACKED_REASON := "None of this is packed yet."
 ## How wide the `Max` face sits. Wider than a stepper's button because it carries a WORD.
 const COMPOSE_CARGO_MAX_BUTTON_WIDTH := 42.0
 
@@ -1443,6 +1466,8 @@ const COMPOSE_DENY_PREY_HINT := "Choose a herd to break — the collapse estimat
 const COMPOSE_FIELD_KEY_WIDTH := 64.0
 
 const COMPOSE_FIELD_PARTY := "Party"
+## A party stepper's greyed `+`: the party already holds every free hand.
+const PARTY_AT_MAX_REASON := "That is every free worker — take someone off a work row to send more."
 
 const COMPOSE_FIELD_POLICY := "Policy"
 

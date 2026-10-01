@@ -327,6 +327,34 @@ the host before showing it again.
   `BandPanelController.note_selection_tile` before rendering; a verb whose anchor differs is closed and
   its armed pick with it. The per-snapshot restate (`reapply_selection`) does not call it.
 
+## A DISABLED CONTROL SAYS WHY
+
+**Every greyed control's hover names the reason it is greyed, in plain words, and what to do** —
+`No free workers — take someone off a work row to scout.` A greyed face whose hover only names the
+control reads as a bug. One clause per failed condition, each on its own line, all of them leading
+the hover with the control's ordinary tooltip after (`HudWidgets.disabled_tooltip`; the separator is
+`HudWorkVocab.DISABLED_REASON_SEPARATOR`). An enabled control keeps its ordinary tooltip unchanged.
+
+- **The reason comes from the gate that greys the control, never from a second test.** The band verbs
+  ask `BandPanelController.verb_block_reasons`, and `verb_enabled` is that list being empty;
+  `verb_tooltip` composes the hover for both the drawer's verb row and the panel's action bar. The
+  work-row cap (`SourceForecast.source_worker_cap_state`) returns its `blocked_reason` beside
+  `can_add`, the compose sheets' crew `+` reads `DrawerComposeController._crew_cap_reason` off the
+  same cap and note the sheet already prints, and the queue arrows and cargo steppers take a
+  `blocked_reason` whose emptiness IS the enabled state.
+- **The panel's action bar carries a live hover.** `BandCityPanel.register_action` takes an optional
+  `live_tooltip` Callable re-asked wherever `enabled` is (`refresh_actions`), because the reason moves
+  with the band the predicate reads. It changes text only, never geometry.
+- **The shared stepper explains both buttons.** `HudWidgets.add_stepper_controls` hovers a greyed `−`
+  with `STEPPER_MINUS_AT_ZERO_REASON` on its own and a greyed `+` with the caller's
+  `plus_blocked_reason`; `build_party_stepper_row` defaults that to `PARTY_AT_MAX_REASON` and the split
+  sheet passes `SPLIT_AT_MAX_REASON`. A caller that greys a `+` without a reason leaves it silent.
+- **Godot shows a tooltip on a disabled `Button`** — the face still takes the pointer. `ui_preview`'s
+  tile-panel chapter (`_assert_greyed_verbs_say_why`) hovers a greyed Scout through the real input
+  pass and reads the engine's tooltip popup back. That hover has to run the clock: the harness
+  freezes `Engine.time_scale`, and the viewport's tooltip delay is a scaled timer that never fires at
+  `0`.
+
 ## ⛔ THE DRAWER FIT MEASURES AFTER THE FRAME'S SORT, NEVER BEFORE IT
 
 Reported from play: stepping the Split sheet's workers 4 → 5 grew the tile card a band of empty space

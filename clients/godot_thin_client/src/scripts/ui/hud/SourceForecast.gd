@@ -5941,8 +5941,12 @@ static func max_useful_workers(forecast: Dictionary) -> int:
 ## workers past the point they help. An unknown forecast (MAX_USEFUL_UNBOUNDED — no wire data) falls
 ## back to the plain `idle > 0` gate. Returns `{can_add, note}`; `note` is set ONLY when max-useful (not
 ## idle) is what stopped the `+`, so the row tooltip explains a dead button rather than leaving it
-## mysterious (the idle-exhausted gate explains itself). Scout/Warrior are band-wide roles with no
-## ceiling — they keep the plain gate and never call this.
+## mysterious. Scout/Warrior are band-wide roles with no ceiling — they keep the plain gate and never
+## call this.
+##
+## **`blocked_reason` IS THE GREYED `+`'s HOVER, AND IT NAMES WHICHEVER CONDITION FAILED** — no free
+## hands, or the source's ceiling (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"); `""` while the
+## `+` can add. It is returned by the gate itself, so the face and the sentence are one test.
 ##
 ## **`useful_floor` IS RETIRED, AND WITH IT `herd_crew_floor`** (`docs/plan_standing_upkeep.md` §2.2).
 ## Both twins used to RAISE this ceiling to a managed herd's `herdersNeeded`, because one crew both
@@ -5958,15 +5962,20 @@ static func max_useful_workers(forecast: Dictionary) -> int:
 ## trusted to remember it.
 static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
     var useful := max_useful_workers(forecast)
+    var no_idle := "" if idle > 0 else HudWorkVocab.STEPPER_NO_IDLE_REASON
     if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
-        return {"can_add": idle > 0, "note": ""}
-    # At/over this source's max-useful: the `+` is capped by the source, not by idle. Explain only
-    # when idle workers remain (else the idle-exhausted gate already reads for itself).
-    var note := ""
-    if idle > 0:
-        var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
-        note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
-    return {"can_add": false, "note": note}
+        return {"can_add": idle > 0, "note": "", "blocked_reason": no_idle}
+    # At/over this source's max-useful: the `+` is capped by the source, not by idle. The ROW note
+    # explains only when idle workers remain (else the idle-exhausted gate is the binding one); the
+    # `+`'s own hover names both when both hold.
+    var noun := MAX_USEFUL_NOUN_ONE if useful == 1 else MAX_USEFUL_NOUN_MANY
+    var full := MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
+    var note := full if idle > 0 else ""
+    var reasons := PackedStringArray([full])
+    if no_idle != "":
+        reasons.insert(0, no_idle)
+    return {"can_add": false, "note": note,
+        "blocked_reason": HudWorkVocab.DISABLED_REASON_SEPARATOR.join(reasons)}
 
 ## **IS THIS CREW BIGGER THAN ITS SOURCE CAN USE?** — hands standing on a job that has nothing left
 ## for them, which is the one question every web asks and only two of them used to answer. It is the

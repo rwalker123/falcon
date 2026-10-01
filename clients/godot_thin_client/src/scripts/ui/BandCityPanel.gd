@@ -487,6 +487,8 @@ const ACTION_SPEC_ID := "id"
 const ACTION_SPEC_GLYPH := "glyph"
 const ACTION_SPEC_TOOLTIP := "tooltip"
 const ACTION_SPEC_ENABLED := "enabled"
+## The optional live hover — see `register_action`'s `live_tooltip`.
+const ACTION_SPEC_LIVE_TOOLTIP := "live_tooltip"
 ## The action's bundled ART, where it has any — a `Texture2D` or `null`, resolved by the REGISTRANT
 ## (e.g. `HudSprites.for_mark`) and stored, so the descriptor stays a declared input rather than a
 ## lookup the rebuild redoes per mount.
@@ -1507,6 +1509,10 @@ func _apply_header_rail_orientation() -> void:
 ## - `enabled` — a zero-argument `Callable` answering `bool`, re-asked by `refresh_actions()`. An
 ##   EMPTY Callable means always enabled; a predicate is never called during layout, only when the
 ##   caller says the world moved, so the bar's geometry can never become a function of band state.
+## - `live_tooltip` — a zero-argument `Callable` answering the face's hover, asked whenever `enabled`
+##   is, or EMPTY for the static `tooltip`. It exists because **a disabled control's hover must say
+##   why it is disabled** (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"), and the reason moves
+##   with the same state the predicate reads. It changes text only, never geometry.
 ##
 ## Registration can move the card's chrome — the bar's height on a vertical dock, the subject row's on
 ## a horizontal one — and a dock's cross-axis size IS its reservation, so this republishes it, the
@@ -1514,7 +1520,7 @@ func _apply_header_rail_orientation() -> void:
 ## cannot put the reservation on the render's hot path.
 func register_action(id: StringName, glyph: String, tooltip: String,
 		enabled: Callable = Callable(), sprite: Texture2D = null,
-		insert_at: int = ACTION_APPEND) -> void:
+		insert_at: int = ACTION_APPEND, live_tooltip: Callable = Callable()) -> void:
 	if id.is_empty():
 		return
 	var spec := {
@@ -1523,6 +1529,7 @@ func register_action(id: StringName, glyph: String, tooltip: String,
 		ACTION_SPEC_TOOLTIP: tooltip,
 		ACTION_SPEC_ENABLED: enabled,
 		ACTION_SPEC_SPRITE: sprite,
+		ACTION_SPEC_LIVE_TOOLTIP: live_tooltip,
 	}
 	var at := _action_index(id)
 	if at >= 0:
@@ -1552,6 +1559,7 @@ func refresh_actions() -> void:
 			continue
 		var button: Button = button_variant
 		button.disabled = not _action_is_enabled(spec)
+		button.tooltip_text = _action_tooltip(spec)
 
 ## Push an action's PIP — the count badge over its glyph. `0` (or negative) clears it.
 ##
@@ -1585,6 +1593,13 @@ func _action_index(id: StringName) -> int:
 		if StringName(_actions[i].get(ACTION_SPEC_ID, &"")) == id:
 			return i
 	return -1
+
+## The face's hover: the live one where the caller gave it, else the declared `tooltip`.
+func _action_tooltip(spec: Dictionary) -> String:
+	var live: Variant = spec.get(ACTION_SPEC_LIVE_TOOLTIP, Callable())
+	if live is Callable and (live as Callable).is_valid():
+		return String((live as Callable).call())
+	return String(spec[ACTION_SPEC_TOOLTIP])
 
 ## An empty predicate means "always" — the common case, so a caller with no gate writes nothing.
 func _action_is_enabled(spec: Dictionary) -> bool:
@@ -1650,7 +1665,7 @@ func _rebuild_action_mount() -> void:
 	for spec in _actions:
 		var id := StringName(spec[ACTION_SPEC_ID])
 		var button := make_icon_button(String(spec[ACTION_SPEC_GLYPH]),
-			String(spec[ACTION_SPEC_TOOLTIP]), spec.get(ACTION_SPEC_SPRITE, null) as Texture2D)
+			_action_tooltip(spec), spec.get(ACTION_SPEC_SPRITE, null) as Texture2D)
 		button.disabled = not _action_is_enabled(spec)
 		button.pressed.connect(func(): action_invoked.emit(id))
 		host.add_child(button)

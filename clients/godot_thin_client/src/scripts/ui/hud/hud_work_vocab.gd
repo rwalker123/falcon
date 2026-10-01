@@ -24,6 +24,16 @@ const STEPPER_MINUS_FACE := "−"
 
 const STEPPER_PLUS_FACE := "+"
 
+## **A GREYED STEPPER BUTTON SAYS WHY** (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"). The `−`
+## greys on one fact everywhere; the `+` greys on whichever condition its caller gated it on, and the
+## no-free-hands one is shared by every crew stepper that spends idle workers.
+## Between a disabled control's reasons, and between them and its name (`HudWidgets.disabled_tooltip`).
+const DISABLED_REASON_SEPARATOR := "\n"
+const STEPPER_MINUS_AT_ZERO_REASON := "Already at zero — there is nothing to take off."
+const STEPPER_NO_IDLE_REASON := "No free workers — take someone off another work row first."
+## A working's `+` past the most hands the working can use (`cutters < useful`), `%d` that count.
+const STEPPER_WORKING_FULL_REASON_FORMAT := "%d is all this working can use — more hands add nothing."
+
 # Policy-picker layout: the two-line rung buttons (name over product line) wrap at most 3 per row, so
 # the six-rung forage/local-hunt pickers read as two tidy rows of three and the four extractive rungs
 # read as 3 + 1 with Eradicate alone on the second row. THREE IS A CEILING, NOT A TARGET — a picker
@@ -2629,6 +2639,10 @@ const BUILD_QUEUE_DEMOTE_GLYPH := "▼"
 const BUILD_QUEUE_PROMOTE_TOOLTIP := "Move this build UP one place. The builders fund the top entry until its meter fills, then the next — so the order IS the funding decision."
 
 const BUILD_QUEUE_DEMOTE_TOOLTIP := "Move this build DOWN one place. The builders fund the top entry until its meter fills, then the next — so the order IS the funding decision."
+
+## The arrows' hover when they grey at either end of the line — the reason in place of the order.
+const BUILD_QUEUE_PROMOTE_AT_HEAD_REASON := "Already first — the builders are funding this one now."
+const BUILD_QUEUE_DEMOTE_AT_TAIL_REASON := "Already last in the queue."
 
 ## How far one press moves an entry: one place, in either direction. The `build_order` position is
 ## `rank ∓ this`, and the command's own semantics are *remove, then insert at* — so a single step

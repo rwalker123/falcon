@@ -16828,10 +16828,15 @@ func _assert_queue_reorder_arrows() -> void:
 		demote_last != null and demote_last.disabled)
 	_assert_band_panel("…while its `%s` is live" % HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH,
 		promote_last != null and not promote_last.disabled)
-	# …and both tooltips say what the ORDER decides, in the drag handle's own words.
-	_assert_band_panel("…and both arrows say what the order decides",
-		promote_head.tooltip_text == HudWorkVocab.BUILD_QUEUE_PROMOTE_TOOLTIP
+	# …and both LIVE arrows say what the ORDER decides, in the drag handle's own words, while the two
+	# end-stops say why they are greyed instead (`selection-card.md` → "A DISABLED CONTROL SAYS WHY").
+	_assert_band_panel("…and both live arrows say what the order decides",
+		promote_last.tooltip_text == HudWorkVocab.BUILD_QUEUE_PROMOTE_TOOLTIP
 			and demote_head.tooltip_text == HudWorkVocab.BUILD_QUEUE_DEMOTE_TOOLTIP)
+	_assert_band_panel("…while the greyed end-stops say why — \"%s\" / \"%s\""
+			% [promote_head.tooltip_text, demote_last.tooltip_text],
+		promote_head.tooltip_text == HudWorkVocab.BUILD_QUEUE_PROMOTE_AT_HEAD_REASON
+			and demote_last.tooltip_text == HudWorkVocab.BUILD_QUEUE_DEMOTE_AT_TAIL_REASON)
 	if _is_headless():
 		push_warning("band_panel_preview: the reorder arrows need a real viewport for their press — skipped under the %s display driver"
 			% HEADLESS_DISPLAY_DRIVER)

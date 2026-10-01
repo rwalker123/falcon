@@ -1483,7 +1483,8 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
         # player who never touched the picker emits the byte-identical line they always did.
         func(n: int) -> void: _emit_assign_labor(
             band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
-            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id))
+            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id),
+        false, {}, HudWorkVocab.STEPPER_NO_IDLE_REASON)
     col.add_child(stepper)
     # **ONLY SCOUT AND WARRIOR MOUNT A KIT PICKER** (`KIT_PICKER_ROLES`). The keeping roles this
     # card used to carry are retired (`docs/plan_site_crews.md`): a site's keeping tools follow from
@@ -2362,7 +2363,8 @@ func _build_pool_line(band: Dictionary, role_name: String, hint: String, kind: S
     HudWidgets.add_stepper_controls(line, workers, _band_labor.effective_idle(band) > 0,
         func(n: int) -> void: _emit_assign_labor(
             band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
-            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id), true)
+            "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id), true, {},
+        HudWorkVocab.STEPPER_NO_IDLE_REASON)
     # **LINE TWO SAYS WHAT THE HANDS DO**, in the rung line's quiet register — and the builders' kit
     # face after it, where the retired one-line form had it beside the title.
     var second := subline if detail == "" \
@@ -2730,11 +2732,18 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var floor := _band_labor.floor_for_extract(band, tile.x, tile.y, material) \
         if HudDepositVocab.renews(deposit) else SourceForecast.FLOOR_UNNAMED
     var kit_id := String(assignment.get("kit_id", KitRoster.NO_KIT_ID))
-    var can_add := _band_labor.effective_idle(band) > 0 \
-        and (useful == HudDepositVocab.CUTTERS_UNCAPPED or cutters < useful)
+    # The gate as its REASONS, so the greyed `+` names each condition that failed and `can_add` is
+    # nothing but their absence.
+    var add_blocked := PackedStringArray()
+    if _band_labor.effective_idle(band) <= 0:
+        add_blocked.append(HudWorkVocab.STEPPER_NO_IDLE_REASON)
+    if useful != HudDepositVocab.CUTTERS_UNCAPPED and cutters >= useful:
+        add_blocked.append(HudWorkVocab.STEPPER_WORKING_FULL_REASON_FORMAT % useful)
+    var can_add := add_blocked.is_empty()
     HudWidgets.add_stepper_controls(line, cutters, can_add,
         func(n: int) -> void: _emit_assign_labor(band, HudConst.LABOR_KIND_EXTRACT, n,
-            tile.x, tile.y, "", floor, material, SourceForecast.IMPROVEMENT_NONE, kit_id), true)
+            tile.x, tile.y, "", floor, material, SourceForecast.IMPROVEMENT_NONE, kit_id), true, {},
+        HudWorkVocab.DISABLED_REASON_SEPARATOR.join(add_blocked))
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
         rung_name if rung_name != "" else HudWorkVocab.SITE_CREW_RUNG_WILD)))
     col.add_child(_build_working_yield_line(_working_yield_text(band, model, deposit, ladder,
@@ -4760,12 +4769,14 @@ func _build_queue_reorder_column(band: Dictionary, model: Dictionary,
         HudWorkVocab.BUILD_QUEUE_PROMOTE_GLYPH, HudWorkVocab.BUILD_QUEUE_PROMOTE_TOOLTIP,
         HudWorkVocab.BUILD_QUEUE_PROMOTE_META,
         rank - HudWorkVocab.BUILD_QUEUE_REORDER_STEP,
-        rank <= SourceForecast.BUILD_QUEUE_HEAD))
+        "" if rank > SourceForecast.BUILD_QUEUE_HEAD
+            else HudWorkVocab.BUILD_QUEUE_PROMOTE_AT_HEAD_REASON))
     column.add_child(_build_queue_reorder_button(band, model,
         HudWorkVocab.BUILD_QUEUE_DEMOTE_GLYPH, HudWorkVocab.BUILD_QUEUE_DEMOTE_TOOLTIP,
         HudWorkVocab.BUILD_QUEUE_DEMOTE_META,
         rank + HudWorkVocab.BUILD_QUEUE_REORDER_STEP,
-        rank >= confirmed - HudWorkVocab.BUILD_QUEUE_REORDER_STEP))
+        "" if rank < confirmed - HudWorkVocab.BUILD_QUEUE_REORDER_STEP
+            else HudWorkVocab.BUILD_QUEUE_DEMOTE_AT_TAIL_REASON))
     return column
 
 ## One arrow. **IT SENDS THE SAME `build_order` THE DRAG DOES**, at the position it is valued with —
@@ -4778,13 +4789,16 @@ func _build_queue_reorder_column(band: Dictionary, model: Dictionary,
 ## **THE SIDES ARE TRIMMED AS WELL AS THE TOP** (`HudWidgets.compact`'s `padding_h`): the ghost
 ## button's 11px side margins are what made a 9px `✕` need 32, and a pair sharing that 32 has room for
 ## neither pair of them.
+##
+## `blocked_reason` is the gate: `""` is a live arrow, anything else greys it and is its hover.
 func _build_queue_reorder_button(band: Dictionary, model: Dictionary, glyph: String,
-        tooltip: String, meta: String, position: int, disabled: bool) -> Button:
+        tooltip: String, meta: String, position: int, blocked_reason: String) -> Button:
+    var disabled := blocked_reason != ""
     var button := Button.new()
     button.set_meta(meta, position)
     button.text = glyph
     button.focus_mode = Control.FOCUS_NONE
-    button.tooltip_text = tooltip
+    button.tooltip_text = blocked_reason if disabled else tooltip
     button.custom_minimum_size = Vector2(
         HudWorkVocab.BUILD_QUEUE_REORDER_BUTTON_WIDTH, 0.0)
     button.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -5784,7 +5798,8 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
         String(model.get("keep_tools_named", "")),
         model.get("tending", {}) as Dictionary))
     HudWidgets.add_stepper_controls(line, int(model.get("workers", 0)), bool(model.get("can_add", false)),
-        func(n: int) -> void: _emit_work_assign(band, model, n), true)
+        func(n: int) -> void: _emit_work_assign(band, model, n), true, {},
+        String(model.get("add_blocked_reason", "")))
     # **LINE TWO NAMES THE RUNG THE SITE STANDS ON**, and nothing else: covered keeping says nothing,
     # a short one is the `⚠` above, and the accounts line below says what the take produces.
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
@@ -7283,6 +7298,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # default — the same rule, and the same failure, as the improvement axis beside it.
             "kit_id": String(m.get("kit_id", KitRoster.NO_KIT_ID)),
             "can_add": bool(cap.get("can_add", idle > 0)),
+            # The greyed `+`'s hover — the cap gate's own reason, or the plain idle gate's where this
+            # row kind has no source ceiling.
+            "add_blocked_reason": String(cap.get("blocked_reason",
+                "" if idle > 0 else HudWorkVocab.STEPPER_NO_IDLE_REASON)),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
                 HudFormat.floor_hint(floor, kind), String(cap.get("note", "")),
@@ -8148,7 +8167,7 @@ func _fill_split_compose_sheet(sheet: VBoxContainer, band: Dictionary) -> void:
         func(n: int) -> void:
             _split_workers = clampi(n, HudConst.WORKER_STEP, pool)
             rerender(),
-        HudComposeVocab.SPLIT_STEPPER_LABEL))
+        HudComposeVocab.SPLIT_STEPPER_LABEL, HudComposeVocab.SPLIT_AT_MAX_REASON))
     var share := (float(_split_workers) / float(pool)) if pool > 0 else 0.0
     sheet.add_child(HudWidgets.alloc_hint_label(
         HudComposeVocab.SPLIT_SHARE_FORMAT % int(round(share * 100.0))))
@@ -8970,13 +8989,15 @@ func _build_cargo_row(row: Dictionary, band: Dictionary, rows: Array) -> HBoxCon
     var amount := float(row.get("amount", 0.0))
     var row_max := _trade_row_max(band, rows, row)
     line.add_child(_build_cargo_step_button(row, HudWorkVocab.STEPPER_MINUS_FACE,
-        HudWidgets.CARGO_CONTROL_MINUS, -HudComposeVocab.COMPOSE_CARGO_STEP, amount <= 0.0))
+        HudWidgets.CARGO_CONTROL_MINUS, -HudComposeVocab.COMPOSE_CARGO_STEP,
+        HudComposeVocab.COMPOSE_CARGO_NONE_PACKED_REASON if amount <= 0.0 else ""))
     line.add_child(_build_cargo_field(row, amount, row_max))
     # **THE `+` GREYS ON THE CEILING, NOT ON THE PILE.** `amount >= row_max` rather than
     # `amount >= held`: a band with 84 food and a full pack has nothing more this shipment can take,
     # and a live `+` there would offer a press that the mass meter immediately refuses.
     line.add_child(_build_cargo_step_button(row, HudWorkVocab.STEPPER_PLUS_FACE,
-        HudWidgets.CARGO_CONTROL_PLUS, HudComposeVocab.COMPOSE_CARGO_STEP, amount >= row_max))
+        HudWidgets.CARGO_CONTROL_PLUS, HudComposeVocab.COMPOSE_CARGO_STEP,
+        _cargo_plus_blocked_reason(amount, row_max)))
     line.add_child(_build_cargo_max_button(row, amount, row_max))
     return line
 
@@ -8991,14 +9012,17 @@ func _build_cargo_row(row: Dictionary, band: Dictionary, rows: Array) -> HBoxCon
 ## `pressed`. The reported defect was exactly that: type an amount, press `+`, and the amount lands
 ## while the STEP silently does not. Taking no focus leaves the field holding the keyboard across the
 ## whole gesture, so the press always arrives and the handler flushes the field itself.
+##
+## `blocked_reason` is the gate: `""` is a live step, anything else greys it and is its hover.
 func _build_cargo_step_button(row: Dictionary, face: String, control: String, step: float,
-        disabled: bool) -> Button:
+        blocked_reason: String) -> Button:
     var key := String(row.get("key", ""))
     var is_material := bool(row.get("is_material", false))
     var button := Button.new()
     button.text = face
     button.custom_minimum_size = Vector2(HudWorkVocab.WORKER_STEPPER_BUTTON_WIDTH, 0)
-    button.disabled = disabled
+    button.disabled = blocked_reason != ""
+    button.tooltip_text = blocked_reason
     button.focus_mode = Control.FOCUS_NONE
     button.set_meta(HudWidgets.CARGO_CONTROL_META, control)
     HudStyle.apply_button(button, "ghost")
@@ -9211,6 +9235,14 @@ func _commit_cargo_field(field: LineEdit, key: String, is_material: bool,
     field.text = HudCraftingVocab.BATCH_AMOUNT_FORMAT % settled
     _set_cargo_amount(key, is_material, settled, row_max)
     _trade_cargo_committing = false
+
+## Why the cargo `+` is greyed, `""` while it can step: the row's ceiling, in `Max`'s own two words —
+## no room at all, or already carrying all that fits. The `+` greys on `amount >= row_max`.
+func _cargo_plus_blocked_reason(amount: float, row_max: float) -> String:
+    if amount < row_max:
+        return ""
+    return HudComposeVocab.COMPOSE_CARGO_MAX_NO_ROOM_HINT if row_max <= 0.0 \
+        else HudComposeVocab.COMPOSE_CARGO_MAX_AT_CAP_HINT
 
 ## `Max` - the largest amount this row can still take, floored. **Disabled with its REASON when it
 ## would do nothing**: the row already carries that much, or there is no pack space (or no pile) to
@@ -9438,7 +9470,13 @@ func _register_band_verbs() -> void:
         _panel.register_action(StringName(verb[HudComposeVocab.VERB_KEY_ID]),
             String(verb[HudComposeVocab.VERB_KEY_GLYPH]), String(verb[HudComposeVocab.VERB_KEY_TOOLTIP]),
             func() -> bool: return not _panel_is_faction and verb_enabled(mission, _band_labor.panel_band()),
-            HudSprites.for_mark(String(verb[HudComposeVocab.VERB_KEY_MARK])), i)
+            HudSprites.for_mark(String(verb[HudComposeVocab.VERB_KEY_MARK])), i,
+            # The face's hover follows the same gate: the band's reasons LEAD it while it is greyed,
+            # and the faction subject — the predicate's other conjunct — says so in its own words.
+            func() -> String: return HudWidgets.disabled_tooltip(
+                    PackedStringArray([HudComposeVocab.VERB_BLOCKED_FACTION_VIEW]),
+                    String(verb[HudComposeVocab.VERB_KEY_TOOLTIP])) \
+                if _panel_is_faction else verb_tooltip(mission, _band_labor.panel_band()))
 
 ## A press on the panel's action bar. Only the verbs are answered here — the `⚒` / `▲` have their own
 ## named relays (`crafting_requested` / `knowledge_requested`).
@@ -9453,15 +9491,43 @@ func _on_panel_action_invoked(id: StringName) -> void:
 ## unassigned), a split wants WORKERS (it divides the band, and an assignment lapses with the person who
 ## held it), and Move wants only a band.
 func verb_enabled(mission: String, band: Dictionary) -> bool:
-    if band.is_empty() or not HudConst.is_player_unit(band) or bool(band.get("is_expedition", false)):
-        return false
+    return verb_block_reasons(mission, band).is_empty()
+
+## **WHY `band` CANNOT DO THIS VERB — THE GATE ITSELF, returning its reasons.** `verb_enabled` is this
+## list being empty, so the greyed face and the sentence explaining it are one test and cannot drift
+## (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"). One plain clause per failed condition, each
+## saying what to do; `[]` when the verb is available.
+func verb_block_reasons(mission: String, band: Dictionary) -> PackedStringArray:
+    var reasons := PackedStringArray()
+    if band.is_empty():
+        reasons.append(HudComposeVocab.VERB_BLOCKED_NO_BAND)
+        return reasons
+    if not HudConst.is_player_unit(band):
+        reasons.append(HudComposeVocab.VERB_BLOCKED_NOT_PLAYER)
+        return reasons
+    if bool(band.get("is_expedition", false)):
+        reasons.append(HudComposeVocab.VERB_BLOCKED_PARTY)
+        return reasons
     match mission:
         HudComposeVocab.VERB_MISSION_MOVE:
-            return true
+            pass
         HudComposeVocab.COMPOSE_MISSION_SPLIT:
-            return _split_worker_pool(band) > 0
+            if _split_worker_pool(band) <= 0:
+                reasons.append(HudComposeVocab.VERB_BLOCKED_SPLIT_NO_WORKERS)
         _:
-            return _band_labor.effective_idle(band) > 0
+            if _band_labor.effective_idle(band) <= 0:
+                var verb := HudComposeVocab.verb_for_mission(mission)
+                reasons.append(HudComposeVocab.VERB_BLOCKED_NO_IDLE_FORMAT
+                    % String(verb.get(HudComposeVocab.VERB_KEY_ACTION, mission)))
+    return reasons
+
+## The verb face's hover for `band`: its name alone when it can act, else its reasons first
+## (`HudWidgets.disabled_tooltip`). Both surfaces' faces read it — the drawer's verb row when it builds,
+## the panel's action bar through `register_action`'s live tooltip.
+func verb_tooltip(mission: String, band: Dictionary) -> String:
+    var verb := HudComposeVocab.verb_for_mission(mission)
+    return HudWidgets.disabled_tooltip(verb_block_reasons(mission, band),
+        String(verb.get(HudComposeVocab.VERB_KEY_TOOLTIP, "")))
 
 ## **THE ONE DISPATCH** — the panel's action bar and the drawer's verb row both call it, with the band
 ## each surface is about. A verb pressed over a pending one replaces it.

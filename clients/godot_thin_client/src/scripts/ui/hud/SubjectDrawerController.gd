@@ -985,6 +985,9 @@ func _make_band_verb_row(band: Dictionary) -> HBoxContainer:
             HudSprites.for_mark(String(verb[HudComposeVocab.VERB_KEY_MARK])))
         button.set_meta(HudWidgets.VERB_BUTTON_META, StringName(verb[HudComposeVocab.VERB_KEY_ID]))
         button.disabled = not _bandpanel.verb_enabled(mission, live)
+        # **A GREYED VERB SAYS WHY** — the gate's own reasons lead the hover, the verb's name follows
+        # (`selection-card.md` → "A DISABLED CONTROL SAYS WHY"). An available verb keeps its name.
+        button.tooltip_text = _bandpanel.verb_tooltip(mission, live)
         button.pressed.connect(func() -> void: _bandpanel.dispatch_verb(mission, live))
         row.add_child(button)
     return row

@@ -1389,6 +1389,16 @@ func _take_notes(take: Dictionary) -> Array[String]:
             notes.append(HudFloraVocab.TAKE_UNQUOTED_NOTE)
     return notes
 
+## **WHY A SHEET'S CREW `+` IS GREYED AT ITS CAP** — the cap gate's own sentence. Where the SOURCE
+## binds (`cap < pool`) that is the cap note the sheet already prints under the stepper; where the
+## band's hands bind it is the labor note when the cap produced one (it names the useful count), else
+## the plain no-free-hands reason. One rule for every compose sheet, so the hunt, forage and deposit
+## `+` cannot explain the same ceiling three ways.
+func _crew_cap_reason(cap_note: String, cap: int, pool: int) -> String:
+    if cap_note != "":
+        return cap_note
+    return HudWorkVocab.STEPPER_NO_IDLE_REASON if cap >= pool else ""
+
 ## **THE CAP OFF A CREW CURVE** — `min(pool, useful)`, with `_forecast_worker_cap`'s two notes. While the
 ## curve is in flight (`NO_CREW_ANSWER`) only the pool caps the stepper.
 func _curve_worker_cap(useful: int, assignable: int) -> Dictionary:
@@ -2541,9 +2551,11 @@ func _refresh_floor_live(hosts: Array, model: Dictionary, workers: int) -> void:
 ## band-wide pool on another panel — a distinction a player who staffed the wrong one pays for, and
 ## which has nowhere else on that sheet to be said. `set_label_tooltip`, because a bare `tooltip_text`
 ## on a `Label` is a silent no-op.
+##
+## `plus_blocked_reason` is the greyed `+`'s hover — `_crew_cap_reason`, which every sheet passes.
 func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, count: int,
         plus_enabled: bool, on_change: Callable, model: Dictionary, on_pick: Callable,
-        label_tooltip: String = "") -> void:
+        label_tooltip: String = "", plus_blocked_reason: String = "") -> void:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
@@ -2564,7 +2576,8 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
     line.add_theme_constant_override("v_separation", HudComposeVocab.CREW_ROW_SEPARATION)
     var stepper := HBoxContainer.new()
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    HudWidgets.add_stepper_controls(stepper, count, plus_enabled, on_change)
+    HudWidgets.add_stepper_controls(stepper, count, plus_enabled, on_change, false, {},
+        plus_blocked_reason)
     line.add_child(stepper)
     if bool(model.get("known", false)) and on_pick.is_valid():
         var targets := HBoxContainer.new()
@@ -3030,7 +3043,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         _compose.hunt_count(), _compose.hunt_count() < cap, on_crew_change, chart_model,
         func(count: int) -> void:
             _compose.set_hunt_count(clampi(count, 0, cap))
-            _build_herd_assign_controls(_live_herd(herd_id, herd), target))
+            _build_herd_assign_controls(_live_herd(herd_id, herd), target),
+        "", _crew_cap_reason(String(capped["note"]), cap, assignable))
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
@@ -3265,6 +3279,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON))
     HudStyle.apply_button(assign_btn, "primary")
     assign_btn.disabled = is_noop
+    # A greyed commit says why on its own hover too — the noop hint, whichever note the sheet printed.
+    if is_noop:
+        assign_btn.tooltip_text = String(HudComposeVocab.HUNT_NOOP_HINTS.get(crew_label, ""))
     # **ONE COMMAND, AND IT IS `assign_labor`** (`docs/plan_standing_upkeep.md` §4.7a ①). The
     # improvement verb that used to follow it is the Work tab's now. `composed_improvement` still
     # travels — it is recorded on the OPTIMISTIC OVERLAY and never on the wire, so a crew edit
@@ -3823,7 +3840,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         chart_model,
         func(count: int) -> void:
             _compose.set_forage_count(clampi(count, 0, cap))
-            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
+        "", _crew_cap_reason(String(capped["note"]), cap, crew_pool))
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
@@ -3952,6 +3970,9 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         else String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(crew_label, ""))
     HudStyle.apply_button(assign_btn, "primary")
     assign_btn.disabled = is_noop
+    # A greyed commit says why on its own hover too — the noop hint, whichever note the sheet printed.
+    if is_noop:
+        assign_btn.tooltip_text = String(HudComposeVocab.PLANT_NOOP_HINTS.get(crew_label, ""))
     # **ONE COMMAND, AND IT IS `assign_labor`** — the plant twin of the hunt sheet's note. The CROP
     # rides it as its `species` token exactly as before, which is why moving the declaration out did
     # not strand the crop picker: the crop is part of the assignment, not part of the verb.
@@ -5497,6 +5518,8 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     var capped_by_seam := useful != HudDepositVocab.CUTTERS_UNCAPPED and useful < cap
     if capped_by_seam:
         cap = maxi(useful, 0)
+    var seam_note := HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()] \
+        if capped_by_seam else ""
     # Auto-max on a floor pick — *give me everything this seam can use at that floor*. Only ever set
     # by a preset or a committed drag, never by a `−`/`+` tick, so a hand-dialled crew survives.
     if _compose.consume_deposit_autofill():
@@ -5554,10 +5577,9 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
         func(count: int) -> void:
             _compose.set_deposit_count(clampi(count, 0, cap))
             _build_deposit_assign_controls(_live_deposit(subject_key, deposit), target),
-        HudDepositVocab.CARD_CREW_HINT)
+        HudDepositVocab.CARD_CREW_HINT, _crew_cap_reason(seam_note, cap, crew_pool))
     if capped_by_seam:
-        target.add_child(HudWidgets.alloc_hint_label(
-            HudDepositVocab.CUTTERS_CAP_NOTE_FORMAT % [cap, crew_label.to_lower()]))
+        target.add_child(HudWidgets.alloc_hint_label(seam_note))
     # **THE KIT ROW** (issue #663). The roster's `extract` job lists the Woodcutting kit (sled + axe)
     # and the Stone kit (sled + wedges) beside `none`, and the picker offers only this working's own,
     # so the selection moves the take and rides the commit as `kit <id>` — see the commit button below.
@@ -5636,6 +5658,9 @@ func _build_deposit_assign_controls(deposit: Dictionary, target: VBoxContainer) 
     # **THE FORAGE SHEET'S DISABLE, VERBATIM** — dead only on the no-op. Distance disables nothing:
     # a far working posts a party.
     assign_btn.disabled = is_noop
+    # A greyed commit says why on its own hover too, in the hint printed above it.
+    if is_noop:
+        assign_btn.tooltip_text = HudDepositVocab.DEPOSIT_NOOP_HINT_FORMAT % crew_label.to_lower()
     # ⛔ **ONE COMMAND, AND IT IS `assign_labor <f> <b> extract <x> <y> <material> [floor] <n>`.** The
     # material rides the `species` token — the slot the sim's own `extract` arm reads it from and half
     # the optimistic overlay's key — and the FLOOR is a validated number in forage's own position and

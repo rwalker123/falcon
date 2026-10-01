@@ -32,6 +32,7 @@ var h
 # assertion selects it deliberately: the faction default is the FIRST band, so a Move wired to
 # anything but the list selection answers 301 instead.
 const TILE_PANEL_MOVE_BAND_ENTITY := 302
+const InputProbe := preload("res://tools/ui_preview/input_probe.gd")
 
 # **THE BAND VERBS THE DRAWER'S ROW MUST CARRY, IN ORDER** (issue #529) — spelled out here rather than
 # read off `HudComposeVocab.BAND_VERBS`, because the claim is that the row offers exactly these five
@@ -477,6 +478,102 @@ func _crowded_bands_fixture() -> Array:
 			"work_range": 2, "hunt_reach": 4, "turns_of_food": 2.0, "morale": 0.30,
 			"activity": "idle", "stores": {"provisions": 8.0}, "labor_assignments": []},
 	]
+
+# ---- A DISABLED CONTROL SAYS WHY (selection-card.md) ------------------------------------------------
+
+## The verbs a band with NO free hands cannot do — the three expeditions, staffed out of the idle.
+## Move needs only a band and Split divides the working-age, so both stay live on the same band.
+const NO_IDLE_GREYED_VERBS: Array[StringName] = [
+	HudComposeVocab.VERB_SCOUT, HudComposeVocab.VERB_DENY, HudComposeVocab.VERB_TRADE]
+const NO_IDLE_LIVE_VERBS: Array[StringName] = [HudComposeVocab.VERB_MOVE, HudComposeVocab.VERB_SPLIT]
+## How long past the engine's own tooltip delay the hover waits before looking for the popup.
+const TOOLTIP_SETTLE_SEC := 0.4
+const TOOLTIP_DELAY_SETTING := "gui/timers/tooltip_delay_sec"
+
+## **EVERY GREYED VERB SAYS WHY, AND THE HOVER ACTUALLY SHOWS IT.** The band the drawer is on is made
+## fully staffed — every working-age hand on a work row — which greys exactly the three expedition
+## verbs. Each must lead its hover with the no-free-workers clause naming what the hand would be for;
+## the two still-live verbs must keep their plain name. Then the Scout face is HOVERED through the real
+## input pass and the engine's own tooltip popup is read back, because a `tooltip_text` the engine
+## never shows on a disabled `Button` would satisfy every string claim above. The panel's action bar
+## reads the same gate, so its faces are held to the same sentence.
+func _assert_greyed_verbs_say_why(panel: BandCityPanel, roster: Array) -> void:
+	var band: Dictionary = roster[1]
+	var hands := int(band.get("working_age", 0))
+	band["idle_workers"] = 0
+	band["labor_assignments"] = [{"kind": "forage", "workers": hands, "target_x": 58,
+		"target_y": 24, "floor": 0.5}]
+	h._hud._selectioncard.select_roster_occupant("unit", TILE_PANEL_MOVE_BAND_ENTITY)
+	# The panel shows the SAME band, so its action bar is asked the same gate as the drawer row.
+	h._hud._bandpanel.render_band(band)
+	await h._settle()
+	for verb_id in NO_IDLE_GREYED_VERBS:
+		var verb := HudComposeVocab.verb_for_id(verb_id)
+		var want := HudWidgets.disabled_tooltip(PackedStringArray([
+				HudComposeVocab.VERB_BLOCKED_NO_IDLE_FORMAT
+					% String(verb[HudComposeVocab.VERB_KEY_ACTION])]),
+			String(verb[HudComposeVocab.VERB_KEY_TOOLTIP]))
+		var button := _verb_button(h._hud.allocation_panel, verb_id)
+		h._assert_hud("a fully-staffed band's %s verb is greyed and its hover leads with why — \"%s\""
+				% [verb_id, button.tooltip_text if button != null else "<none>"],
+			button != null and button.disabled and button.tooltip_text == want)
+		var bar_button: Variant = panel._action_buttons.get(verb_id)
+		h._assert_hud("…and the Band panel's %s face says the same — \"%s\"" % [verb_id,
+				(bar_button as Button).tooltip_text if bar_button is Button else "<none>"],
+			bar_button is Button and (bar_button as Button).disabled
+				and (bar_button as Button).tooltip_text == want)
+	for verb_id in NO_IDLE_LIVE_VERBS:
+		var verb := HudComposeVocab.verb_for_id(verb_id)
+		var button := _verb_button(h._hud.allocation_panel, verb_id)
+		h._assert_hud("…while the live %s verb keeps its plain name — \"%s\""
+				% [verb_id, button.tooltip_text if button != null else "<none>"],
+			button != null and not button.disabled
+				and button.tooltip_text == String(verb[HudComposeVocab.VERB_KEY_TOOLTIP]))
+	var scout := _verb_button(h._hud.allocation_panel, HudComposeVocab.VERB_SCOUT)
+	var shown := ""
+	if scout != null:
+		# ⛔ **THE CLOCK RUNS FOR THE HOVER, AND ONLY FOR IT.** The harness freezes `Engine.time_scale`,
+		# and the viewport's tooltip delay is a scaled scene-tree timer, so at 0 no tooltip ever shows
+		# and this claim would fail on the harness rather than on the client.
+		var frozen := Engine.time_scale
+		Engine.time_scale = 1.0
+		var point := scout.get_global_rect().get_center()
+		InputProbe.hover(h.get_viewport(), InputProbe.canvas_to_window(h.get_viewport(),
+			h.get_window(), point))
+		await h.get_tree().create_timer(
+			float(ProjectSettings.get_setting(TOOLTIP_DELAY_SETTING)) + TOOLTIP_SETTLE_SEC,
+			true, false, true).timeout
+		shown = _visible_tooltip_text(h.get_viewport())
+		await h._save("tile_panel_verb_disabled_tooltip")
+		Engine.time_scale = frozen
+	h._assert_hud("…and hovering the greyed Scout SHOWS that reason — the popup reads \"%s\"" % shown,
+		shown.begins_with(HudComposeVocab.VERB_BLOCKED_NO_IDLE_FORMAT % String(
+			HudComposeVocab.verb_for_id(HudComposeVocab.VERB_SCOUT)[HudComposeVocab.VERB_KEY_ACTION])))
+	# Park the pointer off every control so no tooltip follows the states below.
+	InputProbe.hover(h.get_viewport(), Vector2.ZERO)
+	await h._settle()
+
+## The text of the engine's visible tooltip popup under `root`, `""` when none is up. Internal
+## children are walked too: the viewport parents its tooltip panel as one.
+func _visible_tooltip_text(root: Node) -> String:
+	for child in root.get_children(true):
+		if child is Window and (child as Window).visible:
+			var label := _first_label(child)
+			if label != "":
+				return label
+		var found := _visible_tooltip_text(child)
+		if found != "":
+			return found
+	return ""
+
+func _first_label(root: Node) -> String:
+	for child in root.get_children(true):
+		if child is Label and (child as Label).text != "":
+			return (child as Label).text
+		var found := _first_label(child)
+		if found != "":
+			return found
+	return ""
 
 ## Two herds sharing the crowded hex — a stressed bison (amber dot) and a thriving boar (green), so
 ## the Wildlife group is genuinely plural and the ecology dots differ down the list.
@@ -1493,6 +1590,7 @@ func run(harness) -> void:
 		int(h._hud._targeting._pending_move_band.get("entity", -1)) == TILE_PANEL_MOVE_BAND_ENTITY)
 	h._hud.cancel_active_targeting()
 	await h._settle()
+	await _assert_greyed_verbs_say_why(tile_panel_band_panel, tile_panel_band_roster)
 	h._hud.set_band_city_panel(null)
 	h._hud.set_reserved_inset(&"band_panel", SIDE_RIGHT, 0.0)
 	tile_panel_band_panel.queue_free()
