@@ -2800,7 +2800,12 @@ in work units), so the hint is the only place a pool's holdings are named; the i
   top job in the queue is short of earthmoving tools.` (`POOL_TOOLS_SHORT_*_FORMAT`), off the pool's
   `pool_toe` lines with `filled < required` and the equipment roster's display names
   (`pool_tools_short_line`'s `item_names`). Named as the cause, never COUNTED (#716). The unnamed
-  `*_LINE` forms stand only where the roster has not arrived.
+  `*_LINE` forms stand only where the roster has not arrived. **The queue HEAD names the same tools**
+  off the same lines (`_builders_short_tool_names`): its amber second line `◆ builders short of hoes`
+  (`build_queue_tools_text`), its hover (`build_queue_tools_tooltip`) and its open strip's detail
+  line. **A SITE's keeping-tool shortfall stays generic** (`Short of tools.` on the keeping mark, *its
+  crew is short of tools* on the work-row note): the wire states it as one bool per site
+  (`upkeep_tools_short`), with no item to name.
 - **…AND ITS TOOL LINE NAMES THE JOB, NOT THE POOL** — `POOL_TOOLS_SHORT_BUILDERS_LINE`, *The top job
   in the queue is short of tools.*, chosen by `pool_tools_short_line`'s `kind` argument whatever the
   work reading. The builders' tool claim is the queue HEAD entry's alone (`docs/plan_pool_toe.md`

@@ -3176,6 +3176,15 @@ func _queue_entry_tools_short(band: Dictionary, model: Dictionary) -> bool:
         HudConst.LABOR_KIND_BUILDERS,
         _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)))
 
+## **THE BUILDERS' SHORT TOOLS, NAMED** — off the same settled `pool_toe` lines the Builders row's tool
+## line reads, through the same `toe_short_item_names`, so the queue head and the Builders row name
+## one set of tools. `""` while the equipment roster has not arrived (the generic wording stands).
+func _builders_short_tool_names(band: Dictionary) -> String:
+    return HudWorkVocab.toe_short_item_names(_pool_toe_settled_rows(band,
+        HudConst.LABOR_KIND_BUILDERS,
+        _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_BUILDERS)),
+        _item_display_names)
+
 ## **WHAT THIS POOL'S BILL DID NOT USE — the wire's figure, ADJUSTED BY WHAT THE PLAYER HAS JUST
 ## DONE THAT THE SIM HAS NOT SEEN** (issue #715).
 ##
@@ -4290,7 +4299,7 @@ func _build_queue_detail_line(band: Dictionary, model: Dictionary) -> Label:
     var tools_short := _queue_entry_tools_short(band, model)
     var blocked_lines: Array = model.get("build_blocked_lines", []) as Array
     var text := HudWorkVocab.build_queue_detail_line(tools_short, blocked_lines,
-        _queue_entry_price(model))
+        _queue_entry_price(model), _builders_short_tool_names(band) if tools_short else "")
     var has_cause := tools_short or not blocked_lines.is_empty()
     var label := HudWidgets.build_status_part(text,
         HudWorkVocab.note_color(HudWorkVocab.KIT_SHORT_SEVERITY) if has_cause else HudStyle.INK_DIM,
@@ -4652,7 +4661,7 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # The mark itself is the row's second line, built above.
     row.set_meta(HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_META, tools_short)
     if tools_short:
-        tooltip_lines.append(HudWorkVocab.BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP)
+        tooltip_lines.append(HudWorkVocab.build_queue_tools_tooltip(_builders_short_tool_names(band)))
     var price := _queue_entry_price(model)
     if price != "":
         tooltip_lines.append(price)
@@ -4692,7 +4701,7 @@ func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
         line.add_child(mark)
     if wears_tools:
         var text := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
-            HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT]
+            HudWorkVocab.build_queue_tools_text(_builders_short_tool_names(band))]
         if line.get_child_count() > 1:
             var sep := HudWidgets.build_status_part(
                 HudWorkVocab.BUILD_QUEUE_DETAIL_SEPARATOR.strip_edges(), HudStyle.INK_DIM)

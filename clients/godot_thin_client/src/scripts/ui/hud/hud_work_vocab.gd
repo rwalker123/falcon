@@ -3259,6 +3259,14 @@ const BUILD_QUEUE_DETAIL_SEPARATOR := " · "
 ## while the head is tool-short AND its settings strip is CLOSED. With the strip open the row is one
 ## line and the strip's detail line leads with the same words instead — one statement in either state.
 const BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT := "builders short of tools"
+## …and NAMED, where the equipment roster names the builders' short tools: `builders short of hoes`.
+const BUILD_QUEUE_ROW_TOOLS_SHORT_NAMED_FORMAT := "builders short of %s"
+
+## The row's tool text — named where `named` is non-empty (`toe_short_item_names` over the builders'
+## `pool_toe` lines), the generic form while the roster has not arrived.
+static func build_queue_tools_text(named: String) -> String:
+    return BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT if named == "" \
+        else BUILD_QUEUE_ROW_TOOLS_SHORT_NAMED_FORMAT % named
 const BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT := "%s %s"
 
 ## The line's handle, carrying the drawn text — a harness finds the mark by meta, never by glyph.
@@ -3272,6 +3280,12 @@ const BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT := WORK_ROW_TWO_LINE_HEIGHT - WORK_ROW_H
 
 ## …and the same fact on the head ROW's hover, as a sentence, beside the job's price and cause.
 const BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP := "The builders are short of tools for this job — more tools would speed it up."
+## …and NAMED: `The builders are short of hoes for this job — more hoes would speed it up.`
+const BUILD_QUEUE_HEAD_TOOLS_SHORT_NAMED_TOOLTIP := "The builders are short of %s for this job — more %s would speed it up."
+
+static func build_queue_tools_tooltip(named: String) -> String:
+    return BUILD_QUEUE_HEAD_TOOLS_SHORT_TOOLTIP if named == "" \
+        else BUILD_QUEUE_HEAD_TOOLS_SHORT_NAMED_TOOLTIP % [named, named]
 
 ## The detail label's stable handle, carrying the line's FULL text — a harness asks what the line
 ## says without reading an ellipsised face.
@@ -3293,11 +3307,11 @@ const BUILD_QUEUE_ROW_TOOLS_SHORT_META := "build_queue_row_tools_short"
 ## head's OPEN strip: the head row drops its own second line while its strip is open, so this is the
 ## only statement of the fact in that state — one sentence visible in either state, never both.
 static func build_queue_detail_line(tools_short: bool, blocked_lines: Array,
-        price: String) -> String:
+        price: String, tools_named: String = "") -> String:
     var parts: Array[String] = []
     if tools_short:
         parts.append(BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [KIT_SHORT_MARK,
-            BUILD_QUEUE_ROW_TOOLS_SHORT_TEXT])
+            build_queue_tools_text(tools_named)])
     for line in blocked_lines:
         if String(line) != "":
             parts.append(String(line))

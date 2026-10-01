@@ -16323,6 +16323,22 @@ func _render_queue_head_tools_short_state() -> void:
 	_assert_band_panel("head tools — …naming the short tool: \"%s\" (got \"%s\")"
 			% [named_want, named.get("gear", "")],
 		String(named.get("gear", "")) == named_want)
+	# …and the QUEUE HEAD names the same tool, on its amber second line and its hover.
+	var hoes := POOL_TOE_BUILDERS_ITEM_NAME.to_lower()
+	var head_line_want := HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_FORMAT % [HudWorkVocab.KIT_SHORT_MARK,
+		HudWorkVocab.BUILD_QUEUE_ROW_TOOLS_SHORT_NAMED_FORMAT % hoes]
+	var head_lines := _queue_tools_lines()
+	var head_line := "" if head_lines.is_empty() else (head_lines[0] as Label).text
+	_assert_band_panel("head tools — …and the queue HEAD's second line names it: \"%s\" (got \"%s\")"
+			% [head_line_want, head_line],
+		head_line == head_line_want)
+	var head_tip_want := HudWorkVocab.BUILD_QUEUE_HEAD_TOOLS_SHORT_NAMED_TOOLTIP % [hoes, hoes]
+	var head_tip := ""
+	for row in _build_queue_rows():
+		if int(row.get_meta(HudWorkVocab.BUILD_QUEUE_ROW_META)) == SourceForecast.BUILD_QUEUE_HEAD:
+			head_tip = row.tooltip_text
+	_assert_band_panel("head tools — …and its hover: \"%s\"" % head_tip_want,
+		head_tip.contains(head_tip_want))
 	await _save("band_panel_queue_head_tools_named")
 	_hud.update_equipment_config(JSON.stringify({}))
 	_hud._bandpanel.rerender()
