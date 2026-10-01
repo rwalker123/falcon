@@ -108,14 +108,10 @@ pub const NO_CREW_ON_THE_DEPOSIT: u32 = 0;
 /// with what is left.
 pub const NO_HANDS_ON_THE_DEPOSIT: f32 = 0.0;
 
-/// **THE SHARE OF A CREW THAT IS CUTTING** — `take_hands ÷ crew`, and none of a crew of nobody. The
-/// factor [`CrewLift::of_the_cutters`] scales a whole crew's lift by.
-pub fn cutting_share(take_hands: f32, crew: u32) -> f32 {
-    if crew == NO_CREW_ON_THE_DEPOSIT {
-        return NO_HANDS_ON_THE_DEPOSIT;
-    }
-    take_hands / crew as f32
-}
+// **RETIRED: `cutting_share` / `CrewLift::of_the_cutters`** — a whole crew's lift scaled back by
+// `take_hands ÷ crew`, because the kit used to be spread over the keepers too. A take kit is carried
+// by the take hands now (`docs/plan_site_crews.md` §2.3): every coverage is struck over the cutters,
+// so their tools and their carry are already theirs and there is nothing to scale.
 
 /// **NOBODY CUT THIS WORKING THIS TURN** — the reset value of [`DepositSource::last_take`], and the
 /// reading that makes the runway *"there is no rate to project"* rather than a division by zero.
@@ -154,22 +150,6 @@ pub struct CrewLift {
 }
 
 impl CrewLift {
-    /// **THE LIFT OF THE PART OF THE CREW THAT IS CUTTING** (`docs/plan_site_crews.md` §2.1) — a
-    /// working's crew keeps it first, so `cutting_share` (`take hands ÷ crew`) of it cuts. The kit is
-    /// issued to the whole crew's people, and the tools and the carry are both linear in the hands
-    /// swinging and hauling, so the cutters' lift is the crew's scaled by their share. An uncapped
-    /// carry stays uncapped.
-    pub fn of_the_cutters(self, cutting_share: f32) -> Self {
-        Self {
-            tools: self.tools * cutting_share,
-            carry: if self.carry.is_finite() {
-                self.carry * cutting_share
-            } else {
-                self.carry
-            },
-        }
-    }
-
     /// **Tools and no carry cap** — the take priced on its cut alone. See [`NO_CARRY_CAP`].
     pub fn tools_only(tools: f32) -> Self {
         Self {
@@ -832,21 +812,26 @@ pub fn working_offered_kits(
 /// and less `keeping` — the units this crew's keeping would be issued at the working's own bill
 /// (`crate::systems::prospective_keeping_issue`), which is what lets a quote for a crew nobody has
 /// committed yet agree with the turn that commits it.
+///
+/// ⛔ **THE KIT IS SPREAD OVER `take_hands`**, the crew less its keeping, and the crew claims it for
+/// `claim` hands — its take hands that would cut something with it (`docs/plan_site_crews.md`
+/// §2.3). `claims` is every committed row's claim ([`crate::take_claims::row_claims`]).
 #[allow(clippy::too_many_arguments)] // the ration's own inputs: roster, rows, crew, rung, carry
 pub fn prospective_deposit_gear(
     equipment: &crate::equipment_config::EquipmentConfig,
     allocation: &crate::components::LaborAllocation,
+    claims: &[f32],
     target: &crate::components::LaborTarget,
     kit: &crate::equipment_config::KitChoice,
-    workers: u32,
+    take_hands: f32,
+    claim: f32,
     band_kit: &crate::components::BandEquipment,
     rung: RungKey,
     carry: &DepositCarry,
     keeping: &[(String, f32)],
 ) -> ProspectiveCrew {
     let key = rung.wire_key();
-    let crew = workers as f32;
-    let other_rows = allocation.rows_excluding_source(equipment, target);
+    let other_rows = allocation.rows_excluding_source(equipment, target, claims);
     let site = crate::components::BuildSource::of(target);
     let issued: Vec<(&str, f32)> = match site.as_ref() {
         Some(site) => allocation.issued_excluding_site(site).collect(),
@@ -855,14 +840,14 @@ pub fn prospective_deposit_gear(
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
         other_rows,
         kit,
-        crew,
+        claim,
         allocation.priority_on(target),
     )
     .reserving(issued)
     .reserving(keeping.iter().map(|(item, units)| (item.as_str(), *units)));
     let coverage = equipment.coverage_from_units(
         kit,
-        crew,
+        take_hands,
         band_kit,
         budget.share_for_prospective(band_kit, equipment),
     );
@@ -871,6 +856,45 @@ pub fn prospective_deposit_gear(
         lift: carry.lift(equipment, &coverage, band_kit, gear.take),
         kit_workers_holding: coverage.workers_holding_whole_kit(),
     }
+}
+
+/// ⛔ **THE TAKE HANDS THAT WOULD TAKE SOMETHING WITH THE KIT ON THIS WORKING** — the room the
+/// row's floor leaves above the composed floor ([`deposit_reachable`]), over what one fully equipped
+/// cutter lifts: its hands, its tools on the held rung, capped by its carry
+/// (`docs/plan_site_crews.md` §2.3).
+#[allow(clippy::too_many_arguments)] // the take's own inputs, at one equipped hand
+pub fn deposit_useful_take_hands(
+    equipment: &crate::equipment_config::EquipmentConfig,
+    band_kit: &crate::components::BandEquipment,
+    kit: &crate::equipment_config::KitChoice,
+    working: &DepositSource,
+    ground: &Tile,
+    config: &ExtractionConfig,
+    ladder: &LadderConfig,
+    carry: Option<&DepositCarry>,
+    floor: f32,
+) -> f32 {
+    let payoff = deposit_payoff(working.standing(), ladder);
+    let room = deposit_reachable(
+        working.stock,
+        tile_deposit_capacity(config, &working.material, ground),
+        tile_deposit_regrowth(config, &working.material, ground),
+        &payoff,
+        floor,
+    );
+    let hand = equipment.one_equipped_hand(kit, band_kit);
+    let held = working.standing().held;
+    let tools = equipment
+        .deposit_gear(&hand, band_kit, held.branch(), Some(&held.wire_key()))
+        .take;
+    let lift = carry.map_or_else(
+        || CrewLift::tools_only(tools),
+        |carry| carry.lift(equipment, &hand, band_kit, tools),
+    );
+    crate::equipment_config::hands_to_reach(
+        room,
+        deposit_crew_throughput(crate::equipment_config::ONE_EQUIPPED_HAND, lift, &payoff),
+    )
 }
 
 /// **A PROSPECTIVE CREW, PRICED** — [`prospective_deposit_gear`]'s answer.
@@ -938,6 +962,7 @@ pub fn next_rung_take_for(
     ladder: &LadderConfig,
     config: &ExtractionConfig,
     allocation: &crate::components::LaborAllocation,
+    claims: &[f32],
     target: &crate::components::LaborTarget,
     kit: &crate::equipment_config::KitChoice,
     workers: u32,
@@ -962,19 +987,35 @@ pub fn next_rung_take_for(
     let keeping = crew_keeping_issue(
         equipment, band_kit, &raised, ground, config, ladder, workers,
     );
-    let crew = prospective_deposit_gear(
-        equipment, allocation, target, kit, workers, band_kit, next, carry, &keeping,
-    );
     let take_hands = (workers as f32
         - crew_keep_hands(
             equipment, band_kit, &raised, ground, config, ladder, workers,
         ))
     .max(NO_HANDS_ON_THE_DEPOSIT);
-    deposit_crew_throughput(
-        take_hands,
-        crew.lift.of_the_cutters(cutting_share(take_hands, workers)),
-        &payoff,
-    )
+    let claim = take_hands.min(deposit_useful_take_hands(
+        equipment,
+        band_kit,
+        kit,
+        &raised,
+        ground,
+        config,
+        ladder,
+        Some(carry),
+        target_floor(target),
+    ));
+    let crew = prospective_deposit_gear(
+        equipment, allocation, claims, target, kit, take_hands, claim, band_kit, next, carry,
+        &keeping,
+    );
+    deposit_crew_throughput(take_hands, crew.lift, &payoff)
+}
+
+/// The floor an `extract` target names, or the whole stand for any other.
+fn target_floor(target: &crate::components::LaborTarget) -> f32 {
+    match target {
+        crate::components::LaborTarget::Extract { floor, .. } => *floor,
+        _ => crate::components::STRIP_IT_BARE,
+    }
 }
 
 /// **NO USEFUL-CUTTERS ANSWER** — a row that is not `extract`, or has no crew pool to price.
@@ -1011,6 +1052,7 @@ pub fn useful_cutters(
     config: &ExtractionConfig,
     deposits: &DepositRegistry,
     allocation: &crate::components::LaborAllocation,
+    claims: &[f32],
     assignment: &crate::components::LaborAssignment,
     band_kit: &crate::components::BandEquipment,
     ground: &Tile,
@@ -1043,6 +1085,7 @@ pub fn useful_cutters(
                 ladder,
                 config,
                 allocation,
+                claims,
                 &assignment.target,
                 &kit,
                 crew,
@@ -1091,6 +1134,7 @@ pub fn deposit_crew_quote(
     ladder: &LadderConfig,
     config: &ExtractionConfig,
     allocation: &crate::components::LaborAllocation,
+    claims: &[f32],
     target: &crate::components::LaborTarget,
     kit: &crate::equipment_config::KitChoice,
     workers: u32,
@@ -1099,16 +1143,10 @@ pub fn deposit_crew_quote(
     ground: &Tile,
     carry: &DepositCarry,
 ) -> DepositCrewQuote {
-    let floor = match target {
-        crate::components::LaborTarget::Extract { floor, .. } => *floor,
-        _ => crate::components::STRIP_IT_BARE,
-    };
+    let floor = target_floor(target);
     let held_rung = working.rung();
     let keeping = crew_keeping_issue(
         equipment, band_kit, working, ground, config, ladder, workers,
-    );
-    let crew = prospective_deposit_gear(
-        equipment, allocation, target, kit, workers, band_kit, held_rung, carry, &keeping,
     );
     let capacity = tile_deposit_capacity(config, &working.material, ground);
     let regrowth_rate = tile_deposit_regrowth(config, &working.material, ground);
@@ -1120,10 +1158,27 @@ pub fn deposit_crew_quote(
             equipment, band_kit, working, ground, config, ladder, workers,
         ))
     .max(NO_HANDS_ON_THE_DEPOSIT);
+    // **And claims its kit for the cutters that would cut something with it** — never its head
+    // count (`docs/plan_site_crews.md` §2.3).
+    let claim = take_hands.min(deposit_useful_take_hands(
+        equipment,
+        band_kit,
+        kit,
+        working,
+        ground,
+        config,
+        ladder,
+        Some(carry),
+        floor,
+    ));
+    let crew = prospective_deposit_gear(
+        equipment, allocation, claims, target, kit, take_hands, claim, band_kit, held_rung, carry,
+        &keeping,
+    );
     DepositCrewQuote {
         take: deposit_take(
             take_hands,
-            crew.lift.of_the_cutters(cutting_share(take_hands, workers)),
+            crew.lift,
             working.stock,
             capacity,
             regrowth_rate,
@@ -1132,8 +1187,8 @@ pub fn deposit_crew_quote(
         ),
         armed_workers: crew.kit_workers_holding,
         next_rung_take: next_rung_take_for(
-            equipment, ladder, config, allocation, target, kit, workers, band_kit, working, ground,
-            carry,
+            equipment, ladder, config, allocation, claims, target, kit, workers, band_kit, working,
+            ground, carry,
         ),
     }
 }

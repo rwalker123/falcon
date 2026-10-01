@@ -418,27 +418,31 @@ pub struct CaravanPricing {
 }
 
 impl CaravanPricing {
-    /// Price a caravan of `workers` carrying `kit` at the row's `priority`, against `wear`, beside
-    /// `other_rows`.
+    /// Price a caravan carrying `kit` at the row's `priority`, against `wear`, beside `other_rows`.
+    ///
+    /// ⛔ **THE KIT IS SPREAD OVER `take_hands`**, the staffed crew less its planned keeping
+    /// (`docs/plan_site_crews.md` §2.3): a take kit is carried by the hands taking. `claim` is the
+    /// row's take-kit claim ([`crate::take_claims::take_kit_claim`]), never its head count.
+    #[allow(clippy::too_many_arguments)] // the ration's own inputs: roster, kit, hands, claim, rank, rows
     pub fn resolve(
         equipment: &crate::equipment_config::EquipmentConfig,
         kit: &crate::equipment_config::KitChoice,
-        workers: u32,
+        take_hands: f32,
+        claim: f32,
         priority: crate::components::SourcePriority,
         wear: &crate::components::BandEquipment,
         other_rows: &[crate::equipment_config::KittedRow],
         labor: &LaborConfig,
     ) -> Self {
-        let crew = workers as f32;
         let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
             other_rows.iter().cloned(),
             kit,
-            crew,
+            claim,
             priority,
         );
         let coverage = equipment.coverage_from_units(
             kit,
-            crew,
+            take_hands,
             wear,
             budget.share_for_prospective(wear, equipment),
         );

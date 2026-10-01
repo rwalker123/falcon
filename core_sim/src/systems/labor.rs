@@ -5319,7 +5319,48 @@ pub fn advance_labor_allocation(
         // from ([`LaborAllocation::item_budget`]). Resolved here, before the walk, for the reason
         // `band_kit` is: a band's ledger is one thing, and a row that read all of it would arm its
         // own crew off gear the row beside it is already holding.
-        let item_budget = allocation.item_budget(&equipment_cfg);
+        //
+        // ⛔ **IT IS SETTLED ON EACH ROW'S CLAIM, NOT ITS HEAD COUNT** (`docs/plan_site_crews.md`
+        // §2.3) — the planned take hands that would take something with the kit, struck here, before
+        // any take, off the state this turn's take will find ([`crate::take_claims::row_claims`]).
+        // The capture, the seed and the query strike the same claims through the same functions.
+        let row_claims = {
+            let ground_of = |pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| tiles.get(entity).ok())
+                    .cloned()
+            };
+            let season_of = |pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| food_modules.get(entity).ok())
+                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+            };
+            crate::take_claims::row_claims(
+                &crate::take_claims::ClaimSources {
+                    forage: &forage_registry,
+                    herds: &registry,
+                    deposits: &deposits,
+                    ground_of: &ground_of,
+                    season_of: &season_of,
+                    map_seed,
+                    labor: &labor,
+                    flora: &flora,
+                    fauna: &fauna,
+                    equipment: &equipment_cfg,
+                    extraction: &extraction_cfg,
+                    ladder: &ladder,
+                    materials: &materials_cfg,
+                    combat: &combat_config,
+                    person: person_profile,
+                    start: fauna::ProjectionStart::AfterRegrowth,
+                },
+                &allocation,
+                &band_kit,
+            )
+        };
+        let item_budget = allocation.item_budget(&equipment_cfg, &row_claims.claims);
         // **THE PARTIES THIS BAND HAS OUT**, keyed by the row that staffed them. Collected as the
         // walk goes and written back onto the assignments afterwards, because the walk borrows
         // `assignments` immutably — the same shape `lapsed` and `repaired_takes` take.
@@ -5510,9 +5551,14 @@ pub fn advance_labor_allocation(
             // **AND IT IS CUT FROM THE BAND'S SHARE OF THE LEDGER, NOT THE LEDGER** (`item_budget`
             // above). Asked against the whole ledger, every row here got a full copy of the band's
             // things: two hunt rows on one `trapping` kit armed four hunters each off four traps.
+            //
+            // ⛔ **AND IT DIVIDES THE TAKE HANDS, NEVER THE KEEPERS** (`docs/plan_site_crews.md` §2.3):
+            // a take kit is carried by the hands taking, and a keeping hand carries the keeping
+            // tools. Spread over the whole crew, a kept row with a kit for every take hand would hand
+            // part of each to its keepers and take below the equipped rate.
             let crew_coverage = equipment_cfg.coverage_from_units(
                 &crew_kit,
-                workers as f32,
+                take_hands_after_keeping(workers, keeping.keep_hands),
                 &band_kit,
                 item_budget.share_for_source(&assignment.target, &band_kit, &equipment_cfg),
             );
@@ -5577,10 +5623,15 @@ pub fn advance_labor_allocation(
                 crate::work_party::CaravanPricing::resolve(
                     &equipment_cfg,
                     &crew_kit,
-                    assignment.workers,
+                    take_hands_after_keeping(assignment.workers, row_claims.keep_hands[idx]),
+                    row_claims.claims[idx],
                     assignment.priority,
                     &band_kit,
-                    &allocation.rows_excluding_source(&equipment_cfg, &assignment.target),
+                    &allocation.rows_excluding_source(
+                        &equipment_cfg,
+                        &assignment.target,
+                        &row_claims.claims,
+                    ),
                     &labor,
                 )
             });
@@ -6099,6 +6150,11 @@ pub fn advance_labor_allocation(
                     // the ground, and a crew that carried nothing home did not work it.
                     let standing_above_floor = stand_above_floor * selected_share;
                     let working_the_patch = crew_is_working_the_source(standing_above_floor);
+                    // **WHAT THIS CREW MAY CARRY OFF**, before the take draws it down — what the
+                    // row's needed crew is struck against below.
+                    let take_room = (crate::forage::patch_take_room(patch, *floor)
+                        * selected_share)
+                        .min(biomass_before * selected_share);
                     let provisions = forage_take(
                         patch,
                         &tile_composition,
@@ -6647,7 +6703,39 @@ pub fn advance_labor_allocation(
                     // regrows, but it is the same "add hands" answer.
                     let per_worker_biomass =
                         forage_per_worker_biomass(forage_per_worker_capacity, seasonal);
-                    let workers_needed = workers_needed_for_take(take, per_worker_biomass, workers);
+                    // ⛔ **THE `+` CAP IS THE FEWEST HANDS THAT REACH THE ROOM, NOT THE TAKE OVER
+                    // THE CREW'S AVERAGE RATE** (`docs/plan_site_crews.md` §4) — the average dilutes
+                    // as bare hands are added, so the inverted count climbed with the crew and
+                    // invited one more hand every time. Keeping is folded in here, once.
+                    let workers_needed = crate::forage::forage_crew_needed(
+                        take_room,
+                        &item_budget.reach_coverage_for_source(
+                            &assignment.target,
+                            &crew_kit,
+                            take_hands,
+                            &band_kit,
+                            &equipment_cfg,
+                        ),
+                        |kit| {
+                            forage_per_worker_biomass(
+                                equipment_cfg.forage_per_worker_biomass_capacity(
+                                    baseline_gather_rate,
+                                    kit,
+                                    &band_kit,
+                                ),
+                                seasonal,
+                            )
+                        },
+                        forage_per_worker_biomass(
+                            equipment_cfg.forage_per_worker_biomass_capacity(
+                                baseline_gather_rate,
+                                &equipment_cfg.no_kit(),
+                                &band_kit,
+                            ),
+                            seasonal,
+                        ),
+                        keep_hands,
+                    );
                     // The stock the patch **offered** this turn — the same pre-take escapement room
                     // the work predicate read, and unscaled by anything the build is doing: the
                     // ground standing above the floor is there whether or not a second crew is
@@ -7534,11 +7622,31 @@ pub fn advance_labor_allocation(
                             // `fauna::NO_CARRY_BOUND` wherever carry does not bind, which drops the
                             // haul term out of the `max` and leaves the handling crew — the crew a
                             // pen actually wants — to answer alone.
-                            workers_needed: fauna::hunt_take_workers(
+                            // **Crew-independent** (`docs/plan_site_crews.md` §4): the haul walked over
+                            // the row's own units, armed hands first ([`fauna::hunt_crew_needed`]).
+                            workers_needed: fauna::hunt_crew_needed(
                                 production,
-                                herd.body_mass,
-                                fauna::herd_carry_rate(herd, &fauna, herd_carry_per_worker),
-                                fauna::herd_engage_rate(herd, &fauna),
+                                herd,
+                                &fauna,
+                                &item_budget.reach_coverage_for_source(
+                                    &assignment.target,
+                                    &crew_kit,
+                                    take_hands,
+                                    &band_kit,
+                                    &equipment_cfg,
+                                ),
+                                |kit| {
+                                    equipment_cfg.hunt_per_worker_biomass_capacity(
+                                        baseline_haul_rate,
+                                        kit,
+                                        &band_kit,
+                                    )
+                                },
+                                equipment_cfg.hunt_per_worker_biomass_capacity(
+                                    baseline_haul_rate,
+                                    &equipment_cfg.no_kit(),
+                                    &band_kit,
+                                ),
                                 party_for(herd.body_mass)
                                     .stay_fraction(fauna::herd_wariness(herd, &fauna)),
                             ),
@@ -8212,15 +8320,37 @@ pub fn advance_labor_allocation(
                     // this arm's herd is never penned, the pen returns above — but composing the
                     // rate by hand at *one* of the two `hunt_take_workers` sites is exactly how the
                     // pen's site went on inverting a sled the take had stopped reading.
-                    let workers_needed = fauna::hunt_take_workers(
+                    //
+                    // **Crew-independent** (`docs/plan_site_crews.md` §4): the haul walked over the
+                    // row's own units, armed hands first ([`fauna::hunt_crew_needed`]), so a hand
+                    // the row's units do not reach is counted bare rather than diluting every hand.
+                    let workers_needed = fauna::hunt_crew_needed(
                         // **The meat side of the room, and ONLY here.** The two gates above read
                         // `standing_above_floor` raw and must go on doing so: a fully committed herd
                         // is still a herd to gentle, to fence and to learn from. What scales is the
                         // crew this row asks for, because no number of extra hands increases milk.
                         standing_above_floor * herd.meat_take_fraction(),
-                        herd.body_mass,
-                        fauna::herd_carry_rate(herd, &fauna, herd_carry_per_worker),
-                        fauna.engage_rate_for(&herd.species),
+                        herd,
+                        &fauna,
+                        &item_budget.reach_coverage_for_source(
+                            &assignment.target,
+                            &crew_kit,
+                            take_hands,
+                            &band_kit,
+                            &equipment_cfg,
+                        ),
+                        |kit| {
+                            equipment_cfg.hunt_per_worker_biomass_capacity(
+                                baseline_haul_rate,
+                                kit,
+                                &band_kit,
+                            )
+                        },
+                        equipment_cfg.hunt_per_worker_biomass_capacity(
+                            baseline_haul_rate,
+                            &equipment_cfg.no_kit(),
+                            &band_kit,
+                        ),
                         party_for(herd.body_mass).stay_fraction(fauna::herd_wariness(herd, &fauna)),
                     );
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
@@ -8521,12 +8651,10 @@ pub fn advance_labor_allocation(
                         held_rung.branch(),
                         Some(&held_key),
                     );
-                    // **THE KIT IS ISSUED TO THE WHOLE CREW, AND ONLY THE CUTTERS SWING IT**
-                    // (`docs/plan_site_crews.md` §2.1). Coverage is struck over the row's people,
-                    // because gear is issued to people; the lift is the part of the crew that is
-                    // cutting ([`crate::extraction::CrewLift::of_the_cutters`]).
-                    let cutting_share = crate::extraction::cutting_share(take_hands, workers);
-                    let cutting_equipped = deposit_gear.equipped_workers * cutting_share;
+                    // **THE KIT IS ISSUED TO THE CUTTERS** (`docs/plan_site_crews.md` §2.3) — the
+                    // coverage above is struck over the take hands, so its tools and its carry are
+                    // the cutters' own and nothing is scaled back for the keepers.
+                    let cutting_equipped = deposit_gear.equipped_workers;
                     // **AND WHAT THE CREW CAN CARRY OFF** — the hunt's own coverage-weighted haul
                     // (`hunt_per_worker_biomass`, above) over the material's weight
                     // ([`crate::extraction::DepositCarry`]). A hunt's kill is bounded by what its
@@ -8536,10 +8664,9 @@ pub fn advance_labor_allocation(
                     let lift = crate::extraction::CrewLift {
                         tools: deposit_gear.take,
                         carry: deposit_carry.map_or(crate::extraction::NO_CARRY_CAP, |carry| {
-                            carry.crew_carry(hunt_per_worker_biomass, workers as f32)
+                            carry.crew_carry(hunt_per_worker_biomass, take_hands)
                         }),
-                    }
-                    .of_the_cutters(cutting_share);
+                    };
                     let take_payoff =
                         crate::extraction::deposit_payoff(working.standing(), &ladder);
                     let outcome = crate::extraction::take_from_deposit(
@@ -9260,7 +9387,17 @@ pub fn advance_labor_allocation(
         // each arm inverted its take alone, and the row is one crew that keeps first, so the
         // overstaffing signal `workers > workers_needed` has to count both halves. `site_keeping`
         // is index-aligned with `yields` until the lapse removal below.
-        for (row, keeping) in yields.iter_mut().zip(site_keeping.iter()) {
+        //
+        // **A forage row folded its keeping in already** ([`crate::forage::forage_crew_needed`]),
+        // rounding once.
+        for ((row, keeping), assignment) in yields
+            .iter_mut()
+            .zip(site_keeping.iter())
+            .zip(allocation.assignments.iter())
+        {
+            if matches!(assignment.target, LaborTarget::Forage { .. }) {
+                continue;
+            }
             row.workers_needed =
                 fauna::crew_needed_with_keeping(row.workers_needed, keeping.keep_hands);
         }
@@ -11634,6 +11771,13 @@ pub struct RaidConfigs<'w> {
     pub combat: Res<'w, CombatConfigHandle>,
     pub creatures: Res<'w, CreaturesConfigHandle>,
     pub equipment: Res<'w, EquipmentConfigHandle>,
+    /// The tables the band's take-kit claims are struck off ([`crate::take_claims`]) — the warrior
+    /// line's share of the ledger is settled beside every take row's claim.
+    pub labor: Res<'w, LaborConfigHandle>,
+    pub flora: Res<'w, FloraConfigHandle>,
+    pub ladder: Res<'w, LadderConfigHandle>,
+    pub materials: Res<'w, crate::materials_config::MaterialsConfigHandle>,
+    pub extraction: Res<'w, crate::extraction_config::ExtractionConfigHandle>,
 }
 
 /// **Predators Phase 1b — the raid trigger, and the Warrior role's first live consumer**
@@ -11674,8 +11818,13 @@ fn warrior_contingent_key(index: usize) -> String {
 /// like a multiplier rather than a head count.
 const ONE_PACK_REPRESENTATIVE: f32 = 1.0;
 
+#[allow(clippy::too_many_arguments)] // the raid's inputs plus the sources the take claims read
 pub fn advance_predator_raids(
     herds: Res<HerdRegistry>,
+    forage_registry: Res<ForageRegistry>,
+    deposits: Res<crate::extraction::DepositRegistry>,
+    tile_registry: Res<TileRegistry>,
+    food_modules: Query<&FoodModuleTag>,
     configs: RaidConfigs,
     sim_config: Res<SimulationConfig>,
     tick: Res<SimulationTick>,
@@ -11744,7 +11893,47 @@ pub fn advance_predator_raids(
         // shipped kit puts an item in both, which is why this reads identically today.
         let warrior_kit = alloc.kit_on(&LaborTarget::Warrior, &equipment_cfg);
         // `None`: the warrior line reads clubs alone, which no `extract` row's narrowing can move.
-        let warrior_budget = alloc.item_budget(&equipment_cfg);
+        // **SETTLED ON EVERY ROW'S CLAIM** ([`crate::take_claims::row_claims`]), the turn's own
+        // settlement struck again off the same sources.
+        let no_wear = BandEquipment::default();
+        let claims = {
+            let ground_of = |pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| tiles.get(entity).ok())
+                    .cloned()
+            };
+            let season_of = |pos: UVec2| {
+                tile_registry
+                    .index(pos.x, pos.y)
+                    .and_then(|entity| food_modules.get(entity).ok())
+                    .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0))
+            };
+            crate::take_claims::row_claims(
+                &crate::take_claims::ClaimSources {
+                    forage: &forage_registry,
+                    herds: &herds,
+                    deposits: &deposits,
+                    ground_of: &ground_of,
+                    season_of: &season_of,
+                    map_seed,
+                    labor: &configs.labor.get(),
+                    flora: &configs.flora.get(),
+                    fauna: &fauna,
+                    equipment: &equipment_cfg,
+                    extraction: &configs.extraction.get(),
+                    ladder: &configs.ladder.get(),
+                    materials: &configs.materials.get(),
+                    combat: &configs.combat.get(),
+                    person,
+                    start: fauna::ProjectionStart::AfterRegrowth,
+                },
+                &alloc,
+                band_equipment.as_deref().unwrap_or(&no_wear),
+            )
+            .claims
+        };
+        let warrior_budget = alloc.item_budget(&equipment_cfg, &claims);
         let warrior_coverage = band_equipment.as_deref().map(|wear| {
             equipment_cfg.coverage_from_units(
                 &warrior_kit,
@@ -13148,10 +13337,11 @@ mod labor_yield_tests {
     }
 
     /// The other extreme: when worker throughput is the binding constraint (few workers, a high
-    /// biomass-fraction Eradicate ceiling), every assigned worker was productive → `workers_needed ==
-    /// assigned` (no overstaffing).
+    /// biomass-fraction Eradicate ceiling), every assigned worker was productive and **more would
+    /// take more** — `workers_needed` is the crew that reaches the room, above the crew assigned
+    /// (`docs/plan_site_crews.md` §4), which is what lets the `+` add a hand that takes something.
     #[test]
-    fn labor_bound_take_reports_all_assigned_workers_needed() {
+    fn a_labor_bound_take_reports_the_crew_that_reaches_its_room() {
         let (mut world, tile) = world_with_source(CAP);
         let cfg = world.resource::<LaborConfigHandle>().get();
         let patch_cap = cfg.forage.capacity_for(SOURCE_BIOME);
@@ -13185,9 +13375,25 @@ mod labor_yield_tests {
         world.run_system_once(advance_labor_allocation);
 
         let forage = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
+        // What each worker carried — the whole crew took at one rate, since nobody keeps a wild
+        // patch and every hand is equally kitted — and the room it took it from: the whole stand.
+        let taken = patch_cap
+            - world
+                .resource::<ForageRegistry>()
+                .patch(UVec2::new(0, 0))
+                .unwrap()
+                .biomass;
+        // **Every added hand takes a basket off the shelf** — this band is stocked for more than
+        // the crew — so the crew is the room over one kitted gatherer's carry.
+        let per_worker = taken / assigned as f32;
         assert_eq!(
-            forage.workers_needed, assigned,
-            "a labor-bound take needs every assigned worker: {forage:?}"
+            forage.workers_needed,
+            (patch_cap / per_worker).ceil() as u32,
+            "a labor-bound take reports the crew that reaches its room: {forage:?}"
+        );
+        assert!(
+            forage.workers_needed > assigned,
+            "every assigned hand is productive and another would take more: {forage:?}"
         );
     }
 
@@ -13371,10 +13577,10 @@ mod labor_yield_tests {
             );
             let take_biomass = tended.actual / rate;
             let per_worker = crate::forage::forage_per_worker_biomass(equipped_gather_rate(), 1.0);
-            (take_biomass / per_worker).ceil() as u32
+            take_biomass / per_worker
         };
         assert!(
-            expected_foragers >= 1,
+            expected_foragers > 0.0,
             "the tended patch must pay out, or this asserts nothing"
         );
         // **Plus the hands the patch's own crew kept it with** (`docs/plan_site_crews.md` §4).
@@ -13383,9 +13589,12 @@ mod labor_yield_tests {
             .patch(SOURCE)
             .unwrap()
             .upkeep_hands;
+        // **Rounded ONCE, with the keeping folded in** (`docs/plan_site_crews.md` §4): the take's
+        // fractional hands plus the keep hands, never the take's whole hands plus the keep hands —
+        // rounding twice reported a hand more than the crew needs.
         assert_eq!(
             tended.workers_needed,
-            fauna::crew_needed_with_keeping(expected_foragers, keep_hands),
+            (expected_foragers + keep_hands).ceil() as u32,
             "a tended patch reports the crew its boosted take needs plus its keeping: {tended:?}"
         );
         // **THE PEN'S CREW IS ITS HANDLING CREW, AND NO HAUL COUNT SURVIVES IN IT.**

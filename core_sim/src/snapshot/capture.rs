@@ -2979,6 +2979,15 @@ pub fn capture_snapshot(
                 .and_then(|entity| tiles.get(entity).ok())
                 .map(|(_, tile, _)| tile.clone())
         };
+        // **A tile's gathering season**, off the sweep's own map — what a forage row's take-kit claim
+        // is planned at, exactly as the turn reads it ([`crate::take_claims`]).
+        let season_of = |pos: UVec2| {
+            seasonal_weights
+                .get(&pos)
+                .map_or(crate::forage::NO_FORAGE_SEASON, |weight| {
+                    weight.max(crate::forage::NO_FORAGE_SEASON)
+                })
+        };
         let mut population_states: Vec<PopulationCohortState> = populations
             .iter()
             .filter_map(
@@ -3175,6 +3184,9 @@ pub fn capture_snapshot(
                             materials: &materials_config,
                             ladder: &ladder_config,
                             ground_of: &ground_of,
+                            season_of: &season_of,
+                            map_seed: config.map_seed,
+                            flora: &flora_config,
                         },
                     }))
                 },

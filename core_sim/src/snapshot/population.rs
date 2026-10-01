@@ -203,6 +203,9 @@ pub(crate) struct HuntCrewGear<'a> {
     /// with for that ledger, so a ceiling quoted off the full stock would offer hands the traps on
     /// the row next door are already holding (`equipment.md` → "ONE BAND, ONE SET OF GEAR").
     pub(crate) allocation: &'a LaborAllocation,
+    /// Every row's take-kit claim, index-aligned with `allocation.assignments`
+    /// ([`crate::take_claims::row_claims`]).
+    pub(crate) claims: &'a [f32],
 }
 
 /// **THE CREW BEYOND WHICH MORE HANDS ADD NOTHING ON THIS ROW, *FIGHT INCLUDED*** — the sim's
@@ -247,7 +250,7 @@ fn assigned_hunt_useful_crew(
     // Resolved after the two gates, so a non-hunt row pays nothing for a vector it never reads.
     let other_rows = gear
         .allocation
-        .rows_excluding_source(kit_levers.config, target);
+        .rows_excluding_source(kit_levers.config, target, gear.claims);
     crate::fauna::hunt_useful_crew(&crate::fauna::hunt_crew_take_curve(
         &crate::fauna::HuntCrewCurveInputs {
             herd,
@@ -432,6 +435,13 @@ const NO_STANDING_NET: f32 = 0.0;
 /// (`docs/plan_site_crews.md` §4). The pool is gone, and a positional FlatBuffers field cannot be, so
 /// it states nothing owed and nothing paid rather than disappearing.
 const RETIRED_POOL_READING: f32 = 0.0;
+
+/// **A ROW THAT CLAIMS NONE OF AN ITEM WRITES NO `kitToe` LINE FOR IT** — `required` is never `0` on
+/// the wire, so a reader may divide by it.
+const NOTHING_CLAIMED: f32 = 0.0;
+
+/// One unit serves one worker — an item the roster does not carry is read at the roster's default.
+const ONE_WORKER_PER_UNIT: u32 = 1;
 
 /// ⛔ **THIS TURN'S POOLED FOOD, IN MINUS OUT** — the band's `Pooled` crossings on `FOOD`, off the
 /// per-turn twin [`PopulationCohort::last_turn_transfer_crossings`], so a recapture reads what the
@@ -672,6 +682,13 @@ pub(crate) struct BuildSourceInputs<'a> {
     /// **The ground under a tile**, for an `extract` row's crew curve — the capture's own tile
     /// lookup, `None` off the map.
     pub(crate) ground_of: &'a (dyn Fn(bevy::math::UVec2) -> Option<crate::components::Tile> + Sync),
+    /// **A tile's gathering season** — its food module's `seasonal_weight`, what a forage row's
+    /// take-kit claim is planned at ([`crate::take_claims`]).
+    pub(crate) season_of: &'a (dyn Fn(bevy::math::UVec2) -> f32 + Sync),
+    /// The world seed a tile's realized basket is drawn from.
+    pub(crate) map_seed: u64,
+    /// The flora table a patch's basket resolves against.
+    pub(crate) flora: &'a crate::flora_config::FloraConfig,
 }
 
 /// **THE JOB TOKEN A ROW PUBLISHES** — the rung this band's queue entry for `source` is actually
@@ -795,6 +812,12 @@ fn no_ground(_: bevy::math::UVec2) -> Option<crate::components::Tile> {
     None
 }
 
+/// No food module, so no gathering season — the fixture twin of [`no_ground`].
+#[cfg(test)]
+fn no_season(_: bevy::math::UVec2) -> f32 {
+    crate::forage::NO_FORAGE_SEASON
+}
+
 #[cfg(test)]
 pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
     use std::sync::OnceLock;
@@ -807,6 +830,7 @@ pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
     static LABOR: OnceLock<std::sync::Arc<crate::labor_config::LaborConfig>> = OnceLock::new();
     static MATERIALS: OnceLock<std::sync::Arc<crate::materials_config::MaterialsConfig>> =
         OnceLock::new();
+    static FLORA: OnceLock<std::sync::Arc<crate::flora_config::FloraConfig>> = OnceLock::new();
     static INPUTS: OnceLock<BuildSourceInputs<'static>> = OnceLock::new();
     INPUTS.get_or_init(|| BuildSourceInputs {
         forage: FORAGE.get_or_init(Default::default),
@@ -817,6 +841,9 @@ pub(crate) fn empty_build_sources() -> &'static BuildSourceInputs<'static> {
         materials: MATERIALS.get_or_init(crate::materials_config::MaterialsConfig::builtin),
         ladder: LADDER.get_or_init(crate::intensification::LadderConfig::builtin),
         ground_of: &no_ground,
+        season_of: &no_season,
+        map_seed: crate::HARNESS_MAP_SEED,
+        flora: FLORA.get_or_init(crate::flora_config::FloraConfig::builtin),
     })
 }
 
@@ -1005,31 +1032,87 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // Resolved here rather than per readout because both of this section's gear readouts fold out of
     // it: the per-row `kitWorkersHolding` below and the per-item pair on `kitItemConditions`. One
     // resolution, so the wire and the take cannot disagree about what the band owns.
+    // **EVERY ROW'S PLANNED SPLIT** — its keep hands and the take hands that claim its kit, struck
+    // through the one function the turn, the seed and the query strike them with
+    // ([`crate::take_claims::row_claims`]), off the sources as the next turn will find them.
+    let row_claims = allocation.map(|alloc| {
+        crate::take_claims::row_claims(
+            &crate::take_claims::ClaimSources {
+                forage: build_sources.forage,
+                herds: build_sources.herds,
+                deposits: build_sources.deposits,
+                ground_of: build_sources.ground_of,
+                season_of: build_sources.season_of,
+                map_seed: build_sources.map_seed,
+                labor: build_sources.labor,
+                flora: build_sources.flora,
+                fauna: hunt_crew_levers.fauna,
+                equipment: kit_levers.config,
+                extraction: build_sources.extraction,
+                ladder: build_sources.ladder,
+                materials: build_sources.materials,
+                combat: hunt_crew_levers.combat,
+                person: kit_levers.person_intrinsic,
+                start: crate::fauna::ProjectionStart::BeforeRegrowth,
+            },
+            alloc,
+            &kit,
+        )
+    });
+    let no_claims = crate::take_claims::RowClaims::default();
+    let claims = row_claims.as_ref().unwrap_or(&no_claims);
     let row_gear: Vec<(
         crate::equipment_config::KitChoice,
         crate::equipment_config::KitCoverage,
+        Vec<sim_schema::KitToeLineState>,
     )> = allocation
         .map(|alloc| {
             // The band-wide per-item unit budget `advance_labor_allocation` arms the source crews
-            // from ([`crate::components::LaborAllocation::item_budget`]).
-            let budget = alloc.item_budget(kit_levers.config);
+            // from ([`crate::components::LaborAllocation::item_budget`]), settled on the claims.
+            let budget = alloc.item_budget(kit_levers.config, &claims.claims);
             alloc
                 .assignments
                 .iter()
-                .map(|assignment| {
-                    let workers = assignment.workers as f32;
+                .enumerate()
+                .map(|(i, assignment)| {
+                    // **The kit is spread over the take hands** — a keeper carries the keeping
+                    // tools, never the take kit (`docs/plan_site_crews.md` §2.3).
+                    let workers = crate::take_claims::take_hands(
+                        assignment.workers as f32,
+                        claims.keep_hands[i],
+                    );
                     let row_kit = if assignment.target.is_standing_pool() {
                         kit_levers.config.no_kit()
                     } else {
                         assignment.kit_choice(kit_levers.config)
                     };
-                    let coverage = kit_levers.config.coverage_from_units(
-                        &row_kit,
-                        workers,
-                        &kit,
-                        budget.share_for_source(&assignment.target, &kit, kit_levers.config),
-                    );
-                    (row_kit, coverage)
+                    let share =
+                        budget.share_for_source(&assignment.target, &kit, kit_levers.config);
+                    let coverage = kit_levers
+                        .config
+                        .coverage_from_units(&row_kit, workers, &kit, &share);
+                    // **WHICH OF THE KIT'S ITEMS ARE SHORT, BY NAME** (`docs/plan_site_crews.md`
+                    // §2.3) — per item, the units the row claimed (its take hands that would take
+                    // something with the kit, never its head count) beside the units the
+                    // settlement handed it. A row that claims nothing writes no line.
+                    let claim = claims.claims[i];
+                    let kit_toe = row_kit
+                        .uses()
+                        .filter_map(|item| {
+                            let per_unit = kit_levers
+                                .config
+                                .item(item)
+                                .map_or(ONE_WORKER_PER_UNIT, |def| def.workers_per_unit)
+                                as f32;
+                            let required = claim / per_unit;
+                            (required > NOTHING_CLAIMED).then(|| sim_schema::KitToeLineState {
+                                item_id: item.to_string(),
+                                required,
+                                filled: share(item),
+                            })
+                        })
+                        .collect();
+                    (row_kit, coverage, kit_toe)
                 })
                 .collect()
         })
@@ -1042,7 +1125,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         &crate::equipment_config::KitCoverage,
     )> = match expedition {
         Some(_) => vec![(&hunt_choice, &hunt_coverage)],
-        None => row_gear.iter().map(|(k, c)| (k, c)).collect(),
+        None => row_gear.iter().map(|(k, c, _)| (k, c)).collect(),
     };
     /// Neither half of the pair has found a row yet — the fold's start, and the published answer for
     /// an item no row carries.
@@ -1302,6 +1385,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                             kit: &resolved_kit,
                             wear: &kit,
                             allocation: a,
+                            claims: &claims.claims,
                         },
                         kit_levers,
                         hunt_crew_levers,
@@ -1325,6 +1409,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         // was cut from, so two rows naming one kit state the share each really got.
                         row_gear[i].1.workers_holding_whole_kit(),
                     );
+                    // **WHICH OF ITS KIT ITEMS ARE SHORT, BY NAME** — resolved with the coverage
+                    // above, off the one budget, so the line and the reach beside it agree.
+                    row.kit_toe = row_gear[i].2.clone();
                     // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** (#663) — the plateau of
                     // the deposit crew curve over the same pool the hunt row's cap is struck over,
                     // read by the sheet's own rule. `0` on every non-extract row.
@@ -1343,6 +1430,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                                 build_sources.extraction,
                                 build_sources.deposits,
                                 a,
+                                &claims.claims,
                                 assignment,
                                 &kit,
                                 &ground,

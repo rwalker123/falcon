@@ -4955,9 +4955,14 @@ impl LaborAllocation {
     /// assignment holding ordinary head count, and its wayfinding gear is as much the band's as the
     /// hunters' spears. ⛔ **The five standing pools do NOT count** — see [`Self::kitted_rows`],
     /// which filters them out because their tools are settled by priority instead.
+    ///
+    /// `claims` is every row's take-kit claim, index-aligned with [`Self::assignments`]
+    /// ([`crate::take_claims::row_claims`]) — the hands that would take something with the kit, never
+    /// the head count (`docs/plan_site_crews.md` §2.3).
     pub fn item_budget(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
+        claims: &[f32],
     ) -> crate::equipment_config::BandItemBudget {
         // The kits have to outlive the borrow the budget builds from, so they are resolved into a
         // vector first — `kit_choice` mints a fresh `KitChoice` per call.
@@ -4965,7 +4970,7 @@ impl LaborAllocation {
         // accounts, and the pools settle first (`BandItemBudget::reserving`). Read off
         // [`Self::last_pool_toe`], which the turn parks right after the settlement and above every
         // take row, so the turn, the assign-time seed and the capture all divide one remainder.
-        crate::equipment_config::BandItemBudget::of_rows(self.kitted_rows(config, |_| true))
+        crate::equipment_config::BandItemBudget::of_rows(self.kitted_rows(config, claims, |_| true))
             .reserving(self.pool_issued())
     }
 
@@ -5026,8 +5031,9 @@ impl LaborAllocation {
         &self,
         config: &crate::equipment_config::EquipmentConfig,
         source: &LaborTarget,
+        claims: &[f32],
     ) -> Vec<crate::equipment_config::KittedRow> {
-        self.kitted_rows(config, |target| !target.same_source(source))
+        self.kitted_rows(config, claims, |target| !target.same_source(source))
     }
 
     /// **The rank a crew on `source` claims the band's take gear at** — the row's own
@@ -5041,7 +5047,7 @@ impl LaborAllocation {
             .map_or_else(SourcePriority::default, |assignment| assignment.priority)
     }
 
-    /// The rows `keep` accepts, each as its **resolved** kit and head count — the pairs both
+    /// The rows `keep` accepts, each as its **resolved** kit and claiming hands — the pairs both
     /// [`Self::item_budget`] and [`Self::rows_excluding_source`] are built from, spelled once so a
     /// committed row and a prospective one cannot come to be kitted two ways.
     ///
@@ -5063,14 +5069,23 @@ impl LaborAllocation {
     fn kitted_rows(
         &self,
         config: &crate::equipment_config::EquipmentConfig,
+        claims: &[f32],
         keep: impl Fn(&LaborTarget) -> bool,
     ) -> Vec<crate::equipment_config::KittedRow> {
+        debug_assert_eq!(
+            claims.len(),
+            self.assignments.len(),
+            "the claims are index-aligned with the rows they were struck for"
+        );
         self.assignments
             .iter()
-            .filter(|assignment| !assignment.target.is_standing_pool() && keep(&assignment.target))
-            .map(|assignment| crate::equipment_config::KittedRow {
+            .zip(claims)
+            .filter(|(assignment, _)| {
+                !assignment.target.is_standing_pool() && keep(&assignment.target)
+            })
+            .map(|(assignment, claim)| crate::equipment_config::KittedRow {
                 kit: assignment.kit_choice(config),
-                workers: assignment.workers as f32,
+                claim: *claim,
                 priority: assignment.priority,
                 source: Some(assignment.target.clone()),
             })

@@ -2318,6 +2318,43 @@ fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
              two units and nothing else"
         );
         let band = spawn_resident_hunters(&mut app, pos, &id, floor, LONE_HUNTER);
+        // ⛔ **THE HAUL IS WALKED OVER THE SLEDS THE BAND OWNS** (`docs/plan_site_crews.md` §4): the
+        // count is crew-independent, so it reads the band's stock — a hand past the sleds it holds
+        // hauls at the bare rate. A count that sledded every hand it named would invite haulers the
+        // band could never equip.
+        let haul = {
+            // The band's own ledger, or the one the turn falls back to for a band spawned with none.
+            let equipment = app
+                .world
+                .resource::<core_sim::EquipmentConfigHandle>()
+                .get();
+            let sleds = app
+                .world
+                .get::<core_sim::BandEquipment>(band)
+                .cloned()
+                .unwrap_or_else(|| {
+                    core_sim::BandEquipment::start_stocked_for(&equipment, LONE_HUNTER as f32)
+                })
+                .live_units("sled", &equipment) as f32;
+            let bare = core_sim::LaborConfig::builtin()
+                .hunt
+                .per_worker_biomass_capacity;
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let registry = app.world.resource::<HerdRegistry>();
+            let herd = registry.find(&id).expect("the herd is on the map");
+            let ceiling = core_sim::hunt_escapement_ceiling(
+                floor,
+                herd.biomass,
+                core_sim::herd_capacity(herd, &fauna),
+            );
+            let peak = ((ceiling / herd.body_mass).floor() + 1.0) * herd.body_mass;
+            let armed = sleds * equipped_haul_rate();
+            if peak <= armed {
+                haul
+            } else {
+                (sleds + (peak - armed) / bare).ceil() as u32
+            }
+        };
         app.world.run_system_once(advance_labor_allocation);
         recapture_snapshot_in_place(&mut app.world);
         let row = exported_row(&app, band);

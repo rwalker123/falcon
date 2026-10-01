@@ -697,7 +697,8 @@ and the row prunes itself — **104 turns**. `forestry:felling` is the same shap
 
 Every **built** rung on both branches owes work per turn, and the `extract` row on the working pays
 it **first**, before it cuts (`docs/plan_site_crews.md` §2.1): `keep_hands = min(crew, bill ÷
-keep_rate)` and the cut runs on the rest (`CrewLift::of_the_cutters`, `extraction::cutting_share`).
+keep_rate)` and the cut runs on the rest. The take kit is spread over those cutters alone
+(`equipment.md` → "A ROW CLAIMS ONLY THE TAKE HANDS"), so their tools and carry are theirs whole.
 Without a bill a working's position never falls and **a quarry is free to hold for ever**, which
 contradicts the arc this one sits on: an improvement that costs nothing to hold cannot weigh on
 move-or-stay.

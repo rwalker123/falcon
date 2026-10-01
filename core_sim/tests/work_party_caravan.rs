@@ -871,7 +871,9 @@ fn priced_pack(app: &App, band: Entity, kit: &KitChoice) -> f32 {
     let pricing = core_sim::work_party::CaravanPricing::resolve(
         &equipment,
         kit,
-        CREW,
+        // The whole crew cuts and claims: the pack is one hand's haul, whatever the crew.
+        CREW as f32,
+        CREW as f32,
         core_sim::SourcePriority::default(),
         &wear,
         &[],

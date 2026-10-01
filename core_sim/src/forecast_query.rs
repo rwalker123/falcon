@@ -137,11 +137,12 @@ fn resolve_ask(
     // **A party ranks its kit claim at its own row's Priority** — no near/far distinction: the
     // band's row on this herd where it has one, else the default a new row is given, exactly as a
     // local prospective crew is settled (`docs/plan_site_crews.md` §2.3).
+    let party_crew = party_workers as f32;
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
-        other_rows,
-        &kit,
-        party_workers as f32,
-        priority,
+        other_rows, &kit,
+        // **A detached party takes the standing surplus until it is spent**, so every one of its
+        // hunters takes something and the whole party claims the kit.
+        party_crew, priority,
     );
     let coverage = equipment.coverage_from_units(
         &kit,
@@ -228,10 +229,19 @@ fn resolve_quarry_and_kit(
         fauna_id: herd_id.to_string(),
         floor: SOURCE_IS_KEYED_BY_QUARRY_ALONE,
     };
-    let other_rows = allocation
-        .as_ref()
-        .map(|allocation| allocation.rows_excluding_source(&equipment, &herd_row))
-        .unwrap_or_default();
+    // **Every row's claim, struck the way the turn strikes it** ([`crate::take_claims`]).
+    let other_rows = crate::take_claims::with_world_sources(world, |sources| {
+        allocation
+            .as_ref()
+            .map(|allocation| {
+                allocation.rows_excluding_source(
+                    &equipment,
+                    &herd_row,
+                    &crate::take_claims::row_claims(sources, allocation, &wear).claims,
+                )
+            })
+            .unwrap_or_default()
+    });
     let priority = allocation
         .as_ref()
         .map_or_else(crate::components::SourcePriority::default, |allocation| {
@@ -938,6 +948,10 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
         material: ask.material.clone(),
         floor: ask.floor,
     };
+    // **Every committed row's claim, struck the way the turn strikes it** ([`crate::take_claims`]).
+    let claims = crate::take_claims::with_world_sources(world, |sources| {
+        crate::take_claims::row_claims(sources, &allocation, &wear).claims
+    });
     let per_crew = (1..=ask.max_workers)
         .map(|workers| {
             let quote = crate::extraction::deposit_crew_quote(
@@ -945,6 +959,7 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
                 &ladder,
                 &extraction,
                 &allocation,
+                &claims,
                 &target,
                 &kit,
                 workers,
@@ -1175,13 +1190,29 @@ fn answer_work_party_forecast(world: &mut World, ask: &WorkPartyForecastQuery) -
             return query_failure(query_error::KIT_WRONG_JOB)
         }
     };
+    // **The asked crew's planned split and every committed row's claim**, struck the way the turn
+    // strikes them ([`crate::take_claims`]).
+    let (split, claims) = crate::take_claims::with_world_sources(world, |sources| {
+        (
+            crate::take_claims::take_kit_claim(
+                sources,
+                &wear,
+                crate::take_claims::declared_on(&allocation, &target),
+                &target,
+                &kit,
+                ask.workers,
+            ),
+            crate::take_claims::row_claims(sources, &allocation, &wear).claims,
+        )
+    });
     let pricing = crate::work_party::CaravanPricing::resolve(
         &equipment,
         &kit,
-        ask.workers,
+        split.take_hands(ask.workers),
+        split.claim,
         allocation.priority_on(&target),
         &wear,
-        &allocation.rows_excluding_source(&equipment, &target),
+        &allocation.rows_excluding_source(&equipment, &target, &claims),
         &labor,
     );
     let source_pos = match &asked {

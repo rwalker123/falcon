@@ -542,7 +542,10 @@ fn two_axes_arm_exactly_two_people_across_the_fellers_and_the_keepers() {
             .filter(|issue| issue.item == AXE)
             .map(|issue| issue.units)
             .sum();
-        let budget = allocation.item_budget(&equipment);
+        let claims = core_sim::take_claims::with_world_sources(&world, |sources| {
+            core_sim::take_claims::row_claims(sources, allocation, wear).claims
+        });
+        let budget = allocation.item_budget(&equipment, &claims);
         let take: f32 = allocation
             .assignments
             .iter()
@@ -693,7 +696,10 @@ fn a_working_raised_this_turn_arms_no_more_people_than_there_are_axes() {
             .filter(|(item, _)| *item == "axe")
             .map(|(_, units)| units)
             .sum();
-        let budget = allocation.item_budget(&equipment);
+        let claims = core_sim::take_claims::with_world_sources(&world, |sources| {
+            core_sim::take_claims::row_claims(sources, allocation, wear).claims
+        });
+        let budget = allocation.item_budget(&equipment, &claims);
         let rows: f32 = allocation
             .assignments
             .iter()

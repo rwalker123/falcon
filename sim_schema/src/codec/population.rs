@@ -10,7 +10,7 @@ use crate::state::population::{
     AccessibleStockpileEntryState, AccessibleStockpileState, BandKitCrewState, BandKitTiersState,
     BandLoadoutSupplyRowState, BandLoadoutWindowState, BenchState, BuildQueueEntryState,
     CharacteristicReadingState, CohortStoreState, CraftOfferState, DrawnInputState,
-    EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState,
+    EquipmentBatchState, GenerationState, HarvestTaskState, KitItemConditionState, KitToeLineState,
     LaborAssignmentState, MaterialBatchState, MaterialShortfallState, PoolCrewLineState,
     PoolToeLineState, PoolingLinkState, PopulationCohortState, PopulationDemographicsState,
     ScoutTaskState, SettlementStageViewState, SourcePriorityState, TransferCrossingState,
@@ -319,6 +319,28 @@ fn create_populations<'a>(
                                 .collect();
                             Some(builder.create_vector(&keys))
                         };
+                        // **WHICH KIT ITEMS ARE SHORT, BY NAME** — absent rather than an empty
+                        // vector when the row claims nothing, the `take_species` convention.
+                        let kit_toe = if assignment.kit_toe.is_empty() {
+                            None
+                        } else {
+                            let lines: Vec<_> = assignment
+                                .kit_toe
+                                .iter()
+                                .map(|line| {
+                                    let item_id = builder.create_string(&line.item_id);
+                                    fb::KitToeLine::create(
+                                        builder,
+                                        &fb::KitToeLineArgs {
+                                            itemId: Some(item_id),
+                                            required: line.required,
+                                            filled: line.filled,
+                                        },
+                                    )
+                                })
+                                .collect();
+                            Some(builder.create_vector(&lines))
+                        };
                         fb::LaborAssignment::create(
                             builder,
                             &fb::LaborAssignmentArgs {
@@ -412,6 +434,9 @@ fn create_populations<'a>(
                                 // **HOW MANY CUTTERS THIS WORKING CAN USE, GEAR INCLUDED** — the
                                 // deposit crew curve's plateau. Appended last.
                                 usefulCutters: assignment.useful_cutters,
+                                // **WHICH KIT ITEMS ARE SHORT, BY NAME** — the row's claim and
+                                // its settled units per item. Appended last.
+                                kitToe: kit_toe,
                             },
                         )
                     })
@@ -1271,6 +1296,11 @@ fn decode_labor_assignment(
         next_load_home_in: assignment.nextLoadHomeIn(),
         net_rate_home: assignment.netRateHome(),
         useful_cutters: assignment.usefulCutters(),
+        kit_toe: map_rows(assignment.kitToe(), |line| KitToeLineState {
+            item_id: text(line.itemId()),
+            required: line.required(),
+            filled: line.filled(),
+        }),
     })
 }
 

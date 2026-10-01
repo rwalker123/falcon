@@ -7,6 +7,8 @@ paths:
   - "integration_tests/tests/equipment_toe.rs"
   - "core_sim/tests/kit_selection.rs"
   - "core_sim/tests/pool_toe.rs"
+  - "core_sim/src/take_claims.rs"
+  - "core_sim/tests/take_kit_claims.rs"
 ---
 
 # TOE — the band's consumable equipment
@@ -1686,7 +1688,7 @@ kits on one web share an item. The hunt roster is not so lucky: `big_game` and `
 **sled**, so a kit-id grouping would still sled a full crew on each of two rows off one stock.
 
 ```text
-need(row, item)  = row.workers ÷ workers_per_unit(item)     over the rows whose RESOLVED kit uses it
+need(row, item)  = row.claim ÷ workers_per_unit(item)       over the rows whose RESOLVED kit uses it
 left             = floor(live_units(item) − reserved(item))
 for tier in High, Normal, Low:
     if left >= Σ need over the tier: each row takes its need; left −= that sum
@@ -1694,12 +1696,65 @@ for tier in High, Normal, Low:
           to the largest remainders (ties to the earlier row); left = 0
 ```
 
+> #### ⛔ A ROW CLAIMS ONLY THE TAKE HANDS THAT WOULD TAKE SOMETHING WITH THE KIT
+>
+> `row.claim` is **not the head count** (`docs/plan_site_crews.md` §2.3,
+> `core_sim/src/take_claims.rs`):
+>
+> ```text
+> claim(row) = min(crew − planned_keep_hands(crew),  useful_take_hands(site, kit))
+> ```
+>
+> - **`useful_take_hands`** is planned **as if equipped**, the keeping claim's step 1 on the take:
+>   the room the row's floor leaves, over what ONE fully equipped hand takes of it
+>   (`EquipmentConfig::one_equipped_hand`). Each web's own function answers it —
+>   `forage::forage_useful_take_hands` (the patch's take room over one basketed gatherer's carry
+>   this season), `fauna::hunt_useful_take_hands` (the take crew's carry and reach **and the
+>   fight**: a spear fells `(attack − defense) × lethality × hit_chance ÷ durability` bodies a
+>   turn, and a party that cannot wound the quarry claims nothing) and
+>   `extraction::deposit_useful_take_hands` (the reachable room over one equipped cutter's lift).
+>   It reads the site and the band's gear, **never the crew**, which is what holds a claim — and
+>   so the split — still while the player steps the crew.
+> - **`planned_keep_hands`** is the prospective keeping split every quote already strikes
+>   (`crew_keep_hands` / `extraction::crew_keep_hands`). A keeper carries the keeping tools.
+>
+> Played on a saved band: four baskets, a wild row of 2 and a kept row of 3 on a thin stand. By
+> head count the raise to 4 moved a basket (`4 × 2 ÷ 6` floors the wild row to one) and lit its
+> shortage mark; on claims the kept row asks for **1.8** baskets at every crew and the wild row keeps
+> its 2. Pinned by
+> `take_kit_claims::raising_a_row_past_its_sites_yield_moves_no_kit_off_the_row_beside_it`, which
+> fails on the head-count claim.
+>
+> **ONE FUNCTION OF STATE, STRUCK BY EVERYONE — NO CACHE.** `take_claims::row_claims` is called by
+> the turn before its settlement (`ProjectionStart::AfterRegrowth`) and by every between-turns
+> surface regrow-first (`with_world_sources`, `BeforeRegrowth`): the capture, the assign-time seed,
+> the compose-sheet query, the raid's warrior line. `item_budget` and `rows_excluding_source` take
+> the claims as an argument, so no surface can settle on a head count. A brand-new row is settled on
+> its real claim on the frame it is staffed. The prospective rows strike the asked crew's claim the
+> same way: the hunt crew curve per crew size off its regrown quarry, the caravan pricing at the
+> staffed crew, the extraction quote per crew. **A detached party** (the trip and denial sheets)
+> claims its whole party: it takes the standing surplus until it is spent, so every raider is useful.
+>
+> **AND THE TAKE KIT IS SPREAD OVER THE TAKE HANDS.** Every take coverage — the turn's
+> `crew_coverage`, the seed's, the curves', the caravan's, the extraction quote's, the capture's
+> `kitWorkersHolding` — is struck over `crew − keep_hands`, never the whole crew. Spread over the
+> keepers too, a kept row holding a kit for every take hand handed part of each to its keepers and
+> took below the equipped rate. The extraction take's `cutting_share` scaling that compensated for it
+> is retired. A felling crew of four keeping 0.67 hands now publishes `kitWorkersHolding` **3.33** with
+> six sleds and six axes — the keepers hold none of the take kit.
+>
+> **On the wire, by item:** `LaborAssignment.kitToe[]{itemId, required, filled}` — per item, the units
+> the row claimed beside the units it was settled. Short is `filled < required`; an absent list is a
+> row that claims nothing. `kitWorkersHolding < workers` no longer means short, because unclaimed hands
+> work bare by design. The builders' and Roadwork's per-item twin is `poolToe`.
+
 - **BY PRIORITY, then whole units by largest remainder** (`docs/plan_site_crews.md` §2.3,
   `BandItemBudget::settle`). A take kit's items settle **High rows in full first, then Normal, then
   Low** — the row's own `SourcePriority`, the mark its keeping claims and a pool's tools already
   settle at, so *"when something runs short, the band spends it on high priority first"* is one rule
   across every tool a band holds. Within a tier the stock cannot cover, whole units go by largest
-  remainder on head count — the pro-rata rule, now in whole items and per tier.
+  remainder on the rows' **claims** — the pro-rata rule, now in whole items, per tier, and on the
+  hands that would use the kit.
 
   ⛔ **It was pro-rata by head count across every row, and the playtest is why it is not.** A High
   boar hunt of 4 and a Normal sheep hunt of 2 on the stalking kit, over five kits, read *"3 of 4"*

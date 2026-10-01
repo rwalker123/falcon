@@ -277,7 +277,10 @@ is kept by scaling the two parts onto the row's `actual` in their own proportion
 turn: the forecast steps a crew that moves every turn, and neither the seed nor the query knows who is
 on the road now, so the row's own head count off the band's share of its gear
 (`BandItemBudget::with_prospective_row` beside its other rows) is the one input all three resolve
-identically. The turn's *take* is still priced at the hunters present.
+identically. The turn's *take* is still priced at the hunters present. **The kit is spread over the
+staffed crew's take hands and settled on its claim** (`CaravanPricing::resolve(take_hands, claim,
+…)`, `equipment.md` → "A ROW CLAIMS ONLY THE TAKE HANDS"), struck by the same `take_claims` function
+in all three, so a party's carry is what its cutters and gatherers hold.
 
 **The seed and the query step the band's STANDING party when it has one**, restamped for the crew
 asked about — a stepper press on a live posting re-seeds that posting, not a fresh one that would

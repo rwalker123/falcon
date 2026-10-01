@@ -431,6 +431,27 @@ pub struct LaborAssignmentState {
     /// and on a row with no pool. Derived at capture.
     #[serde(default)]
     pub useful_cutters: u32,
+    /// **WHICH OF THIS ROW'S KIT ITEMS ARE SHORT, BY NAME** (`docs/plan_site_crews.md` §2.3) — one
+    /// [`KitToeLineState`] per item the row's kit carries, wherever the row claims any of it. An
+    /// item is short where `filled < required`. Empty = the row claims nothing. The builders' and
+    /// Roadwork's twin is [`PopulationCohortState::pool_toe`]. Appended last (append-only).
+    #[serde(default)]
+    pub kit_toe: Vec<KitToeLineState>,
+}
+
+/// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct KitToeLineState {
+    /// The `equipment.json` item id. The client resolves it to the roster's display name; no item
+    /// is spelled in client code.
+    pub item_id: String,
+    /// **Units the row claimed** — its take hands that would take something with the kit, over the
+    /// item's `workers_per_unit`. ⛔ **Never `0`**: a line exists only where something is claimed.
+    pub required: f32,
+    /// **Units the band's take-gear settlement handed the row.** Exactly `required` where the row's
+    /// priority tier was covered; whole units where its tier was short. **Short is
+    /// `filled < required`.**
+    pub filled: f32,
 }
 
 /// **THE THREE RANKS A WORKED ROW CAN CARRY** — the wire twin of core_sim's `SourcePriority`, and

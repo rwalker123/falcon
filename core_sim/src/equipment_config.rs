@@ -1423,6 +1423,34 @@ impl KitCoverage {
         &self.crews
     }
 
+    /// ⛔ **THE FEWEST HANDS WHOSE CAPACITY REACHES `room`** — this coverage's crews walked
+    /// best-equipped first, each hand at its crew's per-worker `rate`, and any hand past the
+    /// coverage at `beyond` (a hand the band has no unit for). Fractional; a crew-independent count,
+    /// because it reads the units the row holds rather than how thinly they are spread.
+    ///
+    /// Where nothing past the coverage takes anything (`beyond` is nothing), the hands that take
+    /// something are the whole answer.
+    pub fn hands_to_reach(&self, room: f32, rate: impl Fn(&KitChoice) -> f32, beyond: f32) -> f32 {
+        let mut left = room.max(NO_CLAIMING_HANDS);
+        let mut hands = NO_CLAIMING_HANDS;
+        for crew in &self.crews {
+            if left <= NO_CLAIMING_HANDS {
+                return hands;
+            }
+            let per_hand = rate(&crew.kit);
+            let capacity = crew.workers * per_hand;
+            if capacity >= left {
+                return hands + hands_to_reach(left, per_hand);
+            }
+            left -= capacity;
+            hands += crew.workers;
+        }
+        if left <= NO_CLAIMING_HANDS || beyond <= NO_CLAIMING_HANDS {
+            return hands;
+        }
+        hands + hands_to_reach(left, beyond)
+    }
+
     /// **The head count this coverage divides** — `0` for a job nobody is staffed on.
     ///
     /// The one authority for the denominator: [`Self::workers_holding`] over this is the whole
@@ -1514,14 +1542,17 @@ pub struct DepositGear {
     pub wear_kit: KitChoice,
 }
 
-/// **ONE ROW'S CLAIM ON THE BAND'S TAKE GEAR** — the row's resolved kit, its staffed head count and
-/// its player-set `Priority`, which is the order the band's items are settled in
+/// **ONE ROW'S CLAIM ON THE BAND'S TAKE GEAR** — the row's resolved kit, the hands on it that claim
+/// the kit, and its player-set `Priority`, which is the order the band's items are settled in
 /// ([`BandItemBudget`]). `source` names the row it came from, or `None` for a crew nobody has
 /// committed yet ([`BandItemBudget::with_prospective_row`]).
+///
+/// `claim` is **not the head count**: it is the take hands that would take something with the kit
+/// ([`crate::take_claims::take_kit_claim`], `docs/plan_site_crews.md` §2.3).
 #[derive(Debug, Clone)]
 pub struct KittedRow {
     pub kit: KitChoice,
-    pub workers: f32,
+    pub claim: f32,
     pub priority: crate::components::SourcePriority,
     pub source: Option<crate::components::LaborTarget>,
 }
@@ -1539,9 +1570,14 @@ pub struct KittedRow {
 ///
 /// Per item, the rows are served **High in full, then Normal, then Low** — the row's own
 /// `SourcePriority`, the same mark its keeping claims and a pool's tools settle at. Inside a tier the
-/// stock cannot cover, the tier's whole units are apportioned **by largest remainder on head count**
-/// (each row's quota is `units × its need ÷ the tier's need`, floored, and the units left go to the
-/// largest remainders, ties to the earlier row). A row's need is `workers ÷ workers_per_unit`. So a
+/// stock cannot cover, the tier's whole units are apportioned **by largest remainder on the rows'
+/// claims** (each row's quota is `units × its need ÷ the tier's need`, floored, and the units left go
+/// to the largest remainders, ties to the earlier row). A row's need is `claim ÷ workers_per_unit`.
+///
+/// ⛔ **THE CLAIM IS NOT THE HEAD COUNT.** It is the take hands that would take something with the
+/// kit — planned as if equipped, capped at the row's take hands ([`KittedRow::claim`]). A hand a site
+/// does not need claims nothing and works bare, so raising a crew past its site's yield cannot pull
+/// a kit off a row that needs it. So a
 /// High boar hunt of 4 and a Normal sheep hunt of 2 over five stalking kits reads **4 of 4** and **1
 /// of 2**, where the head-count split this replaced gave the boar 3.3 and the sheep 1.7.
 ///
@@ -1616,12 +1652,14 @@ impl BandItemBudget {
     pub fn with_prospective_row(
         other_rows: impl IntoIterator<Item = KittedRow>,
         kit: &KitChoice,
-        workers: f32,
+        // **The asked-about crew's claiming hands** — not its head count
+        // ([`crate::take_claims::take_kit_claim`]).
+        claim: f32,
         priority: crate::components::SourcePriority,
     ) -> Self {
         Self::of_rows(other_rows.into_iter().chain(std::iter::once(KittedRow {
             kit: kit.clone(),
-            workers,
+            claim,
             priority,
             source: None,
         })))
@@ -1635,6 +1673,16 @@ impl BandItemBudget {
         wear: &crate::components::BandEquipment,
         config: &EquipmentConfig,
     ) -> Vec<f32> {
+        self.settle_and_leave(item, wear, config).0
+    }
+
+    /// [`Self::settle`], and the whole units of `item` no claim took — what is still on the shelf.
+    fn settle_and_leave(
+        &self,
+        item: &str,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> (Vec<f32>, f32) {
         let per_unit = config
             .item(item)
             .map_or_else(one_worker, |def| def.workers_per_unit) as f32;
@@ -1652,7 +1700,7 @@ impl BandItemBudget {
             .iter()
             .map(|row| {
                 if row.kit.uses.iter().any(|used| used.as_ref() == item) {
-                    row.workers / per_unit
+                    row.claim / per_unit
                 } else {
                     NO_UNITS_SETTLED
                 }
@@ -1676,7 +1724,7 @@ impl BandItemBudget {
                 left -= wanted;
                 continue;
             }
-            // **The tier the stock cannot cover**: whole units by largest remainder on head count.
+            // **The tier the stock cannot cover**: whole units by largest remainder on the claims.
             let quota: Vec<f32> = members
                 .iter()
                 .map(|&index| left * need[index] / wanted)
@@ -1702,7 +1750,57 @@ impl BandItemBudget {
             }
             left = NO_UNITS_IN_HAND;
         }
-        settled
+        (settled, left)
+    }
+
+    /// **The units of `item` the settlement left on the shelf** — the live stock less what the pools
+    /// were issued and every row was settled. An item no row claims is all on the shelf.
+    pub fn unclaimed_units(
+        &self,
+        item: &str,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> f32 {
+        let claimed = self
+            .rows
+            .iter()
+            .any(|claim| claim.kit.uses.iter().any(|used| used.as_ref() == item));
+        if claimed {
+            self.settle_and_leave(item, wear, config).1
+        } else {
+            self.units_for_row(item, self.rows.len(), wear, config)
+        }
+    }
+
+    /// ⛔ **THE COVERAGE A ROW'S CREW COULD REACH WITH** — its `take_hands` armed from the units it
+    /// was settled, plus one more hand for every unit still on the shelf, armed from it
+    /// (`docs/plan_site_crews.md` §4). What the row's needed crew is walked over
+    /// ([`KitCoverage::hands_to_reach`]): a hand the player adds takes a spare kit if one is lying
+    /// there, and works bare if not — so the count reads the band's stock, never the crew's size.
+    pub fn reach_coverage_for_source(
+        &self,
+        source: &crate::components::LaborTarget,
+        kit: &KitChoice,
+        take_hands: f32,
+        wear: &crate::components::BandEquipment,
+        config: &EquipmentConfig,
+    ) -> KitCoverage {
+        let row = self.row_of(source);
+        let spare = |item: &str| self.unclaimed_units(item, wear, config);
+        let spare_hands: f32 = kit
+            .uses
+            .iter()
+            .map(|item| {
+                spare(item)
+                    * config
+                        .item(item)
+                        .map_or_else(one_worker, |def| def.workers_per_unit)
+                        as f32
+            })
+            .sum();
+        config.coverage_from_units(kit, take_hands + spare_hands, wear, |item| {
+            self.units_for_row(item, row, wear, config) + spare(item)
+        })
     }
 
     /// **One row's settled units of `item`** — `row` is its index in the budget. An item no row
@@ -1775,6 +1873,24 @@ impl BandItemBudget {
 
 /// One unit, the quantum the in-tier apportionment hands out.
 const WHOLE_UNIT: f32 = 1.0;
+
+/// **ONE HAND, FULLY EQUIPPED** — one person holding one unit of every item a kit carries
+/// ([`EquipmentConfig::one_equipped_hand`]).
+pub const ONE_EQUIPPED_HAND: f32 = 1.0;
+
+/// No hand takes anything with a kit here.
+pub const NO_CLAIMING_HANDS: f32 = 0.0;
+
+/// **THE TAKE HANDS THAT REACH `room` AT `per_equipped_hand`** — the planned take-kit claim of one
+/// site (`docs/plan_site_crews.md` §2.3). Fractional, like the take it plans; a rate of nothing
+/// reaches nothing.
+pub fn hands_to_reach(room: f32, per_equipped_hand: f32) -> f32 {
+    if per_equipped_hand > NO_CLAIMING_HANDS {
+        room.max(NO_CLAIMING_HANDS) / per_equipped_hand
+    } else {
+        NO_CLAIMING_HANDS
+    }
+}
 
 /// **ONE LINE OF A POOL'S TOE** — a tool a site's hands want, and how many hands one unit of it
 /// serves ([`EquipmentConfig::pool_toe`]).
@@ -2565,6 +2681,18 @@ impl EquipmentConfig {
         self.coverage_from_units(kit, workers, wear, |item| {
             wear.live_units(item, self) as f32
         })
+    }
+
+    /// ⛔ **ONE HAND HOLDING THE WHOLE OF `kit`** — the coverage a take-kit claim's rate is read off
+    /// (`docs/plan_site_crews.md` §2.3): the band's ledger read for the kit's tier and condition,
+    /// with no share applied. A dead item still covers nobody, so a band whose kit is spent plans at
+    /// the bare rate.
+    pub fn one_equipped_hand(
+        &self,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> KitCoverage {
+        self.coverage_from_units(kit, ONE_EQUIPPED_HAND, wear, |_| ONE_EQUIPPED_HAND)
     }
 
     /// **[`Self::coverage`] over a UNIT BUDGET the caller decides** — the one implementation of the
@@ -4583,7 +4711,7 @@ mod tests {
         (config, wear, kit)
     }
 
-    /// One hunt row on its own herd, at `workers` and `priority`.
+    /// One hunt row on its own herd, claiming `workers` hands at `priority`.
     fn a_hunt_row(
         kit: &KitChoice,
         herd: &str,
@@ -4592,7 +4720,7 @@ mod tests {
     ) -> KittedRow {
         KittedRow {
             kit: kit.clone(),
-            workers,
+            claim: workers,
             priority,
             source: Some(crate::components::LaborTarget::Hunt {
                 fauna_id: herd.to_string(),

@@ -3335,29 +3335,48 @@ fn seed_source_yield(
     // haul only one of them can make. `set_assignment` has already landed this row, so the
     // allocation read here is the post-assignment truth and its denominator is the one
     // `advance_labor_allocation` will divide by next turn.
+    //
+    // ⛔ **SETTLED ON EVERY ROW'S CLAIM, NOT ITS HEAD COUNT** (`docs/plan_site_crews.md` §2.3) —
+    // struck through the one function the turn settles with ([`core_sim::take_claims::row_claims`]),
+    // so a brand-new row is quoted on its real claim at once.
     let crew_gear = {
         let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+        let band_wear = app
+            .world
+            .get::<BandEquipment>(band)
+            .cloned()
+            .unwrap_or_default();
         app.world
             .get::<LaborAllocation>(band)
             .and_then(|allocation| {
-                allocation
+                let index = allocation
                     .assignments
                     .iter()
-                    .find(|assignment| assignment.target.same_source(target))
-                    .map(|assignment| {
-                        (
-                            assignment.kit_choice(&equipment_cfg),
-                            assignment.priority,
-                            allocation.item_budget(&equipment_cfg),
-                            // **The rows this one competes with for the band's gear** — what a far
-                            // row's caravan forecast is priced beside
-                            // (`core_sim::work_party::CaravanPricing`).
-                            allocation.rows_excluding_source(&equipment_cfg, target),
-                        )
-                    })
+                    .position(|assignment| assignment.target.same_source(target))?;
+                let assignment = &allocation.assignments[index];
+                let claims = core_sim::take_claims::with_world_sources(&app.world, |sources| {
+                    core_sim::take_claims::row_claims(sources, allocation, &band_wear)
+                });
+                Some((
+                    assignment.kit_choice(&equipment_cfg),
+                    assignment.priority,
+                    allocation.item_budget(&equipment_cfg, &claims.claims),
+                    // **The rows this one competes with for the band's gear** — what a far row's
+                    // caravan forecast is priced beside (`core_sim::work_party::CaravanPricing`).
+                    allocation.rows_excluding_source(&equipment_cfg, target, &claims.claims),
+                    // **And this crew's own planned split** — its keep hands and the take hands
+                    // that claim its kit.
+                    core_sim::take_claims::CrewClaim {
+                        keep_hands: claims.keep_hands[index],
+                        claim: claims.claims[index],
+                    },
+                    claims.claims,
+                ))
             })
     };
-    let Some((crew_kit, crew_priority, item_budget, other_rows)) = crew_gear else {
+    let Some((crew_kit, crew_priority, item_budget, other_rows, crew_split, row_claims)) =
+        crew_gear
+    else {
         return;
     };
     let Some(cohort) = app.world.get::<PopulationCohort>(band) else {
@@ -3439,9 +3458,10 @@ fn seed_source_yield(
             // at the whole crew's best tier would promise a basketful to people holding nothing —
             // and off this row's **share** of the band's baskets, because the rows beside it are
             // reaching for the same ones.
+            // **Spread over the take hands** — a keeper carries the keeping tools, never the take kit.
             let crew_coverage = equipment_cfg.coverage_from_units(
                 &crew_kit,
-                workers as f32,
+                crew_split.take_hands(workers),
                 &band_wear,
                 item_budget.share_for_source(target, &band_wear, &equipment_cfg),
             );
@@ -3488,13 +3508,47 @@ fn seed_source_yield(
                 labor.arrivals_horizon_turns,
                 range_sigmas,
             );
+            // ⛔ **THE `+` CAP, STRUCK AS THE TURN STRIKES IT** — the fewest take hands whose
+            // capacity at this row's settled units reaches the room next turn's take will find, plus
+            // the keep hands, rounded up once (`core_sim::forage_crew_needed`).
+            let per_hand = |kit: &core_sim::KitChoice| {
+                core_sim::forage_per_worker_biomass(
+                    equipment_cfg.forage_per_worker_biomass_capacity(
+                        labor.forage.per_worker_biomass_capacity,
+                        kit,
+                        &band_wear,
+                    ),
+                    seasonal,
+                )
+            };
+            seeded.workers_needed = core_sim::forage_crew_needed(
+                core_sim::crew_take_room(
+                    &core_sim::next_turns_stand(patch, &labor.forage),
+                    &tile_composition,
+                    &flora,
+                    &labor.forage,
+                    take_species,
+                    *floor,
+                ),
+                &item_budget.reach_coverage_for_source(
+                    target,
+                    &crew_kit,
+                    crew_split.take_hands(workers),
+                    &band_wear,
+                    &equipment_cfg,
+                ),
+                per_hand,
+                per_hand(&equipment_cfg.no_kit()),
+                keep_hands,
+            );
             // **A far row is priced by stepping its caravan** — the same function the turn's
             // published `netRateHome` answers through, at the same pricing.
             if let Some(party) = caravan {
                 let pricing = core_sim::work_party::CaravanPricing::resolve(
                     &equipment_cfg,
                     &crew_kit,
-                    workers,
+                    crew_split.take_hands(workers),
+                    crew_split.claim,
                     crew_priority,
                     &band_wear,
                     &other_rows,
@@ -3548,9 +3602,10 @@ fn seed_source_yield(
             // owns, so a seed priced at the whole party's best tier would promise a haul only the
             // armed half can make — and by this row's **share** of it, because the hunt row beside
             // it is reaching into the same stock of traps.
+            // **Spread over the take hands** — a keeper carries the keeping tools, never the take kit.
             let hunt_coverage = equipment_cfg.coverage_from_units(
                 &crew_kit,
-                workers as f32,
+                crew_split.take_hands(workers),
                 &band_wear,
                 item_budget.share_for_source(target, &band_wear, &equipment_cfg),
             );
@@ -3601,11 +3656,41 @@ fn seed_source_yield(
                 labor.arrivals_horizon_turns,
                 range_sigmas,
             );
+            // ⛔ **THE TAKE CREW, STRUCK AS THE TURN STRIKES IT** — crew-independent, the haul
+            // walked over this row's own units ([`core_sim::hunt_crew_needed`]), on the herd as the
+            // next turn's take will find it, with the keeping folded in once.
+            let quarry = core_sim::next_turns_quarry(herd, &fauna);
+            let carry = |kit: &core_sim::KitChoice| {
+                equipment_cfg.hunt_per_worker_biomass_capacity(
+                    labor.hunt.per_worker_biomass_capacity,
+                    kit,
+                    &band_wear,
+                )
+            };
+            seeded.workers_needed = core_sim::crew_needed_with_keeping(
+                core_sim::hunt_crew_needed(
+                    core_sim::hunt_crew_room(&quarry, &fauna, *floor),
+                    &quarry,
+                    &fauna,
+                    &item_budget.reach_coverage_for_source(
+                        target,
+                        &crew_kit,
+                        crew_split.take_hands(workers),
+                        &band_wear,
+                        &equipment_cfg,
+                    ),
+                    carry,
+                    carry(&equipment_cfg.no_kit()),
+                    hunting_party.stay_fraction(core_sim::herd_wariness(&quarry, &fauna)),
+                ),
+                keep_hands,
+            );
             if let Some(party) = caravan {
                 let pricing = core_sim::work_party::CaravanPricing::resolve(
                     &equipment_cfg,
                     &crew_kit,
-                    workers,
+                    crew_split.take_hands(workers),
+                    crew_split.claim,
                     crew_priority,
                     &band_wear,
                     &other_rows,
@@ -3713,7 +3798,8 @@ fn seed_source_yield(
                     let pricing = core_sim::work_party::CaravanPricing::resolve(
                         &equipment_cfg,
                         &crew_kit,
-                        workers,
+                        crew_split.take_hands(workers),
+                        crew_split.claim,
                         crew_priority,
                         &band_wear,
                         &other_rows,
@@ -3775,17 +3861,6 @@ fn seed_source_yield(
                         &ladder,
                         workers,
                     );
-                    let crew = core_sim::extraction::prospective_deposit_gear(
-                        &equipment_cfg,
-                        &allocation,
-                        target,
-                        &crew_kit,
-                        workers,
-                        &band_wear,
-                        held_rung,
-                        &carry,
-                        &keeping,
-                    );
                     let keep_hands = core_sim::extraction::crew_keep_hands(
                         &equipment_cfg,
                         &band_wear,
@@ -3797,11 +3872,21 @@ fn seed_source_yield(
                     );
                     let take_hands = (workers as f32 - keep_hands)
                         .max(core_sim::extraction::NO_HANDS_ON_THE_DEPOSIT);
-                    let lift = crew
-                        .lift
-                        .of_the_cutters(core_sim::extraction::cutting_share(take_hands, workers));
+                    let crew = core_sim::extraction::prospective_deposit_gear(
+                        &equipment_cfg,
+                        &allocation,
+                        &row_claims,
+                        target,
+                        &crew_kit,
+                        take_hands,
+                        crew_split.claim,
+                        &band_wear,
+                        held_rung,
+                        &carry,
+                        &keeping,
+                    );
                     core_sim::extraction::DepositProjection::new(&working)
-                        .step(take_hands, lift, *floor, &ground, &extraction, &ladder)
+                        .step(take_hands, crew.lift, *floor, &ground, &extraction, &ladder)
                         .unwrap_or(core_sim::extraction::DEPOSIT_EMPTY)
                 }
             };
@@ -23243,6 +23328,18 @@ mod tests {
     }
 
     /// The published `extract` row for wood on this band, off a freshly captured frame.
+    /// **The crew's CUTTERS** — `crew` less the hands the turn just spent keeping the wood
+    /// working. A take kit is carried by the take hands (`docs/plan_site_crews.md` §2.3), so no more
+    /// than these can hold one.
+    fn wood_cutters(app: &bevy::prelude::App, crew: u32) -> f32 {
+        crew as f32
+            - app
+                .world
+                .resource::<core_sim::DepositRegistry>()
+                .source(WORKING, "wood")
+                .map_or(0.0, |working| working.upkeep_hands)
+    }
+
     fn published_wood_row(app: &mut bevy::prelude::App) -> sim_schema::state::LaborAssignmentState {
         capture_deposit_grid(app);
         app.world
@@ -23391,8 +23488,8 @@ mod tests {
     ///   other lifts the cut, and one complete kit (the axes are the scarcer item);
     /// - an **unopened** deadfall wood, Woodcutting kit, two sleds among three — the sleds lift the
     ///   floor's cut, and no complete kit (no axes);
-    /// - the felling wood again on **`none`** — the bare cut, and the whole crew counted outfitted
-    ///   (nothing to be short of).
+    /// - the felling wood again on **`none`** — the bare cut, and every cutter counted outfitted
+    ///   (nothing to be short of); the keepers carry the keeping tools, never the take kit.
     #[test]
     fn the_deposit_crew_curve_is_what_the_turn_pays() {
         struct Arm {
@@ -23452,14 +23549,16 @@ mod tests {
                 .find(|row| row.workers == arm.crew)
                 .cloned()
                 .expect("the curve carries the crew asked about");
-            assert_eq!(
-                row.armed_workers, arm.armed,
-                "{}: the crew's whole-kit count",
-                arm.kit
-            );
 
             assign_extract_with_kit(&mut app, "wood", arm.crew, arm.kit);
             resolve_deposit_turn(&mut app);
+            // **Whole kits, held only by the cutters** — the keepers carry the keeping tools.
+            assert_eq!(
+                row.armed_workers,
+                arm.armed.min(wood_cutters(&app, arm.crew)),
+                "{}: the crew's whole-kit count",
+                arm.kit
+            );
             let paid = app
                 .world
                 .get::<LaborAllocation>(band)
@@ -23524,8 +23623,11 @@ mod tests {
             // One turn, so the row's budget strikes the keeping issue the settlement parked.
             resolve_deposit_turn(&mut app);
             let committed = published_wood_row(&mut app);
+            // **Held only by the cutters** — a take kit is carried by the take hands, so a felling
+            // crew's keepers hold none of it (`docs/plan_site_crews.md` §2.3).
             assert_eq!(
-                committed.kit_workers_holding, expected,
+                committed.kit_workers_holding,
+                f32::min(expected, wood_cutters(&app, crew)),
                 "fixture {kit} felling={felling} sleds={sleds} axes={axes}: the row's count"
             );
             assert_eq!(

@@ -3672,6 +3672,66 @@ pub(crate) fn forage_take(
     scalar_from_f32(forage_provisions(take, rate, output_multiplier))
 }
 
+/// ⛔ **THE TAKE HANDS THAT WOULD TAKE SOMETHING WITH A BASKET ON THIS PATCH** — the room
+/// [`forage_take`] may carry off at `floor`, over one fully equipped gatherer's carry this season
+/// (`docs/plan_site_crews.md` §2.3). `equipped_capacity` is that gatherer's pre-season tier
+/// ([`crate::equipment_config::EquipmentConfig::one_equipped_hand`]).
+#[allow(clippy::too_many_arguments)] // the take's own inputs, at one equipped hand
+pub fn forage_useful_take_hands(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    take_species: &TakeSelection,
+    floor: f32,
+    equipped_capacity: f32,
+    seasonal: f32,
+) -> f32 {
+    crate::equipment_config::hands_to_reach(
+        crew_take_room(patch, tile_composition, flora, forage, take_species, floor),
+        forage_per_worker_biomass(equipped_capacity, seasonal),
+    )
+}
+
+/// **WHAT A GATHERING CREW MAY CARRY OFF THIS PATCH AT `floor`** — [`forage_take`]'s own room: the
+/// escapement room or the growth share, on the plants the crew is here for, never more than is
+/// standing of them.
+pub fn crew_take_room(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    take_species: &TakeSelection,
+    floor: f32,
+) -> f32 {
+    let selected = selected_biomass_share(
+        &patch_composition(patch, tile_composition, flora, forage),
+        take_species,
+    );
+    (patch_take_room(patch, floor) * selected).min(patch.biomass * selected)
+}
+
+/// ⛔ **THE ROW'S WHOLE NEEDED CREW ON A PATCH — THE `+` CAP** (`docs/plan_site_crews.md` §2.3, §4):
+/// the fewest take hands whose capacity at the units the row was settled reaches `room`
+/// ([`crate::equipment_config::KitCoverage::hands_to_reach`], armed hands first, a hand past the
+/// row's units bare), plus its keep hands, rounded up **once**.
+///
+/// It does not move with the crew: the units are settled on the row's claim, which stops growing
+/// once the crew passes the hands that would take something, and the walk reads the units rather
+/// than how thinly they are spread. A crew short of the room reads above itself — another hand would
+/// take more.
+pub fn forage_crew_needed(
+    room: f32,
+    coverage: &crate::equipment_config::KitCoverage,
+    per_hand: impl Fn(&crate::equipment_config::KitChoice) -> f32,
+    bare_per_hand: f32,
+    keep_hands: f32,
+) -> u32 {
+    (coverage.hands_to_reach(room, per_hand, bare_per_hand)
+        + keep_hands.max(crate::fauna::NO_HANDS))
+    .ceil() as u32
+}
+
 /// The **biomass standing above the assignment's floor** at the patch's current stock — the single
 /// source of the gather ceiling, shared by `forage_take` (the take path) and `forage_forecast` (the
 /// pre-commit forecast), and the exact plant-web twin of `fauna::hunt_escapement_ceiling`:

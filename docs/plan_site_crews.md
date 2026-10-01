@@ -101,8 +101,18 @@ So a site's requirement is **two independent lines**:
 
 **Both lines settle by the row's Priority.** A take kit's items are the site crew's tools as much
 as its keeping tools are, so when a band owns fewer spears than its hunt rows want, the `High` row is
-armed in full before a `Normal` one gets any — not split in proportion to head count. Inside one
-tier, whole items go by largest remainder on the head count, as before.
+armed in full before a `Normal` one gets any — not split in proportion to head count.
+
+**A row claims kit only for the hands that would take something with it.** The claim is planned as
+if equipped, exactly as the keeping claim is: the take hands needed to reach what the site will
+yield at the row's floor, at the equipped rate. A hand past that point claims nothing and works
+bare. Inside one tier, a short stock goes by largest remainder on those claims, never on head
+count — so adding a hand a site does not need cannot pull a kit from a site that does, and the `+`
+cap stops moving when the kits do.
+
+**A shortage names its item.** The settlement is per item, so a row's or the builders' "short" mark
+names the items that came up short by their roster names (`short of baskets`), read off the wire's
+per-item lines — no item is spelled in client code.
 
 **The order, which has no loop:**
 

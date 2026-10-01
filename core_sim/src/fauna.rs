@@ -6687,7 +6687,7 @@ pub fn crew_keep_hands(
 /// takes with the rest, so `workers > workers_needed` stays the overstaffing signal only if the
 /// count carries both halves. `take_needed` is the take activity's own inversion; `keep_hands` is
 /// fractional, so the sum is rounded up to whole workers. A row that keeps nothing is unchanged.
-pub(crate) fn crew_needed_with_keeping(take_needed: u32, keep_hands: f32) -> u32 {
+pub fn crew_needed_with_keeping(take_needed: u32, keep_hands: f32) -> u32 {
     if keep_hands <= NO_HANDS {
         return take_needed;
     }
@@ -9396,6 +9396,93 @@ pub fn hunt_take_workers(
     ))
 }
 
+/// **THE ROW'S OWN ROOM ON THE MEAT SIDE AT `floor`** — the pen's take room on a penned herd, the
+/// range's escapement room on a wild one: exactly what each arm of the take sizes its crew on.
+pub fn hunt_crew_room(herd: &Herd, fauna: &FaunaConfig, floor: f32) -> f32 {
+    let room = if herd.is_corralled() {
+        herd_take_room(herd, floor, fauna)
+    } else {
+        hunt_escapement_ceiling(floor, herd.biomass, herd_capacity(herd, fauna))
+    };
+    room * herd.meat_take_fraction()
+}
+
+/// ⛔ **THE TAKE HANDS THAT WOULD TAKE SOMETHING WITH THE KIT ON THIS HERD** — the crew that brings
+/// the row's room down and carries it home at one fully equipped hunter's rates
+/// (`docs/plan_site_crews.md` §2.3): [`hunt_take_workers`]' carry and reach, and the **fight** — a
+/// hunter's spear brings down `(attack − defense) × lethality × hit_chance ÷ durability` bodies a
+/// turn, and a crew that cannot fell the peak drop does not reach the room however much it can
+/// carry. A party that cannot wound the quarry at all takes nothing, so claims nothing.
+pub fn hunt_useful_take_hands(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    floor: f32,
+    equipped_haul: f32,
+    equipped_party: &HuntingParty,
+) -> f32 {
+    let room = hunt_crew_room(herd, fauna, floor);
+    let carry_and_reach = hunt_take_workers(
+        room,
+        herd.body_mass,
+        herd_carry_rate(herd, fauna, equipped_haul),
+        herd_engage_rate(herd, fauna),
+        equipped_party.stay_fraction(herd_wariness(herd, fauna)),
+    );
+    let Some(quarry) = herd_fight_stage(herd, fauna) else {
+        return carry_and_reach as f32;
+    };
+    let Some(hunter) = equipped_party.crews.first().map(|crew| crew.hunter) else {
+        return crate::equipment_config::NO_CLAIMING_HANDS;
+    };
+    let tuning = &equipped_party.tuning;
+    let bodies_per_hunter = crate::combat::strike_damage(hunter.attack, quarry.profile.defense)
+        * tuning.lethality
+        * tuning.hit_chance
+        / quarry.profile.durability;
+    if !bodies_per_hunter.is_finite()
+        || bodies_per_hunter <= crate::equipment_config::NO_CLAIMING_HANDS
+    {
+        return crate::equipment_config::NO_CLAIMING_HANDS;
+    }
+    let fight = (peak_animal_drop(room, herd.body_mass) / bodies_per_hunter).ceil() as u32;
+    carry_and_reach.max(fight) as f32
+}
+
+/// ⛔ **A HUNT ROW'S TAKE CREW, CREW-INDEPENDENT** (`docs/plan_site_crews.md` §4) — the haul half
+/// walked over the row's own coverage best-equipped first
+/// ([`crate::equipment_config::KitCoverage::hands_to_reach`]), so hands the row's units do not reach
+/// are counted at the bare carry rather than diluting the carry of every hand; and the reach half
+/// ([`hunt_engage_workers`]) at the party's own retreat. `room` is the row's room on the meat side
+/// ([`hunt_crew_room`]), read before the take draws it down.
+#[allow(clippy::too_many_arguments)] // the crew's inputs: room, herd, coverage and its rates
+pub fn hunt_crew_needed(
+    room: f32,
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    coverage: &crate::equipment_config::KitCoverage,
+    carry_per_worker: impl Fn(&crate::equipment_config::KitChoice) -> f32,
+    bare_carry: f32,
+    stay: f32,
+) -> u32 {
+    let body = herd.body_mass;
+    if !body.is_finite() || body <= 0.0 {
+        return NO_CREW_ON_THIS_ACTIVITY;
+    }
+    let haul = coverage
+        .hands_to_reach(
+            peak_animal_drop(room, body) * body,
+            |kit| herd_carry_rate(herd, fauna, carry_per_worker(kit)),
+            herd_carry_rate(herd, fauna, bare_carry),
+        )
+        .ceil() as u32;
+    haul.max(hunt_engage_workers(
+        room,
+        body,
+        herd_engage_rate(herd, fauna),
+        stay,
+    ))
+}
+
 /// **RETIRED: `hunt_provisions(biomass, &FaunaConfig, mult)`** — the single global biomass→provisions
 /// conversion, `take × hunt.provisions_per_biomass × output_multiplier`.
 ///
@@ -9977,14 +10064,19 @@ pub fn next_turns_quarry(herd: &Herd, fauna: &FaunaConfig) -> Herd {
 ///
 /// The share is struck per crew size — see [`HuntCrewCurveInputs::other_rows`] for why that cannot
 /// be hoisted out of the loop.
+///
+/// ⛔ **`workers` ARE TAKE HANDS, AND THEY CLAIM ONLY UP TO `useful`** — the take hands that would
+/// bring something down with the kit ([`curve_useful_take_hands`], `docs/plan_site_crews.md` §2.3),
+/// never the head count.
 fn curve_coverage(
     inputs: &HuntCrewCurveInputs<'_>,
     workers: f32,
+    useful: f32,
 ) -> crate::equipment_config::KitCoverage {
     let budget = crate::equipment_config::BandItemBudget::with_prospective_row(
         inputs.other_rows.iter().cloned(),
         inputs.kit,
-        workers,
+        workers.min(useful),
         inputs.priority,
     );
     inputs.equipment.coverage_from_units(
@@ -9992,6 +10084,34 @@ fn curve_coverage(
         workers,
         inputs.wear,
         budget.share_for_prospective(inputs.wear, inputs.equipment),
+    )
+}
+
+/// **THE CURVE'S PLANNED TAKE-KIT CLAIM** — [`hunt_useful_take_hands`] on the regrown `quarry`, at
+/// one fully equipped hunter of the curve's kit: the same claim the turn and every other surface
+/// settle this row on (`crate::take_claims`).
+fn curve_useful_take_hands(inputs: &HuntCrewCurveInputs<'_>, quarry: &Herd) -> f32 {
+    let hand = inputs.equipment.one_equipped_hand(inputs.kit, inputs.wear);
+    hunt_useful_take_hands(
+        quarry,
+        inputs.fauna,
+        inputs.floor,
+        hand.weighted_rate(|crew| {
+            inputs.equipment.hunt_per_worker_biomass_capacity(
+                inputs.baseline_haul_rate,
+                crew,
+                inputs.wear,
+            )
+        }),
+        &PartyResolution {
+            equipment: inputs.equipment,
+            coverage: &hand,
+            wear: inputs.wear,
+            intrinsic: inputs.intrinsic,
+            tuning: inputs.tuning,
+            hunt_injury_damage_per_animal: inputs.hunt_injury_damage_per_animal,
+        }
+        .party_against(crate::equipment_config::Quarry::Mass(quarry.body_mass)),
     )
 }
 
@@ -10079,6 +10199,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
     // The retreat and the kill arm at this herd's rung — quarry facts, the same on every row.
     let wariness = herd_wariness(&quarry, inputs.fauna);
     let quarry_fight = herd_fight_stage(&quarry, inputs.fauna);
+    let useful = curve_useful_take_hands(inputs, &quarry);
     let keepers_haul_it_home = quarry.is_corralled()
         && !herd_collection(&quarry, inputs.fauna, ONE_WORKER, inputs.baseline_haul_rate)
             .is_infinite();
@@ -10087,7 +10208,7 @@ pub fn hunt_crew_take_curve(inputs: &HuntCrewCurveInputs<'_>) -> Vec<HuntCrewTak
             // **The crew keeps first** — every term below reads the hands left to take with.
             let workers =
                 crew as f32 - crew_keep_hands(inputs.keeping, inputs.equipment, inputs.wear, crew);
-            let coverage = curve_coverage(inputs, workers);
+            let coverage = curve_coverage(inputs, workers, useful);
             let party = PartyResolution {
                 equipment: inputs.equipment,
                 coverage: &coverage,
@@ -10260,7 +10381,11 @@ pub fn hunt_armed_crew(inputs: &HuntCrewCurveInputs<'_>) -> u32 {
     let Some(fight) = herd_fight_stage(&quarry, inputs.fauna) else {
         return inputs.max_workers;
     };
-    let coverage = curve_coverage(inputs, inputs.max_workers as f32);
+    let coverage = curve_coverage(
+        inputs,
+        inputs.max_workers as f32,
+        curve_useful_take_hands(inputs, &quarry),
+    );
     let party = PartyResolution {
         equipment: inputs.equipment,
         coverage: &coverage,

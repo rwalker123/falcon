@@ -2260,6 +2260,15 @@ table LaborAssignment {
   // the honest ceiling is one hand, never none). 0 on every non-extract row and on a row with no
   // crew pool at all. Derived at capture.
   usefulCutters:uint = 0;
+  // --- WHICH OF THIS ROW'S KIT ITEMS ARE SHORT, BY NAME (appended last, #751) ----------------------
+  // One line per item this row's kit carries, wherever the row claims any of it: the units it
+  // claimed (`required`) and the units the band's take-gear settlement handed it (`filled`). The
+  // claim is the row's TAKE HANDS THAT WOULD TAKE SOMETHING WITH THE KIT, never its head count
+  // (`docs/plan_site_crews.md` §2.3), so a crew stepped past its site's yield claims no more and
+  // reads no shorter. The item is SHORT where `filled < required`. Item ids only - the client
+  // resolves each to its roster display name. Absent = the row claims nothing (no kit, or no hand
+  // that would take anything with one). The builders' and Roadwork's twin is the cohort's `poolToe`.
+  kitToe:[KitToeLine];
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -6998,6 +7007,20 @@ table PoolingLinkState {
   // `RouteRungState.rungKey` wire key ("route:trail"). "" = some tile on the path has no kept road,
   // which is every link held by the free reach over open ground.
   rungId:string;
+}
+
+// ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT - a row of `LaborAssignment.kitToe`. Appended last
+// (append-only discipline).
+table KitToeLine {
+  // The `equipment.json` item id this line is about.
+  itemId:string;
+  // Units the row claimed: its take hands that would take something with the kit, over the item's
+  // `workers_per_unit`. *** NEVER 0 ***: a line exists only where something is claimed.
+  required:float;
+  // Units the band's take-gear settlement handed this row. Fractional where the row's priority
+  // tier was covered in full (it is handed exactly its claim); whole units where its tier was short
+  // and split by largest remainder on the claims. SHORT is `filled < required`.
+  filled:float;
 }
 
 // ONE LINE OF ONE STANDING POOL'S TABLE OF EQUIPMENT - a row of `PopulationCohortState.poolToe`,

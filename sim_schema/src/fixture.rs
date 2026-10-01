@@ -521,6 +521,17 @@ fn seed_snapshot() -> WorldSnapshot {
             // other way round would show a client author an ordering the schema promises cannot
             // happen — and invite exactly the re-sort it forbids.
             assignment.take_species = vec!["flax".to_string(), "wild_emmer".to_string()];
+            // **WHICH KIT ITEMS ARE SHORT, BY NAME** — a nested repeated field, seeded for
+            // `material_yield`'s reason. Spelled out rather than `rows()` on `pool_toe`'s rule: the
+            // list is keyed by item, and a duplicate item on one row is not something the server
+            // can emit. The saturation pass rewrites the floats; the keying is what survives.
+            assignment.kit_toe = ["baskets", "spears"]
+                .iter()
+                .map(|item| KitToeLineState {
+                    item_id: (*item).to_string(),
+                    ..Default::default()
+                })
+                .collect();
         }
         // **A trade party's shipment** (arc #527) — a repeated field on the cohort, seeded for the
         // same reason the assignment's material account above is: an empty one is a field the decode

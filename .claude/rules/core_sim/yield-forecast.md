@@ -765,13 +765,33 @@ client's compose-time "Expected yield" row promises. Shape:
 
 ### `workers_needed` IS THE ROW'S WHOLE CREW — its keeping hands plus its take's
 
+> ⛔ **ON A PATCH AND A HERD IT IS CREW-INDEPENDENT, AND IT IS THE FORAGE ROW'S `+` CAP.** The
+> take half was the take over the crew's **average** rate, and the average dilutes as bare hands are
+> added, so the count climbed with the crew: on a saved band a kept row read `4` at crew 3 and `5` at
+> crew 4, inviting one more hand every time. It is now the fewest take hands whose capacity reaches
+> the room (`KitCoverage::hands_to_reach`), walked best-equipped first over **the units the row was
+> settled plus the units still on the shelf** (`BandItemBudget::reach_coverage_for_source`): a hand
+> the player adds takes a spare kit if one is lying there and works bare if not.
+>
+> - **Forage** — `forage::forage_crew_needed`: `ceil(hands_to_reach(room) + keep_hands)`, the keep
+>   hands folded in and rounded **once**. Rounding the take half first and then adding the keep
+>   reported a hand more than the crew needs. The post-pass that adds keeping skips forage rows.
+> - **Hunt** — `fauna::hunt_crew_needed`: the haul half walked the same way, `max` the reach half
+>   (`hunt_engage_workers` at the party's own retreat); the keeping is still added by
+>   `crew_needed_with_keeping`, because a hunt's take crew is whole hunters.
+> - **A labor-bound row reads ABOVE its crew** — another hand would take more, so the cap allows it.
+>   It used to read the crew itself, which refused the `+` on exactly the rows a hand helps.
+> - **The seed strikes it the same way** off the regrown source, so it matches the turn.
+>
+> Saved band, kept row on a thin stand, crew 3 → 4 → 3: `workersNeeded` **3, 3, 3**.
+
 `workers_needed` is written in **two** places — the resolved turn (`advance_labor_allocation`'s three
 telemetry arms) and the assign-time seed (`forage::forage_source_yield_preview` /
 `fauna::hunt_source_yield_preview` → `fauna::forecast_source_yield`) — and both answer the same
 question: **how many of this row's hands were needed?** The take half is inverted out of an
 **undipped** take, because a building crew no longer changes what a gathering crew carries. **The
-keeping half is added on top** (`fauna::crew_needed_with_keeping`: `ceil(take_needed +
-keep_hands)`, `docs/plan_site_crews.md` §4): a site's row is one crew with one stepper that keeps
+keeping half is added on top** (`ceil(take_needed + keep_hands)`, `docs/plan_site_crews.md` §4,
+folded in once — see the callout above): a site's row is one crew with one stepper that keeps
 first, so `workers > workers_needed` stays the overstaffing signal only if the count carries both.
 The resolved turn adds the settled `keep_hands` after the arms (`site_keeping`); the seed adds
 `workers − take_hands`, the same split through `prospective_keep_hands`. A row that keeps nothing is
