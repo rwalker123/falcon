@@ -6802,7 +6802,6 @@ CARGO
 ▸ Bone    8.5 held · 4 grades        [−][ 0.0][+] All
 [ Send shipment ]
 Pick a band on the map to trade with. Load something first.   (WARN, also the Send's hover)
-The porters walk it there and come home. A unit of food weighs 1.0, hay 0.5, goods 1.0.
 ```
 
 - **One row per GOOD** (`_trade_cargo_goods`): Food, Hay, then each material in the order the band
@@ -6836,7 +6835,8 @@ The porters walk it there and come home. A unit of food weighs 1.0, hay 0.5, goo
 - **The Send waits for a destination and a load**, each a clause of its hover and of the WARN line
   under it (`TRADE_SEND_NEEDS_DESTINATION`, `TRADE_SEND_NEEDS_CARGO`). **There is no armed pick on this
   sheet**: the destination is set by a click on a ringed band while the sheet is open, and the Send
-  commits to it. The weights line is composed from the three carry levers, never typed.
+  commits to it. The sheet ends at the Send and that reason line; no closing hint follows it, a
+  good's own `weighs X each` being where a carry weight is stated.
 - **The `To` row is always drawn**: the picked band named as the cycler names it, then
   `N tiles <bearing>` to where the tie last saw it (`_trade_destination_where`, `compass_bearing`),
   with the REMEMBERED sighting and its `≈` walk on the value's hover; unpicked, `Pick a band on the

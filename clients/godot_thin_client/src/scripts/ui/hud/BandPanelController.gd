@@ -8622,7 +8622,7 @@ static func _plain_text(bbcode: String) -> String:
     return tags.sub(bbcode, "", true)
 
 ## **THE SHIPMENT FORM** (arc #527, issue #517, reworked to the approved prototype): `To` → PORTERS →
-## the PACK meter → CARGO, one row per good → Send, its reasons, the weights line.
+## the PACK meter → CARGO, one row per good → Send, and its reasons while it is greyed.
 ##
 ## **IT SHARES NO FIELD WITH THE HUNT FORM, which is why it is a mission and not a mode of one.** No
 ## quarry, no floor, no policy picker, no trip forecast: what a shipment needs to know is who it is
@@ -8741,12 +8741,6 @@ func _fill_trade_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int
         confirm.pressed.connect(func() -> void:
             _commit_trade(band, destination, workers, manifest))
         sheet.add_child(confirm)
-    sheet.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.TRADE_SHEET_HINT_FORMAT % [
-        HudCraftingVocab.BATCH_AMOUNT_FORMAT % HudComposeVocab.COMPOSE_CARGO_FOOD_CARRY_WEIGHT,
-        HudCraftingVocab.BATCH_AMOUNT_FORMAT
-            % float(band.get("expedition_trade_fodder_carry_weight", 0.0)),
-        HudCraftingVocab.BATCH_AMOUNT_FORMAT
-            % float(band.get("expedition_trade_material_carry_weight", 0.0))]))
 
 ## A tied band pre-selected as the Trade sheet's destination — the map's highlighted-band click.
 func _set_trade_destination(destination: int) -> void:

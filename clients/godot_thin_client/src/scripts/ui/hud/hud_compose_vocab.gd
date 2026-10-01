@@ -1438,10 +1438,6 @@ const TRADE_SEND_NEEDS_DESTINATION := "Pick a band on the map to trade with."
 const TRADE_SEND_NEEDS_CARGO := "Load something first."
 const TRADE_SEND_REASON_SEPARATOR := " "
 
-## The sheet's closing line. The weights are the sim's own levers, so the sentence is COMPOSED from
-## them (`food`, `hay`, `goods` per unit) rather than claiming a ratio a config edit could break.
-const TRADE_SHEET_HINT_FORMAT := "The porters walk it there and come home. A unit of food weighs %s, hay %s, goods %s."
-
 const COMPOSE_TITLE_SCOUT := "Setup a scouting party…"
 
 const COMPOSE_TITLE_DENY := "Setup a denial raid…"
