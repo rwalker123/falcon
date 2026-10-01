@@ -321,6 +321,13 @@ hands it spends keeping), appended (proto 7 / 8). They are what the compose shee
 `n` on every web, rather than pricing every worker as a taker; pinned on a patch by
 `forage_cultivation::a_kept_patchs_next_turn_take_is_quoted_on_the_hands_its_keeping_leaves`.
 
+**`ForageCrewTake`** (proto query **9**, reply **12**) is the patch's whole crew curve in one round
+trip — the hunt and deposit curves' shape: one `ForageCrewTakeRow{workers, take, keep_hands}` per
+crew `1..=max_workers`, each row **the work-party forecast's own `take_next_turn` / `keep_hands` at
+that crew** (`forecast_query::answer_forage_crew_take` asks it per crew), so the stepper and a
+one-crew quote are one arithmetic. Seat-gated like the other faction-bearing questions. Pinned by
+`forage_cultivation::a_patchs_crew_curve_is_the_single_crew_answer_at_every_size`.
+
 ## Every exit brings everything home, through ONE settle step
 
 **A caravan that ends early must not lose what is on the road.** `systems::stand_down_party` is the

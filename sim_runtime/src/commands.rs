@@ -719,6 +719,9 @@ pub enum QueryPayload {
     /// *"What does each crew size cut off this working with this kit?"* — the deposit compose
     /// sheet, before the commit. See [`DepositCrewTakeQuery`].
     DepositCrewTake(DepositCrewTakeQuery),
+    /// **The patch's take at every crew size, after keeping** — the forage twin of
+    /// [`Self::DepositCrewTake`]. See [`ForageCrewTakeQuery`].
+    ForageCrewTake(ForageCrewTakeQuery),
 }
 
 /// **THE DEPOSIT COMPOSE SHEET'S QUESTION** (#663) — what a crew of each size, off this band,
@@ -742,6 +745,44 @@ pub struct DepositCrewTakeQuery {
     pub floor: f32,
     /// The stepper's cap: one row per crew size `1..=max_workers`.
     pub max_workers: u32,
+}
+
+/// **THE PATCH'S TAKE AT EVERY CREW SIZE, AFTER KEEPING** (`docs/plan_site_crews.md`) — so the
+/// compose sheet reads the take at `n` workers rather than pricing every worker as a gatherer: a
+/// kept patch's crew keeps it first and gathers with the rest.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ForageCrewTakeQuery {
+    pub faction_id: u32,
+    /// The asking band's durable `BandId`.
+    pub band_id: u64,
+    pub x: u32,
+    pub y: u32,
+    /// The crop selection the crew gathers; empty = the whole basket.
+    pub take_species: Vec<String>,
+    /// An `equipment.json` roster id, **required**; unknown or not listing `forage` is refused.
+    pub kit_id: String,
+    /// The composed escapement floor, a fraction of the patch's capacity.
+    pub floor: f32,
+    /// The stepper's cap: one row per crew size `1..=max_workers`.
+    pub max_workers: u32,
+}
+
+/// **ONE CREW SIZE ON THE PATCH COMPOSE SHEET** — see [`ForageCrewTakeQuery`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ForageCrewTakeRow {
+    /// Echoed so the row is self-describing. Rows ascend from `1`.
+    pub workers: u32,
+    /// **Next turn's take, in provisions**, by the hands left after keeping.
+    pub take: f32,
+    /// **The hands this crew spends keeping the patch**, fractional.
+    pub keep_hands: f32,
+}
+
+/// The answer to [`ForageCrewTakeQuery`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ForageCrewTakeReply {
+    /// One row per crew size, ascending, `1..=max_workers`.
+    pub per_crew: Vec<ForageCrewTakeRow>,
 }
 
 /// **ONE CREW SIZE ON THE DEPOSIT COMPOSE SHEET** — see [`DepositCrewTakeQuery`].
@@ -964,6 +1005,7 @@ pub enum QueryReply {
     WorkPartyForecast(WorkPartyForecastReply),
     /// The deposit compose sheet's crew curve.
     DepositCrewTake(DepositCrewTakeReply),
+    ForageCrewTake(ForageCrewTakeReply),
 }
 
 /// **Whether this connection now drives that faction.**
@@ -2280,6 +2322,18 @@ impl CommandEnvelope {
                                 height: ask.height,
                             })
                         }
+                        QueryPayload::ForageCrewTake(ask) => {
+                            pb::query_command::Query::ForageCrewTake(pb::ForageCrewTakeQuery {
+                                faction_id: ask.faction_id,
+                                band_id: ask.band_id,
+                                x: ask.x,
+                                y: ask.y,
+                                take_species: ask.take_species.clone(),
+                                kit_id: ask.kit_id.clone(),
+                                floor: ask.floor,
+                                max_workers: ask.max_workers,
+                            })
+                        }
                         QueryPayload::DepositCrewTake(ask) => {
                             pb::query_command::Query::DepositCrewTake(pb::DepositCrewTakeQuery {
                                 faction_id: ask.faction_id,
@@ -2793,6 +2847,18 @@ impl CommandEnvelope {
                     pb::query_command::Query::WorkPartyForecast(ask) => {
                         QueryPayload::WorkPartyForecast(work_party_query_from_proto(ask)?)
                     }
+                    pb::query_command::Query::ForageCrewTake(ask) => {
+                        QueryPayload::ForageCrewTake(ForageCrewTakeQuery {
+                            faction_id: ask.faction_id,
+                            band_id: ask.band_id,
+                            x: ask.x,
+                            y: ask.y,
+                            take_species: ask.take_species,
+                            kit_id: ask.kit_id,
+                            floor: ask.floor,
+                            max_workers: ask.max_workers,
+                        })
+                    }
                     pb::query_command::Query::DepositCrewTake(ask) => {
                         QueryPayload::DepositCrewTake(DepositCrewTakeQuery {
                             faction_id: ask.faction_id,
@@ -2960,6 +3026,19 @@ impl QueryReplyEnvelope {
                     slots: slots.iter().map(save_slot_info_to_proto).collect(),
                 })
             }
+            QueryReply::ForageCrewTake(answer) => {
+                pb::query_reply_envelope::Reply::ForageCrewTake(pb::ForageCrewTakeReply {
+                    per_crew: answer
+                        .per_crew
+                        .iter()
+                        .map(|row| pb::ForageCrewTakeRow {
+                            workers: row.workers,
+                            take: row.take,
+                            keep_hands: row.keep_hands,
+                        })
+                        .collect(),
+                })
+            }
             QueryReply::DepositCrewTake(answer) => {
                 pb::query_reply_envelope::Reply::DepositCrewTake(pb::DepositCrewTakeReply {
                     per_crew: answer
@@ -3057,6 +3136,19 @@ impl QueryReplyEnvelope {
                         .collect(),
                     armed_crew: answer.armed_crew,
                     weapon_item_id: answer.weapon_item_id,
+                })
+            }
+            pb::query_reply_envelope::Reply::ForageCrewTake(answer) => {
+                QueryReply::ForageCrewTake(ForageCrewTakeReply {
+                    per_crew: answer
+                        .per_crew
+                        .into_iter()
+                        .map(|row| ForageCrewTakeRow {
+                            workers: row.workers,
+                            take: row.take,
+                            keep_hands: row.keep_hands,
+                        })
+                        .collect(),
                 })
             }
             pb::query_reply_envelope::Reply::DepositCrewTake(answer) => {
@@ -3455,6 +3547,50 @@ mod tests {
             let decoded = CommandEnvelope::decode(&bytes).expect("decode");
             assert_eq!(decoded.payload, payload);
         }
+    }
+
+    /// **The patch's crew curve survives the envelope, question and answer both** — every field a
+    /// distinct value so a transposition cannot pass.
+    #[test]
+    fn the_forage_crew_curve_round_trips() {
+        let ask = QueryPayload::ForageCrewTake(ForageCrewTakeQuery {
+            faction_id: 2,
+            band_id: 9,
+            x: 4,
+            y: 7,
+            take_species: vec!["wild_emmer".to_string()],
+            kit_id: "gathering".to_string(),
+            floor: 0.35,
+            max_workers: 6,
+        });
+        let envelope = CommandEnvelope {
+            payload: CommandPayload::Query {
+                request_id: 11,
+                query: ask.clone(),
+            },
+            correlation_id: None,
+        };
+        let decoded =
+            CommandEnvelope::decode(&envelope.encode_to_vec().expect("encode")).expect("decode");
+        assert_eq!(
+            decoded.payload,
+            CommandPayload::Query {
+                request_id: 11,
+                query: ask
+            }
+        );
+        let reply = QueryReplyEnvelope {
+            request_id: 11,
+            reply: QueryReply::ForageCrewTake(ForageCrewTakeReply {
+                per_crew: vec![ForageCrewTakeRow {
+                    workers: 3,
+                    take: 1.75,
+                    keep_hands: 0.5,
+                }],
+            }),
+        };
+        let bytes = reply.encode_to_vec().expect("encode");
+        assert_eq!(QueryReplyEnvelope::decode(&bytes).expect("decode"), reply);
     }
 
     /// **The crew-take curve survives the wire, question and answer both.**

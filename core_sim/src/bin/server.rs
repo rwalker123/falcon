@@ -11669,6 +11669,7 @@ fn querying_faction(query: &QueryPayload) -> Option<(FactionId, &'static str)> {
         QueryPayload::DepositCrewTake(ask) => {
             Some((FactionId(ask.faction_id), "deposit_crew_take"))
         }
+        QueryPayload::ForageCrewTake(ask) => Some((FactionId(ask.faction_id), "forage_crew_take")),
         // The save headers on disk, and the roster ceiling for a grid size. Neither reads a
         // faction's state, and both are asked from the landing screen — before a world, and
         // therefore before any seat — so a gate applied to them would close the load menu.

@@ -11959,29 +11959,24 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 	# assignable count well above the ceiling so its answer IS the usefulness ceiling and not a labor
 	# bound; `source_worker_cap_state` is probed on either side of that ceiling.
 	#
-	# ⛔ **THE CEILING IS THE TAKE'S USEFUL CREW PLUS THE SITE'S KEEPING HANDS** (`docs/plan_site_crews.md`).
-	# The keepers are the site's own crew now — they keep first and collect with the rest — so the `+`
-	# reaches `take-useful + upkeepWorkersNeeded`, where it used to stop at the take alone while a
-	# separate pool answered for the keepers.
+	# ⛔ **NEITHER TWIN ADDS A KEEPING COUNT OF ITS OWN** (`docs/plan_site_crews.md`): the sim's own
+	# "most hands that still help" already includes the keepers, so the cap is whatever ceiling the
+	# forecast carries — here the take's closed form, there being no published crew on this herd.
 	var herd := _hud._band_labor.find_world_herd(herd_id)
 	var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
-	var keep := int(herd.get("upkeep_workers_needed", 0))
-	var ceiling := HERDER_FLOOR_TAKE_USEFUL + keep
+	var ceiling := HERDER_FLOOR_TAKE_USEFUL
 	var compose_cap := int(_hud._drawercompose._forecast_worker_cap(forecast, ceiling + 1)["cap"])
 	var row_below: bool = bool(SourceForecast.source_worker_cap_state(forecast, ceiling - 1, 1)["can_add"])
 	var row_at: bool = bool(SourceForecast.source_worker_cap_state(forecast, ceiling, 1)["can_add"])
-	if keep <= 0:
-		_fail("the herder-floor herd owes no whole keeping worker, so the claim would prove nothing")
-	elif compose_cap != ceiling:
-		_fail("the compose stepper caps at %d, not the take-useful %d plus the keeping %d"
-			% [compose_cap, HERDER_FLOOR_TAKE_USEFUL, keep])
+	if compose_cap != ceiling:
+		_fail("the compose stepper caps at %d, not the forecast's own %d" % [compose_cap, ceiling])
 	elif not (row_below and not row_at):
-		_fail(("the worked row does not gate at take-useful + keeping %d "
-			+ "(can_add below=%s, at=%s)") % [ceiling, row_below, row_at])
+		_fail(("the worked row does not gate at %d (can_add below=%s, at=%s)")
+			% [ceiling, row_below, row_at])
 	else:
-		print(("band_panel_preview: assert OK — both cap twins gate at the take-useful %d plus the "
-			+ "site's %d keeping hands") % [HERDER_FLOOR_TAKE_USEFUL, keep])
+		print("band_panel_preview: assert OK — both cap twins gate at the forecast's own %d, adding no keeping count"
+			% ceiling)
 
 ## The countdown's own verb, as a LITERAL — the sentence it opens (`Domesticated is lost in 3 turns.`)
 ## is the WORK BOARD's alone, so this needle is asserted PRESENT on the row's hover and ABSENT on the
@@ -24478,7 +24473,10 @@ func _sections_band_fixture() -> Dictionary:
 		if tile == QUEUE_SECOND_PATCH or tile == QUEUE_THIRD_PATCH:
 			var staffed := row.duplicate(true)
 			staffed["workers"] = SECTIONS_ROW_WORKERS
-			staffed["improvement"] = SourceForecast.IMPROVEMENT_NONE
+			# The KEPT patch is being raised to a Field, so its tending line has a rung to name after
+			# the build (`… · 3 workers when Field`); the short one builds nothing.
+			staffed["improvement"] = SourceForecast.IMPROVEMENT_SOW if tile == QUEUE_SECOND_PATCH \
+				else SourceForecast.IMPROVEMENT_NONE
 			rows[i] = staffed
 	return band
 
@@ -24634,8 +24632,10 @@ func _render_work_sections_states() -> void:
 		QUEUE_SECOND_PATCH.y])
 	var tools_node := _find_meta_control(tools_row, HudWorkVocab.SITE_KEEPING_MARK_META) \
 		if tools_row != null else null
-	var tools_hover_want := "Tending: %d workers now · another needed around turn %d\n%s" \
-		% [SECTIONS_KEEP_WORKERS, SECTIONS_NEXT_WORKER_TURN, HudWorkVocab.SITE_KEEPING_TOOLS_INFO]
+	var tools_hover_want := "Tending: %d workers now · another needed around turn %d · %d workers when %s\n%s" \
+		% [SECTIONS_KEEP_WORKERS, SECTIONS_NEXT_WORKER_TURN, SECTIONS_WORKERS_AT_COMPLETION,
+			String(HudComposeVocab.IMPROVEMENT_DONE_LABELS[SourceForecast.IMPROVEMENT_SOW]),
+			HudWorkVocab.SITE_KEEPING_TOOLS_INFO]
 	_assert_band_panel("site crew — a KEPT row short of its keeping tools flies `%s`, its hover `%s` (got \"%s\")"
 			% [HudWorkVocab.SITE_KEEPING_TOOLS_MARK, tools_hover_want,
 				"" if tools_node == null else tools_node.tooltip_text],
@@ -24714,43 +24714,30 @@ func _assert_groundwork_site_crew_lines(rows: Array[Control]) -> void:
 	_assert_band_panel("groundwork — …and every working carries its pill line (%d of %d)"
 			% [pill_lines, rows.size()], pill_lines == rows.size() and not rows.is_empty())
 
-## ⛔ **THE `+` COUNTS THE KEEPING HANDS** (reported from play: a Harvest under a Cultivate, crew 2,
-## tending taking one whole worker, one idle worker — and the `+` dead). The row's cap is the take's
-## useful crew PLUS the sim's whole-worker keeping count, so a crew staffed exactly at the take's
-## useful hands can still add one for the keeping, and not one past it.
+## ⛔ **THE `+` READS THE SIM'S MOST-USEFUL CREW, WHICH ALREADY COUNTS THE KEEPING** (reported from play:
+## a Harvest under a Cultivate, crew 2, tending taking one whole worker, one idle worker — and the `+`
+## dead). A forage row carries its `workers_needed` onto the forecast (`with_published_site_crew`), and
+## the gate opens up to it and not one past it; the client adds no keeping count of its own.
 func _assert_site_crew_is_whole_workers() -> void:
-	# A priced forecast, shaped as `forecast_inputs` returns one: a take useful up to
-	# `ceil(KEEPING_CAP_CEILING / KEEPING_CAP_PER_WORKER)` hands, and one whole worker of keeping.
 	var bare_forecast := {"known": true, "per_worker": KEEPING_CAP_PER_WORKER,
 		"ceiling": KEEPING_CAP_CEILING}
-	var take := SourceForecast.take_useful_workers(bare_forecast)
-	if take == SourceForecast.MAX_USEFUL_UNBOUNDED:
-		_fail("keeping cap — the forecast prices no useful crew, so the claim would prove nothing")
-		return
-	var forecast := bare_forecast.duplicate()
-	forecast[SourceForecast.FORECAST_KEEP_CREW_KEY] = KEEPING_CAP_WORKERS
+	var take := SourceForecast.max_useful_workers(bare_forecast)
+	var forecast := SourceForecast.with_published_site_crew(bare_forecast, KEEPING_CAP_SIM_CREW)
 	var useful := SourceForecast.max_useful_workers(forecast)
-	_assert_band_panel("keeping cap — the useful crew is the take's %d plus the keeping's %d (got %d)"
-			% [take, KEEPING_CAP_WORKERS, useful], useful == take + KEEPING_CAP_WORKERS)
-	var at_take := SourceForecast.source_worker_cap_state(forecast, take, KEEPING_CAP_IDLE)
-	_assert_band_panel("keeping cap — a crew at the take's useful %d can still add a hand for the keeping"
-			% take, bool(at_take.get("can_add", false)))
-	var at_full := SourceForecast.source_worker_cap_state(forecast, take + KEEPING_CAP_WORKERS,
-		KEEPING_CAP_IDLE)
-	_assert_band_panel("keeping cap — …and not one past take + keeping (%d)" % (take + KEEPING_CAP_WORKERS),
-		not bool(at_full.get("can_add", true)))
-	# …and the keeping count reaches the forecast off the SOURCE's own wire field, which is the wiring
-	# the two claims above take for granted.
-	var wired := SourceForecast.forecast_inputs(
-		_sections_tended_patch(QUEUE_SECOND_PATCH, SECTIONS_KEEP_DEMAND, false),
-		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.BARE_FORECAST_PREFIX,
-		SourceForecast.DEFAULT_HARVEST_FLOOR)
-	_assert_band_panel("keeping cap — …and a kept patch carries its `upkeep_workers_needed` onto the forecast (%d)"
-			% int(wired.get(SourceForecast.FORECAST_KEEP_CREW_KEY, -1)),
-		int(wired.get(SourceForecast.FORECAST_KEEP_CREW_KEY, -1)) == SECTIONS_KEEP_WORKERS)
+	_assert_band_panel("keeping cap — the take alone is useful up to %d, the sim's site crew is %d"
+			% [take, KEEPING_CAP_SIM_CREW], take < KEEPING_CAP_SIM_CREW)
+	_assert_band_panel("keeping cap — the cap IS the sim's %d (got %d), with no keeping count added"
+			% [KEEPING_CAP_SIM_CREW, useful], useful == KEEPING_CAP_SIM_CREW)
+	_assert_band_panel("keeping cap — a crew at the take's useful %d can still add a hand"
+			% take, bool(SourceForecast.source_worker_cap_state(forecast, take, KEEPING_CAP_IDLE)
+				.get("can_add", false)))
+	_assert_band_panel("keeping cap — …and not one past the sim's %d" % KEEPING_CAP_SIM_CREW,
+		not bool(SourceForecast.source_worker_cap_state(forecast, KEEPING_CAP_SIM_CREW,
+			KEEPING_CAP_IDLE).get("can_add", true)))
 
-## The keeping claim's whole worker, the band's one idle hand, and a take useful up to two hands.
-const KEEPING_CAP_WORKERS := 1
+## The sim's most-useful crew on the kept site (take 2 + keeping 1), the band's one idle hand, and a
+## take useful up to two hands.
+const KEEPING_CAP_SIM_CREW := 3
 const KEEPING_CAP_IDLE := 1
 const KEEPING_CAP_PER_WORKER := 0.10
 const KEEPING_CAP_CEILING := 0.20

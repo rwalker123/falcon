@@ -1602,6 +1602,27 @@ own flags contradict — which is also why the retired repair fixture could not 
 > crew-gated version of exactly that once and fixed it; the attempt is recorded at both sites so it is
 > not tried a third time.
 
+### ⛔ A KEPT PATCH'S TAKE IS THE SIM'S CREW CURVE (`ForecastQuery.KIND_FORAGE_CREW_TAKE`)
+
+A site's crew keeps it before it collects, and only the sim knows how many hands that is at each crew,
+so the forage sheet composes NO take of its own on a kept patch (`_forage_is_kept`: the patch owes
+keeping). It asks `forage_crew_take` (`{faction_id, band_id, x, y, take_species, kit_id, floor,
+max_workers}` → `per_crew[{workers, take, keep_hands}]`) through `_forage_crew_take_view` — the deposit
+curve's request/caching pattern, keyed on the band's POOL plus the patch's biomass, keeping bill and
+keeping hands, so a new turn is a new question — and `_drag_forage_crew_take` re-asks on a floor drag.
+
+- **Food** is the row's `take` at the stepper's crew. **Fodder, materials and the hold rate** are priced
+  on the gatherers the row names (`workers - keep_hands`), so every account on the line describes the
+  same hands; there is no other client netting.
+- **While the reply is in flight** the readout states the seam's sentence (`HUNT_TAKE_PENDING`, or the
+  refusal) and no take — no fallback arithmetic.
+- **The cap** is the smallest crew on the curve whose gatherers reach the take's own useful count
+  (`SourceForecast.forage_curve_useful`); pending, only the pool caps the stepper.
+- **An unkept patch keeps the closed form** — there is no keeping to take out of the crew.
+- The hunt sheet reads `HuntCrewTake` and the deposit sheet `DepositCrewTake`, both already netted.
+- `ui_preview`'s stand-in (`fixtures_forecast.forage_crew_take_answer`) takes the tile's own
+  `patch_upkeep_hands` off the crew; `forage_kept_curve` is its frame.
+
 ### THE HEADLINE IS **NEXT TURN'S** TAKE, NOT THIS INSTANT'S ROOM (§4.7)
 
 Reported from play: a patch at **102** against a floor of **103**, regrowing and being harvested back

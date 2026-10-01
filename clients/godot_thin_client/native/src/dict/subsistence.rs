@@ -601,6 +601,17 @@ pub(crate) fn herds_to_array(
             "upkeep_workers_needed",
             i64::from(herd.upkeepWorkersNeeded()),
         );
+        // THE KEEPING LINE'S TWO FORECASTS (`docs/plan_site_crews.md`), whole workers like the count
+        // above: the workers once the in-flight rung is done, and the ABSOLUTE game turn the keeping
+        // first needs one more whole worker (`-1` = never within the build).
+        let _ = dict.insert(
+            "upkeep_workers_at_completion",
+            i64::from(herd.upkeepWorkersAtCompletion()),
+        );
+        let _ = dict.insert(
+            "upkeep_next_worker_turn",
+            i64::from(herd.upkeepNextWorkerTurn()),
+        );
         // **THE STANDING PRICE, PER RUNG** — what holding THAT rung will cost per turn once it stands,
         // published unconditionally exactly as the `*_work_cost` beside it is. `upkeep_demand` above
         // answers *"what is this herd billed right now"*, which is `0` on a herd with nothing started,
@@ -1344,6 +1355,17 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert(
             "upkeep_workers_needed",
             i64::from(patch.upkeepWorkersNeeded()),
+        );
+        // THE KEEPING LINE'S TWO FORECASTS (`docs/plan_site_crews.md`), whole workers like the count
+        // above: the workers once the in-flight rung is done, and the ABSOLUTE game turn the keeping
+        // first needs one more whole worker (`-1` = never within the build).
+        let _ = dict.insert(
+            "upkeep_workers_at_completion",
+            i64::from(patch.upkeepWorkersAtCompletion()),
+        );
+        let _ = dict.insert(
+            "upkeep_next_worker_turn",
+            i64::from(patch.upkeepNextWorkerTurn()),
         );
         // **THE STANDING PRICE, PER RUNG** — the plant twin of the herd block's pair; see there for
         // why `upkeep_demand` cannot price a rung nobody has started, and why this is a price rather

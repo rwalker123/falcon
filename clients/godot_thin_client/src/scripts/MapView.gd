@@ -565,6 +565,9 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# …and how many of the SITE'S OWN CREW the keeping took this turn, and whether its keeping tools
 	# came up short (`docs/plan_site_crews.md` §2.2) — a settlement of this turn's hands, so live state.
 	"patch_upkeep_hands", "patch_upkeep_tools_short",
+	# …and the keeping line's two forecasts — the workers once the in-flight rung is done and the turn
+	# the next whole worker is needed — the same live keeping state, redacted with it.
+	"patch_upkeep_workers_at_completion", "patch_upkeep_next_worker_turn",
 	# …and what that shortfall is COSTING the meter, which is the same fact one step on. The two
 	# per-rung `*_upkeep_demand` figures beside it — and their `*_upkeep_material_demand` twins, which
 	# are the same quote in the other currency and ride the same tender-load — are deliberately NOT
@@ -3660,6 +3663,9 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# crew the sim spent keeping it, and whether their keeping tools came up short. The compose
 		# sheet and the work row read them under the same forecast keys the band's labor rows carry.
 		info["patch_upkeep_hands"] = float(patch.get("upkeep_hands", 0.0))
+		info["patch_upkeep_workers_at_completion"] = int(patch.get("upkeep_workers_at_completion", 0))
+		info["patch_upkeep_next_worker_turn"] = int(patch.get("upkeep_next_worker_turn",
+			HudWorkVocab.UPKEEP_NO_NEXT_WORKER_TURN))
 		info["patch_upkeep_tools_short"] = bool(patch.get("upkeep_tools_short", false))
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the

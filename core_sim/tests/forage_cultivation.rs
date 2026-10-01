@@ -1502,6 +1502,85 @@ fn a_kept_patchs_next_turn_take_is_quoted_on_the_hands_its_keeping_leaves() {
     );
 }
 
+/// ⛔ **THE PATCH'S CREW CURVE IS THE SINGLE-CREW ANSWER AT EVERY SIZE** — `ForageCrewTake` row `n`
+/// is the work-party forecast's own `take_next_turn` / `keep_hands` at crew `n`, so the compose
+/// sheet's stepper and a one-crew quote cannot disagree; on a kept patch the curve's rows are netted
+/// of keeping (the take of a crew no larger than its keeping is nothing).
+#[test]
+fn a_patchs_crew_curve_is_the_single_crew_answer_at_every_size() {
+    use sim_runtime::{
+        ForageCrewTakeQuery, QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartySource,
+    };
+    /// The stepper's cap.
+    const MAX_CREW: u32 = 5;
+    /// The asking band's durable id.
+    const ASKING_BAND: u64 = 77_002;
+
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    seat_tended_patch(&mut app, coord);
+    let band = spawn_forager(&mut app, tile, coord, None);
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandId(ASKING_BAND));
+    let kit_id = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .default_kit(core_sim::KitJob::Forage)
+        .id()
+        .to_string();
+    let curve = match core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &QueryPayload::ForageCrewTake(ForageCrewTakeQuery {
+            faction_id: 0,
+            band_id: ASKING_BAND,
+            x: coord.x,
+            y: coord.y,
+            take_species: Vec::new(),
+            kit_id: kit_id.clone(),
+            floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+            max_workers: MAX_CREW,
+        }),
+    ) {
+        QueryReply::ForageCrewTake(reply) => reply,
+        other => panic!("the forage crew curve must answer with a curve, got {other:?}"),
+    };
+    assert_eq!(curve.per_crew.len(), MAX_CREW as usize);
+    for row in &curve.per_crew {
+        let single = match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+                faction_id: 0,
+                band_id: ASKING_BAND,
+                source: WorkPartySource::Forage {
+                    x: coord.x,
+                    y: coord.y,
+                    take_species: Vec::new(),
+                },
+                kit_id: kit_id.clone(),
+                workers: row.workers,
+                floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+            }),
+        ) {
+            QueryReply::WorkPartyForecast(answer) => answer,
+            other => panic!("the work-party query must answer with a forecast, got {other:?}"),
+        };
+        assert_eq!(
+            (row.take, row.keep_hands),
+            (single.take_next_turn, single.keep_hands),
+            "crew {}: the curve row is the single-crew answer",
+            row.workers
+        );
+    }
+    let last = curve.per_crew.last().expect("a row per crew");
+    assert!(
+        last.keep_hands > 0.0 && last.take > 0.0,
+        "liveness: the tended patch is kept and gathered at the top of the curve: {last:?}"
+    );
+}
+
 fn completion_announcements(app: &App, needle: &str) -> usize {
     app.world
         .resource::<CommandEventLog>()

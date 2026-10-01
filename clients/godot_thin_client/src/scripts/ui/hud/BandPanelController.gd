@@ -6633,6 +6633,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             var forage_forecast := SourceForecast.forecast_inputs(
                 patch, SourceForecast.SOURCE_KIND_FORAGE,
                 HudComposeVocab.BARE_FORECAST_PREFIX, floor)
+            # **THE CAP IS THE SIM'S**: the row's `workers_needed` is the most hands that still help
+            # on this site, keeping included (`docs/plan_site_crews.md`).
+            forage_forecast = SourceForecast.with_published_site_crew(forage_forecast,
+                int(m.get("workers_needed", 0)))
             useful = SourceForecast.max_useful_workers(forage_forecast)
             cap = SourceForecast.source_worker_cap_state(forage_forecast, workers, idle)
         else:

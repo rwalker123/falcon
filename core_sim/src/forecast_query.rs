@@ -72,6 +72,7 @@ pub fn answer_forecast_query(world: &mut World, query: &QueryPayload) -> QueryRe
         QueryPayload::HuntCrewTake(ask) => answer_hunt_crew_take(world, ask),
         QueryPayload::WorkPartyForecast(ask) => answer_work_party_forecast(world, ask),
         QueryPayload::DepositCrewTake(ask) => answer_deposit_crew_take(world, ask),
+        QueryPayload::ForageCrewTake(ask) => answer_forage_crew_take(world, ask),
         // **Answered by the server, from disk.** The slot list is a question about the filesystem,
         // not about a world — it has no `World` to resolve against and must be answerable while the
         // server is idle, which is exactly when a player opens the load menu. Reaching here means
@@ -795,6 +796,46 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
 /// is the work-party query's answer (`WorkPartySource::Extract`), not this one's. `in_range` is a
 /// plain fact on the reply (true inside the apron) and zeroes nothing — the hunt crew-take curve's
 /// rule, which has no range gate at all.
+/// **THE PATCH'S TAKE AT EVERY CREW SIZE, AFTER KEEPING** — one row per crew `1..=max_workers`, each
+/// the work-party forecast's own `take_next_turn` and `keep_hands` at that crew
+/// ([`answer_work_party_forecast`]), so the curve and the single-crew answer are one arithmetic: the
+/// crew keeps the patch first and gathers with the rest, at its share of the band's baskets and its
+/// row's Priority (`docs/plan_site_crews.md` §2.1).
+fn answer_forage_crew_take(
+    world: &mut World,
+    ask: &sim_runtime::ForageCrewTakeQuery,
+) -> QueryReply {
+    if ask.max_workers > MAX_CREW_TAKE_WORKERS {
+        return query_failure(query_error::INVALID_CREW);
+    }
+    let mut per_crew = Vec::with_capacity(ask.max_workers as usize);
+    for workers in 1..=ask.max_workers {
+        let one = WorkPartyForecastQuery {
+            faction_id: ask.faction_id,
+            band_id: ask.band_id,
+            source: WorkPartySource::Forage {
+                x: ask.x,
+                y: ask.y,
+                take_species: ask.take_species.clone(),
+            },
+            kit_id: ask.kit_id.clone(),
+            workers,
+            floor: ask.floor,
+        };
+        match answer_work_party_forecast(world, &one) {
+            QueryReply::WorkPartyForecast(answer) => {
+                per_crew.push(sim_runtime::ForageCrewTakeRow {
+                    workers,
+                    take: answer.take_next_turn,
+                    keep_hands: answer.keep_hands,
+                })
+            }
+            refusal => return refusal,
+        }
+    }
+    QueryReply::ForageCrewTake(sim_runtime::ForageCrewTakeReply { per_crew })
+}
+
 fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> QueryReply {
     if !floor_is_valid(ask.floor) {
         return query_failure(query_error::INVALID_FLOOR);

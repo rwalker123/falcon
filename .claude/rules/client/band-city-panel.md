@@ -2381,18 +2381,19 @@ Tended Patch
   site leads `Short: tending needs 2 workers, this crew can't cover it.`, then both marks state
   `Tending: 2 workers now · another needed around turn 58 · 3 workers when Tended Patch`, and a
   tools-short site closes with the tools sentence. The `another…` clause drops where the sim's
-  `upkeep_next_worker_turn` is `-1`, the `when…` clause where no build is in flight on the site (the
+  `upkeep_next_worker_turn` is `-1` (it is an ABSOLUTE game turn otherwise), the `when…` clause where no build is in flight on the site (the
   rung named is the in-flight build's destination). The three counts are the sim's
   (`upkeep_workers_needed` / `upkeep_next_worker_turn` / `upkeep_workers_at_completion`, read by
   `HudWorkVocab.tending_of`); nothing converts work units to hands. The marks run keeps its `⚠` only
   for a missing GOOD with the work paid, the one at-risk case the keeping mark does not state.
-- **The `+` counts the keeping hands.** `SourceForecast.max_useful_workers` is the take's useful crew
-  (`take_useful_workers`) PLUS the source's whole-worker keeping count, carried onto every forecast by
-  `forecast_inputs` as `FORECAST_KEEP_CREW_KEY` off `upkeep_workers_needed`. Both cap twins
-  (`source_worker_cap_state` and the compose sheet's `_forecast_worker_cap`) and the overstaffed flag
-  read it, so a site whose keeping takes a whole worker can staff take-useful + keeping hands. Capped on
-  the take alone, a Harvest under a Cultivate with its keeping taking one worker went dead at the take's
-  count with an idle worker standing by.
+- **The `+` reads the sim's most-useful crew, which already counts the keeping.** A forage row carries
+  its `workers_needed` onto the forecast (`SourceForecast.with_published_site_crew` →
+  `FORECAST_SITE_CREW_KEY`, returned as it stands by `max_useful_workers`); a hunt row carries
+  `hunt_useful_workers` (`with_published_useful_crew`), a working `useful_cutters`. The `+` gate, the
+  cap note and the overstaffed flag read those; **the client adds no keeping count of its own** (it did
+  for one batch, and double-counted on hunt rows). A `workers_needed` of `0` is the rehydrated save's
+  *unknown* and leaves the closed form to answer. Capped on the take alone, a Harvest under a Cultivate
+  whose keeping took one worker went dead at the take's count with an idle worker standing by.
 - **Two priority pills, on their own line under the row** (`_build_pill_line`, meta
   `WORK_ROW_PILL_LINE_META`). `Priority: <level>` is on every
   harvest, hunt and GROUNDWORK row and cycles `work_priority` (Normal → High → Low → Normal).

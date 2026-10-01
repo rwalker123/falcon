@@ -47,9 +47,9 @@
 use godot::prelude::*;
 use sim_runtime::{
     CommandEncodeError, CommandEnvelope, CommandPayload, DenialRaidForecastQuery,
-    DepositCrewTakeQuery, FactionCapacityQuery, HuntCrewTakeQuery, HuntTripForecastQuery,
-    QueryPayload, QueryReply, QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartySource,
-    MAX_PROTO_FRAME,
+    DepositCrewTakeQuery, FactionCapacityQuery, ForageCrewTakeQuery, HuntCrewTakeQuery,
+    HuntTripForecastQuery, QueryPayload, QueryReply, QueryReplyEnvelope, WorkPartyForecastQuery,
+    WorkPartySource, MAX_PROTO_FRAME,
 };
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -107,6 +107,10 @@ pub(crate) const QUERY_KIND_WORK_PARTY: &str = "work_party_forecast";
 /// stepper is answered by one round trip, exactly as the hunt curve is. The working is keyed by its
 /// tile AND its material, because one hex can hold two.
 pub(crate) const QUERY_KIND_DEPOSIT_CREW_TAKE: &str = "deposit_crew_take";
+/// **The patch compose sheet's question** — *"what does a crew of each size take off this patch
+/// next turn, after keeping it?"* One row per crew `1..=max_workers`, the hunt and deposit curves'
+/// shape: each row's take is struck on the hands the patch's keeping leaves, and names them.
+pub(crate) const QUERY_KIND_FORAGE_CREW_TAKE: &str = "forage_crew_take";
 /// The three values of a work-party ask's `source_kind`, spelled as `ForecastQuery.gd` spells them.
 /// An ask naming none of them is REFUSED rather than defaulted to one web: a forecast for the wrong
 /// source is worse than no forecast.
@@ -270,6 +274,16 @@ pub(crate) fn dispatch(
             floor: dict_f32(ask, "floor"),
             max_workers: dict_u32(ask, "max_workers"),
         }),
+        QUERY_KIND_FORAGE_CREW_TAKE => QueryPayload::ForageCrewTake(ForageCrewTakeQuery {
+            faction_id: dict_u32(ask, "faction_id"),
+            band_id: dict_u64(ask, "band_id"),
+            x: dict_u32(ask, "x"),
+            y: dict_u32(ask, "y"),
+            take_species: dict_string_array(ask, "take_species"),
+            kit_id: dict_string(ask, "kit_id"),
+            floor: dict_f32(ask, "floor"),
+            max_workers: dict_u32(ask, "max_workers"),
+        }),
         QUERY_KIND_WORK_PARTY => {
             let source = match dict_string(ask, "source_kind").as_str() {
                 WORK_PARTY_SOURCE_HUNT => WorkPartySource::Hunt {
@@ -355,7 +369,8 @@ fn names_a_faction(query: &QueryPayload) -> bool {
         | QueryPayload::DenialRaidForecast(_)
         | QueryPayload::HuntCrewTake(_)
         | QueryPayload::WorkPartyForecast(_)
-        | QueryPayload::DepositCrewTake(_) => true,
+        | QueryPayload::DepositCrewTake(_)
+        | QueryPayload::ForageCrewTake(_) => true,
         // The save headers on disk and the roster ceiling for a grid size. Neither reads a faction's
         // state, and both are asked before a world — and therefore before a seat — exists.
         QueryPayload::ListSaves | QueryPayload::FactionCapacity(_) => false,
@@ -581,9 +596,22 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
             // and the sheet states the reason rather than a zero.
             let _ = dict.insert("in_range", reply.in_range);
         }
+        Ok(QueryReply::ForageCrewTake(reply)) => {
+            let _ = dict.insert("ok", true);
+            let _ = dict.insert("kind", QUERY_KIND_FORAGE_CREW_TAKE);
+            let mut per_crew = VarArray::new();
+            for row in &reply.per_crew {
+                per_crew.push(&forage_crew_row_to_dict(row).to_variant());
+            }
+            let _ = dict.insert("per_crew", &per_crew);
+        }
         Ok(QueryReply::WorkPartyForecast(reply)) => {
             let _ = dict.insert("ok", true);
             let _ = dict.insert("kind", QUERY_KIND_WORK_PARTY);
+            // Next turn's take AT THE SOURCE by the asked crew, after keeping, and the hands it
+            // spends keeping — what a sheet previews a crew of `workers` with.
+            let _ = dict.insert("take_next_turn", f64::from(reply.take_next_turn));
+            let _ = dict.insert("keep_hands", f64::from(reply.keep_hands));
             // `false` inside the apron: no party, every walk field `0`, and `rate_home` is the
             // ordinary local row's steady rate.
             let _ = dict.insert("posts_a_party", reply.posts_a_party);
@@ -745,6 +773,17 @@ fn deposit_crew_row_to_dict(row: &sim_runtime::DepositCrewTakeRow) -> VarDiction
     let _ = dict.insert("take", f64::from(row.take));
     let _ = dict.insert("armed_workers", f64::from(row.armed_workers));
     let _ = dict.insert("next_rung_take", f64::from(row.next_rung_take));
+    dict
+}
+
+/// One crew size on the patch sheet — **whole-crew figures**. `take` is next turn's take, in
+/// provisions, by the hands the patch's keeping leaves; `keep_hands` is how many of the crew keep
+/// it, fractional (`workers - keep_hands` gather).
+fn forage_crew_row_to_dict(row: &sim_runtime::ForageCrewTakeRow) -> VarDictionary {
+    let mut dict = VarDictionary::new();
+    let _ = dict.insert("workers", i64::from(row.workers));
+    let _ = dict.insert("take", f64::from(row.take));
+    let _ = dict.insert("keep_hands", f64::from(row.keep_hands));
     dict
 }
 
@@ -912,6 +951,16 @@ mod tests {
                 x: 0,
                 y: 0,
                 material: String::new(),
+                kit_id: String::new(),
+                floor: 0.0,
+                max_workers: 0,
+            }),
+            QueryPayload::ForageCrewTake(ForageCrewTakeQuery {
+                faction_id: 0,
+                band_id: 1,
+                x: 0,
+                y: 0,
+                take_species: Vec::new(),
                 kit_id: String::new(),
                 floor: 0.0,
                 max_workers: 0,

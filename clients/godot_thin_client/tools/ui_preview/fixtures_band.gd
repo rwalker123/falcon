@@ -259,7 +259,7 @@ static func cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Diction
 		"kind": "forage", "workers": 1, "target_x": x, "target_y": y, "floor": 0.5,
 		"improvement": "cultivate",
 		"actual_yield": 0.08, "sustainable_yield": 0.96, "realized_yield": 0.08,
-		"workers_needed": ForageFx.CULTIVATE_SIM_SITE_CREW, "overdraws": false,
+		"workers_needed": ForageFx.CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
 	}, builders_role_row(CULTIVATING_BAND_BUILDERS)]
 	return band
 

@@ -644,9 +644,12 @@ three source dicts (`dict/subsistence.rs` for patches and herds, `dict/deposits.
 |---|---|---|
 | `upkeep_hands` | `upkeepHands:float` | how many of this site's crew the keeping took this turn; the take is the crew less these |
 | `upkeep_tools_short` | `upkeepToolsShort:bool` | whether that keeping crew's tool claim was filled less than in full |
+| `upkeep_workers_at_completion` | `upkeepWorkersAtCompletion:uint` | whole workers the keeping takes once the in-flight rung is done (patch, herd and deposit dicts) |
+| `upkeep_next_worker_turn` | `upkeepNextWorkerTurn:int` | the ABSOLUTE game turn the keeping first needs one more whole worker; `-1` = never within the build |
 
-`MapView._tile_info_at` crosses the patch pair as `patch_upkeep_hands` / `patch_upkeep_tools_short`
-(redacted with the rest of the live patch payload), and `SourceForecast.upkeep_hands` /
+`MapView._tile_info_at` crosses the patch pair as `patch_upkeep_hands` / `patch_upkeep_tools_short`,
+and the two tending forecasts as `patch_upkeep_workers_at_completion` / `patch_upkeep_next_worker_turn`
+(all redacted with the rest of the live patch payload; `HudWorkVocab.tending_of` reads them), and `SourceForecast.upkeep_hands` /
 `upkeep_tools_short` are the one reader of each. Each build-queue entry carries **`build_priority`**
 (`BuildQueueEntryState.buildPriority`, `high` | `normal` | `low`), read through
 `HudBandLaborState.build_priority_for_key`, which normalises an unwritten value to `normal`. It also

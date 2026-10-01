@@ -498,6 +498,10 @@ func run(harness) -> void:
 	var kit_band: Dictionary = h._hud._band_labor.player_band()
 	var kit_patch := ForageFx.floorify(BaseFx.food_tile_fixture(),
 		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	# **AN UNKEPT PATCH**, because this is a claim about the closed form's kit repricing: a KEPT patch's
+	# take is the sim's crew curve (`ForecastQuery.KIND_FORAGE_CREW_TAKE`), which the kit reaches through
+	# the ask rather than through this arithmetic.
+	kit_patch["patch_upkeep_demand"] = SourceForecast.NO_UPKEEP_DEMAND
 	var forage_kit_before: String = h._hud._compose.forage_kit_id()
 	h._hud._compose.set_forage_kit_id(BandFx.KIT_ID_GATHERING)
 	var basketed: Dictionary = h._hud._drawercompose._forage_priced_patch(kit_patch, kit_band)

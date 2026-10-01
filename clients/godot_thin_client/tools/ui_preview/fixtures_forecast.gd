@@ -125,6 +125,8 @@ static func answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
 		return work_party_answer(hud, request_id, ask)
 	if kind == ForecastQuery.KIND_DEPOSIT_CREW_TAKE:
 		return deposit_crew_take_answer(hud, request_id, ask)
+	if kind == ForecastQuery.KIND_FORAGE_CREW_TAKE:
+		return forage_crew_take_answer(hud, request_id, ask)
 	if kind == ForecastQuery.KIND_HUNT_CREW_TAKE:
 		return {"request_id": request_id, "ok": true, "kind": kind,
 			"per_crew": crew_take_rows(_quarry_for_id(hud, String(ask.get("herd_id", ""))),
@@ -231,6 +233,56 @@ static func deposit_crew_take_answer(hud: Node, request_id: int, ask: Dictionary
 			"armed_workers": float(workers), "next_rung_take": 0.0})
 	reply["per_crew"] = rows
 	return reply
+
+## **THE PATCH CREW CURVE'S STAND-IN** (`ForecastQuery.KIND_FORAGE_CREW_TAKE`). A tile that AUTHORS
+## its reply under `FORAGE_CREW_TAKE_KEY` is answered with it verbatim; every other is answered with a
+## curve whose keeping takes the hands the tile's own wire says the crew spent keeping
+## (`patch_upkeep_hands`) off the crew first, and whose take is the gatherers'
+## `min(per_worker × gatherers, next turn's room)` — the shape the sim answers, at the fixture's own
+## terms. A fixture stating no keeping hands answers the plain gather, so a frame that is not about
+## keeping reads the take it always did.
+const FORAGE_CREW_TAKE_KEY := "forage_crew_take"
+
+## The tiles a harness opened a forage sheet on, by `"x,y"` — what the sheet asked about, which is not
+## always the selected tile (a chapter opens a sheet on a fixture it never put on the map).
+static var forage_tiles: Dictionary = {}
+
+## Record the tile a forage sheet is about to be opened on, so the stand-in answers about it.
+static func note_forage_tile(tile_info: Dictionary) -> void:
+	forage_tiles["%d,%d" % [int(tile_info.get("x", -1)), int(tile_info.get("y", -1))]] = tile_info
+
+static func forage_crew_take_answer(hud: Node, request_id: int, ask: Dictionary) -> Dictionary:
+	var kind := ForecastQuery.KIND_FORAGE_CREW_TAKE
+	var tile: Dictionary = forage_tiles.get("%d,%d" % [int(ask.get("x", -1)), int(ask.get("y", -1))],
+		hud._selection.tile_info())
+	var authored: Dictionary = tile.get(FORAGE_CREW_TAKE_KEY, {})
+	if not authored.is_empty():
+		var out := {"request_id": request_id, "ok": true, "kind": kind}
+		for key in authored:
+			out[key] = authored[key]
+		return out
+	# The SHEET's own take source and pricing — the narrowed stand and the kit-priced patch — so the
+	# stand-in answers about the same crop and kit the sheet asked about.
+	var compose: Object = hud._drawercompose
+	var basket := SourceForecastRef.flora_basket_entries(tile.get("patch_composition", []))
+	var take_tile: Dictionary = compose._forage_take_source(tile, compose._selective_take_state(
+		basket, PackedStringArray(ask.get("take_species", []))))
+	var band: Dictionary = {}
+	for row in hud._band_labor.player_bands():
+		if int((row as Dictionary).get("band_id", -1)) == int(ask.get("band_id", -2)):
+			band = row
+	if band.is_empty():
+		band = hud._band_labor.player_band()
+	var forecast: Dictionary = compose._forage_forecast(take_tile, band, float(ask.get("floor", 0.0)))
+	var keep := SourceForecastRef.upkeep_hands(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var rows: Array = []
+	for workers in range(1, int(ask.get("max_workers", 0)) + 1):
+		var keep_hands := minf(keep, float(workers))
+		var gatherers := float(workers) - keep_hands
+		rows.append({"workers": workers, "keep_hands": keep_hands,
+			"take": minf(gatherers * float(forecast.get("per_worker", 0.0)),
+				float(forecast.get("next_ceiling", 0.0)))})
+	return {"request_id": request_id, "ok": true, "kind": kind, "per_crew": rows}
 
 ## The working at `(x, y)` carrying `material`, off the selected tile first (where a sheet is opened)
 ## and then off the labor model's whole section; `{}` where neither holds it.

@@ -1662,7 +1662,7 @@ func run(harness) -> void:
 	# patch is capped at `MAX_USEFUL_BARREN` (1) — NOT left UNBOUNDED, which is what an undescribed one
 	# gets and what the old rate-based `known` wrongly handed this state.
 	h._assert_hud("a described-but-empty patch caps workers rather than going unbounded",
-		SourceForecast.take_useful_workers(SourceForecast.forecast_inputs(
+		SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
 			dead_season, SourceForecast.SOURCE_KIND_FORAGE,
 			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK))
 			== SourceForecast.MAX_USEFUL_BARREN)
@@ -1736,11 +1736,8 @@ func run(harness) -> void:
 	var full_hold = Readout.crew_target_count(h._hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD)
 	h._assert_hud("a source with no room still admits the crew that HOLDS it — the cap floors on the hold number",
 		full_hold > 0)
-	# …plus the site's keeping hands, which the cap adds on top of the take's (`max_useful_workers`).
-	var full_keep := int(full_patch.get("patch_upkeep_workers_needed", 0))
 	h._assert_hud("the verdict reads the crew the stepper shows, not one the cap is about to clamp away",
-		Readout.stepper_value(h._hud._drawercompose._compose_sheet)
-			== mini(ForageFx.FLOOR_CHART_CREW, full_hold + full_keep))
+		Readout.stepper_value(h._hud._drawercompose._compose_sheet) == mini(ForageFx.FLOOR_CHART_CREW, full_hold))
 
 	# State floor_chart_drawn_down — THE SAME PATCH ALREADY DRAWN DOWN, worked below the food peak.
 	# The stock band is amber (the patch reports Stressed), the floor sits under it, and the projection
@@ -2213,7 +2210,7 @@ func run(harness) -> void:
 	# fixture the issue is named after, in the same frame, because "not barren" is trivially satisfied
 	# by a cap that stopped answering at all.
 	h._assert_hud("…while a patch that pays nothing anywhere still caps at one worker",
-		SourceForecast.take_useful_workers(SourceForecast.forecast_inputs(
+		SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
 			ForageFx.floorify(_dead_season_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX),
 			SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
 			SourceForecast.FLOOR_FOOD_PEAK)) == SourceForecast.MAX_USEFUL_BARREN)
@@ -2341,7 +2338,7 @@ func run(harness) -> void:
 		SourceForecast.FLOOR_FOOD_PEAK)
 	h._assert_hud("…while a patch that pays into no account at all is still capped at one worker",
 		not SourceForecast.pays_any_account(dead_forecast)
-			and SourceForecast.take_useful_workers(dead_forecast)
+			and SourceForecast.max_useful_workers(dead_forecast)
 				== SourceForecast.MAX_USEFUL_BARREN)
 	# (5) …and the sheet quotes the tobacco those tenders bring home, so the cap was widened rather
 	# than the readout silenced.
@@ -2460,6 +2457,9 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	# SHOWN as well as composed: a kept patch's take is the crew curve's answer, and the sheet that
+	# answer rebuilds is the SELECTED tile's — the live game's only shape.
+	h._show_tile(at_floor)
 	h._compose_forage(at_floor)
 	await h._settle()
 	await h._save("forage_at_floor")
@@ -2543,6 +2543,9 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	# SHOWN as well as composed: a kept patch's take is the crew curve's answer, and the sheet that
+	# answer rebuilds is the SELECTED tile's — the live game's only shape.
+	h._show_tile(below_floor)
 	h._compose_forage(below_floor)
 	await h._settle()
 	await h._save("forage_below_floor")
@@ -2575,6 +2578,7 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	h._hud._compose.set_forage_count(AT_FLOOR_FORAGERS)
+	h._show_tile(descending)
 	h._compose_forage(descending)
 	await h._settle()
 	await h._save("forage_reaches_floor")
@@ -2596,3 +2600,44 @@ func run(harness) -> void:
 	# about a WORD, which every canned row in this harness was structurally unable to expose (see
 	# `_assert_readout_names_both_rates`).
 	_assert_readout_names_both_rates()
+
+	# State forage_kept_curve — **A KEPT PATCH'S TAKE IS THE SIM'S CREW CURVE**
+	# (`ForecastQuery.KIND_FORAGE_CREW_TAKE`). The reference patch with its crew spending
+	# `KEPT_CURVE_KEEP_HANDS` keeping it: the stand-in curve takes those hands off the crew first, so
+	# three foragers gather with one and the headline is that ONE hand's take — the sheet composes no
+	# take of its own on a kept patch.
+	var kept := BaseFx.food_tile_fixture()
+	kept["patch_upkeep_hands"] = KEPT_CURVE_KEEP_HANDS
+	h._hud._compose.reset_forage_source()
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+	h._show_tile(kept)
+	h._compose_forage(kept)
+	await h._settle()
+	# The crew is dialed AFTER the first open, which re-seeds it off the band's standing row.
+	h._hud._compose.set_forage_count(KEPT_CURVE_CREW)
+	h._compose_forage(kept)
+	await h._settle()
+	h._assert_hud("precondition: the sheet stands at the dialed crew of %d (got %d)"
+			% [KEPT_CURVE_CREW, h._hud._compose.forage_count()],
+		h._hud._compose.forage_count() == KEPT_CURVE_CREW)
+	await h._save("forage_kept_curve")
+	var kept_text = Readout.yields_text(h._hud._drawercompose._compose_sheet)
+	var kept_priced := ForageFx.floorify(kept, HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var kept_forecast := SourceForecast.forecast_inputs(kept_priced, SourceForecast.SOURCE_KIND_FORAGE,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
+	var one_hand := minf((float(KEPT_CURVE_CREW) - KEPT_CURVE_KEEP_HANDS)
+		* float(kept_forecast["per_worker"]), float(kept_forecast["next_ceiling"]))
+	print("ui_preview: kept curve  %s (gatherers' take %s)" % [kept_text,
+		SourceForecast.format_magnitude(one_hand)])
+	h._assert_hud("a kept patch's headline is the curve's take for the gatherers left after keeping (%s)"
+			% kept_text,
+		kept_text.contains(SourceForecast.format_magnitude(one_hand)))
+	h._assert_hud("…which is below what the whole crew would gather, so the keeping really came off (%s)"
+			% SourceForecast.format_magnitude(minf(float(KEPT_CURVE_CREW)
+				* float(kept_forecast["per_worker"]), float(kept_forecast["next_ceiling"]))),
+		one_hand < minf(float(KEPT_CURVE_CREW) * float(kept_forecast["per_worker"]),
+			float(kept_forecast["next_ceiling"])))
+
+## The kept-curve state's crew, and the hands of it the patch's keeping takes.
+const KEPT_CURVE_CREW := 3
+const KEPT_CURVE_KEEP_HANDS := 2.0

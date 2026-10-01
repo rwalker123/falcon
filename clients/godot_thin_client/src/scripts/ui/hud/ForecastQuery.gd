@@ -52,6 +52,10 @@ const WORK_PARTY_SOURCE_EXTRACT := "extract"
 ## how many whole kits the crew holds, and what they would cut once the working stands one rung up. The deposit twin of
 ## `KIND_HUNT_CREW_TAKE`, keyed the same way: on the band's pool, so a stepper tick asks nothing new.
 const KIND_DEPOSIT_CREW_TAKE := "deposit_crew_take"
+## **THE PATCH SHEET'S CREW CURVE** — one row per crew `{workers, take, keep_hands}`, `take` next
+## turn's provisions by the hands the patch's keeping leaves. Asked on a KEPT patch only, keyed like
+## the deposit curve: on the band's pool, so a stepper tick asks nothing new.
+const KIND_FORAGE_CREW_TAKE := "forage_crew_take"
 
 # ---- what a sheet gets back -----------------------------------------------------------------------
 

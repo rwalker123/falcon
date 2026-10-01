@@ -228,6 +228,12 @@ var _hunt_live_crew_view: Dictionary = {}
 ## figure on the sheet is read out of it, so a drag's refill and a rebuild read one member.
 var _deposit_live_crew_view: Dictionary = {}
 
+## **THE PATCH SHEET'S CREW CURVE VIEW** (`ForecastQuery.KIND_FORAGE_CREW_TAKE`) — asked on a KEPT patch
+## only, at the floor the sheet composes at (the build) or a floor a live drag is on. A kept patch's
+## take, its cap and its keeping hands are read out of it; an UNKEPT patch leaves it empty and keeps the
+## closed form, there being no keeping to take out of the crew.
+var _forage_live_crew_view: Dictionary = {}
+
 ## **WHEN THE DRAG LAST PUT THE CURVE QUESTION ON THE SOCKET**, and the key it put — the rate limit's
 ## two terms (`HudComposeVocab.HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC`). The key is held beside the
 ## clock so that a motion landing back on a floor already asked costs nothing AND does not restart the
@@ -1210,6 +1216,13 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     if not bool(forecast["known"]):
         return _wordless_take_model(notes)
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    # ⛔ **A KEPT PATCH'S TAKE IS THE SIM'S** (`ForecastQuery.KIND_FORAGE_CREW_TAKE`). The keeping comes
+    # out of the crew first and only the sim knows how many hands that is at each crew, so the take
+    # is the curve's row and the other accounts are priced on the hands the row says gather. While the
+    # reply is in flight the sheet states no take at all — there is no fallback arithmetic here.
+    if _forage_is_kept(tile_info):
+        return _kept_forage_yield_model(band, tile_info, floor, workers, improvement, reaches, notes,
+            forecast, overdraws, output)
     # **THE HEADLINE IS WHAT LANDS NEXT TURN, NOT THE ROOM STANDING NOW.** The sim regrows a whole
     # stage before it harvests, so a patch held at its floor pays its regrowth while the standing room
     # is empty — which is what had this readout quoting `0.00 FOOD` beside a work board quoting
@@ -1250,6 +1263,14 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
             SourceForecast.YIELD_ACCOUNT_FODDER: SourceForecast.expected_yield_account(
                 forecast, workers, band, "per_worker_fodder", "hold_ceiling_fodder"),
         }
+    return _forage_model_rows(tile_info, actual, actual_fodder, zero_account, after, materials,
+        overdraws, notes)
+
+## **THE FORAGE READOUT'S SHARED TAIL** — the rows, the wild-fodder lock and the model — for the closed
+## form and the kept patch's curve alike, so the lock and the joined sentence cannot differ by path.
+func _forage_model_rows(tile_info: Dictionary, actual: float, actual_fodder: float,
+        zero_account: String, after: Dictionary, materials: Array[Dictionary], overdraws: bool,
+        notes: Array[String]) -> Dictionary:
     var rows := SourceForecast.yield_rows(actual, actual_fodder, zero_account, after, materials)
     if rows.is_empty():
         # The patch pays in NO account at all — there is no line to draw rather than a zero to print.
@@ -1367,6 +1388,118 @@ func _take_notes(take: Dictionary) -> Array[String]:
         if reason == SourceForecast.SELECTION_REASON_UNPRICED:
             notes.append(HudFloraVocab.TAKE_UNQUOTED_NOTE)
     return notes
+
+## **THE CAP OFF A CREW CURVE** — `min(pool, useful)`, with `_forecast_worker_cap`'s two notes. While the
+## curve is in flight (`NO_CREW_ANSWER`) only the pool caps the stepper.
+func _curve_worker_cap(useful: int, assignable: int) -> Dictionary:
+    if useful == SourceForecast.NO_CREW_ANSWER or useful >= assignable:
+        var labor_note := ""
+        if useful != SourceForecast.NO_CREW_ANSWER and useful > assignable:
+            labor_note = SourceForecast.LABOR_BOUND_NOTE_FORMAT % [assignable, useful]
+        return {"cap": assignable, "note": labor_note}
+    var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
+    return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
+
+## Does this patch owe keeping? The gate on reading its take off the crew curve.
+func _forage_is_kept(tile_info: Dictionary) -> bool:
+    return SourceForecast.has_upkeep(SourceForecast.upkeep_state(tile_info,
+        HudComposeVocab.FORAGE_FORECAST_PREFIX))
+
+## **A KEPT PATCH'S READOUT, OFF THE CREW CURVE.** Food is the row's `take`; fodder, materials and the
+## hold rate are priced on the gatherers the row names (`workers - keep_hands`), so every account on
+## the line describes the same hands. Pending or refused, the readout states the seam's sentence.
+func _kept_forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float, workers: int,
+        improvement: String, reaches: bool, notes: Array[String], forecast: Dictionary,
+        overdraws: bool, output: float) -> Dictionary:
+    var state := String(_forage_live_crew_view.get("state", ForecastQuery.STATE_PENDING))
+    if state != ForecastQuery.STATE_READY:
+        var waiting: Array[String] = notes.duplicate()
+        waiting.append(HudComposeVocab.HUNT_TAKE_PENDING if state == ForecastQuery.STATE_PENDING \
+            else HudComposeVocab.FORECAST_FAILED_FORMAT % String(_forage_live_crew_view.get("error", "")))
+        return _wordless_take_model(waiting)
+    var per_crew: Array = (_forage_live_crew_view.get("answer", {}) as Dictionary).get("per_crew", [])
+    var row := SourceForecast.forage_crew_row(per_crew, workers)
+    var actual := float(row.get(SourceForecast.FORAGE_CREW_TAKE_KEY, 0.0))
+    var gatherers := maxf(float(workers) - float(row.get(SourceForecast.FORAGE_CREW_KEEP_HANDS_KEY,
+        0.0)), 0.0)
+    var fodder := minf(gatherers * float(forecast.get("per_worker_fodder", 0.0)),
+        float(forecast.get("next_ceiling_fodder", 0.0))) * output
+    var materials := SourceForecast.scaled_material_rows(SourceForecast.expected_materials(
+        gatherers, forecast, SourceForecast.MATERIAL_CEILING_NEXT_TURN_KEY), output)
+    var after := {}
+    if _walks_to_the_floor(reaches, improvement):
+        after = {
+            SourceForecast.YIELD_ACCOUNT_FOOD: minf(gatherers * float(forecast.get("per_worker", 0.0)),
+                float(forecast.get("hold_ceiling", 0.0))) * output,
+            SourceForecast.YIELD_ACCOUNT_FODDER: minf(gatherers * float(forecast.get(
+                "per_worker_fodder", 0.0)), float(forecast.get("hold_ceiling_fodder", 0.0))) * output,
+        }
+    return _forage_model_rows(tile_info, actual, fodder, String(forecast["zero_account"]), after,
+        materials, overdraws, notes)
+
+## **THE PATCH CREW CURVE, COMPOSED AND ASKED** — the deposit curve's twin: the SUBJECT is band + tile,
+## the key adds the kit, the floor, the take selection, the band's gear and the POOL, so a stepper tick
+## re-reads rows the seam already holds. Read exactly, for the deposit curve's reason.
+func _forage_crew_take_ask(band: Dictionary, tile_info: Dictionary, take_species: Array,
+        kit_id: String, floor: float, max_workers: int) -> Dictionary:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var workers := _crew_take_workers(max_workers)
+    var x := int(tile_info.get("x", -1))
+    var y := int(tile_info.get("y", -1))
+    var subject := ForecastQuery.subject_of(ForecastQuery.KIND_FORAGE_CREW_TAKE, band_id,
+        "%d,%d" % [x, y])
+    var key := ForecastQuery.key_of(subject, kit_id, workers, floor, band, _band_labor.kits())
+    if not take_species.is_empty():
+        key += ":" + ",".join(PackedStringArray(take_species))
+    # **THE STAND AND ITS BILL ARE TERMS OF THE QUESTION** — every row is bounded by next turn's room
+    # above the floor and starts by taking the keeping out of the crew, so a turn that moves the
+    # patch's biomass or its keeping is a new question rather than the previous turn's answer.
+    key += ":%f:%f:%f" % [
+        float(tile_info.get(HudComposeVocab.FORAGE_FORECAST_PREFIX + "biomass", 0.0)),
+        float(tile_info.get(HudComposeVocab.FORAGE_FORECAST_PREFIX + "upkeep_demand", 0.0)),
+        SourceForecast.upkeep_hands(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)]
+    return {
+        "subject": subject, "key": key,
+        "askable": workers > 0 and band_id != HudConst.NO_BAND_ID and x >= 0 and y >= 0,
+        "params": {
+            "faction_id": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+            "band_id": band_id, "x": x, "y": y,
+            "take_species": take_species, "kit_id": kit_id, "floor": floor,
+            "max_workers": workers,
+        },
+    }
+
+func _forage_crew_take_view(band: Dictionary, tile_info: Dictionary, take_species: Array,
+        kit_id: String, floor: float, max_workers: int) -> Dictionary:
+    if _forecast_query == null:
+        return {"state": ForecastQuery.STATE_PENDING, "answer": {}, "error": ""}
+    var ask := _forage_crew_take_ask(band, tile_info, take_species, kit_id, floor, max_workers)
+    if not bool(ask["askable"]):
+        return {"state": ForecastQuery.STATE_READY, "answer": {}, "error": ""}
+    _forecast_query.ask(ForecastQuery.KIND_FORAGE_CREW_TAKE, String(ask["subject"]),
+        String(ask["key"]), ask["params"])
+    return _forecast_query.view_exact(String(ask["subject"]), String(ask["key"]))
+
+## The same question while the floor is moving — `_drag_deposit_crew_take`'s twin, on the same rate
+## limit and members.
+func _drag_forage_crew_take(band: Dictionary, tile_info: Dictionary, take_species: Array,
+        kit_id: String, floor: float, max_workers: int) -> void:
+    if _forecast_query == null:
+        return
+    var ask := _forage_crew_take_ask(band, tile_info, take_species, kit_id, floor, max_workers)
+    if not bool(ask["askable"]):
+        _forage_live_crew_view = {"state": ForecastQuery.STATE_READY, "answer": {}, "error": ""}
+        return
+    var key := String(ask["key"])
+    var now := Time.get_ticks_msec()
+    if key != _crew_take_drag_asked_key \
+            and now - _crew_take_drag_asked_at_msec \
+                >= HudComposeVocab.HUNT_CREW_TAKE_DRAG_ASK_INTERVAL_MSEC:
+        _crew_take_drag_asked_key = key
+        _crew_take_drag_asked_at_msec = now
+        _forecast_query.ask(ForecastQuery.KIND_FORAGE_CREW_TAKE, String(ask["subject"]), key,
+            ask["params"])
+    _forage_live_crew_view = _forecast_query.view_exact(String(ask["subject"]), key)
 
 ## A model with NO numbers in it — the shape every "there is nothing this sheet may state" path
 ## returns. `{}` when there is not even an aside to print, which is the whole-basket sheet's own
@@ -3555,7 +3688,27 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # the DIPPED one and a 25-turn improvement therefore asked for fewer hands than gathering the same
     # ground. Both terms are retired: the take is undipped, so the quotient is the honest count, and
     # what a build costs is the builders' own stepper.
-    var capped := _forecast_worker_cap(forecast, crew_pool)
+    # **A KEPT PATCH ASKS THE SIM FOR ITS CURVE**, and caps on the curve's plateau — the most hands
+    # that still help, keeping included. The kit is resolved here for the ask exactly as the kit row
+    # below resolves it, so the two cannot name different kits.
+    var kept := _forage_is_kept(take_tile)
+    var capped := {}
+    if kept:
+        var ask_kit := KitRoster.resolve_selection(_band_labor.kits(), KitRoster.JOB_FORAGE,
+            _band_labor.default_kit_id(KitRoster.JOB_FORAGE), _compose.forage_kit_id())
+        _forage_live_crew_view = _forage_crew_take_view(band, take_tile,
+            Array(_compose.forage_take_species()), ask_kit, _compose.forage_floor(), crew_pool)
+        # **THE CAP IS THE CREW WHOSE GATHERERS REACH THE TAKE'S USEFUL HANDS** — the take's own
+        # count, plus the keeping hands the sim says that crew spends first. While the reply is in
+        # flight, or no row gets there, only the pool caps the stepper.
+        var useful := SourceForecast.NO_CREW_ANSWER
+        if String(_forage_live_crew_view.get("state", "")) == ForecastQuery.STATE_READY:
+            useful = SourceForecast.forage_curve_useful((_forage_live_crew_view.get("answer", {})
+                as Dictionary).get("per_crew", []), SourceForecast.max_useful_workers(forecast))
+        capped = _curve_worker_cap(useful, crew_pool)
+    else:
+        _forage_live_crew_view = {}
+        capped = _forecast_worker_cap(forecast, crew_pool)
     var cap := int(capped["cap"])
     # Auto-max on stance select — "give me everything this patch sustains": jump to the max-useful for
     # the stance (clamped to available below). Only ever set by a stance click, never by a −/+ tick.
@@ -3598,6 +3751,11 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         # to EVERY open sheet, so a raid reply landing while a forager drags this chart would rebuild
         # it and end the drag. A drag is never rebuilt on either web.
         _floor_drag_refill = func(floor: float) -> void:
+            # **A KEPT PATCH'S CURVE IS FLOOR-DEPENDENT, SO THE DRAG RE-ASKS IT** — the deposit
+            # sheet's rate-limited drag ask; the refill then reads what the seam holds for that floor.
+            if kept:
+                _drag_forage_crew_take(band, take_tile, Array(_compose.forage_take_species()),
+                    _compose.forage_kit_id(), floor, crew_pool)
             _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
                 _forage_priced_patch(_forage_take_source(
                     _live_tile_info(subject_key, tile_info), take_state), band),

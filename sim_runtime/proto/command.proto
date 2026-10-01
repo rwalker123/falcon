@@ -1027,6 +1027,8 @@ message QueryCommand {
     // 7 is held by `work_party_forecast`, so the deposit compose sheet's question takes 8.
     // Seat-gated: it is answered out of the named band's gear, rows and pool issue.
     DepositCrewTakeQuery deposit_crew_take = 8;
+    // 8 is held by `deposit_crew_take`, so the patch's crew curve takes 9 (append-only).
+    ForageCrewTakeQuery forage_crew_take = 9;
   }
 }
 
@@ -1039,6 +1041,43 @@ message QueryCommand {
 // competes with the band's other rows for each tool and loses what the standing pools were issued -
 // through the same functions the turn cuts with, so committing crew n with this kit makes the turn
 // pay row n's `take`.
+// THE PATCH'S TAKE AT EVERY CREW SIZE, AFTER KEEPING (docs/plan_site_crews.md) - the forage twin of
+// `DepositCrewTakeQuery` and `HuntCrewTakeQuery`, so the compose sheet reads the take at N workers
+// rather than pricing every worker as a gatherer: a kept patch's crew keeps it first and gathers
+// with the rest. Seat-gated like the other faction-bearing questions.
+message ForageCrewTakeQuery {
+  uint32 faction_id = 1;
+  // The asking band's durable `BandId` - its live gear, rows and Priority price the crew.
+  uint64 band_id = 2;
+  uint32 x = 3;
+  uint32 y = 4;
+  // The crop selection the crew gathers (`TakeSelection` keys); empty = the whole basket.
+  repeated string take_species = 5;
+  // An `equipment.json` roster id, REQUIRED; unknown or not listing `forage` is a `QueryError`.
+  string kit_id = 6;
+  // The composed escapement floor, as a fraction of the patch's capacity.
+  float floor = 7;
+  // The stepper's cap: one row per crew size `1..=max_workers`; 0 asks for nothing.
+  uint32 max_workers = 8;
+}
+
+// ONE CREW SIZE ON THE PATCH COMPOSE SHEET - see `ForageCrewTakeQuery`.
+message ForageCrewTakeRow {
+  // Echoed so the row is self-describing. Rows ascend from 1.
+  uint32 workers = 1;
+  // NEXT TURN'S TAKE, in provisions, by the hands left after keeping - the patch as next turn finds
+  // it, at the crew's share of the band's baskets and its row's Priority.
+  float take = 2;
+  // THE HANDS THIS CREW SPENDS KEEPING THE PATCH, fractional - `workers - keep_hands` gather.
+  float keep_hands = 3;
+}
+
+// The answer to `ForageCrewTakeQuery`.
+message ForageCrewTakeReply {
+  // ONE ROW PER CREW SIZE, ascending, `1..=max_workers`. Empty when `max_workers` is 0.
+  repeated ForageCrewTakeRow per_crew = 1;
+}
+
 message DepositCrewTakeQuery {
   uint32 faction_id = 1;
   // The asking band's durable `BandId`.
@@ -1239,6 +1278,8 @@ message QueryReplyEnvelope {
     WorkPartyForecastReply work_party_forecast = 10;
     // 10 is held by `work_party_forecast`, so the deposit compose sheet's answer takes 11.
     DepositCrewTakeReply deposit_crew_take = 11;
+    // 11 is held by `deposit_crew_take`, so the patch's crew curve takes 12 (append-only).
+    ForageCrewTakeReply forage_crew_take = 12;
   }
 }
 

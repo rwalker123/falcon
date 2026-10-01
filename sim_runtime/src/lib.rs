@@ -13,9 +13,10 @@ pub mod commands;
 pub use commands::{
     query_error, DenialRaidForecastQuery, DenialRaidForecastReply, DenialRow, DepositCrewTakeQuery,
     DepositCrewTakeReply, DepositCrewTakeRow, FactionCapacityQuery, FactionCapacityReply,
-    HuntCrewTakeQuery, HuntCrewTakeReply, HuntCrewTakeRow, HuntTripForecastQuery,
-    HuntTripForecastReply, HuntTripRow, QueryPayload, QueryReply, QueryReplyEnvelope,
-    WorkPartyForecastQuery, WorkPartyForecastReply, WorkPartySource,
+    ForageCrewTakeQuery, ForageCrewTakeReply, ForageCrewTakeRow, HuntCrewTakeQuery,
+    HuntCrewTakeReply, HuntCrewTakeRow, HuntTripForecastQuery, HuntTripForecastReply, HuntTripRow,
+    QueryPayload, QueryReply, QueryReplyEnvelope, WorkPartyForecastQuery, WorkPartyForecastReply,
+    WorkPartySource,
 };
 pub use commands::{
     CancelScope, CommandDecodeError, CommandEncodeError, CommandEnvelope, CommandPayload,

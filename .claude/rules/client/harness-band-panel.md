@@ -2929,9 +2929,12 @@ state a non-default level. Frames: `band_panel_work_sections`, `band_panel_work_
   sentence.
 - **The pills sit on the row's own pill line** (`WORK_ROW_PILL_LINE_META`), never beside the rung line.
 - **`_assert_site_crew_is_whole_workers` is the keeping-cap claim**: a forecast whose take is useful up
-  to 2 hands and whose keeping takes 1 whole worker caps at 3, a crew of 2 can still add a hand, 3
-  cannot, and a kept patch's `upkeep_workers_needed` reaches the forecast. The herder-floor frame's twin
-  claim is re-aimed the same way: both cap twins gate at take-useful + the herd's keeping hands.
+  to 2 hands, carrying the sim's site crew of 3 (`with_published_site_crew`), caps at 3 exactly — no
+  keeping count added — a crew of 2 can still add a hand, and 3 cannot. The herder-floor frame's twin
+  claim asserts both cap twins gate at the forecast's own ceiling, adding nothing.
+- **The tools-short `ⓘ` hover carries all three tending clauses**: the kept patch is being raised to a
+  Field (`improvement: sow` on its row), so it reads `Tending: 2 workers now · another needed around
+  turn 58 · 3 workers when Field`.
 - **The pills are claimed as a set**: a `Priority` pill on every row, exactly ONE `Build` pill and it
   is on the queued row, and the queue row's `Build:` mark is a `Label`, not a control. Both pills are
   pressed with REAL input (`_drive_click`) and the emitted LINE is read back through `Main`'s own

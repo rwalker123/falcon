@@ -588,9 +588,11 @@
       "upkeep_hands": 40.82,
       "upkeep_kit_id": "deposits[0].upkeep_kit_id",
       "upkeep_kit_named": false,
+      "upkeep_next_worker_turn": 26,
       "upkeep_shortfall": 109.129997,
       "upkeep_supplied": 40.529999,
       "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 34,
       "upkeep_workers_needed": 83
     },
     {
@@ -623,9 +625,11 @@
       "upkeep_hands": 96.720001,
       "upkeep_kit_id": "deposits[1].upkeep_kit_id",
       "upkeep_kit_named": true,
+      "upkeep_next_worker_turn": 121,
       "upkeep_shortfall": 73.75,
       "upkeep_supplied": 45.66,
       "upkeep_tools_short": false,
+      "upkeep_workers_at_completion": 171,
       "upkeep_workers_needed": 112
     },
     {
@@ -658,9 +662,11 @@
       "upkeep_hands": 82.980003,
       "upkeep_kit_id": "deposits[2].upkeep_kit_id",
       "upkeep_kit_named": false,
+      "upkeep_next_worker_turn": 92,
       "upkeep_shortfall": 11.28,
       "upkeep_supplied": 78.470001,
       "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 128,
       "upkeep_workers_needed": 125
     }
   ],
@@ -1224,9 +1230,11 @@
           "material_id": "forage_patches[0].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 74,
       "upkeep_shortfall": 85.980003,
       "upkeep_supplied": 28.360001,
       "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 58,
       "upkeep_workers_needed": 99,
       "x": 0,
       "y": 1
@@ -1575,9 +1583,11 @@
           "material_id": "forage_patches[1].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 89,
       "upkeep_shortfall": 34.380001,
       "upkeep_supplied": 37.41,
       "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 51,
       "upkeep_workers_needed": 48,
       "x": 1,
       "y": 2
@@ -1926,9 +1936,11 @@
           "material_id": "forage_patches[2].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 92,
       "upkeep_shortfall": 101.790001,
       "upkeep_supplied": 78.580002,
       "upkeep_tools_short": false,
+      "upkeep_workers_at_completion": 48,
       "upkeep_workers_needed": 133,
       "x": 2,
       "y": 0
@@ -2366,9 +2378,11 @@
           "material_id": "herds[0].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 13,
       "upkeep_shortfall": 10.37,
       "upkeep_supplied": 24.889999,
       "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 111,
       "upkeep_workers_needed": 156,
       "x": 0,
       "y": 1
@@ -2600,9 +2614,11 @@
           "material_id": "herds[1].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 134,
       "upkeep_shortfall": 8.97,
       "upkeep_supplied": 47.07,
       "upkeep_tools_short": true,
+      "upkeep_workers_at_completion": 102,
       "upkeep_workers_needed": 119,
       "x": 1,
       "y": 2
@@ -2834,9 +2850,11 @@
           "material_id": "herds[2].upkeep_material_supplied[2].material_id"
         }
       ],
+      "upkeep_next_worker_turn": 175,
       "upkeep_shortfall": 75.959999,
       "upkeep_supplied": 46.810001,
       "upkeep_tools_short": false,
+      "upkeep_workers_at_completion": 37,
       "upkeep_workers_needed": 134,
       "x": 2,
       "y": 0

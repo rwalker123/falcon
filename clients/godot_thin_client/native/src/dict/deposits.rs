@@ -143,6 +143,17 @@ pub(crate) fn deposits_to_array(
             "upkeep_workers_needed",
             deposit.upkeepWorkersNeeded() as i64,
         );
+        // THE KEEPING LINE'S TWO FORECASTS (`docs/plan_site_crews.md`), whole workers like the count
+        // above: the workers once the in-flight rung is done, and the ABSOLUTE game turn the keeping
+        // first needs one more whole worker (`-1` = never within the build).
+        let _ = dict.insert(
+            "upkeep_workers_at_completion",
+            i64::from(deposit.upkeepWorkersAtCompletion()),
+        );
+        let _ = dict.insert(
+            "upkeep_next_worker_turn",
+            i64::from(deposit.upkeepNextWorkerTurn()),
+        );
         // THE NEGLECT COUNTDOWN, NOT THE COUNTER — `RouteState`'s rule verbatim. `0` means IT IS
         // SLIDING NOW, and a working whose bill is met reads its rung's full grace + 1 ("walk away
         // and you have this long"). `has_neglect_grace == false` means there is NOTHING AT RISK

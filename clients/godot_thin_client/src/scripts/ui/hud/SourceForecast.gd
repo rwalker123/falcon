@@ -4093,11 +4093,6 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     return {
         "per_worker": per_worker,
         "ceiling": ceiling,
-        # **THE HANDS THIS SITE'S KEEPING TAKES** (`upkeepWorkersNeeded`, whole workers), which the
-        # site's own crew spends before it takes anything (`docs/plan_site_crews.md`). Read by
-        # `max_useful_workers`, which adds it to the take's useful crew — see `FORECAST_KEEP_CREW_KEY`.
-        FORECAST_KEEP_CREW_KEY: maxi(int(src.get(prefix + FORECAST_UPKEEP_CREW_KEY, NO_UPKEEP_CREW)),
-            NO_UPKEEP_CREW),
         # **THE COVERAGE BLOCK, CARRIED VERBATIM.** `max_useful_workers` re-solves the crew from these
         # rather than dividing by `per_worker`, which is the average over the crew this source was
         # priced for and therefore cannot answer a question about a different crew. Absent on any
@@ -5647,6 +5642,56 @@ static func with_published_useful_crew(forecast: Dictionary, source: Dictionary)
         int(source[ASSIGNMENT_HUNT_USEFUL_WORKERS_KEY]), PUBLISHED_NO_USEFUL_CREW)
     return out
 
+## **A FORAGE ROW'S PUBLISHED CREW** — the row's `workers_needed`, the sim's most hands that still help
+## on this site, keeping included. `0` is the rehydrated save's *unknown* and publishes nothing, so the
+## client's closed form answers there.
+static func with_published_site_crew(forecast: Dictionary, useful: int) -> Dictionary:
+    if useful <= PUBLISHED_NO_USEFUL_CREW:
+        return forecast
+    var out := forecast.duplicate()
+    out[FORECAST_SITE_CREW_KEY] = useful
+    return out
+
+## The forecast slot a forage row's published site crew travels in. Read FIRST by
+## `max_useful_workers` and returned as it stands: it is the sim's whole answer for a worked site, so no
+## closed form and no hold floor may move it.
+const FORECAST_SITE_CREW_KEY := "published_site_crew"
+
+## ---- THE FORAGE CREW CURVE (`ForecastQuery.KIND_FORAGE_CREW_TAKE`) -----------------------------
+##
+## One row per crew size: `workers`, `take` (next turn's provisions by the hands the patch's keeping
+## leaves) and `keep_hands` (how many of the crew keep it, fractional). The compose sheet reads a KEPT
+## patch's take off it rather than composing one: the keeping comes out of the crew first, and only
+## the sim knows how many hands that is at each crew.
+const FORAGE_CREW_TAKE_KEY := "take"
+const FORAGE_CREW_KEEP_HANDS_KEY := "keep_hands"
+
+## The row for `workers`, `{}` where the curve has none.
+static func forage_crew_row(per_crew: Array, workers: int) -> Dictionary:
+    for row_variant in per_crew:
+        if row_variant is Dictionary and int((row_variant as Dictionary).get(
+                CREW_TAKE_WORKERS_KEY, 0)) == workers:
+            return row_variant
+    return {}
+
+## **A KEPT PATCH'S USEFUL CREW** — the smallest crew on the curve whose GATHERERS (`workers -
+## keep_hands`, the sim's own keeping) reach `take_useful`, the hands the take itself can use.
+## `NO_CREW_ANSWER` when no row on the curve gets there, which leaves the pool as the only cap. It is
+## asked in gatherers rather than off the take's plateau because the curve states provisions only, and
+## a patch paying hay or a material has a take the curve does not plateau on.
+static func forage_curve_useful(per_crew: Array, take_useful: int) -> int:
+    if take_useful == MAX_USEFUL_UNBOUNDED:
+        return NO_CREW_ANSWER
+    for row_variant in per_crew:
+        if not (row_variant is Dictionary):
+            continue
+        var row: Dictionary = row_variant
+        var workers := int(row.get(CREW_TAKE_WORKERS_KEY, 0))
+        if float(workers) - float(row.get(FORAGE_CREW_KEEP_HANDS_KEY, 0.0)) \
+                >= float(take_useful) - CREW_TAKE_REACH_TOLERANCE:
+            return workers
+    return NO_CREW_ANSWER
+
 ## The ceiling the sim published for this source, or `NO_CREW_ANSWER` where it published none — which
 ## is every surface with no assigned row behind it (the compose sheet, which holds the curve itself,
 ## and every pre-commit forecast).
@@ -5697,22 +5742,14 @@ static func party_readout(row: Dictionary) -> Dictionary:
 static func party_is_posted(party: Dictionary) -> bool:
     return bool(party.get(PARTY_PRESENT_KEY, false))
 
-## ⛔ **THE USEFUL CREW IS THE TAKE'S USEFUL HANDS PLUS THE KEEPING'S** (`docs/plan_site_crews.md`).
-## A site's crew keeps it before it collects, so a Tended Patch whose keeping takes one whole worker
-## and whose take is useful up to two can use three — capped on the take alone, the `+` went dead at
-## two with the band's idle worker standing by (reported from play on a Harvest under a Cultivate).
-## The keeping count is the sim's own whole-worker answer (`upkeepWorkersNeeded`), carried on the
-## forecast as `FORECAST_KEEP_CREW_KEY`; an unbounded take stays unbounded.
-const FORECAST_KEEP_CREW_KEY := "keep_crew"
-
+## ⛔ **ON A WORKED ROW THE CAP IS THE SIM'S, AND IT ALREADY COUNTS THE KEEPING** (`docs/plan_site_crews.md`).
+## A site's crew keeps it before it collects, and the sim's "most hands that still help" — a forage
+## row's `workers_needed`, a hunt row's `hunt_useful_workers`, a working's `useful_cutters` — include
+## those keeping hands. The board carries that figure onto the forecast (`with_published_site_crew`,
+## `with_published_useful_crew`) and this reads it; it never adds a keeping count of its own.
 static func max_useful_workers(forecast: Dictionary) -> int:
-    var take := take_useful_workers(forecast)
-    if take == MAX_USEFUL_UNBOUNDED:
-        return take
-    return take + maxi(int(forecast.get(FORECAST_KEEP_CREW_KEY, NO_UPKEEP_CREW)), NO_UPKEEP_CREW)
-
-## The TAKE's useful crew alone — the hands past which the take stops rising.
-static func take_useful_workers(forecast: Dictionary) -> int:
+    if forecast.has(FORECAST_SITE_CREW_KEY):
+        return int(forecast[FORECAST_SITE_CREW_KEY])
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
     # ON THE AXIS THE SPECIES PAYS (issue #337): a wolf's food per-worker and ceiling are both 0, so
