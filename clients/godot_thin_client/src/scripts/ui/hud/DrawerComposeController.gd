@@ -1400,7 +1400,8 @@ func _curve_worker_cap(useful: int, assignable: int) -> Dictionary:
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
-## **A KEPT PATCH'S CREW PILLS NAME THE WHOLE CREW THE STEPPER SETS** — each pill's take target
+## **A KEPT PATCH'S CREW COUNTS NAME THE WHOLE CREW THE STEPPER SETS** — both pills and the verdict's
+## crew clause. Each pill's take target
 ## (`crew_to_clear` / `crew_to_hold`, in gathering hands) converted through the patch curve's own
 ## `keep_hands` (`SourceForecast.forage_curve_crew_for`), the conversion the cap goes through too, so
 ## the pills, the cap note and the stepper are one count. While the curve is in flight neither pill
@@ -1415,7 +1416,25 @@ func _kept_crew_targets(model: Dictionary, kept: bool) -> Dictionary:
         out[key] = SourceForecast.forage_curve_crew_for(per_crew,
             int(model.get(key, SourceForecast.NO_CREW_ANSWER))) \
             if ready else SourceForecast.NO_CREW_ANSWER
+    # …and the VERDICT's `K harvesters would reach the floor`, through the same conversion — the one
+    # other crew count the sheet states.
+    var reaching := int(model.get("reaching_crew", 0))
+    out["verdict"] = SourceForecast.verdict_with_reaching_crew(model.get("verdict", {}) as Dictionary,
+        reaching, SourceForecast.forage_curve_crew_for(per_crew, reaching) if ready \
+            else SourceForecast.NO_CREW_ANSWER, String(model.get("crew_noun", "")))
     return out
+
+## **THE HANDS OF `workers` THAT GATHER ON A KEPT PATCH** — `workers - keep_hands` off the curve's row,
+## which `floor_chart_model` walks the stock with. `WHOLE_CREW_TAKES` on an unkept patch, and while the
+## curve is in flight (the chart then walks the whole crew until the answer lands).
+func _kept_take_crew(kept: bool, workers: int) -> float:
+    if not kept or String(_forage_live_crew_view.get("state", "")) != ForecastQuery.STATE_READY:
+        return SourceForecast.WHOLE_CREW_TAKES
+    var row := SourceForecast.forage_crew_row((_forage_live_crew_view.get("answer", {})
+        as Dictionary).get("per_crew", []), workers)
+    if row.is_empty():
+        return SourceForecast.WHOLE_CREW_TAKES
+    return maxf(float(workers) - float(row.get(SourceForecast.FORAGE_CREW_KEEP_HANDS_KEY, 0.0)), 0.0)
 
 ## Does this patch owe keeping? The gate on reading its take off the crew curve.
 func _forage_is_kept(tile_info: Dictionary) -> bool:
@@ -3762,7 +3781,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _forage_priced_patch(take_tile, band),
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         _compose.forage_floor(), _compose.forage_count(),
-        crew_label.to_lower(), lesson_known), kept)
+        crew_label.to_lower(), lesson_known, [], _kept_take_crew(kept, _compose.forage_count())),
+        kept)
     if bool(chart_model.get("known", false)):
         # The plant twin of the hunt sheet's published refill, and it exists for the narrower half of
         # the same reason: this web asks the query channel nothing, but the seam's `answered` fans out
@@ -3779,7 +3799,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                     _live_tile_info(subject_key, tile_info), take_state), band),
                 SourceForecast.SOURCE_KIND_FORAGE,
                 HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(), crew_label.to_lower(),
-                lesson_known), kept),
+                lesson_known, [], _kept_take_crew(kept, _compose.forage_count())), kept),
                 _compose.forage_count())
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:

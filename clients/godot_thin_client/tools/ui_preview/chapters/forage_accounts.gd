@@ -2664,6 +2664,31 @@ func run(harness) -> void:
 	h._assert_hud("…and the cap note names the same whole crew, `%s`" % cap_want,
 		_sheet_has_text(sheet, cap_want))
 
+	# ⛔ **AND THE VERDICT'S CREW COUNT IS THE WHOLE CREW TOO.** A crew all of whom the keeping takes
+	# gathers nothing, so it cannot draw the patch down and the verdict states the crew that WOULD reach
+	# the floor — take hands plus the 2 keeping. (The walk itself is drawn by the gatherers the curve
+	# names, so a crew of 3 here — 1 gatherer — honestly reaches the floor in its own time.)
+	h._hud._compose.set_forage_floor(KEPT_CURVE_DEEP_FLOOR)
+	h._hud._compose.set_forage_count(keep_whole)
+	h._compose_forage(kept)
+	await h._settle()
+	await h._save("forage_kept_curve_verdict")
+	var deep_model := SourceForecast.floor_chart_model(
+		h._hud._drawercompose._forage_priced_patch(kept_priced, h._hud._band_labor.player_band()),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		KEPT_CURVE_DEEP_FLOOR, keep_whole, "harvesters", false)
+	var reach_take := int(deep_model.get("reaching_crew", 0))
+	var verdict_text = Readout.verdict_text(h._hud._drawercompose._compose_sheet)
+	var verdict_want := SourceForecast.VERDICT_SETTLES_CREW_FORMAT % [reach_take + keep_whole,
+		"harvesters"]
+	print("ui_preview: kept curve verdict  %s" % verdict_text)
+	h._assert_hud("precondition: a deep floor this crew cannot reach states a reaching crew (%d take hands)"
+			% reach_take, reach_take > 0)
+	h._assert_hud("the verdict names the whole crew that would reach the floor, `%s` (got \"%s\")"
+			% [verdict_want.strip_edges(), verdict_text],
+		String(verdict_text).ends_with(verdict_want))
+	h._hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
+
 ## Any Label or RichTextLabel under `root` whose text contains `needle`.
 func _sheet_has_text(root: Node, needle: String) -> bool:
 	if root == null:
@@ -2676,6 +2701,8 @@ func _sheet_has_text(root: Node, needle: String) -> bool:
 			return true
 	return false
 
+## A floor deep enough that the kept-curve crew settles short of it, so the verdict names a crew.
+const KEPT_CURVE_DEEP_FLOOR := 0.05
 ## The kept-curve state's crew, and the hands of it the patch's keeping takes.
 const KEPT_CURVE_CREW := 3
 const KEPT_CURVE_KEEP_HANDS := 2.0

@@ -3663,6 +3663,25 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
 ## **IT TAKES NO `regrows` TERM.** One existed to drop the reaching sentence's *"then holds it"*
 ## clause where there was no aftermath to promise; the clause is off both readings now, so the flag
 ## chose between two identical strings. See `VERDICT_REACHES_FORMAT`.
+## `floor_chart_model`'s `take_crew` when every hand of the crew gathers.
+const WHOLE_CREW_TAKES := -1.0
+
+## **THE VERDICT'S CREW CLAUSE, RESTATED FOR A CONVERTED CREW** — `text` with its
+## `K <noun> would reach the floor` clause re-spelled at `crew` (or closed with `VERDICT_SETTLES_END`
+## where the conversion has no answer). Any other verdict passes through untouched.
+static func verdict_with_reaching_crew(verdict: Dictionary, reaching: int, crew: int,
+        crew_noun: String) -> Dictionary:
+    var text := String(verdict.get("text", ""))
+    if reaching <= 0:
+        return verdict
+    var clause := VERDICT_SETTLES_CREW_FORMAT % [reaching, crew_noun]
+    if not text.ends_with(clause):
+        return verdict
+    var out := verdict.duplicate()
+    out["text"] = text.left(text.length() - clause.length()) \
+        + ((VERDICT_SETTLES_CREW_FORMAT % [crew, crew_noun]) if crew > 0 else VERDICT_SETTLES_END)
+    return out
+
 static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capacity: float,
         floor: float, reaching_crew: int, crew_noun: String,
         body_mass: float = 0.0, quarry: String = "",
@@ -3717,7 +3736,7 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
 ## curve-reading section above for why leaving them there was the panel being two models at once.
 static func floor_chart_model(src: Dictionary, kind: String, prefix: String, floor: float,
         workers: int, crew_noun: String, lesson_known: bool,
-        per_crew: Array = []) -> Dictionary:
+        per_crew: Array = [], take_crew: float = WHOLE_CREW_TAKES) -> Dictionary:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
     var samples := regrowth_samples(src, prefix)
@@ -3747,7 +3766,11 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     # biomass, so the picture is the same picture — only its third bound got the fight.
     var curve_take := crew_take_biomass(per_crew, workers, body_mass) \
         if has_crew_take_curve(per_crew) else ENGAGEMENT_UNBOUNDED
-    var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry,
+    # **THE WALK IS DRAWN BY THE HANDS THAT GATHER** — on a KEPT patch the caller hands in the crew the
+    # sim says is left after keeping (`take_crew`), so the reach, the settle and the verdict describe
+    # the hands that actually take; everywhere else the whole crew takes.
+    var takers := float(workers) if take_crew < 0.0 else take_crew
+    var walk := project_stock(samples, biomass, capacity, floor_value, takers * carry,
         curve_take if is_finite(curve_take) \
             else engaged_quantum(workers, body_mass, engage_rate, stay))
     # **ALL THREE CREW ANSWERS CARRY THE RETREAT.** They ask different questions about different stocks
@@ -3831,6 +3854,11 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
             body_mass, engage_rate, stay, per_crew),
         "crew_to_hold": hold,
+        # The verdict's `K <noun> would reach the floor` count and its noun, carried beside the sentence
+        # so a caller that converts the crew (a KEPT patch, `DrawerComposeController._kept_crew_targets`)
+        # can restate that one clause through the same conversion as the pills.
+        "reaching_crew": reaching,
+        "crew_noun": crew_noun,
         # `takes_next_turn` from the SAME room the readout's headline is composed from
         # (`escapement_room_next_turn`), so the sentence and the number above it are one answer.
         "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching,

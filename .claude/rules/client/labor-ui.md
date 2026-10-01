@@ -1623,10 +1623,18 @@ keeping hands, so a new turn is a new question — and `_drag_forage_crew_take` 
   pills are converted in `_kept_crew_targets`, on the build and on every drag refill. Pending, only the
   pool caps the stepper and neither pill names a crew. The hunt and deposit pills already walk curves
   indexed by whole crew, so they needed no conversion.
+- **The floor walk is drawn by the gatherers, and the verdict names the whole crew.**
+  `floor_chart_model`'s `take_crew` (`_kept_take_crew`: the row's `workers - keep_hands`) is the carry
+  the stock walk uses, so the reach, the settle and the take targets all describe the hands that take.
+  The verdict's `K harvesters would reach the floor` is re-spelled through the same
+  `forage_curve_crew_for` (`SourceForecast.verdict_with_reaching_crew`, off the model's
+  `reaching_crew`), so no number on the sheet is in take hands. While the curve is pending the walk
+  uses the whole crew and the clause closes without a count.
 - **An unkept patch keeps the closed form** — there is no keeping to take out of the crew.
 - The hunt sheet reads `HuntCrewTake` and the deposit sheet `DepositCrewTake`, both already netted.
 - `ui_preview`'s stand-in (`fixtures_forecast.forage_crew_take_answer`) takes the tile's own
-  `patch_upkeep_hands` off the crew; `forage_kept_curve` is its frame.
+  `patch_upkeep_hands` off the crew; `forage_kept_curve` is its frame and
+  `forage_kept_curve_verdict` the verdict's whole-crew count.
 
 ### THE HEADLINE IS **NEXT TURN'S** TAKE, NOT THIS INSTANT'S ROOM (§4.7)
 
