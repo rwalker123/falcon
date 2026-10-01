@@ -1306,6 +1306,11 @@ func _build_upkeep_mode_row(band: Dictionary, road_pool: Dictionary) -> VBoxCont
     # words), and the line went with the per-web marks — it SUMMED both webs, so it could not name the
     # one that was short, and its covered form announced that nothing was wrong in a noun no control in
     # the game uses. Each pool card carries its own shortfall now, on its own hover.
+    #
+    # **IT IS A QUIET LINE UNDER THE ROAD CREW ROW**, in that row's line-two indent and the quiet type,
+    # so it reads as the pool's own setting rather than as a section-level control.
+    var margin := MarginContainer.new()
+    margin.add_theme_constant_override("margin_left", HudWorkVocab.WORK_ROW_ACCOUNTS_INDENT)
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
     row.alignment = BoxContainer.ALIGNMENT_BEGIN
@@ -1313,7 +1318,9 @@ func _build_upkeep_mode_row(band: Dictionary, road_pool: Dictionary) -> VBoxCont
         HudWorkVocab.UPKEEP_MODE_SPREAD_LABEL, HudWorkVocab.UPKEEP_MODE_SPREAD_HINT, mode))
     row.add_child(_build_upkeep_mode_button(band, HudConst.UPKEEP_FUND_MODE_PRIORITY,
         HudWorkVocab.UPKEEP_MODE_PRIORITY_LABEL, HudWorkVocab.UPKEEP_MODE_PRIORITY_HINT, mode))
-    block.add_child(row)
+    margin.add_child(row)
+    block.add_child(margin)
+    block.custom_minimum_size = Vector2(0.0, HudWorkVocab.UPKEEP_MODE_ROW_HEIGHT)
     return block
 
 ## One mode's button. The press emits unconditionally — including on the active mode — because the
@@ -1328,7 +1335,7 @@ func _build_upkeep_mode_button(band: Dictionary, mode: String, label: String, hi
     # (§4.7), so a button that expanded would take the width that line has to state a number in.
     button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
     HudStyle.apply_button(button, "primary" if mode == active_mode else "ghost")
-    HudWidgets.compact(button, HudWorkVocab.WORK_CHIP_FONT_SIZE, HudWorkVocab.WORK_CHIP_PADDING_V)
+    HudWidgets.compact(button, HudWorkVocab.ALLOC_SECTION_FONT_SIZE, HudWorkVocab.WORK_CHIP_PADDING_V)
     button.tooltip_text = hint
     button.pressed.connect(func() -> void: _emit_upkeep_mode(band, mode))
     return button
@@ -2230,22 +2237,13 @@ func _build_roadwork_block(band: Dictionary, models: Array, unseen: bool) -> VBo
     block.set_meta(HudWorkVocab.ROADWORK_ROSTER_BLOCK_META, models.size())
     block.add_theme_constant_override("separation", 0)
     var height := 0.0
-    var line := _build_roadwork_pool_line(band)
+    var line := _build_roadwork_pool_line(band, unseen)
     block.add_child(line)
     height += line.custom_minimum_size.y
-    var fund_mode := _build_upkeep_mode_row(band, _band_labor.roadwork_pool_state(band))
-    if fund_mode != null:
-        block.add_child(fund_mode)
-        height += HudWorkVocab.UPKEEP_MODE_ROW_HEIGHT
-    if unseen:
-        var unseen_line := HudWidgets.alloc_hint_label(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_LINE)
-        unseen_line.set_meta(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_META, true)
-        unseen_line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
-        block.add_child(unseen_line)
-        height += HudWorkVocab.WORK_ROW_HEIGHT
     for index in range(mini(models.size(), HudWorkVocab.ROADWORK_ROSTER_ROWS_MAX)):
-        block.add_child(_build_roadwork_roster_row(band, models[index] as Dictionary))
-        height += HudWorkVocab.WORK_ROW_HEIGHT
+        var road_row := _build_roadwork_roster_row(band, models[index] as Dictionary)
+        block.add_child(road_row)
+        height += road_row.custom_minimum_size.y
     block.custom_minimum_size = Vector2(0.0, height)
     return block
 
@@ -2266,8 +2264,16 @@ func _build_builders_pool_line(band: Dictionary) -> PanelContainer:
 ## **THE ROADWORK LINE** — the band's one remaining keeping pool, with the cohort's own published
 ## `{supplied, demand, shortfall}` as its cover (the road rows are fog-filtered, so summing them would
 ## understate a bill the band certainly owes).
-func _build_roadwork_pool_line(band: Dictionary) -> PanelContainer:
+func _build_roadwork_pool_line(band: Dictionary, unseen: bool = false) -> PanelContainer:
     var road_pool := _band_labor.roadwork_pool_state(band)
+    # **THE FUND-MODE PICK AND THE UNSEEN LINE ARE THE POOL'S OWN LINES**, so they hang under its row in
+    # its indent rather than flush-left in the section.
+    var extras: Array = []
+    var fund_mode := _build_upkeep_mode_row(band, road_pool)
+    if fund_mode != null:
+        extras.append(fund_mode)
+    if unseen:
+        extras.append(_build_roadwork_unseen_line())
     var cover := {
         HudWorkVocab.POOL_COVERAGE_SUPPLY_KEY: float(road_pool.get("supplied",
             SourceForecast.NO_UPKEEP_DEMAND)),
@@ -2279,7 +2285,20 @@ func _build_roadwork_pool_line(band: Dictionary) -> PanelContainer:
     return _build_pool_line(band, HudWorkVocab.ROLE_NAME_ROADWORK, HudWorkVocab.ROADWORK_ROLE_HINT,
         HudConst.LABOR_KIND_ROADWORK,
         _band_labor.effective_role_workers(band, HudConst.LABOR_KIND_ROADWORK), cover,
-        HudWorkVocab.POOL_ICON_ROAD_CREW, HudWorkVocab.ROAD_CREW_POOL_SUBLINE)
+        HudWorkVocab.POOL_ICON_ROAD_CREW, HudWorkVocab.ROAD_CREW_POOL_SUBLINE, "", extras)
+
+## The road crew owes keeping on roads the band cannot see — the honesty rule's case 2, a quiet line
+## under the pool row in its indent.
+func _build_roadwork_unseen_line() -> MarginContainer:
+    var margin := MarginContainer.new()
+    margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    margin.add_theme_constant_override("margin_left", HudWorkVocab.WORK_ROW_ACCOUNTS_INDENT)
+    margin.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_INSPECTOR_NOTE_LINE_HEIGHT)
+    var line := HudWidgets.alloc_hint_label(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_LINE)
+    line.set_meta(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_META, true)
+    margin.add_child(line)
+    return margin
 
 ## **ONE POOL, ONE SITE-SHAPED ROW** — the retired pool CARD's reading drawn exactly like a site row:
 ## its icon, its name, the one-slot mark and the stepper on line one, what its hands do (and an optional
@@ -2295,7 +2314,7 @@ func _build_roadwork_pool_line(band: Dictionary) -> PanelContainer:
 ## answers `NO_KIT_ID` on the builders branch deliberately, and the roadwork pool names no kit.
 func _build_pool_line(band: Dictionary, role_name: String, hint: String, kind: String,
         effective: Dictionary, cover: Dictionary, icon: String, subline: String,
-        detail: String = "") -> PanelContainer:
+        detail: String = "", extras: Array = []) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var coverage_line := HudWorkVocab.upkeep_pool_coverage_line(cover)
@@ -2347,6 +2366,12 @@ func _build_pool_line(band: Dictionary, role_name: String, hint: String, kind: S
         else HudWorkVocab.WORK_INSPECT_SENTENCE_SEPARATOR.join(PackedStringArray([subline, detail]))
     (shell[SITE_ROW_SHELL_COLUMN] as VBoxContainer).add_child(
         _build_site_crew_line(second, HudWorkVocab.WORK_POOL_SUBLINE_META))
+    # **AND ANY LINE THAT BELONGS TO THE POOL ITSELF** (the road crew's fund-mode pick and its unseen
+    # line) hangs under line two in the same indent, each charged to the row's reservation.
+    for extra in extras:
+        (shell[SITE_ROW_SHELL_COLUMN] as VBoxContainer).add_child(extra as Control)
+        row.custom_minimum_size.y += (extra as Control).custom_minimum_size.y \
+            + float(HudWorkVocab.TWO_LINE_STEPPER_SEPARATION)
     return row
 
 ## The keys of `_site_row_shell`'s answer.
@@ -2455,49 +2480,54 @@ func _roadwork_roster_unseen(band: Dictionary, visible: int) -> bool:
         return false
     return SourceForecast.has_upkeep(_band_labor.roadwork_pool_state(band))
 
-## One roster row: where the road is, what state it is in, and the `✕` that puts it down.
+## **ONE ROAD'S ROW — a site row** (`_site_row_shell`): the road's mark in the icon column, its
+## locator as the title (`2 tiles SE`, one ink), the `✕` that puts it down at the right; line two its
+## rung and state; and the `Build` pill line only while a road build is queued on it — a road has no
+## crew, so no stepper and no `Priority`. A click on the row jumps the map to the road.
 ##
-## ⛔ **THE VALUE CELL IS `HudRouteVocab.road_row_value`, VERBATIM.** It already composes
-## `Dirt road · 25% to paved · ⚠ washing out` for the tile card and the map's own readout, and the
-## point of reusing it rather than writing roster strings is that the three surfaces then cannot
-## disagree about a road's state — one composer, one answer.
-##
-## **THE NAME JUMPS AND THE REST DROPS**, the `FactionRollup._summary_row` split: a road IS its tile,
-## so the jump is `alert_focus_requested` on the road's own coordinates with no entity resolution.
+## ⛔ **LINE TWO IS `HudRouteVocab.road_row_value`, VERBATIM.** It already composes
+## `Dirt road · 25% to paved · ⚠ washing out` for the tile card and the map's own readout, so the three
+## surfaces cannot disagree about a road's state — one composer, one answer. Its ink forks on the same
+## keeping-short answer, DANGER, and the row's stripe with it.
 func _build_roadwork_roster_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var tile: Vector2i = model["tile"]
     var road: Dictionary = model["road"]
-    var row := PanelContainer.new()
-    row.set_meta(HudWorkVocab.ROADWORK_ROSTER_ROW_META, tile)
-    row.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
-    row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_theme_stylebox_override("panel", HudStyle.work_row_stylebox(false))
-    var line := HBoxContainer.new()
-    line.add_theme_constant_override("separation", HudWorkVocab.WORK_ROW_SEPARATION)
-    row.add_child(line)
-    var jump := HudWidgets.build_inline_link(String(model["locator"]), HudStyle.SIGNAL,
-        func() -> void: emit_signal("alert_focus_requested", tile.x, tile.y))
-    line.add_child(jump)
-    var value := Label.new()
-    value.text = HudRouteVocab.road_row_value(road, _band_labor.road_queue_tiles())
-    value.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
-    # The hazard clause is the reused composer's own, so the row's INK forks on the same answer the
-    # tile card's does rather than on a second test of the same road.
-    value.add_theme_color_override("font_color",
-        HudStyle.DANGER if HudRouteVocab.is_keeping_short(road) else HudStyle.INK_DIM)
-    value.clip_text = true
-    value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    line.add_child(value)
-    # **A ROAD CARRIES ONLY A `Build` MARK, and only while a road build is queued on it**
-    # (`docs/plan_site_crews.md` §2.4 as amended) — a road has no crew, so there is no `Priority`.
+    var short := HudRouteVocab.is_keeping_short(road)
     var key := _band_labor.pending_key(HudConst.LABOR_KIND_ROADWORK, tile.x, tile.y, "")
-    if _band_labor.build_queue_keys(band).has(key):
-        _add_priority_pills(line, band, {
+    var queued := _band_labor.build_queue_keys(band).has(key)
+    var shell := _site_row_shell(HudWorkVocab.roadwork_roster_row_height(queued), false,
+        HudStyle.DANGER if short else Color(0.0, 0.0, 0.0, 0.0))
+    var row: PanelContainer = shell[SITE_ROW_SHELL_ROW]
+    var col: VBoxContainer = shell[SITE_ROW_SHELL_COLUMN]
+    var line: HBoxContainer = shell[SITE_ROW_SHELL_LINE]
+    row.set_meta(HudWorkVocab.ROADWORK_ROSTER_ROW_META, tile)
+    row.mouse_filter = Control.MOUSE_FILTER_STOP
+    row.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+    row.gui_input.connect(func(event: InputEvent) -> void:
+        if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+            emit_signal("alert_focus_requested", tile.x, tile.y))
+    line.add_child(HudWidgets.build_marker_icon(null, HudWorkVocab.ROADWORK_ROSTER_ICON,
+        HudWorkVocab.WORK_ROW_ICON_WIDTH, HudWorkVocab.WORK_ROW_FONT_SIZE))
+    var title := Label.new()
+    title.text = String(model["locator"])
+    title.clip_text = true
+    title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    title.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    title.add_theme_color_override("font_color", HudStyle.INK)
+    title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    title.set_meta(HudWorkVocab.ROADWORK_ROSTER_NAME_META, title.text)
+    line.add_child(title)
+    line.add_child(_build_roadwork_roster_abandon_button(band, tile))
+    col.add_child(_build_working_yield_line(
+        HudRouteVocab.road_row_value(road, _band_labor.road_queue_tiles()),
+        HudStyle.DANGER if short else HudStyle.INK_DIM, HudWorkVocab.ROADWORK_ROSTER_VALUE_META))
+    if queued:
+        col.add_child(_build_pill_line(band, {
             "kind": HudConst.LABOR_KIND_ROADWORK, "x": tile.x, "y": tile.y, "herd_id": "",
             "road": true, "build_queued": true,
             "build_priority": _band_labor.build_priority_for_key(band, key),
-        }, false)
-    line.add_child(_build_roadwork_roster_abandon_button(band, tile))
+        }, false))
     return row
 
 ## **THE DROP — the same `abandon <faction> <x> <y>` the road ladder's own button sends, and no second
@@ -2745,7 +2775,8 @@ func _working_yield_text(band: Dictionary, model: Dictionary, deposit: Dictionar
 ## The yield line itself — the accounts line's indent and quiet type, its ink the working value's own
 ## (`deposit_value_color`: WARN where it carries a hazard). It elides and states its whole self on its
 ## hover; PASS, so the row's own click still reaches the row.
-func _build_working_yield_line(text: String, ink: Color) -> MarginContainer:
+func _build_working_yield_line(text: String, ink: Color,
+        meta: StringName = HudWorkVocab.WORK_ROW_ACCOUNTS_META) -> MarginContainer:
     var margin := MarginContainer.new()
     margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2758,7 +2789,7 @@ func _build_working_yield_line(text: String, ink: Color) -> MarginContainer:
     label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     HudWidgets.set_label_tooltip(label, text)
     label.mouse_filter = Control.MOUSE_FILTER_PASS
-    label.set_meta(HudWorkVocab.WORK_ROW_ACCOUNTS_META, text)
+    label.set_meta(meta, text)
     margin.add_child(label)
     return margin
 
@@ -3900,14 +3931,9 @@ func _build_roster_expanded(band: Dictionary, models: Array, unseen: bool) -> VB
     var roadwork := int(_band_labor.effective_role_workers(
         band, HudConst.LABOR_KIND_ROADWORK).get("workers", 0))
     block.add_child(_build_roadwork_head(roadwork, ZONE_NOTHING_HIDDEN))
-    block.add_child(_build_roadwork_pool_line(band))
-    var chrome := HudWorkVocab.ROADWORK_ROSTER_HEAD_HEIGHT + HudWorkVocab.WORK_POOL_LINE_HEIGHT
-    if unseen:
-        var line := HudWidgets.alloc_hint_label(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_LINE)
-        line.set_meta(HudWorkVocab.ROADWORK_ROSTER_UNSEEN_META, true)
-        line.custom_minimum_size = Vector2(0.0, HudWorkVocab.WORK_ROW_HEIGHT)
-        block.add_child(line)
-        chrome += HudWorkVocab.WORK_ROW_HEIGHT
+    var pool_line := _build_roadwork_pool_line(band, unseen)
+    block.add_child(pool_line)
+    var chrome := HudWorkVocab.ROADWORK_ROSTER_HEAD_HEIGHT + pool_line.custom_minimum_size.y
     var scroll := ScrollContainer.new()
     scroll.name = HudWorkVocab.ROSTER_EXPANDED_SCROLL_NAME
     scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -4494,8 +4520,9 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     # it — and, on a tool-short head whose strip is closed, the builders' `◆` after it. One height
     # for every row, so the block's reservation is `rows × BUILD_QUEUE_ROW_HEIGHT` with no fork.
     row.custom_minimum_size.y = HudWorkVocab.BUILD_QUEUE_ROW_HEIGHT
-    body.add_child(_build_queue_row_second_line(band, model,
-        tools_short and String(model.get("key", "")) != _queue_open_key))
+    var second := _build_queue_row_second_line(band, model,
+        tools_short and String(model.get("key", "")) != _queue_open_key)
+    body.add_child(second)
     line.add_child(_build_queue_row_marker(band, model, is_head))
     # **AND THE ROW IS THE DROP TARGET, where the marker alone is the grab** — a drop that only
     # landed on a 10px column would be a gesture the player has to aim at twice.
@@ -4572,18 +4599,25 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
         else DetailFormat.build_completion_value(turns, builders, percent,
             _band_labor.current_turn(), _build_queue_row_rank(model),
             String(model.get("building_policy", "")))
+    # **THE DATE LEADS LINE TWO, UNDER THE FACE** — a site row's shape (line one identity and controls,
+    # line two state). It used to be a fixed 168px column on line one, and with the face moved onto the
+    # site rows' TITLE column (`BUILD_QUEUE_MARKER_WIDTH`) that column left the face too little width to
+    # state `🌱 Cultivate (71, 18)` whole. Line two has the row's width, so neither clips.
     var date := Label.new()
     date.set_meta(HudWorkVocab.BUILD_QUEUE_DATE_META, value)
     date.text = value
-    date.clip_text = true
-    date.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    date.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_DATE_WIDTH, 0.0)
-    date.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     date.add_theme_color_override("font_color",
         HudStyle.WARN if pending else DetailFormat.rung_value_color(value))
-    date.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    date.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     date.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    line.add_child(date)
+    second.add_child(date)
+    second.move_child(date, QUEUE_SECOND_LINE_DATE_INDEX)
+    if second.get_child_count() > QUEUE_SECOND_LINE_DATE_INDEX + 1:
+        var sep := HudWidgets.build_status_part(
+            HudWorkVocab.BUILD_QUEUE_DETAIL_SEPARATOR.strip_edges(), HudStyle.INK_DIM)
+        sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        second.add_child(sep)
+        second.move_child(sep, QUEUE_SECOND_LINE_DATE_INDEX + 1)
     # Both columns clip, so the row's own tooltip carries the pair in full — and the pending row's
     # half is the status glyph's OWN words ("Pending — starts when you advance the turn"), which is
     # where a one-character date column has to say what it means.
@@ -4633,10 +4667,13 @@ func _build_build_queue_row(band: Dictionary, model: Dictionary, is_head: bool,
     line.add_child(_build_queue_reorder_column(band, model, confirmed))
     return row
 
-## **THE QUEUE ROW'S SECOND LINE** — `Build: Normal`, the entry's own mark, read-only, then (on the
+## **THE QUEUE ROW'S SECOND LINE** — the date (inserted by the row builder at
+## `QUEUE_SECOND_LINE_DATE_INDEX`), then `Build: Normal`, the entry's own mark, read-only, then (on the
 ## tool-short head with its strip closed) `· ◆ builders short of tools` in `KIT_SHORT_SEVERITY` amber.
-## A pending row states no mark, the wire having not yet placed it; the line still draws, empty, so
-## every row is one height. Indented past the marker column so it sits under the job face.
+## A pending row states no mark, the wire having not yet placed it. Indented past the marker column so
+## it sits under the job face, in the site rows' line-two column.
+const QUEUE_SECOND_LINE_DATE_INDEX := 1
+
 func _build_queue_row_second_line(band: Dictionary, model: Dictionary,
         wears_tools: bool) -> HBoxContainer:
     var line := HBoxContainer.new()
@@ -4762,6 +4799,7 @@ func _build_queue_row_marker(band: Dictionary, model: Dictionary, is_head: bool)
     var marker := Label.new()
     marker.set_meta(HudWorkVocab.BUILD_QUEUE_MARKER_META, is_head)
     marker.custom_minimum_size = Vector2(HudWorkVocab.BUILD_QUEUE_MARKER_WIDTH, 0.0)
+    marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     marker.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     if is_head:
         marker.text = HudWorkVocab.BUILD_QUEUE_HEAD_MARKER

@@ -16314,8 +16314,8 @@ func _queue_tools_lines() -> Array[Control]:
 ## The mark is drawn on the head row and on no other; it is amber, a text-presentation glyph (a colour
 ## emoji ignores `font_color`, the red-backpack defect); it sits INSIDE the head row, BELOW its face;
 ## the row draws exactly the one-line height plus `BUILD_QUEUE_ROW_TOOLS_LINE_HEIGHT` (reserved ==
-## drawn); and the first line is untouched — the face renders unclipped, the date column keeps its
-## `BUILD_QUEUE_DATE_WIDTH`, and the marker column still holds `▸`.
+## drawn); and the first line is untouched — the face renders unclipped, the date leads line two
+## under it, and the marker column still holds `▸`.
 func _assert_queue_head_tools_mark(where: String) -> void:
 	_assert_band_panel("head mark — %s: the HEAD row and only the head states the shortfall (ranks %s)"
 			% [where, _queue_rows_stating_tools_short()],
@@ -16367,9 +16367,10 @@ func _assert_queue_head_tools_mark(where: String) -> void:
 	_assert_band_panel("head mark — %s: …the face `%s` is UNCLIPPED (%.0f of %.0f)"
 			% [where, face.text, face_need, face.size.x],
 		face.size.x + QUEUE_FACE_WIDTH_TOLERANCE >= face_need)
-	_assert_band_panel("head mark — %s: …the date column keeps its %.0fpx (%.0f)"
-			% [where, HudWorkVocab.BUILD_QUEUE_DATE_WIDTH, date.size.x],
-		absf(date.size.x - HudWorkVocab.BUILD_QUEUE_DATE_WIDTH) <= QUEUE_FACE_WIDTH_TOLERANCE)
+	_assert_band_panel("head mark — %s: …the date leads line two, under the face (date x %.0f, face x %.0f)"
+			% [where, date.global_position.x, face.global_position.x],
+		absf(date.global_position.x - face.global_position.x) <= QUEUE_FACE_WIDTH_TOLERANCE
+			and date.global_position.y + QUEUE_FACE_WIDTH_TOLERANCE >= face.global_position.y + face.size.y)
 	_assert_band_panel("head mark — %s: …and the marker column still holds `%s` (\"%s\")"
 			% [where, HudWorkVocab.BUILD_QUEUE_HEAD_MARKER, marker.text],
 		marker.text == HudWorkVocab.BUILD_QUEUE_HEAD_MARKER)
@@ -17573,16 +17574,12 @@ func _roster_rows() -> Array[Control]:
 	return _collect_meta_controls(_panel, HudWorkVocab.ROADWORK_ROSTER_ROW_META, [])
 
 func _roster_row_locator(row: Control) -> String:
-	for child in row.find_children("*", "Button", true, false):
-		if child is Button and not (child as Button).has_meta(
-				HudWorkVocab.ROADWORK_ROSTER_ABANDON_META):
-			return (child as Button).text
-	return ""
+	var name := _find_meta_control(row, HudWorkVocab.ROADWORK_ROSTER_NAME_META)
+	return "" if name == null else (name as Label).text
 
 func _roster_row_value(row: Control) -> String:
-	for child in row.find_children("*", "Label", true, false):
-		return (child as Label).text
-	return ""
+	var value := _find_meta_control(row, HudWorkVocab.ROADWORK_ROSTER_VALUE_META)
+	return "" if value == null else (value as Label).text
 
 func _assert_the_roadwork_roster_names_its_roads() -> void:
 	## ⛔ **THE POOL SAYS `Roadwork 2` AND THE ROSTER SAYS WHICH TWO.** Reported from play at turn 122:
@@ -24943,7 +24940,62 @@ func _render_work_sections_all_five() -> void:
 		_assert_band_panel("all five sections — the groundwork row's icon sits in the site rows' icon column (%.1f vs %.1f)"
 				% [icon_x, -1.0 if site == null else _site_row_icon_x(site)],
 			site != null and is_equal_approx(icon_x, _site_row_icon_x(site)))
+	_assert_roadwork_and_queue_share_the_site_columns()
 	_restore_workings_roster_fixture()
 	_restore_road_queue_fixture()
 	_hud._bandpanel.rerender()
 	await _settle()
+
+## ⛔ **EVERY LINE IN ROADWORK AND BUILD QUEUE SITS ON THE SITE ROWS' COLUMNS**, measured off the drawn
+## nodes: a road row's icon and title on a harvest row's, the fund-mode pick on the Road crew row's
+## line-two column, a queue entry's job face on the Builders title column and its date on the Builders
+## second line's column.
+func _assert_roadwork_and_queue_share_the_site_columns() -> void:
+	var site: Control = null
+	for row in _work_board_rows():
+		site = row
+		break
+	var roads := _roster_rows()
+	var road_crew := _find_pool_card(HudWorkVocab.ROLE_NAME_ROADWORK)
+	var builders := _find_pool_card(HudWorkVocab.ROLE_NAME_BUILDERS)
+	var queue := _build_queue_rows()
+	if site == null or roads.is_empty() or road_crew == null or builders == null or queue.is_empty():
+		_fail("site columns — a site row, a road row, both pool rows and a queue row must all draw")
+		return
+	var road_name := _find_meta_control(roads[0], HudWorkVocab.ROADWORK_ROSTER_NAME_META)
+	var road_value := _find_meta_control(roads[0], HudWorkVocab.ROADWORK_ROSTER_VALUE_META)
+	var crew_sub := _find_meta_control(road_crew, HudWorkVocab.WORK_POOL_SUBLINE_META)
+	var builders_sub := _find_meta_control(builders, HudWorkVocab.WORK_POOL_SUBLINE_META)
+	var fund := _find_meta_control(road_crew, BandPanelController.UPKEEP_MODE_BUTTON_META)
+	var face := _find_meta_control(queue[0], HudWorkVocab.BUILD_QUEUE_FACE_META)
+	var date := _find_meta_control(queue[0], HudWorkVocab.BUILD_QUEUE_DATE_META)
+	var builders_title := _label_titled_under(builders, HudWorkVocab.ROLE_NAME_BUILDERS)
+	var xs := {
+		"site icon": _site_row_icon_x(site), "road icon": _site_row_icon_x(roads[0]),
+		"site title": _row_title_x(site), "road title": _gx(road_name),
+		"builders title": _gx(builders_title), "queue face": _gx(face),
+		"road line two": _gx(road_value), "road crew line two": _gx(crew_sub),
+		"fund mode": _gx(fund), "builders line two": _gx(builders_sub), "queue date": _gx(date),
+	}
+	print("band_panel_preview: site columns — %s" % [xs])
+	for pair in [["road icon", "site icon"], ["road title", "site title"],
+			["builders title", "site title"], ["queue face", "builders title"],
+			["road line two", "road crew line two"], ["fund mode", "road crew line two"],
+			["queue date", "builders line two"]]:
+		_assert_band_panel("site columns — the %s sits on the %s's column (%.1f vs %.1f)"
+				% [pair[0], pair[1], float(xs[pair[0]]), float(xs[pair[1]])],
+			float(xs[pair[0]]) >= 0.0 and is_equal_approx(float(xs[pair[0]]), float(xs[pair[1]])))
+	_assert_band_panel("site columns — the fund-mode pick is INSIDE the Road crew row, not a section line",
+		fund != null and road_crew.is_ancestor_of(fund))
+
+## A control's global left edge, `-1` when it is absent.
+func _gx(control: Control) -> float:
+	return -1.0 if control == null else control.get_global_rect().position.x
+
+## The x a drawn site row's TITLE starts at — its first line's second child.
+func _row_title_x(site: Control) -> float:
+	for child in site.find_children("*", "HBoxContainer", true, false):
+		var line := child as HBoxContainer
+		if line.get_child_count() > 1 and line.get_parent() is VBoxContainer:
+			return (line.get_child(1) as Control).get_global_rect().position.x
+	return -1.0

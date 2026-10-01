@@ -1081,6 +1081,11 @@ const WORK_ROW_ICON_WIDTH := 16.0
 ## lines' container and costs neither.
 const WORK_ROW_ACCOUNTS_INDENT := int(WORK_ROW_ICON_WIDTH) + WORK_ROW_SEPARATION
 
+## **WHERE A SITE ROW'S ICON COLUMN ENDS**, measured from the row's content edge: the severity stripe,
+## its gap, and the icon. A row with no stripe or icon of its own (a build-queue entry) reserves this
+## much before its gap so its text lands in the site rows' TITLE column.
+const WORK_ROW_TITLE_OFFSET := WORK_ROW_STRIPE_WIDTH + float(WORK_ROW_SEPARATION) + WORK_ROW_ICON_WIDTH
+
 ## The stable handle on a row's ACCOUNTS line, the `WORK_ROW_RUNG_META` treatment one control down: it
 ## is a `Label` in its own margin under line one, and a harness that found it by text would be
 ## asserting the string it had already composed. **A RETIRED `WORK_ROW_RATE_WIDTH` (46px) IS WHAT IT
@@ -2296,6 +2301,17 @@ const ROADWORK_ROSTER_UNSEEN_META := "roadwork_roster_unseen"
 ## `build_queue_rows_max` and `_work_board_capacity`, to buy back less than a tenth of a row.
 const ROADWORK_ROSTER_HEAD_HEIGHT := 22.0
 
+## **A ROAD ROW IS A SITE ROW** — the icon in the site rows' icon column, its locator as the title
+## (`2 tiles SE`), line two its rung and state (`road_row_value`), and the `Build` pill line only while
+## a road build is queued on it. The row's click jumps the map to the road.
+const ROADWORK_ROSTER_ICON := "🛤"
+const ROADWORK_ROSTER_NAME_META := &"roadwork_roster_name"
+const ROADWORK_ROSTER_VALUE_META := &"roadwork_roster_value"
+
+static func roadwork_roster_row_height(build_queued: bool) -> float:
+    return WORK_ROW_TWO_LINE_HEIGHT + ((float(TWO_LINE_STEPPER_SEPARATION) + WORK_ROW_PILL_LINE_HEIGHT)
+        if build_queued else 0.0)
+
 # ---- THE WORKINGS ROSTER — WHICH workings the `Workings` pool is paying for (arc #583) ------------
 #
 # ⛔ **THE ROADWORK ROSTER'S TWIN, AND EVERY RULE ABOVE APPLIES UNCHANGED.** The pool card one line up
@@ -2400,7 +2416,10 @@ const BUILD_QUEUE_ROWS_MAX := 3
 ## omitted Label would shift every row behind the head.
 const BUILD_QUEUE_HEAD_MARKER := "▸"
 
-const BUILD_QUEUE_MARKER_WIDTH := 10.0
+## **THE MARKER COLUMN IS THE SITE ROWS' STRIPE-AND-ICON COLUMN**, so a queue entry's job face starts
+## in the same TITLE column as the `Builders` row above it and every site row on the tab, and its
+## second line under their second lines. The marker is centred in it.
+const BUILD_QUEUE_MARKER_WIDTH := WORK_ROW_TITLE_OFFSET
 
 # ---- DRAG-TO-REORDER — the marker column IS the handle (`docs/plan_standing_upkeep.md` §4.7b ③) ---
 #
@@ -2448,25 +2467,6 @@ const BUILD_QUEUE_DROP_MARK_META := "build_queue_drop_mark"
 ## key check.
 const BUILD_QUEUE_DRAG_TYPE := "build_queue_entry"
 
-## The date column. Fixed and CLIPPING: the widest values this column takes — the `∞`-carrying
-## sentinels and the `<verb> N% · turn N` completion form — would squeeze the job face to nothing on a
-## left dock if they sized the row. The Label's `text` still carries the full value (clipping is visual
-## only) and the row tooltip repeats it, so nothing is unreachable.
-##
-## **IT IS THE WIDEST VALUE THE COLUMN CAN BE HANDED, MEASURED, and that is why it went 118 → 168**
-## (`docs/plan_standing_upkeep.md` §2.8). The completion form leads with the leg in flight's
-## participle now, so the value is `Cultivating 100% · turn 999` at its longest — 168px at
-## `WORK_ROW_FONT_SIZE`, printed by `band_panel_preview._report_queue_row_columns` rather than
-## guessed. **Under-sizing it is not a cosmetic loss here**: the Label trims from the END whatever its
-## alignment, so a column short of the value cuts the DATE off a row whose whole remaining job is to
-## state one. That is also why the Corral's participle was shortened to `Penning` — see
-## `HudComposeVocab.IMPROVEMENT_RUNNING_LABELS`.
-##
-## The 50px comes out of the job FACE, which is the row's only expanding child: at the tall dock it
-## leaves ~106px, which holds a plant face (`▦ Sow (66, 25)` needs 89) and ellipsises a long animal one
-## (`🐄 Corral Thunder Mammoths` needs 189 — it was already ellipsised at the old width). The hover
-## carries face and date in full.
-const BUILD_QUEUE_DATE_WIDTH := 168.0
 
 ## …and the head's tooltip. **It names where the pool is staffed, so it moved with the card** (§4.7):
 ## the Builders card is in the POOLS block directly above this head now, not in the band tab's

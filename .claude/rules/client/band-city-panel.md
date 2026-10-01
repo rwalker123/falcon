@@ -2375,6 +2375,29 @@ head's first child:
 - **The road pool's row is `Road crew`** (`ROLE_NAME_ROADWORK`) and its section stays `ROADWORK`: the
   row names the hands, the section the work.
 
+### EVERY ROW ON THE WORK TAB SHARES THE SITE ROWS' COLUMNS
+
+Every row in every section puts its icon at the site rows' icon column, its title at their title
+column and its second line at their line-two column (measured on the drawn nodes by
+`band_panel_preview._assert_roadwork_and_queue_share_the_site_columns`):
+
+- **Road rows are site rows** (`_build_roadwork_roster_row` on `_site_row_shell`): the road mark
+  (`ROADWORK_ROSTER_ICON`), the locator as the title in INK (`ROADWORK_ROSTER_NAME_META`), the `✕` at
+  the right; line two `road_row_value` in DANGER when the keeping is short, INK_DIM otherwise
+  (`ROADWORK_ROSTER_VALUE_META`), the stripe DANGER with it; and the `Build` pill line only while a road
+  build is queued on it (`roadwork_roster_row_height(queued)`). A click on the row jumps the map to
+  the road.
+- **The fund-mode pick and the unseen line are the Road crew row's own lines** (`_build_pool_line`'s
+  `extras`): the Spread/Priority pair at `ALLOC_SECTION_FONT_SIZE` and the "kept out of sight" hint,
+  each in the row's line-two indent and charged to the row's reservation. The road block's height is
+  the drawn rows' own `custom_minimum_size` summed.
+- **A build-queue entry's marker column is the site rows' stripe-and-icon column**
+  (`BUILD_QUEUE_MARKER_WIDTH` = `WORK_ROW_TITLE_OFFSET`, the `▸` centred in it), so the job face starts
+  in the title column under `Builders`. **The date leads line two** (`QUEUE_SECOND_LINE_DATE_INDEX`, at
+  `ALLOC_SECTION_FONT_SIZE`, then `· Build: <level>` and the tools mark): the face lost the width the
+  wider marker column took, and on line one the fixed 168px date column left `🌱 Cultivate (71, 18)`
+  9px short. Line two has the row's width, so neither clips.
+
 ### A site row is four lines
 
 ```
@@ -3444,7 +3467,9 @@ red line there asks for is a decision, not a failing run.
 - **`HudComposeVocab.IMPROVEMENT_RUNNING_LABELS["corral"]` went `Building the pen` → `Penning`** in the
   same measurement. It was the one phrase among four single words, it is the craft's own name, and at
   203px it would have set this column's reservation on its own.
-- **The date column is `168.0`, measured and not guessed**, and under-sizing it is not cosmetic here.
+- **The date column was `168.0`, measured and not guessed.** It has since left line one: the date
+  leads the row's SECOND line (see "EVERY ROW ON THE WORK TAB SHARES THE SITE ROWS' COLUMNS"), so the
+  column width and the face/date squeeze measured here describe the retired one-line layout.
 
 Asserted in `band_panel_preview` on FOUR states — the reported two-leg sow (rendered as
 `band_panel_queue_legs`), the same board with **one** work unit banked (the turn the defect starts on,

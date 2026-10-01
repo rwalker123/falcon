@@ -747,7 +747,9 @@ ascending, tie-broken by tile, so the order is stable frame to frame — an unst
 the `✕` a player was aiming at.
 
 **Row click → `alert_focus_requested(x, y)`**, the same signal `jump_to_band_entity` uses. A road IS
-its tile, so there is no band-style entity resolution to do.
+its tile, so there is no band-style entity resolution to do. The row is a site row — icon, the locator
+as its title, `road_row_value` on line two, the `Build` pill line while a road build is queued
+(`band-city-panel.md` → "EVERY ROW ON THE WORK TAB SHARES THE SITE ROWS' COLUMNS").
 
 ### The `✕` is the EXISTING abandon path, and it must not be quieter than the tile card
 
@@ -773,7 +775,7 @@ cases, and the middle one is the one that must not be got wrong:
 1. **Nothing kept in sight AND no roadwork demand** → no block at all (the expeditions idiom, stated
    in arithmetic by `HudWorkVocab.roadwork_roster_height` answering `0`).
 2. **Demand > 0 but zero kept roads visible** → the block renders with ONE muted line saying the
-   roads being kept are not in sight. **Never an empty roster beside a non-zero `Roadwork` count** —
+   roads being kept are not in sight, under the Road crew row in its indent. **Never an empty roster beside a non-zero `Roadwork` count** —
    that is a readout that lies, and `band_panel_preview` sabotage-checks exactly it.
 3. **Roads visible** → the rows, capped at `ROADWORK_ROSTER_ROWS_MAX` with the build queue's own
    `+N more` foot.
