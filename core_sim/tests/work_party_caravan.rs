@@ -135,6 +135,10 @@ fn spawn_camp_band(app: &mut App, target: LaborTarget, kit: Option<KitChoice>) -
                 generation: 0 as GenerationId,
                 faction: FACTION,
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {

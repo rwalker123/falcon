@@ -255,6 +255,14 @@ source falls outside the band's work range **posts a party** and goes on working
 distance in walking — each pack is carried home by one of the party, and the band feeds it
 through its ordinary consumption.
 
+## The founding lines are PARTITIONED, not copied
+
+The splinter takes its share of the parent's founding lines and the parent no longer holds them —
+the split "takes its lines with it and lowers both ceilings". Same share as the people, highest ids
+first, each half keeping at least one; a one-line parent shares its line. Taken off a copy before
+anything is written and set on the parent in the "take it off the parent" block, so a refusal
+leaves the parent's lines untouched. See `campaign.md` → "Founding lines".
+
 ## The wire carries the FLOORS, never the verdict
 
 `PopulationCohortState.foundingMinWorkers` / `foundingParentMinWorkers`, echoed onto every cohort (the

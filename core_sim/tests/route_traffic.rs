@@ -139,6 +139,10 @@ fn spawn_band(app: &mut App, (x, y): (u32, u32), food: i64) -> Entity {
                 generation: 0 as GenerationId,
                 faction: TEST_FACTION,
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             ResidentBand,
             BandId(NEXT_TEST_BAND_ID.fetch_add(1, Ordering::Relaxed)),

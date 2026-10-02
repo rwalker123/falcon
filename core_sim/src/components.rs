@@ -1215,6 +1215,12 @@ pub struct PopulationCohort {
     pub generation: GenerationId,
     pub faction: FactionId,
     pub knowledge: Vec<KnowledgeFragment>,
+    /// **The unrelated families this band descends from** — the relatedness proxy
+    /// (`crate::lineage`). Founded on a starting band, partitioned by a split, and carried through
+    /// the checkpoint with the rest of the cohort. A detached expedition is a clone of its home
+    /// band's cohort and carries the same set: it is those same people walking somewhere. On the
+    /// client wire as `PopulationCohortState.founding_lines` (the count).
+    pub founding_lines: crate::lineage::FoundingLines,
 }
 
 /// The dominant negative driver of a cohort's morale on a given turn, surfaced so the client can
