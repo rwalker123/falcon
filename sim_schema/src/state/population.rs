@@ -447,6 +447,13 @@ pub struct LaborAssignmentState {
     /// `0` when nothing rots. Appended last.
     #[serde(default)]
     pub transit_keeps_turns: f32,
+    /// **A far forage row's fodder per turn arriving home** (#706) — `net_rate_home`'s twin,
+    /// smoothed off the same forecast. `0` on a local row. Appended last.
+    #[serde(default)]
+    pub fodder_rate_home: f32,
+    /// **Its materials per turn arriving home**, one row per material id. Appended last.
+    #[serde(default)]
+    pub materials_rate_home: Vec<MaterialPayoff>,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].

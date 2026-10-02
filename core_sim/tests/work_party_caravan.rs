@@ -95,10 +95,20 @@ fn world_hunting_at(distance: u32) -> (App, Entity) {
 /// **The fixture band, camped on [`CAMP`] with [`CREW`] hands on one row** — `target`, carrying
 /// `kit` (`None` = the job's default).
 fn spawn_camp_band(app: &mut App, target: LaborTarget, kit: Option<KitChoice>) -> Entity {
+    spawn_band_camped_at(app, CAMP, target, kit)
+}
+
+/// [`spawn_camp_band`], camped on `at` rather than [`CAMP`].
+fn spawn_band_camped_at(
+    app: &mut App,
+    at: UVec2,
+    target: LaborTarget,
+    kit: Option<KitChoice>,
+) -> Entity {
     let camp = app
         .world
         .resource::<TileRegistry>()
-        .index(CAMP.x, CAMP.y)
+        .index(at.x, at.y)
         .expect("the harness map carries the camp tile");
     // **An empty larder, on purpose**: a party is fed by its band's ordinary consumption, so nothing
     // about the posting may depend on what the band has put by.
@@ -1839,4 +1849,201 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
         answer.rate_home, sled_only.rate_home,
         "the rate carries felling's tool: the axe lifts felling where the sled does not"
     );
+}
+
+/// ⛔ **A CREW CUT SHORT OF ZERO WALKS ITS DROPPED HANDS HOME** (#706) — a six-hunter party five
+/// hexes out (a three-turn walk), cut to two the turn it reaches the herd, with all six at the source.
+/// The four dropped hands leave the source and walk the whole walk carrying nothing: `idleWorkers` is
+/// unchanged on the cut, the band publishes the four walking home, and they rejoin the pool only as
+/// they arrive. Asserted on the encoded wire.
+#[test]
+fn cutting_a_far_crew_walks_the_dropped_hands_home() {
+    /// The crew the row is cut to.
+    const KEPT: u32 = 2;
+    /// The walk at five hexes, in turns.
+    const WALK: u32 = 3;
+    let (mut app, band) = world_hunting_at(5);
+    let mut arrived = false;
+    for _ in 0..TURNS_TO_SEE_A_PORTER {
+        resolve_a_turn(&mut app);
+        let party = published_party(&app);
+        if party.walk_out_remaining == 0 && party.party_workers == CREW {
+            assert_eq!(
+                party.hunters_on_the_road, 0,
+                "fixture: all six at the source"
+            );
+            arrived = true;
+            break;
+        }
+    }
+    assert!(arrived, "liveness: the party reaches the herd");
+    let before = published_homeward(&app);
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .set_assignment(hunt_target(), KEPT, CREW, None);
+    resolve_a_turn(&mut app);
+    let cut = published_homeward(&app);
+    assert_eq!(cut.idle, before.idle, "the cut frees nobody that turn");
+    assert_eq!(cut.workers, CREW - KEPT, "the four dropped hands walk home");
+    assert_eq!(cut.food, 0.0, "they carry nothing — the load stays");
+    assert_eq!(
+        cut.all_home_in, WALK,
+        "from the source, over the whole walk"
+    );
+    assert_eq!(published_party(&app).party_workers, KEPT);
+    for turn in 1..=WALK {
+        resolve_a_turn(&mut app);
+        let now = published_homeward(&app);
+        if turn < WALK {
+            assert_eq!(now.idle, before.idle, "turn {turn}: still walking");
+            assert_eq!(now.workers, CREW - KEPT);
+        } else {
+            assert_eq!(now.workers, 0, "home after the whole walk");
+            assert_eq!(now.idle, before.idle + CREW - KEPT, "…and back in the pool");
+        }
+    }
+}
+
+/// ⛔ **A FAR HAY ROW PRINTS SMOOTHED FODDER AND MATERIALS RATES HOME, NOT LUMPS** (#706) — its hay
+/// and fibre ride the packs, so the row's per-turn `fodderYield` / `materialYield` read only what
+/// landed and are zero between packs. `fodderRateHome` / `materialsRateHome` are their
+/// `netRateHome`: off the same caravan forecast, non-zero on exactly those turns. Read off the
+/// ENCODED row.
+#[test]
+fn a_far_hay_row_publishes_smoothed_fodder_and_materials_rates_home() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    /// Hexes between the band and the patch along one row — past the apron.
+    const FAR: u32 = 8;
+    const HAY: &str = "hay_grass";
+    /// A stocked stand, so the crew's take is never what runs out.
+    const STOCKED: f32 = 0.8;
+
+    let mut app = build_test_app();
+    app.update();
+    let (coord, camp) = {
+        let labor = app.world.resource::<core_sim::LaborConfigHandle>().get();
+        let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
+        let mut tiles: Vec<core_sim::Tile> = app
+            .world
+            .query::<&core_sim::Tile>()
+            .iter(&app.world)
+            .cloned()
+            .collect();
+        tiles.sort_by_key(|tile| (tile.position.y, tile.position.x));
+        let registry = app.world.resource::<core_sim::ForageRegistry>();
+        let index = app.world.resource::<TileRegistry>();
+        tiles
+            .iter()
+            .filter(|tile| registry.patch(tile.position).is_some())
+            .find_map(|tile| {
+                let camp = UVec2::new(tile.position.x + FAR, tile.position.y);
+                index.index(camp.x, camp.y)?;
+                core_sim::tile_flora_composition(&flora, &labor.forage, tile, map_seed)
+                    .iter()
+                    .any(|share| share.species == HAY && share.share > 0.0)
+                    .then_some((tile.position, camp))
+            })
+            .expect("the harness map grows hay somewhere with room to camp far off")
+    };
+    {
+        let mut registry = app.world.resource_mut::<core_sim::ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("the chosen patch");
+        patch.biomass = patch.carrying_capacity * STOCKED;
+    }
+    {
+        let mut sites = app.world.resource_mut::<core_sim::FoodSiteRegistry>();
+        if !sites.is_site(coord) {
+            let module = core_sim::FoodModule::SavannaGrassland;
+            let mut entries = sites.sites().to_vec();
+            entries.push(core_sim::FoodSiteEntry {
+                position: coord,
+                module,
+                kind: module.site_kind(),
+                seasonal_weight: 1.0,
+            });
+            sites.set_sites(entries);
+        }
+    }
+    app.world
+        .resource_mut::<core_sim::DiscoveryProgressLedger>()
+        .add_progress(FACTION, core_sim::FODDERING_DISCOVERY_ID, scalar_one());
+    spawn_band_camped_at(
+        &mut app,
+        camp,
+        LaborTarget::Forage {
+            tile: coord,
+            floor: FLOOR,
+            species: None,
+            take_species: core_sim::TakeSelection::from_keys([HAY]),
+        },
+        None,
+    );
+    let row_of = |app: &App| -> (u32, f32, f32, f32, Vec<(String, f32)>) {
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+        let row = envelope
+            .payload_as_snapshot()
+            .and_then(|snapshot| snapshot.population())
+            .and_then(|section| section.populations())
+            .expect("the cohort list")
+            .iter()
+            .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+            .find(|row| row.kind().unwrap_or_default() == "forage")
+            .expect("the far forage row is on the wire");
+        let yielded: f32 = row
+            .materialYield()
+            .map(|list| list.iter().map(|payoff| payoff.amount()).sum())
+            .unwrap_or(0.0);
+        (
+            row.partyWorkers(),
+            row.fodderYield(),
+            yielded,
+            row.fodderRateHome(),
+            row.materialsRateHome()
+                .map(|list| {
+                    list.iter()
+                        .map(|payoff| {
+                            (
+                                payoff.materialId().unwrap_or_default().to_string(),
+                                payoff.amount(),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        )
+    };
+    let mut between_packs = false;
+    let mut a_landing = false;
+    for _ in 0..TURNS_TO_SEE_A_PORTER {
+        resolve_a_turn(&mut app);
+        let (party, fodder_now, materials_now, fodder_home, materials_home) = row_of(&app);
+        assert!(party > 0, "the far row posts a party");
+        a_landing |= fodder_now > 0.0;
+        if fodder_home > 0.0 && fodder_now == 0.0 && materials_now == 0.0 {
+            assert!(
+                materials_home
+                    .iter()
+                    .any(|(id, amount)| id == "fibre" && *amount > 0.0),
+                "the fibre home rate rides beside the hay's: {materials_home:?}"
+            );
+            between_packs = true;
+        }
+        if between_packs && a_landing {
+            break;
+        }
+    }
+    assert!(
+        between_packs,
+        "a turn with no pack landing still publishes the smoothed home rates"
+    );
+    assert!(a_landing, "liveness: a pack of hay lands within the run");
 }

@@ -150,6 +150,24 @@ pub(crate) fn labor_assignment_to_state(
             .party
             .as_ref()
             .map_or(0.0, |p| p.transit_keeps_turns),
+        // **A far forage row's fodder and materials, home** (#706) — smoothed off the forecast.
+        fodder_rate_home: assignment
+            .party
+            .as_ref()
+            .map_or(0.0, |p| p.fodder_rate_home),
+        materials_rate_home: assignment
+            .party
+            .as_ref()
+            .map(|p| {
+                p.materials_rate_home
+                    .iter()
+                    .map(|payoff| sim_runtime::MaterialPayoff {
+                        material_id: payoff.material.clone(),
+                        amount: payoff.amount,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         ..Default::default()
     };
     match &assignment.target {

@@ -1602,14 +1602,7 @@ fn answer_work_party_forecast(
             take,
         )
         .map_or(NOTHING_TAKEN_ONCE_RAISED, |turn| turn.biomass);
-        let fodder_credited =
-            crate::systems::committed_to_a_fodder_crop(patch.species.as_deref(), &flora)
-                || crate::intensification::knows(
-                    world.resource::<crate::DiscoveryProgressLedger>(),
-                    faction,
-                    crate::FODDERING_DISCOVERY_ID,
-                    ladder.knowledge.completion_threshold,
-                );
+        let fodder_credited = forage_fodder_credited(world, patch, &flora, faction, &ladder);
         accounts.fodder = if fodder_credited {
             crate::forage::tended_take_fodder(
                 taken,
@@ -1697,6 +1690,7 @@ fn answer_work_party_forecast(
                 keep_hands,
                 horizon,
                 &demographics.keeping,
+                forage_fodder_credited(world, patch, &flora, faction, &ladder),
             )
         }
         Asked::Extract {
@@ -1716,8 +1710,22 @@ fn answer_work_party_forecast(
             horizon,
         ),
     };
+    // ⛔ **A FAR BASKET'S FODDER AND MATERIALS ARRIVE WITH ITS PACKS** (#706) — the forecast's
+    // own home rates, the figures the assigned row will publish as `fodderRateHome` /
+    // `materialsRateHome`.
+    let fodder_rate_home = forecast.fodder_rate_home;
+    let materials_rate_home = forecast
+        .materials_rate_home
+        .iter()
+        .map(|payoff| sim_runtime::commands::MaterialPayoff {
+            material_id: payoff.material.clone(),
+            amount: payoff.amount,
+        })
+        .collect();
     QueryReply::WorkPartyForecast(WorkPartyForecastReply {
         posts_a_party: true,
+        fodder_rate_home,
+        materials_rate_home,
         rate_home: forecast.rate_home,
         spoiled_rate_home: forecast.spoiled_rate_home,
         transit_keeps_turns: forecast.transit_keeps_turns,
@@ -1728,6 +1736,24 @@ fn answer_work_party_forecast(
         take_next_turn,
         keep_hands,
     })
+}
+
+/// **Does this faction bank a patch's fodder?** — the labor arm's credit gate: a commitment to a
+/// fodder-bearing crop, or knowing Foddering.
+pub fn forage_fodder_credited(
+    world: &World,
+    patch: &crate::forage::ForagePatch,
+    flora: &crate::flora_config::FloraConfig,
+    faction: FactionId,
+    ladder: &crate::intensification::LadderConfig,
+) -> bool {
+    crate::systems::committed_to_a_fodder_crop(patch.species.as_deref(), flora)
+        || crate::intensification::knows(
+            world.resource::<crate::DiscoveryProgressLedger>(),
+            faction,
+            crate::FODDERING_DISCOVERY_ID,
+            ladder.knowledge.completion_threshold,
+        )
 }
 
 /// One turn of projection — the next turn's take ([`WorkPartyForecastReply::take_next_turn`]).

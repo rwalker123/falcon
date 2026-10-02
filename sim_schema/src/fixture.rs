@@ -512,6 +512,8 @@ fn seed_snapshot() -> WorldSnapshot {
             // same reason: two nested repeated fields the guard cannot see while they are empty.
             assignment.material_upkeep_demand = rows();
             assignment.material_upkeep_supplied = rows();
+            // …and a far forage row's materials home rate (#706), for the same reason.
+            assignment.materials_rate_home = rows();
             // **WHICH PLANTS THE CREW CARRIES HOME** (the selective gather) — a `[string]`, seeded
             // for the same reason: a repeated field the fixture leaves empty is a field the decode
             // guard cannot exercise.

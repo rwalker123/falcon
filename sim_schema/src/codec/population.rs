@@ -274,6 +274,13 @@ fn create_populations<'a>(
                             builder,
                             &assignment.material_yield,
                         );
+                        // **A far forage row's materials home rate** (#706), built before the
+                        // parent table opens.
+                        let materials_rate_home =
+                            crate::codec::subsistence::create_material_payoffs(
+                                builder,
+                                &assignment.materials_rate_home,
+                            );
                         // **THE GOOD-SIDE SHORTFALL PAIR**, built here for the same reason: the
                         // child vectors have to close before the parent table opens.
                         let material_upkeep_demand =
@@ -442,6 +449,9 @@ fn create_populations<'a>(
                                 // **WHAT THE WALK HOME LOSES** (#706). Appended last.
                                 spoiledRateHome: assignment.spoiled_rate_home,
                                 transitKeepsTurns: assignment.transit_keeps_turns,
+                                // **A FAR FORAGE ROW'S OTHER ACCOUNTS, HOME** (#706). Appended last.
+                                fodderRateHome: assignment.fodder_rate_home,
+                                materialsRateHome: Some(materials_rate_home),
                             },
                         )
                     })
@@ -1317,6 +1327,8 @@ fn decode_labor_assignment(
         keep_hands: assignment.keepHands(),
         spoiled_rate_home: assignment.spoiledRateHome(),
         transit_keeps_turns: assignment.transitKeepsTurns(),
+        fodder_rate_home: assignment.fodderRateHome(),
+        materials_rate_home: decode_material_payoffs(assignment.materialsRateHome()),
     })
 }
 

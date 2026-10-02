@@ -4780,3 +4780,124 @@ fn a_far_basket_with_no_food_quotes_its_first_load_turn() {
         "a {species} pack still walks home, after the walk out: {answer:?}"
     );
 }
+
+/// ⛔ **A FAR ROW'S FODDER AND MATERIALS RIDE THE PACKS** (#706) — a hay crew (`hay_grass`: fodder and
+/// fibre, no food) eight hexes out cuts hay and fibre from its first turn at the patch, and the band's
+/// stores see none of it until a pack walks in. Every turn the fodder ledger closes on the delay:
+/// `Δ FODDER == fodderInflow + Δ received` (no pens draw here), and the row's fodder reads what
+/// landed. Liveness: something is cut, and something lands.
+#[test]
+fn a_far_hay_row_lands_its_fodder_and_fibre_only_when_a_pack_lands() {
+    /// Hexes between the band and the patch along one row — past the apron.
+    const FAR: u32 = 8;
+    /// The crew on the row.
+    const CREW: u32 = 3;
+    /// A bound on the run, not a prediction.
+    const TURNS: u32 = 40;
+    const HAY: &str = "hay_grass";
+    const FIBRE: &str = "fibre";
+
+    let mut app = spawn_world();
+    let (coord, camp) = {
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+        let mut tiles: Vec<Tile> = app
+            .world
+            .query::<&Tile>()
+            .iter(&app.world)
+            .cloned()
+            .collect();
+        tiles.sort_by_key(|tile| (tile.position.y, tile.position.x));
+        let registry = app.world.resource::<ForageRegistry>();
+        let index = app.world.resource::<TileRegistry>();
+        tiles
+            .iter()
+            .filter(|tile| registry.patch(tile.position).is_some())
+            .find_map(|tile| {
+                let camp = index.index(tile.position.x + FAR, tile.position.y)?;
+                tile_flora_composition(&flora, &labor.forage, tile, map_seed)
+                    .iter()
+                    .any(|share| share.species == HAY && share.share > 0.0)
+                    .then_some((tile.position, camp))
+            })
+            .expect("the harness map grows hay somewhere with room to camp far off")
+    };
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("the chosen patch");
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
+    }
+    declare_gathering_site(&mut app, coord);
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), core_sim::FODDERING_DISCOVERY_ID, scalar_one());
+    let band = spawn_forager_of(&mut app, camp, coord, None, CREW);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band");
+        if let LaborTarget::Forage { take_species, .. } = &mut allocation.assignments[0].target {
+            *take_species = TakeSelection::from_keys([HAY]);
+        }
+    }
+    let stores = |app: &App| {
+        let cohort = app.world.get::<PopulationCohort>(band).expect("the band");
+        (
+            cohort.stores.get(core_sim::FODDER).to_f32(),
+            cohort.stores.material_total(FIBRE).to_f32(),
+        )
+    };
+    let mut first_cut = None;
+    let mut first_landing = None;
+    let mut walk = 0;
+    let (mut fodder_before, _) = stores(&app);
+    let mut received_before = 0.0_f32;
+    for turn in 1..=TURNS {
+        run_turns_with_forage(&mut app, 1);
+        let (fodder, fibre) = stores(&app);
+        let allocation = app.world.get::<LaborAllocation>(band).expect("the band");
+        let party = allocation.assignments[0]
+            .party
+            .clone()
+            .expect("the far row posts a party");
+        walk = party.walk_turns;
+        let carried = party.load_goods.fodder
+            + party
+                .on_the_road
+                .iter()
+                .map(|walker| walker.goods.fodder)
+                .sum::<f32>();
+        if first_cut.is_none() && carried > 0.0 {
+            first_cut = Some(turn);
+        }
+        let received = allocation.last_fodder_transfers.received();
+        assert!(
+            (fodder - fodder_before - (allocation.last_fodder_inflow + received - received_before))
+                .abs()
+                < EPSILON,
+            "turn {turn}: the fodder ledger closes on the delay"
+        );
+        assert!(
+            (allocation.last_yields[0].fodder - (fodder - fodder_before)).abs() < EPSILON,
+            "turn {turn}: the row reads the fodder that LANDED"
+        );
+        if first_landing.is_none() {
+            if fodder > 0.0 {
+                first_landing = Some(turn);
+                assert!(fibre > 0.0, "the pack's fibre lands with its hay");
+            } else {
+                assert_eq!(fibre, 0.0, "turn {turn}: no fibre before a pack lands");
+            }
+        }
+        fodder_before = fodder;
+        received_before = received;
+    }
+    let cut = first_cut.expect("liveness: the crew cuts hay");
+    let landed = first_landing.expect("liveness: a pack of hay lands");
+    assert!(
+        landed >= cut + walk,
+        "hay cut on turn {cut} lands no sooner than the {walk}-turn walk allows: turn {landed}"
+    );
+}

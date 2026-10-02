@@ -662,19 +662,15 @@ pub fn credit_material_yield(
     biomass: f32,
     output_multiplier: f32,
 ) -> Vec<MaterialPayoff> {
-    let mut credited: BTreeMap<&str, Scalar> = BTreeMap::new();
-    for row in rows {
-        let amount = scalar_from_f32(biomass * row.per_biomass * output_multiplier);
-        if amount <= scalar_zero() {
-            continue;
-        }
-        let Some(band) = materials.band_key(&row.material, &row.characteristics) else {
-            continue;
-        };
-        store.deposit_material(&row.material, band, amount, &row.characteristics);
-        *credited
-            .entry(row.material.as_str())
-            .or_insert(scalar_zero()) += amount;
+    let mut credited: BTreeMap<String, Scalar> = BTreeMap::new();
+    for batch in material_yield_batches(materials, rows, biomass, output_multiplier) {
+        store.deposit_material(
+            &batch.material,
+            batch.band,
+            batch.amount,
+            &batch.characteristics,
+        );
+        *credited.entry(batch.material).or_insert(scalar_zero()) += batch.amount;
     }
     credited
         .into_iter()
@@ -683,6 +679,42 @@ pub fn credit_material_yield(
             // Reported in the store's own units — `Scalar` in, `f32` out, so a readout never
             // re-derives the fixed-point rounding the deposit already did.
             amount: amount.to_f32(),
+        })
+        .collect()
+}
+
+/// **One material a yield edge pays, at its reading and its band** — what
+/// [`credit_material_yield`] deposits, and what a far forage pack carries home instead (#706).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialYieldBatch {
+    pub material: String,
+    pub band: BandKey,
+    pub characteristics: BTreeMap<String, f32>,
+    pub amount: Scalar,
+}
+
+/// **What `biomass` pays through `rows`, one batch per row** — the arithmetic and the skips (a
+/// sub-quantum amount, an unknown material) [`credit_material_yield`] deposits by, so a far pack
+/// carries exactly what a local take would have credited.
+pub fn material_yield_batches(
+    materials: &MaterialsConfig,
+    rows: &[MaterialYieldDef],
+    biomass: f32,
+    output_multiplier: f32,
+) -> Vec<MaterialYieldBatch> {
+    rows.iter()
+        .filter_map(|row| {
+            let amount = scalar_from_f32(biomass * row.per_biomass * output_multiplier);
+            if amount <= scalar_zero() {
+                return None;
+            }
+            let band = materials.band_key(&row.material, &row.characteristics)?;
+            Some(MaterialYieldBatch {
+                material: row.material.clone(),
+                band,
+                characteristics: row.characteristics.clone(),
+                amount,
+            })
         })
         .collect()
 }

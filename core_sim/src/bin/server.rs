@@ -3571,6 +3571,15 @@ fn seed_source_yield(
                         .resource::<core_sim::DemographicsConfigHandle>()
                         .get()
                         .keeping,
+                    core_sim::forecast_query::forage_fodder_credited(
+                        &app.world,
+                        patch,
+                        &flora,
+                        app.world
+                            .get::<PopulationCohort>(band)
+                            .map_or(FactionId(0), |cohort| cohort.faction),
+                        &app.world.resource::<core_sim::LadderConfigHandle>().get(),
+                    ),
                 );
                 seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, false);
             }
