@@ -3959,13 +3959,6 @@ struct PartyPosting {
     /// **Forecast from the state this turn leaves**, struck at the take site where the source's
     /// post-take state and every pricing term are in hand. `None` for an arm that never got there.
     forecast: Option<crate::work_party::CaravanForecast>,
-    /// **The crew the party held before this turn's restamp** — what a row cut to zero hands stands
-    /// down with. The restamp writes the row's new head count onto the party, and at zero that would
-    /// send the hands still at the source straight back into the pool without walking a step.
-    crew_before: u32,
-    /// **The hands a crew cut sent walking home this turn** ([`WorkParty::cut_crew`]) — pushed onto
-    /// the band's [`LaborAllocation::homeward`] when the posting is settled.
-    walking_home: Vec<crate::work_party::HomewardWalk>,
 }
 
 impl PartyPosting {
@@ -4229,24 +4222,26 @@ fn post_a_party(
     let mut party = standing
         .cloned()
         .unwrap_or_else(|| WorkParty::posted(source_pos, walk_tiles, walk_turns));
-    let crew_before = party.workers;
-    // ⛔ **A CUT SHORT OF ZERO WALKS ITS DROPPED HANDS HOME** (`WorkParty::cut_crew`) — after the
-    // turn's step, from the hands it leaves where they stand. A cut to zero is a stand-down, settled
-    // with the crew it held; a raise is new hands at once, as it always was.
-    let cuts = workers > NO_CREW_ON_THIS_ACTIVITY && workers < crew_before;
+    // ⛔ **A ROW BELOW ITS PARTY'S CREW HERE WAS TRIMMED BY THE STARVATION SHED** — a player's cut
+    // walks its dropped hands home at command time (`LaborAllocation::set_assignment` →
+    // `WorkParty::cut_crew`), so the party already matches the row by the turn. The shed's hands are
+    // people the band no longer has: they leave **without walking home** — the same order
+    // (`cut_crew`: the hands at the source first, then porters nearest home, whose packs go with
+    // them), its walks discarded. Sending them home would count them against the pool next turn and
+    // fire the shed again on the hands it had just shed. A raise is new hands at once, as it always
+    // was.
+    let shed = workers < party.workers;
     party.restamp(
         source_pos,
-        if cuts { crew_before } else { workers },
+        if shed { party.workers } else { workers },
         walk_tiles,
         walk_turns,
     );
     let open = party.open_turn();
-    let walking_home = if cuts {
-        party.cut_crew(workers, target)
-    } else {
-        Vec::new()
-    };
-    let working_crew = if cuts && open.present > NO_CREW_ON_THIS_ACTIVITY {
+    if shed {
+        let _gone_with_the_shed = party.cut_crew(workers, target);
+    }
+    let working_crew = if shed && open.present > NO_CREW_ON_THIS_ACTIVITY {
         party.hunters_present()
     } else {
         open.present
@@ -4258,8 +4253,6 @@ fn post_a_party(
         party,
         closed: false,
         forecast: None,
-        crew_before: if cuts { workers } else { crew_before },
-        walking_home,
     })
 }
 
@@ -4313,6 +4306,23 @@ fn stand_down_unopened_party(
     let spoiled = bring_the_party_home(stores, allocation, &open.packs, home, keeping);
     stand_down_party(allocation, party, target);
     spoiled
+}
+
+/// ⛔ **A PARTY WHOSE ROW THE STARVATION SHED DROPPED — ITS HANDS LEAVE WITHOUT WALKING HOME.** The
+/// shed drives the band's committed hands down to the people it still has, so every hand on a row it
+/// drops is one the band no longer has; listing them as walking home would count them against the
+/// pool next turn and fire the shed again. The turn still happened to the road, so the party takes
+/// this turn's step first and whatever lands now lands (rotting by its walk); the rest — the load,
+/// the packs still out — goes with the people. Returns what rotted.
+fn shed_unopened_party(
+    stores: &mut LocalStore,
+    allocation: &mut LaborAllocation,
+    mut party: WorkParty,
+    home: &CargoHome,
+    keeping: &crate::demographics_config::KeepingConfig,
+) -> f32 {
+    let open = party.open_turn();
+    bring_the_party_home(stores, allocation, &open.packs, home, keeping)
 }
 
 /// ⛔ **CARGO A PARTY BRINGS HOME OUTSIDE A LIVE ROW** — a stood-down party's walk ending, or the
@@ -5313,9 +5323,9 @@ pub fn advance_labor_allocation(
         // destroyed outright can cost a 25-turn build commitment (the queue entry goes with it on
         // the prune below); a row merely cut is the crew the player set moving on its own. Neither
         // may happen quietly.
-        // **A ROW THE SHED DROPS SENDS ITS PARTY WALKING HOME.** `normalize` drops the row with its
-        // party, so the parties are read off the rows before the walk and stood down for every row
-        // it ended outright, through the one stand-down step ([`stand_down_party`]).
+        // **A ROW THE SHED DROPS TAKES ITS PARTY WITH IT** — its hands are people the band no
+        // longer has, so they leave without walking home ([`shed_unopened_party`]). `normalize`
+        // drops the row with its party, so the parties are read off the rows before the walk.
         let parties_before_shed: Vec<(LaborTarget, WorkParty)> = allocation
             .assignments
             .iter()
@@ -5328,11 +5338,10 @@ pub fn advance_labor_allocation(
                         .iter()
                         .find(|(held, _)| held.same_source(target))
                     {
-                        let spoiled = stand_down_unopened_party(
+                        let spoiled = shed_unopened_party(
                             &mut cohort.stores,
                             &mut allocation,
                             party.clone(),
-                            held,
                             &cargo_home_of(held),
                             food_keeping,
                         );
@@ -9884,9 +9893,6 @@ pub fn advance_labor_allocation(
         // `assignments` (`docs/plan_civilization_steps.md` §One work party).
         let posted_rows: BTreeSet<usize> = postings.keys().copied().collect();
         for (idx, mut posting) in std::mem::take(&mut postings) {
-            allocation
-                .homeward
-                .extend(std::mem::take(&mut posting.walking_home));
             let row_lapsed = lapsed.contains(&idx);
             let home = cargo_home_of(&allocation.assignments[idx].target);
             // **An arm that never reached its take site still closes the turn**, on a zero take: the
@@ -9941,9 +9947,6 @@ pub fn advance_labor_allocation(
             // the road with the workers.
             if row_lapsed {
                 let target = allocation.assignments[idx].target.clone();
-                // The hands the party held are who is out there — not the head count the row was
-                // restamped to as it ended (a zero-crew row lapses at zero).
-                posting.party.workers = posting.crew_before;
                 stand_down_party(&mut allocation, posting.party, &target);
                 continue;
             }
@@ -9969,13 +9972,12 @@ pub fn advance_labor_allocation(
                 posting.party.fodder_rate_home = forecast.fodder_rate_home;
                 posting.party.materials_rate_home = forecast.materials_rate_home.clone();
             }
-            // **UNASSIGNED: EVERYONE WALKS HOME.** A row held at zero hands has nobody to keep at
-            // the source, so the party is stood down and walks home with the load and the road.
-            // The row itself survives as a holding.
+            // **A ROW AT ZERO HANDS HOLDS NO PARTY.** A player's unassign stood it down at command
+            // time (`set_assignment` → `WorkParty::walk_home`); a row here at zero was trimmed there
+            // by the shed, whose hands left without walking (`post_a_party`), so whatever is left
+            // walks home. The row itself survives as a holding.
             if allocation.assignments[idx].workers == NO_CREW_ON_THIS_ACTIVITY {
                 let target = allocation.assignments[idx].target.clone();
-                // The hands it held are still out there: they walk home, carrying the load.
-                posting.party.workers = posting.crew_before;
                 stand_down_party(&mut allocation, posting.party, &target);
                 allocation.assignments[idx].party = None;
                 continue;

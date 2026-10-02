@@ -1851,11 +1851,29 @@ fn a_far_workings_rate_home_on_the_turn_it_completes_a_rung_is_the_querys() {
     );
 }
 
-/// ⛔ **A CREW CUT SHORT OF ZERO WALKS ITS DROPPED HANDS HOME** (#706) — a six-hunter party five
-/// hexes out (a three-turn walk), cut to two the turn it reaches the herd, with all six at the source.
-/// The four dropped hands leave the source and walk the whole walk carrying nothing: `idleWorkers` is
-/// unchanged on the cut, the band publishes the four walking home, and they rejoin the pool only as
-/// they arrive. Asserted on the encoded wire.
+/// **Run the fixture hunt until its party stands at the herd with every hand at the source** — the
+/// turn its walk out ends, before any pack has left.
+fn a_party_arrived_at_the_herd(app: &mut App) {
+    for _ in 0..TURNS_TO_SEE_A_PORTER {
+        resolve_a_turn(app);
+        let party = published_party(app);
+        if party.walk_out_remaining == 0 && party.party_workers == CREW {
+            assert_eq!(
+                party.hunters_on_the_road, 0,
+                "fixture: all six at the source"
+            );
+            return;
+        }
+    }
+    panic!("liveness: the party reaches the herd");
+}
+
+/// ⛔ **A CREW CUT SHORT OF ZERO WALKS ITS DROPPED HANDS HOME, FROM THE COMMAND** (#706) — a
+/// six-hunter party five hexes out (a three-turn walk), cut to two with all six at the source. The
+/// four dropped hands leave the source in the command itself and walk the whole walk carrying
+/// nothing. **Before any turn runs**, the band publishes them walking home and `idleWorkers` does not
+/// offer them, and `set_assignment` refuses them to another row — they are not in the band to give.
+/// They rejoin the pool only as they arrive. Asserted on the encoded wire.
 #[test]
 fn cutting_a_far_crew_walks_the_dropped_hands_home() {
     /// The crew the row is cut to.
@@ -1863,38 +1881,45 @@ fn cutting_a_far_crew_walks_the_dropped_hands_home() {
     /// The walk at five hexes, in turns.
     const WALK: u32 = 3;
     let (mut app, band) = world_hunting_at(5);
-    let mut arrived = false;
-    for _ in 0..TURNS_TO_SEE_A_PORTER {
-        resolve_a_turn(&mut app);
-        let party = published_party(&app);
-        if party.walk_out_remaining == 0 && party.party_workers == CREW {
-            assert_eq!(
-                party.hunters_on_the_road, 0,
-                "fixture: all six at the source"
-            );
-            arrived = true;
-            break;
-        }
-    }
-    assert!(arrived, "liveness: the party reaches the herd");
+    a_party_arrived_at_the_herd(&mut app);
     let before = published_homeward(&app);
+    let workforce = |app: &App| {
+        core_sim::BandWorkforce::resolve(
+            app.world.get::<PopulationCohort>(band),
+            app.world.get::<LaborAllocation>(band),
+            None,
+        )
+    };
+    let assignable = workforce(&app).assignable();
     app.world
         .get_mut::<LaborAllocation>(band)
         .expect("the band keeps its allocation")
-        .set_assignment(hunt_target(), KEPT, CREW, None);
-    resolve_a_turn(&mut app);
+        .set_assignment(hunt_target(), KEPT, assignable, None);
+    recapture_snapshot_in_place(&mut app.world);
     let cut = published_homeward(&app);
-    assert_eq!(cut.idle, before.idle, "the cut frees nobody that turn");
-    assert_eq!(cut.workers, CREW - KEPT, "the four dropped hands walk home");
+    assert_eq!(cut.idle, before.idle, "the cut frees nobody");
+    assert_eq!(
+        cut.workers,
+        CREW - KEPT,
+        "the four dropped hands walk home from the command"
+    );
     assert_eq!(cut.food, 0.0, "they carry nothing — the load stays");
     assert_eq!(
         cut.all_home_in, WALK,
         "from the source, over the whole walk"
     );
-    assert_eq!(published_party(&app).party_workers, KEPT);
+    assert_eq!(workforce(&app).assignable(), CREW - (CREW - KEPT));
+    let assignable = workforce(&app).assignable();
+    let given = app
+        .world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band keeps its allocation")
+        .set_assignment(LaborTarget::Scout, CREW - KEPT, assignable, None);
+    assert_eq!(given, 0, "the walkers cannot be given to another row");
     for turn in 1..=WALK {
         resolve_a_turn(&mut app);
         let now = published_homeward(&app);
+        assert_eq!(published_party(&app).party_workers, KEPT);
         if turn < WALK {
             assert_eq!(now.idle, before.idle, "turn {turn}: still walking");
             assert_eq!(now.workers, CREW - KEPT);
@@ -1902,6 +1927,42 @@ fn cutting_a_far_crew_walks_the_dropped_hands_home() {
             assert_eq!(now.workers, 0, "home after the whole walk");
             assert_eq!(now.idle, before.idle + CREW - KEPT, "…and back in the pool");
         }
+    }
+}
+
+/// ⛔ **THE STARVATION SHED'S HANDS LEAVE WITHOUT WALKING HOME — IT SHEDS ONCE.** A far party of six
+/// whose band loses two working people: the shed trims the row to four, and the two it removed are
+/// people the band no longer has. Listing them as walking home would count them against the pool
+/// next turn and fire the shed again (6 → 4 → 2 → 0). The row holds at four, nobody walks home, and
+/// nothing is idle, turn after turn. Asserted on the encoded wire.
+#[test]
+fn a_far_row_the_shed_trims_sheds_once_and_nobody_walks_home() {
+    /// The working people the band keeps.
+    const LEFT: u32 = CREW - 2;
+    /// Turns watched after the loss — several, so a repeat shed would show.
+    const TURNS_AFTER: usize = 6;
+    let (mut app, band) = world_hunting_at(5);
+    a_party_arrived_at_the_herd(&mut app);
+    app.world
+        .get_mut::<PopulationCohort>(band)
+        .expect("the band keeps its cohort")
+        .working = scalar_from_f32(LEFT as f32);
+    for turn in 1..=TURNS_AFTER {
+        resolve_a_turn(&mut app);
+        let party = published_party(&app);
+        let homeward = published_homeward(&app);
+        assert_eq!(
+            party.party_workers, LEFT,
+            "turn {turn}: the shed cut two, once"
+        );
+        assert_eq!(
+            homeward.workers, 0,
+            "turn {turn}: the shed's hands walk nowhere"
+        );
+        assert_eq!(
+            homeward.idle, 0,
+            "turn {turn}: every hand the band has is on the row"
+        );
     }
 }
 

@@ -5590,6 +5590,20 @@ impl LaborAllocation {
         // **A source the band already held keeps its row at zero** — see the doc above. A role's row
         // goes, and a source the band never worked is not conjured into existence by an unassign.
         let keep_holding = applied == 0 && had_row && target.is_source();
+        // ⛔ **A CUT SENDS ITS DROPPED HANDS WALKING HOME NOW, NOT AT THE TURN** (#706) — a far row
+        // cut short of zero through [`crate::work_party::WorkParty::cut_crew`], one held at zero
+        // through [`crate::work_party::WorkParty::walk_home`], onto [`Self::homeward`] in this
+        // command. `walking_home` then covers them at once, so `idle` / `assignable` never offer a
+        // hand that is still days from home to another row. A raise cuts nothing.
+        let standing_party = standing_party.and_then(|mut party| {
+            if applied == 0 {
+                self.homeward.extend(party.walk_home(&target));
+                None
+            } else {
+                self.homeward.extend(party.cut_crew(applied, &target));
+                Some(party)
+            }
+        });
         if applied > 0 || keep_holding {
             self.assignments.push(LaborAssignment {
                 target,

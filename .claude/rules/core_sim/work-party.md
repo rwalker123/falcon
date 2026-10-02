@@ -474,25 +474,33 @@ sweep) goes through `stand_down_unopened_party`, which takes the party's step fo
 (`open_turn`, landing whatever it lands) — without it those walkers would lose a turn the
 command-window paths do not cost.
 
-**A row cut to zero stands down with the crew it HELD.** The posting restamps the party with the
-row's new head count before the turn's stand-downs run, so a zero-crew row (held, or lapsing because
-it holds nothing) would otherwise stand down with `workers == 0` and its hands at the source would
-rejoin the pool without walking a step, leaving their load behind. `PartyPosting::crew_before`
-carries the pre-restamp crew, and both stand-downs restore it. Pinned by
-`work_party_caravan::unassigning_a_deposit_caravan_mid_walk_walks_every_pack_home_as_material`
-(`homewardWorkers == CREW`).
+**A player's cut walks its dropped hands home FROM THE COMMAND** — `LaborAllocation::set_assignment`,
+the one place a crew is cut: a far row cut short of zero through `WorkParty::cut_crew`, one held at
+zero through `WorkParty::walk_home`, onto `homeward` in the command itself (as `abandon`'s
+`bring_the_dropped_party_home` already did). `walking_home` therefore covers them at once, so
+`idleWorkers` and `BandWorkforce::assignable` never offer a hand still days from home, and a second
+`assign_labor` cannot give them to another row. In `cut_crew` the hands at the source go first and
+walk the whole walk carrying nothing — the load stays with those who remain; past them, porters on
+the road nearest home first: one carrying a pack finishes its walk and lands it (rotting by its walk)
+but does not walk back out, one heading back out empty turns round. A party still walking out sends
+the dropped hands back the turns it has covered. A raise cuts nothing: new hands are at the source
+at once, as they always were. Pinned by
+`work_party_caravan::cutting_a_far_crew_walks_the_dropped_hands_home` (before any turn: the four on
+the wire as walking home, `idleWorkers` unchanged, `assignable` without them, a second row refused
+them; they rejoin only as they arrive) and `work_party::tests::a_deep_cut_turns_porters_round_nearest_home_first`.
 
-**A crew cut short of zero walks its dropped hands home too** (`WorkParty::cut_crew`, called by
-`post_a_party` after the turn's step whenever `0 < workers < the party's crew`). The hands at the
-source go first and walk the whole walk carrying nothing — the load stays with those who remain;
-past them, porters on the road nearest home first: one carrying a pack finishes its walk and lands
-it (rotting by its walk) but does not walk back out, one heading back out empty turns round. A party
-still walking out sends the dropped hands back the turns it has covered. The walks ride
-`PartyPosting::walking_home` onto `LaborAllocation::homeward` when the posting settles, so they are
-away from the pool and on the homeward wire fields like any stand-down. A raise is new hands at
-once, as it always was. Pinned by `work_party_caravan::cutting_a_far_crew_walks_the_dropped_hands_home`
-(`idleWorkers` unchanged on the cut, rising only as the four arrive) and
-`work_party::tests::a_deep_cut_turns_porters_round_nearest_home_first`.
+> #### ⛔ THE STARVATION SHED'S HANDS LEAVE WITHOUT WALKING HOME
+>
+> The shed (`LaborAllocation::normalize`) drives the band's committed hands — `walking_home`
+> included — down to the people it still has, so every hand it removes is one the band **no longer
+> has**. Sending those hands home would list them on `homeward`, count them against the pool next
+> turn and fire the shed again on the hands it had just shed: a far row of six losing two people
+> would go 6 → 4 → 2 → 0. So a row the shed **trims** reaches `post_a_party` below its party's crew
+> (the only way it can, a player's cut having already matched them), and the party sheds the
+> difference through `cut_crew`'s own order — the hands at the source first, then porters nearest
+> home, whose packs go with them — with its walks discarded. A row the shed **drops** goes through
+> `shed_unopened_party`: the party takes this turn's step (what lands now lands) and nothing walks
+> home. Pinned by `work_party_caravan::a_far_row_the_shed_trims_sheds_once_and_nobody_walks_home`.
 
 **The hands are away until they arrive.** `LaborAllocation::walking_home` sums the walks' workers;
 `BandWorkforce::walking_home` nets it out of `idle`, `assignable` and `benchable`, and
@@ -512,14 +520,13 @@ Every path that ends a posting routes through the one step:
   still carrying a party that posted nothing this turn, stands it down, and clears `party` — **before**
   the `lapsed` removal, which would otherwise drop the row with its caravan on the road. A re-entered
   row is plainly local afterwards and publishes no party field.
-- **Unassign** — a row held at zero hands has nobody to keep at the source, so the party is stood
-  down (the row survives as a holding if it holds anything). A zero-crew row that posts nothing is
-  caught by the sweep above.
+- **Unassign** — `set_assignment` at zero stands the party down in the command (above); the row
+  survives as a holding if it holds anything, with no party. A row the shed trims to zero walks
+  home whatever its shed left.
 - **Abandon / a zero-crew drop** — `LaborAllocation::drop_source_row` returns the row it removed, and
   `systems::bring_the_dropped_party_home` stands its party down.
-- **The starvation shed** — `LaborAllocation::normalize` drops a row with its party, so the labor
-  pass reads the parties off the rows before the walk and stands down the party of every row the
-  shed drops outright.
+- **The starvation shed** is the one exit that does **not** walk its hands home — see the callout
+  above.
 - **`cancel_order`** — `clear_kinds` drops rows with their parties too, so `handle_cancel_order` reads
   the rows it is about to clear and stands each one's party down through
   `bring_the_dropped_party_home`.
