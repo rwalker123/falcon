@@ -532,7 +532,7 @@ them; they rejoin only as they arrive) and `work_party::tests::a_deep_cut_turns_
 `BandWorkforce::walking_home` nets it out of `idle`, `assignable` and `benchable`, and
 `LaborAllocation::normalize` counts it beside the bench in the total it drives down (nothing in the
 shed can shed a walker, so a pool below them strips every row and stops). It rides `SimState` with
-the allocation (save v16) and sits outside the allocation's intent `PartialEq`, as a row's party
+the allocation (save v18) and sits outside the allocation's intent `PartialEq`, as a row's party
 does.
 
 Every path that ends a posting routes through the one step:

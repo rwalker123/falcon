@@ -189,23 +189,10 @@ pub(crate) fn deposits_to_array(
             deposit.buildBlockedReason().unwrap_or_default(),
         );
         // IS THIS WORKING IN SOME BAND'S BUILD QUEUE RIGHT NOW? — the MEMBERSHIP flag, and the term
-        // `build_turns_remaining`'s `-5` is separated from `-1` by. Resolved by the same live-queue
-        // walk that resolves `build_kit_id`, because the row's own scratch lags a command by a whole
-        // turn and this state exists precisely in that frame.
-        //
-        // ⛔ **IT CANNOT BE REPLACED BY A `build_kit_id != ""` TEST**: a resolved builders kit is
-        // NEVER empty, the bare-handed kit being a roster entry like any other.
+        // `build_turns_remaining`'s `-5` is separated from `-1` by. Resolved by a live walk of the
+        // bands' queues, because the row's own scratch lags a command by a whole turn and this state
+        // exists precisely in that frame.
         let _ = dict.insert("is_queued", deposit.isQueued());
-        // The kit this working's build is being raised with — the patch's `build_kit_id` off the
-        // same one resolution seam, so the row cannot state a tool the pool is not using. `""` only
-        // where no band has this working queued.
-        let _ = dict.insert("build_kit_id", deposit.buildKitId().unwrap_or_default());
-        // **THE KEEPING KIT** — the patch / herd pair, from the upkeep-kit resolution pass.
-        // `upkeep_kit_named` is not recoverable from the id (a player may name the very kit the
-        // derivation would have picked), which is why it rides beside it rather than being
-        // re-derived on the client.
-        let _ = dict.insert("upkeep_kit_id", deposit.upkeepKitId().unwrap_or_default());
-        let _ = dict.insert("upkeep_kit_named", deposit.upkeepKitNamed());
         // **WHAT THIS WORKING'S OWN CREW SPENT KEEPING IT** — the patch / herd pair
         // (`docs/plan_site_crews.md` §2.5): the hands spent keeping, and whether the band-wide
         // settlement filled less than the site's keeping-tool claim.

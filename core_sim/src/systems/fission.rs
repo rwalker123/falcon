@@ -250,6 +250,13 @@ pub fn split_band_from_parent(
     child.children = taken_children;
     child.elders = taken_elders;
 
+    // ---- Divide the founding lines ----
+    // On the same people share, and PARTITIONED: the lines that walk off leave the parent, which is
+    // what lowers both halves' ceilings (`crate::lineage`). Taken off a copy here and written to the
+    // parent below, with the rest of what leaves it.
+    let mut parent_lines = cohort.founding_lines.clone();
+    child.founding_lines = parent_lines.split_off_share(share);
+
     // ---- Divide the stores ----
     // Every good, on the same share. The new band starts stocked because its people were already
     // sitting on that food — there is no reserve calculation and no second consumption rate.
@@ -323,6 +330,7 @@ pub fn split_band_from_parent(
         for (class, amount) in taken_food.iter() {
             parent_cohort.stores.take_food_class(class, amount);
         }
+        parent_cohort.founding_lines = parent_lines;
         parent_cohort.sync_size();
     }
 

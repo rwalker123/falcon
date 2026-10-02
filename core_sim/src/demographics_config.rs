@@ -19,6 +19,7 @@
 
 use std::{
     fs, io,
+    num::NonZeroU16,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -294,6 +295,17 @@ impl KeepingConfig {
     }
 }
 
+/// **Founding lines** — the relatedness proxy (`crate::lineage`, issue #687).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DemographicsLineage {
+    /// `L` — how many unrelated families a **starting** band descends from. Every faction's
+    /// starting band is founded with this many lines; a split takes a proportional share of its
+    /// parent's. **At least one**, enforced by the type: a band of people descends from someone,
+    /// and a `0` is a parse error rather than a band with no lines.
+    pub founding_lines: NonZeroU16,
+}
+
 /// Root demographic configuration.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -316,6 +328,7 @@ pub struct DemographicsConfig {
     /// The tail above `heat.onset_temp`. **Dormant on today's maps** — worldgen tops out near 31 °
     /// and the onset is 40 ° — but calibrated for the range issue #622 opens up, not for today's.
     pub heat: DemographicsTemperatureTail,
+    pub lineage: DemographicsLineage,
 }
 
 /// The **only** `Default` in this module: it parses the builtin JSON, so `default()` and the
@@ -653,6 +666,18 @@ mod tests {
         assert!(
             DemographicsConfig::from_json_str(&value.to_string()).is_err(),
             "a retired/misspelled key must fail to parse"
+        );
+    }
+
+    /// A band with **no** founding lines descends from nobody, so `lineage.founding_lines = 0` is a
+    /// parse error rather than a world whose starting bands hold an empty set.
+    #[test]
+    fn zero_founding_lines_is_rejected() {
+        let mut value = builtin_value();
+        value["lineage"]["founding_lines"] = serde_json::json!(0);
+        assert!(
+            DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+            "a starting band must descend from at least one line"
         );
     }
 }

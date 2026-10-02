@@ -730,9 +730,9 @@ Nobody built them, so there is nothing to hold.
   `deposit_crew_quote` strike the cut on the hands the keeping leaves, and
   `prospective_deposit_gear` reserves the keeping's tools first.
 - **Retired**: `LaborTarget::Quarrywork`, `settle_bands_extraction`, `extraction_keeping_claims` and
-  the per-assignment award vector they fed. The `quarryworkDemand` / `Supplied` / `Shortfall` triple
-  on `PopulationCohortState` is `(deprecated)` and publishes `0`; `KitJob::Quarrywork` and
-  `default_kits.quarrywork` stay in the equipment vocabulary.
+  the per-assignment award vector they fed, and the band-level `quarrywork*` triple on
+  `PopulationCohortState`; `KitJob::Quarrywork` and `default_kits.quarrywork` stay in the equipment
+  vocabulary.
 
 ### The measure: keeper-loads off the deposit's own capacity
 
@@ -909,8 +909,7 @@ branch.
 `removedDeposits` twin — a row that leaves the frame leaves by being absent). The `extract`
 labor row carries `material` beside its tile. The working's keeping is on its own row —
 `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall`, and `upkeepHands` / `upkeepToolsShort`
-(`docs/plan_site_crews.md` §4); `PopulationCohortState`'s `quarrywork*` triple is `(deprecated)` and
-publishes `0`.
+(`docs/plan_site_crews.md` §4); `PopulationCohortState` carries no band-level `quarrywork*` triple.
 
 **A ROW DESCRIBES THE GROUND, AND THE WORKING IS ITS STATE — the FORAGE PATCH's shape.** A row is
 published for **every discovered tile that holds a deposit** — every `(tile, material)` pair whose
@@ -938,9 +937,8 @@ was: the lazily opened set of workings a band has put a crew on.
 renewing deposit standing at capacity quotes its **MSY** — an untouched wood is the one that can
 best afford a crew, not the one with nothing to give; a finite one nobody is cutting answers
 `DEPOSIT_RUNWAY_NO_TAKE` off a `last_take` of
-nothing, and a renewing one still answers `DEPOSIT_RUNWAY_NOT_APPLICABLE`. `isQueued`, `buildKitId`
-and `upkeepKitId` are keyed `(tile, material)` and answer their empty/false defaults for a key they
-do not hold.
+nothing, and a renewing one still answers `DEPOSIT_RUNWAY_NOT_APPLICABLE`. `isQueued` is keyed
+`(tile, material)` and answers `false` for a key it does not hold.
 
 **The fog gate is the ROAD's `Discovered`, not the herd's `Active`, and the whole row passes or none
 of it does.** A quarry does not wander off, so remembering one is remembering something true; and a
@@ -1120,9 +1118,8 @@ index answering both rather than two that could disagree.
 > `UpkeepKitIds` carried the same key for `upkeepKitId` / `upkeepKitNamed` — resolving the working's
 > branch off the **source's own rung** rather than off the row, because one row kind serves both
 > ladders. `docs/plan_pool_toe.md` §4 retires both ids: a site's tools follow from its rung, are
-> settled band-wide by priority, and are published per pool as `PopulationCohortState.poolToe`. A
-> working's `buildKitId` / `upkeepKitId` publish empty, the values went, and only the membership
-> stayed. **A worked-deposit set went with them** — the deposit row gates its build scratch on the
+> settled band-wide by priority, and are published per pool as `PopulationCohortState.poolToe`. The
+> values and the wire fields went, and only the membership stayed. **A worked-deposit set went with them** — the deposit row gates its build scratch on the
 > queue alone, so `WorkedSources` indexes the two food webs and nothing else.
 
 ### The rung catalog — what a wood or a rock body MAY become, once per world

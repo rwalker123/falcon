@@ -299,37 +299,11 @@ table InfluencerCultureResonanceEntry {
   output:long;
 }
 
-table CultureTraitEntry {
-  axis:CultureTraitAxis;
-  baseline:long;
-  modifier:long;
-  value:long;
-}
-
 table CultureLayerState {
   id:uint;
   owner:ulong;
   parent:uint;
   scope:CultureLayerScope;
-  // RETIRED from the client stream (#386). `MapView` reads only this table's topology —
-  // id / owner / parent / scope — to walk the tree and resolve a tile's province. The 45 numbers
-  // below (15 axes x baseline/modifier/value, plus divergence and the thresholds) were read by
-  // nothing but the Inspector's Culture tab, and `lastUpdatedTick` by nothing at all.
-  //
-  // They were the largest single item on the wire: culture layers outnumber tiles (4201 vs 4160)
-  // and each of those numbers drifts ~0.0025/turn, so across 45 of them something crossed a
-  // hundredths boundary every turn and no quantisation could ever settle the layer. Dropping them
-  // took `encode.flat_delta` from 5.5 ms to 0.62 ms.
-  //
-  // Deprecated rather than deleted because slots are positional. The values still ride the bincode
-  // snapshot, which is what rollback restores from.
-  traits:[CultureTraitEntry] (deprecated);
-  divergence:long (deprecated);
-  softThreshold:long (deprecated);
-  hardThreshold:long (deprecated);
-  ticksAboveSoft:ushort (deprecated);
-  ticksAboveHard:ushort (deprecated);
-  lastUpdatedTick:ulong (deprecated);
 }
 
 table CultureTensionState {
@@ -463,15 +437,6 @@ table TileState {
   x:uint;
   y:uint;
   element:ubyte;
-  // RETIRED from the client stream (#386). `mass` drifts every turn on every tile — including
-  // open ocean with no life on it — so it alone put all 4160 tiles of an 80x52 map into every
-  // delta and pinned per-turn cost to tile count, which is the property delta streaming exists to
-  // remove. Its only consumer in the whole client was the Inspector's Terrain tab, rendering it as
-  // "Mass: %.1f". The serde `TileState.mass` beside this slot is gone too, and so is `Tile.mass`
-  // itself: the whole mass economy was demolished with the dead logistics slice (arc #527,
-  // docs/plan_contact_and_logistics.md §As-built). Deprecated rather than deleted because slots
-  // are positional.
-  mass:long (deprecated);
   temperature:long;
   terrain:TerrainType;
   terrainTags:ushort;
@@ -531,21 +496,6 @@ table TileState {
   underlyingTerrain:TerrainType;
 }
 
-// RETIRED (arc #527, docs/plan_contact_and_logistics.md §As-built). `TradeLink` was never inserted
-// by any system, so this vector was empty for the whole life of the band game; `LogisticsLink` was
-// one entity per adjacent tile pair moving a `Tile.mass` nothing gameplay-facing read. The sim no
-// longer builds either. The TABLES below are kept — a client may still decode an old capture, and
-// the contact/logistics substrate will want link-shaped rows again — but the two VECTOR SLOTS on
-// EconomySection are deprecated rather than freed: this repo is worked by concurrent sessions that
-// append to these tables, and a reused field id is exactly how two branches collide.
-table LogisticsLinkState {
-  entity:ulong;
-  from:ulong;
-  to:ulong;
-  capacity:long;
-  flow:long;
-}
-
 // A band's resolved settlement-progression stage — how rooted-in-place its dwelling has become.
 // Fully data-driven: the sim resolves which stage a band is in from the ORDERED stage list in
 // `settlement_stage_config.json` and ships the winning stage's presentation tokens here. All three
@@ -568,22 +518,9 @@ table PopulationCohortState {
   generation:ushort;
   faction:uint;
   knowledgeFragments:[KnownTechFragment];
-  // RETIRED (#512): the whole-band knowledge migration's pending payload. That mechanism was deleted
-  // — defection is now the wellbeing trickle with the same-people filter lifted
-  // (docs/plan_band_fission.md §Defection) — so nothing is pending and the slot stopped being
-  // written. Deprecated, never freed (append-only discipline).
-  migration:PendingMigration (deprecated);
   harvestTask:HarvestTask;
   scoutTask:ScoutTask;
   accessibleStockpile:AccessibleStockpile;
-  // RETIRED: the age brackets as RAW fixed-point Scalars (1e6 = one person). The fraction is an
-  // internal growth accumulator, not a fact about people, and a client that rounded them for itself
-  // disagreed with the sim's own rounding. Replaced by the whole-people `childrenCount` /
-  // `workingAge` / `eldersCount` at the end of this table. Stopped being written; the slots stay
-  // (append-only discipline).
-  children:long (deprecated);
-  working:long (deprecated);
-  elders:long (deprecated);
   stores:[CohortStore];
   ageTurns:uint = 0;
   // TURNS until the larder is empty, INCOME INCLUDED: larder / (consumption + pen feed − income),
@@ -615,11 +552,6 @@ table PopulationCohortState {
   moraleTerrain:long = 0;
   moraleClimate:long = 0;
   moraleUnrest:long = 0;
-  // RETIRED by the harvest floor arc: it summarised the largest Hunt assignment's STANCE, and there
-  // are no stances. The floor it would summarise is per-assignment (`LaborAssignment.floor`), and a
-  // band-wide summary of a continuous per-source dial is not a thing a single string can say.
-  // Stopped being written; the slot stays (append-only discipline).
-  huntMode:string (deprecated);
   // Early-Game Labor (slice 3a): the band's per-source labor allocation — one entry per staffed
   // Forage tile / Hunt herd / Scout / Warrior demand. Client renders the allocation panel from it;
   // also the rollback-persisted staffing. Appended last (append-only schema discipline).
@@ -655,28 +587,6 @@ table PopulationCohortState {
   expeditionAnnounced:bool = false; // whether the arrival feed line has fired for this AwaitingOrders latch.
   pendingRevealX:[uint];      // observed-but-unreported tile coords (zipped with pendingRevealY).
   pendingRevealY:[uint];
-  // HOW FAR THE PRE-LAUNCH ESTIMATE TABLES WERE SAMPLED (expedition_config.json
-  // `estimate_party_sizes`) — the party axis of HerdTelemetryState.huntTripEstimates, and the base of
-  // denialEstimates' own (wider) axis. A global config lever echoed per-cohort, same idiom as
-  // workRange, populated for every cohort.
-  //
-  // *** IT IS NOT A CAP ON THE PARTY, AND THE STEPPER MUST NOT CLAMP TO IT. *** The legal bound is
-  // the band's own idleWorkers and nothing else (docs/plan_denial_raid.md §3.1): you cannot send
-  // workers you do not have, and you may send all the ones you do. The field name predates the split
-  // and is kept only because renaming a wire slot costs a client decode change for no behaviour.
-  //
-  // What it IS for: telling the client where the quoted rows stop. A legal party past the last row
-  // has no pre-computed estimate, and the client must NOT compose one — the take passes through the
-  // sim's whole-animal quantiser, so it is non-linear and ships as an ANSWER, never as terms (see
-  // .claude/rules/core_sim/yield-forecast.md, "THE BOUNDARY"). Quote the largest sampled row WITH
-  // the party size it was sampled for. That is safe in the honest direction: both tables are
-  // monotone in party size, so it under-states a larger party's take and over-states its turns.
-  // RETIRED with the two pre-launch estimate tables. It echoed the last rung of the sampled party
-  // axis those tables were built on - "where the rows stop" - and it capped NOTHING: the sim never
-  // read it, and every client site that mentions it says so in capitals, because a reader naturally
-  // assumes a field called maxExpeditionPartySize is a rules cap. The honest bound on a party has
-  // always been the band's own idle workers. Deprecated rather than deleted: ids are immutable.
-  maxExpeditionPartySize:uint = 0 (deprecated);
   // The band's resolved settlement-progression stage (data-driven; see `SettlementStageView`).
   // The sim resolves it from the band's `size` against the ordered `settlement_stage_config.json`
   // list (interim: a size-only proxy; Phase 3/4 enrich the resolution inputs without touching this
@@ -704,9 +614,6 @@ table PopulationCohortState {
   // LaborAssignment.faunaId. Persisted so a rollback reconstructs `Hunt { fauna_id }`. Appended last
   // (append-only schema discipline — must follow every field shipped in earlier PRs).
   expeditionTargetHerd:string;
-  // RETIRED by the harvest floor arc: a raid names a FLOOR. Stopped being written; the slot stays
-  // (append-only discipline). Read `expeditionFloor` below.
-  expeditionHuntPolicy:string (deprecated);
   // The `move_band`/`BandTravel` destination tile while traveling (`isTraveling` gates it; `0,0`
   // when not traveling). Lets the client draw a destination hex + line from a selected band or
   // expedition to where it's headed. Appended last (append-only schema discipline).
@@ -739,21 +646,6 @@ table PopulationCohortState {
   // Appended last (append-only schema discipline).
   huntPerWorkerProvisions:float = 0;    // one hunter's provisions/turn throughput (global rate)
   expeditionViabilityWarnTurns:uint = 0; // expedition_config.hunt.viability_warn_turns
-  // RETIRED. Was the food this band PAID for pen feed in a turn, drawn by the client as its own
-  // negative row in the food ledger ("my people ate X" / "my animals ate Y"). HUMAN FOOD IS NOT ANIMAL
-  // FEED: a penned herd eats the grass its fenced footprint grows and the hay its keeper carries in
-  // (FODDER, a separate store that never converts to FOOD), and what those two leave uncovered makes
-  // the pen UNDERFED — `penFedFraction` < 1, and the herd shrinks. The larder draw was
-  // short-circuiting exactly that starvation path: a pen whose pasture failed took food out of its
-  // keepers' mouths instead of withering. It stopped being written when the draw was removed, so the
-  // ledger identity loses a term:
-  //
-  //   larder_delta == foodIncome - foodConsumption - raidForfeit        (pinned by a sim test)
-  //
-  // Kept as (deprecated) rather than deleted so the field id/slot stays reserved: this repo is worked
-  // by concurrent sessions that append to these tables, and a freed slot is how two branches collide
-  // on one id.
-  penFeedUpkeep:float = 0 (deprecated);
   // Hunt expedition lever: one worker's carry contribution = expedition_config.hunt.per_worker_carry.
   // Global config echoed per-cohort (same idiom as `maxExpeditionPartySize`,
   // `expeditionViabilityWarnTurns`, `huntPerWorkerProvisions` — the outfit UI lives on the
@@ -767,15 +659,6 @@ table PopulationCohortState {
   // pre-launch huntTripEstimates as ceil(2 × hex_distance(selectedBand, herd) / bandMoveTilesPerTurn).
   // Appended last (append-only schema discipline).
   bandMoveTilesPerTurn:float = 0;
-  // RETIRED. Was the band's steady food income = Σ of every worked source's realizedYield. The client
-  // now sums that income half itself from the per-source realizedYield of the breakdown rows, so the
-  // headline equals the Gathered + Hunted rows it sits above by construction instead of being a second,
-  // independently-computed total that could drift from them — which made this band-level duplicate
-  // redundant. Kept as (deprecated) rather than deleted so the field id/slot stays reserved: this repo
-  // is worked by concurrent sessions that append to these tables, and a freed slot is how two branches
-  // collide on one id. foodIncome above stays — it is the real arrivals and is load-bearing for the
-  // larder_delta == foodIncome − foodConsumption − raidForfeit − foodSpoiled ledger identity.
-  foodIncomeAverage:float = 0 (deprecated);
   // In-flight hunt-party delivery forecast (the client's "Next delivery: ~X food in ~N turns" drawer
   // line) — the in-flight twin of the pre-launch `huntTripEstimates`. Computed at capture by
   // `systems::expeditions::expedition_delivery`. All three are 0/false for a scout, a normal band, or
@@ -836,18 +719,6 @@ table PopulationCohortState {
   // hold, so the party runs repeated trips). 1.0 on a Scout party — it harvests nothing, and an
   // absent floor must NOT read as "take everything". Replaces the retired `expeditionHuntPolicy`.
   expeditionFloor:float = 1;
-  // --- THE RAID'S FILL TARGET: RETIRED (docs/plan_hunt_through_combat.md §5.2) -------------------
-  // It carried a player-set count of whole animals to come home with, below the pack's capacity.
-  // RETIRED because it was a control asking the player to work around a tuning error: a trip's
-  // length is `carry / (engage_rate × stay_chance × body_mass)`, in which PARTY SIZE CANCELS, so it
-  // was the only lever on what is otherwise a species-and-kit constant. The unplayably long trips it
-  // existed to escape (Wild Fowl 88 turns, Grey Wolf 76) are a TUNING problem — issue #491 — and
-  // once tuned there is nothing to escape.
-  //
-  // Kept as (deprecated) rather than deleted so the field id/slot stays reserved: a FlatBuffers
-  // vtable slot is positional, so deleting a field shifts every later one and silently re-points a
-  // client's decode (the fogMode / fogRaster precedent). The sim never writes it.
-  expeditionFillTarget:uint = 0 (deprecated);
   // WHICH STOP WILL END THIS PARTY'S RAID — the core_sim HuntTripBound key ("pack_full" | "floor" |
   // "herd_lost" | "horizon"), off the same in-flight forward simulation expeditionEtaTurns comes
   // from, so it answers for the party's REAL orders (its own floor, against the herd's live stock)
@@ -856,24 +727,16 @@ table PopulationCohortState {
   // "" = not raiding: a resident band, a scout, or a party already walking a load home. That is a
   // different statement from "horizon", which means the projection ran and found no stop.
   expeditionTripBound:string;
-  // --- THE MINIMAL TOE (appended, docs/plan_hunt_through_combat.md 4.8 / docs/plan_early_game_labor.md)
-  // The band's THREE consumable kits, and the tiers they resolve to. ONE KIT, ONE JOB (4.8): spears
-  // raise attack, a SLED raises the HUNT's carry (a carcass is one lumpy object you drag out whole),
-  // BASKETS raise the FORAGE web's carry (berries are loose and bounded by what you can hold). They
-  // are START-STOCKED and NOT CRAFTABLE this slice: these only ever fall. A kit is EQUIPPED while its
-  // remaining condition is > 0; at 0 the role STEPS DOWN to its unequipped tier and STAYS there
-  // (there is no replenishment path yet - running dry is the intended pressure). Performance is FLAT
-  // until expiry: durability and performance are orthogonal axes, so do NOT scale any readout by
-  // remaining condition.
+  // --- THE MINIMAL TOE (docs/plan_hunt_through_combat.md 4.8 / docs/plan_early_game_labor.md) ---
+  // The tiers the band's THREE consumable kits resolve to. ONE KIT, ONE JOB (4.8): spears raise
+  // attack, a SLED raises the HUNT's carry (a carcass is one lumpy object you drag out whole),
+  // BASKETS raise the FORAGE web's carry (berries are loose and bounded by what you can hold). A kit
+  // is EQUIPPED while its remaining condition (`kitItemConditions`) is > 0; at 0 the role STEPS DOWN
+  // to its unequipped tier. Performance is FLAT until expiry: durability and performance are
+  // orthogonal axes, so do NOT scale any readout by remaining condition.
   //
-  // Remaining condition on the equipment.json 0-100 scale. 0 = dry.
-  // RETIRED, replaced by kitItemConditions below (one row per item, config-driven). Marked
-  // deprecated rather than deleted because FlatBuffers field ids are POSITIONAL: removing one
-  // renumbers every field after it and silently mis-reads an old buffer.
-  huntingKitDurability:float = 0 (deprecated);
-  sledKitDurability:float = 0 (deprecated);
   // The RESOLVED tiers, so the client renders the band's real numbers rather than re-deriving them
-  // from the durabilities and the config it does not have.
+  // from the kit conditions and the config it does not have.
   //   - hunterAttack: this band's per-hunter combat `attack` (creatures.json person = 1 unequipped,
   //     equipment.json hunting_kit.equipped_attack = 20 equipped). It is what the combat gate
   //     max(0, attack - defense) is compared against a herd's HerdTelemetryState.defense:
@@ -887,11 +750,11 @@ table PopulationCohortState {
   //     perWorkerBiomass stays the EQUIPPED reference rate (a herd has no band to resolve against).
   hunterAttack:float = 0;
   huntCarryPerWorkerBiomass:float = 0;
-  // --- THE THREE-KIT SPLIT (appended, 4.8 "One kit, one job")
-  // The forage web's half. It is NOT a second reading of the two fields above: a band can be out of
-  // baskets with its sled untouched, and a client that renders huntCarryPerWorkerBiomass on a
-  // gathering row is repeating the defect this split corrected.
-  basketKitDurability:float = 0 (deprecated);   // see kitItemConditions
+  // --- THE THREE-KIT SPLIT (4.8 "One kit, one job") — the forage web's half. It is NOT a second
+  // reading of the two fields above: a band can be out of baskets with its sled untouched, and a
+  // client that renders huntCarryPerWorkerBiomass on a gathering row is repeating the defect this
+  // split corrected.
+  //
   // This band's per-GATHERER throughput, BEFORE the tile's seasonal weight (multiply by the food
   // module's seasonalWeight for the effective rate, exactly as ForagePatchState.perWorkerBiomass
   // already is). Equipped = labor_config forage.per_worker_biomass_capacity (8.0); bare-handed =
@@ -931,8 +794,8 @@ table PopulationCohortState {
   //
   // It exists so the client can put a NUMBER on the projections' "it never finished" sentinels, all
   // of which are horizon-relative and none of which carry the horizon:
-  //   - HuntTripEstimate.turnsToFill == 0        (never filled the pack within the horizon)
-  //   - DenialEstimate.turnsToCollapse{,Low,High} == 0 (never past recovery within the horizon)
+  //   - HuntTripRow.turns_to_fill == 0           (never filled the pack within the horizon)
+  //   - DenialRow.turns_to_collapse{,_low,_high} == 0 (never past recovery within the horizon)
   //   - PopulationCohortState.expeditionTripBound == "horizon" (in-flight: no stop found)
   // ONE lever serves all of them: the denial forecast and the hunt forecast run over the SAME
   // horizon (core_sim `denial_projection_at` and `hunt_trip_forecast_seeded` both read this field),
@@ -950,9 +813,8 @@ table PopulationCohortState {
   // REASSURING direction, which is worse than the "many" it replaces.
   expeditionForecastHorizonTurns:uint = 0;
   // --- THE TOE, ONE ROW PER ITEM (appended last) -------------------------------------------------
-  // Replaces huntingKitDurability / sledKitDurability / basketKitDurability above, which are now
-  // deprecated. See the KitItemCondition table for what a row means and what must NOT be inferred
-  // from it.
+  // One row per item, config-driven. See the KitItemCondition table for what a row means and what
+  // must NOT be inferred from it.
   kitItemConditions:[KitItemCondition];
   // --- WHAT EVERY OFFERED KIT WOULD GRANT *THIS* BAND, RIGHT NOW (appended last) -----------------
   // One row per roster kit, resolved against this band's LIVE wear. See the BandKitTiers table.
@@ -971,13 +833,9 @@ table PopulationCohortState {
   // resolves through ITS OWN job's default; on an in-flight party they all resolve through the one
   // kit the party carries.
   //
-  // A THIRD FIELD, penCarryPerWorkerBiomass, RODE HERE AND IS DELETED (issue #543). It said "this
-  // band's per-KEEPER pen collection rate, which is NOT huntCarryPerWorkerBiomass — a band on the
-  // stalking kit collects a pen at the bare rate rather than the sledded 40". THAT IS FALSE: carry
-  // is a fact about the people and their gear, blind to whether the animal is penned or wild, so a
-  // keeper's rate IS huntCarryPerWorkerBiomass and a second field could only republish it under a
-  // second name. Slots after it renumbered; nothing persists a snapshot buffer, so the field went
-  // rather than being deprecated in place.
+  // THERE IS NO PER-KEEPER PEN CARRY FIELD (issue #543). Carry is a fact about the people and their
+  // gear, blind to whether the animal is penned or wild, so a keeper's rate IS
+  // huntCarryPerWorkerBiomass and a second field could only republish it under a second name.
   //
   //   - scoutVantageRange: the sight range each posted scout vantage reveals at. How far the
   //     vantages are POSTED is not a kit axis (three labor_config dials); this is only how far each
@@ -1021,7 +879,7 @@ table PopulationCohortState {
   // every turn — and it has exactly ONE correct reading, which is the sim's. Publishing the raw
   // Scalars let the client invent a second one: a band of 16.6 working-age people rendered "17" in
   // the PEOPLE bar beside "0 idle of 16" in the WORKFORCE header, the same frame, off the same band.
-  // So `children`/`working`/`elders` above are deprecated slots and these are what a reader uses.
+  // So the raw Scalars are not published, and these are what a reader uses.
   //
   // INVARIANT: childrenCount + workingAge + eldersCount == size, always, by construction — `size`
   // is written as that sum. `workingAge` (the whole assignable workers, already shipped) IS the
@@ -1262,7 +1120,7 @@ table PopulationCohortState {
   // then inverted the gesture it was computed from. THIS field is the rank; that one is a readout.
   //
   // *** IT IS CAPTURED LIVE off `LaborAllocation::build_queue`, NOT stamped by the turn *** - the
-  // same discipline as `buildKitId` on the source rows. The server re-captures and broadcasts after
+  // same discipline as `DepositState.isQueued`. The server re-captures and broadcasts after
   // every dispatched command, so a `build_order`, an `unqueue` or a fresh declaration arrives on
   // THAT COMMAND'S OWN recapture rather than a turn later. A client therefore needs no optimistic
   // ordering overlay, and must not keep one: an overlay is a second ordering beside this one, which
@@ -1481,15 +1339,6 @@ table PopulationCohortState {
   // openingLoadout` for the campaign-wide half (the profile's pick list and its pre-fills), which is
   // one per world and deliberately NOT duplicated per band.
   loadoutWindow:BandLoadoutWindowState;
-  // --- DEPRECATED: THE RETIRED QUARRYWORK BILL (appended last) ---------------------------------
-  // *** DEPRECATED - ALWAYS 0 (docs/plan_site_crews.md section 4). *** This was the `quarrywork`
-  // keeping pool's band-level bill, the roadwork triple one pool over. The pool retired: each
-  // working is kept FIRST by its own `extract` crew, and states what that crew kept on its own
-  // `DepositState` row (`upkeepSupplied`, `upkeepHands`, `upkeepToolsShort`). The three fields stay
-  // because FlatBuffers fields are positional; they publish 0 and nothing reads them.
-  quarryworkDemand:float = 0;
-  quarryworkSupplied:float = 0;
-  quarryworkShortfall:float = 0;
   // --- THIS BAND'S POOL TABLES OF EQUIPMENT (appended last) -------------------------------------
   // WHAT EACH STANDING POOL'S OWN SITES REQUIRE THIS TURN, AND WHAT THE BAND'S SETTLEMENT GAVE
   // THEM (`docs/plan_pool_toe.md` section 4). One row per (pool, item).
@@ -1560,6 +1409,12 @@ table PopulationCohortState {
   // foodNeed - foodConsumption, never negative; 0 on a fed turn.
   foodNeed:float = 0;
   foodShortfall:float = 0;
+  // --- FOUNDING LINES (appended last, issue #687) -----------------------------------------------
+  // How many unrelated families this band descends from - the relatedness proxy
+  // (`docs/plan_civilization_steps.md`). A starting band holds `lineage.founding_lines`; a split
+  // takes a proportional share of its parent's and the parent keeps the rest. The sim tracks the
+  // line identities; only the count is published. Never 0 on a band the viewer owns.
+  foundingLines:uint = 0;
   // THE FOOD THAT ROTTED THIS TURN (#706, appended last) - the larder rot (food the band could not
   // eat before its keeping class's shelf life ran out, struck right after the meal) plus the transit
   // rot of any caravan pack that landed after a walk longer than its class keeps. A rotten pack is
@@ -1730,9 +1585,8 @@ table BandKitTiers {
   // `buildRate` multiplier, and PER_WORKER_OUTPUT + build_work = 1.5 inverts that mint with no
   // reference crew and no reference job.
   //
-  // The `buildRate` slot above is kept rather than deprecated so a client still compiles against it;
-  // a consumer rendering a build axis should read THIS field, as work-per-worker-per-turn - never as
-  // a factor, and never as units off a job.
+  // A consumer rendering a build axis should read THIS field rather than `buildRate` above, as
+  // work-per-worker-per-turn - never as a factor, and never as units off a job.
   buildWorkPerWorker:float = 0;
   // HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A BUILD out of what this band holds (appended)
   // - the head count at or ABOVE which extra hands add no further gear work. `0` = the kit
@@ -1835,10 +1689,6 @@ table LaborAssignment {
   targetX:uint = 0;  // Forage tile / Hunt herd position readout
   targetY:uint = 0;
   faunaId:string;    // Hunt target herd id
-  // RETIRED by the harvest floor arc: an assignment carries `floor` (below), a fraction of the
-  // source's carrying capacity, and that is the whole of what the player decides about pressure.
-  // Stopped being written; the slot stays (append-only discipline).
-  policy:string (deprecated);
   // Per-source food-income breakdown (derived per-turn at capture, 0 on a rehydrated save before the
   // next tick). actualYield = provisions this source produced this turn; sustainableYield = what it
   // could yield without drawing down its stock (forage: ≡ actual; hunt: herd net regrowth). The
@@ -1903,27 +1753,6 @@ table LaborAssignment {
   // "no data", never as famine. Derived per-turn at capture, from the source's POST-take state so
   // slot 0 is the next delivery. Appended (append-only).
   arrivalSchedule:[float];
-  // The TRADE GOODS this source produced this turn — the twin of actualYield in the other currency
-  // (issue #337) — and its steady forward-projected twin. Every harvesting policy now sells the
-  // species' trade component, so these are non-zero on rungs that earned nothing before, and they are
-  // the ONLY thing a wolf hunt produces.
-  //
-  // NEITHER IS FOOD INCOME: `PopulationCohortState.foodIncome` stays Sum(actualYield) and must never
-  // include these, because that sum is one side of the pinned larder identity
-  //   larder_delta == foodIncome - foodConsumption - raidForfeit - foodSpoiled
-  // and trade goods never touch the larder (they credit the faction stockpile). Render a trade line
-  // ONLY when the value is > 0, the rule flora's cash-crop line already uses.
-  //
-  // There is deliberately NO trade arrival schedule: `arrivalSchedule` answers "when does food land
-  // so my people eat", a question with a consumption clock; nothing consumes the trade stockpile per
-  // turn. `realizedTradeYield` is 0 on every FORAGE source — the plant web's trade PROJECTION is a
-  // known gap (#337 covered the animal web); the trade a gather actually earned IS reported in
-  // `tradeYield`. Appended last (append-only).
-  // RETIRED (arc #527) with the trade-goods yield axis: written by every take site and read by
-  // nothing. What a take is really worth beyond food is MATERIALS, which ride
-  // PopulationCohortState.materialBatches as batches with a characteristic vector each.
-  tradeYield:float (deprecated);
-  realizedTradeYield:float (deprecated);
   // --- THE SECOND AXIS (appended, issue #442) ----------------------------------------------------
   // WHAT THIS CREW IS BUILDING on the source, independent of how hard it is pulling:
   //   "" | "cultivate" | "sow" | "tame" | "corral"
@@ -1984,9 +1813,6 @@ table LaborAssignment {
   // range could not state its take at all. Read each pair beside its scalar as one vector.
   actualYieldLow:float = 0;
   actualYieldHigh:float = 0;
-  // RETIRED (arc #527) with the trade-goods axis they bounded.
-  tradeYieldLow:float (deprecated);
-  tradeYieldHigh:float (deprecated);
   // --- THE KIT THIS CREW IS WORKING UNDER (appended last) ---------------------------------------
   // The `equipment.json` roster id (SubsistenceSection.kits) the row's yields are priced at — what
   // the player named on `assign_labor`, or the job's default when they named none, RESOLVED: the
@@ -2036,32 +1862,6 @@ table LaborAssignment {
   // species. The number a player decides on is the herd row's materialPerBiomass /
   // perWorkerMaterial, which are rates and need no take.
   materialYield:[MaterialPayoff];
-  // RETIRED: `improvementWorkers`, the per-source BUILD crew - the twin of the keeper crew below,
-  // retired one slice after it. THE BUILD LEFT THE TILE TOO (docs/plan_standing_upkeep.md 2.5): a
-  // verb names no crew any more, it appends an entry to the band's ORDERED BUILD QUEUE, and the
-  // hands stand on the band-level `builders` role - which arrives as an ordinary row in this very
-  // list, kind="builders", head count in `workers`, exactly like agriculture, husbandry, scout and
-  // warrior. The slot stays because FlatBuffers field ids are positional.
-  //
-  // WHAT SURVIVES PER SOURCE IS `improvement` above, and it is DERIVED AT CAPTURE from that band's
-  // queue entry - the resolved job token (cultivate/sow/tame/corral, or "extend_pen" for a ring),
-  // "" when the band has nothing queued here. So a client still reads "what is being raised on this
-  // source" off the row and still does no arithmetic to get it. The place in the line and the finish
-  // date are the SOURCE's own fields: ForagePatchState / HerdTelemetryState carry
-  // `buildQueuePosition` beside `buildTurnsRemaining`.
-  improvementWorkers:uint = 0 (deprecated);
-  // RETIRED: `maintainWorkers`, the per-source KEEPER crew. MAINTENANCE LEFT THE TILE
-  // (docs/plan_standing_upkeep.md 2.5). An indivisible supplier meeting a per-source demand wastes
-  // whatever it does not spend, and the waste grows as gear makes a hand worth more; a band-level
-  // POOL against the summed demand has no leftover by construction. The keeping is now two BAND-WIDE
-  // STANDING ROLES - `agriculture` (the plant web) and `husbandry` (the animal one) - which arrive as
-  // ordinary rows in this very list, kind="agriculture"/"husbandry", hands in `workers`, exactly like
-  // scout and warrior. The slot stays because FlatBuffers field ids are positional.
-  //
-  // What survives PER SOURCE is the readout: upkeepDemand / upkeepSupplied / upkeepShortfall, where
-  // `supplied` is now that source's SHARE OF THE POOL. Those three stopped answering "did you staff
-  // this one" and started answering "where is my pooled shortfall landing".
-  maintainWorkers:uint = 0 (deprecated);
   // --- THE CROP THIS CREW ASKED FOR (appended last, docs/plan_flora_roster.md 4.2) --------------
   // Which named plant a Forage assignment wants its Cultivate/Sow to commit the patch to — a
   // flora_config.json species key, or "" for "pick the tile's dominant legal plant for me". "" on
@@ -2329,12 +2129,6 @@ table CohortStore {
   quantity:long = 0;
 }
 
-table PendingMigration {
-  destination:uint;
-  eta:ushort;
-  fragments:[KnownTechFragment];
-}
-
 table HarvestTask {
   kind:string;
   module:string;
@@ -2493,19 +2287,6 @@ table CampaignProfile {
   startingUnits:[CampaignStartingUnit];
   inventory:[CampaignInventoryEntry];
   knowledgeTags:[string];
-  // RETIRED. Was the start profile's initial reveal radius around the start marker, which only ever
-  // fed the retired Fog-of-Knowledge overlay's reveal circle. A band's sight is now decided entirely
-  // by `calculate_visibility` (archetype `sight_ranges` in `visibility_config.json`, elevation, LoS,
-  // terrain, movement corridor, scout vantages), so no start-radius override survives. Kept as
-  // (deprecated) rather than deleted so the field id/slot stays reserved — a FlatBuffers vtable slot
-  // is positional, and a freed slot is how two concurrent branches collide on one id.
-  surveyRadius:uint (deprecated);
-  // RETIRED. Was the start profile's "Fog of Knowledge" mode (standard/revealed/shroud), which drove
-  // the separate `fogRaster` data overlay. Fog of war is the only fog the game keeps, and it is
-  // carried by `VisionSection.visibilityRaster`. Kept as (deprecated) rather than deleted so the
-  // field id/slot stays reserved — a FlatBuffers vtable slot is positional, and a freed slot is how
-  // two concurrent branches collide on one id.
-  fogMode:string (deprecated);
   primaryFoodModule:string;
   secondaryFoodModule:string;
 }
@@ -2583,39 +2364,15 @@ table ForagePatchState {
   // `workersNeeded` telemetry is post-hoc — it only reports after a turn is committed).
   // Computed at capture with an output_multiplier of 1.0: multiply every field below by the acting
   // band's `PopulationCohortState.outputMultiplier` (a linear factor, so `maxUsefulWorkers` is
-  // unaffected by it). Compose:
-  //   expected(workers, policy) = min(workers * perWorker, ceiling)
-  //   maxUsefulWorkers(policy)  = ceil(ceiling / perWorker)   [perWorker > 0]
-  // PER ACCOUNT, both terms read off `foragePolicyCeilings` — the per-policy ROW that is the patch's
-  // ONLY wire representation of a ceiling now (#426). Each ceiling is already clamped to the patch's
-  // remaining biomass, so that min IS the take the sim pays (`forage_take` and the forecast share the
-  // ceiling/conversion helpers — forecast == actual is an invariant, see core_sim/CLAUDE.md).
-  // A CULTIVATED (tended) patch reports its tended yield as every ceiling, with perWorkerYield equal
-  // to it — one worker suffices (maxUsefulWorkers = 1); the policy is irrelevant to a tended patch.
+  // unaffected by it). A take at any floor is composed from `biomass` / `carryingCapacity` and THE
+  // PER-BIOMASS YIELD VECTOR below — forecast == actual is an invariant, see core_sim/CLAUDE.md.
   //
-  // THE SIX FLAT `ceiling*` SCALARS ARE RETIRED `(deprecated)` SLOTS (#426) — the treatment the herd's
-  // own per-policy scalars got when `huntPolicyCeilings` replaced them. They had no reader left once
-  // the row landed, and a live-looking duplicate of a policy-keyed table is how a future consumer
-  // comes to read one representation while the sim pays the other. **`(deprecated)` rather than
-  // deleted, and that distinction is load-bearing**: FlatBuffers assigns vtable slots by declaration
-  // order, so removing a field silently re-seats every field after it — including the ones a
-  // concurrent branch appended. The keyword drops the accessors and keeps the slot. `perWorkerYield`
-  // survives as the FOOD per-worker term alone, because a patch-level scalar cannot state a
-  // policy-dependent rate and the two non-food accounts genuinely have one — theirs ride the row.
-  // perWorkerYield folds in this tile's seasonal weight (as `forage_take` does); it can be 0 in a
-  // dead season — do not divide by it, and **do not read it as "no forecast was sent"**: whether a
-  // patch was DESCRIBED is `foragePolicyCeilings`' presence, never this number's size.
+  // `perWorkerYield` is the FOOD per-worker term. It folds in this tile's seasonal weight (as
+  // `forage_take` does); it can be 0 in a dead season — do not divide by it.
   perWorkerYield:float = 0;
-  ceilingSustain:float = 0 (deprecated);
-  ceilingSurplus:float = 0 (deprecated);
-  ceilingDeplete:float = 0 (deprecated);
-  ceilingEradicate:float = 0 (deprecated);
-  // --- The Cultivate investment rung (appended) ---
-  // The DIP — what the patch pays while it is being prepared — rides `foragePolicyCeilings`' own
-  // `cultivate` row like every other rung. `tendedYield` = food/turn the patch will pay ONCE
-  // cultivated (maintenance labor: one worker suffices); with that row it is the client's
-  // "preparing X → then Y" pre-commit pair. Cultivate is FORAGE-ONLY (the herd twin is Corral).
-  ceilingCultivate:float = 0 (deprecated);
+  // --- The Cultivate investment rung --- `tendedYield` = food/turn the patch will pay ONCE
+  // cultivated (maintenance labor: one worker suffices). Cultivate is FORAGE-ONLY (the herd twin is
+  // Corral).
   tendedYield:float = 0;
   // --- The Sow investment rung + the Field (appended, slice 5/6a) --- plant RUNG 3, the twin of the
   // herd's Corral block. `fieldProgress` is the per-patch `plant:field` build meter 0..1 (the mirror
@@ -2626,19 +2383,10 @@ table ForagePatchState {
   // tended.
   fieldProgress:float = 0;
   isField:bool = false;
-  // Sow's DIP — what the ground pays while it is being sown (the rung's
-  // `yield_fraction_while_building` × what the ground would otherwise pay — the MSY dip on a wild
-  // patch, the *tended-harvest* dip on a tended one being upgraded) — likewise rides its OWN `sow`
-  // row. On ground the crew has only just seeded that is honestly ~0: there is no standing crop to
-  // take a fraction of, so a bare-ground sow is pure investment. `fieldYield` = food/turn the patch
-  // will pay ONCE sown (maintenance labor: one worker suffices), the Field's rate on its current
-  // standing crop — 2× `tendedYield` on the shipped dials. Together they are Sow's
-  // "preparing X → then Y" pre-commit pair, exactly as the `cultivate` row and `tendedYield` are
-  // Cultivate's. A row PER RUNG rather than one shared dip: the plant branch has two investment rungs
-  // whose dips are independently tunable, and folding them onto one number would pass every
-  // forecast==actual test by coincidence and lie the moment either rung is retuned (the `ceilingTame`
-  // lesson).
-  ceilingSow:float = 0 (deprecated);
+  // `fieldYield` = food/turn the patch will pay ONCE sown (maintenance labor: one worker suffices),
+  // the Field's rate on its current standing crop — 2× `tendedYield` on the shipped dials. Together
+  // with `tendedYield` it is the two investment rungs' payoff pair: the rungs' baskets and conversion
+  // gains differ, so one number cannot answer both.
   fieldYield:float = 0;
   // **WHY this ground will not take seed** — "" when it will (and on a rung with no site requirement).
   // Otherwise the verdict of the `plant:field` rung's `site_requirement`, as a stable key:
@@ -2696,62 +2444,14 @@ table ForagePatchState {
   // (`isCultivated`/`isField`). See docs/plan_flora_roster.md §4.3.
   committedSpecies:string;
   committedDisplayName:string;
-  // --- THE TILE'S YIELD VECTOR (appended, issue #426) --------------------------------------------
-  // Every field above this line is PROVISIONS. But a harvest of `B` biomass pays `B × yield.*` into
-  // THREE accounts, and a patch's rate for each is the share-weighted average over its own basket
-  // (`patch_provisions_per_biomass` / `patch_trade_per_biomass` / `patch_fodder_per_biomass`) — so
-  // the food-only forecast under-reported almost every tile in the game, not merely the cash crops.
-  // Every staple carries the flat `trade_goods_per_biomass` token (0.005), so essentially NO tile is
-  // single-account; a tobacco Field was just the case where the missing account was the WHOLE yield
-  // and `perWorkerYield == 0` made the client read "no forecast data".
-  //
-  // THIS IS THE **TILE's** VECTOR, NOT A PLANT'S — do not confuse it with `FloraShareInfo`'s
-  // `cultivate*`/`sow*` payoffs, which answer "what would THIS PLANT pay if I committed to it".
-  // Rungs 1 and 2 are baskets (rung 2 only WEEDS), so they routinely pay 2–3 accounts; only a sown
-  // Field is one plant. The two surfaces are answering different questions and must stay separate.
-  //
-  // Read each beside its provisions sibling as ONE vector and render a component **only when it is
-  // non-zero** — the rule `HuntPolicyCeiling.tradeGoodsPerTurn` already states. In particular
-  // `trade > 0` does **NOT** mean "cash crop": every staple pays the token.
-  //
-  // **There is deliberately NO patch-level `perWorkerTrade`/`perWorkerFodder`.** The plant web's
-  // trade rate is POLICY-DEPENDENT (`Deplete` marks it up), and a policy-blind per-worker scalar
-  // cannot express that — so the per-worker vector lives on the per-policy ROW below, where it can be
-  // stated correctly. `perWorkerYield` above stays as the shipped food throughput.
-  //
-  // The per-policy ceilings as ROWS rather than scalars — one per rung, each carrying all three
-  // accounts. This replaces the six flat `ceiling*` fields above (now deprecated slots), mirroring
-  // the migration `HerdTelemetryState` already made to `huntPolicyCeilings`: a future rung (rung 4,
-  // Worked Land) costs no schema change, where the flat shape would have cost three more fields per
-  // rung forever.
-  // RETIRED by the harvest floor arc: four rows cannot express a continuous dial. The client
-  // composes any floor's ceiling from `biomass`/`carryingCapacity`/`*PerBiomass` below. Stopped
-  // being written; the slot stays (append-only discipline).
-  foragePolicyCeilings:[ForagePolicyCeiling] (deprecated);
-  // The non-food halves of the two investment rungs' PAYOFFS — the twins of `tendedYield` /
-  // `fieldYield`, exactly as `pastoralTrade`/`corralTrade` are of `pastoralYield`/`corralYield`. A
-  // tended patch is drawn down, so its accounts ride the take; a Field is a managed rate. Two fields
-  // per account per rung for `tendedYield`/`fieldYield`'s own reason: the rungs differ in basket,
-  // conversion gain AND the shape of the harvest, so one number cannot answer both.
-  // RETIRED (arc #527) with the trade-goods axis.
-  tendedTrade:float (deprecated);
+  // The FODDER halves of the two investment rungs' PAYOFFS — the twins of `tendedYield` /
+  // `fieldYield`. A tended patch is drawn down, so its fodder rides the take; a Field is a managed
+  // rate. One field per rung for `tendedYield`/`fieldYield`'s own reason: the rungs differ in basket,
+  // conversion gain AND the shape of the harvest, so one number cannot answer both. THIS IS THE
+  // **TILE's** VECTOR, NOT A PLANT'S — `FloraShareInfo`'s `cultivate*`/`sow*` payoffs answer "what
+  // would THIS PLANT pay if I committed to it", a different question.
   tendedFodder:float = 0;
-  // RETIRED (arc #527). A cash Field's whole product is MATERIALS now; a material yield cannot
-  // be quoted as one per-turn number, so there is no replacement scalar here.
-  fieldTrade:float (deprecated);
   fieldFodder:float = 0;
-  // --- THE BUILD DIPS: RETIRED (docs/plan_standing_upkeep.md section 2.2) ------------------------
-  // Each plant investment rung's `yield_fraction_while_building`, the factor a crew's take was
-  // multiplied by while it built that rung.
-  //
-  // THE DIP DISSOLVED INTO THE WORK BUDGET. It said "this crew is preparing ground, not gathering",
-  // which is a work-budget conflict hardcoded as a fraction; a crew-turn is ONE POOL, so work spent
-  // on the build is work not spent on the take, and a building crew now simply takes NOTHING. There
-  // is no factor left to publish: the client reads `preparing(stance, rung) = 0` from the model
-  // rather than from a number. Deprecated rather than deleted because FlatBuffers field ids are
-  // POSITIONAL — removing one renumbers every field after it.
-  cultivateBuildFraction:float (deprecated);
-  sowBuildFraction:float (deprecated);
   // --- THE NEGLECT GRACE (appended) --------------------------------------------------------------
   // How many more turns nobody may work this patch before its improvement starts reverting. The sim
   // now forgives a rung's `grace_turns` of consecutive neglect before the feral bleed begins, so a
@@ -2771,18 +2471,6 @@ table ForagePatchState {
   // patch carrying both reports the Field's grace.
   hasNeglectGrace:bool = false;
   neglectGraceRemaining:uint = 0;
-  // --- THE BUILD CREW: RETIRED (docs/plan_standing_upkeep.md section 2.2) -------------------------
-  // The crew each plant investment rung's build wanted (`crew_needed` on the ladder). It FLOORED the
-  // compose sheet's worker cap, because the cap was inverted out of the TAKE and a building crew was
-  // paid a dipped take — so committing to a 25-turn improvement asked for FEWER people than gathering
-  // the same ground.
-  //
-  // THE PLAYER STATES THE BUILD'S CREW NOW: `cultivate|sow|tame|corral <faction> <target...>
-  // <workers>` names it outright, so there is no blended count for a rung-level floor to raise and no
-  // number for the sim to guess. Deprecated rather than deleted because FlatBuffers field ids are
-  // POSITIONAL - removing one renumbers every field after it.
-  cultivateCrewNeeded:uint (deprecated);
-  sowCrewNeeded:uint (deprecated);
   // --- THE PER-BIOMASS YIELD VECTOR (appended, docs/plan_harvest_floor.md §5) --------------------
   // What ONE UNIT of this source's standing stock is worth, in each account, at the rates the sim
   // actually pays with. With `biomass` (B) and `carryingCapacity` (K) already on this table, the
@@ -2813,9 +2501,6 @@ table ForagePatchState {
   // so a tended patch carrying a committed crop reads its committed conversion, not the wild one.
   provisionsPerBiomass:float = 0;
   fodderPerBiomass:float = 0;
-  // RETIRED (arc #527) with the trade-goods axis: the source's non-food product is materials,
-  // and a material rate is a per-material reading rather than one scalar.
-  tradePerBiomass:float (deprecated);
   // --- THE PER-WORKER BIOMASS THROUGHPUT (appended) ----------------------------------------------
   // What ONE gatherer moves this turn, **in biomass**: `per_worker_biomass_capacity × seasonalWeight`
   // — the exact term `forage::forage_take`'s worker cap multiplies by the head-count. It folds in the
@@ -2896,7 +2581,7 @@ table ForagePatchState {
   collapseFraction:float = 0;
   stressedFraction:float = 0;
   // --- WHAT A GATHER OF THIS PATCH IS MADE OF (appended last, arc #527) ---
-  // The replacement for the retired tradePerBiomass above, and the RUNG-1 half of the material
+  // The successor to the retired trade-goods rate, and the RUNG-1 half of the material
   // story: FloraShareInfo.sowMaterialPayoff/cultivateMaterialPayoff quote rungs 3 and 2, and a WILD
   // gather had nothing at all - a tile whose basket is 32% cotton and 26% tobacco read
   // "0.24 FOOD, - FODDER" while the turn banked fibre and leaf.
@@ -3391,29 +3076,6 @@ table ForagePatchState {
   // capacity beside it moves.
   buildDestinationCapacity:float = -1;
 
-  // WHAT THIS SOURCE'S BUILD IS BEING RAISED WITH (appended last, append-only wire) - the kit id the
-  // winning band's queue entry RESOLVES TO, and "" when no band has this source queued.
-  //
-  // IT IS THE RESOLVED KIT, NEVER "the player named none". That is `kitId`'s standing rule on the
-  // labor row, and it matters more here: the builders' default is derived PER QUEUE ENTRY from that
-  // entry's own food web (a hoe for a Cultivate, hurdles for a Tame), so an entry that named nothing
-  // would otherwise publish "" while the pool was out with hurdles. An explicit bare-handed pick
-  // crosses as the roster's own bare kit id, which is a real selection and reads differently from the
-  // empty string above.
-  //
-  // THERE IS NO SECOND "what would the default be" FIELD, deliberately: the client mirrors the same
-  // roster derivation (KitRoster.build_kit_for_branch) to draw its `(default)` mark, exactly as the
-  // hunt row does per quarry.
-  //
-  // IT IS CAPTURED LIVE off the band's queue, NOT stamped by the turn like `buildQueuePosition` above.
-  // The server re-captures and broadcasts after every dispatched command, so a live read shows a kit
-  // pick immediately where a turn-written one would lag a whole turn.
-  //
-  // IT RIDES THE SAME WINNING BAND as `buildQueuePosition`: several bands may work one source, and a
-  // kit taken from one band's queue beside a position from another's would be two answers pretending
-  // to be one.
-  buildKitId:string;
-
   // WHAT RUNG THIS PATCH IS STANDING ON *NOW* (appended last, append-only wire) - `<branch>:<id>`,
   // the SAME spelling `buildDestinationRung` above ships. Read the two as a pair, because the
   // difference between them is the whole point: that one says where a QUEUED CLIMB IS HEADED and is
@@ -3510,45 +3172,6 @@ table ForagePatchState {
   // them.
   cultivationUpkeepMaterialDemand:[MaterialPayoff];
   fieldUpkeepMaterialDemand:[MaterialPayoff];
-  // --- WHAT THIS SITE IS KEPT WITH (appended last, append-only wire) ----------------------------
-  // THE KEEPING KIT IS PER WORK SITE, NOT PER BAND (docs/plan_standing_upkeep.md 2.7). The band is
-  // the pool of workers and goods to draw from; it does not decide which tool a given site is worked
-  // with. So this was a property of the WORKED ROW, set by the retired `upkeep_kit` command, exactly
-  // as `buildKitId` above was of the queue entry. Both publish empty (docs/plan_pool_toe.md 4).
-  //
-  // upkeepKitId = THE KIT THE KEEPERS OF THIS SITE ARE ACTUALLY CARRYING, resolved - never "the
-  //               player named none". `kitId`'s standing rule, and it matters here for `buildKitId`'s
-  //               reason one account over: the default is DERIVED from this site's own food web, so a
-  //               row that named nothing would otherwise publish "" while the keepers were out with
-  //               hoes. An explicit bare-handed pick crosses as the roster's own bare kit id, which
-  //               is a real selection and reads differently from the empty string. "" only when NO
-  //               band ANYWHERE works this source. NOT faction-filtered: `resolve_upkeep_kits` walks
-  //               every band's allocation, so on a source the viewer can SEE but only a rival works,
-  //               this publishes the RIVAL's kit with `upkeepKitNamed` true. The leak is inherited
-  //               verbatim from `buildKitId`'s `resolve_build_kit_ids` above; it is stated here
-  //               because a comment claiming a filter that does not exist is worse than the leak.
-  // upkeepKitNamed = whether that id is an OVERRIDE the player stated, as opposed to the web's
-  //               derivation. The two are NOT recoverable from the id alone - a player may name the
-  //               very kit the derivation would have picked - and a picker has to be able to draw its
-  //               `(default)` mark and offer "back to default" without guessing.
-  //
-  // WHICH KITS A CLIENT MAY OFFER HERE IS ALREADY ON THE WIRE, and there is deliberately NO second
-  // roster: `KitOption.jobs` lists "agriculture" for the kits that keep a PLANT site and "husbandry"
-  // for the kits that keep an ANIMAL one, and `buildWorkPerWorker`/`buildWorkBranch` beside it say
-  // what each is worth on which web. A kit named for a job outside that list is a COMMAND FAILURE,
-  // so the picker must filter by the site's web exactly as it filters a builders kit.
-  //
-  // IT IS CAPTURED LIVE off the bands' rows, NOT stamped by the turn - `buildKitId`'s rule, for its
-  // reason: the server re-captures and broadcasts after every dispatched command, so a kit picked on
-  // a row has to be visible in that frame where a turn-written one would lag a whole turn.
-  //
-  // WHEN SEVERAL BANDS WORK ONE SOURCE, A STATED OVERRIDE WINS over a band that left the derivation
-  // alone, and the first stated one wins among several. Every band that left it alone answers the
-  // SAME derived kit - it is a pure function of the site's web - so the only way two bands can
-  // disagree is that one of them named something, and publishing the derivation over a real pick
-  // would hide the pick entirely.
-  upkeepKitId:string;
-  upkeepKitNamed:bool = false;
   // --- WHAT THIS SITE'S OWN CREW SPENT KEEPING IT (appended last, docs/plan_site_crews.md) -----
   // A SITE'S CREW KEEPS IT FIRST AND COLLECTS WITH WHAT IS LEFT (section 2.1). `upkeepSupplied`
   // above is what those keeping hands delivered; these two say how many hands that took and whether
@@ -3659,44 +3282,6 @@ table BuildQueueEntryState {
   road:bool = false;
 }
 
-// One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
-// twin of [HuntPolicyCeiling], and deliberately the same shape: `policy` names the stance
-// (`sustain`/`surplus`/`deplete`/`eradicate` — FOUR rows since issue #442, the build dips having
-// become `cultivateBuildFraction`/`sowBuildFraction` factors on these), and the three components are
-// that stance's per-turn ceiling in each account, already biomass-clamped, captured at
-// `output_multiplier = 1.0`.
-//
-// A LIST, not flat scalars, for the reason the herd's is: the set of rungs grows (rung 4 is planned),
-// and a row costs no schema change where a scalar triple costs three fields per rung forever.
-//
-// **`fodderPerTurn` has no herd counterpart** — the animal web has two accounts, the plant web three
-// (`hay_grass` pays fodder and nothing else). Render a component only when it is non-zero.
-//
-// **THE ROW IS SELF-CONTAINED: it carries the per-worker vector too, and that is load-bearing.** The
-// client composes `expected(workers, policy) = min(workers × perWorker, ceiling)`, so BOTH terms must
-// be in the same units — and on the plant web the trade rate is POLICY-DEPENDENT, because `Deplete`
-// applies `market.trade_goods_multiplier` ("sell harder") at the credit site. The sim applies that
-// markup to the **final take**, i.e. after the worker cap, so a markup folded into the ceiling alone
-// would understate a **labor-bound** Deplete take by the full multiplier — and a forage Deplete
-// ceiling is `0.20 × biomass`, so labor is usually the binding term, making that the common case
-// rather than the rare one.
-//
-// So each row states the per-worker contribution **under its own policy**, with the markup already
-// folded in server-side. The client does `min(w × row.perWorker*, row.ceiling*)` per component and
-// never learns what a markup is — the same "the sim answers, the client renders" discipline as
-// `huntTripEstimates`. `perWorkerProvisions`/`perWorkerFodder` repeat an
-// invariant number across the rows; that redundancy is the price of the `min` being honest per
-// component, and it is cheap.
-table ForagePolicyCeiling {
-  policy:string;
-  provisionsPerTurn:float = 0;
-  tradeGoodsPerTurn:float = 0;
-  fodderPerTurn:float = 0;
-  perWorkerProvisions:float = 0;
-  perWorkerTradeGoods:float = 0;
-  perWorkerFodder:float = 0;
-}
-
 // ONE MATERIAL A COMMITMENT WOULD PAY, AND HOW MUCH OF IT PER TURN (appended, arc #527) - a row of
 // FloraShareInfo.sowMaterialPayoff / cultivateMaterialPayoff.
 //
@@ -3796,18 +3381,6 @@ table FloraShareInfo {
   // yield vector pays no fodder) or a plant that cannot climb to the Field rung here. Produced by the
   // same `field_fodder` payoff function the sim pays with, so the quote and the payout cannot drift.
   sowFodderPayoff:float = 0;
-  // --- WHAT A CASH-CROP FIELD WOULD PAY (appended, flora roster F4) ---
-  // Trade goods/turn a sown Field of THIS plant would credit to the faction trade_goods stockpile on
-  // this tile, in the same convention as `sowFodderPayoff` but routed to the TRADE account. A cash
-  // crop's payoff is NOT in provisions, so `sowYieldRatio`/`sowPayoff` read `0` for it (worthless as
-  // food) — this is the number that lets the picker show a cash crop's real value instead of a bare
-  // 0x. `0` for hay (its yield vector pays no trade at all) or a plant that cannot climb to the Field
-  // rung here. A STAPLE reads the small flat token (`trade_goods_per_biomass` 0.005), never `0` — so no
-  // client surface may treat `trade > 0` as "cash crop". Produced by the same `field_trade_goods`
-  // payoff function the sim pays with, so the quote and the payout cannot drift.
-  // RETIRED (arc #527). The crop picker's cash-crop row went with the trade axis; a per-material
-  // quote is client-side work with a different shape.
-  sowTradePayoff:float (deprecated);
   // --- WHAT A TENDED PATCH WOULD PAY IN THE TWO NON-FOOD ACCOUNTS (appended, issue #419) ---
   // The rung-2 twins of `sowFodderPayoff`/`sowTradePayoff`: fodder and trade goods per turn a
   // completed TENDED PATCH of this plant would pay on this tile. `0` where the plant's vector pays
@@ -3826,8 +3399,6 @@ table FloraShareInfo {
   // `Deplete`-policy concept applied at the credit site, and a crop row states what the CROP pays on
   // this ground. The same rule `sowTradePayoff` states one rung up.
   cultivateFodderPayoff:float = 0;
-  // RETIRED (arc #527) — see sowTradePayoff.
-  cultivateTradePayoff:float (deprecated);
   // --- WHAT THIS PLANT IS FOR (appended, tile-card crop roles) ---
   // The species' own `role` (flora_config.json -> species): "staple" | "fodder" | "cash". A DISPLAY
   // TAG — nothing in the sim branches on it, and nothing on a client may either. The yield vector is
@@ -3935,11 +3506,6 @@ table LadderKnowledgeProgress {
 // ladder progress.
 table IntensificationKnowledgeState {
   faction:uint;
-  cultivation:float = 0 (deprecated);
-  herding:float = 0 (deprecated);
-  seedSelection:float = 0 (deprecated);
-  penning:float = 0 (deprecated);
-  foddering:float = 0 (deprecated);
   // EVERY knowledge the ladder declares, in the roster's own order. Sparse in VALUE, never in
   // MEMBERSHIP: a knowledge the faction has not begun reads 0 rather than being absent, so a client
   // never has to tell "not begun" from "not published".
@@ -3972,168 +3538,6 @@ table PopulationDemographicsState {
   elders:uint = 0;
 }
 
-// One take policy's per-turn BAND / local-hunt ceiling for a herd, in PROVISIONS (already converted
-// from biomass by the sim). Worker-INDEPENDENT: the policy's cap on the take at this herd's CURRENT
-// state, before any party-throughput cap, clamped to the herd's remaining biomass. `0` = no take is
-// possible under this policy (a collapsing sub-Allee herd yields nothing under Sustain/Surplus).
-// `policy` is free-form (`sustain|surplus|deplete|eradicate|corral`), like `species`, so a new policy
-// needs no schema change.
-//
-// THE ROWS ARE NOT ALL THE SAME KIND OF QUANTITY — which is exactly why nothing may divide by them:
-// Sustain is a per-turn FLOW (MSY), Surplus that flow × a multiplier, Corral a fraction of it (the
-// pen-building dip), while Deplete/Eradicate are shares of standing STOCK that shrink as the herd is
-// drawn down.
-//
-// Consumer: the resident-band local-hunt yield preview, for ONE turn at the herd's current state,
-//   min(workers × HerdTelemetryState.perWorkerYield, provisionsPerTurn) × outputMultiplier
-// (and the same per component against tradeGoodsPerTurn — NOT the species-blind cohort echo
-// `huntPerWorkerProvisions`, see its doc)
-// That single-turn arithmetic is legitimate; projecting it across turns is not.
-// A hunting EXPEDITION must not forecast a trip from this (or any) rate: `cap / rate` is wrong for
-// every policy, because the herd's state moves under the party. An expedition's trip length comes
-// from HuntTripEstimate, which the sim forward-simulates.
-table HuntPolicyCeiling {
-  policy:string;
-  // BAND / local-hunt ceiling in provisions/turn. Produced by projecting the herd's
-  // `fauna::hunt_forecast` through `SourceYieldForecast::ceiling_for(policy)` — the per-policy
-  // biomass ceiling (`fauna::hunt_policy_ceiling`) converted by the species' own `HuntYield::apply`,
-  // the same helpers the take path pays with (forecast == actual, per component). Never re-derive it.
-  provisionsPerTurn:float = 0;
-  // The SAME ceiling in TRADE GOODS/turn (appended last — field slots are positional). The row is a
-  // PAIR, not a food scalar (issue #337): every harvesting policy sells the species' trade component,
-  // and an INEDIBLE species (a wolf) reads provisionsPerTurn == 0 with this strictly positive — a
-  // food-only row could not express its yield at all. Render a trade line ONLY when this is > 0 (the
-  // rule flora's cash-crop line already uses), so a source with no trade shows no line, not a false 0.
-  tradeGoodsPerTurn:float = 0;
-}
-
-// The sim's PRE-LAUNCH HUNT-TRIP ESTIMATE for one (policy, party size) against one herd — the
-// *answer*, so the client's outfit UI is a pure TABLE LOOKUP and does ZERO arithmetic.
-//
-// Produced by core_sim's `hunt_trip_forecast`, a bounded forward SIMULATION of the trip (herd
-// regrowth + the party's real take, turn by turn) rather than a closed-form `carryCap / rate`. The
-// division was wrong for Surplus/Deplete on a small herd, whose per-policy ceiling is a *stock*, not
-// a flow: the party strips the headroom in a turn or two, then crawls at the herd's regrowth trickle.
-// It read a 4-worker party on a full Rabbit Warren (K = 200) under Surplus as a ~5-turn trip; the
-// simulation says that party NEVER fills within the 60-turn horizon (only a 1-worker party — a
-// quarter the pack — fills, in 23 turns).
-//
-// Counts only turns spent HUNTING, once the party is in reach — travel is NOT included.
-table HuntTripEstimate {
-  // RETIRED by the harvest floor arc (docs/plan_harvest_floor.md): a raid names a FLOOR, not a
-  // stance. Stopped being written; the slot stays (append-only discipline). Read `floor` below.
-  policy:string (deprecated);
-  // A SAMPLED party size — one rung of the expedition_config.estimate_party_sizes ladder, exactly as
-  // `floor` below is one of RAID_FORECAST_FLOOR_SAMPLES. Resolve a party to the NEAREST row and name
-  // the size it was computed for; never a cap on what may be launched.
-  partyWorkers:uint = 0;
-  // Turns of hunting until the RAID COMPLETES — the party comes home when the pack fills OR the
-  // standing surplus is spent (herd at the policy's floor) OR the herd is lost. NOT "turns to fill
-  // the pack": a big party on a full herd leaves a partial pack once it strips the surplus, and that
-  // is a successful short trip. 0 = never completed within forecast_horizon_turns.
-  turnsToFill:uint = 0;
-  // Does this trip bring home FOOD? REDEFINED (issue #337): a fact about the SPECIES, not the policy
-  // — false means the quarry is INEDIBLE (a wolf), so render "no food delivered" and never an ETA. It
-  // used to read false for `eradicate` on the premise that denial carries nothing home; an Eradicate
-  // raid now banks the whole-stock windfall like every other rung. See deliversTrade (appended last).
-  deliversFood:bool = false;
-  // Whole animals the raid KILLS over M turns (append-only) — a kill count, the client headlines "≈N
-  // animals over M turns"; the delivered food total is `deliveredFood`, NOT `animalsTaken × foodPerAnimal`
-  // (a party too small to seat a whole animal still kills one and wastes the rest). Bounded by the
-  // standing surplus, so it plateaus with partyWorkers once the surplus (not the pack) binds — that
-  // plateau IS the max-useful party size (ceil(surplus_food / per_worker_carry)). 0 = herd at/below
-  // the policy's floor, no surplus to raid (the honest non-viable case). NOTE: `animalsTaken` is now a
-  // KILL count — a party too small to seat a whole animal still kills one and wastes the rest (mirroring
-  // the resident band), so the delivered payload is `deliveredFood`, not `animalsTaken × foodPerAnimal`.
-  animalsTaken:uint = 0;
-  // Food the party actually LANDS in its larder over the raid (append-only) — the PRIMARY readout. A
-  // small party on a big animal now brings home a partial (with waste), so "too lean to raid" means
-  // `deliveredFood == 0` (no surplus at any party size), NOT "party too small to carry a whole animal".
-  deliveredFood:float = 0;
-  // Food killed but not hauled home over the raid (append-only). `wastedFood / (deliveredFood +
-  // wastedFood)` is the waste fraction the client shows beside the delivered total.
-  wastedFood:float = 0;
-  // Does this trip bring home TRADE GOODS? (appended last — field slots are positional, so a new
-  // field goes strictly after every shipped one.) The sibling of deliversFood: the other component of
-  // the species' hunt-yield vector (issue #337), so a wolf trip reads deliversFood=false,
-  // deliversTrade=true ("pelts, no meat") instead of being mistaken for a denial mission. The trade
-  // AMOUNT a raid delivers (`deliveredTrade`) is a later slice of the same arc.
-  deliversTrade:bool = false;
-  // Trade goods the party actually LANDS over the raid (appended last) — the twin of deliveredFood,
-  // projected through the SAME HuntYield::apply the take path pays with (issue #337). For a wolf raid
-  // this is the ONLY payload: deliveredFood is 0 and deliversFood is false.
-  deliveredTrade:float = 0;
-  // --- THE SAMPLED FLOOR (appended, docs/plan_harvest_floor.md) ---------------------------------
-  // Where this sampled raid stops, as a fraction of the herd's carrying capacity. Replaces the
-  // retired `policy` string.
-  //
-  // THE TABLE SAMPLES A CONTINUUM — it is not a set of stances. A raid's trip length is a bounded
-  // forward simulation with no closed form, so the sim cannot hand the client a formula and must
-  // export answers at chosen points instead; the points are `snapshot::RAID_FORECAST_FLOOR_SAMPLES`,
-  // and the client interpolates between them for the outfit preview. Read these as marks on a dial,
-  // never as the options on offer: the launch command accepts ANY floor in 0.0..=1.0.
-  floor:float = 0;
-  // --- WHICH STOP ENDS THE TRIP (appended) ------------------------------------------------------
-  // The core_sim HuntTripBound key: "pack_full" | "floor" | "herd_lost" | "horizon".
-  // A trip LENGTH alone cannot say which bound it was — "you fill the pack in 4 turns" and "you
-  // reach the floor in 2 turns with the pack a third full" are different decisions carrying the same
-  // kind of number — so the sim names the bound and the client renders it. "horizon" is exactly the
-  // turnsToFill == 0 case; "herd_lost" also reports no completion turn.
-  //
-  // A launched party's own bound is PopulationCohortState.expeditionTripBound.
-  bound:string;
-}
-
-// The sim's pre-launch estimate of a DENIAL RAID against this herd (docs/plan_denial_raid.md §1.1),
-// one entry per party size 1..=maxExpeditionPartySize. The denial twin of HuntTripEstimate, and it
-// carries NO floor: the mission has no floor and no rate, which is the whole
-// reason it is a mission rather than a number on the assign dialog. There is nothing to sample.
-//
-// THE HEADLINE IS turnsToCollapse, NOT A FOOD TOTAL. A raid's goal is to push the herd under
-// ecology.collapse_fraction — the point of no return, where the growth flow is zeroed and the herd
-// declines irreversibly with the party gone — and then walk away. Success is that line, never zero;
-// the food that comes home is a rounding error against what was killed, and the client says so.
-table DenialEstimate {
-  // A SAMPLED party size — the expedition_config.estimate_party_sizes ladder PLUS a short contiguous
-  // run at this herd's own closed-form requirement, so `denialPartyNeeded` names an exact party
-  // rather than the next rung above it. Resolve a party to the NEAREST row.
-  partyWorkers:uint = 0;
-  // Turns until the herd is past recovery, at the take's EXPECTATION — and therefore turns until the
-  // party comes home, because that is when a denial raid completes. 0 = it never got there within
-  // forecast_horizon_turns; `outcome` says which KIND of never, and must be rendered instead of a
-  // blank (docs/plan_denial_raid.md §3).
-  turnsToCollapse:uint = 0;
-  // THE RANGE (docs/plan_hunt_through_combat.md §6.4), reported because the retreat is stochastic and
-  // the roster's wariness is authored. `Low` is the FEWEST turns — the optimistic draw, where more
-  // animals stay and more strikes land, so the herd falls sooner. Render as "past recovery in 3-5
-  // turns"; when low == turnsToCollapse == high the distribution is degenerate and the client must say
-  // one number, exactly as it does for every other range on this wire. 0 = "not within the horizon" on
-  // that end, so a positive `low` beside a 0 `high` reads "only on a good run".
-  turnsToCollapseLow:uint = 0;
-  turnsToCollapseHigh:uint = 0;
-  // The core_sim DenialOutcome key: "past_recovery" | "herd_lost" | "repelled" | "horizon".
-  // "repelled" is the one the design insists on: the party's kills per turn are at or below the herd's
-  // own regrowth, so it CANNOT get there — a verdict about the party, not about the clock ("horizon"
-  // is the clock). Never show a blank turn count without this line.
-  outcome:string;
-  // Whole animals the raid KILLS before it walks away — the number the mission is really about.
-  animalsKilled:uint = 0;
-  // Food landed in the pack over the raid: SMALL, and non-zero. The raid banks what it can haul on the
-  // way home; `carried` is the hunt's formula unchanged.
-  deliveredFood:float = 0;
-  // Food killed and left on the range — THE BULK OF A RAID'S TAKE, and stated rather than hidden.
-  wastedFood:float = 0;
-  // The trade half of the same carried biomass. For an INEDIBLE quarry (a wolf is a legitimate denial
-  // target) this is the whole payload and deliveredFood is 0.
-  deliveredTrade:float = 0;
-  // Trade goods killed and left on the range — the twin of wastedFood, appended last (slots are
-  // positional). On an INEDIBLE quarry this is the ONLY non-zero waste there is: a wolf pays no
-  // provisions, so a food-only waste line reads 0 beside a large animalsKilled on the very raid
-  // whose waste is total. Render the waste per product, and the trade line only when it is > 0
-  // (the same rule deliveredTrade follows).
-  wastedTrade:float = 0;
-}
-
 table HerdTelemetryState {
   id:string;
   label:string;
@@ -4159,70 +3563,20 @@ table HerdTelemetryState {
   // The herd-side twin of `ForagePatchState`'s forecast block — food/turn at this herd's CURRENT
   // biomass, for a live "Expected yield" readout + worker-stepper cap while the player composes a
   // Hunt assignment. Captured with an output_multiplier of 1.0 (scale by the band's
-  // `outputMultiplier`). The per-policy ceilings live in `huntPolicyCeilings` below (one row per
-  // policy, keyed by a free-form policy name); this scalar is the per-worker RATE they clamp:
-  //   ceiling(policy)           = huntPolicyCeilings[policy].provisionsPerTurn
-  //   expected(workers, policy) = min(workers * perWorkerYield, ceiling(policy))
-  //   maxUsefulWorkers(policy)  = ceil(ceiling(policy) / perWorkerYield)   [perWorkerYield > 0]
-  // Ceilings are already clamped to the herd's remaining biomass; `hunt_take` and the forecast share
-  // the ceiling/conversion helpers, so forecast == actual (see core_sim/CLAUDE.md).
-  // A CORRALLED herd reports its corral yield as every ceiling with perWorkerYield equal to it — one
-  // keeper suffices (maxUsefulWorkers = 1) and the policy is irrelevant.
+  // `outputMultiplier`). A take at any floor is composed from `biomass` / `carryingCapacity` and the
+  // per-biomass yield vector below; `hunt_take` and the forecast share the conversion helpers, so
+  // forecast == actual (see core_sim/CLAUDE.md). This scalar is the per-worker FOOD rate.
   perWorkerYield:float = 0;
-  // Retired: the per-policy ceilings are now carried ONLY by `huntPolicyCeilings`. Kept as
-  // (deprecated) slots because a FlatBuffers field's vtable slot is positional — deleting these
-  // lines would renumber every field appended after them.
-  ceilingSustain:float = 0 (deprecated);
-  ceilingSurplus:float = 0 (deprecated);
-  ceilingDeplete:float = 0 (deprecated);
-  ceilingEradicate:float = 0 (deprecated);
-  // --- The Corral investment rung (appended) --- the herd twin of `ForagePatchState`'s Cultivate
-  // block. The food/turn WHILE the pen is being built is `huntPolicyCeilings[stance] ×
-  // corralBuildFraction` (issue #442 — the dip is a factor on the selected stance, not a row of its
-  // own). `corralYield` = food/turn the herd will pay ONCE penned (maintenance labor: one keeper
+  // --- The Corral investment rung --- the herd twin of `ForagePatchState`'s Cultivate block.
+  // `corralYield` = food/turn the herd will pay ONCE penned (maintenance labor: one keeper
   // suffices). Corral is ANIMAL-ONLY (the patch twin is Cultivate).
-  ceilingCorral:float = 0 (deprecated);
   corralYield:float = 0;
-  // Per-STANCE band / local-hunt take ceilings for this herd's current state — one entry per
-  // the four retired harvest stances. RETIRED WHOLESALE by the harvest floor arc: the `tame` and
-  // `corral` dips used to ride here as extra rows, and are now the `tameBuildFraction` /
-  // `corralBuildFraction` factors below, because a dip multiplies whichever stance the crew holds.
-  // Phase-correct: a penned herd's rows all read its corral yield. This list is the ONLY wire
-  // representation of a herd's per-stance ceilings (the old ceiling* scalars are deprecated slots):
-  // a free-form `policy` string means a new stance needs no schema change, matching `species` and
-  // `huntTripEstimates`.
-  // With the cohort's `huntPerWorkerProvisions` + `outputMultiplier` this is everything the client
-  // needs to preview a RESIDENT BAND's hunt yield as pure arithmetic — it must NOT re-derive the
-  // ecology model. Appended (append-only discipline).
-  // RETIRED by the harvest floor arc: four rows cannot express a continuous dial. The client
-  // composes any floor's ceiling from `biomass`/`carryingCapacity`/`*PerBiomass` below. Stopped
-  // being written; the slot stays (append-only discipline).
-  huntPolicyCeilings:[HuntPolicyCeiling] (deprecated);
-  // RETIRED by the forecast query channel. The two pre-launch estimate tables were the sim
-  // pre-computing every (floor x party) and (party) cell for EVERY huntable herd, every frame,
-  // against ONE kit over a FRESH component set - because the command socket was one-way and could
-  // not be asked. It measured 46 of a 49 ms capture on a fully-revealed 80x52 map with 128 huntable
-  // herds (debug), i.e. 93% of the turn's dominant phase, spent almost entirely on rows nobody read.
+  // --- The pen as a managed POPULATION --- a corralled herd is a population in its own right: it
+  // EATS every turn, and underfeeding shrinks it (docs/plan_corral_managed_population.md). HUMAN
+  // FOOD IS NOT ANIMAL FEED — a pen eats the grass its fenced footprint grows and the hay its keeper
+  // carries in, so what a pen demands is FODDER: fodder_per_biomass × biomass, of which
+  // `penPastureFraction` and `fodderDraw` below are the two sources.
   //
-  // It was also WRONG for anyone who had worn their gear or picked another kit: a band whose spears
-  // have run dry hunts at the intrinsic attack 1 - effectively zero against a Red Deer's defense 1.0
-  // - while these rows quoted it a working party, and a detached raid was priced at resident-hunt
-  // lethality. The client now ASKS (QueryCommand in sim_runtime/proto/command.proto) and is answered
-  // for its exact (band, kit, party, floor) off the live world.
-  //
-  // Deprecated rather than deleted: field ids are immutable once released.
-  huntTripEstimates:[HuntTripEstimate] (deprecated);
-  // --- The pen as a managed POPULATION (appended) --- a corralled herd is a population in its own
-  // right: it EATS every turn, and underfeeding shrinks it (docs/plan_corral_managed_population.md).
-  //
-  // RETIRED: `penUpkeep`. Was the FOOD the pen demanded per turn (= pen.upkeep_per_biomass × biomass),
-  // quoted beside `corralYield` so a pre-commit Corral row could show the running cost next to the
-  // payoff. HUMAN FOOD IS NOT ANIMAL FEED — a pen eats the grass its fenced footprint grows and the
-  // hay its keeper carries in — so there is no food-unit running cost to quote and `corralYield`
-  // stands alone. What a pen demands is fodder: fodder_per_biomass × biomass, of which
-  // `penPastureFraction` and `fodderDraw` below are the two sources. Kept as (deprecated) rather than
-  // deleted so the field id/slot stays reserved (a freed slot is how two branches collide on one id).
-  penUpkeep:float = 0 (deprecated);
   // `penFedFraction` = the fraction of that FODDER demand the pen's grass and hay actually covered
   // last turn, = (footprint_intake + fodderDraw) / (fodder_per_biomass × biomass). 1.0 = fully fed
   // (also the value for a herd that is not penned); < 1 = STARVING — the herd is shrinking by
@@ -4305,13 +3659,6 @@ table HerdTelemetryState {
   // what `penFedFraction` falls short by. 0 for an unpenned herd, a keeper that has not learned
   // Foddering, or a pen whose own footprint already fed it. Appended (append-only).
   fodderDraw:float = 0;
-  // RETIRED: `penLarderBill` and `penHayFood`. They were the FOOD-unit terms of a three-way split
-  // (pasture_food + penHayFood + penLarderBill == penUpkeep): the bread a keeper handed its livestock,
-  // and hay restated in the units the PEOPLE eat in so it could sit in the same row. Both die with the
-  // larder feed — the split is grass and hay, in fodder, and `penPastureFraction` + `fodderDraw` are
-  // the whole of it. Kept as (deprecated) rather than deleted so the field ids/slots stay reserved.
-  penLarderBill:float = 0 (deprecated);
-  penHayFood:float = 0 (deprecated);
   // --- Predators Phase 0 (docs/plan_predators.md, appended last) --- the RAW combat components of this
   // herd's species, so the client can DERIVE danger itself (danger is never stored server-side, because
   // strength ≠ danger: hunt-danger ≈ attack×ferocity, camp-threat ≈ attack×aggression). `attack`/
@@ -4339,39 +3686,6 @@ table HerdTelemetryState {
   // lag before ownership is set in the Population stage. 0 for a wild-ceiling species (mammoth/deer,
   // never tameable). For a herd already managed this equals `herdersNeeded`.
   herdersNeededIfManaged:uint = 0;
-  // --- The hunt-yield VECTOR's trade half (issue #337, appended last) --- the forecast is a PAIR
-  // per rung, and these are the two per-herd scalars' trade twins:
-  //   perWorkerTrade  = one hunter's trade-goods/turn throughput at THIS herd's species.
-  //   tradePerAnimal  = one whole animal's worth of trade goods.
-  // Read each beside its food sibling (`perWorkerYield` / `foodPerAnimal`) as one vector, and clamp
-  // a band preview PER COMPONENT: min(workers × perWorkerTrade, huntPolicyCeilings[p].tradeGoodsPerTurn).
-  //
-  // **`perWorkerTrade`/`perWorkerYield` are the rates a per-herd preview uses — NOT the cohort's
-  // `huntPerWorkerProvisions`**, which is a species-blind global echo (see its doc). An INEDIBLE
-  // species (a wolf) reads `perWorkerYield == 0` and `foodPerAnimal == 0` with both of these
-  // positive, so a client that renders a kill rhythm from food alone divides by zero; the animal
-  // COUNT is the same on either component, because a ratio is unit-free.
-  // RETIRED (arc #527) with the trade-goods axis. A crew count on an inedible species reads
-  // perWorkerBiomass, which is positive there and always was.
-  perWorkerTrade:float (deprecated);
-  tradePerAnimal:float (deprecated);
-  // --- The INVESTMENT rungs' trade half (issue #397, appended last) --- the trade twins of
-  // `pastoralYield` / `corralYield`. A rung's payoff is a PAIR like every other yield in this
-  // model (`SourceYieldForecast::pastoral_yield` / `managed_yield` are `YieldPair`s); exporting
-  // only the provisions half made a Wild Boar's Tame/Corral picker faces read `→ 1.48 food` while
-  // its four extractive rungs correctly read `0.74 food · 0.18 trade`.
-  // Read each beside its food sibling as one vector, and render each component only when it is
-  // non-zero (the same rule `perWorkerTrade` follows). 0 on a herd that never offers the rung.
-  // `corralTrade` is GROSS like `corralYield`; the pen's feed is FODDER, never a PROVISIONS debit,
-  // and stays on the food half only.
-  // RETIRED (arc #527) with the trade-goods axis.
-  pastoralTrade:float (deprecated);
-  corralTrade:float (deprecated);
-  // --- THE BUILD DIPS: RETIRED --- the animal twins of
-  // `ForagePatchState.cultivateBuildFraction`/`sowBuildFraction`; see there for why the dip
-  // dissolved into the work budget and why the slots stay rather than being deleted.
-  tameBuildFraction:float (deprecated);
-  corralBuildFraction:float (deprecated);
   // --- THE NEGLECT GRACE (appended) --- the animal twin of `ForagePatchState`'s pair; see there for
   // the countdown's exact reading and why the bool is not optional to check. The penalty it counts
   // down to is the SHED (animals over the keepers' labor capacity drift into the wild web), not a
@@ -4403,9 +3717,6 @@ table HerdTelemetryState {
   // `bodyMass`/`foodPerAnimal` are what make the pulse visible.
   provisionsPerBiomass:float = 0;
   fodderPerBiomass:float = 0;
-  // RETIRED (arc #527) with the trade-goods axis: the source's non-food product is materials,
-  // and a material rate is a per-material reading rather than one scalar.
-  tradePerBiomass:float (deprecated);
   // --- THE PER-WORKER BIOMASS THROUGHPUT (appended) ----------------------------------------------
   // What ONE hunter moves this turn, **in biomass** — `labor_config.hunt.per_worker_biomass_capacity`,
   // the exact term `systems::hunt_take`'s collection multiplies by the head-count. **No seasonal
@@ -4572,27 +3883,6 @@ table HerdTelemetryState {
   // duration model reading a live accumulator would be a competing answer rather than a term.
   // 0 for a herd whose species the roster cannot resolve.
   durability:float = 0;
-  // --- THE DENIAL RAID (appended last, docs/plan_denial_raid.md slice 1) ------------------------
-  // RETIRED with huntTripEstimates above, and for the same reasons - see that field's note. The
-  // denial table was the more expensive of the two: 3 quantiles x axis rows x forecastHorizonTurns
-  // turn-steps per huntable herd, and its most expensive rows were the small REPELLED parties, which
-  // run the whole horizon to prove they accomplish nothing.
-  //
-  // denialPartyNeeded went with it. It was the smallest QUOTED party whose row succeeded, so it was
-  // only ever as exact as the sampled axis under it; the query searches contiguously and answers the
-  // real number, for the asking band's own kit and wear.
-  //
-  // Deprecated rather than deleted: field ids are immutable once released.
-  denialEstimates:[DenialEstimate] (deprecated);
-  denialPartyNeeded:uint = 0 (deprecated);
-  // --- WHICH KIT THE TWO ESTIMATE TABLES WERE QUOTED FOR (appended last) ------------------------
-  // RETIRED with the two tables these described. They existed so a client could REFUSE to present
-  // rows priced at the hunt job's default kit as an answer for a player who had selected another
-  // one - an honesty note compensating for a table that could not answer the question asked. The
-  // query takes the kit id as an ARGUMENT and echoes the floor and party it answered on every row,
-  // so there is nothing left to disclaim.
-  huntTripEstimatesKitId:string (deprecated);
-  denialEstimatesKitId:string (deprecated);
   // --- THIS QUARRY'S OWN DEFAULT KIT (appended last) --------------------------------------------
   // The `equipment.json` roster id the hunt compose sheet opens on for THIS herd, and the kit
   // `assign_labor … hunt <herd> <n>` resolves when the player names none. DERIVED, never authored:
@@ -4894,11 +4184,6 @@ table HerdTelemetryState {
   // between them.
   buildDestinationCapacity:float = -1;
 
-  // WHAT THIS HERD'S BUILD IS BEING RAISED WITH (appended last, append-only wire) - the animal twin of
-  // `ForagePatchState.buildKitId`; that field carries the whole rationale, including why the wire
-  // states the RESOLVED kit rather than the stored one and why there is no second "default" field.
-  buildKitId:string;
-
   // WHAT THE IN-FLIGHT FENCE RING COSTS (appended last, append-only wire) - the DENOMINATOR of
   // `penExtendProgress` above, in the SAME work units, so the pen ring publishes the pile/meter pair
   // every other build on this table already does (`tameWorkDone`/`tameWorkCost`,
@@ -4925,27 +4210,16 @@ table HerdTelemetryState {
   // The bottom rung is `animal:wild`, which every untouched herd on the map publishes.
   currentRung:string;
 
-  // RETIRED: `penHayNeed`. Was the hay this pen was short PER TURN, in fodder units:
-  // max(0, fodder_per_biomass x biomass - footprint_intake) - the gap its own fenced footprint left,
-  // published so a pen row could state what still had to be farmed for it. NOTHING EVER READ IT: the
-  // row states how much MORE the pen needs, which is `penFodderShortfall` below (that same gap less
-  // the hay the keeper actually carried in), so the gap on its own was a term of an arithmetic the
-  // sim already does. The sim still computes the quantity - it is what the band-level roll-up
-  // `PopulationCohortState.fodderNeed` is the sum of - but it is not a per-pen wire field. Kept as
-  // (deprecated) rather than deleted so the field id/slot stays reserved (a freed slot is how two
-  // branches collide on one id).
-  penHayNeed:float = 0 (deprecated);
-
   // HOW MUCH MORE FODDER THIS PEN NEEDS PER TURN (appended last, append-only wire) - the READOUT
   // number, in fodder units: max(0, hay need - fodderDraw), where the hay need is the gap the pen's
   // own fenced footprint leaves (fodder_per_biomass x biomass - footprint_intake). What the land does
   // not grow AND the keeper did not carry in, so a pen row reads "40% pasture - 7% fodder - needs
   // 11.3 more/turn" without the client subtracting two figures sitting on the same line.
   //
-  // THE SIM OWNS THE ARITHMETIC, AND IT IS THE ONLY TERM PUBLISHED. The gap it is taken from rode
-  // this row as `penHayNeed` and is retired above: a client that had both would be one subtraction
-  // away from a number describing a different turn from its own terms, and this one is struck on the
-  // same pass as both of them.
+  // THE SIM OWNS THE ARITHMETIC, AND IT IS THE ONLY TERM PUBLISHED. The gap it is taken from is not
+  // a per-pen wire field: a client that had both would be one subtraction away from a number
+  // describing a different turn from its own terms, and this one is struck on the same pass as both
+  // of them.
   //
   // UNGATED BY FODDERING, unlike `fodderDraw`. A band that has not learned Foddering draws nothing,
   // so its shortfall is its WHOLE need - the case where the herd is dying and the remedy is
@@ -5033,13 +4307,6 @@ table HerdTelemetryState {
   // them.
   tameUpkeepMaterialDemand:[MaterialPayoff];
   corralUpkeepMaterialDemand:[MaterialPayoff];
-  // --- WHAT THIS SITE IS KEPT WITH (appended last, append-only wire) ----------------------------
-  // The animal twin of `ForagePatchState.upkeepKitId` / `upkeepKitNamed`; that field carries the
-  // whole rationale, including why the wire states the RESOLVED kit, why the "named" flag is not
-  // recoverable from the id, and which published roster a picker filters for a HERD (`KitOption.jobs`
-  // containing "husbandry").
-  upkeepKitId:string;
-  upkeepKitNamed:bool = false;
   // --- THE PRE-COMMIT MATERIAL QUOTE FOR A **RING** (appended last, append-only wire) ------------
   // Conceptually this belongs with `corralUpkeepMaterialDemand` above; it sits at the end of the
   // table because field slots are positional and this wire is append-only. Read it there.
@@ -5201,13 +4468,9 @@ table VictoryState {
 table SnapshotHeader {
   tick:ulong;
   tileCount:uint;
-  // Retired with the link sections themselves (arc #527) — deprecated, not freed.
-  logisticsCount:uint (deprecated);
-  tradeLinkCount:uint (deprecated);
   populationCount:uint;
   powerCount:uint;
   influencerCount:uint;
-  hash:ulong;
   campaignLabel:CampaignLabel;
   victory:VictoryState;
   wrapHorizontal:bool = false;
@@ -5233,25 +4496,6 @@ table KnownTechFragment {
   discoveryId:uint;
   progress:long;
   fidelity:long;
-}
-
-table TradeLinkKnowledge {
-  openness:long;
-  leakTimer:uint;
-  lastDiscovery:uint;
-  decay:long;
-}
-
-table TradeLinkState {
-  entity:ulong;
-  fromFaction:uint;
-  toFaction:uint;
-  throughput:long;
-  tariff:long;
-  knowledge:TradeLinkKnowledge;
-  fromTile:ulong;
-  toTile:ulong;
-  pendingFragments:[KnownTechFragment];
 }
 
 table DiscoveryProgressEntry {
@@ -5314,23 +4558,7 @@ table MapSection {
 }
 
 table EconomySection {
-  // FIVE retired slots (arc #527) — see the note above `LogisticsLinkState`. Deprecated, never
-  // freed: field ids are positional and reusing one silently mis-decodes an old capture.
-  logistics:[LogisticsLinkState] (deprecated);
-  tradeLinks:[TradeLinkState] (deprecated);
-  // The raster averaged `LogisticsLink.flow`, which went with the mass economy. It was briefly left
-  // UNdeprecated on the grounds that the client still decoded it and fell back when absent — that
-  // stopped being true in the same arc, which deleted the native decode site and the delta path
-  // (`apply_logistics_raster` / `SECTION_OVERLAY_LOGISTICS`), so nothing in the workspace reads the
-  // slot and `(deprecated)` is now the honest statement. Deprecating it also drops it from
-  // `EconomySectionArgs`, which is what removed the two `logisticsRaster: None` writes in
-  // `sim_schema/src/codec/economy.rs`: an always-absent field nobody decodes had two writers and no
-  // reader. A future logistics network refills THIS slot by un-deprecating it — the meaning is
-  // reserved, only the accessor is withdrawn.
-  logisticsRaster:ScalarRaster (deprecated);
   factionInventory:[FactionInventoryState];
-  removedLogistics:[ulong] (deprecated);    // delta-only
-  removedTradeLinks:[ulong] (deprecated);   // delta-only
 }
 
 table PopulationSection {
@@ -5474,10 +4702,9 @@ table KitOption {
   // they consumed no component, and the expanded roster gave them one each (`wayfinding` ->
   // ["scout"], `warrior` -> ["warrior"]) while `none` lists them all.
   //
-  // THE LAST THREE ARE THE WORK JOBS, and they are what a KEEPING or BUILD picker filters on:
-  // "agriculture" is the kit list for keeping a PLANT site (`ForagePatchState.upkeepKitId`),
-  // "husbandry" for keeping an ANIMAL one (`HerdTelemetryState.upkeepKitId`), and "builders" for a
-  // queue entry (`buildKitId`). There is no second roster for any of them.
+  // THE LAST THREE ARE THE WORK JOBS, and they are what a KEEPING or BUILD kit is drawn from:
+  // "agriculture" is the kit list for keeping a PLANT site, "husbandry" for keeping an ANIMAL one,
+  // and "builders" for a queue entry. There is no second roster for any of them.
   jobs:[string];
   // A fresh-kit hunter's combat `attack` under this kit — the number the combat gate
   // max(0, attack - defense) compares against a herd's `defense`. Below a species' defense that
@@ -5566,9 +4793,8 @@ table KitOption {
   // `buildRate` multiplier, and PER_WORKER_OUTPUT + build_work = 1.5 inverts that mint with no
   // reference crew and no reference job.
   //
-  // The `buildRate` slot above is kept rather than deprecated so a client still compiles against it;
-  // a consumer rendering a build axis should read THIS field, as work-per-worker-per-turn - never as
-  // a factor, and never as units off a job.
+  // A consumer rendering a build axis should read THIS field rather than `buildRate` above, as
+  // work-per-worker-per-turn - never as a factor, and never as units off a job.
   buildWorkPerWorker:float = 0;
   // WHICH FOOD WEB `buildWorkPerWorker` IS FOR (appended) - "plant" | "animal", and "" when this kit
   // carries no build tool at all.
@@ -5799,11 +5025,6 @@ table CraftOffer {
   //     recipe only that half applies.
   outputGrade:string;
   onBench:bool;          // this recipe is the running job — the row's button is spent
-  // Three unused slots. The ledger groups by item rather than under tier heads, and which tier a band
-  // holds is `ownedAtTier` below. Deprecated rather than deleted because slots are positional.
-  outputTierName:string (deprecated);
-  outputTierRank:uint (deprecated);
-  ownedNote:string (deprecated);
   // --- ONE LEDGER ROW PER ITEM, ITS RECIPES BEHIND A LINK (appended last) -----------------------
   // Several offers can share one `outputItemId` (a spear pointed with bone, a spear knapped from
   // stone). The ledger shows ONE row per item; these five fields are what its recipe popup and its
@@ -6320,12 +5541,6 @@ table CultureSection {
 }
 
 table VisionSection {
-  // RETIRED. Was the "Fog of Knowledge" data overlay — a selectable heatmap of per-tile discovery
-  // progress, unrelated to fog of war. Fog of war is `visibilityRaster` below and is the only fog
-  // concept the game keeps. Kept as (deprecated) rather than deleted because this is the FIRST field
-  // of the table: a FlatBuffers vtable slot is positional, so removing the line would renumber
-  // `visibilityRaster` and `militaryRaster` and silently break the wire.
-  fogRaster:ScalarRaster (deprecated);
   visibilityRaster:ScalarRaster;
   militaryRaster:ScalarRaster;
   // The server-owned fog-of-war master switch (`SimulationConfig::fog_enabled`), published so the
@@ -6454,18 +5669,17 @@ table CampaignSection {
 // THE KIT ROSTER IS NOT HERE and must not be added: it already rides
 // `SubsistenceSection.equipmentConfigJson`, and a recipe's input costs already ride the per-band
 // `craftOffers` rows. A second copy of either is a second wire contract for one fact.
-// *** `open`, `kitBudget` and `materialBudget` WERE DELETED FROM THIS TABLE, NOT DEPRECATED IN PLACE.
-// *** They moved to `PopulationCohortState.loadoutWindow`, because a window is now a fact about ONE
-// BAND rather than about the campaign: every band gets one, and a splinter's budgets are not the
-// spawned band's. The deletion is safe here for exactly one reason - this repo has NO SHIPPED SAVES
-// OR CLIENTS and both halves build from one tree, so no reader can hold the old vtable. The general
-// append-only rule stands; see the identical note on `foundingRefusals` in
-// `.claude/rules/core_sim/fission.md`.
+// *** WHETHER A WINDOW IS OPEN, ITS BUDGETS, AND THE KIT PRE-FILL ARE NOT HERE. *** They live on
+// `PopulationCohortState.loadoutWindow`, because a window is a fact about ONE BAND rather than about
+// the campaign: every band gets one, and a splinter's budgets are not the spawned band's. The sim
+// applies the kit pre-fill to each band itself, and it arrives in `loadoutWindow.kits`.
 table OpeningLoadoutState {
   // The pick list, in the order the profile declares it. A material absent from it cannot be bought.
   pickableMaterials:[string];
-  // The allocation the window OPENS on — a suggestion, never a grant. Nothing is deposited until a
-  // `set_starting_loadout` arrives.
+  // The campaign-wide material pre-fill — a suggestion, never a grant. Its one reader is the AI
+  // seat's grant-window material pre-fill (sim_ai `ConstantStance::prefill_over`). The client never
+  // seeds from it: the sim applies the pre-fill to each band itself, and that arrives in the band's
+  // `loadoutWindow.materials`.
   materialDefaults:[OpeningMaterialDefault];
   // THE RECIPES THIS FACTION CAN PUT ON A BENCH RIGHT NOW — every recipe whose `requires_knowledge`
   // crafts are all learned. It is what excludes the knowledge-gated bench tools (tanning frame,
@@ -6474,14 +5688,6 @@ table OpeningLoadoutState {
   // PUBLISHED AS IDS rather than left for the client to infer: the alternative is sniffing a refusal
   // string off a craft offer, which makes a player-facing sentence into a machine contract.
   craftableRecipeIds:[string];
-  // The KIT column's pre-fill, the material one's twin — appended last (append-only).
-  //
-  // ALREADY CLAMPED to the SPAWNED band's `loadoutWindow.kitBudget`. That budget is that band's
-  // working-age head count rather
-  // than a config number, so `start_profiles.json` cannot sum-check its own pre-fill; the sim scales
-  // it proportionally at publish time and warns when that binds. A client draws these counts as-is
-  // and never has to re-fit them.
-  kitDefaults:[OpeningKitDefault];
 }
 
 // One pre-filled material allocation. `units` is in the same points the budget is counted in.
@@ -6703,23 +5909,10 @@ table DepositState {
   // built - which is every working on the map until a player types `fell` or `quarry`.
   buildBlockedReason:string;
   // IS THIS WORKING IN SOME BAND'S BUILD QUEUE RIGHT NOW? - the MEMBERSHIP flag, and the term
-  // `buildTurnsRemaining`'s -5 is separated from -1 by. It is resolved by the same live-queue walk
-  // that resolves `buildKitId`, because the row's own scratch lags a command by a whole turn and
-  // this state exists precisely in that frame.
-  //
-  // It cannot be replaced by a `buildKitId != ""` test: a resolved builders kit is NEVER empty (the
-  // bare-handed kit is a roster entry like any other).
+  // `buildTurnsRemaining`'s -5 is separated from -1 by. It is resolved by a live walk of the bands'
+  // queues, because the row's own scratch lags a command by a whole turn and this state exists
+  // precisely in that frame.
   isQueued:bool = false;
-  // The kit this working's build is being raised with - `ForagePatchState.buildKitId`'s twin, off
-  // the same one resolution seam, so the row cannot state a tool the pool is not using. "" only
-  // where no band has this working queued.
-  buildKitId:string;
-  // THE KEEPING KIT - the patch/herd pair, from the upkeep-kit resolution pass.
-  // `upkeepKitNamed` is not recoverable from the id (a player may name the very kit the derivation
-  // would have picked), which is why it rides beside it rather than being re-derived on the client.
-  // See `ForagePatchState.upkeepKitId` for the whole rationale.
-  upkeepKitId:string;
-  upkeepKitNamed:bool = false;
 
   // --- THE ESCAPEMENT FLOOR AND THE CHART IT IS DRAGGED ON (appended, issue #650) ---------------
   // THE RUNG'S OWN FLOOR, as a fraction of `capacity` - `1 - recovery_fraction`, what this rung's

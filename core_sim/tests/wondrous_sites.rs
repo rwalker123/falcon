@@ -98,6 +98,10 @@ fn spawn_cohort(app: &mut App, faction: FactionId, size: u32) {
         generation: 0 as GenerationId,
         faction,
         knowledge: Vec::new(),
+        founding_lines: core_sim::FoundingLines::founded(
+            core_sim::BandId(0),
+            core_sim::MIN_BAND_LINES,
+        ),
     });
 }
 

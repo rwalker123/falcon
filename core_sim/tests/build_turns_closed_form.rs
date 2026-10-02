@@ -290,6 +290,10 @@ fn spawn_keepers_of(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             ResidentBand,
             match gear {
@@ -1378,6 +1382,10 @@ fn the_client_form_reproduces_the_sim_with_a_live_rot_past_the_grace() {
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             ResidentBand,
             // **THE LEDGER IS STATED, NOT LEFT ABSENT.** An absent component resolves to one reference

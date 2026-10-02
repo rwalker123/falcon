@@ -25,8 +25,8 @@ use bevy::prelude::*;
 
 use crate::{
     components::{
-        BandBench, BandEquipment, BatchGrade, DrawnInputs, DrawnMaterial, LocalStore,
-        PopulationCohort,
+        BandBench, BandEquipment, BatchGrade, DrawnInputs, DrawnMaterial, FinishedBatch,
+        LocalStore, PopulationCohort,
     },
     crafting::{craft_discovery_id, HAND_WORKING_MATERIAL_EFFICIENCY},
     equipment_config::{EquipmentConfigHandle, EquipmentStat},
@@ -403,7 +403,7 @@ pub fn advance_crafting(
             recipe,
             drawn_grade.as_deref(),
             &mut cohort.stores,
-            &mut wear,
+            &mut bench.finished,
             &materials,
             &equipment,
             &known,
@@ -441,6 +441,22 @@ pub fn advance_crafting(
     }
 }
 
+/// **WHAT THE BENCHES FINISHED LAST TURN REACHES THE STORE — at the top of this one.**
+///
+/// Drains each band's [`BandBench::finished`] into its [`BandEquipment`] in completion order. It is
+/// scheduled before the turn's first stage, so every system that reads the ledger this turn — the
+/// labour pass's tool settlement first among them — sees the finished tools, and the turn that first
+/// shows them in the store is the turn that first issues them.
+pub fn deliver_bench_output(mut bands: Query<(&mut BandBench, &mut BandEquipment)>) {
+    for (mut bench, mut wear) in bands.iter_mut() {
+        // Read-only probe first, so an idle bench does not trip change detection every turn.
+        if bench.finished.is_empty() {
+            continue;
+        }
+        bench.deliver_finished(&mut wear);
+    }
+}
+
 /// **NOBODY AT THE BENCH** — the crew below which it may not draw. Named rather than a bare `0`
 /// because the test is *"is anyone working this job"* and not a comparison with a magnitude.
 const AN_IDLE_BENCH: u32 = 0;
@@ -468,10 +484,18 @@ fn fix_grade(
 
 /// Deliver one pass's outputs.
 ///
-/// **Equipment lands as a NEW BATCH** ([`BandEquipment::stock`]) carrying `amount` units, the tier
-/// the faction can reach, and the grade the draw fixed. It is never merged into a batch already
-/// standing: *"the next ten are their own batch"* is what keeps a fresh craft from averaging into a
-/// half-spent pile.
+/// **Equipment is PARKED, not stocked** — pushed onto [`BandBench::finished`] as a resolved
+/// [`FinishedBatch`] carrying `amount` units, the tier the faction can reach, and the grade the draw
+/// fixed. [`deliver_bench_output`] stocks it at the top of the next turn as a NEW batch
+/// ([`BandEquipment::stock`]), never merged into one already standing: *"the next ten are their own
+/// batch"* is what keeps a fresh craft from averaging into a half-spent pile.
+///
+/// ⛔ **The bench runs after this turn's tool settlement**, so a tool stocked here would sit in the
+/// store while every pool card and keeping row read it as missing. Parked, it reaches the store on
+/// the same turn the settlement first issues it.
+///
+/// **Materials are NOT parked** — they go straight into the store, because the next pass's
+/// [`draw_pass`] runs right after this and may chain on them.
 ///
 /// **`RecipeOutput::amount` is honoured** — a pass of a recipe that makes three makes three. It used
 /// to deliver exactly one pass's worth of *condition* however many the row named, which a
@@ -480,7 +504,7 @@ fn emit_outputs(
     recipe: &RecipeDef,
     drawn_grade: Option<&str>,
     store: &mut LocalStore,
-    wear: &mut BandEquipment,
+    finished: &mut Vec<FinishedBatch>,
     materials: &MaterialsConfig,
     equipment: &crate::equipment_config::EquipmentConfig,
     known: &dyn Fn(&str) -> bool,
@@ -510,7 +534,12 @@ fn emit_outputs(
                 id: id.to_string(),
                 effects: recipe.grade_effects_for(id, materials).to_vec(),
             });
-            wear.stock(item, whole_units(output.amount), &tier, grade);
+            finished.push(FinishedBatch {
+                item: item.to_string(),
+                count: whole_units(output.amount),
+                tier,
+                grade,
+            });
         }
         if let Some(material) = output.material_id() {
             let Some(band) = materials.band_key(material, &output.characteristics) else {

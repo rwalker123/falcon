@@ -271,7 +271,7 @@ has no single tier to be sorted under. Everything else about the heads is unchan
 
 **NO TIER WORD REACHES THE OWNED CELL AT ALL.** The cell states count and grade and nothing else —
 no `tier_id`: a row that must stay short has no line for it, and it would put the internal tier word
-`plain` in front of the player (the schema's `ownedNote` is deprecated and the sim publishes none).
+`plain` in front of the player (the schema has no `ownedNote`, and the sim publishes none).
 **Which tier the band holds is answered in one place — the recipe popup's per-recipe Owned
 column**, on an item whose recipes make different tiers. **A recipe's own tier is named by its
 `recipeLabel`** — `Bone`, `Flint`, `Withy` — in the popup and the picker, and nowhere on the row.
@@ -375,7 +375,7 @@ a second recipe so the link is present.
 `CraftOffer.outputItemId` is the key, twice over: it groups an item's offers into ONE row (a material
 row keys by its material instead — see "ONE SHORT ROW PER THING MADE"), and it joins that row onto the
 batches. The **suggested offer** supplies the name, the group, the refusal and the shortfalls
-(`outputTierName`, `outputTierRank` and `ownedNote` are deprecated, unpublished and not decoded);
+(`outputTierName`, `outputTierRank` and `ownedNote` are not on the wire);
 **`equipment_batches` grouped by `itemId`** supplies the grades and the counts — ALL of an item's
 batches, not the first, since one item may be held at two grades — plus `life_severity` + `remaining`,
 which the urgency sort ranks on and nothing renders; the **recipe book** supplies the rebuild cost.

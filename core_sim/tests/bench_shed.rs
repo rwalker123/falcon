@@ -85,6 +85,10 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 generation: 0 as GenerationId,
                 faction: FACTION,
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             StartingUnit {
                 kind: "BandForager".to_string(),
@@ -116,6 +120,7 @@ fn world_with_a_band_at_the_bench(bench_priority: SourcePriority) -> (App, Entit
                 last_output_grade: None,
                 priority: bench_priority,
                 last_started: Default::default(),
+                finished: Vec::new(),
             },
         ))
         .id();

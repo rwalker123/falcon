@@ -56,6 +56,7 @@ mod influencers;
 mod intensification;
 mod knowledge_ledger;
 mod labor_config;
+mod lineage;
 pub mod log_stream;
 mod map_preset;
 mod mapgen;
@@ -128,13 +129,13 @@ pub use components::{
     BandBench, BandEquipment, BandId, BandName, BandTravel, BandWorkforce, BatchGrade, BuildJob,
     BuildQueueEntry, BuildSource, DeathCause, DemographicFlowAccumulator, DrawnInputs,
     DrawnMaterial, ElementKind, EquipmentBatch, Expedition, ExpeditionMission, ExpeditionPhase,
-    FoodMix, Improvement, KeepingToolLine, KnowledgeFragment, LaborAllocation, LaborAssignment,
-    LaborTarget, LocalStore, MaterialBatch, MaterialDraw, MoraleCause, PopulationCohort, PowerNode,
-    ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep, ShedSubject, SourcePriority,
-    SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile, TownCenter, TransferCause,
-    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
-    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR,
-    STRIP_IT_BARE,
+    FinishedBatch, FoodMix, Improvement, KeepingToolLine, KnowledgeFragment, LaborAllocation,
+    LaborAssignment, LaborTarget, LocalStore, MaterialBatch, MaterialDraw, MoraleCause,
+    PopulationCohort, PowerNode, ResidentBand, Settlement, ShedCrew, ShedFacts, ShedStep,
+    ShedSubject, SourcePriority, SourceShedFacts, SourceYield, StartingUnit, TakeSelection, Tile,
+    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
+    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD,
+    NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -281,6 +282,7 @@ pub use great_discovery::{
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
 pub use hydrology::{generate_hydrology, HydrologyState};
+pub use lineage::{FoundingLines, LineId, MIN_BAND_LINES};
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,
@@ -445,13 +447,13 @@ pub use systems::{
     advance_band_movement, advance_crafting, advance_expeditions, advance_labor_allocation,
     advance_party_defection, advance_population_migration, advance_predator_raids, advance_tick,
     bench_material_rate, bench_tiers, bill_and_stock_roads, bring_the_dropped_party_home,
-    denial_forecast, expedition_returned_event, expedition_take_provisions, fold_party_into_band,
-    hunt_per_worker_provisions, hunt_report_event, hunt_take, hunt_trip_forecast,
-    output_multiplier, party_owes_a_report, prospective_keep_hands, publish_turn_transfers,
-    settle_bands_roadwork, settle_scarce_tools, simulate_population, simulate_power,
-    source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers, DenialForecast,
-    DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, PartySightings, PoolToolPlan,
-    PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
+    deliver_bench_output, denial_forecast, expedition_returned_event, expedition_take_provisions,
+    fold_party_into_band, hunt_per_worker_provisions, hunt_report_event, hunt_take,
+    hunt_trip_forecast, output_multiplier, party_owes_a_report, prospective_keep_hands,
+    publish_turn_transfers, settle_bands_roadwork, settle_scarce_tools, simulate_population,
+    simulate_power, source_has_a_meter_at_risk, split_band_from_parent, split_refusals, BenchTiers,
+    DenialForecast, DenialOutcome, HuntOutcome, HuntTripBound, HuntTripForecast, PartySightings,
+    PoolToolPlan, PowerSimParams, RaidRoll, SplitBand, SplitRefusal, SplitRefusals, ToolClaimStage,
     TradeDiffusionEvent,
 };
 pub use systems::{
@@ -962,6 +964,18 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             starting_loadout::close_opening_window.before(TurnStage::Influence),
+        )
+        // ⛔ **WHAT A BENCH FINISHED LAST TURN REACHES THE STORE BEFORE ANYTHING READS THE STORE.**
+        // `advance_crafting` runs after the labour pass that settles the band's tools, so it parks
+        // a finished tool on the bench rather than stocking it into a ledger that turn's settlement
+        // has already read. This drains it at the top of the next turn, ahead of the first stage,
+        // so every `BandEquipment` reader in the turn — the husbandry and deposit passes in
+        // Logistics, `bill_and_stock_roads` and the labour settlement in Population, the sight
+        // sweep's wayfinding wear, the capture — sees one ledger, and the turn the tool first
+        // shows in the store is the turn it is first issued. See `deliver_bench_output`.
+        .add_systems(
+            Update,
+            systems::deliver_bench_output.before(TurnStage::Influence),
         )
         .add_systems(
             Update,

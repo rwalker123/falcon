@@ -430,11 +430,10 @@ pub fn stamp_starting_loadout(
             material_budget,
             "starting_loadout.window.opened"
         );
-        // **The kit pre-fill's only sanity check, and it happens HERE rather than at the publish
-        // site** — this is the first and only moment a config fault of that shape can be observed
-        // (the budget does not exist until the band does), and it happens once per opening band
-        // rather than once per captured frame. `snapshot_opening_loadout` re-runs the same pure
-        // helper for the value.
+        // **The kit pre-fill's only sanity check, and it happens HERE** — this is the first and only
+        // moment a config fault of that shape can be observed (the budget does not exist until the
+        // band does), and it happens once per opening band. `outfit_band_with_defaults` runs the
+        // same pure helper to apply the value.
         let (_, clamped) = clamped_kit_defaults(
             &profile.profile().overrides().opening_loadout.kit_defaults,
             kit_budget,

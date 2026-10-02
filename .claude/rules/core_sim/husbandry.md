@@ -1730,7 +1730,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   pinned against a **real turn** through the real systems and the real snapshot export by
   `integration_tests/tests/pen_food_ledger.rs` — at the pen's *hungriest* (barren footprint, no hay),
   which is exactly the turn the retired draw would have billed the most for, so the reconciliation is
-  not vacuous. The `.fbs` slot is `(deprecated)` in place; field ids are positional.
+  not vacuous. The field is off the wire.
 
   > **`FoodFlow::pen_feed_upkeep` went with it** — the fertility half of the same error. `trend_factor`
   > subtracted the pens' bread bill from the band's food flow, so keeping animals suppressed the
@@ -1742,7 +1742,7 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
   **`corralProgress:float`** (0..1, the pen-building meter — the animal twin of
   `ForagePatchState.cultivationProgress`), plus **`penFedFraction:float`** — per-herd, for the herd
   drawer and the starving warning.
-  - **`penUpkeep` is RETIRED** (the slot is `(deprecated)`). It was the **food** this pen demanded, or
+  - **`penUpkeep` is RETIRED** (off the wire). It was the **food** this pen demanded, or
     would demand once built, at the herd's current biomass (`pen.upkeep_per_biomass × biomass`) — a
     projection for an unpenned herd, the live demand for a penned one, computed on the same biomass
     basis as `corralYield` so the two were a matched pair the client **subtracted** on the pre-commit
@@ -1768,11 +1768,11 @@ units**, complete at its stored `corral_cost`; the pen under construction), `cor
     leaves uncovered — which is the figure the row asks the player to act on (`graze.md` → "The number
     the player acts on is `penFodderShortfall`, and the sim subtracts"). Pinned by
     `core_sim/tests/grazing_f3_fodder.rs::the_pen_feed_terms_sum_to_the_fodder_demand_and_never_touch_the_larder`.
-    - **`penHayNeed` is RETIRED** (slot `(deprecated)`). It published the gap un-differenced, and
+    - **`penHayNeed` is RETIRED** (off the wire). It published the gap un-differenced, and
       nothing rendered it: what a pen row states is how much MORE the pen needs. The quantity is still
       struck and still summed into the band's `fodderNeed` — only the per-pen field is gone, along with
       the `Herd` scratch that carried it.
-    - **`penLarderBill` / `penHayFood` are RETIRED** (slots `(deprecated)`). They were the FOOD-unit
+    - **`penLarderBill` / `penHayFood` are RETIRED** (off the wire). They were the FOOD-unit
       terms of a three-way split `pasture_food + penHayFood + penLarderBill == penUpkeep` — the bread a
       keeper handed its livestock, and hay restated in the units the *people* eat in so it could share
       that row. Both die with the larder feed. `fodderDraw` itself survives, in its own grass units,

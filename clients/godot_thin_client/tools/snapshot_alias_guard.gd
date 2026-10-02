@@ -195,8 +195,7 @@ func _fixture() -> Dictionary:
 				"upkeep_demand": 0.0, "upkeep_supplied": 0.0, "upkeep_shortfall": 0.0,
 				"upkeep_workers_needed": 0, "has_neglect_grace": false,
 				"neglect_grace_remaining": 0, "build_turns_remaining": -1,
-				"build_blocked_reason": "", "is_queued": false, "build_kit_id": "",
-				"upkeep_kit_id": "", "upkeep_kit_named": false},
+				"build_blocked_reason": "", "is_queued": false},
 			{"tile_x": SITE_X, "tile_y": SITE_Y, "material": "stone", "branch": "extraction",
 				"stock": 3000.0, "capacity": 3000.0, "reachable": 450.0, "regrowth_rate": 0.0,
 				"rung": "extraction:gathering", "build_fraction": 0.0, "ladder_position": 0.0,
@@ -204,8 +203,7 @@ func _fixture() -> Dictionary:
 				"upkeep_demand": 0.0, "upkeep_supplied": 0.0, "upkeep_shortfall": 0.0,
 				"upkeep_workers_needed": 0, "has_neglect_grace": false,
 				"neglect_grace_remaining": 0, "build_turns_remaining": -1,
-				"build_blocked_reason": "", "is_queued": false, "build_kit_id": "",
-				"upkeep_kit_id": "", "upkeep_kit_named": false},
+				"build_blocked_reason": "", "is_queued": false},
 		],
 	}
 

@@ -1288,6 +1288,10 @@ mod tests {
                     generation: 0,
                     faction: FactionId(0),
                     knowledge: Vec::new(),
+                    founding_lines: crate::lineage::FoundingLines::founded(
+                        crate::components::BandId(0),
+                        crate::lineage::MIN_BAND_LINES,
+                    ),
                 },
                 StartingUnit::new("BandScout".to_string(), vec![]),
                 allocation,
@@ -1390,6 +1394,10 @@ mod tests {
                 generation: 0,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
+                founding_lines: crate::lineage::FoundingLines::founded(
+                    crate::components::BandId(0),
+                    crate::lineage::MIN_BAND_LINES,
+                ),
             },
             // BandCrafter: base_range 2, so the band center can't reveal the far worked tiles.
             StartingUnit::new("BandCrafter".to_string(), vec![]),
@@ -1894,6 +1902,10 @@ mod hex_sight_range_tests {
             generation: 0,
             faction,
             knowledge: Vec::new(),
+            founding_lines: crate::lineage::FoundingLines::founded(
+                crate::components::BandId(0),
+                crate::lineage::MIN_BAND_LINES,
+            ),
         }
     }
 

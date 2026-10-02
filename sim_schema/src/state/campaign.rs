@@ -394,11 +394,6 @@ pub struct OpeningLoadoutState {
     /// a refusal string to work out which bench tools are still gated.
     #[serde(default)]
     pub craftable_recipe_ids: Vec<String>,
-    /// The kit column's pre-fill, **already clamped to the spawned band's kit budget** — that
-    /// budget is that band's head count rather than a config number, so the sim fits the profile's
-    /// suggestion to it and a client draws these counts as they arrive.
-    #[serde(default)]
-    pub kit_defaults: Vec<OpeningKitDefaultState>,
 }
 
 /// One pre-filled kit allocation — a suggestion the window opens on, never a grant.

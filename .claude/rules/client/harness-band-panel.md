@@ -2263,16 +2263,12 @@ states, i.e. every state in this file that draws one.
   real roster id on a source row, so a fixture omitting it left the take picker resolving through its
   FALLBACK on every frame in this file. Each row states its own job's DEFAULT, so **no frame moved**;
   what it buys is that "the picker names the row's kit" is a claim about the row.
-- **The three KEPT fixtures state `upkeep_kit_id` + `upkeep_kit_named`.** They did so because
-  `resolve_upkeep_kits` answered a real id for every source a band works, so the same argument held
-  one account over. **That account is retired** (`docs/plan_pool_toe.md` §4): the resolver is now
-  `resolve_worked_sources`, a MEMBERSHIP SET carrying no kit at all — it answers only *does one of
-  the viewer's bands work this source*, which gates a build scratch — and every patch, herd and
-  working publishes `upkeep_kit_id` `""` with `upkeep_kit_named` `false`, a site's keeping tools
-  following from its own rung and being read off the cohort's `pool_toe`. So the pair these three
-  fixtures state is one no server sends any more, and what they exercise is the client's Upkeep
-  picker rather than a wire path. `KEEPING_POOL_PATCH_UPKEEP_KIT` / `_HERD_UPKEEP_KIT` are still the
-  two webs' derivations, spelled from the shared roster's ids.
+- **No fixture states a per-site keeping kit.** The resolver is `resolve_worked_sources`, a
+  MEMBERSHIP SET carrying no kit at all — it answers only *does one of the viewer's bands work this
+  source*, which gates a build scratch — and a site's keeping tools follow from its own rung and are
+  read off the cohort's `pool_toe` (`docs/plan_pool_toe.md` §4). The wire has no
+  `upkeep_kit_id` / `upkeep_kit_named`, so a fixture stating them would describe a row no server
+  sends.
 
 **`_assert_unstated_upkeep_kit_falls_through` is PNG-LESS and DRIVEN because no fixture here can
 render its state.** The wire states `""` only for a source no band works, and every kept source in

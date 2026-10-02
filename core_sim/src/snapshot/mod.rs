@@ -1376,6 +1376,10 @@ mod tests {
             generation: 0,
             faction: FactionId(0),
             knowledge: Vec::new(),
+            founding_lines: crate::lineage::FoundingLines::founded(
+                crate::components::BandId(0),
+                crate::lineage::MIN_BAND_LINES,
+            ),
         };
         (cohort, allocation)
     }

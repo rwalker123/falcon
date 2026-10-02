@@ -1,5 +1,6 @@
 use super::*;
 use crate::climate::{climate_band_for_temperature, ClimateBand};
+use crate::lineage::FoundingLines;
 
 /// Seasonal weight a freshly stamped `FoodModuleTag` carries: full strength, unmodulated. The
 /// seasonal cycle is applied later by the food systems; worldgen only decides *which* module a tile
@@ -878,19 +879,17 @@ pub fn spawn_initial_world(
         .as_ref()
         .map(|handle| handle.get())
         .unwrap_or_else(crate::materials_config::MaterialsConfig::builtin);
+    let start_kit_demographics = start_kit_handles
+        .demographics
+        .as_ref()
+        .map(|handle| handle.get())
+        .unwrap_or_else(crate::demographics_config::DemographicsConfig::builtin);
     let start_kit = StartKit {
         equipment: &start_kit_equipment,
         recipes: &start_kit_recipes,
         materials: &start_kit_materials,
-        working_fraction: start_kit_handles
-            .demographics
-            .as_ref()
-            .map(|handle| handle.get().initial_distribution.working)
-            .unwrap_or_else(|| {
-                crate::demographics_config::DemographicsConfig::builtin()
-                    .initial_distribution
-                    .working
-            }),
+        working_fraction: start_kit_demographics.initial_distribution.working,
+        founding_lines: start_kit_demographics.lineage.founding_lines.get(),
     };
     if config.start_profile_overrides.starting_units.is_empty() {
         // **The no-`starting_units` fallback stays faction 0's alone, deliberately.** It is the
@@ -3293,6 +3292,10 @@ struct StartKit<'a> {
     /// the one config that owns it, rather than from a second constant that would drift the moment
     /// the demographics were retuned.
     working_fraction: f32,
+    /// **`L` — the founding lines every starting band is founded with**
+    /// (`demographics.lineage.founding_lines`, `crate::lineage`). Every faction's starting band
+    /// takes the same `L`; only the origin [`crate::components::BandId`] differs.
+    founding_lines: u16,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3449,6 +3452,10 @@ fn spawn_population_entity(
     // Brackets and larder are seeded at Startup by `apply_starting_inventory_effects`
     // (it splits `size` via the demographics config distribution and distributes start-grant
     // provisions into larders) — spawn them empty here.
+    // The band's durable identity — see `BandId`. Allocated here rather than derived from position
+    // because several bands can share a hex and a band outlives the hex it started on. Allocated
+    // BEFORE the cohort because a starting band's founding lines are minted on its own id.
+    let band_id = identity.ids.allocate();
     let mut entity = commands.spawn(PopulationCohort {
         home: tile_entity,
         current_tile: tile_entity,
@@ -3481,6 +3488,9 @@ fn spawn_population_entity(
         generation,
         faction,
         knowledge: knowledge.to_vec(),
+        // **A starting band is where lines are minted** — `L` of them, each originating on this
+        // band's own id, which is what makes a line id unique without an allocator of its own.
+        founding_lines: FoundingLines::founded(band_id, start_kit.founding_lines),
     });
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.
@@ -3504,9 +3514,7 @@ fn spawn_population_entity(
     // (`docs/plan_crafting_and_materials.md` §5). Inserted here rather than on first use so the
     // bench's crew comes out of the same worker pool the assignment loop reads, on turn one.
     entity.insert(crate::components::BandBench::default());
-    // The band's durable identity — see `BandId`. Allocated here rather than derived from position
-    // because several bands can share a hex and a band outlives the hex it started on.
-    entity.insert(identity.ids.allocate());
+    entity.insert(band_id);
     // ...and the band's NAME, minted from the same source in the same breath — see `BandName`. It is
     // minted rather than derived for the same reason the id is: nothing about a band's identity may
     // move when a different band dies.

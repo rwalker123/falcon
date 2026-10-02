@@ -7321,13 +7321,6 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             "build_legs": SourceForecast.build_legs(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
-            # **AND WHAT THE ENTRY IS BEING RAISED WITH** (`docs/plan_standing_upkeep.md` §4.7a ②) —
-            # the RESOLVED builders kit of the winning band's queue entry, `""` on a source nobody
-            # has queued. It is the queue row's settings strip that spends it; the field is composed
-            # here beside the other five build fields because this is where the raw wire source is in
-            # hand, and because the five are one reading of one entry.
-            "build_kit_id": SourceForecast.build_kit_id(
-                rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             # **WHAT THIS SITE IS BILLED TO STAND, PER TURN, AND WHETHER IT IS BILLED AT ALL.** One
             # list, spent twice: `_work_inspector_has_upkeep` reads its EMPTINESS as the gate, and
             # the bill line renders its TERMS. `RungLadder.upkeep_price_terms` carries why one
@@ -7335,10 +7328,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # to keep — answers `[]`. Composed here for the reason the build fields above are: this
             # is where the raw wire source is in hand.
             #
-            # ⛔ **`upkeep_kit_id` AND `upkeep_kit_named` RODE BESIDE IT AND ARE GONE.** They fed the
-            # retired Upkeep picker and its `(default)` mark; `docs/plan_pool_toe.md` §4 publishes
-            # `""` / `false` for both on every patch, herd and working, so a model key carrying them
-            # could only state the absence of a choice nobody makes.
+            # ⛔ **THERE IS NO PER-SITE KEEPING KIT ON THIS MODEL.** A site's keeping tools follow
+            # from its own rung (`docs/plan_pool_toe.md` §4), so the wire carries no such field.
             "upkeep_price_terms": RungLadder.upkeep_price_terms(
                 rung_source, HudComposeVocab.BARE_FORECAST_PREFIX),
             # **WHY THE BUILDERS ARE HELD ON THIS ENTRY, THROUGH THE ONE PRODUCER THE SOURCE'S OWN

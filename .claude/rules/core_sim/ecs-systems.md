@@ -93,12 +93,11 @@ Constellation-level leaps from overlapping discoveries.
 
 > **Fog of war is the ONLY fog concept in this repo.** There used to be a second, unrelated one —
 > `FogMode` / `fogRaster`, the selectable "Fog of Knowledge" *data* overlay — and it is gone
-> (`fogMode` and `fogRaster` survive only as `(deprecated)` FlatBuffers slots, since a vtable slot is
-> positional). Its orphans went with it: `FogRevealLedger` / `FogReveal`, `decay_fog_reveals`,
-> `FogOverlayConfig`, `StartProfileOverrides::fog_mode`, and `survey_radius` (the start-marker reveal
-> radius, which only ever fed that overlay's reveal circle — a band's sight is decided entirely by
-> `calculate_visibility`). A grep for "fog" now means fog of war in every case *except* those two
-> deprecated schema lines.
+> (`fogMode` and `fogRaster` are off the wire too). Its orphans went with it: `FogRevealLedger` /
+> `FogReveal`, `decay_fog_reveals`, `FogOverlayConfig`, `StartProfileOverrides::fog_mode`, and
+> `survey_radius` (the start-marker reveal radius, which only ever fed that overlay's reveal circle —
+> a band's sight is decided entirely by `calculate_visibility`). A grep for "fog" means fog of war in
+> every case.
 
 **The master switch is server-owned: `SimulationConfig::fog_enabled` (default `true`).** It is the
 single authority, and it gates BOTH halves so they cannot disagree:

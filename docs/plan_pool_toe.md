@@ -263,9 +263,9 @@ something a pool can be staffed with.
 
 - **Fields that stop carrying meaning for pools** are left in place, because FlatBuffers fields are
   positional: a pool row's `LaborAssignment.kitId` publishes empty and its `kitWorkersHolding` equals
-  its `workers` (the *nothing to be short of* reading, so no existing reader reports a shortfall);
-  per-site `upkeepKitId` / `buildKitId` on patches, herds and workings publish empty. No fallback
-  code.
+  its `workers` (the *nothing to be short of* reading, so no existing reader reports a shortfall).
+  The per-site `upkeepKitId` / `buildKitId` on patches, herds and workings are deleted from the
+  wire. No fallback code.
 - **`sim_ai` reads those per-site kit ids** (`instruments/observations.rs`, `SourceBuild.kit_id` and
   `SourceUpkeep`). It moves to `poolToe`. It never sends the retired commands.
 

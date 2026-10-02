@@ -638,8 +638,8 @@ steady-state profile fails that test.
 
 ## The per-frame content hash is gone — `WorldSnapshot::finalize` no longer exists
 
-`finalize` bincode-serialized the **entire world** on every published frame to stamp
-`header.hash` — ~1.0 ms of an 80×52 frame. #393 deleted it, and the deletion is the point: **the
+`finalize` bincode-serialized the **entire world** on every published frame to stamp a header
+field — ~1.0 ms of an 80×52 frame. #393 deleted it, and the deletion is the point: **the
 value had no reader anywhere.**
 
 That was established by tracing every consumer, not by assuming:
@@ -648,7 +648,7 @@ That was established by tracing every consumer, not by assuming:
 |---|---|
 | the Godot client | never touches `hash` — no hit in the native decoder or any `.gd` |
 | rollback / the ring | restores from the snapshot; never compares a hash |
-| `integration_tests/tests/determinism.rs` | **zeroes** `header.hash` on both snapshots and calls `hash_snapshot` itself |
+| `integration_tests/tests/determinism.rs` | calls `hash_snapshot` itself on both snapshots |
 | `sim_schema/src/world.rs` tests | tested the stamping mechanism, i.e. themselves |
 
 So this is the same shape this file already records twice — the retired bincode socket (#388) and
@@ -662,10 +662,9 @@ appears on *neither* side.
 
 **What survives.** `hash_snapshot` stays public with exactly one caller, `determinism.rs`, and is
 now off every publication path — pinned by `world.rs`'s
-`hash_snapshot_is_deterministic_and_ignores_the_stored_hash`, which replaces the two `finalize`
-tests and covers the two properties that caller depends on. `SnapshotHeader::hash` and its
-`snapshot.fbs` slot also stay, always `0`: FlatBuffers slots are positional and this repo's merges
-are append-only, so retiring a wire slot is its own change, and an always-zero `u64` costs 8 bytes.
+`hash_snapshot_is_deterministic_and_depends_on_content`, which replaces the two `finalize` tests and
+covers the property that caller depends on. `SnapshotHeader` carries no stamp field, on the struct
+or in `snapshot.fbs`.
 
 ## Publication is not on the turn thread — and `turn.profile` no longer describes all of a turn
 

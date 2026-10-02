@@ -279,7 +279,7 @@ uses them only to walk the tree and resolve a tile's **province**. It reads no t
 divergence, no threshold. The sole consumer of those was the Inspector's Culture tab.
 
 So the layer's 45 numbers (15 axes × baseline/modifier/value) plus divergence, the thresholds and
-`lastUpdatedTick` came off the client stream; their FlatBuffers slots are `(deprecated)`. What
+`lastUpdatedTick` came off the client stream; their FlatBuffers fields are deleted. What
 remains is topology, which changes only when the culture tree restructures.
 
 **And no amount of quantisation could have substituted for this.** Each of those 45 numbers drifts

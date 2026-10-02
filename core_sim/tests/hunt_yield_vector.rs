@@ -248,6 +248,10 @@ fn spawn_hunters(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {
@@ -712,6 +716,10 @@ fn spawn_resident_crew(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             ResidentBand,
             LaborAllocation {
@@ -1510,6 +1518,10 @@ fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FactionId(0),
         knowledge: Vec::new(),
+        founding_lines: core_sim::FoundingLines::founded(
+            core_sim::BandId(0),
+            core_sim::MIN_BAND_LINES,
+        ),
     }
 }
 

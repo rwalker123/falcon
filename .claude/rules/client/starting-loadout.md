@@ -2,8 +2,10 @@
 paths:
   - "clients/godot_thin_client/src/scripts/ui/StartingLoadoutPanel.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/StartingLoadoutController.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/OpeningCardController.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/hud_loadout_vocab.gd"
   - "clients/godot_thin_client/tools/ui_preview/chapters/starting_loadout.gd"
+  - "clients/godot_thin_client/tools/ui_preview/chapters/opening_card.gd"
 ---
 
 # The outfitting picker (issue #629)
@@ -130,7 +132,38 @@ band actually holds** — never a suggestion and never an unspent budget.
 | `ui/StartingLoadoutPanel.gd` | The free-floating card — three columns (kits / resources / what the resources can build), two meters, a **band switcher** drawn only while two or more windows are open, a footer control that CLOSES the card (it sends nothing: every stepper press already orders) and its own reopen pill. **`AutoSizingPanel`, not `PanelCard` + `DockScrollFit`** (`panel-framework.md`): it is measured against the ROOM. **ONE NODE CARRIES BOTH STATES** — the card and the pill are two children and exactly one is visible, so one fit and one placement serve the expanded and dismissed states; the fit measures whichever is showing and `_place` centres the card in the room and puts the pill at the top of it. It renders a payload and emits five intents (`dismissed` / `reopened` / `band_selected` / `kit_count_changed` / `material_units_changed`) and holds no allocation of its own — the footer control emits `dismissed` like the ✕, `commit_requested` having gone with the deferred order. **A row's `+` is enabled from the ROW's own `can_add`**, never re-derived from the meter — on a take the cap is per ITEM, so one kit row can be exhausted while the next is free. `_column` draws NO caption for an empty note, which is what keeps the builds column from carrying a blank row where the other two carry a line |
 | `ui/hud/StartingLoadoutController.gd` | The controller half, held by `HudLayer` as `_loadout`. **Holds ONE allocation PER BAND — what that band HOLDS, never a draft — every clamp, both remainders and the "what this builds" arithmetic.** Ingests the campaign's half (`set_campaign_loadout` — the pick list and the craftable ids; **the two pre-fills are read by nothing**), **the windows off the band roster** (`set_bands`, fed the player bands `HudLayer.update_band_alerts` has already filtered), the parsed equipment config (`set_equipment_config`) and the recipe book (`set_recipes`). `_write_pick` is the one press handler and the one sender; `_send_order` composes the line and queues it in `BAND_UNECHOED`; `revert_order` is the rollback `Main` reaches through `HudLayer.revert_starting_loadout`. Relays `set_starting_loadout_requested` onto `HudLayer`'s and pushes its orb half through `attention_changed` |
 | `ui/hud/hud_loadout_vocab.gd` (`HudLoadoutVocab`) | The vocabulary leaf — the wire keys, the words, the measured geometry, and the **swatch ring** (`apply_palette`, registered in `HudPalette.apply`) |
+| `ui/hud/OpeningCardController.gd` | The OPENING HAND-OFF, held by `HudLayer` as `_opening` — see "THE OPENING CARD" below. Collects every tick-0 `narrative_beat` off `ingest_command_events` (de-duplicated by `tick\|label\|detail`, arrival order), takes `StartingLoadoutController.opening_grant_held`, and decides in ONE deferred `_resolve`. Owns the `OpeningCardPanel` node, parented into the HUD layer. `reset_world_state` re-arms it; `is_open` / `dismiss` back `HudLayer.is_opening_card_open` / `dismiss_opening_card`, which `Main.escape_claimant` probes BY NAME |
+| `tools/ui_preview/chapters/opening_card.gd` | The opening card's chapter, appended LAST in `CHAPTERS` because every block starts on a world boundary. Three frames (`opening_card`, `opening_card_handoff`, `opening_card_late`) and 32 checkpoints: the window-then-beats frame, the button / scrim click / ESC hand-offs, once per world, a later splinter untouched, no story, a story a snapshot late, and a story after the window shut |
 | `tools/ui_preview/chapters/starting_loadout.gd` | The preview chapter, LAST in `CHAPTERS` — thirteen frames and **136 checkpoints**, including the orb's two colours, the no-dead-space bound, the press-sends-an-order claims, the refused-send rollback, the TAKE arc appended after them and, last, the ADOPTION pair: its own band, a press made, the band's allocation re-published against shrunken budgets and taken whole, then two presses whose first echo must not pull the card back. **Every fixture band publishes the last order this card sent for it** (`_held_kits`), which is what a server does. Its kit fixture is the **shipped nine-kit roster**, `none` included so the picker has something to drop. See `harness-ui-preview.md` |
+
+## THE OPENING CARD — the world's first auto-open is the Telling's, and it hands off here
+
+The sim says its opening on tick 0 as ordinary `narrative_beat` command events (the cold open, then
+`guidance.food_and_the_split`, whose last sentence tells the player to choose what to carry). They
+reach the Telling panel as every beat does, and they ALSO stand on a modal card
+(`OpeningCardPanel`, the fork's look) **in place of this card's first auto-open**. Its one button,
+`HudLoadoutVocab.OPENING_HANDOFF_LABEL` (*Choose what we carry*), opens the opening band's outfitting
+card.
+
+- **The hold is the controller's, the decision is `OpeningCardController`'s.** With
+  `yield_opening_grant` set (`HudLayer` sets it when it wires the card), the world's FIRST auto-open,
+  when it is a GRANT, renders the card, puts it at its reopen pill and emits `opening_grant_held`
+  instead of expanding. Every later auto-open — a splinter's, grant or take — is untouched.
+  `_first_auto_open_seen` is reset by `reset_world_state`, so the hold is once per world.
+- ⛔ **THE TWO INPUTS ARRIVE IN EITHER ORDER, SO THE DECISION IS DEFERRED.** `Main` dispatches
+  `populations` (the window) BEFORE `command_events` (the beats) within one snapshot, so the opening
+  frame holds the window before the story has been read. Both inputs only record, and one
+  `call_deferred` `_resolve` decides at the end of the frame: a held band and a story → the card; a
+  held band and no story (a save loaded mid-opening, beats absent) → this card opens as it always did.
+  A story arriving in a LATER snapshot while the held band's window is still open raises the card
+  over this one (put away to its pill) and hands back to it; a story after the window shut raises
+  nothing (`has_window`).
+- ⛔ **THE OUTFITTING CARD IS NEVER LOST.** The held card is already rendered and at its pill, so
+  the window is reachable even before the hand-off, and EVERY way off the opening card — the button,
+  a click on the scrim, ESC (`Main.escape_claimant` → `ESC_OPENING_CARD`, right after the pause
+  menu) — emits `handed_off`, which opens the held band.
+- **Once per world.** `_shown` is cleared only by `reset_world_state`; a full snapshot re-sending
+  the ring and the roster raises nothing.
 
 ## What the client owns, and what it must not decide
 
@@ -164,8 +197,9 @@ band actually holds** — never a suggestion and never an unspent budget.
 Neither the kit roster nor a recipe's input costs is copied into the loadout section, and neither
 should be:
 
-- ⛔ **`openingLoadout.kitDefaults` / `.materialDefaults` HAVE NO CLIENT READER, AND MUST NOT GROW
-  ONE.** The wire still carries both; the SIM applies that spread when it makes the band, so it is
+- ⛔ **THE CAMPAIGN SECTION CARRIES NO KIT PRE-FILL, AND `openingLoadout.materialDefaults` HAS NO
+  CLIENT READER AND MUST NOT GROW ONE.** `materialDefaults` stays on the wire for the AI seat's
+  grant-window pre-fill alone; the SIM applies the default spread when it makes the band, so it is
   already in `loadout_window.kits` / `.materials` by the time a card is drawn, and a client seeding
   from the campaign section as well would draw — and then ORDER — twice the gear the band holds. What
   the client still reads out of that section is the **pick list** (a grant's offered materials, in the
@@ -509,6 +543,6 @@ went 0.20 → 0.25 and 0.17 → 0.25 against their own `SIGNAL`).
 
 | direction | contract |
 |---|---|
-| in, per world | `CampaignSection.openingLoadout` → `opening_loadout` on the snapshot dict (`native/src/dict/campaign.rs`) — the pick list, the two pre-fills, the craftable recipe ids. ⛔ **`open`, `kitBudget` and `materialBudget` were DELETED from it**, not deprecated in place: a window is a fact about one band |
+| in, per world | `CampaignSection.openingLoadout` → `opening_loadout` on the snapshot dict (`native/src/dict/campaign.rs`) — the pick list, the material pre-fill (for the AI seat, never read here), the craftable recipe ids. ⛔ **No `open`, `kitBudget`, `materialBudget` or kit pre-fill**: a window is a fact about one band |
 | in, per band | `PopulationCohortState.loadoutWindow` → `loadout_window` on each cohort dict (`native/src/dict/population.rs`). **`kits` / `materials` are what the band HOLDS — the sim applies a band's default outfit at its creation, so they are NON-EMPTY on a fresh band of either kind** — they carry the split's kit-denominated default take, which is what the card opens on; `parentItemSupply` lists only items some kit carries, so a bench tool is never offered as claimable. Decoded inside `population_to_dict`, so the full and delta paths get it from one place — the sim whole-diffs these tables and the change that matters is `open` going false on the turn advance. It reaches the picker through `HudLayer.update_band_alerts` → `set_bands`, off the roster that method already filters to the player's own bands (parties excluded: a detached party is those same people walking somewhere, not a band to outfit) |
 | out | `set_starting_loadout <faction> <band> [kit <id> <n>]... [material <id> <n>]...`, built by `Main.format_set_starting_loadout` and emitted on **every stepper press**. **The band is positional and required**, and it is the durable `band_id` rather than the ECS `entity` — asserted by `cargo xtask command-guard`, which drives the card's real commit control. **The whole allocation every time, never a diff** — the verb fails closed and whole. An EMPTY tail is a real order (*spend nothing*), which is the one place that formatter departs from its neighbours and returns a line rather than `{}` |

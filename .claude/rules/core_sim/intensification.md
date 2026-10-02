@@ -521,8 +521,7 @@ existed to avoid.
 > *what is being raised* off the row and still does **no arithmetic** to get it — the sim-answers
 > discipline — while there is exactly one authority for the fact.
 >
-> **`improvementWorkers` is `(deprecated)` in place**, beside `maintainWorkers`; FlatBuffers field
-> ids are positional, so the slots stay and the sim stops writing them. Where the crews are is the
+> **`improvementWorkers` is off the wire**, beside `maintainWorkers`. Where the crews are is the
 > **rows** above. The place in the line and the finish date are the **source's** own fields —
 > `buildQueuePosition` beside `buildTurnsRemaining`.
 >
@@ -620,8 +619,7 @@ take             = min((crew − keep_hands) × per_worker_capacity, source_offe
   clearing instead of gathering*, and the gatherers beside them carry exactly what they carried
   before. Four config numbers went with it, along with a term nobody chose (the plant rungs sat at
   `0.25` for years purely because that was the pre-move `cultivating_yield_fraction`).
-  `LadderConfig::build_dip`, `BuildDips` and the four `*BuildFraction` wire fields are gone; the wire
-  slots stay `(deprecated)`, because FlatBuffers field ids are positional.
+  `LadderConfig::build_dip`, `BuildDips` and the four `*BuildFraction` wire fields are gone.
 - **The cost stopped depending on a regime the player cannot see.** Under the dip a crew big enough
   to saturate the source's standing stock paid *nothing* for its build (the ceiling bound it either
   way) while a thin crew paid the full fraction.
@@ -822,7 +820,7 @@ first *rate*** (`docs/plan_standing_upkeep.md`).
 > > source-addressed and keep the winner rule above, and they agree across every holder by
 > > construction (one `cultivate` enqueues the same declaration on every band working the source).
 > > It is **captured live** off `LaborAllocation::build_queue`
-> > rather than turn-written — `buildKitId`'s discipline — so `build_order` / `unqueue` / a
+> > rather than turn-written — `isQueued`'s discipline — so `build_order` / `unqueue` / a
 > > declaration land on the command's own recapture and the client keeps **no optimistic ordering
 > > overlay**, an overlay being the second ordering this rule exists to forbid.
 > >
@@ -1309,10 +1307,9 @@ holds no hoes publishes `hoes required 1.8 filled 0`; the paid control reads fil
   elsewhere), a road's carries `road = true`. Two workings queued on one hex are two
   distinguishable entries (`source_crews_on_the_wire::
   two_workings_and_a_road_on_one_tile_publish_distinguishable_entries`).
-- **`poolCrew` / `poolToe` state `roadwork` and `builders` only**, and the `quarrywork*` triple on
-  `PopulationCohortState` is `(deprecated)` and publishes `0`.
-- **The four `*BuildFraction` slots and the two `*CrewNeeded` slots are `(deprecated)`** and no
-  longer written.
+- **`poolCrew` / `poolToe` state `roadwork` and `builders` only**, and `PopulationCohortState`
+  carries no `quarrywork*` triple.
+- **The four `*BuildFraction` fields and the two `*CrewNeeded` fields are off the wire.**
 
 ### THE MATERIAL HALF — a rung costs WORK **and** GOODS, on both terms
 

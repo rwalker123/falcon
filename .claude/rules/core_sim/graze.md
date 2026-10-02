@@ -343,8 +343,8 @@ entirely from the keeper's stores) and becomes **a piece of fenced land the herd
   > key **fails the load** rather than being silently dropped), `fauna::pen_upkeep`, the food-unit wire
   > terms `penUpkeep` / `penLarderBill` / `penHayFood`, `LaborAllocation::last_pen_feed_upkeep` and its
   > wire field `PopulationCohortState.penFeedUpkeep`, and `FoodFlow::pen_feed_upkeep` (the fertility
-  > half of the same error — your animals' appetite suppressed your births). Every one of those slots
-  > is `(deprecated)` in `snapshot.fbs` rather than deleted; field ids are positional.
+  > half of the same error — your animals' appetite suppressed your births). None of those fields is
+  > on the wire.
   >
   > **The fed fraction is one expression in one unit** now. It used to add a fodder-unit land share to
   > a food-unit payment ratio, which is precisely how the two units came to be mixed at all.
@@ -437,10 +437,10 @@ the per-pen remainder, and the sim is what sums and subtracts.
 
 > #### ⛔ THE GAP ITSELF HAD A HERD-ROW FIELD, AND NOTHING READ IT
 >
-> `penHayNeed` published one pen's gap un-differenced. It is `(deprecated)` in place (the slot stays
-> reserved): what a pen row says is *"needs 11.3 more/turn"*, which is the shortfall, and a client
-> holding both terms of a subtraction the sim already does is one expression away from a difference
-> that describes two different turns. The **quantity** is untouched — the corral arm still strikes it,
+> `penHayNeed` published one pen's gap un-differenced, and it is off the wire: what a pen row says
+> is *"needs 11.3 more/turn"*, which is the shortfall, and a client holding both terms of a
+> subtraction the sim already does is one expression away from a difference that describes two
+> different turns. The **quantity** is untouched — the corral arm still strikes it,
 > still sums it into `LaborAllocation::last_fodder_need`, and still differences it — only the copy on
 > `Herd` and the field on the wire are gone.
 

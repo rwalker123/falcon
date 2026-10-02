@@ -13041,6 +13041,10 @@ mod tests {
                     generation: 0,
                     faction,
                     knowledge: Vec::new(),
+                    founding_lines: core_sim::FoundingLines::founded(
+                        core_sim::BandId(0),
+                        core_sim::MIN_BAND_LINES,
+                    ),
                 },
                 LaborAllocation {
                     assignments: vec![core_sim::LaborAssignment {

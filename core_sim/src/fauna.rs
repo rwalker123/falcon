@@ -578,8 +578,8 @@ pub struct Herd {
     // (*how much MORE* the pen needs, which is the number a player acts on), and the sim's own two
     // readers of the quantity — that shortfall and the band's `last_fodder_need` roll-up — take it
     // from the settlement's local `hay_need` on the same pass rather than from a stamped field. So
-    // the quantity is still computed and still summed; only the copy on the herd is gone. The wire
-    // slot `penHayNeed` is `(deprecated)` in place.
+    // the quantity is still computed and still summed; only the copy on the herd is gone, and
+    // `penHayNeed` is off the wire.
     /// Transient per-turn scratch: **how much more fodder this pen needs per turn** —
     /// `max(0, hay_need − fodder_draw)`, in fodder units, where `hay_need` is the gap the pen's own
     /// fenced footprint leaves (`max(0, fodder_per_biomass × biomass − footprint_intake)`). Written
@@ -14049,6 +14049,10 @@ mod tests {
                 generation: 0,
                 faction,
                 knowledge: Vec::new(),
+                founding_lines: crate::lineage::FoundingLines::founded(
+                    crate::components::BandId(0),
+                    crate::lineage::MIN_BAND_LINES,
+                ),
             },
         ));
     }

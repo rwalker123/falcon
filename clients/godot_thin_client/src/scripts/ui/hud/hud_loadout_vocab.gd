@@ -28,8 +28,8 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 ## The pick list, in the order the profile declares it — **and that order is also the draw order**,
 ## shared by the resources column and the legend, so the two cannot disagree.
 const PICKABLE_MATERIALS_KEY := "pickable_materials"
-## ⛔ **THE TWO PRE-FILLS HAVE NO CLIENT READER, AND MUST NOT GROW ONE.** `openingLoadout` still
-## publishes `materialDefaults` / `kitDefaults`, and the SIM is what applies that spread — at the
+## ⛔ **THE PRE-FILL HAS NO CLIENT READER, AND MUST NOT GROW ONE.** `openingLoadout` still
+## publishes `materialDefaults` (for the AI seat), and the SIM is what applies that spread — at the
 ## band's creation, down the same path a player's `set_starting_loadout` takes — so it is already in
 ## `WINDOW_KITS_KEY` / `WINDOW_MATERIALS_KEY` by the time a card is drawn. A client that seeded from
 ## the campaign section as well would draw, and then order, twice the gear the band holds. The keys
@@ -47,8 +47,8 @@ const CRAFTABLE_RECIPE_IDS_KEY := "craftable_recipe_ids"
 # ---- the wire's own keys: ONE BAND'S WINDOW ------------------------------------------------------
 # `PopulationCohortState.loadoutWindow`, decoded onto each cohort dict as `loadout_window`
 # (`native/src/dict/population.rs`). **EVERY BAND GETS ONE** — the spawned band's, and one on every
-# splinter a split makes — so the budgets and the open flag are facts about a BAND and were deleted
-# from the campaign section above rather than deprecated in it.
+# splinter a split makes — so the budgets and the open flag are facts about a BAND and the campaign
+# section above does not carry them.
 
 ## The window, on the cohort dict. Absent means this band has nothing to outfit.
 const WINDOW_KEY := "loadout_window"
@@ -220,6 +220,12 @@ const DISMISS_GLYPH := "✕"
 const DISMISS_TOOLTIP := "Look around first. The picker stays available until the turn advances."
 const REOPEN_LABEL := "⚑  Outfit the band"
 const REOPEN_TOOLTIP := "Finish outfitting the band before the turn advances."
+
+## **THE OPENING CARD'S ONE BUTTON** (`OpeningCardPanel`). The world's opening lines end by telling
+## the player to choose what to carry, and this is the control that does it: it closes the card and
+## opens the opening band's outfitting card. A dismissal does exactly the same, so this face names the
+## ONE thing that happens next rather than offering a choice.
+const OPENING_HANDOFF_LABEL := "Choose what we carry"
 
 ## What the panel says while it is open on a world that published no pick list and no kit roster —
 ## a frame between the section arriving and the catalogues arriving, not an error.

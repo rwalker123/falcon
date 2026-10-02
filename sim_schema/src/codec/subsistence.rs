@@ -492,11 +492,6 @@ fn create_herds<'a>(
         // **WHERE THE HERD IS**, beside where it is going. Always written: every herd stands on a
         // rung, so unlike the destination there is no "not queued" reading to encode.
         let current_rung = builder.create_string(herd.current_rung.as_str());
-        let upkeep_kit_id = builder.create_string(herd.upkeep_kit_id.as_str());
-        // **Always written, `""` included** — the empty string is *"no band has this queued"*, and a
-        // client comparing its own selection against an absent field would read every source as a
-        // mismatch, exactly as it would for `defaultKitId` above.
-        let build_kit_id = builder.create_string(herd.build_kit_id.as_str());
         let build_legs = if herd.build_legs.is_empty() {
             None
         } else {
@@ -590,7 +585,7 @@ fn create_herds<'a>(
                 // **How much more fodder the pen still needs** — appended last (append-only wire).
                 // `max(0, hay need − fodderDraw)`, struck sim-side on the same pass as both its terms
                 // so the difference can never describe a different turn from them. The gap it is
-                // taken from rode this row as `penHayNeed` and is `(deprecated)`: nothing read it.
+                // taken from is not a wire field: nothing read it.
                 penFodderShortfall: herd.pen_fodder_shortfall,
                 // The render-ready feed split (F3) — appended last (append-only wire).
                 // Raw combat components (Predators Phase 0) — the client derives danger itself.
@@ -604,8 +599,6 @@ fn create_herds<'a>(
                 preySenseRadius: herd.prey_sense_radius,
                 // Ownership-independent would-be herder count (taming-startup-lag fix) — appended last.
                 herdersNeededIfManaged: herd.herders_needed_if_managed,
-                // The two build dips are RETIRED: `tameBuildFraction`/`corralBuildFraction` are
-                // `(deprecated)` slots and flatc emits no `Args` field for them.
                 // The neglect grace — appended last.
                 hasNeglectGrace: herd.has_neglect_grace,
                 neglectGraceRemaining: herd.neglect_grace_remaining,
@@ -678,10 +671,6 @@ fn create_herds<'a>(
                 buildDestinationCapacity: herd
                     .build_destination_capacity
                     .unwrap_or(crate::NO_BUILD_DESTINATION_CAPACITY),
-                // **What this herd's build is being raised with** — appended last (append-only
-                // wire). The RESOLVED kit of the winning band's queue entry; `""` when no band has
-                // it queued.
-                buildKitId: Some(build_kit_id),
                 // **The pen ring's DENOMINATOR** — appended last (append-only wire). Rides beside
                 // `penExtendProgress` above in the same work units; `0` with no ring in flight.
                 penExtendCost: herd.pen_extend_cost,
@@ -702,9 +691,6 @@ fn create_herds<'a>(
                 // declares no material at all.
                 tameUpkeepMaterialDemand: Some(tame_upkeep_material_demand),
                 corralUpkeepMaterialDemand: Some(corral_upkeep_material_demand),
-                // **WHAT THIS SITE IS KEPT WITH** — the resolved kit, and whether a band stated it.
-                upkeepKitId: Some(upkeep_kit_id),
-                upkeepKitNamed: herd.upkeep_kit_named,
                 // **WHAT THE HERD'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.2).
                 upkeepHands: herd.upkeep_hands,
                 upkeepToolsShort: herd.upkeep_tools_short,
@@ -739,9 +725,6 @@ fn create_forage_patches<'a>(
         let build_destination_rung = builder.create_string(patch.build_destination_rung.as_str());
         // **WHERE THE PATCH IS**, beside where it is going — see the herd twin.
         let current_rung = builder.create_string(patch.current_rung.as_str());
-        let upkeep_kit_id = builder.create_string(patch.upkeep_kit_id.as_str());
-        // Always written, `""` included — see the herd twin.
-        let build_kit_id = builder.create_string(patch.build_kit_id.as_str());
         let build_legs = if patch.build_legs.is_empty() {
             None
         } else {
@@ -852,9 +835,7 @@ fn create_forage_patches<'a>(
                 fodderPerBiomass: patch.fodder_per_biomass,
                 tendedFodder: patch.tended_fodder,
                 fieldFodder: patch.field_fodder,
-                // The two build dips are RETIRED — `(deprecated)` slots, no `Args` field.
-                // The neglect grace — appended last. The two build-crew slots retired with
-                // `crew_needed`; they are `(deprecated)` and flatc emits no `Args` field for them.
+                // The neglect grace — appended last.
                 hasNeglectGrace: patch.has_neglect_grace,
                 neglectGraceRemaining: patch.neglect_grace_remaining,
                 // One gatherer's BIOMASS throughput, seasonal weight folded in — appended last
@@ -921,9 +902,6 @@ fn create_forage_patches<'a>(
                 buildDestinationCapacity: patch
                     .build_destination_capacity
                     .unwrap_or(crate::NO_BUILD_DESTINATION_CAPACITY),
-                // **What this patch's build is being raised with** — appended last (append-only
-                // wire); see the herd twin.
-                buildKitId: Some(build_kit_id),
                 // **The rung this patch STANDS on** — appended last (append-only wire); see the
                 // herd twin.
                 currentRung: Some(current_rung),
@@ -935,9 +913,6 @@ fn create_forage_patches<'a>(
                 // point: one says what you were billed, the other what this rung costs.
                 cultivationUpkeepMaterialDemand: Some(cultivation_upkeep_material_demand),
                 fieldUpkeepMaterialDemand: Some(field_upkeep_material_demand),
-                // **WHAT THIS SITE IS KEPT WITH** — the resolved kit, and whether a band stated it.
-                upkeepKitId: Some(upkeep_kit_id),
-                upkeepKitNamed: patch.upkeep_kit_named,
                 // **WHAT THE PATCH'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md` §2.1).
                 upkeepHands: patch.upkeep_hands,
                 upkeepToolsShort: patch.upkeep_tools_short,
@@ -1231,8 +1206,6 @@ fn create_deposits<'a>(
             // Always written, `""` included: *"not blocked"* is a statement about this turn, not an
             // absent field.
             let build_blocked_reason = builder.create_string(&deposit.build_blocked_reason);
-            let build_kit_id = builder.create_string(&deposit.build_kit_id);
-            let upkeep_kit_id = builder.create_string(&deposit.upkeep_kit_id);
             let default_kit_id = builder.create_string(&deposit.default_kit_id);
             let offered_kit_ids = create_ladder_areas(builder, &deposit.offered_kit_ids);
             // **Absent, not empty, where the sim published no curve** — `regrowthSamples`' own rule
@@ -1276,9 +1249,6 @@ fn create_deposits<'a>(
                     buildTurnsRemaining: deposit.build_turns_remaining,
                     buildBlockedReason: Some(build_blocked_reason),
                     isQueued: deposit.is_queued,
-                    buildKitId: Some(build_kit_id),
-                    upkeepKitId: Some(upkeep_kit_id),
-                    upkeepKitNamed: deposit.upkeep_kit_named,
                     defaultKitId: Some(default_kit_id),
                     offeredKitIds: Some(offered_kit_ids),
                     // **WHAT THE WORKING'S OWN CREW SPENT KEEPING IT** (`docs/plan_site_crews.md`
@@ -1326,9 +1296,6 @@ fn decode_deposit(deposit: fb::DepositState<'_>) -> DepositState {
         build_turns_remaining: deposit.buildTurnsRemaining(),
         build_blocked_reason: text(deposit.buildBlockedReason()),
         is_queued: deposit.isQueued(),
-        build_kit_id: text(deposit.buildKitId()),
-        upkeep_kit_id: text(deposit.upkeepKitId()),
-        upkeep_kit_named: deposit.upkeepKitNamed(),
         default_kit_id: text(deposit.defaultKitId()),
         offered_kit_ids: decode_strings(deposit.offeredKitIds()),
         upkeep_hands: deposit.upkeepHands(),
@@ -1612,7 +1579,6 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         build_destination_capacity: decode_build_destination_capacity(
             herd.buildDestinationCapacity(),
         ),
-        build_kit_id: text(herd.buildKitId()),
         pen_extend_cost: herd.penExtendCost(),
         standing_output_fraction: herd.standingOutputFraction(),
         standing_output_target: herd.standingOutputTarget(),
@@ -1625,8 +1591,6 @@ fn decode_herd(herd: fb::HerdTelemetryState<'_>) -> HerdTelemetryState {
         tame_upkeep_material_demand: decode_material_payoffs(herd.tameUpkeepMaterialDemand()),
         corral_upkeep_material_demand: decode_material_payoffs(herd.corralUpkeepMaterialDemand()),
         corral_build_material_cost: decode_material_payoffs(herd.corralBuildMaterialCost()),
-        upkeep_kit_id: text(herd.upkeepKitId()),
-        upkeep_kit_named: herd.upkeepKitNamed(),
         upkeep_hands: herd.upkeepHands(),
         upkeep_tools_short: herd.upkeepToolsShort(),
     }
@@ -1698,7 +1662,6 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
         build_destination_capacity: decode_build_destination_capacity(
             patch.buildDestinationCapacity(),
         ),
-        build_kit_id: text(patch.buildKitId()),
         current_rung: text(patch.currentRung()),
         build_material_cost: decode_material_payoffs(patch.buildMaterialCost()),
         upkeep_material_demand: decode_material_payoffs(patch.upkeepMaterialDemand()),
@@ -1707,8 +1670,6 @@ fn decode_forage_patch(patch: fb::ForagePatchState<'_>) -> ForagePatchState {
             patch.cultivationUpkeepMaterialDemand(),
         ),
         field_upkeep_material_demand: decode_material_payoffs(patch.fieldUpkeepMaterialDemand()),
-        upkeep_kit_id: text(patch.upkeepKitId()),
-        upkeep_kit_named: patch.upkeepKitNamed(),
         upkeep_hands: patch.upkeepHands(),
         upkeep_tools_short: patch.upkeepToolsShort(),
     }

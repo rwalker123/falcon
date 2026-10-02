@@ -3679,8 +3679,8 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array,
 static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: Dictionary,
 		denial_view: Dictionary = {}) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    # THE PARTY'S ORDERS — `expedition_floor`, where this raid stops (the retired
-    # `expeditionHuntPolicy` string is a `(deprecated)` wire slot). `1.0` is the sim's value for a
+    # THE PARTY'S ORDERS — `expedition_floor`, where this raid stops (a raid carries no stance
+    # string). `1.0` is the sim's value for a
     # scout or a resident band, and it is a legal raid floor too, so the hint is gated on the MISSION
     # rather than on the number.
     var floor_hint := ""

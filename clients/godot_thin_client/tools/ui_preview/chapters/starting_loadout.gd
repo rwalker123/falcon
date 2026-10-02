@@ -380,7 +380,7 @@ func _assert_opened_itself() -> void:
 ## the total would still look reasonable.
 ##
 ## ⛔ **AND THE CAMPAIGN PRE-FILL IS NOT DRAWN HERE AT ALL.** `_campaign()` no longer states it, so a
-## client that still read `openingLoadout.kitDefaults` would render an EMPTY kit column on this frame
+## client that seeded its kits from the campaign section would render an EMPTY kit column on this frame
 ## rather than a doubled one — which these same counts catch, at `got 0`.
 func _assert_the_kits_the_band_holds() -> void:
 	var rows := _rows(HudLoadoutVocab.KIT_ROW_META)

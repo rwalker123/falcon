@@ -50,8 +50,8 @@ const LEGACY_STANCE_FLOORS := {
 ## **Seed the per-policy forage ROWS from the flat scalars this fixture already states** (#426).
 ##
 ## The wire now carries the tile's whole yield vector as one row per rung — six dicts keyed by policy,
-## both the ceiling and the per-worker term, in all three accounts — and the six flat `patch_ceiling_*`
-## scalars are deprecated slots. `SourceForecast.forecast_is_known` reads the ROW's PRESENCE as its
+## both the ceiling and the per-worker term, in all three accounts — and carries no flat
+## `patch_ceiling_*` scalars. `SourceForecast.forecast_is_known` reads the ROW's PRESENCE as its
 ## "does the wire describe this source" witness, so a fixture that seeds only the scalars now correctly
 ## reads as *undescribed* and renders no forecast at all.
 ##
@@ -64,8 +64,8 @@ const LEGACY_STANCE_FLOORS := {
 ## byte-identical, which is exactly what a reseeding pass must not disturb.
 ##
 ## **THE `patch_ceiling_*` KEYS IT READS ARE A FIXTURE-AUTHORING SHORTHAND, NOT WIRE KEYS, AND THIS
-## ERASES THEM** (#426). The six flat scalars they are named after are retired `(deprecated)` wire
-## slots that `MapView` no longer cross-refs and `SourceForecast` no longer reads — so a tile dict
+## ERASES THEM** (#426). The six flat scalars they are named after are not on the wire, and neither
+## `MapView` nor `SourceForecast` reads them — so a tile dict
 ## left carrying them would be a wire-shaped key with no wire behind it, and the next fixture author
 ## to reach for one would get silence rather than an error. Consuming them here keeps ~30 fixtures
 ## naming their numbers once, in the readable form their comments explain, while guaranteeing no

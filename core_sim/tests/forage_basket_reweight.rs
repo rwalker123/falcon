@@ -670,7 +670,7 @@ fn a_deep_gather_banks_the_baskets_materials_at_both_drawn_down_rungs() {
 /// **THE PUBLISHED WILD MATERIAL RATE IS WHAT THE GATHER BANKS** (arc #527) — the rung-1 twin of the
 /// wolf guard, and the close on the third instance of one mistake.
 ///
-/// `ForagePatchState.tradePerBiomass` was `(deprecated)` with **no replacement**: the crop picker's
+/// The retired `ForagePatchState.tradePerBiomass` left **no replacement**: the crop picker's
 /// quotes cover a *commitment* at rungs 2 and 3, and a **wild gather had nothing at all**. A tile
 /// whose basket carries a cash crop read food-and-fodder-only while the turn banked its fibre.
 ///
@@ -1570,6 +1570,10 @@ fn spawn_forager(
                 generation: 0 as GenerationId,
                 faction: FactionId(0),
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             StartingUnit {
                 kind: "BandForager".to_string(),

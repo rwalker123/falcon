@@ -12,10 +12,11 @@ use bevy::prelude::Entity;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_crafting, scalar_from_f32, scalar_one, scalar_zero, BandBench, BandEquipment, BandId,
-    DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle, FactionId, GenerationId,
-    LadderConfigHandle, LocalStore, MaterialsConfig, MaterialsConfigHandle, MoraleCause,
-    PopulationCohort, RecipesConfig, RecipesConfigHandle, Scalar, WearQuantum,
+    advance_crafting, deliver_bench_output, scalar_from_f32, scalar_one, scalar_zero, BandBench,
+    BandEquipment, BandId, DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle,
+    FactionId, GenerationId, LadderConfigHandle, LocalStore, MaterialsConfig,
+    MaterialsConfigHandle, MoraleCause, PopulationCohort, RecipesConfig, RecipesConfigHandle,
+    Scalar, WearQuantum,
 };
 use std::collections::BTreeMap;
 
@@ -97,6 +98,10 @@ fn cohort(working: f32, stores: LocalStore) -> PopulationCohort {
         generation: 0 as GenerationId,
         faction: FACTION,
         knowledge: Vec::new(),
+        founding_lines: core_sim::FoundingLines::founded(
+            core_sim::BandId(0),
+            core_sim::MIN_BAND_LINES,
+        ),
     }
 }
 
@@ -180,10 +185,22 @@ impl Bench {
         self
     }
 
+    /// **`count` turns of the bench, in the schedule's order** — each opens with
+    /// [`deliver_bench_output`] (what the bench finished last turn reaches the store, before the turn's
+    /// first stage) and then works the bench.
     fn turns(&mut self, count: u32) -> &mut Self {
         for _ in 0..count {
+            self.app.world.run_system_once(deliver_bench_output);
             self.app.world.run_system_once(advance_crafting);
         }
+        self
+    }
+
+    /// **The top of the next turn, and nothing else of it** — what the last turn's bench finished
+    /// reaches the store. A finished item is parked on the bench until then, so a test about what
+    /// the store holds after a completion has to cross this line first.
+    fn deliver(&mut self) -> &mut Self {
+        self.app.world.run_system_once(deliver_bench_output);
         self
     }
 
@@ -473,7 +490,7 @@ fn a_finished_item_lands_in_the_bands_equipment_ledger_unworn() {
         .wear_item(&equipment, SLED, WearQuantum::BiomassHauled, uses);
     assert_eq!(bench.count_of(SLED), 1, "the band starts with one sled");
 
-    bench.start(SLED, CREW).turns(6);
+    bench.start(SLED, CREW).turns(6).deliver();
     assert!(
         bench.bench().items_completed >= 1,
         "the bench must finish one"
@@ -741,7 +758,8 @@ fn a_completion_delivers_the_recipes_whole_output_amount() {
         .stock(HIDE, 12.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
         .stock("fibre", 8.0, &[("fineness", 0.5), ("strength", 0.5)])
         .start(SLED, CREW)
-        .turns(6);
+        .turns(6)
+        .deliver();
 
     let completed = bench.bench().items_completed;
     assert!(completed >= 1, "the bench must finish at least one pass");
@@ -917,7 +935,8 @@ fn crafted_build_gear_grades_its_build_work_and_keeps_its_branch() {
                 )
                 .give_tool(BONE_AWL)
                 .start(case.recipe, CREW)
-                .turns(TURNS_TO_FINISH);
+                .turns(TURNS_TO_FINISH)
+                .deliver();
             assert_eq!(
                 bench.bench().items_completed,
                 1,
@@ -980,7 +999,8 @@ fn a_delivered_item_carries_the_tier_that_ships_known() {
         .stock(HIDE, 12.0, &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)])
         .stock("fibre", 8.0, &[("fineness", 0.5), ("strength", 0.5)])
         .start(SLED, CREW)
-        .turns(6);
+        .turns(6)
+        .deliver();
     assert!(bench.bench().items_completed >= 1, "the bench finishes one");
 
     let ledger = bench
@@ -1109,4 +1129,93 @@ fn a_bench_that_had_already_drawn_keeps_its_pile_when_the_crew_goes() {
         banked,
         "nobody at the bench banks nothing, so the item does not creep forward"
     );
+}
+
+/// ⛔ **A FINISHED ITEM IS PARKED ON THE BENCH, AND A JOB CHANGE BEFORE THE NEXT TURN DOES NOT LOSE
+/// IT** (issue #720).
+///
+/// The bench runs after the labour pass that settles the band's tools, so a tool it finishes cannot
+/// be issued that turn — and it no longer sits in the store pretending it was. It waits on
+/// `BandBench::finished` until the top of the next turn stocks it.
+///
+/// **Both job changes the player can make between turns** — a clear and a re-task — must carry the
+/// parked batch across: the item is already made, and only the next one is being cancelled.
+#[test]
+fn a_finished_item_waits_on_the_bench_and_survives_a_job_change() {
+    /// One pass of the sled's own inputs (`recipes.json`: 6 hide + 2 fibre), so the bench finishes
+    /// exactly one and cannot re-draw.
+    const ONE_PASS_OF_HIDE: f32 = 6.0;
+    const ONE_PASS_OF_FIBRE: f32 = 2.0;
+    /// Enough turns for [`CREW`] bare-handed to finish one `work: 8` pass, with room to spare.
+    const TURN_LIMIT: u32 = 8;
+    /// The sled a start-stocked band already holds.
+    const STARTING_SLEDS: u32 = 1;
+    const ONE_PARKED_BATCH: usize = 1;
+    /// What the re-task puts on the bench instead — any other recipe will do.
+    const RETASKED_RECIPE: &str = "baskets";
+
+    type JobChange = fn(&mut BandBench);
+    let changes: [(&str, JobChange); 2] = [
+        ("cleared", |bench| bench.clear_job()),
+        ("re-tasked", |bench| bench.set_job(RETASKED_RECIPE, CREW)),
+    ];
+    for (label, change) in changes {
+        let mut bench = Bench::shipped();
+        bench
+            .stock(
+                HIDE,
+                ONE_PASS_OF_HIDE,
+                &[(TOUGHNESS, 0.6), (SUPPLENESS, 0.5)],
+            )
+            .stock(
+                FIBRE,
+                ONE_PASS_OF_FIBRE,
+                &[(FINENESS, 0.5), (STRENGTH, 0.5)],
+            )
+            .start(SLED, CREW);
+        let mut turns = 0;
+        while bench.bench().items_completed == 0 && turns < TURN_LIMIT {
+            bench.turns(1);
+            turns += 1;
+        }
+        assert_eq!(
+            bench.bench().items_completed,
+            1,
+            "{label}: fixture — the bench must finish the sled"
+        );
+        assert_eq!(
+            bench.count_of(SLED),
+            STARTING_SLEDS,
+            "{label}: the turn that finished the sled does NOT put it in the store"
+        );
+        assert_eq!(
+            bench.bench().finished.len(),
+            ONE_PARKED_BATCH,
+            "{label}: …it is parked on the bench instead"
+        );
+
+        change(
+            &mut bench
+                .app
+                .world
+                .get_mut::<BandBench>(bench.band)
+                .expect("the band has a bench"),
+        );
+        assert_eq!(
+            bench.bench().finished.len(),
+            ONE_PARKED_BATCH,
+            "{label}: the job change leaves the finished sled where it was"
+        );
+
+        bench.deliver();
+        assert_eq!(
+            bench.count_of(SLED),
+            STARTING_SLEDS + 1,
+            "{label}: the top of the next turn stocks the parked sled"
+        );
+        assert!(
+            bench.bench().finished.is_empty(),
+            "{label}: …and empties the bench's parking, so it is delivered once"
+        );
+    }
 }

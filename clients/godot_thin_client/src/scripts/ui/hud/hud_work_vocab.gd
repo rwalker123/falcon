@@ -592,12 +592,17 @@ const BUILDERS_ROLE_HINT := "Builders work the build queue, top job first."
 ## two buttons under it and the arithmetic line under those did not already say — a label over a
 ## control whose whole content is two words — and it cost a line on a zone that clips. The buttons and
 ## the line share ONE row now; `UPKEEP_MODE_TITLE` went with the head.
-const UPKEEP_MODE_SPREAD_LABEL := "Spread"
+##
+## **THE FACES ARE `Even` / `Best first`, NOT THE WIRE TOKENS `spread` / `priority`** (#721). A work
+## row's `Priority` pill is a different lever — it ranks who gets tools and who is spared the shed — and
+## a pill that also said `Priority` read as part of it. The faces name the split instead: the wear
+## shared evenly, or the most-invested roads kept first.
+const UPKEEP_MODE_SPREAD_LABEL := "Even"
 
-const UPKEEP_MODE_PRIORITY_LABEL := "Priority"
+const UPKEEP_MODE_PRIORITY_LABEL := "Best first"
 
 ## The two modes stated as what they DO to the band's own sources, since that is the choice. Ride
-## each button's tooltip, so the pair of one-word faces stays narrow enough for the dock's flanks.
+## each button's tooltip, so the pair of short faces stays narrow enough for the dock's flanks.
 const UPKEEP_MODE_SPREAD_HINT := "Spread the roadwork across every road — each wears a little."
 
 const UPKEEP_MODE_PRIORITY_HINT := "Keep the best roads in full and let the lesser ones wear."

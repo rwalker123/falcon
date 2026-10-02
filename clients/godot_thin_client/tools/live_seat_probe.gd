@@ -282,6 +282,20 @@ func _split_through_the_ui(band: Dictionary, workers: int) -> bool:
 	var map_view: Node = _main.get("map_view")
 	var loadout: Object = hud.call("starting_loadout_panel")
 	var entity := int(band.get(ENTITY_KEY, NO_ENTITY))
+	# **THE OPENING CARD COMES FIRST.** A fresh world's first frame carries the Telling's tick-0 lines,
+	# and they stand on a modal card in place of the outfit card's first auto-open; its button is the
+	# hand-off to the outfit card (`starting-loadout.md` → "THE OPENING CARD"). Pressed as a player
+	# presses it, so the outfit card checked below is the one the hand-off opened.
+	if not bool(hud.call("is_opening_card_open")):
+		_fail("the opening card is not up on this fresh game — the Telling's tick-0 lines never reached it")
+		return false
+	var opening: Object = hud.call("opening_card")
+	_press_through_viewport(opening.call("panel").call("handoff_button"))
+	await _frames(UI_SETTLE_FRAMES)
+	if bool(hud.call("is_opening_card_open")):
+		_fail("a real click on the opening card's button did not close it")
+		return false
+	print("%s: the opening card handed off to the outfit card" % TAG)
 	if loadout == null or not bool(loadout.call("is_expanded")):
 		_fail("the opening outfit card is not up on this fresh game, so the probe cannot show a band verb puts it away")
 		return false

@@ -11,7 +11,8 @@ paths:
   - "core_sim/src/systems/{population,trade}.rs"
   - "core_sim/src/snapshot/population.rs"
   - "core_sim/src/data/{demographics_config,supply_network_config,sedentarization_config}.json"
-  - "core_sim/tests/{supply_network,sedentarization}.rs"
+  - "core_sim/tests/{supply_network,sedentarization,founding_lines}.rs"
+  - "core_sim/src/lineage.rs"
 ---
 
 <!-- Extracted verbatim from lines 48-51;4382-4760 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -26,8 +27,8 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
-| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
-| `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) — plus the **required** `opening_loadout` block (see "The opening loadout" below): `material_points` (**30**, one point buys one unit), `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 3` / `fibre 17` / `hide 8`, serde-defaulting to empty — the **default outfit** the sim applies to every band at creation), and **`kit_defaults`** (`big_game 4` / `trapping 4` / `gathering 4`, same optionality — its kit twin, opening on Stalking / Trapping / Harvesting so a band stands in a plausible outfit rather than a column of zeros, with hands still left to spend). ⛔ **These are APPLIED, not suggested** — see `starting-loadout.md`; the window's accepted rows are set by that apply, so they describe gear the band really holds. **There is deliberately no kit budget here.** `validate` rejects a `material_points` of `0`, an empty or duplicated `pickable_materials`, a `material_defaults` key outside the pick list, defaults summing above the budget, and a `kit_defaults` count of `0`; `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`, the one place all three tables are in scope. ⛔ **There is no sum check on `kit_defaults` and there cannot be**, because the kit budget is the spawned band's head count rather than a number in this file; an over-allocation is clamped at publish time instead (see "The opening loadout") |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), **`keeping`** (how food keeps, #706 — `classes`, each `{ id, shelf_life_turns }`: **`flesh` 4.0**, **`fresh_plant` 8.0**, **`dry` 60.0**; `startup_class` **`dry`**, the class the opening reserve is seeded into; `plant_fallback_class` **`fresh_plant`** / `kill_fallback_class` **`flesh`**, where a take's food lands when no species says. Validated at parse — unique ids, finite positive shelf lives, every named class present — and every fauna/flora species' `keeping` is reconciled against it at boot; see "Food spoils by keeping class" below), `births` (`birth_rate` + the `reserve` stock factor (`bonus`/`saturation_turns`) + the `trend` flow factor (`surplus_gain`/`surplus_saturation`/`deficit_penalty`/`deficit_saturation`); morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `lineage.founding_lines` (`L`, **8**, a `NonZeroU16` so `0` is a parse error — how many founding lines a starting band holds; see "Founding lines" below), `cold` and `heat` (the two temperature tails — `onset_temp` / `mortality_scale` / `max_mortality` plus each tail's own `child_vulnerability` 1.25 / `working_vulnerability` 1.0 / `elder_vulnerability` 1.5, a different ordering from `scarcity`'s; see “The cold/heat death model is PUBLISHED” below for why the two tails differ in all three parameters and why both are calibrated ahead of the map's current range). **This file is the SOLE source of demographics tuning** (#350): `demographics_config.rs` has no hand-written `Default` impls — `DemographicsConfig::default()` parses the builtin JSON, and every field is required with `deny_unknown_fields`, so a missing or unknown key is a parse error rather than a silent fallback to a second set of numbers that can drift (it did: `per_capita_draw` was 0.03 in Rust against 0.16 here). Do not re-add `#[serde(default)]` — the root `Default` parses through serde, so a container-level default would make it recurse. **The loader is strict to match**, and that strictness is no longer demographics-specific: it now lives in the shared `config_load.rs` seam and applies to every boot config (see `.claude/rules/core_sim/config-loading.md`). Strictness without a loud loader would only move the silent substitution one layer out — the whole file instead of one key |
+| `src/data/start_profiles.json` | Campaign initialization. Per profile: `starting_units` (`kind`/`count`/`band_size`), `starting_knowledge_tags`, `inventory`, `food_modules`, `victory_modes_enabled` (AI tuning is per seat and lives in `sim_ai/data/ai_profiles.json`, not here) — plus the **required** `opening_loadout` block (see "The opening loadout" below): `material_points` (**30**, one point buys one unit), `pickable_materials` (`bone`, `fibre`, `hide`, `wood`, `stone` — the picker's list, in the order it is drawn), `material_defaults` (`bone 3` / `fibre 17` / `hide 8`, serde-defaulting to empty — the **default outfit** the sim applies to every band at creation), and **`kit_defaults`** (`big_game 4` / `trapping 4` / `gathering 4`, same optionality — its kit twin, opening on Stalking / Trapping / Harvesting so a band stands in a plausible outfit rather than a column of zeros, with hands still left to spend). ⛔ **These are APPLIED, not suggested** — see `starting-loadout.md`; the window's accepted rows are set by that apply, so they describe gear the band really holds. **There is deliberately no kit budget here.** `validate` rejects a `material_points` of `0`, an empty or duplicated `pickable_materials`, a `material_defaults` key outside the pick list, defaults summing above the budget, and a `kit_defaults` count of `0`; `StartProfiles::validate_against_materials` rejects a pickable or default naming a material the roster does not carry, and `validate_against_equipment` rejects a `kit_defaults` key the equipment roster does not carry **or one whose `uses` is empty** — both run from `build_headless_app`, the one place all three tables are in scope. ⛔ **There is no sum check on `kit_defaults` and there cannot be**, because the kit budget is the spawned band's head count rather than a number in this file; an over-allocation is clamped proportionally when the outfit is applied to a band instead (see "The opening loadout") |
 | `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius, in **hex steps**), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer_fraction` (the dead-band, as a fraction of the node's own per-capita fair share of that commodity — see "The dead-band is RELATIVE, because one balancer serves food and a bone pile" below) |
 | `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
 ## Campaign Loop & System Activation
@@ -443,9 +444,9 @@ the whole runway: the turns after are walked as before. A detached party reads i
 > has exactly **one** correct resolution into people — so the resolution belongs to the sim and the
 > raw Scalars do not cross.
 >
-> `PopulationCohortState.children` / `working` / `elders` are therefore `(deprecated)` FlatBuffers
-> slots (the `i64`s survive on the Rust struct — `food_demand`, the fission split and the JSON map
-> export all read masses). What a client reads is the whole triple **`childrenCount` / `workingAge`
+> `PopulationCohortState` therefore carries no raw `children` / `working` / `elders` (the `i64`s
+> survive on the Rust struct — `food_demand`, the fission split and the JSON map export all read
+> masses). What a client reads is the whole triple **`childrenCount` / `workingAge`
 > / `eldersCount`**, with `childrenCount + workingAge + eldersCount == size` guaranteed because
 > `size` is *written* as that sum.
 >
@@ -462,6 +463,38 @@ the whole runway: the turns after are walked as before. A detached party reads i
 > invented an elder who ate nothing and could never die. The symptom that made this visible was the
 > other half of the same rounding: the PEOPLE bar read "17" beside "0 idle of 16" in the WORKFORCE
 > header of the same panel, because the client rounded the raws for itself.
+
+#### Founding lines — the relatedness proxy, carried as a SET
+
+Design: `docs/plan_civilization_steps.md` §"The mechanism: a breeding population cannot grow past
+its lines". The sim has no individuals, sexes or kinship, so relatedness is proxied by **founding
+lines** — the unrelated families a band descends from. `PopulationCohort.founding_lines`
+(`lineage::FoundingLines`) is a `BTreeSet<LineId>`, and `LineId` is
+`{ origin_band: u64, index: u16 }`.
+
+- **A set of identities, not a count.** Contact merges sets ("each side gains the lines it lacks")
+  and a recent split shares every line and adds nothing — both are set operations two numbers
+  cannot answer. The **count** is what the wire carries: `PopulationCohortState.foundingLines`.
+- **No allocator.** Lines are minted in exactly one place — `spawn_population_entity` in
+  `systems/worldgen.rs`, `FoundingLines::founded(band_id, L)` — on a starting band whose `BandId`
+  is already unique, so `(origin_band, index)` is globally unique by construction. Nothing else
+  mints. The id is allocated before the cohort is built for this reason.
+- **A split PARTITIONS** (`split_band_from_parent`, via `FoundingLines::split_off_share`): the child
+  takes `round(len × share)` on the same people share every other quantity divides on, clamped so
+  both halves keep at least `MIN_BAND_LINES` (1). The lines taken are the **highest** ids in set
+  order, so the partition is deterministic. They leave the parent. **A one-line parent cannot
+  partition**: both halves hold that same line.
+- **The share is a worker share.** `asked ÷ working` — a split of 5 *workers* off a 30-person band
+  holding ~18 workers is a share of ~0.28 and takes ~8 people with it, so it takes **2** of 8
+  lines, not 1. The plan's "five of thirty takes one or two" counts *people*.
+- **A detached expedition carries a clone of its home band's set.** It is those same people walking
+  somewhere, mints nothing, and folds back into the band it came from.
+- **Checkpointed with the cohort** (`BandRecord::cohort`); `SAVE_FORMAT_VERSION` 17.
+- **Redacted on a foreign row** — `foundingLines` is not on the redaction allow-list, so a rival's
+  band publishes `0`. A band the viewer owns never publishes `0`.
+
+Pinned by `core_sim/tests/founding_lines.rs` (starting bands of both factions, the split share and
+its clamp, the one-line case, save/load and restore, the count off the encoded envelope).
 
 ### Supply Network (logistics from turn 0)
 Bands are small logistics nodes: `balance_supply_networks` (`supply.rs`, `TurnStage::Logistics`,
@@ -983,10 +1016,8 @@ transferSent` ledger identity.
 > sums the Food line's income half **itself**, from the per-source `realizedYield` of the breakdown
 > rows it renders, so the headline equals the Gathered + Hunted rows it sits above **by construction**
 > rather than being a second, independently-computed total that could drift from them. That made a
-> band-level duplicate redundant, and it was read by nobody. Marked `(deprecated)` in `snapshot.fbs`
-> rather than deleted — deleting frees the field id for the next appender, and this repo is worked by
-> concurrent sessions that append to these tables, so a freed slot is exactly how two branches collide
-> on one id. **Do not re-add it**: if a band-level steady income is ever wanted again, sum the rows.
+> band-level duplicate redundant, and it was read by nobody, so it is off the wire. **Do not re-add
+> it**: if a band-level steady income is ever wanted again, sum the rows.
 > The Σ `realized` value still exists as a *local* in `snapshot::population`, because
 > `larder_runway_turns` needs a steady income term; it is simply not exported.
 

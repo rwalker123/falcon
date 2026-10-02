@@ -1462,7 +1462,7 @@ message HuntTripForecastReply {
   uint32 useful_cap = 3;
 }
 
-// Mirrors the wire's `DenialEstimate` row, field for field.
+// One party size's denial-raid forecast — the answer to a `DenialRaidForecastQuery`.
 message DenialRow {
   uint32 party_workers = 1;
   // `0` = never past recovery inside the horizon; `outcome` says which kind of never.

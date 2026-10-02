@@ -4,7 +4,7 @@ paths:
   - "core_sim/src/systems/crafting.rs"
   - "core_sim/src/snapshot/crafting.rs"
   - "core_sim/src/data/{materials,recipes}.json"
-  - "core_sim/tests/{materials,crafting,crafting_wire}.rs"
+  - "core_sim/tests/{materials,crafting,crafting_wire,bench_delivery}.rs"
 ---
 
 # Materials and the bench — the stuff a craftable thing is made of, and how it gets made
@@ -521,7 +521,8 @@ there in slice 4.
 # The bench
 
 `BandBench` is a component on a band: `{ recipe_id, workers, progress, drawn, items_completed,
-last_output_grade, priority, last_started }`. **One job at a time**, so no surface ever has to explain a queue.
+last_output_grade, priority, last_started, finished }`. **One job at a time**, so no surface ever
+has to explain a queue.
 
 **THE BENCH IS THE ASSIGNMENT.** `set_bench` puts the recipe up; there is no Crafter role card and
 **no `LaborTarget` variant**. Scout and Warrior are standing roles with nothing to point at, and
@@ -650,7 +651,9 @@ out of the pool that pass spends.
    which is `0` for a material that cannot be worked bare-handed. **That zero is the entire refusal
    mechanism.** There is no *"you cannot craft that"* branch anywhere in the sim, exactly as
    `max(0, attack − defense)` refuses a hunt; the client renders the reasoned refusal.
-4. On `progress >= work`: emit the outputs, charge one wear, charge one lesson, reset, re-draw.
+4. On `progress >= work`: emit the outputs (equipment **parked** on the bench, materials into the
+   store — see "What a completed craft delivers"), charge one wear, charge one lesson, reset,
+   re-draw.
 
 **The grade is fixed at draw time and never moves** (`DrawnInputs`), which is what makes it *not* a
 taper: a tool that runs dry mid-craft does not retroactively coarsen the thing on the bench, and a
@@ -678,6 +681,43 @@ lost is nameable rather than merely warned about: it is `BenchState::drawnInputs
 into one already standing**, because *"the next ten are their own batch"* is what keeps a fresh craft
 from averaging into a half-spent pile. It is what ends `equipment.md`'s *"start-stocked and NOT
 craftable"*, and a second sled made while the first is fresh is now genuinely a second sled.
+
+### ⛔ Finished equipment is PARKED on the bench and stocked at the top of the NEXT turn
+
+`emit_outputs` does not call `stock`. It pushes a fully resolved `FinishedBatch { item, count, tier,
+grade }` onto `BandBench::finished`, and `systems::deliver_bench_output` — registered
+`.before(TurnStage::Influence)`, ahead of every `BandEquipment` reader in the turn — drains it into
+the ledger in completion order.
+
+**Why: the bench runs after the tool settlement.** `advance_crafting` follows
+`advance_labor_allocation`, which settles the band's tools (`plan_pool_tools`, the take-row kit
+budget), so a tool finished on turn N cannot be issued before turn N+1. Stocking it at completion put
+it in the store a turn before anything could hand it out: the published pool cards and keeping rows
+read short beside a ledger that already held the hoe. Parked, **the turn a tool first shows in the
+store is the turn it is first issued** — the one-turn lag is kept (the tool did not exist while that
+turn's work was done), and the store and the issue agree. A finished **bench tool** is unaffected in
+effect: the re-draw after a completion already used the tiers resolved at the top of that band's
+pass, and the next turn's delivery lands before the next turn's bench.
+
+- **Resolved at completion, delivered with no lookup.** The tier and the grade's absolutes are
+  copied into the `FinishedBatch` exactly as they were stamped onto the stocked batch before, so a
+  recipe retuned or a bench re-tasked between turns cannot change what arrives.
+- **A job change never drops it.** `set_job` leaves `finished` alone and `clear_job` carries it
+  across beside `last_started` — the items are made; only the next one is cancelled. The shed's
+  `shed_one_worker` touches nothing but the crew.
+- **It rides `BandRecord::bench`** with the rest of the bench (`SAVE_FORMAT_VERSION` 16), so a save
+  or a rollback taken between the finishing turn and the next keeps it.
+- **A splinter does not take it.** Fission's kit divide moves units out of the parent's
+  `BandEquipment`, which does not hold a parked batch yet; the parent's bench keeps it and the parent
+  is stocked with it next turn.
+- **Materials are NOT parked.** A material output goes straight into `cohort.stores`, because the
+  next pass's `draw_pass` runs immediately after and may chain on it.
+
+Pinned through the real schedule by
+`bench_delivery::a_tool_finished_this_turn_is_stocked_and_issued_on_the_next` (the ledger and the
+encoded `poolToe` both without the tool on the craft turn, both with it the turn after) and
+`::a_job_change_between_turns_still_delivers_the_finished_tool`; the bench-only harness in
+`crafting.rs` runs `deliver_bench_output` at the top of each of its turns, in the schedule's order.
 
 Three things the batch carries, each resolved at the moment of the craft:
 
@@ -967,9 +1007,7 @@ The ledger is **one row per thing made** — an item, or a material for a stock 
 heads, **Kit · Bench tools · Materials**, with the columns **Item · Owned · Costs · action**. There is
 no Tier column and there are no tier heads: an item with two recipes carries both of its tiers in one
 row, so there is nothing to sort it under. **The sim publishes no tier word on an offer.**
-`CraftOffer.outputTierName`, `outputTierRank` and `ownedNote` are `(deprecated)` slots in
-`snapshot.fbs` — kept so the fields appended after them keep their ids — and nothing writes or reads
-them.
+`CraftOffer` carries no `outputTierName`, `outputTierRank` or `ownedNote`.
 
 **What the tier still decides is every number an offer quotes.** `makes`, `lasts`, `ownedAtTier` and
 the invitation's unlock band are all read at the tier **this offer's own recipe** makes

@@ -502,9 +502,6 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# now, so it is redacted with the countdown it explains rather than with the ground readings: a
 	# remembered tile knows no more about a live refusal than it knows the date behind it.
 	"patch_build_blocked_reason",
-	# …and WHAT THAT BUILD IS BEING RAISED WITH. A resolved builders kit is a fact about a band's
-	# declared job, redacted with the queue position and the cause it rides beside.
-	"patch_build_kit_id",
 	# WHERE THE QUEUED ENTRY IS TAKING THIS PATCH, and what is left of the climb
 	# (`docs/plan_standing_upkeep.md` §2.8). Both are facts about a band's DECLARED job — the
 	# destination it named and the legs still owed from where the patch stands — so they are redacted
@@ -558,10 +555,6 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# the one directly above where this patch stands — so the pile a card quotes states the ladder
 	# position `patch_is_cultivated` / `patch_is_field` are struck out to hide.
 	"patch_build_material_cost",
-	# WHAT THIS SITE'S KEEPERS ARE HELD WITH, and whether the player named it. A kit resolved onto a
-	# work site this turn is a fact about a band's doing — set by a command — so it is redacted with
-	# the rest of the live payload, as `patch_build_kit_id` above is.
-	"patch_upkeep_kit_id", "patch_upkeep_kit_named",
 	# …and how many of the SITE'S OWN CREW the keeping took this turn, and whether its keeping tools
 	# came up short (`docs/plan_site_crews.md` §2.2) — a settlement of this turn's hands, so live state.
 	"patch_upkeep_hands", "patch_upkeep_tools_short",
@@ -3494,13 +3487,6 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `site`, …). It crosses BESIDE the `-4` it explains: a countdown sentinel with no cause beside
 		# it is the state the field exists to end, and the client cannot re-derive the gate.
 		info["patch_build_blocked_reason"] = String(patch.get("build_blocked_reason", ""))
-		# **WHAT THIS PATCH'S BUILD IS BEING RAISED WITH** — the builders kit the winning band's queue
-		# entry RESOLVES to, `""` when nobody has it queued. It rides the queue position and the cause
-		# above because it is the same entry's property. **This line was MISSING while the decoder
-		# emitted the key**, which is the plant web's second-wiring bug for the fourth time: the
-		# compose sheet reads `build_kit_id` out of `tile_info` and there only, so every forage build
-		# read as carrying no kit at all.
-		info["patch_build_kit_id"] = String(patch.get("build_kit_id", ""))
 		# **WHERE THE ENTRY IS TAKING THIS PATCH, AND WHAT IS LEFT OF THE CLIMB** (§2.8). A queue entry
 		# names a DESTINATION rung rather than a single rung, so a `sow` declared on untended ground is
 		# a two-leg climb that holds the head of the queue through its Cultivate leg. The legs travel
@@ -3541,8 +3527,8 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# `patch_carrying_capacity` above — the PATCH's ceiling, since the floor is a fraction of the
 		# stand actually standing here — the client composes the ceiling at ANY floor
 		# (`SourceForecast.escapement_room`). The six per-policy row dicts it replaced — and the six
-		# flat `patch_ceiling_*` scalars before them — are retired `(deprecated)` wire slots, so nothing
-		# can read one representation while the sim pays the other. The vector's PRESENCE is what tells
+		# flat `patch_ceiling_*` scalars before them — are not on the wire, so nothing can read one
+		# representation while the sim pays the other. The vector's PRESENCE is what tells
 		# `SourceForecast` "the wire describes this source" apart from "the source pays nothing at this
 		# floor" — the #426 distinction, now answered by a rate rather than a row.
 		info["patch_provisions_per_biomass"] = float(patch.get("provisions_per_biomass", 0.0))
@@ -3651,16 +3637,6 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# rest of the payload.
 		info["patch_has_neglect_grace"] = bool(patch.get("has_neglect_grace", false))
 		info["patch_neglect_grace_remaining"] = int(patch.get("neglect_grace_remaining", 0))
-		# **WHAT THIS PATCH'S KEEPERS ARE HELD WITH** — the RESOLVED keeping kit of the work site (set
-		# by `upkeep_kit <faction> <x> <y>`, so it is the SOURCE's and the same on every band that works
-		# it), and whether that id is the player's own word or the web's derivation. The flag is not
-		# recoverable from the id — a player may name the very kit the derivation would have picked —
-		# which is why the wire states both and no reader re-derives the `(default)` mark.
-		#
-		# Redacted on a remembered hex: a kit in a band's hands this turn is live state, not ground,
-		# and it is set per site by a command the player issues.
-		info["patch_upkeep_kit_id"] = String(patch.get("upkeep_kit_id", ""))
-		info["patch_upkeep_kit_named"] = bool(patch.get("upkeep_kit_named", false))
 		# **THE SITE CREW'S KEEPING** (`docs/plan_site_crews.md` §2.2) — the hands of this site's own
 		# crew the sim spent keeping it, and whether their keeping tools came up short. The compose
 		# sheet and the work row read them under the same forecast keys the band's labor rows carry.

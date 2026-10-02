@@ -267,7 +267,7 @@ paths:
 
   **THERE IS NO `Pen feed` COST ROW, and there must not be one again.** A `−1.74 /turn` WARN-amber row
   stated the pen's food demand beside that badge, reading `pen_upkeep` (later `pen_larder_bill`). Both
-  fields are retired `(deprecated)` wire slots: **human food is not animal feed**. A pen is fed by land
+  fields are retired from the wire: **human food is not animal feed**. A pen is fed by land
   and by fodder, so a shortfall has no price to quote — it has a CONSEQUENCE, and the marked `Fed:` row
   is it. The band's food ledger lost its matching `🐄 Pen feed (animals)` row for the same reason
   (`band-readouts.md`), so there is no per-herd figure and no per-band one, and nothing to add together.
@@ -339,9 +339,9 @@ paths:
     gap the LAND leaves (what the pen needs grown for it whether or not any arrives) so that a pen row
     could state *"land covers 40% · needs 12.0 hay/turn"*. That is not the row that shipped: the row
     states what would fix the pen NOW, which is the shortfall, so the gap was left decoded and read by
-    nothing. The wire slot is `(deprecated)` in place, the decoder no longer inserts it, and **a
-    readout must not reconstruct it** by adding `fodder_draw` back onto the shortfall — the sum would
-    be a figure no snapshot carries, presented as though one did.
+    nothing. The wire field is gone, the decoder inserts no key for it, and **a readout must not
+    reconstruct it** by adding `fodder_draw` back onto the shortfall — the sum would be a figure no
+    snapshot carries, presented as though one did.
 
     The band-level roll-up is the cohort's `fodder_need` (`band-readouts.md` → "The band's FODDER
     LEDGER"), which the SIM sums over those same gaps. **It is therefore NOT a total of the pen rows'

@@ -255,6 +255,14 @@ source falls outside the band's work range **posts a party** and goes on working
 distance in walking — each pack is carried home by one of the party, and the band feeds it
 through its ordinary consumption.
 
+## The founding lines are PARTITIONED, not copied
+
+The splinter takes its share of the parent's founding lines and the parent no longer holds them —
+the split "takes its lines with it and lowers both ceilings". Same share as the people, highest ids
+first, each half keeping at least one; a one-line parent shares its line. Taken off a copy before
+anything is written and set on the parent in the "take it off the parent" block, so a refusal
+leaves the parent's lines untouched. See `campaign.md` → "Founding lines".
+
 ## The wire carries the FLOORS, never the verdict
 
 `PopulationCohortState.foundingMinWorkers` / `foundingParentMinWorkers`, echoed onto every cohort (the
@@ -263,13 +271,10 @@ one field per possible composition; what crosses is the pair of thresholds the s
 the per-source forecast publishes rates rather than an answer per party size. The client composes the
 refusal sentences and does no gate of its own.
 
-> **`foundingRefusals:[string]` was DELETED from `snapshot.fbs`, not deprecated in place** — a
-> deliberate exception to the rule stated in `expeditions.md` ("the wire slots are deprecated in
-> place, a FlatBuffers vtable slot is positional"). It is safe here for one reason and only one: this
-> repo has **no shipped clients or saves**, and both halves are built from the same tree, so no reader
-> can hold the old vtable. The general rule stands; a slot removed after a client ships is a silent
-> mis-read, not a compile error. Cross-reference: the `no-back-compat-yet` position in the root
-> `CLAUDE.md` lineage.
+> **There is no `foundingRefusals:[string]` on the wire.** A retired wire field is deleted from
+> `snapshot.fbs`, never kept as a `(deprecated)` slot — see `sim_schema/README.md` → "Field order
+> and retiring a field". It is safe because this repo has **no shipped clients or saves** and every
+> reader builds from the same tree.
 
 ## The splinter opens its own outfitting window
 

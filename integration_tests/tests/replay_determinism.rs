@@ -273,7 +273,6 @@ fn canonical(snapshot: &WorldSnapshot) -> Value {
     snapshot.header.frame_seq = 0;
     snapshot.header.base_frame_seq = 0;
     snapshot.header.world_epoch = 0;
-    snapshot.header.hash = 0;
 
     let tile_coords: BTreeMap<u64, (u32, u32)> = snapshot
         .tiles
