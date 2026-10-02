@@ -624,7 +624,7 @@ queued."*
 to put on it — so it keeps a band-wide stepper. The Work tab's ROADWORK section draws, top down: the
 head (`ROADWORK`, carrying the roster's `+N more` door), the pool's own row (`Road crew`,
 drawn as a site row — `band-city-panel.md` → "THE WORK TAB IS FIVE SECTIONS" — with the one-slot `⚠` /
-`ⓘ` mark, the coverage, tool and idle sentences on its hover, and the stepper), the Spread/Priority
+`ⓘ` mark, the coverage, tool and idle sentences on its hover, and the stepper), the Even/Best first
 pick wherever the road bill is live (`_build_upkeep_mode_row`, which
 reads the road bill alone), the unseen line, and the roads it keeps. A road row carries a `Build`
 pill only while a road build is queued on it (`build_priority … road <x> <y>`) and never a `Priority`

@@ -2348,7 +2348,7 @@ while something is queued and no builder is on it:
 | BUILD QUEUE | the `Builders` pool row (stepper, kit face, TOE mark), then the queue rows | yes |
 | AGRICULTURE | one row per forage source | only with a forage row |
 | HUSBANDRY | one row per hunt source | only with a hunt row |
-| ROADWORK | the `Road crew` pool row, the Spread/Priority pick where the road bill is live, then the roads kept | with a road (below) |
+| ROADWORK | the `Road crew` pool row, the Even/Best first pick where the road bill is live, then the roads kept | with a road (below) |
 | GROUNDWORK | one row per held working (`extraction-workings.md`) | only with a working |
 
 - **The sections ARE the filter.** The Gathering chips, the pager and the paged board's capacity
@@ -2411,7 +2411,7 @@ column and its second line at their line-two column (measured on the drawn nodes
   through `_emit_road_abandon` → `road_abandon_requested`. The roster models carry the card's `key` /
   `kind` / `x` / `y`, and `_find_work_model` searches site, workings and road models alike.
 - **The fund-mode pick and the unseen line are the Road crew row's own lines** (`_build_pool_line`'s
-  `extras`): the Spread/Priority pair at `ALLOC_SECTION_FONT_SIZE` and the "kept out of sight" hint,
+  `extras`): the Even/Best first pair at `ALLOC_SECTION_FONT_SIZE` and the "kept out of sight" hint,
   each in the row's line-two indent and charged to the row's reservation. The road block's height is
   the drawn rows' own `custom_minimum_size` summed.
 - **A build-queue entry's marker column is the site rows' stripe-and-icon column**
@@ -3187,14 +3187,17 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   `assign_labor` builder matched `scout` / `warrior` / `agriculture` / `husbandry` and answered `{}`
   for anything else, so the Builders card's stepper emitted NO COMMAND AT ALL and the pool could not
   be staffed from the UI. The sim has parsed `builders` since §2.5.
-- **THE FUND-MODE ROW IS THE ONE DECISION THE ROLES CANNOT EXPRESS** — `Spread` (fund every source in
-  proportion, so everything degrades a little) against `Priority` (fund the biggest investments in
+- **THE FUND-MODE ROW IS THE ONE DECISION THE ROLES CANNOT EXPRESS** — `Even` (fund every source in
+  proportion, so everything degrades a little) against `Best first` (fund the biggest investments in
   full and let the marginal ones rot), emitting `upkeep_mode <faction> <band> <mode>` through
   `BandPanelController.upkeep_mode_requested`. **It renders only where either web demands work this
   turn**: a band holding nothing has no split to choose, and a control offered there reads as a
   setting the player forgot to make. The active mode is `primary` and the other `ghost`, the work
   board's filter-chip treatment, and **both stay pressable** — a disabled active mode is
   indistinguishable at a glance from an unavailable one on a control whose whole content is two words.
+- **The faces are NOT the wire tokens** (#721): the buttons read `Even` / `Best first` and send
+  `spread` / `priority`. A face reading `Priority` sat a section away from the work rows' `Priority`
+  pill — a different lever (tools and the shed) — and players read the two as one.
 - **The line beneath states the POOL's own arithmetic, in both directions** (`Short 5 work of 7 this
   turn.` in WARN, or the covered form in HEALTHY). Both figures are summed by
   `HudBandLaborState.upkeep_pool_state` from the wire's per-source fields — one sum per web, skipping
