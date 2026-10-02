@@ -19184,6 +19184,78 @@ mod tests {
         );
     }
 
+    /// The second band on the lapsed Field — a band id distinct from [`LAPSED_BAND_ID`].
+    const SECOND_KEEPING_BAND_ID: u64 = 8;
+
+    /// ⛔ **EACH ROW PUBLISHES ITS OWN KEEPING HANDS, AND THEY SUM TO THE SITE'S.** Two bands work
+    /// one kept patch, so the source's `upkeep_hands` is their two shares added; a row's crew-split
+    /// marks must show that row's share, which is `LaborAssignment.keepHands` on the encoded frame.
+    #[test]
+    fn two_bands_on_one_site_publish_each_rows_own_keep_hands() {
+        /// Float slack on hand counts carried through the frame.
+        const HANDS_EPSILON: f32 = 1e-3;
+        let (mut app, _, coord) = lapsed_field_scene(LAPSED_FIELD_FRACTION);
+        let faction = FactionId(0);
+        let tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)
+            .expect("the scene's tile");
+        let second = spawn_idle_band(&mut app, faction, tile);
+        app.world
+            .entity_mut(second)
+            .insert(BandId(SECOND_KEEPING_BAND_ID));
+        handle_assign_labor(
+            &mut app,
+            faction,
+            Some(SECOND_KEEPING_BAND_ID),
+            "forage".to_string(),
+            LAPSED_CREW,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            None,
+            Some(SUSTAIN_FLOOR),
+            None,
+            Vec::new(),
+        );
+        resolve_labor(&mut app);
+        let site = app
+            .world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("the scene's patch")
+            .upkeep_hands;
+        let cells = (GRID * GRID) as usize;
+        app.world
+            .insert_resource(core_sim::heightfield::ElevationField::new(
+                GRID,
+                GRID,
+                vec![0.0; cells],
+            ));
+        recapture_snapshot_in_place(&mut app.world);
+        let rows: Vec<f32> = app
+            .world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("a snapshot was captured")
+            .populations
+            .iter()
+            .flat_map(|cohort| cohort.labor_assignments.iter())
+            .filter(|row| row.kind == "forage")
+            .map(|row| row.keep_hands)
+            .collect();
+        assert_eq!(rows.len(), 2, "fixture: two bands work the patch");
+        assert!(
+            rows.iter().all(|hands| *hands > 0.0 && *hands < site),
+            "each row keeps a share, never the site's total {site}: {rows:?}"
+        );
+        assert!(
+            (rows.iter().sum::<f32>() - site).abs() < HANDS_EPSILON,
+            "the rows' own keep hands sum to the site's {site}: {rows:?}"
+        );
+    }
+
     /// A steppe tile whose realized basket is emmer, pulses and hay grass under the harness seed —
     /// two staples that convert at different rates and a fodder crop that also pays fibre.
     const MIXED_STEPPE: UVec2 = UVec2::new(1, 0);
@@ -26227,6 +26299,55 @@ mod tests {
     /// no idle hand read `1` and greyed the `+`. It is now the crew whose capacity reaches the room
     /// above the floor (`extraction::useful_cutters`), crew-independent: above one, the same at crew
     /// 1, 2 and 1 again, and the compose sheet's curve rises at every crew below it.
+    /// ⛔ **THE DEPOSIT CURVE STATES THE HANDS EACH CREW KEEPS WITH, AND THEY RISE WITH THE BILL.**
+    /// A felling working owes keeping; doubling its stamped bill must raise every row's
+    /// `keep_hands` wherever the crew is not all keeping already.
+    #[test]
+    fn a_deposit_curves_keep_hands_rise_with_the_bill() {
+        /// How much dearer the second bill is than the working's own.
+        const DEARER: f32 = 2.0;
+        let curve_at = |bill_scale: Option<f32>| {
+            let mut app = build_test_app();
+            let tile = seed_deposit_grid(&mut app, sim_runtime::TerrainType::MixedWoodland);
+            seat_a_felling_working(&mut app, tile);
+            if let Some(scale) = bill_scale {
+                let ladder = app.world.resource::<LadderConfigHandle>().get();
+                let extraction = app.world.resource::<ExtractionConfigHandle>().get();
+                let ground = app.world.get::<Tile>(tile).cloned().expect("the tile");
+                let mut deposits = app.world.resource_mut::<core_sim::DepositRegistry>();
+                let working = deposits
+                    .source_mut(WORKING, "wood")
+                    .expect("the seated working");
+                let measure = core_sim::extraction::deposit_measure(working, &ground, &extraction);
+                let bill = core_sim::extraction::deposit_keeping_basis(working, measure, &ladder);
+                working.upkeep_demanded = Some(bill * scale);
+            }
+            deposit_band_holding(&mut app, tile, BandEquipment::default());
+            deposit_crew_curve(
+                &mut app,
+                "wood",
+                "woodcutting",
+                PLAYED_DEADFALL_FLOOR,
+                CURVE_CREWS,
+            )
+            .per_crew
+        };
+        let own = curve_at(None);
+        let dearer = curve_at(Some(DEARER));
+        let last = own.len() - 1;
+        assert!(
+            own[last].keep_hands > 0.0,
+            "liveness: a felling working is kept: {:?}",
+            own[last]
+        );
+        assert!(
+            dearer[last].keep_hands > own[last].keep_hands,
+            "a dearer bill keeps with more hands: {} against {}",
+            dearer[last].keep_hands,
+            own[last].keep_hands
+        );
+    }
+
     #[test]
     fn a_deadfall_above_its_floor_tells_one_cutter_a_second_would_cut_more() {
         let mut app = build_test_app();

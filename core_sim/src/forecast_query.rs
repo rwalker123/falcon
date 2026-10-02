@@ -809,6 +809,14 @@ fn answer_hunt_crew_take(world: &mut World, ask: &HuntCrewTakeQuery) -> QueryRep
                 animals_low: row.low,
                 animals_likely: row.likely,
                 animals_high: row.high,
+                // **The hands this crew keeps the herd with** — the split each row's take is
+                // struck on (`HuntCrewCurveInputs::keeping`).
+                keep_hands: crate::fauna::crew_keep_hands(
+                    inputs.keeping,
+                    &equipment,
+                    &wear,
+                    row.workers,
+                ),
                 next_rung_animals_likely,
                 next_rung_keep_hands,
             }
@@ -1031,6 +1039,7 @@ fn answer_deposit_crew_take(world: &mut World, ask: &DepositCrewTakeQuery) -> Qu
                 take: quote.take,
                 armed_workers: quote.armed_workers,
                 next_rung_take: quote.next_rung_take,
+                keep_hands: quote.keep_hands,
             }
         })
         .collect();
@@ -3634,6 +3643,46 @@ mod tests {
                 row.animals_likely
             );
         }
+    }
+
+    /// ⛔ **THE HUNT CURVE STATES THE HANDS EACH CREW KEEPS WITH, AND THEY RISE WITH THE BILL.**
+    /// The same tamed herd at two stamped bills: each row's `keep_hands` is the split its take is
+    /// struck on, so the dearer bill keeps with more hands wherever the crew is not all keeping.
+    #[test]
+    fn a_hunt_curves_keep_hands_rise_with_the_bill() {
+        /// A bill a sweep crew covers with hands to spare.
+        const LIGHT_BILL: f32 = 1.0;
+        /// Twice that.
+        const HEAVY_BILL: f32 = 2.0;
+        let curve_at = |bill: f32| {
+            let mut world = world_hunting(DEER, DEER_BODY);
+            let ladder = world
+                .resource::<crate::intensification::LadderConfigHandle>()
+                .get();
+            {
+                let mut registry = world.resource_mut::<HerdRegistry>();
+                let herd = &mut registry.herds[0];
+                herd.tame_outright(FACTION, &ladder);
+                herd.upkeep_demanded = Some(bill);
+            }
+            crew_curve(
+                &mut world,
+                &crew_ask(SWEEP_CREW, crate::components::DEFAULT_ESCAPEMENT_FLOOR),
+            )
+        };
+        let light = curve_at(LIGHT_BILL);
+        let heavy = curve_at(HEAVY_BILL);
+        let last = light.len() - 1;
+        assert!(
+            light[last].keep_hands > 0.0,
+            "liveness: a tamed herd's crew keeps it"
+        );
+        assert!(
+            heavy[last].keep_hands > light[last].keep_hands,
+            "a heavier bill keeps with more hands: {} against {}",
+            heavy[last].keep_hands,
+            light[last].keep_hands
+        );
     }
 
     /// ⛔ **ONCE TAMED IS WHAT THIS CREW TAKES ON THE TAMED HERD, ITS KEEPING NETTED** — the hunt

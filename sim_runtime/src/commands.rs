@@ -818,6 +818,8 @@ pub struct DepositCrewTakeRow {
     /// **The crew's cut once the working is raised one rung**, before the reach caps it — the
     /// sheet's *"once felled"* figure. `0` at the top of a branch.
     pub next_rung_take: f32,
+    /// **The hands this crew spends keeping the working**, fractional — `workers - keep_hands` cut.
+    pub keep_hands: f32,
 }
 
 /// The answer to [`DepositCrewTakeQuery`].
@@ -1400,6 +1402,9 @@ pub struct HuntCrewTakeRow {
     pub animals_low: f32,
     pub animals_likely: f32,
     pub animals_high: f32,
+    /// **The hands this crew spends keeping the herd**, fractional — the split every quantile on
+    /// this row is struck on. `0` on a herd that owes no keeping.
+    pub keep_hands: f32,
     /// **The same crew's likely take once the rung in flight is finished** — or the next rung up
     /// where nothing is in flight — in animals a turn, **its keeping netted** at that rung's bill.
     /// `0` where the herd has no rung left to climb or its species cannot climb it. The compose
@@ -3041,6 +3046,7 @@ impl QueryReplyEnvelope {
                             animals_low: row.animals_low,
                             animals_likely: row.animals_likely,
                             animals_high: row.animals_high,
+                            keep_hands: row.keep_hands,
                             next_rung_animals_likely: row.next_rung_animals_likely,
                             next_rung_keep_hands: row.next_rung_keep_hands,
                         })
@@ -3088,6 +3094,7 @@ impl QueryReplyEnvelope {
                             take: row.take,
                             armed_workers: row.armed_workers,
                             next_rung_take: row.next_rung_take,
+                            keep_hands: row.keep_hands,
                         })
                         .collect(),
                     held_rung: answer.held_rung.clone(),
@@ -3171,6 +3178,7 @@ impl QueryReplyEnvelope {
                             animals_low: row.animals_low,
                             animals_likely: row.animals_likely,
                             animals_high: row.animals_high,
+                            keep_hands: row.keep_hands,
                             next_rung_animals_likely: row.next_rung_animals_likely,
                             next_rung_keep_hands: row.next_rung_keep_hands,
                         })
@@ -3213,6 +3221,7 @@ impl QueryReplyEnvelope {
                             take: row.take,
                             armed_workers: row.armed_workers,
                             next_rung_take: row.next_rung_take,
+                            keep_hands: row.keep_hands,
                         })
                         .collect(),
                     held_rung: answer.held_rung,
@@ -3751,6 +3760,7 @@ mod tests {
                         animals_high: workers as f32 * 0.75,
                         next_rung_animals_likely: workers as f32 * 0.4,
                         next_rung_keep_hands: 1.5,
+                        keep_hands: 0.75,
                     })
                     .collect(),
                 // **Short of the crew asked about, and named** — the shape the sheet's
@@ -3799,6 +3809,7 @@ mod tests {
                         take: workers as f32 * 0.6,
                         armed_workers: workers as f32 * 0.5,
                         next_rung_take: workers as f32 * 2.25,
+                        keep_hands: workers as f32 * 0.2,
                     })
                     .collect(),
                 held_rung: "forestry:deadfall".to_string(),

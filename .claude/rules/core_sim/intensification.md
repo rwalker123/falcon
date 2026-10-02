@@ -1219,6 +1219,18 @@ lists).
 `docs/plan_site_crews.md` §4 — **`upkeepHands`** (`float`, the hands the crew spent keeping, summed
 across bands) and **`upkeepToolsShort`** (`bool`, the keeping held fewer tools than it planned for).
 
+**A row carries its OWN share: `LaborAssignment.keepHands`** (`float`, appended last). The source's
+`upkeepHands` sums every band keeping the site, so a row's crew-split marks read the row's figure:
+the hands **this row's** crew spent keeping this turn, written per row by the keeping fold after the
+arms (`SourceYield::keep_hands`, from `site_keeping`), and the prospective split on a pre-commit seed
+(`fauna::forecast_source_yield`: `workers − take_hands`). `0` on a row that keeps nothing. Viewer
+scoping is the row's own. The rows on one site sum to its `upkeepHands`. Pinned by
+`server::tests::two_bands_on_one_site_publish_each_rows_own_keep_hands`. **The crew curves carry the
+same figure per asked crew** — `ForageCrewTakeRow.keep_hands`, `HuntCrewTakeRow.keep_hands` (proto
+7) and `DepositCrewTakeRow.keep_hands` (proto 5) — pinned by
+`forecast_query::tests::a_hunt_curves_keep_hands_rise_with_the_bill` and
+`server::tests::a_deposit_curves_keep_hands_rise_with_the_bill`.
+
 **`upkeepToe:[KitToeLine{itemId, required, filled}]` names which tools** — one line per tool the
 site's keeping claimed this turn, the take row's `kitToe` shape. The source stamps the lines
 (`upkeep_toe`, cleared on `upkeep_supplied`'s cycle) through `components::merge_keeping_tool_lines`,

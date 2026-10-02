@@ -437,6 +437,8 @@ fn create_populations<'a>(
                                 // **WHICH KIT ITEMS ARE SHORT, BY NAME** — the row's claim and
                                 // its settled units per item. Appended last.
                                 kitToe: kit_toe,
+                                // **THIS ROW'S OWN KEEPING HANDS**. Appended last.
+                                keepHands: assignment.keep_hands,
                             },
                         )
                     })
@@ -1301,6 +1303,7 @@ fn decode_labor_assignment(
             required: line.required(),
             filled: line.filled(),
         }),
+        keep_hands: assignment.keepHands(),
     })
 }
 

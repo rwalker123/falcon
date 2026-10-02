@@ -434,6 +434,11 @@ pub struct LaborAssignmentState {
     /// Roadwork's twin is [`PopulationCohortState::pool_toe`]. Appended last (append-only).
     #[serde(default)]
     pub kit_toe: Vec<KitToeLineState>,
+    /// **THIS ROW'S OWN KEEPING HANDS** — the fractional hands this row's crew spent keeping its
+    /// site this turn, its own share of the bill (the source's `upkeep_hands` sums every band
+    /// keeping the site). `0` on a row that keeps nothing. Appended last (append-only).
+    #[serde(default)]
+    pub keep_hands: f32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].

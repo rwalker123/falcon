@@ -275,6 +275,7 @@ mod tests {
                     animals_high: workers as f32,
                     next_rung_animals_likely: 0.0,
                     next_rung_keep_hands: 0.0,
+                    keep_hands: 0.0,
                 })
                 .collect(),
             armed_crew: 3,

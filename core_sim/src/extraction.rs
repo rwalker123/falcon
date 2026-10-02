@@ -1159,6 +1159,9 @@ pub struct DepositCrewQuote {
     pub armed_workers: f32,
     /// The cut once the working is raised one rung ([`next_rung_take_for`]).
     pub next_rung_take: f32,
+    /// **The hands this crew spends keeping the working**, fractional — the split the take is
+    /// struck on ([`crew_keep_hands`]).
+    pub keep_hands: f32,
 }
 
 /// **WHAT A PROSPECTIVE CREW OF `workers` CUTS OFF THIS WORKING WITH THIS KIT** (#663) — the deposit
@@ -1194,11 +1197,10 @@ pub fn deposit_crew_quote(
     let payoff = deposit_payoff(working.standing(), ladder);
     // **The crew keeps the working first** (`docs/plan_site_crews.md` §2.5) and cuts with the rest,
     // exactly as the turn does.
-    let take_hands = (workers as f32
-        - crew_keep_hands(
-            equipment, band_kit, working, ground, config, ladder, workers,
-        ))
-    .max(NO_HANDS_ON_THE_DEPOSIT);
+    let keep_hands = crew_keep_hands(
+        equipment, band_kit, working, ground, config, ladder, workers,
+    );
+    let take_hands = (workers as f32 - keep_hands).max(NO_HANDS_ON_THE_DEPOSIT);
     // **And claims its kit for the cutters that would cut something with it** — never its head
     // count (`docs/plan_site_crews.md` §2.3).
     let claim = take_hands.min(deposit_useful_take_hands(
@@ -1231,6 +1233,7 @@ pub fn deposit_crew_quote(
             equipment, ladder, config, allocation, claims, target, kit, workers, band_kit, working,
             ground, carry,
         ),
+        keep_hands,
     }
 }
 

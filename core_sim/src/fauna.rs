@@ -6771,6 +6771,9 @@ pub(crate) fn forecast_source_yield(
     // retired work budget's share); with the build staffed in its own right there is nothing left to
     // scale it by.
     SourceYield {
+        // **The prospective split** — the hands this crew would spend keeping, its share of the
+        // site's bill: everything the take does not use.
+        keep_hands: (workers as f32 - take_hands).max(NO_HANDS),
         actual: actual.provisions + standing,
         // **THE SPLIT, ON THE PRE-COMMIT ROW TOO.** A seeded row is what the player reads on the
         // screen where they assign keepers, so a committed herd that quoted meat alone would say

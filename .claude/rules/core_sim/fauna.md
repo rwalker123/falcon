@@ -784,6 +784,10 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   `0`, because *which item is the weapon* is a fact about the kit and *whether it reaches this
 >   quarry* is a fact about the party.
 >
+> **EACH ROW STATES THE HANDS ITS CREW KEEPS WITH** — `keep_hands` (proto 7), `fauna::crew_keep_hands`
+> over the curve's own `keeping`: the split every quantile on the row is struck on. `0` on a herd
+> that owes no keeping.
+>
 > **EACH ROW ALSO QUOTES THE HERD ONCE ITS NEXT RUNG IS FINISHED** — `next_rung_animals_likely`
 > and `next_rung_keep_hands` (proto 5 / 6), the forage curve's `next_rung_take` twin: the same crew
 > on a clone with the rung in flight (or the next one up) seated by

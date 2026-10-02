@@ -2266,6 +2266,11 @@ table LaborAssignment {
   // resolves each to its roster display name. Absent = the row claims nothing (no kit, or no hand
   // that would take anything with one). The builders' and Roadwork's twin is the cohort's `poolToe`.
   kitToe:[KitToeLine];
+  // --- THIS ROW'S OWN KEEPING HANDS (appended last, #751) ------------------------------------------
+  // The fractional hands THIS row's crew spent keeping its site this turn - its own share of the
+  // site's bill, which is why it is on the row: the source's `upkeepHands` sums every band keeping
+  // the site. The pre-commit seed carries the prospective split. 0 on a row that keeps nothing.
+  keepHands:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

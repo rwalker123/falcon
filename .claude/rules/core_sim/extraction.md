@@ -509,8 +509,10 @@ off the committed row's `materialYield` / `kitWorkersHolding` alone.
 `QueryReplyEnvelope.deposit_crew_take = 11`) asks it the hunt curve's way: band, `(x, y, material)`,
 the sheet's `kit_id` (`none` included; a kit not listing `extract` is `kit_wrong_job`), `floor` and
 `max_workers`, and answers one `DepositCrewTakeRow` per crew size — `take` (this turn's cut at the
-held rung, geared, carry-capped and reach-capped), `armed_workers` (the crew's whole-kit count) and
-`next_rung_take` (the cut once raised) — plus the `held_rung` / `next_rung` it priced and `in_range`.
+held rung, geared, carry-capped and reach-capped), `armed_workers` (the crew's whole-kit count),
+`next_rung_take` (the cut once raised) and `keep_hands` (proto 5, the hands the crew keeps the
+working with — the split `take` is struck on, `DepositCrewQuote::keep_hands`) — plus the `held_rung`
+/ `next_rung` it priced and `in_range`.
 
 **One model, not a second.** Each row is `extraction::deposit_crew_quote`: the crew is a
 **prospective row** (`extraction::prospective_deposit_gear` — the whole kit, the band's other rows

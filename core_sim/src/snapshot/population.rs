@@ -52,6 +52,8 @@ pub(crate) fn labor_assignment_to_state(
         standing_yield: yields.standing,
         overdraws: yields.overdraws,
         realized_yield: yields.realized,
+        // **This row's own keeping hands** — its share of the site's bill, never the site's total.
+        keep_hands: yields.keep_hands,
         // The discrete arrival schedule: index `i` = the food landing `i + 1` turns ahead. Cloned
         // rather than moved so the caller's telemetry row (which the band roll-ups below still read)
         // is untouched.

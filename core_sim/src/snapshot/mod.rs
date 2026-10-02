@@ -1491,6 +1491,7 @@ mod tests {
             build_queue: Vec::new(),
             last_yields: vec![
                 SourceYield {
+                    keep_hands: crate::fauna::NO_HANDS,
                     // A staple gather: nothing anyone builds with, and no fodder crop in the basket.
                     materials: Vec::new(),
                     fodder: 0.0,
@@ -1510,6 +1511,7 @@ mod tests {
                     standing: 0.0,
                 },
                 SourceYield {
+                    keep_hands: crate::fauna::NO_HANDS,
                     // A hunt: no animal pays fodder, and this fixture's quarry is made of nothing.
                     materials: Vec::new(),
                     fodder: 0.0,

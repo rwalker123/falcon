@@ -3265,6 +3265,13 @@ pub struct SourceYield {
     /// `0.0` on every source that is not a kept herd committed to standing output, which is every
     /// source until a player pays for a `set_herd_output`.
     pub standing: f32,
+    /// **THE HANDS THIS ROW'S CREW SPENT KEEPING ITS SITE** (`docs/plan_site_crews.md` §2.1) —
+    /// fractional, this row's own share of the site's bill, never the site's total across bands
+    /// (that is the source's `upkeep_hands`). The resolved turn writes the settled split
+    /// (`site_keeping`); a pre-commit seed writes the prospective one. `0` on a row that keeps
+    /// nothing.
+    #[serde(default)]
+    pub keep_hands: f32,
 }
 
 /// **The distribution a [`SourceYield`]'s `actual` sits in the middle of**, in the same currency and
@@ -3341,6 +3348,8 @@ impl SourceYield {
         // Nothing was killed and nothing was milked — the two halves of the nothing above.
         meat: 0.0,
         standing: 0.0,
+        // Nobody kept anything.
+        keep_hands: crate::fauna::NO_HANDS,
     };
 }
 

@@ -6795,6 +6795,8 @@ pub fn advance_labor_allocation(
                         arrivals_horizon,
                     );
                     yields[idx] = SourceYield {
+                        // The row's own keeping hands are written by the keeping fold after the arms.
+                        keep_hands: fauna::NO_HANDS,
                         actual: provisions.to_f32(),
                         // **THE PLANT WEB PAYS ONLY THE ONE WAY** — there is nothing to keep
                         // alive and milk, so the whole of `actual` is the "meat" half and the
@@ -7612,6 +7614,8 @@ pub fn advance_labor_allocation(
                             arrivals_horizon,
                         );
                         yields[idx] = SourceYield {
+                            // The row's own keeping hands are written by the keeping fold after the arms.
+                            keep_hands: fauna::NO_HANDS,
                             actual: tended,
                             // **THE SPLIT, PUBLISHED RATHER THAN LEFT TO BE SUBTRACTED** — one row
                             // for one herd, itemized on the row (`docs/plan_pen_standing_yield.md`
@@ -8408,6 +8412,8 @@ pub fn advance_labor_allocation(
                         arrivals_horizon,
                     );
                     yields[idx] = SourceYield {
+                        // The row's own keeping hands are written by the keeping fold after the arms.
+                        keep_hands: fauna::NO_HANDS,
                         actual: provisions.to_f32(),
                         // The split, published rather than subtracted — the pen branch's rule. On a
                         // wild herd `standing` is a structural zero and `meat` is the whole row.
@@ -9463,6 +9469,9 @@ pub fn advance_labor_allocation(
             .zip(site_keeping.iter())
             .zip(allocation.assignments.iter())
         {
+            // **THIS ROW'S OWN SPLIT**, published per row: a site kept by two bands sums their
+            // shares on the source (`upkeep_hands`), and a row's marks must show its own crew.
+            row.keep_hands = keeping.keep_hands;
             if matches!(
                 assignment.target,
                 LaborTarget::Forage { .. } | LaborTarget::Extract { .. }

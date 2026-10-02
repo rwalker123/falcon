@@ -1317,6 +1317,8 @@ message DepositCrewTakeRow {
   // the next rung's tool, before the reach caps it: the sheet's "once felled / coppiced / quarried"
   // figure. 0 at the top of a branch.
   float next_rung_take = 4;
+  // THE HANDS THIS CREW SPENDS KEEPING THE WORKING, fractional - `workers - keep_hands` cut.
+  float keep_hands = 5;
 }
 
 // The answer to `DepositCrewTakeQuery`.
@@ -1539,6 +1541,9 @@ message HuntCrewTakeRow {
   float next_rung_animals_likely = 5;
   // The hands this crew would spend keeping the finished rung, fractional.
   float next_rung_keep_hands = 6;
+  // THE HANDS THIS CREW SPENDS KEEPING THE HERD, fractional - the split every quantile on this row
+  // is struck on. 0 on a herd that owes no keeping.
+  float keep_hands = 7;
 }
 
 // THE HUNT TAKE CURVE - what each crew size actually brings down, so a pre-commit panel can move its
