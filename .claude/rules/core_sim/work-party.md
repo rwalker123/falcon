@@ -220,6 +220,18 @@ the remainder stays in the load for the next porter. So a far hunt's take is `ta
 not `take.carried`, and its row's `wasted` is `0`. An unbounded carry (a pen that is a larder) takes
 the whole load in one pack.
 
+**A pack is filled by BULK — everything the crew cut — and lands whatever it is worth as food.** A
+basket of a cash or fodder crop (tobacco, cotton, hay: `provisions_per_biomass == 0`) cuts biomass
+every turn and walks it home in packs exactly as a food basket does; its packs carry zero food
+cargo. Two readings had to say so: `forage::ForageProjection::step` calls the stand spent only when
+**no biomass** was taken (`REALIZED_PROJECTION_BIOMASS_EPSILON`), not when the take was worth no
+food — read off provisions alone it ended every no-food projection on its first turn — and
+`forecast_caravan`'s `first_load_turn` is the first turn a **pack** lands, not the first turn food
+does. Together they made a far no-food basket quote the `0` sentinel, and the compose sheet drop its
+*first load home in N turns* clause. Pinned by
+`forage_cultivation::a_far_basket_with_no_food_quotes_its_first_load_turn` (one harvester, six
+tiles out: first load turn 14).
+
 **On the two food webs only the FOOD account travels.** Fodder and the hide, bone and fibre a take
 yields are credited to the band as they always were: a batch carries a characteristic vector and a
 band key, and a pipe over those is the storage arc's. Standing yield (milk) is food with no biomass:
@@ -490,10 +502,9 @@ Every path that ends a posting routes through the one step:
 > the same `PartyHome` cause — the material route arm, which is the crossings list itself. Which of
 > the two a party's cargo is comes from `CargoHome::of`, never from a check at the settle site.
 
-Pinned by `work_party_caravan::unassigning_a_caravan_mid_walk_brings_every_pack_home`,
-`::a_herd_back_inside_the_apron_brings_its_caravan_home_once` and
-`::a_vanished_herd_brings_its_caravan_home_as_the_row_lapses`, each on both the larder and the route
-arm.
+Pinned by `work_party_caravan::a_cancelled_far_hunt_walks_every_pack_home_and_rots_it_by_its_walk`,
+`::a_herd_back_inside_the_apron_walks_its_caravan_home_once` and
+`::a_vanished_herd_walks_its_caravan_home_as_the_row_lapses`, each on the route arm.
 
 ## `BandReach` no longer asks about distance
 

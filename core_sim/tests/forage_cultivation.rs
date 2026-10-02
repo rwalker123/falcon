@@ -4678,3 +4678,105 @@ fn an_off_map_patch_owes_its_keeping_and_reverts_like_any_other() {
          ({seated} -> {left})"
     );
 }
+
+/// ⛔ **A FAR BASKET THAT CARRIES NO FOOD STILL QUOTES WHEN ITS FIRST LOAD LANDS.** Packs fill by
+/// bulk — everything the crew cut — so a carry-home basket of a cash or fodder crop (tobacco, hay,
+/// fibre: `provisions_per_biomass == 0`) walks packs home exactly as a food basket does. The quote's
+/// `first_load_turn` used to be read off the food those packs carried, so a no-food basket answered
+/// the "no load within the horizon" sentinel and the compose sheet dropped its *first load home in N
+/// turns* clause (a Riverine/Delta tobacco + hay patch, one harvester, six tiles away). Asserted on
+/// the query's published answer.
+#[test]
+fn a_far_basket_with_no_food_quotes_its_first_load_turn() {
+    use sim_runtime::{QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartySource};
+    /// The asking band's durable id.
+    const ASKING_BAND: u64 = 77_002;
+    /// One harvester — the crew the reported sheet was quoting.
+    const ONE_HARVESTER: u32 = 1;
+    /// Hexes between the band and the patch along one row — past the apron, so a party is posted.
+    const FAR: u32 = 8;
+
+    let mut app = spawn_world();
+    // **A patch that grows a species paying no food**, with a tile `FAR` hexes along its row for the
+    // band to camp on. Chosen by the roster's own yield vector, so any no-food crop qualifies.
+    let (coord, species, camp) = {
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+        let mut tiles: Vec<Tile> = app
+            .world
+            .query::<&Tile>()
+            .iter(&app.world)
+            .cloned()
+            .collect();
+        tiles.sort_by_key(|tile| (tile.position.y, tile.position.x));
+        let registry = app.world.resource::<ForageRegistry>();
+        let index = app.world.resource::<TileRegistry>();
+        tiles
+            .iter()
+            .filter(|tile| registry.patch(tile.position).is_some())
+            .find_map(|tile| {
+                let camp = index.index(tile.position.x + FAR, tile.position.y)?;
+                let composition = tile_flora_composition(&flora, &labor.forage, tile, map_seed);
+                composition
+                    .iter()
+                    .find(|share| {
+                        share.share > 0.0
+                            && flora
+                                .species
+                                .get(&share.species)
+                                .is_some_and(|def| def.yield_.provisions_per_biomass == 0.0)
+                    })
+                    .map(|share| (tile.position, share.species.clone(), camp))
+            })
+            .expect("the harness map grows a no-food crop somewhere with room to camp far off")
+    };
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("the chosen patch");
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
+    }
+    declare_gathering_site(&mut app, coord);
+    let band = spawn_forager_of(&mut app, camp, coord, None, ONE_HARVESTER);
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandId(ASKING_BAND));
+    let kit_id = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .default_kit(core_sim::KitJob::Forage)
+        .id()
+        .to_string();
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+            faction_id: 0,
+            band_id: ASKING_BAND,
+            source: WorkPartySource::Forage {
+                x: coord.x,
+                y: coord.y,
+                take_species: vec![species.clone()],
+            },
+            kit_id,
+            workers: ONE_HARVESTER,
+            floor: core_sim::DEFAULT_ESCAPEMENT_FLOOR,
+        }),
+    );
+    let answer = match reply {
+        QueryReply::WorkPartyForecast(answer) => answer,
+        other => panic!("the work-party query must answer with a forecast, got {other:?}"),
+    };
+    assert!(
+        answer.posts_a_party && answer.walk_turns > 0,
+        "fixture: the patch is past the apron — {answer:?}"
+    );
+    assert_eq!(
+        answer.rate_home, 0.0,
+        "a {species} basket carries no food home"
+    );
+    assert!(
+        answer.first_load_turn > answer.walk_turns,
+        "a {species} pack still walks home, after the walk out: {answer:?}"
+    );
+}

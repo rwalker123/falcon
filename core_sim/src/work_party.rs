@@ -863,7 +863,8 @@ pub struct CaravanForecast {
     pub home_by_turn: Vec<f32>,
     /// The average number of hunters on the road across the turns stepped.
     pub mean_on_the_road: f32,
-    /// **The 1-based turn the first load lands**, or [`NO_LOAD_WITHIN_HORIZON`].
+    /// **The 1-based turn the first pack lands** — whatever its cargo is worth, so a basket that
+    /// carries no food still reports when its first load walks in — or [`NO_LOAD_WITHIN_HORIZON`].
     pub first_load_turn: u32,
 }
 
@@ -906,7 +907,11 @@ pub fn forecast_caravan(
                 .sum()
         });
         let home = open.delivered + landed_now;
-        let load_landed = home > NOTHING_CARRIED;
+        // ⛔ **A LOAD LANDS WHEN A PACK LANDS, WHATEVER IT IS WORTH AS CARGO.** Packs fill by
+        // BULK — everything the crew cut — so a basket of hay, fibre or tobacco fills and walks
+        // packs exactly as a food basket does, but its `cargo` (food) is zero. Reading the landing
+        // off `home > 0` published no first load at all for such a basket.
+        let load_landed = !open.packs.is_empty() || landed_now > NOTHING_CARRIED;
         spoiled += lost;
         forecast.home_by_turn.push(home - lost);
         on_the_road += party.hunters_on_the_road();

@@ -4573,6 +4573,13 @@ pub(crate) fn forage_forecast_at_rate(
 /// always does.
 const REALIZED_PROJECTION_PROVISIONS_EPSILON: f32 = 1e-4;
 
+/// **Below this much biomass taken in a projected turn, the crew took nothing at all** — the
+/// biomass-scale twin of [`REALIZED_PROJECTION_PROVISIONS_EPSILON`], for a basket that pays **no
+/// food** (a cash or fodder crop: tobacco, cotton, hay). Such a take is worth zero provisions every
+/// turn and is still a real cut the caravan walks home a pack at a time, so "spent" has to be read
+/// off the biomass too. The same four orders of magnitude below a live patch's one-turn cut.
+const REALIZED_PROJECTION_BIOMASS_EPSILON: f32 = 1e-4;
+
 /// **The steady `realized` yield for a forage source — a FORWARD PROJECTION** (the plant twin of
 /// `fauna::project_realized_hunt`). The average food/turn the patch delivers over the next `horizon`
 /// turns, simulated forward from its CURRENT state under `policy` + `workers`, mirroring the real turn
@@ -4714,11 +4721,18 @@ impl ForageProjection {
             seasonal,
         )
         .to_f32();
-        if provisions <= REALIZED_PROJECTION_PROVISIONS_EPSILON {
+        let biomass = (biomass_before - self.sim.biomass).max(0.0);
+        // ⛔ **SPENT MEANS NOTHING WAS TAKEN, NOT NOTHING EDIBLE.** Reading it off provisions alone
+        // ended every projection of a no-food basket on its first turn, so its caravan forecast never
+        // dispatched a pack and quoted no first load (and the query priced its other accounts off a
+        // take of nothing).
+        if provisions <= REALIZED_PROJECTION_PROVISIONS_EPSILON
+            && biomass <= REALIZED_PROJECTION_BIOMASS_EPSILON
+        {
             return None;
         }
         Some(ProjectedForageTurn {
-            biomass: (biomass_before - self.sim.biomass).max(0.0),
+            biomass,
             provisions,
         })
     }
