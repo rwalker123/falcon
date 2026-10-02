@@ -2808,64 +2808,115 @@ fn probe_the_price_of_holding_a_plant_rung() {
     }
 }
 
-/// **A lost rung is announced — ON THE RETENTION BAR, not on the first bleed.** Crossing back below
-/// the bar destroys a 25-turn investment's payoff, so the feed says so — once, on the transition, the
-/// way the animal web has always announced a lost pen. The long bleed to zero that follows adds
-/// nothing further.
-///
-/// **The edge moved, and that is the bug this arc was filed against**
-/// (`docs/plan_standing_upkeep.md` §2.4): a completed meter sits exactly at its own cost, so under a
-/// `progress >= cost` predicate the very first bleed of any size revoked the rung and pushed this
-/// line — finish a Cultivate and the patch could be out of *tended* before its keepers were
-/// assigned. The rung is held down to a stated fraction of its cost now, so the announcement lands
-/// where the loss actually is.
+/// Feed lines about the tended rung carrying `status=<status>` — `slipping` (Info) or `feral`
+/// (Alert, the whole rung lost).
+fn tended_decay_lines(app: &App, status: &str) -> usize {
+    let (status, rung) = (format!("status={status}"), "rung=plant:tended");
+    app.world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains(&status) && detail.contains(rung))
+        })
+        .count()
+}
+
+/// ⛔ **A TENDED PATCH SLIPPING IS ONE INFO LINE; LOSING IT IS ONE ALERT LINE.** The position
+/// leaving the rung's top is a SLIP — the rung pays a fading share of itself, and the feed says so
+/// once, at `status=slipping`, the event dock's lowest importance. The position falling all the way
+/// to the top of the rung beneath — wild ground — is the LOSS: every unit of work is gone, and the
+/// feed says so once, at `status=feral` (Alert). Both are edges: the long bleed between them
+/// re-announces nothing.
 #[test]
-fn losing_a_tended_patch_pushes_one_feed_line() {
+fn a_tended_patch_slipping_is_one_info_line_and_losing_it_one_alert() {
     let mut app = spawn_world();
     let (_tile, coord) = prime_thriving_patch(&mut app);
     seat_tended_patch(&mut app, coord);
-    let grace = tended_grace(&app);
     let survives = unmaintained_turns_before_the_rung_is_lost(&app);
-    assert_eq!(
-        survives,
-        grace + 1,
-        "fixture: with the retention bar deleted (§2.8) the rung goes on its first bleeding turn \
-         past the grace — which is the edge the feed line must ride, exactly once"
-    );
 
     run_turns_untended(&mut app, survives - 1);
     assert_eq!(
-        completion_announcements(&app, "gone feral"),
+        tended_decay_lines(&app, "slipping"),
         0,
-        "a tended patch stays tended while its meter erodes — nothing has been lost yet"
+        "nothing is said while the grace holds"
     );
 
     run_turns_untended(&mut app, 1);
     assert_eq!(
-        completion_announcements(&app, "gone feral"),
+        tended_decay_lines(&app, "slipping"),
         1,
-        "the turn the meter crosses the retention bar, the player is told"
+        "the turn the position leaves the rung's top, the player is told it is slipping"
     );
-
-    // The rest of the bleed is not news.
-    let feral_turns = turns_to_go_fully_feral(&app);
-    run_turns_untended(&mut app, feral_turns);
     assert_eq!(
-        completion_announcements(&app, "gone feral"),
-        1,
-        "the loss is announced once, not every turn of the bleed"
+        tended_decay_lines(&app, "feral"),
+        0,
+        "…and nothing is lost yet"
     );
-    let entry = app
+    let slip = app
         .world
         .resource::<CommandEventLog>()
         .iter()
-        .find(|e| e.label.contains("gone feral"))
-        .expect("the feral line")
+        .find(|entry| entry.label.contains("is slipping"))
+        .expect("the slip line")
         .clone();
-    let detail = entry.detail.clone().unwrap_or_default();
     assert!(
-        detail.contains("status=feral") && detail.contains("action=cultivate"),
-        "the line rides the rung's own verb channel: {detail}"
+        slip.label.starts_with("Tended patch at (") && slip.label.ends_with('%'),
+        "the slip names the rung, the place and the meter: {}",
+        slip.label
+    );
+
+    let feral_turns = turns_to_go_fully_feral(&app);
+    run_turns_untended(&mut app, feral_turns);
+    assert_eq!(
+        tended_decay_lines(&app, "slipping"),
+        1,
+        "staying below the top re-announces nothing"
+    );
+    assert_eq!(
+        tended_decay_lines(&app, "feral"),
+        1,
+        "the turn the last of the rung's work is gone, exactly one Alert"
+    );
+    let lost = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .find(|entry| entry.label.contains(" lost — back to "))
+        .expect("the loss line")
+        .clone();
+    assert!(
+        lost.label.ends_with("back to wild ground"),
+        "the loss names what is left: {}",
+        lost.label
+    );
+}
+
+/// ⛔ **A RUNG THAT RECOVERS AND SLIPS AGAIN IS ANNOUNCED AGAIN** — the slip is an edge on the
+/// rung's top, so climbing back to it re-arms the line.
+#[test]
+fn a_tended_patch_that_recovers_and_slips_again_is_announced_twice() {
+    let mut app = spawn_world();
+    let (_tile, coord) = prime_thriving_patch(&mut app);
+    seat_tended_patch(&mut app, coord);
+    let survives = unmaintained_turns_before_the_rung_is_lost(&app);
+    run_turns_untended(&mut app, survives);
+    assert_eq!(tended_decay_lines(&app, "slipping"), 1, "fixture: one slip");
+
+    // Recovered: the meter back at the rung's top (the completion resets the grace too).
+    seat_tended_patch(&mut app, coord);
+    run_turns_untended(&mut app, survives);
+    assert_eq!(
+        tended_decay_lines(&app, "slipping"),
+        2,
+        "a second slip after recovering is a second line"
+    );
+    assert_eq!(
+        tended_decay_lines(&app, "feral"),
+        0,
+        "and still nothing lost"
     );
 }
 

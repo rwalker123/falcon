@@ -165,6 +165,167 @@ pub fn neglect_grace_remaining(neglect_turns: u16, grace_turns: u32) -> u32 {
 /// the patch; the herd's keepers can hold its animals).
 pub const NEGLECT_NONE: u16 = 0;
 
+/// **WHAT A DECAY CROSSED** — the two edges a falling position can cross on each rung of its branch,
+/// newest rung first (the order the unwind runs in).
+///
+/// - **`slipped`** — the position left the rung's TOP: the rung is no longer achieved, and it pays
+///   a fading share of itself. Announced at [`DECAY_SLIP_STATUS`] (the feed's lowest importance).
+/// - **`lost`** — the position fell to (or below) the rung's BASE, the top of the rung beneath it:
+///   every unit of work put into the rung is gone. Announced at [`DECAY_LOST_STATUS`] (Alert).
+///
+/// A rung crossing both edges in one decay is reported **lost only**: an investment gone subsumes it
+/// slipping on the way. Each is an EDGE, so a position that stays below re-announces nothing, and a
+/// rung that recovers to its top and slips again is announced again.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RungDecayEdges {
+    pub slipped: Vec<(RungKey, (f32, f32))>,
+    pub lost: Vec<(RungKey, (f32, f32))>,
+}
+
+impl RungDecayEdges {
+    pub fn is_empty(&self) -> bool {
+        self.slipped.is_empty() && self.lost.is_empty()
+    }
+}
+
+/// **RECORD A COMPLETED RUNG AS ACHIEVED** — `peak` rises to `held` where `held` is above it (see
+/// `ForagePatch::peak_rung`).
+pub fn raise_peak(peak: &mut Option<RungKey>, held: RungKey) {
+    if peak.is_none_or(|peak| held != peak && held.is_at_or_above(peak)) {
+        *peak = Some(held);
+    }
+}
+
+/// **A LOSS IS ONLY A LOSS OF SOMETHING HAD** — drop from `edges.lost` every rung above `peak` (a
+/// part-built meter rotting to empty: its work is gone, but the rung was never achieved, and the row
+/// already reads *losing ground*), and lower `peak` beneath every loss kept, so the rung must be
+/// achieved again before it can be lost again.
+pub fn settle_achieved_losses(edges: &mut RungDecayEdges, peak: &mut Option<RungKey>) {
+    edges
+        .lost
+        .retain(|(rung, _)| peak.is_some_and(|peak| peak.is_at_or_above(*rung)));
+    // Newest first, so the last write is the lowest rung lost.
+    for (rung, _) in &edges.lost {
+        *peak = rung.below();
+    }
+}
+
+/// **THE BAND A DECAY LINE LINKS TO, FOR ONE PEOPLE** — of `faction`'s bands with a row on the
+/// site (`candidates`: `(faction, band, crew on the site)`), the one with the largest crew, ties to
+/// the lowest `BandId`. `None` where no band of that people works the site.
+pub fn site_band_for(
+    candidates: &[(FactionId, crate::components::BandId, u32)],
+    faction: FactionId,
+) -> Option<crate::components::BandId> {
+    candidates
+        .iter()
+        .filter(|(owner, _, _)| *owner == faction)
+        .max_by(|(_, a_band, a_crew), (_, b_band, b_crew)| {
+            a_crew.cmp(b_crew).then_with(|| b_band.0.cmp(&a_band.0))
+        })
+        .map(|(_, band, _)| *band)
+}
+
+/// **The `status=` token a slip announces with** — the event dock's lowest importance rung.
+pub const DECAY_SLIP_STATUS: &str = "slipping";
+/// **The `status=` token a loss announces with** — the dock's Alert (`status=feral`), the token a
+/// lost plant rung has always carried, so every branch's loss reads on one rule.
+pub const DECAY_LOST_STATUS: &str = "feral";
+/// The percentage a meter is stated in on a slip line.
+const PERCENT: f32 = 100.0;
+/// The highest percentage a slipped rung can read — it is by definition short of full.
+const SLIPPED_PERCENT_MAX: u32 = 99;
+
+/// **THE EDGES A DECAY FROM `was` TO `now` CROSSED ON `branch`** — see [`RungDecayEdges`].
+/// `span_of` is each rung's `(base, width)` on the source's own price list **as it stood before the
+/// decay** (a plant patch's Field price lapses with its meter, so a span read after would move the
+/// top the slip is measured against). A rung of no width (a branch's root) has nothing to lose.
+pub fn rung_decay_edges(
+    branch: RungBranch,
+    was: f32,
+    now: f32,
+    span_of: impl Fn(RungKey) -> (f32, f32),
+) -> RungDecayEdges {
+    let mut edges = RungDecayEdges::default();
+    if now >= was {
+        return edges;
+    }
+    for rung in RungKey::ALL
+        .iter()
+        .rev()
+        .copied()
+        .filter(|rung| rung.branch() == branch)
+    {
+        let (base, width) = span_of(rung);
+        if width <= NO_RUNG_WIDTH {
+            continue;
+        }
+        let top = base + width;
+        if was > base && now <= base {
+            edges.lost.push((rung, (base, width)));
+        } else if was >= top && now < top {
+            edges.slipped.push((rung, (base, width)));
+        }
+    }
+    edges
+}
+
+/// **ANNOUNCE A DECAY'S EDGES** to `faction`'s feed, on `kind`'s channel — one Info line per slip
+/// (`Field at (44, 24) is slipping — 94%`) and one Alert line per loss (`Field at (44, 24) lost —
+/// back to a tended patch`). Tokens: `status=` ([`DECAY_SLIP_STATUS`] / [`DECAY_LOST_STATUS`]),
+/// `rung=` (the wire key), `x=` / `y=`, and on a slip `progress=` (whole percent of the rung's own
+/// meter). Every value is one word; the prose lives in the label.
+#[allow(clippy::too_many_arguments)] // one feed line's whole context: whom, which band, which channel, where, and what
+pub fn announce_rung_decay(
+    event_log: &mut crate::resources::CommandEventLog,
+    tick: u64,
+    faction: FactionId,
+    band: Option<crate::components::BandId>,
+    kind_of: impl Fn(RungKey) -> crate::resources::CommandEventKind,
+    tile: bevy::math::UVec2,
+    now: f32,
+    edges: &RungDecayEdges,
+) {
+    let (x, y) = (tile.x, tile.y);
+    // **`band=` links the line to the Work row** that works or keeps the site
+    // ([`site_band_for`]); absent where no band of the people told has a row on it.
+    let band_token = band.map_or(String::new(), |band| format!(" band={}", band.0));
+    for (rung, _) in &edges.lost {
+        let back_to = rung.below().unwrap_or(*rung).feed_fallback();
+        event_log.push(crate::resources::CommandEventEntry::new(
+            tick,
+            kind_of(*rung),
+            faction,
+            format!(
+                "{} at ({x}, {y}) lost — back to {back_to}",
+                rung.feed_name()
+            ),
+            Some(format!(
+                "status={DECAY_LOST_STATUS} reason=untended rung={} x={x} y={y}{band_token}",
+                rung.wire_key()
+            )),
+        ));
+    }
+    for (rung, (base, width)) in &edges.slipped {
+        let percent = (((now - base) / width) * PERCENT)
+            .floor()
+            .clamp(0.0, SLIPPED_PERCENT_MAX as f32) as u32;
+        event_log.push(crate::resources::CommandEventEntry::new(
+            tick,
+            kind_of(*rung),
+            faction,
+            format!(
+                "{} at ({x}, {y}) is slipping — {percent}%",
+                rung.feed_name()
+            ),
+            Some(format!(
+                "status={DECAY_SLIP_STATUS} rung={} x={x} y={y} progress={percent}{band_token}",
+                rung.wire_key()
+            )),
+        ));
+    }
+}
+
 /// **DID THE HELD RUNG JUST RISE?** — `now` is a higher rung than `was` on the same branch: a build
 /// completed. Every branch's one position mutator asks this and, on `true`, resets the source's
 /// neglect counter to [`NEGLECT_NONE`], so **a just-finished rung starts with its full grace**
@@ -1557,6 +1718,59 @@ impl RungKey {
     /// the two together, so this is a *reading* of the ladder rather than a second authority.
     ///
     /// `None` for a rung no verb drives — the two wild rungs, which are nothing to build.
+    /// **THE RUNG ONE BELOW THIS ONE ON ITS BRANCH** — the inverse of [`Self::above`]; `None` at the
+    /// branch's root.
+    pub fn below(self) -> Option<RungKey> {
+        RungKey::ALL
+            .iter()
+            .copied()
+            .find(|rung| rung.above() == Some(self))
+    }
+
+    /// **WHAT THE FEED CALLS A SOURCE STANDING ON THIS RUNG**, capitalised to lead a line — the
+    /// subject of a slip or a loss (`Field at (44, 24) is slipping — 94%`).
+    pub fn feed_name(self) -> &'static str {
+        match self {
+            RungKey::PlantWild => "Wild ground",
+            RungKey::PlantTended => "Tended patch",
+            RungKey::PlantField => "Field",
+            RungKey::AnimalWild => "Wild herd",
+            RungKey::AnimalPastoral => "Tamed herd",
+            RungKey::AnimalPen => "Pen",
+            RungKey::RoutePath => "Path",
+            RungKey::RouteTrail => "Trail",
+            RungKey::RouteDirtRoad => "Road",
+            RungKey::RoutePavedRoad => "Paved road",
+            RungKey::ForestryDeadfall => "Deadfall",
+            RungKey::ForestryFelling => "Felling",
+            RungKey::ForestryCoppice => "Coppice",
+            RungKey::ExtractionGathering => "Surface gathering",
+            RungKey::ExtractionQuarry => "Quarry",
+        }
+    }
+
+    /// **WHAT A LOSS LEAVES BEHIND, IN THE FEED'S WORDS** — the rung a source falls *back to*
+    /// (`… lost — back to a tended patch`).
+    pub fn feed_fallback(self) -> &'static str {
+        match self {
+            RungKey::PlantWild => "wild ground",
+            RungKey::PlantTended => "a tended patch",
+            RungKey::PlantField => "a field",
+            RungKey::AnimalWild => "a wild herd",
+            RungKey::AnimalPastoral => "a tamed herd",
+            RungKey::AnimalPen => "a pen",
+            RungKey::RoutePath => "a path",
+            RungKey::RouteTrail => "a trail",
+            RungKey::RouteDirtRoad => "a road",
+            RungKey::RoutePavedRoad => "a paved road",
+            RungKey::ForestryDeadfall => "deadfall",
+            RungKey::ForestryFelling => "a felled wood",
+            RungKey::ForestryCoppice => "a coppice",
+            RungKey::ExtractionGathering => "surface gathering",
+            RungKey::ExtractionQuarry => "a quarry",
+        }
+    }
+
     pub fn builder_verb(self) -> Option<Improvement> {
         match self {
             RungKey::PlantWild | RungKey::AnimalWild => None,

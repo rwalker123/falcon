@@ -425,12 +425,12 @@ the exact twin, one `ladder_position` beside a stamped `standing`; the checkpoin
     > running `Sow` marked the patch worked every turn, so rung 2 could neither decay further nor
     > re-accrue. The patch was stranded one hundredth below a rung it had already paid for,
     > **permanently**. A single position cannot express it.
-  - **A lost rung is ANNOUNCED**, on the edge where the position falls out of a rung's span —
-    `ForagePatch::decay_ladder` returns **which rung this call took the patch out of**, the exact
-    mirror of the accrue helpers' "did this call finish it", and `forage::announce_rung_lost` pushes
-    the verb's **own** feed kind (`Cultivate`/`Sow`, detail `status=feral reason=untended action=…`).
-    Once, not every turn of the bleed that follows: the 25-turn payoff has already been destroyed. The
-    animal twin is `fauna::announce_pen_lost`.
+  - **A decaying rung is announced on TWO edges** (`event-feed.md` → "A rung's decay is two
+    edges"): the position leaving the rung's top is a **slip** (`status=slipping`, Info — the rung
+    pays a fading share of itself), and the position falling to the top of the rung beneath is the
+    **loss** (`status=feral`, Alert — every unit of its work is gone). Both ride the verb's **own**
+    feed kind (`Cultivate`/`Sow`, `forage::plant_rung_event_kind`), once each, never on the turns of
+    the bleed between. The animal twin is `fauna::announce_pen_lost`.
   - **On the wire:** `upkeepDemand` / `upkeepSupplied` / `upkeepShortfall` / `upkeepWorkersNeeded`
     — what holding this rung costs, what the crew that owes it paid, what went unmet (i.e. what it is
     losing) and how many hands would stop it. **All four are published on BOTH sides of completion**,

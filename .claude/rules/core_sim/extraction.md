@@ -766,6 +766,8 @@ short → the bleed at the at-risk rung's own rate past its own grace → clear 
 The grace counter (`DepositSource::neglect_turns`) resets the turn a rung completes
 (`DepositSource::set_ladder_position`), so a working raised by a crew short of its bill keeps its
 full grace — `intensification.md` → "A COMPLETED RUNG RESETS THE COUNTER".
+A working's slip and loss are announced on the `Extraction` channel to every people with an
+`extract` row on it (a working has no owner) — `event-feed.md` → "A rung's decay is two edges".
 
 **The slide shrinks its own penalty.** The position falls, the interpolated demand falls with it, and
 an abandoned working decays toward costing nothing rather than bleeding a band's roster for ever

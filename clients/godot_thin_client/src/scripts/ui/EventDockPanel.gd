@@ -628,7 +628,14 @@ static func detail_phrase(detail: String) -> String:
 	var open_key: String = ""
 	var open_value: String = ""
 	var open_index := -1
-	for token in detail.split(" ", false):
+	var tokens := detail.split(" ", false)
+	# The status-scoped hidden keys, if this line carries one of their `status=` tokens.
+	var status_hidden: Dictionary = {}
+	for token in tokens:
+		if HudEventVocab.DETAIL_KEY_HIDDEN_BY_STATUS.has(token):
+			status_hidden = HudEventVocab.DETAIL_KEY_HIDDEN_BY_STATUS[token]
+			break
+	for token in tokens:
 		var coordinate := _coordinate_phrase(token)
 		if coordinate != "":
 			fragments.append(coordinate)
@@ -638,7 +645,7 @@ static func detail_phrase(detail: String) -> String:
 		if split > 0:
 			open_key = token.substr(0, split)
 			open_value = token.substr(split + 1)
-			if HudEventVocab.DETAIL_KEY_HIDDEN.has(open_key):
+			if HudEventVocab.DETAIL_KEY_HIDDEN.has(open_key) or status_hidden.has(open_key):
 				open_index = -1
 				continue
 			fragments.append(_key_value_phrase(open_key, open_value))

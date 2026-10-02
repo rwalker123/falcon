@@ -1053,9 +1053,13 @@ pub fn build_headless_app() -> App {
                 // share `CommandEventLog` and the order they append in is observable. The plant
                 // pass goes first, matching the order the two webs already read in the Population
                 // stage.
+                //
+                // **And before the supply pass**, which writes the bands' rows the plant pass reads
+                // to name the band a decay line links to (`band=`).
                 advance_cultivation
                     .after(advance_forage_regrowth)
-                    .before(advance_husbandry),
+                    .before(advance_husbandry)
+                    .before(supply::balance_supply_networks),
                 advance_graze_regrowth.after(advance_herd_grazing),
                 supply::balance_supply_networks.after(advance_herds),
                 // ⛔ **AFTER THE POOLING, ALWAYS.** This spends the links that pass recorded, so it
@@ -1063,7 +1067,13 @@ pub fn build_headless_app() -> App {
                 // reading, the same one-turn lag `balance_supply_networks` already accepts against
                 // the connection ledger. Reversing it would let this turn's pooling read a road
                 // this turn's pooling created.
-                routes::advance_roads.after(supply::balance_supply_networks),
+                //
+                // **And after the herd pass**: a kept road's slip or loss is announced on the
+                // `CommandEventLog` the plant and herd passes write, so the order the feed appends
+                // in is declared — plant, herd, road, working.
+                routes::advance_roads
+                    .after(supply::balance_supply_networks)
+                    .after(advance_husbandry),
                 // ⛔ **AFTER THE ROAD PASS, ALWAYS** — declared rather than left to the ambiguity
                 // gate. A connection's lesson is read off the road standing `advance_roads` has just
                 // produced, so this turn's decay, banking and prune are all already in the registry
@@ -1078,7 +1088,13 @@ pub fn build_headless_app() -> App {
                 // it reads `&Tile` (a working's keeper-load is its ground's capacity) and
                 // `simulate_materials` writes them, which is the identical edge
                 // `advance_forage_regrowth` declares one line up.
-                extraction::advance_deposits.after(systems::simulate_materials),
+                //
+                // **And after the road pass**: a working's slip or loss is announced on the feed the
+                // three passes above write, and it reads the bands' rows the supply pass writes —
+                // both edges reached through `advance_roads`.
+                extraction::advance_deposits
+                    .after(systems::simulate_materials)
+                    .after(routes::advance_roads),
             )
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(

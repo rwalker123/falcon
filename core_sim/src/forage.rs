@@ -92,7 +92,7 @@ use crate::{
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     materials_config::MaterialPayoff,
     orders::FactionId,
-    resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
+    resources::{CommandEventKind, CommandEventLog, SimulationTick},
     scalar::{scalar_from_f32, Scalar},
 };
 
@@ -341,6 +341,12 @@ pub struct ForagePatch {
     /// the meter it protects — otherwise a restore could hand a patch a fresh grace it had already
     /// spent.
     pub neglect_turns: u16,
+    /// **THE HIGHEST RUNG ACHIEVED SINCE THE POSITION LAST STOOD AT ITS BASE** — raised the turn a
+    /// rung completes, lowered when that rung is lost. A loss is announced only for a rung at or
+    /// below it: a part-built meter rotting to empty was never had, so it is not "lost"
+    /// (`intensification::settle_achieved_losses`). `None` = nothing above the branch's root.
+    #[serde(default)]
+    pub peak_rung: Option<crate::intensification::RungKey>,
     /// **WHAT THE AT-RISK METER'S OWN CREW SUPPLIED THIS TURN**, in work units — the **keepers**
     /// once that rung is built and the **builders** while it is not
     /// ([`patch_upkeep_supply`], `docs/plan_standing_upkeep.md` §2.4), stamped by the labor arm that
@@ -582,6 +588,7 @@ impl ForagePatch {
             species: None,
             owner: None,
             neglect_turns: NEGLECT_NONE,
+            peak_rung: None,
             upkeep_supplied: NO_UPKEEP_DEMAND,
             upkeep_hands: crate::fauna::NO_HANDS,
             upkeep_toe: Vec::new(),
@@ -727,6 +734,7 @@ impl ForagePatch {
         // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
         if crate::intensification::rung_rose(was, self.standing.held) {
             self.neglect_turns = crate::intensification::NEGLECT_NONE;
+            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held);
         }
         self.reconcile_owner();
     }
@@ -3344,6 +3352,7 @@ pub fn patch_upkeep_workers_needed(
     (demand / crate::intensification::PER_WORKER_OUTPUT).ceil() as u32
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource it reads or writes
 pub fn advance_cultivation(
     mut registry: ResMut<ForageRegistry>,
     ladder_config: Res<LadderConfigHandle>,
@@ -3352,6 +3361,12 @@ pub fn advance_cultivation(
     tiles: Query<&Tile>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
+    // **The bands working each patch** — the `band=` a decay line links to.
+    bands: Query<(
+        &crate::components::BandId,
+        &crate::components::PopulationCohort,
+        &crate::components::LaborAllocation,
+    )>,
 ) {
     let ladder = ladder_config.get();
     let labor = labor_config.get();
@@ -3441,13 +3456,55 @@ pub fn advance_cultivation(
                     // the ground beneath it is untouched until the Field is wholly gone. The
                     // newest-first rule this pass used to spell out is now a property of the number
                     // — including the ORDER these announce in, which is the order they were lost.
-                    for lost in patch.decay_ladder(decay, &ladder) {
-                        announce_rung_lost(
+                    //
+                    // **TWO EDGES, TWO IMPORTANCES** (`intensification::rung_decay_edges`): a rung
+                    // whose position leaves its top is SLIPPING (Info), and one whose position
+                    // falls to the top of the rung beneath has LOST every unit of its work (Alert).
+                    // The spans are read before the decay — the Field's price lapses with its meter.
+                    let was = patch.ladder_position();
+                    let before = patch.clone();
+                    let owner = patch.owner;
+                    patch.decay_ladder(decay, &ladder);
+                    let mut edges = crate::intensification::rung_decay_edges(
+                        RungBranch::Plant,
+                        was,
+                        patch.ladder_position(),
+                        |rung| patch_rung_span(&before, rung, &ladder),
+                    );
+                    crate::intensification::settle_achieved_losses(
+                        &mut edges,
+                        &mut patch.peak_rung,
+                    );
+                    if let Some(owner) = owner.filter(|_| !edges.is_empty()) {
+                        let tile = patch.tile;
+                        let candidates: Vec<_> = bands
+                            .iter()
+                            .filter_map(|(band, cohort, allocation)| {
+                                let crew: u32 = allocation
+                                    .assignments
+                                    .iter()
+                                    .filter(|row| {
+                                        matches!(
+                                            row.target,
+                                            crate::components::LaborTarget::Forage {
+                                                tile: worked, ..
+                                            } if worked == tile
+                                        )
+                                    })
+                                    .map(|row| row.workers)
+                                    .sum();
+                                (crew > 0).then_some((cohort.faction, *band, crew))
+                            })
+                            .collect();
+                        crate::intensification::announce_rung_decay(
                             &mut event_log,
                             tick.0,
-                            patch.owner,
-                            lost.builder_verb(),
+                            owner,
+                            crate::intensification::site_band_for(&candidates, owner),
+                            plant_rung_event_kind,
                             patch.tile,
+                            patch.ladder_position(),
+                            &edges,
                         );
                     }
                 }
@@ -3481,38 +3538,14 @@ pub fn advance_cultivation(
     }
 }
 
-/// **Announce a lost plant rung** — the plant twin of `fauna::announce_pen_lost`, and pushed on the
-/// same edge: the turn a *completed* improvement crosses back below its own cost. A completed rung
-/// is 25 turns of forgone harvest, so losing it is never silent; the partial bleed that follows is not
-/// announced, because the thing that mattered has already happened.
-///
-/// Rides the verb's **own** feed kind (`cultivate` / `sow`), so a rung's whole life — the command, the
-/// completion, the loss — reads on one channel, exactly as the pen's does.
-fn announce_rung_lost(
-    event_log: &mut CommandEventLog,
-    tick: u64,
-    owner: Option<FactionId>,
-    verb: Option<Improvement>,
-    tile: UVec2,
-) {
-    let (Some(owner), Some(verb)) = (owner, verb) else {
-        return;
-    };
-    let (kind, what) = match verb {
-        Improvement::Sow => (CommandEventKind::Sow, "field"),
-        _ => (CommandEventKind::Cultivate, "tended patch"),
-    };
-    let (x, y) = (tile.x, tile.y);
-    event_log.push(CommandEventEntry::new(
-        tick,
-        kind,
-        owner,
-        format!("The {what} at ({x}, {y}) has gone feral — untended, the ground is reverting"),
-        Some(format!(
-            "status=feral reason=untended action={} x={x} y={y}",
-            verb.as_str()
-        )),
-    ));
+/// **Which feed channel a plant rung's slip or loss rides** — the verb that builds it
+/// (`cultivate` / `sow`), so a rung's whole life — the command, the completion, the decay — reads on
+/// one channel, exactly as the pen's does.
+fn plant_rung_event_kind(rung: RungKey) -> CommandEventKind {
+    match rung {
+        RungKey::PlantField => CommandEventKind::Sow,
+        _ => CommandEventKind::Cultivate,
+    }
 }
 
 /// Apply one turn of **pure logistic** regrowth toward the patch's carrying capacity and refresh its

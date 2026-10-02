@@ -236,6 +236,7 @@ added to one and forgotten in the other renders a row wearing the loss accent at
 | `status=trimmed` | Notable | `▾` | the source is still worked, by fewer hands than the player set |
 | `status=pruned` | Notable | `▾` | the crew still stands there; what it TAKES was narrowed |
 | `status=stalled` | Notable | `▾` | the crafting bench lost its LAST hand; the job stops and keeps everything |
+| `status=slipping` | Routine | `▾` | a rung's meter is falling for want of keeping; the rung still stands |
 
 **Notable is the ladder's own answer for a crew that was merely cut.** Routine is *"bracket
 transitions, and receipts for things the player asked for"*, and a cut crew is the opposite of a
@@ -277,6 +278,29 @@ craft crew disappearing announces itself to nobody, which is precisely the defec
 sim changed a labor row unasked, the bench is staffed from the Work tab like any other crew, and
 `announce_shed_bench` writes the `band=` the jump needs.
 
+### `slipping` is ROUTINE, and its loss is the Alert
+
+`core_sim::intensification::announce_rung_decay` writes two lines about one rung:
+
+- **The slip:** `status=slipping rung=<key> x= y= progress=<%>`, labelled `Field at (44, 24) is
+  slipping — 94%`, at Info importance.
+- **The loss:** `status=feral reason=untended …`, which is already Alert.
+
+**The slip is a meter moving, and staffing the keeping reverses it.** So it sits below the default
+floor at Routine, wears the reduced mark `▾` in `WARN` amber, and never takes `⚠`. A player who
+raises the floor to Everything sees it coming; one on defaults is told when the rung is gone.
+
+**The detail column says only the status.** The label already says the place and the percent in
+words, so `rung`, `progress`, `x`, `y` and `reason` are dropped from both decay lines, and the
+column reads `slipping` / `feral`. The drop is `HudEventVocab.DETAIL_KEY_HIDDEN_BY_STATUS`, keyed by
+the `status=` token. It is not `DETAIL_KEY_HIDDEN`, because `x` / `y` are the only place a forage
+`trimmed` line names its tile.
+
+**It is in `DETAIL_STATUS_WORK_LINK`**, because the keeping is staffed from the Work tab. Like every
+member, it links only where the detail carries `band=`. **The sim's slip writes no `band=`**, so the
+shipped line renders linkless. `chapters/event_dock.gd` (`event_dock_rung_slipping`) stages the
+shipped detail beside a `band=`-bearing one, and claims that only the second offers the jump.
+
 ### ⛔ THE GLYPH TRACKS THE RUNG, or the split is filter-only and unreadable
 
 All four tokens wore `⚠` for a release. The rungs above were **right the whole time** and did real
@@ -312,8 +336,8 @@ stages — a row-level claim would pass on exactly that addition.
 ### A cut row offers the way to what it cut
 
 A row whose `status=` token is in `DETAIL_STATUS_WORK_LINK` (`trimmed`, `lapsed`, `pruned`,
-`stalled` — a labor row the sim changed unasked; **not** `feral`, which changes a source and leaves
-the work board alone)
+`stalled` — a labor row the sim changed unasked; `slipping`, whose remedy is the keeping crew;
+**not** `feral`, which changes a source and leaves the work board alone)
 draws a `Work tab` link and emits `band_work_tab_requested(band_id)`. It is the dock's **first and
 only per-row signal**; every other one it publishes is about the strip.
 

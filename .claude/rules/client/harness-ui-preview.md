@@ -3571,4 +3571,24 @@ SHEET".
 
 **Sabotage-verified**: either sheet reading crew 1's row fails its four claims.
 
-**A clean run is 466 frames / 2503 `PASS`, exit 0 — RE-MEASURED windowed.**
+## A rung slipping, beside its loss (`chapters/event_dock.gd`)
+
+One frame and eight claims, appended last in the chapter: `event_dock_rung_slipping`, read at the
+Routine floor. The behaviour is `event-dock.md` → "`slipping` is ROUTINE, and its loss is the
+Alert".
+
+- Two slips: the sim's shipped detail with no `band=`, and one carrying `band=5`.
+- One loss: `status=feral reason=untended`.
+- The claims:
+  - the slip resolves to Routine and its row draws `▾`;
+  - exactly one Work-tab link exists, and it is band 5's;
+  - the loss is Alert and draws `⚠`;
+  - the slip's detail reads `slipping` on the drawn row, with no `Progress` / `X` token, and the
+    loss's reads `feral`;
+  - a `trimmed` line still shows its tile, so the hiding stays scoped.
+- `EXPECTED_CHECKPOINTS` **229**, re-measured.
+
+**Sabotage-verified**: the slip at Alert with `⚠` fails two claims, and dropping it from the
+work-link set fails the link claim. Dropping the status scoping fails both detail claims.
+
+**A clean run is 467 frames / 2511 `PASS`, exit 0 — RE-MEASURED windowed.**

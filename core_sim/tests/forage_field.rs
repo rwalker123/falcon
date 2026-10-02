@@ -2271,17 +2271,13 @@ fn a_gap_in_a_sow_cannot_strand_the_tended_rung_below_complete() {
     assert!(saw_untended, "the sweep never saw untended ground");
 }
 
-/// **Losing a Field is announced on the `sow` channel, ONCE** — the rung-3 twin of the tended patch's
-/// feral line, pushed on the edge the position falls out of the Field's span and never again.
-///
-/// **The bleed does not stop there, and the second announcement is CORRECT.** One position means the
-/// source goes on down through the tended rung's range and loses that rung too, on the `cultivate`
-/// channel — the ground really did revert through both, and each 25-turn investment is announced
-/// where it was lost. So this asserts the pair by channel rather than counting feral lines: exactly
-/// one Sow line for the Field, exactly one Cultivate line for the ground, neither repeated over the
-/// hundred bleeding turns between them.
+/// ⛔ **A FIELD SLIPS ON THE `sow` CHANNEL, ONCE, AND IS LOST ONCE** — the rung-3 twin of the
+/// tended patch's pair. The slip (`status=slipping`, Info) rides the edge the position leaves the
+/// Field's top; the loss (`status=feral`, Alert) the edge it falls to the tended rung's top. One
+/// position means the bleed goes on down through the tended range too, so the ground beneath slips
+/// and is lost on the `cultivate` channel — each rung announced where it went, never repeated.
 #[test]
-fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
+fn losing_a_field_pushes_one_slip_and_one_loss_on_the_sow_channel() {
     let mut app = spawn_world();
     let (_tile, coord) = find_sowable_tile(&app);
     {
@@ -2293,76 +2289,119 @@ fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
     let grace = field_grace(&app);
     run_turns_untended(&mut app, grace);
     assert_eq!(
-        feral_lines_on(&app, "sow"),
+        decay_lines(&app, "slipping", "plant:field"),
         0,
-        "nothing is lost, so nothing is announced, while the grace holds"
+        "nothing is said while the grace holds"
     );
 
-    // **The Field goes on the FIRST bleeding turn past its grace** — the retention bar is deleted
-    // (`docs/plan_standing_upkeep.md` §2.8), and what makes that a rounding rather than a cliff is
-    // that the payout fades with the position.
     run_turns_untended(&mut app, 1);
     assert_eq!(
-        feral_lines_on(&app, "sow"),
+        decay_lines(&app, "slipping", "plant:field"),
         1,
-        "the Field's loss is announced on the turn it happens"
+        "the Field slips on the first bleeding turn past its grace"
     );
     assert_eq!(
-        feral_lines_on(&app, "cultivate"),
+        decay_lines(&app, "feral", "plant:field"),
         0,
-        "…and the ground beneath it is untouched — the position eats the Field first"
+        "…and is not lost yet"
     );
 
-    // **Then run it into the ground.** The source walks down through the tended rung's range and
-    // loses that too, once, on its own channel — and the Field's line is NOT repeated over the
-    // hundred bleeding turns in between, which is the thing this test exists to catch.
     let survives = unmaintained_field_turns_before_loss(&app, coord);
-    run_turns_untended(&mut app, survives);
+    let (_, bleed) = field_build(&app, coord);
+    let to_the_tended_top = (field_cost(&app) / bleed).ceil() as u32;
+    run_turns_untended(&mut app, survives.max(to_the_tended_top));
     assert_eq!(
-        feral_lines_on(&app, "sow"),
+        decay_lines(&app, "slipping", "plant:field"),
         1,
-        "the Field's loss is announced once, not every turn of the bleed that follows"
+        "the Field's slip is announced once, not every turn of the bleed"
     );
     assert_eq!(
-        feral_lines_on(&app, "cultivate"),
+        decay_lines(&app, "feral", "plant:field"),
         1,
-        "and the tended ground's loss is announced once too, on its own channel — the source really \
-         did revert through both rungs"
+        "the Field's loss is announced once, the turn its last work is gone"
     );
-    let detail = app
+    let lost = app
         .world
         .resource::<CommandEventLog>()
         .iter()
-        .find(|entry| entry.label.contains("gone feral"))
-        .expect("the feral line")
-        .detail
-        .clone()
-        .unwrap_or_default();
+        .find(|entry| {
+            entry.detail.as_deref().is_some_and(|detail| {
+                detail.contains("status=feral") && detail.contains("rung=plant:field")
+            })
+        })
+        .expect("the Field's loss line")
+        .clone();
     assert!(
-        detail.contains("action=sow"),
-        "a lost Field reads on the `sow` channel, not `cultivate`: {detail}"
+        lost.label.ends_with("lost — back to a tended patch"),
+        "the loss names the rung left standing: {}",
+        lost.label
+    );
+    assert_eq!(
+        lost.kind,
+        core_sim::CommandEventKind::Sow,
+        "a lost Field reads on the `sow` channel"
     );
 }
 
-/// Feed lines announcing a plant rung going feral.
-/// **Feral lines on ONE verb's channel** — `action=sow` for a lost Field, `action=cultivate` for the
-/// tended ground beneath it.
-///
-/// **The channel is not optional any more.** With one position a long bleed walks the source down
-/// through *both* plant rungs, so it genuinely loses two and genuinely announces two — a counter that
-/// matched only on `"gone feral"` reads `2` and looks like a double-fire on one rung. The rungs are
-/// distinguishable exactly where the feed already distinguishes them: the `action=` token.
-fn feral_lines_on(app: &App, action: &str) -> usize {
-    let token = format!("action={action}");
+/// ⛔ **A PART-BUILT FIELD ROTTING TO EMPTY IS NOT "LOST"** — it was never had. Its work is gone,
+/// and the row already reads *not queued, losing ground*, but the loss Alert is for a rung that was
+/// ACHIEVED since the position last stood at its base. So a Field half sown and left to rot back to
+/// the tended rung's top emits no loss line and no slip line (it never stood at its top), where an
+/// achieved one emits exactly one ([`losing_a_field_pushes_one_slip_and_one_loss_on_the_sow_channel`]).
+#[test]
+fn a_part_built_field_rotting_to_empty_is_not_announced_lost() {
+    /// How far up the Field leg the abandoned Sow stood.
+    const HALF_SOWN: f32 = 0.5;
+    /// Turns past the bleed's own arithmetic, so the meter is certainly empty.
+    const SLACK_TURNS: u32 = 2;
+    let mut app = spawn_world();
+    let (_tile, coord) = find_sowable_tile(&app);
+    let tended_top = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        let (base, width) = core_sim::plant_rung_span(RungKey::PlantField, &ladder);
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch");
+        patch.owner = Some(FactionId(0));
+        patch.set_ladder_position(base + width * HALF_SOWN, &ladder);
+        base
+    };
+    let (_, bleed) = field_build(&app, coord);
+    let turns =
+        field_grace(&app) + (field_cost(&app) * HALF_SOWN / bleed).ceil() as u32 + SLACK_TURNS;
+    run_turns_untended(&mut app, turns);
+    let position = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .ladder_position();
+    assert!(
+        position <= tended_top,
+        "fixture: the half-sown meter rotted to the tended rung's top ({position} vs {tended_top})"
+    );
+    assert_eq!(
+        decay_lines(&app, "feral", "plant:field"),
+        0,
+        "a Field never had is not announced lost"
+    );
+    assert_eq!(
+        decay_lines(&app, "slipping", "plant:field"),
+        0,
+        "…nor slipping — it never stood at its top"
+    );
+}
+
+/// Feed lines carrying `status=<status>` about the rung `rung` (its wire key).
+fn decay_lines(app: &App, status: &str, rung: &str) -> usize {
+    let (status, rung) = (format!("status={status}"), format!("rung={rung}"));
     app.world
         .resource::<CommandEventLog>()
         .iter()
-        .filter(|entry| entry.label.contains("gone feral"))
         .filter(|entry| {
             entry
                 .detail
                 .as_deref()
-                .is_some_and(|detail| detail.contains(&token))
+                .is_some_and(|detail| detail.contains(&status) && detail.contains(&rung))
         })
         .count()
 }

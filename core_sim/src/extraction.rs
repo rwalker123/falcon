@@ -281,6 +281,12 @@ pub struct DepositSource {
     /// rung's `upkeep.grace_turns` — a crew re-tasked for a season does not cost the working.
     #[serde(default)]
     pub neglect_turns: u16,
+    /// **THE HIGHEST RUNG ACHIEVED SINCE THE POSITION LAST STOOD AT ITS BASE** — raised the turn a
+    /// rung completes, lowered when that rung is lost. A loss is announced only for a rung at or
+    /// below it: a part-built meter rotting to empty was never had, so it is not "lost"
+    /// (`intensification::settle_achieved_losses`). `None` = nothing above the branch's root.
+    #[serde(default)]
+    pub peak_rung: Option<crate::intensification::RungKey>,
     /// **WHAT EVERY CREW TOOK OUT OF THIS WORKING THIS TURN**, in the material's own units.
     ///
     /// Accumulates (`+=`) across the bands cutting it — [`Self::upkeep_supplied`]'s rule, and for
@@ -369,6 +375,7 @@ impl DepositSource {
             upkeep_hands: NO_HANDS_ON_THE_DEPOSIT,
             upkeep_toe: Vec::new(),
             neglect_turns: NEGLECT_NONE,
+            peak_rung: None,
             last_take: NO_TAKE_THIS_TURN,
             last_floor: NOBODY_ASKED_FOR_A_FLOOR,
             build_blocked_reason: BuildGate::Open,
@@ -430,6 +437,7 @@ impl DepositSource {
         // **A FINISHED RUNG STARTS WITH ITS FULL GRACE** ([`crate::intensification::rung_rose`]).
         if crate::intensification::rung_rose(was, self.standing.held) {
             self.neglect_turns = crate::intensification::NEGLECT_NONE;
+            crate::intensification::raise_peak(&mut self.peak_rung, self.standing.held);
         }
     }
 }
@@ -1957,12 +1965,22 @@ pub fn project_realized_deposit(
 /// (the `Extract` arm's keeping, inside the labour pass, because the head count it divides is
 /// the one the shedding order left). Logistics runs before Population, so the stamp this pass writes
 /// is the bill that turn's keepers pay against, and the next Logistics pass judges that pair.
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource it reads or writes
 pub fn advance_deposits(
     mut registry: ResMut<DepositRegistry>,
     ladder: Res<crate::intensification::LadderConfigHandle>,
     extraction: Res<crate::extraction_config::ExtractionConfigHandle>,
     tile_registry: Res<crate::resources::TileRegistry>,
     tiles: bevy::prelude::Query<&Tile>,
+    // **WHO HEARS A WORKING SLIP OR GO** — every people with a band holding an `extract` row on it
+    // (a working has no owner; its keepers are whoever works it). Optional, like the feed.
+    bands: bevy::prelude::Query<(
+        &crate::components::BandId,
+        &crate::components::PopulationCohort,
+        &crate::components::LaborAllocation,
+    )>,
+    mut event_log: Option<ResMut<crate::resources::CommandEventLog>>,
+    tick: Option<Res<crate::resources::SimulationTick>>,
 ) {
     let ladder = ladder.get();
     let config = extraction.get();
@@ -1995,8 +2013,62 @@ pub fn advance_deposits(
             .rung(at_risk)
             .upkeep_decay(shortfall_fraction, source.neglect_turns);
         if decay > crate::intensification::NO_UPKEEP_DECAY {
-            let bled = source.ladder_position() - decay;
+            let was = source.ladder_position();
+            let bled = was - decay;
             source.set_ladder_position(bled, &ladder, branch);
+            // **TWO EDGES, TWO IMPORTANCES** (`intensification::rung_decay_edges`).
+            let mut edges = crate::intensification::rung_decay_edges(
+                branch,
+                was,
+                source.ladder_position(),
+                |rung| deposit_rung_span(rung, &ladder),
+            );
+            crate::intensification::settle_achieved_losses(&mut edges, &mut source.peak_rung);
+            if let Some(log) = event_log.as_deref_mut() {
+                if !edges.is_empty() {
+                    let candidates: Vec<_> = bands
+                        .iter()
+                        .filter_map(|(band, cohort, allocation)| {
+                            let crew: u32 = allocation
+                                .assignments
+                                .iter()
+                                .filter(|row| {
+                                    matches!(
+                                        &row.target,
+                                        crate::components::LaborTarget::Extract { tile, material, .. }
+                                            if *tile == source.tile && *material == source.material
+                                    )
+                                })
+                                .map(|row| row.workers)
+                                .sum();
+                            let on_the_site = allocation.assignments.iter().any(|row| {
+                                matches!(
+                                    &row.target,
+                                    crate::components::LaborTarget::Extract { tile, material, .. }
+                                        if *tile == source.tile && *material == source.material
+                                )
+                            });
+                            on_the_site.then_some((cohort.faction, *band, crew))
+                        })
+                        .collect();
+                    let mut factions: Vec<crate::orders::FactionId> =
+                        candidates.iter().map(|(faction, _, _)| *faction).collect();
+                    factions.sort_unstable();
+                    factions.dedup();
+                    for faction in factions {
+                        crate::intensification::announce_rung_decay(
+                            log,
+                            tick.as_deref().map_or(0, |tick| tick.0),
+                            faction,
+                            crate::intensification::site_band_for(&candidates, faction),
+                            |_| crate::resources::CommandEventKind::Extraction,
+                            source.tile,
+                            source.ladder_position(),
+                            &edges,
+                        );
+                    }
+                }
+            }
         }
         // ## 3 — clear the payment and re-stamp, at the position the bleed left. **This turn's
         // take, the blocked cause and the countdown clear with it**, and for the same reason: each

@@ -882,7 +882,9 @@ per turn by `advance_roads`.
    `Road::neglect_turns` (consecutive turns, never a lifetime budget; `Road::set_position` resets it
    the turn a rung completes — `intensification.md` → "A COMPLETED RUNG RESETS THE COUNTER");
 2. **bleed the rung at risk** at `shortfall_fraction × meter_decay.per_turn`, past that rung's own
-   `grace_turns`. `RungDef::upkeep_decay` owns both the rate and the strictly-greater comparison;
+   `grace_turns`. A kept road leaving a rung's top or falling to the rung beneath is announced
+   to the keeper's people on the `Road` channel — a slip (Info) and a loss (Alert), once each
+   (`event-feed.md` → "A rung's decay is two edges"). `RungDef::upkeep_decay` owns both the rate and the strictly-greater comparison;
 3. **clear** `upkeep_demanded` / `upkeep_supplied` for the coming turn's stamp;
 4. **bank this turn's traffic on every tile each journey crossed, capped at `traffic_ceiling`** — and
    count the idle turns. Each journey banks **its own** `RouteJourney::work_per_tile`, so a link and a

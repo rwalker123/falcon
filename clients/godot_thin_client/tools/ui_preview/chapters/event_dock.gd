@@ -8,7 +8,7 @@ extends RefCounted
 
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
-const EXPECTED_CHECKPOINTS := 203
+const EXPECTED_CHECKPOINTS := 229
 
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
 const WorldFx := preload("res://tools/ui_preview/fixtures_world.gd")
@@ -303,6 +303,84 @@ const SHED_LINK_BANDS: Array[int] = [SHED_TRIMMED_LINKED_BAND, SHED_STALLED_BAND
 ## pixels. Every count-and-press claim below passed on that build; the frame showed no link at all.
 ## Well under the word at the row's detail type size, and unreachably far above the zero.
 const WORK_LINK_MIN_DRAWN_WIDTH := 20.0
+
+## **THE RUNG-DECAY PAIR** (`core_sim::intensification::announce_rung_decay`): a slip and a loss,
+## in the sim's own detail shape. The slip's shipped detail names no band. The second slip carries
+## `band=` to pin the link the Work tab offers once a band is named.
+const SLIP_LABEL := "Field at (44, 24) is slipping — 94%"
+const SLIP_DETAIL := "status=slipping rung=forage:field x=44 y=24 progress=94"
+const SLIP_BANDED_LABEL := "Field at (45, 24) is slipping — 60%"
+const SLIP_BANDED_DETAIL := "status=slipping rung=forage:field x=45 y=24 progress=60 band=5"
+const SLIP_BANDED_BAND := 5
+const SLIP_LOST_LABEL := "Field at (46, 24) lost — back to a tended patch"
+const SLIP_LOST_DETAIL := "status=feral reason=untended rung=forage:field x=46 y=24"
+## What each line's detail column reads once the label's own facts are dropped: the status alone.
+const SLIP_PHRASE := "slipping"
+const SLIP_LOST_PHRASE := "feral"
+
+func _event_dock_slip_fixture() -> Array:
+	return [
+		{"tick": 90, "kind": "forage", "faction": 0,
+			"label": SLIP_LABEL, "detail": SLIP_DETAIL, "seq": 1961},
+		{"tick": 90, "kind": "forage", "faction": 0,
+			"label": SLIP_BANDED_LABEL, "detail": SLIP_BANDED_DETAIL, "seq": 1962},
+		{"tick": 90, "kind": "forage", "faction": 0,
+			"label": SLIP_LOST_LABEL, "detail": SLIP_LOST_DETAIL, "seq": 1963},
+	]
+
+## Every `Label` text on the drawn row whose label column reads `label` (bar or expanded log).
+func _row_drawn_texts(dock: EventDockPanel, label: String) -> Array[String]:
+	var texts: Array[String] = []
+	var line := _preview_dock_row_line(dock, label)
+	if line == null:
+		return texts
+	for child in line.get_children():
+		if child is Label:
+			texts.append((child as Label).text)
+	return texts
+
+## **A RUNG SLIPPING IS ROUTINE, ITS LOSS IS ALERT** (state `event_dock_rung_slipping`). Read at the
+## Routine floor so the slip is drawn at all.
+func _rung_slip_states(event_dock: EventDockPanel) -> void:
+	var prior_detail: String = event_dock._detail_level
+	event_dock.set_detail_level(HudEventVocab.RUNG_ROUTINE)
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_slip_fixture())
+	event_dock.set_expanded(true)
+	await h._settle()
+	await h._save("event_dock_rung_slipping")
+	h._assert_hud("a rung SLIPPING is Routine, not Alert (got %s)"
+			% _preview_event_rung(event_dock, SLIP_LABEL),
+		_preview_event_rung(event_dock, SLIP_LABEL) == HudEventVocab.RUNG_ROUTINE)
+	h._assert_hud("…and its row wears the reduced mark `%s` (got \"%s\")"
+			% [HudEventVocab.STATUS_REDUCED_GLYPH, _preview_dock_row_glyph(event_dock, SLIP_LABEL)],
+		_preview_dock_row_glyph(event_dock, SLIP_LABEL) == HudEventVocab.STATUS_REDUCED_GLYPH)
+	var links := _preview_dock_link_bands(event_dock)
+	h._assert_hud("…a slip naming its band offers the Work tab for THAT band, and the shipped slip, naming none, offers nothing (link bands %s)"
+			% str(links),
+		links.size() == 1 and int(links[0]) == SLIP_BANDED_BAND)
+	# **THE DETAIL COLUMN SAYS ONLY THE STATUS** — the label carries the place and the percent.
+	var slip_phrase := EventDockPanel.detail_phrase(SLIP_DETAIL)
+	h._assert_hud("…and the slip's detail column carries no raw token (\"%s\", want \"%s\")"
+			% [slip_phrase, SLIP_PHRASE],
+		slip_phrase == SLIP_PHRASE and _row_drawn_texts(event_dock, SLIP_LABEL).has(SLIP_PHRASE)
+			and not _row_drawn_texts(event_dock, SLIP_LABEL).any(
+				func(text: String) -> bool: return text.contains("Progress") or text.contains("X ")))
+	var lost_phrase := EventDockPanel.detail_phrase(SLIP_LOST_DETAIL)
+	h._assert_hud("…nor does the loss's (\"%s\", want \"%s\")" % [lost_phrase, SLIP_LOST_PHRASE],
+		lost_phrase == SLIP_LOST_PHRASE)
+	h._assert_hud("the TRIM keeps its tile in the detail — the hiding is scoped to the decay pair (\"%s\")"
+			% EventDockPanel.detail_phrase(SHED_TRIMMED_LINKLESS_DETAIL),
+		EventDockPanel.detail_phrase(SHED_TRIMMED_LINKLESS_DETAIL).contains("60"))
+	h._assert_hud("the LOSS beside it stays Alert (got %s)"
+			% _preview_event_rung(event_dock, SLIP_LOST_LABEL),
+		_preview_event_rung(event_dock, SLIP_LOST_LABEL) == HudEventVocab.RUNG_ALERT)
+	h._assert_hud("…with the shed mark `%s` (got \"%s\")"
+			% [HudEventVocab.STATUS_SHED_GLYPH, _preview_dock_row_glyph(event_dock, SLIP_LOST_LABEL)],
+		_preview_dock_row_glyph(event_dock, SLIP_LOST_LABEL) == HudEventVocab.STATUS_SHED_GLYPH)
+	event_dock.set_expanded(false)
+	event_dock.set_detail_level(prior_detail)
+	event_dock.reset()
 
 func _event_dock_shed_fixture() -> Array:
 	return [
@@ -2714,6 +2792,8 @@ func run(harness) -> void:
 		_preview_event_label_count(event_dock, MIGRATED_IN_LABEL, true) == 1)
 	event_dock.set_band_labels({})
 	FactionNames.reset()
+
+	await _rung_slip_states(event_dock)
 
 	event_dock.queue_free()
 	await h.get_tree().process_frame

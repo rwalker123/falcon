@@ -19256,6 +19256,84 @@ mod tests {
         );
     }
 
+    /// ⛔ **A SLIP LINE LINKS TO THE BAND WITH THE LARGEST CREW ON THE SITE** — `band=<BandId>`, so
+    /// the event dock can open that band's Work row. Two bands of one people work a finished Field,
+    /// both short of its bill; the second carries the bigger crew, so the line names it.
+    #[test]
+    fn a_slip_line_names_the_band_with_the_largest_crew_on_the_site() {
+        /// The first band's crew — the smaller.
+        const SMALL_CREW: u32 = 1;
+        /// The second band's crew — the larger, and still short of the Field's bill.
+        const LARGE_CREW: u32 = 2;
+        /// A shortfall run past any grace, so the first short turn bleeds.
+        const PAST_ANY_GRACE: u16 = 32;
+        /// Turns enough for one bleed to cross the Field's top.
+        const TURNS: u32 = 3;
+        let (mut app, _, coord) = lapsed_field_scene(FINISHED_FIELD_FRACTION);
+        let faction = FactionId(0);
+        let tile = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)
+            .expect("the scene's tile");
+        let second = spawn_idle_band(&mut app, faction, tile);
+        app.world
+            .entity_mut(second)
+            .insert(BandId(SECOND_KEEPING_BAND_ID));
+        // **No hoes on the second band**, so the two crews together stay short of the bill.
+        app.world
+            .get_mut::<BandEquipment>(second)
+            .expect("a spawned band carries a ledger")
+            .restore_batches("hoes", Vec::new());
+        for (band, crew) in [
+            (LAPSED_BAND_ID, SMALL_CREW),
+            (SECOND_KEEPING_BAND_ID, LARGE_CREW),
+        ] {
+            handle_assign_labor(
+                &mut app,
+                faction,
+                Some(band),
+                "forage".to_string(),
+                crew,
+                Some(coord.x),
+                Some(coord.y),
+                None,
+                None,
+                Some(SUSTAIN_FLOOR),
+                None,
+                Vec::new(),
+            );
+        }
+        app.world
+            .resource_mut::<ForageRegistry>()
+            .patch_mut(coord)
+            .expect("the scene's patch")
+            .neglect_turns = PAST_ANY_GRACE;
+        for _ in 0..TURNS {
+            resolve_labor(&mut app);
+            use bevy_ecs::system::RunSystemOnce;
+            app.world.run_system_once(core_sim::advance_cultivation);
+        }
+        let slip = app
+            .world
+            .resource::<CommandEventLog>()
+            .iter()
+            .find(|entry| {
+                entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("status=slipping"))
+            })
+            .expect("the Field slipped")
+            .clone();
+        let detail = slip.detail.unwrap_or_default();
+        assert!(
+            detail.contains(&format!("band={SECOND_KEEPING_BAND_ID}"))
+                && !detail.contains(&format!("band={LAPSED_BAND_ID}")),
+            "the slip links to the band with the larger crew: {detail}"
+        );
+    }
+
     /// A steppe tile whose realized basket is emmer, pulses and hay grass under the harness seed —
     /// two staples that convert at different rates and a fodder crop that also pays fibre.
     const MIXED_STEPPE: UVec2 = UVec2::new(1, 0);
