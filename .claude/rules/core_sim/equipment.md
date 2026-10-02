@@ -1449,8 +1449,8 @@ hunt arc is still moving; it rides with the hunt-effectiveness tuning on **issue
 3. **Start-stocked, and craftable since the bench landed.** Running dry was a one-way door for
    exactly as long as nothing could make a second spear; it is now the pull into a replenishment loop
    (`crafting.md`). **`BandEquipment::stock` is the one seam in the sim that ADDS condition**, and it
-   is called from two kinds of place — a spawn, and `systems::advance_crafting` on an item the bench
-   finished. Every unequipped tier is still **absorbing on its own** (`a_kit_run_dry_stays_dry`,
+   is called from two kinds of place — a spawn, and `systems::deliver_bench_output`, which stocks at
+   the top of the next turn what `systems::advance_crafting` parked on `BandBench::finished`. Every unequipped tier is still **absorbing on its own** (`a_kit_run_dry_stays_dry`,
    `baskets_run_dry_on_their_own_quantum_and_stay_dry`, both of which run worlds with an empty
    bench): nothing *decays* wear, nothing repairs a batch, and a band that makes nothing stays dry.
 
