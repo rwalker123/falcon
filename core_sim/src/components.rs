@@ -4022,6 +4022,25 @@ pub struct DrawnMaterial {
     pub amount: Scalar,
 }
 
+/// **A finished equipment batch waiting for the top of the next turn** — one row of
+/// [`BandBench::finished`].
+///
+/// **Fully resolved when the bench finishes it**: the tier the faction could reach then, and the
+/// grade's absolutes copied off the recipe then. Delivery
+/// ([`crate::systems::deliver_bench_output`]) does no recipe or config lookup, so a recipe retuned
+/// or a bench re-tasked between turns cannot change what arrives.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FinishedBatch {
+    /// The `equipment.json` item id.
+    pub item: String,
+    /// Whole units the pass made — the recipe output row's `amount`.
+    pub count: u32,
+    /// The tier the batch was made at.
+    pub tier: String,
+    /// The grade the draw fixed, its effects already copied — see [`BatchGrade`].
+    pub grade: Option<BatchGrade>,
+}
+
 /// **A band's crafting bench — ONE job at a time.**
 ///
 /// Design: `docs/plan_crafting_and_materials.md` §5/§7. **Make IS the assignment**: putting a recipe
@@ -4088,6 +4107,20 @@ pub struct BandBench {
     /// `SAVE_FORMAT_VERSION` moved. `BTreeMap` so the checkpoint and any readout iterate in a stable
     /// order.
     pub last_started: BTreeMap<String, String>,
+    /// **FINISHED EQUIPMENT NOT YET IN THE STORE** — batches this bench completed during the turn
+    /// just resolved, in completion order, waiting for [`crate::systems::deliver_bench_output`] to
+    /// stock them into [`BandEquipment`] at the top of the next turn.
+    ///
+    /// The bench runs after the labour pass that settles the band's tools, so a tool finished on
+    /// turn N cannot be issued until turn N+1. Stocking it at completion left the store holding a
+    /// tool that turn's settlement never saw: the pool cards and keeping rows read short beside a
+    /// ledger that already held the hoe. Parking it here keeps the one-turn lag (the tool did not
+    /// exist while that turn's work was done) and makes the store and the issue agree.
+    ///
+    /// ⛔ **A job change never touches it** — [`Self::set_job`] and [`Self::clear_job`] carry it
+    /// across, because the items are already made. **Persisted** with the rest of the bench
+    /// (`BandRecord::bench`), so a save taken between the finishing turn and the next keeps them.
+    pub finished: Vec<FinishedBatch>,
 }
 
 impl BandBench {
@@ -4106,6 +4139,8 @@ impl BandBench {
     /// **Put a recipe on the bench**, discarding whatever was there. Progress and the drawn pile go
     /// with it: a job swapped out mid-pass has to draw again, because the materials it drew were for
     /// the thing it is no longer making.
+    ///
+    /// **[`Self::finished`] is untouched** — a batch the old job completed is still delivered.
     pub fn set_job(&mut self, recipe_id: &str, workers: u32) {
         self.recipe_id = Some(recipe_id.to_string());
         self.workers = workers;
@@ -4125,12 +4160,26 @@ impl BandBench {
     /// **[`Self::last_started`] survives it**, deliberately: which recipe a band last chose for an item
     /// is a fact about the band, not about the job being taken off the bench, and a bench cleared
     /// between two batches of spears must still suggest the recipe it was making them from.
+    ///
+    /// **[`Self::finished`] survives it too**: those items are already made, and clearing the job
+    /// only stops the next one.
     pub fn clear_job(&mut self) {
         let last_started = std::mem::take(&mut self.last_started);
+        let finished = std::mem::take(&mut self.finished);
         *self = Self {
             last_started,
+            finished,
             ..Self::default()
         };
+    }
+
+    /// **Hand every parked batch to the band's store, in the order the bench finished them** —
+    /// [`Self::finished`] drained into [`BandEquipment::stock`]. Each lands as its own new batch,
+    /// exactly as a same-turn stock did.
+    pub fn deliver_finished(&mut self, wear: &mut BandEquipment) {
+        for batch in self.finished.drain(..) {
+            wear.stock(&batch.item, batch.count, &batch.tier, batch.grade);
+        }
     }
 
     /// **TAKE ONE HAND OFF THE BENCH AND LEAVE EVERYTHING ELSE STANDING** — what the shedding order

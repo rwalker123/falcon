@@ -19,10 +19,11 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::Entity;
 
 use core_sim::{
-    advance_crafting, build_test_app, recapture_snapshot_in_place, scalar_from_f32, BandBench,
-    BandEquipment, BatchGrade, DiscoveryProgressLedger, EquipmentConfig, EquipmentConfigHandle,
-    LadderConfigHandle, MaterialsConfig, MaterialsConfigHandle, PopulationCohort,
-    RecipesConfigHandle, ResidentBand, SnapshotHistory, SourcePriority,
+    advance_crafting, build_test_app, deliver_bench_output, recapture_snapshot_in_place,
+    scalar_from_f32, BandBench, BandEquipment, BatchGrade, DiscoveryProgressLedger,
+    EquipmentConfig, EquipmentConfigHandle, LadderConfigHandle, MaterialsConfig,
+    MaterialsConfigHandle, PopulationCohort, RecipesConfigHandle, ResidentBand, SnapshotHistory,
+    SourcePriority,
 };
 use std::collections::BTreeMap;
 
@@ -1556,6 +1557,9 @@ fn a_start_stocked_batch_carries_the_grade_a_bare_handed_craft_of_it_comes_out_a
         bench.set_job(SLED_RECIPE, CREW_THAT_FINISHES_A_SLED_BARE_HANDED);
     }
     app.world.run_system_once(advance_crafting);
+    // **The top of the next turn** — a finished sled is parked on the bench until then, and this
+    // test is about the batch the ledger holds.
+    app.world.run_system_once(deliver_bench_output);
 
     let crafted = publish(&mut app, band);
     let crafted_rows = rows_for(&crafted, SLED_ITEM);
