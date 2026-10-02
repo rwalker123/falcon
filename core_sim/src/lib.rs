@@ -56,6 +56,7 @@ mod influencers;
 mod intensification;
 mod knowledge_ledger;
 mod labor_config;
+mod lineage;
 pub mod log_stream;
 mod map_preset;
 mod mapgen;
@@ -280,6 +281,7 @@ pub use great_discovery::{
     GreatDiscoveryResolvedEvent, GreatDiscoveryTelemetry, ObservationLedger,
 };
 pub use hydrology::{generate_hydrology, HydrologyState};
+pub use lineage::{FoundingLines, LineId, MIN_BAND_LINES};
 // The drainage-network measurement instrument (consumed by the `#[ignore]`d census test).
 pub use extraction::{
     advance_deposits, deposit_at_risk_rung, deposit_keeper_loads, deposit_keeping_basis,

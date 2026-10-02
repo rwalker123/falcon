@@ -229,6 +229,10 @@ fn spawn_band(app: &mut App, tile: UVec2, assignments: Vec<LaborAssignment>) -> 
                 generation: 0 as GenerationId,
                 faction: FACTION,
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             StartingUnit {
                 kind: "BandKeeper".to_string(),

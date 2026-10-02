@@ -1409,6 +1409,12 @@ table PopulationCohortState {
   // foodNeed - foodConsumption, never negative; 0 on a fed turn.
   foodNeed:float = 0;
   foodShortfall:float = 0;
+  // --- FOUNDING LINES (appended last, issue #687) -----------------------------------------------
+  // How many unrelated families this band descends from - the relatedness proxy
+  // (`docs/plan_civilization_steps.md`). A starting band holds `lineage.founding_lines`; a split
+  // takes a proportional share of its parent's and the parent keeps the rest. The sim tracks the
+  // line identities; only the count is published. Never 0 on a band the viewer owns.
+  foundingLines:uint = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which

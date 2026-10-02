@@ -158,6 +158,10 @@ fn spawn_band_of(
                 generation: 0 as GenerationId,
                 faction: FACTION,
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             LaborAllocation {
                 assignments: vec![LaborAssignment {

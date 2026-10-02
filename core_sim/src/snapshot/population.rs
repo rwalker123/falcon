@@ -2081,6 +2081,10 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // Never negative: eaten is `min(need, larder)`, so this is the part of the meal the larder
         // could not cover.
         food_shortfall: (cohort.last_food_need - cohort.last_food_consumption).max(0.0),
+        // The count, not the identities: what a band's lines ARE matters only to the sim's own
+        // set operations (contact merge, the split partition); a reader wants how many.
+        // A set minted from a `u16` count and only ever partitioned cannot outgrow `u32`.
+        founding_lines: cohort.founding_lines.len() as u32,
     }
 }
 
@@ -2525,6 +2529,10 @@ mod tests {
             generation: 0,
             faction: crate::FactionId(0),
             knowledge: Vec::new(),
+            founding_lines: crate::lineage::FoundingLines::founded(
+                crate::components::BandId(0),
+                crate::lineage::MIN_BAND_LINES,
+            ),
         }
     }
 

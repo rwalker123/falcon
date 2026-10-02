@@ -725,6 +725,7 @@ Traits roll up into sentiment modifiers, opinion modifiers, and systemic multipl
 
 ### Divergence & Conflict
 - **Layer Drift Meters** track deviation between global, regional, and local vectors. Crossing soft limits triggers tension—regional unrest, loyalty taxes, or conversion campaigns. Hard divergence can split a region into a new faction or enforce assimilation quests.
+- **Contact Drift**: two bands that know each other — both ways — grow alike a little each turn, and the one with less behind it (fewer people, a more purist culture) changes more. A band tied to a people from another province drifts away from its own, which is what raises the drift meters above. Purist peoples change slowly; accepting ones change fast. See `docs/plan_contact_and_logistics.md` §Settled by #530.
 - **Cultural Clash Events** fire when overlapping spheres disagree (e.g., Devout local enclave under Secular global policy). Outcomes include negotiated autonomy, crackdowns, or cultural syncretism mini-games.
 - **Influential Amplifiers**: Influencers align with trait poles; sponsoring them raises that axis locally, while suppression pushes in the opposite direction. See §7b for how these figures channel sentiment adjustments.
   - Culture impact is explicit: influencer briefs now expose “culture resonance” weights so players can draft personalities to reinforce openness, devotion, etc., without waiting for policy ticks.

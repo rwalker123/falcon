@@ -1119,6 +1119,7 @@ fn create_populations<'a>(
                     supplyNetworkSpanTiles: cohort.supply_network_span_tiles,
                     foodNeed: cohort.food_need,
                     foodShortfall: cohort.food_shortfall,
+                    foundingLines: cohort.founding_lines,
                 },
             )
         })
@@ -1632,6 +1633,7 @@ fn decode_population(
         supply_network_span_tiles: cohort.supplyNetworkSpanTiles(),
         food_need: cohort.foodNeed(),
         food_shortfall: cohort.foodShortfall(),
+        founding_lines: cohort.foundingLines(),
     })
 }
 

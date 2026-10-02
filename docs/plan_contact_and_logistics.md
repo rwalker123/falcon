@@ -114,8 +114,8 @@ what lets influence be asymmetric without a second mechanic. A mutual relationsh
 edges existing.
 
 Whether a given rider *requires* both directions is the rider's business, not the connection's:
-culture plausibly needs a two-way tie where a one-way observation is enough to carry knowledge home.
-That is a per-rider property (§Q5).
+culture needs a two-way tie (§Settled by #530) where a one-way observation is plausibly enough to
+carry knowledge home. That is a per-rider property (§Q5).
 
 ---
 
@@ -296,7 +296,7 @@ Each rider defines its own use of a connection. The connection does not know the
 | Rider | Sits on | Its own behaviour |
 |---|---|---|
 | **Logistics** | a connection | holds a route; climbs the ladder; **its tiles stay `Seen` while the route is kept — confirmed, see below** |
-| **Culture** | a connection | **open — §Open items** |
+| **Culture** | a **mutual** connection | two bands that know each other grow alike, the lighter one more — §Settled by #530 |
 | **Knowledge** | a connection | **open** — the `openness → leak_timer → partial fragment` model is worth keeping (§As-built) |
 | **Cargo** (food, fodder, materials) | a **logistics link** | mass moves, throughput-limited, friction-lossy |
 
@@ -327,8 +327,8 @@ Each rider defines its own use of a connection. The connection does not know the
 Two structural properties belong to the rider, not the connection:
 
 - **Directionality requirement** — how many directions the rider needs. A one-way observation is
-  enough to carry knowledge home; culture plausibly needs a two-way tie. Expressed as a column on
-  the rider table, not as five special cases.
+  enough to carry knowledge home; culture needs a two-way tie (§Settled by #530). Expressed as a
+  column on the rider table, not as five special cases.
 - **What it does to the world beyond moving its payload** — logistics keeps tiles `Seen`; the others
   are open.
 
@@ -524,9 +524,6 @@ connections this arc owns.
 
 ## Open items
 
-- **How culture uses a connection** — #530. The question is not whether culture gates a connection;
-  it does not, connections have no vocabulary about culture. It is what culture *does* with one it
-  has: rate, direction, what it changes, and whether it needs the tie to be mutual.
 - **How knowledge uses a connection** — #531, beyond the decision to keep the leak-timer model.
 - **Standing upkeep on the route ladder** — #532, which owns the `route` branch and the standing-cost
   term the intensification engine does not yet have.
@@ -548,6 +545,80 @@ reap. What zero means to a rider is still each rider's to define; the primitive 
 nothing flows across it.
 
 The shipped numbers and the as-built are `.claude/rules/core_sim/connections.md`.
+
+### Settled by #530 — culture over a connection
+
+Culture is the second rider, and it does one thing with a tie: **two bands that know each other grow
+alike, a little each turn, and the one with less behind it moves more.** It is the single mechanism
+for culture moving between bands — anything else that brings bands together converges them by making
+ties, never by a second rule.
+
+**It needs both directions.** Culture crosses only where A→B **and** B→A exist, at the **weaker** of
+the two strengths. A scout on a ridge carries a map home, not a way of life; a tie that is full one
+way and faint the other moves culture at the faint side's rate, and a parked edge on either side
+moves nothing. That is this rider's column in §Q5 — knowledge (#531) is free to choose otherwise.
+
+**It changes each band's own character offset — nothing new.** A band layer resolves toward its
+province's values plus its `modifier`, the per-band character seeded by `seeded_modifiers_for_band`,
+at the band scope's elasticity. Drift writes the **modifier**, never `value`: a push to `value` is
+relaxed straight back out by the next reconcile, while the modifier is the band's persistent
+personality and is already checkpointed with the layer. No new layer, no new scope. What follows
+from that:
+
+- **Two bands in one province converge on each other** — their offsets close.
+- **A band tied to a band from another province is pulled away from its own.** Its divergence rises,
+  and the band scope's existing drift-warning and schism thresholds fire on it. Contact is therefore
+  what *feeds* the strain; what the strain becomes — absorption, a split, leaving — is #702's, not
+  this rider's.
+- **Gathering is not a second mechanism.** Bands at a shared sacred place
+  (`plan_civilization_steps.md` §Gathering is where culture converges, #702) are in contact, contact
+  makes ties, and the ties converge them here.
+
+**The rule — per band, per axis, per turn, for each mutual tie:**
+
+```
+pull_A = rate × tie × receptiveness_A × weight_B / (weight_A + weight_B) × (value_B − value_A)
+```
+
+- **`tie`** — `min(strength A→B, strength B→A)`.
+- **`rate`** — the one new lever, a culture config value; never `connections_config.json`, which has
+  no culture vocabulary. Defined as the share of the gap two equal, neutral bands at a full tie
+  close per turn. **First guess `0.014`: half the gap in ~50 turns.** A guess on purpose — set so
+  the effect is visible, and tuned from what play shows.
+- **`weight`** — what stands behind a band's culture; **headcount** today. It is a **ratio**, not a
+  rule that the smaller always yields: all else equal the smaller band moves more, but a small band
+  can still hold — through receptiveness now, and through whatever later gives a culture strength of
+  its own (belief, #701), which joins this term rather than adding a new one.
+- **`receptiveness`** — from **Syncretic ↔ Purist**, a continuous value, not a switch:
+  `1 − clamp(purist / span, −1, 1)` with `span` the ±2.5 trait range — neutral `1`, fully purist
+  `0`, fully syncretic `2`. Positive is Purist, as `compute_effects` already reads it. One axis on
+  purpose: *"they are purists, they hold their ways"* is something a player can learn.
+
+- **Read from start-of-turn values and summed across a band's ties**, so the order pairs are visited
+  in changes nothing.
+- **The feedback is intended.** Syncretic ↔ Purist drifts like every other axis, so a purist band
+  living beside an accepting one slowly becomes readier to change.
+
+**Accepting and purist peoples differ in what the strain does, too — and that half is #702's.** An
+accepting people absorbs a changed band: the change flows into the whole, the band stays *us*, and
+it does not leave. A purist people does not: the changed band stands out, the strain builds, and it
+breaks away. So purism is the same trait read twice — hard to change, brittle once changed. This
+rider owns only the first reading.
+
+**What the player sees:**
+
+- **The band panel** names the band's strongest pull this turn and the axis it moved most —
+  *"Drifting toward the Red Hill band — Open +0.02/turn."* That needs the pull on the wire per band:
+  the source band and its per-axis delta.
+- **The culture overlay** paints each band's own divergence on the tile it stands on, on the same
+  ramp (ratio against the hard threshold) as the tile layers it paints today.
+- **The band drift-warning and schism alerts** that exist today, which contact now actually drives.
+
+**What it leaves to the culture arc:** band culture has **no consumer in play** today —
+`compute_effects` reads the global layer only — so beyond the alerts and the readouts above, a
+drifted band behaves as it did. Giving band culture an effect, what sets a band's culture with
+nobody around (#701), what the strain becomes (#702) and how culture meets morale (#699) all belong
+to the culture arc.
 
 ## See Also
 

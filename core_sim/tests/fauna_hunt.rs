@@ -138,6 +138,10 @@ fn hunt_assignment_takes_biomass_and_yields() {
                 generation: 0 as GenerationId,
                 faction,
                 knowledge: Vec::new(),
+                founding_lines: core_sim::FoundingLines::founded(
+                    core_sim::BandId(0),
+                    core_sim::MIN_BAND_LINES,
+                ),
             },
             StartingUnit {
                 kind: "BandHunter".to_string(),
