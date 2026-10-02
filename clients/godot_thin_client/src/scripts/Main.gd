@@ -2481,6 +2481,10 @@ func _send_runtime_command(line: String, message: String,
 
 ## ESC PRECEDENCE, as data. Which surface claims the key, innermost first:
 ##   (1) an open pause menu resumes;
+##   (1b) the OPENING CARD hands off to the outfitting card — the same thing its button does. It is
+##       modal (a scrim over everything), so nothing behind it can be the surface the player means.
+##       `opening_card_open` is the trailing parameter and defaults false, so a caller that predates
+##       the card asks the chain it always asked;
 ##   (2) an open COMPOSE SHEET closes — it is the innermost working surface, so it claims ESC ahead
 ##       of targeting (docs/plan_tile_panel_layout.md §15);
 ##   (3) active targeting keeps ESC for MapView's targeting-cancel path (we must NOT consume it);
@@ -2513,6 +2517,7 @@ func _send_runtime_command(line: String, message: String,
 ## knowledge screen up and nothing selected, ESC still falls through to the pause menu exactly as it
 ## did before — the plan asks ESC to close the reading and asks nothing about closing the screen.
 const ESC_RESUME := "resume"
+const ESC_OPENING_CARD := "opening_card"
 const ESC_COMPOSE_SHEET := "compose_sheet"
 const ESC_TARGETING := "targeting"
 const ESC_VERB_FORM := "verb_form"
@@ -2521,9 +2526,12 @@ const ESC_KNOWLEDGE_DETAIL := "knowledge_detail"
 const ESC_PAUSE := "pause"
 
 static func escape_claimant(pause_open: bool, compose_open: bool, targeting: bool,
-        work_inspector_open: bool, knowledge_detail_open: bool, verb_form_open: bool = false) -> String:
+        work_inspector_open: bool, knowledge_detail_open: bool, verb_form_open: bool = false,
+        opening_card_open: bool = false) -> String:
     if pause_open:
         return ESC_RESUME
+    if opening_card_open:
+        return ESC_OPENING_CARD
     if compose_open:
         return ESC_COMPOSE_SHEET
     if targeting:
@@ -2544,10 +2552,14 @@ func _unhandled_input(event: InputEvent) -> void:
             hud != null and hud.has_method("is_targeting_active") and bool(hud.call("is_targeting_active")),
             hud != null and hud.has_method("is_work_inspector_open") and bool(hud.call("is_work_inspector_open")),
             hud != null and hud.has_method("is_knowledge_detail_open") and bool(hud.call("is_knowledge_detail_open")),
-            hud != null and hud.has_method("is_verb_form_open") and bool(hud.call("is_verb_form_open")))
+            hud != null and hud.has_method("is_verb_form_open") and bool(hud.call("is_verb_form_open")),
+            hud != null and hud.has_method("is_opening_card_open") and bool(hud.call("is_opening_card_open")))
         match claimant:
             ESC_RESUME:
                 _hide_pause_menu()
+                get_viewport().set_input_as_handled()
+            ESC_OPENING_CARD:
+                hud.call("dismiss_opening_card")
                 get_viewport().set_input_as_handled()
             ESC_COMPOSE_SHEET:
                 hud.call("close_compose_sheet")

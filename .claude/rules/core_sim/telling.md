@@ -199,8 +199,12 @@ their own.
   window is **lost for good** — the edge is committed whether or not the beat could fire. A beat-tier
   opening guidance on turn 2 swallowed `voice.medium_painted`'s crossing in
   `telling_memory::crossing_a_medium_threshold_…`. Ambient has no tier cooldown, so advice costs no
-  story beat its turn. The opening guidance is `turn.index gte 1` + `once`, landing on turn 1, the
-  turn after the cold open. Pinned by `telling::the_opening_guidance_points_at_food_and_the_split_once`.
+  story beat its turn. The opening guidance is `turn.index gte 0` + `once`, landing on **turn 0**
+  beside the cold open (a different tier, so no shared budget): turn 0's beats are what the
+  client's game-start card shows before the outfitting window, so a turn-1 hint is invisible until
+  the player has already ended a turn — the playtest finding. Its last sentence points at the
+  outfitting window for the same reason. Pinned by
+  `telling::the_opening_guidance_points_at_food_and_the_split_once`.
 
 ### Validation — content typos fail at LOAD, not at render
 

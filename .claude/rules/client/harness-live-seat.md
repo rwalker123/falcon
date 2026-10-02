@@ -49,8 +49,10 @@ every band verb did nothing**: pressing a verb jumped the map back to the band's
 re-clicked as the selected hex, cycled the selection onto the land, and closed the verb the press had
 just opened (`map-renderers.md` → "A JUMP TO THE SELECTED HEX IS NOT A RE-CLICK"). The probe fails on
 that by name — *the verb closed as it opened* — before the command is ever built. **Every press is a
-REAL viewport click** — the verb, each stepper `+`, the confirm. On a fresh game the outfit card opens
-itself over the sheet's right column, and a band verb puts it away to its pill
+REAL viewport click** — the verb, each stepper `+`, the confirm. On a fresh game the Telling's
+opening card comes up first, in place of the outfit card's own auto-open, and the probe requires it
+up and presses its button for real (`starting-loadout.md` → "THE OPENING CARD") — a fresh world that
+shows no opening card fails here by name. The hand-off opens the outfit card over the sheet's right column, and a band verb puts it away to its pill
 (`starting-loadout.md` → "A BAND VERB PUTS THE CARD AWAY"), so the probe asserts the card was up
 before Split and at its pill after, that each `+` click RAISES the count (a click the card swallowed
 would not), and that a real click on the pill brings the card back. **The assertion is the EFFECT,

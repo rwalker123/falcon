@@ -55,7 +55,7 @@
       "all": [
         {
           "signal": "turn.index",
-          "gte": 1
+          "gte": 0
         }
       ]
     },
@@ -65,8 +65,8 @@
         "id": "food_and_the_split.ground_around_us",
         "fit": {},
         "voice": {
-          "mythic": "Food is the first thing. A band eats only from the ground around it, and when that ground thins, the band goes hungry. If we grow too many for one place, split the band and let the new one walk to fresh ground.",
-          "warm": "Food comes first. A band can only eat from the land around it, and when that runs thin, people go hungry. If there get to be too many of us for one spot, split the band and send the new one off to fresh ground."
+          "mythic": "Food is the first thing. A band eats only from the ground around it, and when that ground thins, the band goes hungry. If we grow too many for one place, split the band and let the new one walk to fresh ground. But first, before we walk: choose what we carry.",
+          "warm": "Food comes first. A band can only eat from the land around it, and when that runs thin, people go hungry. If there get to be too many of us for one spot, split the band and send the new one off to fresh ground. First things first, though — pick what we're taking with us."
         }
       }
     ],

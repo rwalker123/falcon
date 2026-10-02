@@ -89,6 +89,10 @@ signal set_starting_loadout_requested(payload: Dictionary)
 ## The orb registry's loadout half changed (or emptied). `HudLayer` relays it to `TurnOrbController`,
 ## which folds it in with the band, knowledge and fork halves.
 signal attention_changed(rows: Array)
+## **THE WORLD'S FIRST AUTO-OPEN WAS A GRANT, AND IT WAS HELD** rather than shown — only while
+## `yield_opening_grant` is set. The card is rendered and left at its reopen pill; whoever holds the
+## hand-off (`OpeningCardController`) brings it up with `open_band` once the opening lines are said.
+signal opening_grant_held(band_id: int)
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 ## The HUD CanvasLayer, so this `RefCounted` has a node to parent the panel into.
@@ -124,6 +128,13 @@ var _band_order: Array[int] = []
 var _subject: int = HudConst.NO_BAND_ID
 ## Bands whose card has already stood itself up once this world.
 var _auto_opened: Dictionary = {}
+## ⛔ **THE OPENING HAND-OFF.** Set by `HudLayer` when an opening card is wired: the FIRST auto-open of
+## a world, when it is a GRANT, is then held at the reopen pill and announced on `opening_grant_held`
+## instead of expanding. Off by default, so a controller nobody hands off from opens exactly as it
+## always did — a held card with no listener would be an outfitting window silently dropped.
+var yield_opening_grant: bool = false
+## Whether this world's first auto-open has happened — the one candidate for the hold.
+var _first_auto_open_seen: bool = false
 ## The rows last handed to the orb, so an unchanged half is not re-pushed — `set_knowledge_attention`
 ## records what a needless full-registry push costs.
 var _attention_rows: Array = []
@@ -427,7 +438,14 @@ func _settle_subject() -> void:
 			pending = band_id
 	if pending != HudConst.NO_BAND_ID:
 		_subject = pending
-		_open_card()
+		if _holds_for_opening(pending):
+			# Rendered and put at its pill — the dismissed state, which every later snapshot already
+			# knows how to keep — so the window is on screen and reachable even before the hand-off.
+			_open_card()
+			_panel.collapse()
+			opening_grant_held.emit(pending)
+		else:
+			_open_card()
 	# ⛔ **`is_expanded`, NOT `is_open`.** A DISMISSED picker is still "open" — the panel node is
 	# visible, carrying the reopen pill — so a re-render gated on `is_open()` puts the card the player
 	# just dismissed straight back on screen, on the very next snapshot and every one after it. That is
@@ -439,6 +457,14 @@ func _settle_subject() -> void:
 		_ensure_panel()
 		_panel.collapse()
 	_push_attention()
+
+## The world's FIRST auto-open, when it is a GRANT and the opening hand-off is wired. Every later
+## auto-open — a splinter's window, grant or take — opens as it always did.
+func _holds_for_opening(band_id: int) -> bool:
+	var first := not _first_auto_open_seen
+	_first_auto_open_seen = true
+	return (yield_opening_grant and first
+		and _parent_of(_bands.get(band_id, {})) == HudLoadoutVocab.GRANT_PARENT_BAND_ID)
 
 # ---- open / close -----------------------------------------------------------
 
@@ -464,6 +490,11 @@ func open_band(band_id: int) -> void:
 	_subject = band_id
 	_open_card()
 	_push_attention()
+
+## Does `band_id` have an open outfitting window? The opening hand-off asks before raising its card
+## late, so a story that arrives after the turn advanced shows nothing.
+func has_window(band_id: int) -> bool:
+	return _bands.has(band_id)
 
 ## The band the card is currently outfitting, for the harnesses and the orb.
 func subject_band_id() -> int:
@@ -499,6 +530,7 @@ func reset_world_state() -> void:
 	_band_order = []
 	_subject = HudConst.NO_BAND_ID
 	_auto_opened = {}
+	_first_auto_open_seen = false
 	_equipment_config = {}
 	_recipes = []
 	_pickable = []

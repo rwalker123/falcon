@@ -3592,3 +3592,39 @@ Alert".
 work-link set fails the link claim. Dropping the status scoping fails both detail claims.
 
 **A clean run is 467 frames / 2511 `PASS`, exit 0 — RE-MEASURED windowed.**
+
+## `chapters/opening_card.gd` — the Telling's opening card, and its hand-off
+
+Three frames and 32 checkpoints (`EXPECTED_CHECKPOINTS` **32**, read back off the run), appended
+LAST in `CHAPTERS`. The behaviour is `starting-loadout.md` → "THE OPENING CARD"; what belongs here
+is the shape of the drive.
+
+- **Every block starts on a WORLD BOUNDARY** (`Hud.reset_world_state`), because that is the only
+  thing that re-arms a once-per-world card. A reset also clears the outfitting card's catalogues and
+  the Telling's book, which every earlier chapter relies on — that is why the chapter is last, and it
+  ends on a boundary too. Each block re-pushes the equipment config and the campaign section after
+  its reset.
+- **The first block pushes the two inputs in `Main`'s order with no frame between** —
+  `update_band_alerts` (the window) and then `ingest_command_events` (the beats). That is the order a
+  real opening frame arrives in, and the one a decision taken where either lands gets wrong. The
+  scrim-click block pushes the beats first, and the late block a whole snapshot late.
+- **The two lines are the sim's own prose**, `beat_definitions.json`'s mythic wording at the
+  fixture's band size, spelled out as chapter constants. A tick-3 beat and a tick-0 row of another
+  kind ride the same ingest, and both must stay off the card.
+- **The button and the scrim are pressed with real pointer input**, press and release with no frame
+  between. The scrim point is derived from the card's own rect and asserted outside it. ESC is
+  asserted through `Main.escape_claimant` with the HUD's own `is_opening_card_open`, then driven
+  through `dismiss_opening_card`, the name `Main` calls.
+
+| frame | what only IT can say |
+|---|---|
+| `opening_card` | the two opening lines as prose on the fork's card, one `Choose what we carry` button, the outfitting card at its pill behind the scrim |
+| `opening_card_handoff` | the button opened the opening band's outfitting card |
+| `opening_card_late` | a story arriving a snapshot after the window raises the card over the outfitting card, put away to its pill |
+
+**Sabotage-verified** by making the hand-off do nothing and dropping the once-per-world flag: exactly
+**five** claims fail — the three hand-offs (button, scrim, ESC), the late block's hand-back, and the
+re-sent opening raising the card again. `EXIT=1`.
+
+**A clean run is 470 frames / 2540 `PASS`, exit 0 — MEASURED windowed on this tree.**
+`band_panel_preview` 1518 `PASS`, exit 0, on the same tree.
