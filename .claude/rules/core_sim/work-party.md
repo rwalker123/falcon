@@ -269,12 +269,26 @@ the species' `hunt_materials_for` rows — plus a pen's standing rows (fleece) o
 (`systems::labor::hunt_goods_cut`, the same `material_yield_batches` → `CarriedGoods` path the forage
 arm takes), instead of crediting them; they land with the pack through the same landings above. A
 hunt yields no fodder. A pen can be far: it stands where its herd does, so it posts a party like any
-other row. `forecast_hunt_caravan` fills `materials_rate_home` from `bulk_rate_home` through the
-same per-biomass rows, so a far hunt's row prints `materialsRateHome` and its compose reply carries
-`materials_rate_home`. **A pen's per-head fleece rides the packs but is outside that forecast**, as
-its milk is outside `netRateHome`. A local hunt or pen still credits at the kill, off `take.carried`.
-The deposit web's material is not a side good but the cargo itself (below). Standing yield (milk) is
-food with no biomass: it rides the load with the next pack. Pinned by
+other row. A local hunt or pen still credits at the kill, off `take.carried`. The deposit web's
+material is not a side good but the cargo itself (below).
+
+**A far pen's standing yield walks home and is in its forecast.** Its milk or eggs ride the pack's
+food cargo (the pen arm loads meat and standing food as one delivery, in the herd's one keeping
+class, so they rot by the walk as its flesh does) and its fleece rides the goods. Both now carry
+**bulk** (`work_party::standing_stream`): the milk's biomass-equivalent at the herd's own meat rate,
+each fleece at its material's `weight`. The pen and hunt arms load it beside the carcass, so a pen
+that culls nothing still fills packs — without it, its milk and fleece sat in the load and never
+left. `forecast_hunt_caravan` steps the same thing through `forecast_caravan_carrying`: each
+projected turn's food is `HuntProjection::step`'s (which already counts the standing food at the
+projected head count), its bulk adds the stream's, and its goods are the carcass rows off the cull
+plus the fleece — the stream read off `HuntProjection::herd`, so fleece follows the projected head
+count as milk does. So `netRateHome` / `rate_home` carry the milk net of the walk's rot (and
+`spoiledRateHome` / `transitKeepsTurns` when the walk outlasts its class), and `materialsRateHome` /
+`materials_rate_home` carry the hides and the fleece, averaged over what lands. Pinned by
+`pen_standing_yield::a_far_pens_milk_and_fleece_are_in_its_caravan_forecast` (a culling-free sheep
+pen at 5 and 8 hexes, on the encoded row and the compose reply: the milk carried is at least half the
+standing stream and spoils on the long walk, the fleece likewise, and the reply quotes the row).
+Pinned for the carcass by
 `work_party_caravan::a_far_hunt_lands_its_hides_with_its_packs_and_prints_a_smoothed_rate_home`
 (on the encoded row: hide lands exactly on the turns food does, none before the first pack, and a
 no-landing turn prints a non-zero hide `materialsRateHome` the compose reply quotes too), and for

@@ -7839,7 +7839,15 @@ pub fn advance_labor_allocation(
                             provisions,
                             &std::iter::once((herd_class.clone(), provisions.to_f32())).collect(),
                             &goods_cut,
-                            loaded,
+                            // A kept herd's milk and fleece fill packs too (#706).
+                            loaded
+                                + crate::work_party::standing_stream(
+                                    herd,
+                                    &fauna,
+                                    &materials_cfg,
+                                    mult_f,
+                                )
+                                .bulk,
                             pen_pack,
                         );
                         let (_, materials_landed) =
@@ -7871,6 +7879,7 @@ pub fn advance_labor_allocation(
                                 keep_hands,
                                 realized_horizon,
                                 food_keeping,
+                                &materials_cfg,
                             ));
                         }
                         let spoiled = land_food_home(
@@ -8743,7 +8752,15 @@ pub fn advance_labor_allocation(
                         provisions,
                         &std::iter::once((herd_class.clone(), provisions.to_f32())).collect(),
                         &goods_cut,
-                        loaded,
+                        // A kept herd's milk and fleece fill packs too (#706).
+                        loaded
+                            + crate::work_party::standing_stream(
+                                herd,
+                                &fauna,
+                                &materials_cfg,
+                                mult_f,
+                            )
+                            .bulk,
                         hunt_pack,
                     );
                     let (_, materials_landed) =
@@ -8775,6 +8792,7 @@ pub fn advance_labor_allocation(
                             keep_hands,
                             realized_horizon,
                             food_keeping,
+                            &materials_cfg,
                         ));
                     }
                     let spoiled =

@@ -3730,6 +3730,9 @@ fn seed_source_yield(
                         .resource::<core_sim::DemographicsConfigHandle>()
                         .get()
                         .keeping,
+                    &app.world
+                        .resource::<core_sim::MaterialsConfigHandle>()
+                        .get(),
                 );
                 seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, true);
             }

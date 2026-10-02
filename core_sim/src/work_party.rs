@@ -1098,27 +1098,43 @@ pub fn forecast_caravan(
     rot: Option<&TransitRot<'_>>,
     mut take: impl FnMut(u32) -> Option<SourceTake>,
 ) -> CaravanForecast {
+    forecast_caravan_carrying(start, horizon, pack_bulk, rot, |present| {
+        take(present).map(|taken| (taken, CarriedGoods::default()))
+    })
+}
+
+/// **[`forecast_caravan`] with the by-products each projected take packs** (#706) — they ride the
+/// load and every pack exactly as the turn's do, and what LANDS is averaged into
+/// [`CaravanForecast::fodder_rate_home`] / [`CaravanForecast::materials_rate_home`]. The hunt web
+/// steps it, because a pen's standing fleece is not proportional to the carcass bulk a per-biomass
+/// rate could convert.
+pub fn forecast_caravan_carrying(
+    start: &WorkParty,
+    horizon: u32,
+    pack_bulk: f32,
+    rot: Option<&TransitRot<'_>>,
+    mut take: impl FnMut(u32) -> Option<(SourceTake, CarriedGoods)>,
+) -> CaravanForecast {
     let mut party = start.clone();
     let mut forecast = CaravanForecast::default();
     let mut on_the_road = 0u32;
     let mut spoiled = NOTHING_CARRIED;
     let mut bulk_home = NOTHING_CARRIED;
+    let mut goods_home = CarriedGoods::default();
     for turn in 1..=horizon {
         let mut spent = false;
         let open = party.open_turn();
-        let taken = take(open.present).unwrap_or_else(|| {
+        let (taken, goods) = take(open.present).unwrap_or_else(|| {
             spent = true;
-            SourceTake::default()
+            (SourceTake::default(), CarriedGoods::default())
         });
-        let now = party.close_turn_classed(
-            taken,
-            &CargoClasses::new(),
-            &CarriedGoods::default(),
-            pack_bulk,
-        );
+        let now = party.close_turn_classed(taken, &CargoClasses::new(), &goods, pack_bulk);
         let landed_now = now.as_ref().map_or(NOTHING_CARRIED, |pack| pack.cargo);
         bulk_home += open.packs.iter().map(|pack| pack.bulk).sum::<f32>()
             + now.as_ref().map_or(NOTHING_CARRIED, |pack| pack.bulk);
+        for pack in open.packs.iter().chain(now.iter()) {
+            goods_home.merge(&pack.goods);
+        }
         let lost: f32 = rot.map_or(NOTHING_CARRIED, |rot| {
             open.packs
                 .iter()
@@ -1147,6 +1163,14 @@ pub fn forecast_caravan(
         forecast.spoiled_rate_home = spoiled / turns as f32;
         forecast.mean_on_the_road = on_the_road as f32 / turns as f32;
         forecast.bulk_rate_home = bulk_home / turns as f32;
+        forecast.fodder_rate_home = goods_home.fodder / turns as f32;
+        forecast.materials_rate_home =
+            crate::materials_config::merge_material_payoffs(goods_home.materials.iter().map(
+                |carried| crate::materials_config::MaterialPayoff {
+                    material: carried.material.clone(),
+                    amount: carried.amount / turns as f32,
+                },
+            ));
     }
     forecast.transit_keeps_turns = rot.map_or(NOTHING_ROTS_ON_THE_WALK, |rot| {
         rot.keeps_turns(start.walk_turns)
@@ -1175,6 +1199,8 @@ pub fn forecast_hunt_caravan(
     horizon: u32,
     // **How food keeps** (#706) — a herd's take is its species' one class.
     keeping: &crate::demographics_config::KeepingConfig,
+    // **What a material weighs** — the bulk a pen's fleece fills a pack with ([`standing_stream`]).
+    materials: &crate::materials_config::MaterialsConfig,
 ) -> CaravanForecast {
     let pack = hunt_pack_biomass(herd, fauna, carry_per_worker);
     let mut projection = HuntProjection::new(herd, fauna);
@@ -1182,36 +1208,126 @@ pub fn forecast_hunt_caravan(
         .keeping_for(&herd.species)
         .unwrap_or(&keeping.kill_fallback_class);
     let rot = TransitRot::single(keeping, class);
-    let mut forecast = forecast_caravan(party, horizon, pack, Some(&rot), |present| {
-        projection
-            .step(
-                fauna,
-                carry_per_worker,
-                hunters,
-                output_multiplier,
-                take_hands_present(present, keep_hands),
-                floor,
-                // A party's load waits at the source for the next porter — it keeps every carcass.
-                crate::fauna::CarcassKept::Whole,
-            )
-            .map(|turn| SourceTake {
-                cargo: turn.yields.provisions,
-                bulk: turn.biomass,
-            })
+    // ⛔ **WHAT THE CARCASS AND THE STANDING HERD SEND HOME, EVERY STEPPED TURN** (#706). The cull's
+    // meat and the standing food (milk, eggs — `HuntProjection::step` counts both in the turn's
+    // provisions, so `rate_home` carries the milk net of the walk's rot, by the herd's one keeping
+    // class, as the turn lands it); the carcass's hide, bone and sinew through the species'
+    // per-biomass rows off the carcass bulk; and a kept herd's per-head fleece and the BULK its milk
+    // and fleece fill packs by ([`standing_stream`]) — without that bulk a pen that culls nothing
+    // never fills a pack and its standing yield never leaves. A wild herd's stream is empty. A hunt
+    // yields no fodder; materials never rot.
+    let carcass_rows = fauna.hunt_materials_for(&herd.species);
+    let mut forecast = forecast_caravan_carrying(party, horizon, pack, Some(&rot), |present| {
+        let culled = projection.step(
+            fauna,
+            carry_per_worker,
+            hunters,
+            output_multiplier,
+            take_hands_present(present, keep_hands),
+            floor,
+            // A party's load waits at the source for the next porter — it keeps every carcass.
+            crate::fauna::CarcassKept::Whole,
+        );
+        let (food, carcass) = match culled {
+            Some(turn) => (turn.yields.provisions, turn.biomass),
+            // The projection ends only when there is nothing to cull AND no standing yield.
+            None => return None,
+        };
+        // At the PROJECTED head count, as the standing food in the step is.
+        let standing = standing_stream(projection.herd(), fauna, materials, output_multiplier);
+        let mut goods = CarriedGoods {
+            fodder: NOTHING_CARRIED,
+            materials: carcass_rows
+                .iter()
+                .map(|row| CarriedMaterial {
+                    material: row.material.clone(),
+                    band: crate::materials_config::BandKey::default(),
+                    characteristics: Default::default(),
+                    amount: carcass * row.per_biomass * output_multiplier,
+                })
+                .collect(),
+        };
+        goods.merge(&standing.goods);
+        Some((
+            SourceTake {
+                // `HuntProjection::step` already counts the standing food (milk, eggs) in the turn's
+                // provisions, at the projected head count — only its bulk and fleece are added here.
+                cargo: food,
+                bulk: carcass + standing.bulk,
+            },
+            goods,
+        ))
     });
-    // ⛔ **THE CARCASS'S HIDE, BONE AND SINEW ARRIVE WITH ITS PACKS** (#706) — the bulk landing per
-    // turn through the species' own per-biomass material rows, the arithmetic the kill packs them
-    // by. A hunt yields no fodder; materials never rot. Standing rows (a pen's fleece) are paid per
-    // head, not per pack, and stay outside this forecast as the standing food (milk) does.
-    forecast.materials_rate_home = crate::materials_config::merge_material_payoffs(
-        fauna.hunt_materials_for(&herd.species).iter().map(|row| {
-            crate::materials_config::MaterialPayoff {
-                material: row.material.clone(),
-                amount: forecast.bulk_rate_home * row.per_biomass * output_multiplier,
-            }
-        }),
-    );
     forecast
+        .materials_rate_home
+        .retain(|payoff| payoff.amount > NOTHING_CARRIED);
+    forecast
+}
+
+/// **A KEPT HERD'S STANDING YIELD, AS A CARAVAN STREAM** (#706) — what it pays per turn for standing
+/// there (`fauna::herd_standing_provisions`, `FaunaConfig::standing_materials_for` at
+/// `fauna::herd_standing_scale`, times the band's output multiplier — the arithmetic the take site
+/// credits by), and the **bulk** it fills a pack with: the milk's biomass-equivalent at the herd's
+/// own meat rate, and each fleece at its material's `weight` (biomass-equivalent mass per unit). The
+/// turn loads the same bulk, so a pen that culls nothing still fills packs and sends its milk and
+/// fleece home. Empty for a wild herd.
+pub struct StandingStream {
+    pub provisions: f32,
+    pub bulk: f32,
+    pub goods: CarriedGoods,
+}
+
+impl StandingStream {
+    /// Pays nothing.
+    pub fn is_empty(&self) -> bool {
+        self.provisions <= NOTHING_CARRIED && self.goods.is_empty()
+    }
+}
+
+/// See [`StandingStream`].
+pub fn standing_stream(
+    herd: &crate::fauna::Herd,
+    fauna: &FaunaConfig,
+    materials: &crate::materials_config::MaterialsConfig,
+    output_multiplier: f32,
+) -> StandingStream {
+    let scale = crate::fauna::herd_standing_scale(herd, fauna);
+    let provisions = crate::fauna::herd_standing_provisions(herd, fauna) * output_multiplier;
+    let per_biomass = crate::fauna::herd_hunt_yield(herd, fauna).provisions_per_biomass;
+    let food_bulk = if per_biomass > NOTHING_CARRIED {
+        provisions / per_biomass
+    } else {
+        NOTHING_CARRIED
+    };
+    let goods = CarriedGoods {
+        fodder: NOTHING_CARRIED,
+        materials: fauna
+            .standing_materials_for(&herd.species)
+            .iter()
+            .map(|row| CarriedMaterial {
+                material: row.material.clone(),
+                band: crate::materials_config::BandKey::default(),
+                characteristics: Default::default(),
+                amount: scale * row.per_biomass * output_multiplier,
+            })
+            .filter(|carried| carried.amount > NOTHING_CARRIED)
+            .collect(),
+    };
+    let material_bulk: f32 = goods
+        .materials
+        .iter()
+        .map(|carried| {
+            carried.amount
+                * materials
+                    .material(&carried.material)
+                    .map_or(NOTHING_CARRIED, |def| def.weight)
+        })
+        .sum();
+    StandingStream {
+        provisions,
+        bulk: food_bulk + material_bulk,
+        goods,
+    }
 }
 
 /// ⛔ **ONE PORTER'S PACK OF A MATERIAL, IN THE MATERIAL'S OWN UNITS** — the haul carry

@@ -2315,9 +2315,9 @@ table LaborAssignment {
   // LANDED that turn (zero between packs). These are their netRateHome: the same caravan forecast's
   // bulk landing per turn through the source's own per-biomass rates - smoothed, the numbers the
   // work row prints. Fodder is the CREDITED figure (0 without Foddering unless the patch is
-  // committed to a fodder crop; a hunt yields none); none of it rots. A pen's per-head fleece is
-  // outside this forecast, as its milk is outside netRateHome. 0 / absent on a local row and an
-  // extract row (whose material is netRateHome itself).
+  // committed to a fodder crop; a hunt yields none); none of it rots. A far pen's per-head fleece
+  // is in it (its milk is in netRateHome), at the projected head count. 0 / absent on a local row
+  // and an extract row (whose material is netRateHome itself).
   fodderRateHome:float = 0;
   // One row per material id. NEVER summed into one figure.
   materialsRateHome:[MaterialPayoff];

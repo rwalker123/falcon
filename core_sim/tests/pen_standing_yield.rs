@@ -1285,3 +1285,185 @@ fn the_take_crew_answers_for_the_meat_side_alone() {
          empty row: {all_milk:?}"
     );
 }
+
+/// ⛔ **A FAR PEN'S MILK AND FLEECE ARE IN ITS CARAVAN FORECAST** (#706) — a fully committed sheep
+/// pen (milk and fibre per head) kept by a band camped down the row. Its standing yield rides the
+/// packs and fills them, so the row's `netRateHome` carries the milk, net of the walk's rot: five
+/// hexes out (a three-turn walk, inside the milk's shelf life) it arrives and nothing spoils; eight
+/// out (six turns) it is struck as `spoiledRateHome`. Either way `materialsRateHome` carries the
+/// fleece, and the compose reply quotes what the row prints. Asserted on the ENCODED row and the
+/// query answer.
+#[test]
+fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
+    /// The asking band's durable id.
+    const KEEPER_BAND: u64 = 91_706;
+    /// Turns run before reading — the party walks out and settles.
+    const POSTED_TURNS: u32 = 4;
+    /// Float slack on one function read twice.
+    const SAME: f32 = 1e-4;
+    /// **Leave the whole herd standing** — the floor keeps culls to a trickle, so the row's food and
+    /// fibre are the standing stream's (a sheep's carcass yields fibre too).
+    const NOTHING_CULLED: f32 = 1.0;
+    /// **The share of the per-turn standing stream the row must carry home** — less than all of it,
+    /// because the forecast's horizon opens with the walk and the first pack's fill, when nothing
+    /// lands. Far above the culls' trickle, so a forecast without the stream fails it.
+    const MOST_OF_THE_STREAM: f32 = 0.5;
+    for (distance, walk_rots) in [(5_u32, false), (8, true)] {
+        let mut app = core_sim::build_test_app();
+        app.update();
+        let tile = richest_pasture(&app).0;
+        let camp = UVec2::new(tile.x + distance, tile.y);
+        assert!(
+            app.world
+                .resource::<TileRegistry>()
+                .index(camp.x, camp.y)
+                .is_some(),
+            "fixture: the camp {distance} hexes along the row is on the map"
+        );
+        level_footprint_pasture(&mut app, tile, PEN_RADIUS);
+        let id = seat_herd(&mut app, tile, FLEECE_SPECIES, Rung::Penned, 1.0);
+        let keeper = spawn_keeper(&mut app, &id, camp);
+        app.world
+            .entity_mut(keeper)
+            .insert(core_sim::BandId(KEEPER_BAND));
+        if let LaborTarget::Hunt { floor, .. } = &mut app
+            .world
+            .get_mut::<LaborAllocation>(keeper)
+            .expect("the keeper's allocation")
+            .assignments[0]
+            .target
+        {
+            *floor = NOTHING_CULLED;
+        }
+        for _ in 0..POSTED_TURNS {
+            publishing_turn(&mut app, keeper);
+        }
+        let (party, net_home, spoiled_home, keeps, fibre_home) = {
+            let snapshot = app
+                .world
+                .resource::<SnapshotHistory>()
+                .latest_entry()
+                .expect("a snapshot was captured")
+                .snapshot;
+            let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+            let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+            let row = envelope
+                .payload_as_snapshot()
+                .and_then(|snapshot| snapshot.population())
+                .and_then(|section| section.populations())
+                .expect("the cohort list")
+                .iter()
+                .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+                .find(|row| row.kind().unwrap_or_default() == "hunt")
+                .expect("the pen's row is on the wire");
+            let fibre: f32 = row
+                .materialsRateHome()
+                .map(|list| {
+                    list.iter()
+                        .filter(|payoff| payoff.materialId() == Some(FLEECE_MATERIAL))
+                        .map(|payoff| payoff.amount())
+                        .sum()
+                })
+                .unwrap_or(0.0);
+            (
+                row.partyWorkers(),
+                row.netRateHome(),
+                row.spoiledRateHome(),
+                row.transitKeepsTurns(),
+                fibre,
+            )
+        };
+        assert!(party > 0, "{distance} hexes: the pen's row posts a party");
+        // **The stream the forecast must carry**, off the same public seam the turn loads by, at the
+        // band's own output multiplier.
+        let stream = {
+            let herd = app
+                .world
+                .resource::<HerdRegistry>()
+                .find(&id)
+                .expect("the pen's herd")
+                .clone();
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let materials = app
+                .world
+                .resource::<core_sim::MaterialsConfigHandle>()
+                .get();
+            let mult = core_sim::output_multiplier(
+                app.world
+                    .get::<PopulationCohort>(keeper)
+                    .expect("the keeper"),
+                &app.world.resource::<WellbeingConfigHandle>().get(),
+            )
+            .to_f32();
+            core_sim::work_party::standing_stream(&herd, &fauna, &materials, mult)
+        };
+        let fleece: f32 = stream
+            .goods
+            .materials
+            .iter()
+            .filter(|carried| carried.material == FLEECE_MATERIAL)
+            .map(|carried| carried.amount)
+            .sum();
+        assert!(
+            stream.provisions > 0.0 && fleece > 0.0,
+            "fixture: the committed pen pays milk and fleece"
+        );
+        assert!(
+            net_home + spoiled_home >= MOST_OF_THE_STREAM * stream.provisions,
+            "{distance} hexes: the milk is in the forecast — carried {} of {} per turn",
+            net_home + spoiled_home,
+            stream.provisions
+        );
+        assert!(
+            fibre_home >= MOST_OF_THE_STREAM * fleece,
+            "{distance} hexes: the fleece is in materialsRateHome — {fibre_home} of {fleece}"
+        );
+        if walk_rots {
+            assert!(
+                spoiled_home > 0.0 && keeps > 0.0,
+                "a six-turn walk spoils the milk: spoiled {spoiled_home}, keeps {keeps}"
+            );
+        } else {
+            assert!(
+                net_home > 0.0 && spoiled_home == 0.0,
+                "a three-turn walk brings the milk home: net {net_home}, spoiled {spoiled_home}"
+            );
+        }
+        let kit_id = app
+            .world
+            .resource::<core_sim::EquipmentConfigHandle>()
+            .get()
+            .default_kit(core_sim::KitJob::Hunt)
+            .id()
+            .to_string();
+        let answer = match core_sim::forecast_query::answer_forecast_query(
+            &mut app.world,
+            &sim_runtime::QueryPayload::WorkPartyForecast(sim_runtime::WorkPartyForecastQuery {
+                faction_id: 0,
+                band_id: KEEPER_BAND,
+                source: sim_runtime::WorkPartySource::Hunt {
+                    herd_id: id.clone(),
+                },
+                kit_id,
+                workers: KEEPER_WORKERS + KEEPER_WORKERS,
+                floor: NOTHING_CULLED,
+            }),
+        ) {
+            sim_runtime::QueryReply::WorkPartyForecast(answer) => answer,
+            other => panic!("the work-party query must answer with a forecast, got {other:?}"),
+        };
+        let quoted_fibre: f32 = answer
+            .materials_rate_home
+            .iter()
+            .filter(|payoff| payoff.material_id == FLEECE_MATERIAL)
+            .map(|payoff| payoff.amount)
+            .sum();
+        assert!(
+            (answer.rate_home - net_home).abs() < SAME
+                && (answer.spoiled_rate_home - spoiled_home).abs() < SAME
+                && (quoted_fibre - fibre_home).abs() < SAME,
+            "{distance} hexes: the compose reply quotes what the row prints — {answer:?} vs \
+             net {net_home}, spoiled {spoiled_home}, fibre {fibre_home}"
+        );
+    }
+}

@@ -1672,6 +1672,9 @@ fn answer_work_party_forecast(
                 keep_hands,
                 horizon,
                 &demographics.keeping,
+                &world
+                    .resource::<crate::materials_config::MaterialsConfigHandle>()
+                    .get(),
             )
         }
         Asked::Forage { patch, tile, take } => {
