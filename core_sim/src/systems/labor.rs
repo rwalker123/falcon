@@ -4119,10 +4119,37 @@ fn land_goods_off_the_row(
     }
 }
 
+/// **A far hunt's or pen's by-products, packed** (#706) — every material its carcass yields off the
+/// biomass the party keeps (`loaded`), plus the standing rows (fleece) off the head count, the batches
+/// [`crate::materials_config::credit_material_yield`] would deposit at a local kill. A hunt yields no
+/// fodder.
+fn hunt_goods_cut(
+    materials: &crate::materials_config::MaterialsConfig,
+    fauna: &crate::fauna_config::FaunaConfig,
+    species: &str,
+    loaded: f32,
+    standing_scale: f32,
+    output_multiplier: f32,
+) -> crate::work_party::CarriedGoods {
+    let mut batches = crate::materials_config::material_yield_batches(
+        materials,
+        fauna.hunt_materials_for(species),
+        loaded,
+        output_multiplier,
+    );
+    batches.extend(crate::materials_config::material_yield_batches(
+        materials,
+        fauna.standing_materials_for(species),
+        standing_scale,
+        output_multiplier,
+    ));
+    packed_goods(crate::work_party::NOTHING_CARRIED, batches)
+}
+
 /// **A far forage take's fodder and materials, packed** (#706) — what a local take credits on the
 /// spot ([`crate::materials_config::credit_material_yield`] and the `FODDER` store), loaded instead,
 /// at the same amounts.
-fn forage_goods_cut(
+fn packed_goods(
     fodder: f32,
     batches: Vec<crate::materials_config::MaterialYieldBatch>,
 ) -> crate::work_party::CarriedGoods {
@@ -6710,7 +6737,7 @@ pub fn advance_labor_allocation(
                     };
                     let far_posting = postings.contains_key(&idx);
                     let goods_cut = if far_posting {
-                        forage_goods_cut(
+                        packed_goods(
                             fodder_cut,
                             crate::materials_config::material_yield_batches(
                                 &materials_cfg,
@@ -7791,14 +7818,32 @@ pub fn advance_labor_allocation(
                             .keeping_for(&herd.species)
                             .unwrap_or(&food_keeping.kill_fallback_class)
                             .to_string();
+                        // ⛔ **A FAR HUNT'S HIDE, BONE AND SINEW WALK HOME IN ITS PACKS** (#706) — off the
+                        // carcass the party keeps whole (`loaded`), packed rather than credited at the
+                        // kill; a local row credits them below, as it always has.
+                        let far_posting = postings.contains_key(&idx);
+                        let goods_cut = if far_posting {
+                            hunt_goods_cut(
+                                &materials_cfg,
+                                &fauna,
+                                &herd.species,
+                                loaded,
+                                standing_scale,
+                                mult_f,
+                            )
+                        } else {
+                            crate::work_party::CarriedGoods::default()
+                        };
                         let delivery = deliver_take_home(
                             postings.get_mut(&idx),
                             provisions,
                             &std::iter::once((herd_class.clone(), provisions.to_f32())).collect(),
-                            &crate::work_party::CarriedGoods::default(),
+                            &goods_cut,
                             loaded,
                             pen_pack,
                         );
+                        let (_, materials_landed) =
+                            land_delivered_goods(&mut cohort.stores, &delivery.packs);
                         let provisions = delivery.total;
                         if let (Some(posting), Some(carry), Some(hunters)) = (
                             postings.get_mut(&idx),
@@ -7852,30 +7897,35 @@ pub fn advance_labor_allocation(
                         // **A pen changes the INTENSITY, never the PRODUCT** — so the keeper is paid
                         // this herd's own material rows too, off what was carried home, exactly as
                         // the range take is. Penning an animal does not change what it is made of.
-                        let credited_materials = crate::materials_config::merge_material_payoffs(
-                            crate::materials_config::credit_material_yield(
-                                &mut cohort.stores,
-                                &materials_cfg,
-                                fauna.hunt_materials_for(&herd.species),
-                                take.carried,
-                                mult_f,
-                            )
-                            .into_iter()
-                            // **AND THE FLEECE, THROUGH THE VERY SAME SEAM** — the standing rows are
-                            // per **head**, so the quantity handed over is the head-count scale
-                            // rather than a biomass. That is the whole difference: one credit
-                            // function, two bases, and **no rounding** — a draw of `0.0000455` fibre
-                            // subtracts exactly that and the stock crosses whole units by itself.
-                            .chain(
+                        // **A far pen reports what its packs LANDED this turn**, already deposited.
+                        let credited_materials = if far_posting {
+                            materials_landed
+                        } else {
+                            crate::materials_config::merge_material_payoffs(
                                 crate::materials_config::credit_material_yield(
                                     &mut cohort.stores,
                                     &materials_cfg,
-                                    fauna.standing_materials_for(&herd.species),
-                                    standing_scale,
+                                    fauna.hunt_materials_for(&herd.species),
+                                    take.carried,
                                     mult_f,
+                                )
+                                .into_iter()
+                                // **AND THE FLEECE, THROUGH THE VERY SAME SEAM** — the standing rows are
+                                // per **head**, so the quantity handed over is the head-count scale
+                                // rather than a biomass. That is the whole difference: one credit
+                                // function, two bases, and **no rounding** — a draw of `0.0000455` fibre
+                                // subtracts exactly that and the stock crosses whole units by itself.
+                                .chain(
+                                    crate::materials_config::credit_material_yield(
+                                        &mut cohort.stores,
+                                        &materials_cfg,
+                                        fauna.standing_materials_for(&herd.species),
+                                        standing_scale,
+                                        mult_f,
+                                    ),
                                 ),
-                            ),
-                        );
+                            )
+                        };
                         let tended = provisions.to_f32();
                         // **Extending** a pen (2d-β) re-uses the pen rung's own build dials — a ring
                         // is the same fencing labor at the same forgone-yield price, so it must
@@ -8672,14 +8722,32 @@ pub fn advance_labor_allocation(
                         .keeping_for(&herd.species)
                         .unwrap_or(&food_keeping.kill_fallback_class)
                         .to_string();
+                    // ⛔ **A FAR HUNT'S HIDE, BONE AND SINEW WALK HOME IN ITS PACKS** (#706) — off the
+                    // carcass the party keeps whole (`loaded`), packed rather than credited at the
+                    // kill; a local row credits them below, as it always has.
+                    let far_posting = postings.contains_key(&idx);
+                    let goods_cut = if far_posting {
+                        hunt_goods_cut(
+                            &materials_cfg,
+                            &fauna,
+                            &herd.species,
+                            loaded,
+                            standing_scale,
+                            mult_f,
+                        )
+                    } else {
+                        crate::work_party::CarriedGoods::default()
+                    };
                     let delivery = deliver_take_home(
                         postings.get_mut(&idx),
                         provisions,
                         &std::iter::once((herd_class.clone(), provisions.to_f32())).collect(),
-                        &crate::work_party::CarriedGoods::default(),
+                        &goods_cut,
                         loaded,
                         hunt_pack,
                     );
+                    let (_, materials_landed) =
+                        land_delivered_goods(&mut cohort.stores, &delivery.packs);
                     let provisions = delivery.total;
                     if let (Some(posting), Some(carry), Some(hunters)) = (
                         postings.get_mut(&idx),
@@ -8716,29 +8784,34 @@ pub fn advance_labor_allocation(
                     // §2) — hide, sinew and bone, off the meat **carried home** exactly as the two
                     // accounts above are, so a party that killed a mammoth and hauled a leg of it
                     // brings back a leg's worth of hide. A take that hauls nothing home yields none.
-                    let credited_materials = crate::materials_config::merge_material_payoffs(
-                        crate::materials_config::credit_material_yield(
-                            &mut cohort.stores,
-                            &materials_cfg,
-                            fauna.hunt_materials_for(&herd.species),
-                            take.carried,
-                            mult_f,
-                        )
-                        .into_iter()
-                        // **And the standing rows, off the head count** — the pen branch's comment
-                        // applies here word for word; the roster's two pastoral-only species carry
-                        // no standing material today, so this is a structural seam rather than a
-                        // live payment on the shipped table.
-                        .chain(
+                    // **A far row reports what its packs LANDED this turn**, already deposited.
+                    let credited_materials = if far_posting {
+                        materials_landed
+                    } else {
+                        crate::materials_config::merge_material_payoffs(
                             crate::materials_config::credit_material_yield(
                                 &mut cohort.stores,
                                 &materials_cfg,
-                                fauna.standing_materials_for(&herd.species),
-                                standing_scale,
+                                fauna.hunt_materials_for(&herd.species),
+                                take.carried,
                                 mult_f,
+                            )
+                            .into_iter()
+                            // **And the standing rows, off the head count** — the pen branch's comment
+                            // applies here word for word; the roster's two pastoral-only species carry
+                            // no standing material today, so this is a structural seam rather than a
+                            // live payment on the shipped table.
+                            .chain(
+                                crate::materials_config::credit_material_yield(
+                                    &mut cohort.stores,
+                                    &materials_cfg,
+                                    fauna.standing_materials_for(&herd.species),
+                                    standing_scale,
+                                    mult_f,
+                                ),
                             ),
-                        ),
-                    );
+                        )
+                    };
                     // **THE OUTPUT COMMITMENT, ONE TURN OF IT** (`docs/plan_pen_standing_yield.md` §4)
                     // — a `set_herd_output` job is work on the rung the herd already stands on, so it is
                     // the ring's shape exactly: the band's `builders` pool, only at the head of the queue,

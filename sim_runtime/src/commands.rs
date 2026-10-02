@@ -911,9 +911,11 @@ pub struct WorkPartyForecastReply {
     /// when nothing rots.
     pub transit_keeps_turns: f32,
     /// **A far forage row's fodder per turn ARRIVING home** (#706) — it rides the packs, so a
-    /// delivered rate over `rate_home`'s horizon; the credited figure. `0` inside the apron.
+    /// delivered rate over `rate_home`'s horizon; the credited figure. `0` inside the apron and on a
+    /// hunt, which yields none.
     pub fodder_rate_home: f32,
-    /// **Its materials per turn arriving home**, one row per material. Empty inside the apron.
+    /// **A far row's materials per turn arriving home** — a basket's, or a hunt's hide, bone and
+    /// sinew — one row per material. Empty inside the apron and on a deposit.
     pub materials_rate_home: Vec<MaterialPayoff>,
 }
 

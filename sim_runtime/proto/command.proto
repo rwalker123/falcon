@@ -1371,11 +1371,12 @@ message WorkPartyForecastReply {
   // The SHORTEST shelf life, in turns, among the keeping classes of this source's cargo that rot on
   // this walk - the number a "keeps N turns, the walk is M" line reads. 0 when nothing rots.
   float transit_keeps_turns = 10;
-  // A FAR FORAGE ROW'S FODDER AND MATERIALS, PER TURN, ARRIVING HOME (#706) - they ride the packs
-  // with the food, so these are delivered rates over the same horizon as `rate_home` (fodder and
-  // materials never rot). Fodder is the CREDITED figure (0 without Foddering unless the patch is
-  // committed to a fodder crop). 0 / empty inside the apron (nothing walks: the take-site figures
-  // apply), on a hunt and on a deposit.
+  // A FAR ROW'S BY-PRODUCTS, PER TURN, ARRIVING HOME (#706) - a forage basket's fodder and
+  // materials, a hunt's or pen's hide, bone and sinew. They ride the packs with the food, so these
+  // are delivered rates over the same horizon as `rate_home` (they never rot). Fodder is the
+  // CREDITED figure (0 without Foddering unless the patch is committed to a fodder crop); a hunt
+  // yields none. 0 / empty inside the apron (nothing walks: the take-site figures apply) and on a
+  // deposit, whose material is `rate_home` itself.
   float fodder_rate_home = 11;
   repeated MaterialPayoff materials_rate_home = 12;
 }

@@ -451,7 +451,8 @@ pub struct LaborAssignmentState {
     /// smoothed off the same forecast. `0` on a local row. Appended last.
     #[serde(default)]
     pub fodder_rate_home: f32,
-    /// **Its materials per turn arriving home**, one row per material id. Appended last.
+    /// **A far row's materials per turn arriving home** — a basket's, or a hunt's or pen's hide,
+    /// bone and sinew — one row per material id. Appended last.
     #[serde(default)]
     pub materials_rate_home: Vec<MaterialPayoff>,
 }

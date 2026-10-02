@@ -2108,3 +2108,106 @@ fn a_far_hay_row_publishes_smoothed_fodder_and_materials_rates_home() {
     );
     assert!(a_landing, "liveness: a pack of hay lands within the run");
 }
+
+/// ⛔ **A FAR HUNT'S HIDES WALK HOME IN ITS PACKS** (#706) — a boar party five hexes out (a
+/// three-turn walk, inside flesh's shelf life) kills from its first turn at the herd, but the band's
+/// hide arrives only on the turns a pack lands: the encoded row's `materialYield` is non-zero exactly
+/// when its food `actualYield` is (one pack, one landing), and the store holds no hide before the
+/// first. On a turn no pack lands, the row still prints a smoothed `materialsRateHome` for hide, and
+/// the compose reply quotes the same one. Liveness: a pack lands, and a no-landing turn is seen.
+#[test]
+fn a_far_hunt_lands_its_hides_with_its_packs_and_prints_a_smoothed_rate_home() {
+    use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
+    const HIDE: &str = "hide";
+    let (mut app, band) = world_hunting_at(5);
+    let hide_held = |app: &App| {
+        app.world
+            .get::<PopulationCohort>(band)
+            .expect("the band keeps its cohort")
+            .stores
+            .material_total(HIDE)
+            .to_f32()
+    };
+    let row_of = |app: &App| -> (f32, f32, f32) {
+        let snapshot = app
+            .world
+            .resource::<SnapshotHistory>()
+            .latest_entry()
+            .expect("a snapshot was captured")
+            .snapshot;
+        let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+        let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+        let row = envelope
+            .payload_as_snapshot()
+            .and_then(|snapshot| snapshot.population())
+            .and_then(|section| section.populations())
+            .expect("the cohort list")
+            .iter()
+            .flat_map(|cohort| cohort.laborAssignments().into_iter().flatten())
+            .find(|row| row.kind().unwrap_or_default() == "hunt")
+            .expect("the far hunt row is on the wire");
+        let hide_of = |list: Vec<(Option<&str>, f32)>| -> f32 {
+            list.into_iter()
+                .filter(|(id, _)| *id == Some(HIDE))
+                .map(|(_, amount)| amount)
+                .sum()
+        };
+        (
+            row.actualYield(),
+            hide_of(
+                row.materialYield()
+                    .map(|list| list.iter().map(|p| (p.materialId(), p.amount())).collect())
+                    .unwrap_or_default(),
+            ),
+            hide_of(
+                row.materialsRateHome()
+                    .map(|list| list.iter().map(|p| (p.materialId(), p.amount())).collect())
+                    .unwrap_or_default(),
+            ),
+        )
+    };
+    let mut landed = false;
+    let mut between_packs = false;
+    for turn in 0..TURNS_TO_SEE_A_PORTER {
+        let held_before = hide_held(&app);
+        resolve_a_turn(&mut app);
+        let (food_landed, hide_landed, hide_home) = row_of(&app);
+        assert!(
+            (hide_held(&app) - held_before - hide_landed).abs() < SAME_FOOD,
+            "turn {turn}: the store gains exactly the hide the row reports landed"
+        );
+        assert_eq!(
+            hide_landed > 0.0,
+            food_landed > 0.0,
+            "turn {turn}: hide lands when, and only when, a pack does"
+        );
+        if !landed && hide_landed == 0.0 {
+            assert_eq!(
+                hide_held(&app),
+                0.0,
+                "turn {turn}: no hide before the first pack"
+            );
+        }
+        landed |= hide_landed > 0.0;
+        if landed && food_landed == 0.0 && hide_home > 0.0 {
+            let answer = ask_the_socket(&mut app);
+            let quoted: f32 = answer
+                .materials_rate_home
+                .iter()
+                .filter(|payoff| payoff.material_id == HIDE)
+                .map(|payoff| payoff.amount)
+                .sum();
+            assert_eq!(
+                quoted, hide_home,
+                "the compose reply quotes the row's hide rate home"
+            );
+            between_packs = true;
+            break;
+        }
+    }
+    assert!(landed, "liveness: a pack of boar lands");
+    assert!(
+        between_packs,
+        "a turn with no pack landing still prints the smoothed hide rate home"
+    );
+}

@@ -2309,13 +2309,15 @@ table LaborAssignment {
   // The SHORTEST shelf life, in turns, among the keeping classes of this row's cargo that rot on
   // this walk - the number a "keeps N turns, the walk is M" line reads. 0 when nothing rots.
   transitKeepsTurns:float = 0;
-  // --- A FAR FORAGE ROW'S FODDER AND MATERIALS, PER TURN, ARRIVING HOME (appended last, #706) ---
-  // They ride the packs with the food, so the row's per-turn fodderYield / materialYield read only
-  // what LANDED that turn (zero between packs). These are their netRateHome: the same caravan
-  // forecast's bulk landing per turn through the basket's own per-biomass rates - smoothed, the
-  // numbers the work row prints. Fodder is the CREDITED figure (0 without Foddering unless the
-  // patch is committed to a fodder crop); fodder and materials never rot. 0 / absent on a local
-  // row, a hunt and an extract row.
+  // --- A FAR ROW'S BY-PRODUCTS, PER TURN, ARRIVING HOME (appended last, #706) -----------------
+  // A far forage row's fodder and materials, a far hunt's or pen's hide, bone and sinew: they ride
+  // the packs with the food, so the row's per-turn fodderYield / materialYield read only what
+  // LANDED that turn (zero between packs). These are their netRateHome: the same caravan forecast's
+  // bulk landing per turn through the source's own per-biomass rates - smoothed, the numbers the
+  // work row prints. Fodder is the CREDITED figure (0 without Foddering unless the patch is
+  // committed to a fodder crop; a hunt yields none); none of it rots. A pen's per-head fleece is
+  // outside this forecast, as its milk is outside netRateHome. 0 / absent on a local row and an
+  // extract row (whose material is netRateHome itself).
   fodderRateHome:float = 0;
   // One row per material id. NEVER summed into one figure.
   materialsRateHome:[MaterialPayoff];

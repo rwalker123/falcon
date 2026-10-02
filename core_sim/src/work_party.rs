@@ -150,10 +150,10 @@ fn merge_classes(into: &mut CargoClasses, from: &CargoClasses) {
     }
 }
 
-/// ⛔ **WHAT A FORAGE PACK CARRIES BESIDES FOOD** (#706) — the take's fodder and its flora materials,
-/// riding the load and every pack in the same proportion as the food, and landing at home when the
-/// pack does. They do not rot. The deposit web's material is the pack's cargo itself and never
-/// rides here; a hunt's hides are credited at the take and never ride here either.
+/// ⛔ **WHAT A PACK CARRIES BESIDES FOOD** (#706) — a forage take's fodder and flora materials, a
+/// hunt's or pen's hide, bone, sinew and fleece, riding the load and every pack in the same
+/// proportion as the food, and landing at home when the pack does. They do not rot. The deposit
+/// web's material is the pack's cargo itself and never rides here.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CarriedGoods {
     /// Fodder (hay) — what lands in the band's `FODDER` store.
@@ -309,7 +309,8 @@ pub struct WorkParty {
     /// hay, off the same forecast ([`CaravanForecast::fodder_rate_home`]): smoothed, where the row's
     /// per-turn `fodder` reads only what landed.
     pub fodder_rate_home: f32,
-    /// **THE MATERIALS PER TURN ARRIVING HOME**, one row per material id, off the same forecast.
+    /// **THE MATERIALS PER TURN ARRIVING HOME**, one row per material id, off the same forecast — a
+    /// basket's, or a hunt's hide, bone and sinew.
     pub materials_rate_home: Vec<crate::materials_config::MaterialPayoff>,
 }
 
@@ -1069,7 +1070,8 @@ pub struct CaravanForecast {
     /// the basket's fodder rate, behind the credit's own Foddering gate. Filled by
     /// [`forecast_forage_caravan`]; `0` on every other web.
     pub fodder_rate_home: f32,
-    /// **Its materials per turn arriving home**, one row per material id. Empty on every other web.
+    /// **Its materials per turn arriving home**, one row per material id — filled by
+    /// [`forecast_forage_caravan`] and [`forecast_hunt_caravan`]; empty on the deposit web.
     pub materials_rate_home: Vec<crate::materials_config::MaterialPayoff>,
     /// **The 1-based turn the first pack lands** — whatever its cargo is worth, so a basket that
     /// carries no food still reports when its first load walks in — or [`NO_LOAD_WITHIN_HORIZON`].
@@ -1180,7 +1182,7 @@ pub fn forecast_hunt_caravan(
         .keeping_for(&herd.species)
         .unwrap_or(&keeping.kill_fallback_class);
     let rot = TransitRot::single(keeping, class);
-    forecast_caravan(party, horizon, pack, Some(&rot), |present| {
+    let mut forecast = forecast_caravan(party, horizon, pack, Some(&rot), |present| {
         projection
             .step(
                 fauna,
@@ -1196,7 +1198,20 @@ pub fn forecast_hunt_caravan(
                 cargo: turn.yields.provisions,
                 bulk: turn.biomass,
             })
-    })
+    });
+    // ⛔ **THE CARCASS'S HIDE, BONE AND SINEW ARRIVE WITH ITS PACKS** (#706) — the bulk landing per
+    // turn through the species' own per-biomass material rows, the arithmetic the kill packs them
+    // by. A hunt yields no fodder; materials never rot. Standing rows (a pen's fleece) are paid per
+    // head, not per pack, and stay outside this forecast as the standing food (milk) does.
+    forecast.materials_rate_home = crate::materials_config::merge_material_payoffs(
+        fauna.hunt_materials_for(&herd.species).iter().map(|row| {
+            crate::materials_config::MaterialPayoff {
+                material: row.material.clone(),
+                amount: forecast.bulk_rate_home * row.per_biomass * output_multiplier,
+            }
+        }),
+    );
+    forecast
 }
 
 /// ⛔ **ONE PORTER'S PACK OF A MATERIAL, IN THE MATERIAL'S OWN UNITS** — the haul carry

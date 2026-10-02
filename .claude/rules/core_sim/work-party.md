@@ -263,10 +263,22 @@ rot**; the transit rot strikes food classes only.
   turns no pack landed).
 - **A local row is unchanged**: it credits its fodder and materials the turn it cuts them.
 
-**A hunt's hides, bone and sinew are still credited at the take**, as the deposit web's material is
-not a side good but the cargo itself (below). Standing yield (milk) is food with no biomass: it rides
-the load with the next pack. Pinned by
-`forage_cultivation::a_far_hay_row_lands_its_fodder_and_fibre_only_when_a_pack_lands` (nothing lands
+**A far HUNT's or PEN's by-products ride the packs by the same rule** (#706). At the kill a far row
+packs every material its carcass yields — off `loaded`, the whole carcass the party keeps, through
+the species' `hunt_materials_for` rows — plus a pen's standing rows (fleece) off the head count
+(`systems::labor::hunt_goods_cut`, the same `material_yield_batches` → `CarriedGoods` path the forage
+arm takes), instead of crediting them; they land with the pack through the same landings above. A
+hunt yields no fodder. A pen can be far: it stands where its herd does, so it posts a party like any
+other row. `forecast_hunt_caravan` fills `materials_rate_home` from `bulk_rate_home` through the
+same per-biomass rows, so a far hunt's row prints `materialsRateHome` and its compose reply carries
+`materials_rate_home`. **A pen's per-head fleece rides the packs but is outside that forecast**, as
+its milk is outside `netRateHome`. A local hunt or pen still credits at the kill, off `take.carried`.
+The deposit web's material is not a side good but the cargo itself (below). Standing yield (milk) is
+food with no biomass: it rides the load with the next pack. Pinned by
+`work_party_caravan::a_far_hunt_lands_its_hides_with_its_packs_and_prints_a_smoothed_rate_home`
+(on the encoded row: hide lands exactly on the turns food does, none before the first pack, and a
+no-landing turn prints a non-zero hide `materialsRateHome` the compose reply quotes too), and for
+the forage web by `forage_cultivation::a_far_hay_row_lands_its_fodder_and_fibre_only_when_a_pack_lands` (nothing lands
 before the walk allows; the fodder ledger closes every turn) and
 `work_party::tests::a_pack_carries_its_share_of_the_loads_goods`.
 
@@ -399,8 +411,8 @@ Every party field on `LaborAssignment` (`snapshot.fbs`) reads `0` on a local row
 | `netRateHome` | cargo per turn arriving home **and keeping** — net of transit rot — the number the row prints: food on a hunt or forage row, the material's own units on an extract row (the row's `kind` says which) |
 | `spoiledRateHome` | cargo per turn lost on the walk home to transit rot, over the same forecast (#706); `netRateHome + spoiledRateHome` is what the porters carry in. `0` on a local row, an extract row and any walk every class survives |
 | `transitKeepsTurns` | the shortest shelf life among the row's cargo classes that rot on this walk, in turns; `0` when nothing rots |
-| `fodderRateHome` | a far forage row's fodder per turn arriving home — `netRateHome`'s twin, smoothed off the same forecast, where the row's `fodderYield` reads only what landed that turn; the credited figure (Foddering gate). `0` on a local row, a hunt and an extract row |
-| `materialsRateHome` | its materials per turn arriving home, one `MaterialPayoff` per material id, never summed; absent on the same rows. `materialYield` beside it reads only what landed |
+| `fodderRateHome` | a far forage row's fodder per turn arriving home (a hunt yields none) — `netRateHome`'s twin, smoothed off the same forecast, where the row's `fodderYield` reads only what landed that turn; the credited figure (Foddering gate). `0` on a local row, a hunt and an extract row |
+| `materialsRateHome` | a far forage row's, hunt's or pen's materials per turn arriving home (a hunt's hide, bone and sinew), one `MaterialPayoff` per material id, never summed; absent on a local row and an extract row. `materialYield` beside it reads only what landed |
 
 The query is `QueryPayload::WorkPartyForecast` (`sim_runtime`, proto query field 7, reply field 10),
 seat-gated like the other faction-bearing questions: band, `Hunt { herd_id }`, `Forage { x, y,
