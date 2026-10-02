@@ -735,6 +735,52 @@ fn a_bands_last_started_recipes_survive_the_round_trip() {
     assert_eq!(seen, marked, "every band that made a choice came back");
 }
 
+/// **EQUIPMENT A BENCH FINISHED, NOT YET STOCKED, SURVIVES A SAVE AND A LOAD**
+/// (`BandBench::finished`, issue #720). A finished item waits on the bench until the top of the next
+/// turn, so a save taken in between that dropped it would silently delete a tool the band made. A
+/// fresh band has parked nothing, so this parks a graded batch on every band first.
+#[test]
+fn a_bands_parked_bench_output_survives_the_round_trip() {
+    let parked = core_sim::FinishedBatch {
+        item: "spears".to_string(),
+        count: 2,
+        tier: "flint".to_string(),
+        grade: Some(core_sim::BatchGrade {
+            id: "excellent".to_string(),
+            effects: Vec::new(),
+        }),
+    };
+    let mut original = spawn_world();
+    let mut marked = 0;
+    let mut benches = original
+        .world
+        .query::<(&core_sim::BandId, &mut core_sim::BandBench)>();
+    for (_, mut bench) in benches.iter_mut(&mut original.world) {
+        bench.finished.push(parked.clone());
+        marked += 1;
+    }
+    assert!(
+        marked > 0,
+        "LIVENESS: the world has a band whose parked output there is to lose"
+    );
+
+    let blob = encode_save(&original.world).expect("the world encodes");
+    let (mut loaded, _) = load_save(&blob).expect("the save loads");
+    let mut restored = loaded
+        .world
+        .query::<(&core_sim::BandId, &core_sim::BandBench)>();
+    let mut seen = 0;
+    for (band, bench) in restored.iter(&loaded.world) {
+        assert_eq!(
+            bench.finished,
+            vec![parked.clone()],
+            "band {band:?} must come back with the batch its bench finished, grade and all"
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, marked, "every band that parked a batch came back");
+}
+
 /// ⛔ **A LOADED WORLD AWAITS THE ROSTER IN THE SAVE, not the one the boot profile named.**
 ///
 /// `load_save` builds its app with `build_headless_app`, whose `TurnQueue` is seeded from whatever
