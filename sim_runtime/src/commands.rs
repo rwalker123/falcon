@@ -904,6 +904,12 @@ pub struct WorkPartyForecastReply {
     /// **The hands the asked crew spends keeping the site**, fractional — `workers − keep_hands`
     /// gather, hunt or cut.
     pub keep_hands: f32,
+    /// **Cargo per turn lost on the walk home to transit rot** (#706), over the same horizon as
+    /// `rate_home` (which is net of it). `0` inside the apron and on any walk everything survives.
+    pub spoiled_rate_home: f32,
+    /// **The shortest shelf life among the cargo's classes that rot on this walk**, in turns; `0`
+    /// when nothing rots.
+    pub transit_keeps_turns: f32,
 }
 
 /// The grid the player is **configuring**, not the one the server is running: the ceiling is a
@@ -3112,6 +3118,8 @@ impl QueryReplyEnvelope {
                     first_load_turn: answer.first_load_turn,
                     take_next_turn: answer.take_next_turn,
                     keep_hands: answer.keep_hands,
+                    spoiled_rate_home: answer.spoiled_rate_home,
+                    transit_keeps_turns: answer.transit_keeps_turns,
                 })
             }
             QueryReply::SaveOp(reply) => {
@@ -3239,6 +3247,8 @@ impl QueryReplyEnvelope {
                     first_load_turn: answer.first_load_turn,
                     take_next_turn: answer.take_next_turn,
                     keep_hands: answer.keep_hands,
+                    spoiled_rate_home: answer.spoiled_rate_home,
+                    transit_keeps_turns: answer.transit_keeps_turns,
                 })
             }
             pb::query_reply_envelope::Reply::ListSaves(reply) => QueryReply::ListSaves(
@@ -3716,6 +3726,8 @@ mod tests {
                 first_load_turn: 11,
                 take_next_turn: 12.5,
                 keep_hands: 1.25,
+                spoiled_rate_home: 0.75,
+                transit_keeps_turns: 4.0,
             }),
         };
         let bytes = reply.encode_to_vec().expect("encode");

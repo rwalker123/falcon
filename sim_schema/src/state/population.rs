@@ -415,9 +415,9 @@ pub struct LaborAssignmentState {
     /// rather than render a countdown at zero.
     #[serde(default)]
     pub next_load_home_in: u32,
-    /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND** — the caravan stepped forward over
-    /// `yield_average_horizon_turns` from this state: every pack that lands, per turn — the whole
-    /// take, delayed by the walk.
+    /// **THE PER-TURN RATE ARRIVING AT THE HOME BAND AND KEEPING** — the caravan stepped forward
+    /// over `yield_average_horizon_turns` from this state: every pack that lands, per turn, net of
+    /// transit rot (#706) — the take, delayed by the walk, less what spoiled on it.
     /// The number the work row prints.
     #[serde(default)]
     pub net_rate_home: f32,
@@ -439,6 +439,14 @@ pub struct LaborAssignmentState {
     /// keeping the site). `0` on a row that keeps nothing. Appended last (append-only).
     #[serde(default)]
     pub keep_hands: f32,
+    /// **What a far party's packs lose on the walk home, per turn** (#706) — transit rot over the
+    /// same forecast as [`Self::net_rate_home`], which is net of it. Appended last.
+    #[serde(default)]
+    pub spoiled_rate_home: f32,
+    /// **The shortest shelf life among this row's cargo classes that rot on this walk**, in turns;
+    /// `0` when nothing rots. Appended last.
+    #[serde(default)]
+    pub transit_keeps_turns: f32,
 }
 
 /// **ONE LINE OF ONE TAKE ROW'S TABLE OF EQUIPMENT** — a row of [`LaborAssignmentState::kit_toe`].
@@ -1700,6 +1708,22 @@ pub struct PopulationCohortState {
     /// rot; one term of the larder ledger identity (`snapshot.fbs` → `foodSpoiled`). Appended last.
     #[serde(default)]
     pub food_spoiled: f32,
+    /// **Hands of a stood-down party still walking home** (#706) — on no row, not idle, back the
+    /// turn they arrive. Appended last.
+    #[serde(default)]
+    pub homeward_workers: u32,
+    /// The food they carry home, gross of the walk's rot. Appended last.
+    #[serde(default)]
+    pub homeward_food: f32,
+    /// Of [`Self::homeward_food`], what will rot before it lands. Appended last.
+    #[serde(default)]
+    pub homeward_food_spoils: f32,
+    /// Turns until the soonest homeward load lands; `0` = none. Appended last.
+    #[serde(default)]
+    pub homeward_next_load_in: u32,
+    /// Turns until the last homeward hand is back; `0` = nobody walking home. Appended last.
+    #[serde(default)]
+    pub homeward_all_home_in: u32,
 }
 
 /// **ONE GOOD THAT CROSSED A BAND'S STORE, BY CAUSE** — a row of

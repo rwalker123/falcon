@@ -3342,6 +3342,13 @@ is held to the same rule (19 tiles / 19 turns, one harvester, first load at 42).
 | the section mounts | the liveness companion to the two absences below |
 | the far spine EQUALS the local hunt's | the far sheet is the same sheet plus a section, never a second grammar |
 
+**`herd_hunt_far_party_spoils` (#706)** follows `herd_hunt_far_party_small`: the far boar with a
+reply whose whole carried take rots (`rate_home` 0, `spoiled_rate_home` 0.08, keeps 4 turns on a
+6-turn walk). Claims: the section's second line equals `WORK_PARTY_ALL_SPOILS_FORMAT` with the hunt
+remedy; and, PNG-less through `work_party_section_lines`, a partial rot reads
+`WORK_PARTY_SPOILS_FORMAT`. The compose sheet keeps the taller state's height into
+`herd_hunt_band_near`, so that frame's sheet bottom edge moved when this state was inserted.
+
 **`herd_hunt_far_party_small` is Ray's playtest case, re-staged for the model that ships**: three
 hunters (`SMALL_PARTY_*`) on a thin boar take, 4 hexes out from an apron of 2. Under the retired
 eat-first rule this frame was a party eating its whole catch, with a DANGER deficit line; the band now

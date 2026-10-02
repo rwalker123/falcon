@@ -142,6 +142,14 @@ pub(crate) fn labor_assignment_to_state(
             .as_ref()
             .map_or(0, |p| p.next_load_home_in()),
         net_rate_home: assignment.party.as_ref().map_or(0.0, |p| p.net_rate_home),
+        spoiled_rate_home: assignment
+            .party
+            .as_ref()
+            .map_or(0.0, |p| p.spoiled_rate_home),
+        transit_keeps_turns: assignment
+            .party
+            .as_ref()
+            .map_or(0.0, |p| p.transit_keeps_turns),
         ..Default::default()
     };
     match &assignment.target {
@@ -951,6 +959,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         build_sources,
         loadout_window,
     } = inputs;
+    let homeward: &[crate::work_party::HomewardWalk] =
+        allocation.map_or(&[], |allocation| allocation.homeward.as_slice());
     // **The minimal TOE, resolved for the wire.** An absent component means the ledger was never
     // built, which reads as **start-stocked** — the same fallback `advance_labor_allocation`,
     // `advance_expeditions` and the party-wear site in `capture.rs` take, and it has to be, or this
@@ -2112,6 +2122,30 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // **What rotted this turn** (#706) — the ledger identity's `spoiled` term, set by the larder
         // rot and added to by any caravan pack's transit rot.
         food_spoiled: cohort.last_food_spoiled,
+        // **The band's stood-down parties, walking home** (#706) — read off the allocation, since
+        // they outlive the rows that posted them.
+        homeward_workers: homeward.iter().map(|walk| walk.workers).sum(),
+        homeward_food: homeward
+            .iter()
+            .filter(|walk| walk.carries_food())
+            .map(|walk| walk.cargo)
+            .sum(),
+        homeward_food_spoils: homeward
+            .iter()
+            .map(|walk| walk.food_that_rots(&demographics.keeping))
+            .sum(),
+        homeward_next_load_in: homeward
+            .iter()
+            .filter(|walk| walk.cargo > crate::work_party::NOTHING_CARRIED)
+            .map(|walk| walk.turns_left)
+            .min()
+            .unwrap_or(crate::work_party::NO_LOAD_ON_THE_ROAD),
+        homeward_all_home_in: homeward
+            .iter()
+            .filter(|walk| walk.workers > crate::work_party::NOBODY_ON_THE_ROAD)
+            .map(|walk| walk.turns_left)
+            .max()
+            .unwrap_or(crate::work_party::NO_WALK),
     }
 }
 

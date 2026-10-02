@@ -225,7 +225,12 @@ larder; and `raid_forfeit` ← `cohort.raidForfeit()` (`float`, `as f64`), the f
 raids THIS turn — one of the ledger's two loss terms beyond consumption, `pen_feed_upkeep` having been
 retired (human food is not animal feed; see `band-readouts.md`). The other is `food_spoiled` ←
 `cohort.foodSpoiled()` (`float`, `as f64`, #706, decoded beside `food_shortfall`): food that rotted
-this turn in the larder or in a caravan pack on the walk home, the "Spoiled" food-ledger row. Both are consumed client-side by the band panel:
+this turn in the larder or in a caravan pack on the walk home, the "Spoiled" food-ledger row. Beside
+it, the band's stood-down-party walk home (#706): `homeward_workers` / `homeward_next_load_in` /
+`homeward_all_home_in` (`uint`, `as i64`) and `homeward_food` / `homeward_food_spoils` (`float`,
+`f64`), all 0 while nobody walks home. Each work row carries `spoiled_rate_home` and
+`transit_keeps_turns` (`float`) beside `net_rate_home`, which is NET of that rot; the
+`WorkPartyForecastReply` decode (`bridge/query.rs`) carries the same pair beside `rate_home`. Both are consumed client-side by the band panel:
 `raid_radius` derives the "Predator nearby" Warrior alert (the DANGER itself is derived on the client
 from visible-herd telemetry, never a wire flag), `raid_forfeit` is the "Lost to raids" food-ledger row.
 

@@ -2769,6 +2769,15 @@ that read the wrong row's party lands on a figure a claim names.
 arithmetic reserved is sliced off the bottom; `_assert_work_party_rows_fit_the_zone` measures the
 DRAWN rows against the zone with a liveness guard ahead of it. Measured: **4 rows, 304 of 759 px**.
 
+**`band_panel_work_party_spoils` / `band_panel_homeward` (#706)** run after the crew-split states, on
+`_work_party_spoil_band_fixture`: the party band with its running posting's walk rotting 0.35 a turn
+(keeps 4 turns) and its pelt posting stood down — those three hands walk home with 2.40 food, 0.80 of
+it rotting, first load in 1, all home in 3. Claims: the far row's third party line equals
+`WORK_ROW_PARTY_SPOILS_FORMAT` and is drawn in `WARN`; the walking-out posting grows no spoil line;
+on the band tab the partition guard holds with a `Walking home` segment of 3, `effective_idle` is 0,
+and the WORKFORCE zone's `HOMEWARD_LINE_META` lines equal the three expected strings. They hand the
+reference band back, and no earlier frame moves.
+
 > ⛔ **THE PIPELINE MODEL'S FIXTURE IS RETIRED WITH ITS FIELDS.** It staged `porters`,
 > `travelTiles` / `transitTurns` and `partyTransitRemaining` — a near posting part-way through a walk
 > the sim counted down, a settled one whose line was open, and a `First load arrives next turn`

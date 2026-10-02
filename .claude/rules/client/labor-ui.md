@@ -4531,6 +4531,13 @@ floor and kit, so on a moved dial it answers something nobody asked, and the she
 its job. `_standing_row_cap` maps `PUBLISHED_NO_USEFUL_CREW` to `MAX_USEFUL_BARREN`: a cap of zero
 would clamp the stepper to `0`, and committing `0` is an unassign.
 
+### `effective_idle` NETS OUT HANDS WALKING HOME (#706)
+
+A far posting that ends hands nothing over at once: its hands walk home carrying the load
+(`homeward_workers`, the band's key, not a row's). They are on no row and at no bench, and the sim's
+`BandWorkforce::idle()` nets them out until their walk ends — so `effective_idle` subtracts
+`HudBandLaborState.homeward_workers` too, or every `+` would offer hands the sim refuses.
+
 ### `effective_idle` SUMS `staffed_total`, AND FOR ONE RELEASE IT DID NOT
 
 That helper summed each merged row's `workers` — the TAKE crew alone — so a band with three hands on
@@ -8580,6 +8587,23 @@ its ordinary consumption, nothing is eaten at the source, and the whole take wal
 (`.claude/rules/core_sim/work-party.md` → "RETIRED: an eat-first rule"). The eat-first rule's deficit
 line, its eats-everything reasons and its `[text, is_shortfall]` pairs went with it:
 `work_party_section_lines` returns plain strings, and no line is a warning.
+
+**THE WALK HOME CAN ROT THE TAKE (#706), and the section says so right under the walk line.** The
+reply's `rate_home` is NET of transit rot; `spoiled_rate_home` is the per-turn food lost on the walk
+and `transit_keeps_turns` the shortest shelf life that loses it (both `0` when nothing rots, and on a
+deposit — a material keeps). The line renders only when `spoiled_rate_home` clears
+`SourceForecast.has_component`, in one of two registers (`HudComposeVocab.WORK_PARTY_*SPOILS*`):
+
+- **Everything rots** (`rate_home` rounds to nothing): `Food keeps 4 turns; this walk is 6 turns —
+  every pack rots before it gets home. Hunt closer.` — the remedy in the web's own verb
+  (`…_REMEDY_HUNT` / `_FORAGE`).
+- **Some rots**: `Loses 0.05 food a turn to spoilage on the walk home (keeps 4 turns, walk is 6
+  turns)`.
+
+The walk is the reply's `walk_turns`. **The food is named generically** — the wire carries no keeping
+class, so the line never names one. The shelf life prints through `HudWorkVocab.keeps_turns_phrase`
+(a whole number bare, `1 turn` singular). `ui_preview`'s `herd_hunt_far_party_spoils` renders the
+everything-rots register; the partial one is asserted PNG-less through the same producer.
 
 - ⛔ **IT IS A STANDING ASSIGNMENT, NOT A TRIP, and the copy is in that register.** No *this trip*, no
   *away N turns*, no *Send Anyway*, no one-shot totals — the party walks out once and the source is

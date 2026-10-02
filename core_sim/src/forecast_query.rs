@@ -1216,6 +1216,13 @@ fn answer_work_party_forecast(
         .get();
     let combat = world.resource::<CombatConfigHandle>().get();
     let intrinsic = world.resource::<CreaturesConfigHandle>().get().person();
+    // **How food keeps** (#706) — the caravan's rate home is struck net of transit rot.
+    let demographics = world
+        .get_resource::<crate::demographics_config::DemographicsConfigHandle>()
+        .map_or_else(
+            crate::demographics_config::DemographicsConfig::builtin,
+            |handle| handle.get(),
+        );
     let supply = world
         .resource::<crate::supply_network_config::SupplyNetworkConfigHandle>()
         .get();
@@ -1671,6 +1678,7 @@ fn answer_work_party_forecast(
                 ask.floor,
                 keep_hands,
                 horizon,
+                &demographics.keeping,
             )
         }
         Asked::Forage { patch, tile, take } => {
@@ -1688,6 +1696,7 @@ fn answer_work_party_forecast(
                 take,
                 keep_hands,
                 horizon,
+                &demographics.keeping,
             )
         }
         Asked::Extract {
@@ -1710,6 +1719,8 @@ fn answer_work_party_forecast(
     QueryReply::WorkPartyForecast(WorkPartyForecastReply {
         posts_a_party: true,
         rate_home: forecast.rate_home,
+        spoiled_rate_home: forecast.spoiled_rate_home,
+        transit_keeps_turns: forecast.transit_keeps_turns,
         walk_tiles,
         walk_turns,
         hunters_on_the_road: forecast.mean_on_the_road,

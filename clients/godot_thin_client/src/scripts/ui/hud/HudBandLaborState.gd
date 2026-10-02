@@ -1040,7 +1040,7 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		if (a as Dictionary).has(SourceForecast.ASSIGNMENT_KIT_TOE_KEY):
 			(merged[key] as Dictionary)[SourceForecast.ASSIGNMENT_KIT_TOE_KEY] = \
 				(a as Dictionary)[SourceForecast.ASSIGNMENT_KIT_TOE_KEY]
-		# **AND THE WORK PARTY** (`docs/plan_civilization_steps.md` §One work party) — the nine keys
+		# **AND THE WORK PARTY** (`docs/plan_civilization_steps.md` §One work party) — the party keys
 		# that say where this row's workers are standing when it is not where the band is. Copied
 		# VERBATIM and as a SET: **this map is a hand-listed allowlist**, so a key not copied here
 		# does not exist as far as the work board is concerned, and the set is named once
@@ -1208,12 +1208,22 @@ func _effort_on(key: String, bands: Array = []) -> Dictionary:
 ## resolves, which is exactly what `effective_worker_map`'s pending overlay supplies. A bench crew
 ## carries no such overlay (a `bench_crew` edit shows on the next snapshot), so the published crew is
 ## the right term to subtract.
+##
+## **NOR ARE HANDS WALKING HOME FROM A STOOD-DOWN PARTY** (#706, `homeward_workers`): on no row and at
+## no bench, but not with the band either — the sim's `BandWorkforce::idle()` nets them out until their
+## walk ends, so this does too, or every `+` would offer hands the sim refuses.
 func effective_idle(band: Dictionary) -> int:
 	var assigned := 0
 	var merged := effective_worker_map(band)
 	for key in merged:
 		assigned += staffed_total(merged[key] as Dictionary)
-	return max(0, int(band.get("working_age", 0)) - assigned - bench_workers(band))
+	return max(0, int(band.get("working_age", 0)) - assigned - bench_workers(band)
+		- homeward_workers(band))
+
+## Hands of a stood-down far party still walking home (`PopulationCohortState.homewardWorkers`) —
+## out of the idle pool until they arrive. 0 = nobody walking home.
+func homeward_workers(band: Dictionary) -> int:
+	return max(0, int(band.get(HudWorkVocab.HOMEWARD_WORKERS_KEY, 0)))
 
 ## The crew standing at the band's crafting bench (`PopulationCohortState.bench.workers`) — spent
 ## labor that carries no `LaborAssignment`, hence its own reader. Beside `effective_idle` because it

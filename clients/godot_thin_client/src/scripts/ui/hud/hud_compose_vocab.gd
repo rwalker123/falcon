@@ -2161,5 +2161,20 @@ const WORK_PARTY_SLOW_FILL_HUNT := "Their catch builds up too slowly to fill a p
 const WORK_PARTY_SLOW_FILL_FORAGE := "What they gather builds up too slowly to fill a pack soon"
 const WORK_PARTY_SLOW_FILL_EXTRACT := "What they cut builds up too slowly to fill a pack soon"
 
+## **THE TAKE SPOILS ON THE WALK HOME** (#706) — the reply's `spoiled_rate_home` > 0: food whose
+## keeping class's shelf life (`transit_keeps_turns`) is shorter than the walk home rots before its
+## pack lands. The headline rate is already NET of it; this says what is lost, and why. TWO REGISTERS:
+##   • **everything rots** (`rate_home` rounds to nothing) — the posting brings home NOTHING, so the
+##     line names the remedy in the section's own verb (`…_REMEDY_HUNT` / `_FORAGE`).
+##     Args: `[keeps phrase, walk phrase, remedy]`.
+##   • **some rots** — the loss per turn beside the two numbers that cause it.
+##     Args: `[magnitude, keeps phrase, walk phrase]`.
+## The wire names no keeping class, so the food is named generically — never a class the client
+## would have to invent.
+const WORK_PARTY_ALL_SPOILS_FORMAT := "Food keeps %s; this walk is %s — every pack rots before it gets home. %s"
+const WORK_PARTY_SPOILS_FORMAT := "Loses %s food a turn to spoilage on the walk home (keeps %s, walk is %s)"
+const WORK_PARTY_SPOILS_REMEDY_HUNT := "Hunt closer."
+const WORK_PARTY_SPOILS_REMEDY_FORAGE := "Gather closer."
+
 ## While the answer is in flight — the raid readout's own treatment.
 const WORK_PARTY_PENDING := "Costing the work party…"

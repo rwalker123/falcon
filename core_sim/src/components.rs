@@ -4448,6 +4448,10 @@ pub struct BandWorkforce {
     /// giving it one would put a fictitious row on every yield readout in the game — so it is never
     /// part of `assigned` and has to be subtracted on its own.
     pub benched: u32,
+    /// **Hands of a stood-down work party still walking home** ([`LaborAllocation::homeward`]) —
+    /// on no row and at no bench, but not with the band either, so they are netted out of every
+    /// ceiling until their walk ends.
+    pub walking_home: u32,
 }
 
 impl BandWorkforce {
@@ -4466,6 +4470,7 @@ impl BandWorkforce {
             // if it counted only the take (`docs/plan_standing_upkeep.md` §2.2).
             assigned: allocation.map(|a| a.assigned_total()).unwrap_or(0),
             benched: bench.map(|b| b.workers).unwrap_or(0),
+            walking_home: allocation.map(|a| a.walking_home()).unwrap_or(0),
         }
     }
 
@@ -4476,6 +4481,7 @@ impl BandWorkforce {
         self.pool
             .saturating_sub(self.assigned)
             .saturating_sub(self.benched)
+            .saturating_sub(self.walking_home)
     }
 
     /// **The ceiling an `assign_labor` clamps against** — the pool the *range* may spend, which the
@@ -4483,13 +4489,17 @@ impl BandWorkforce {
     /// the other assignments itself (and lets a re-staffed source reuse its own crew), so this must
     /// NOT have `assigned` taken off it.
     pub fn assignable(&self) -> u32 {
-        self.pool.saturating_sub(self.benched)
+        self.pool
+            .saturating_sub(self.benched)
+            .saturating_sub(self.walking_home)
     }
 
     /// **The ceiling a bench command clamps against** — `idle` plus the crew already at the bench,
     /// because a band's own crew stays put while its job is swapped and must not be counted twice.
     pub fn benchable(&self) -> u32 {
-        self.pool.saturating_sub(self.assigned)
+        self.pool
+            .saturating_sub(self.assigned)
+            .saturating_sub(self.walking_home)
     }
 }
 
@@ -4781,6 +4791,16 @@ pub struct LaborAllocation {
     /// assignments and the fund mode, and it is `SimState` by the same route they are
     /// (`capture_sim_state` clones the whole component).
     pub build_queue: Vec<BuildQueueEntry>,
+    /// ⛔ **THIS BAND'S STOOD-DOWN WORK PARTIES, STILL WALKING HOME** (#706) — what
+    /// [`crate::work_party::WorkParty::walk_home`] turned each ended posting into. It lives here, not
+    /// on a row, because it outlives the row: an unassign, a lapse or `cancel_order` ends the row
+    /// that very command, while its porters and its load are still days from home. Each group lands
+    /// (and rots by its walk) the turn its walk ends, and its hands are away from the band's pool
+    /// until then ([`Self::walking_home`], [`BandWorkforce::walking_home`]).
+    ///
+    /// **State, not intent**: where the band's people are standing is a fact about the world, so
+    /// — like a row's party — it is outside the manual `PartialEq` below.
+    pub homeward: Vec<crate::work_party::HomewardWalk>,
 }
 
 /// Equality is **intent only** — two allocations with equal `assignments`, `upkeep_fund_mode` and
@@ -5218,6 +5238,12 @@ impl LaborAllocation {
     /// build verbs' own affordability refusal retired with the crew they used to name (§2.5).
     pub fn assigned_total(&self) -> u32 {
         self.assignments.iter().map(|a| a.staffed_total()).sum()
+    }
+
+    /// **Hands still walking home from a stood-down party** ([`Self::homeward`]) — away from the
+    /// band until their walk ends.
+    pub fn walking_home(&self) -> u32 {
+        self.homeward.iter().map(|walk| walk.workers).sum()
     }
 
     /// Total workers staffed on the given source (matched by [`LaborTarget::same_source`], so a
@@ -5929,7 +5955,11 @@ impl LaborAllocation {
         let mut shed: Vec<ShedCrew> = Vec::new();
         // **Read fresh every pass**, because the walk itself moves it: a bench thinned to zero must
         // stop counting against the pool, or the loop cannot terminate on the hand it just took.
+        // **Hands walking home are people the band has and cannot staff** (#706), so they stand in
+        // the total beside the bench; nothing in the walk can shed them, so a pool below them
+        // strips every row and stops.
         while self.assigned_total()
+            + self.walking_home()
             + bench
                 .as_deref()
                 .map_or(NO_CREW_ON_THIS_ACTIVITY, |bench| bench.workers)

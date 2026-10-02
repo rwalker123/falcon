@@ -991,6 +991,16 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // party row (the sim settles the row's own projection through the party's flow), which
             // is why the board's head total and this row cannot disagree.
             let _ = entry.insert("net_rate_home", f64::from(assignment.netRateHome()));
+            // **WHAT THE WALK HOME LOSES TO ROT** (#706). `net_rate_home` above is already NET of
+            // it; `spoiled_rate_home` is the per-turn cargo lost on the walk (`net + spoiled` is
+            // what the porters carry in) and `transit_keeps_turns` the shortest shelf life among
+            // the classes that rot on this walk. Both `0` on a local row, an extract row, and any
+            // walk every class survives — that zero drops the readout's line.
+            let _ = entry.insert("spoiled_rate_home", f64::from(assignment.spoiledRateHome()));
+            let _ = entry.insert(
+                "transit_keeps_turns",
+                f64::from(assignment.transitKeepsTurns()),
+            );
             array.push(&entry.to_variant());
         }
     }
@@ -1729,6 +1739,30 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     //     larder_delta == food_income − food_consumption − raid_forfeit − food_spoiled
     //                     + transfer_received − transfer_sent
     let _ = dict.insert("food_spoiled", cohort.foodSpoiled() as f64);
+    // THE BAND'S STOOD-DOWN PARTIES STILL WALKING HOME (#706). A far posting that ends hands nothing
+    // over at once: the hands walk home, carrying the load. These outlive the row, so they are the
+    // band's, not any work row's. All 0 = nobody walking home.
+    //   homeward_workers      — hands on the way home: NOT idle (`idle_workers` already excludes
+    //                           them) and on no row; they rejoin the pool the turn they arrive.
+    //   homeward_food         — the food they carry, GROSS (before the walk's rot).
+    //   homeward_food_spoils  — of that, what rots before it lands (struck as `food_spoiled` on
+    //                           the arrival turn).
+    //   homeward_next_load_in — turns until the soonest load lands; 0 = no load on the way home.
+    //   homeward_all_home_in  — turns until the last hand is back; 0 = nobody walking home.
+    let _ = dict.insert("homeward_workers", i64::from(cohort.homewardWorkers()));
+    let _ = dict.insert("homeward_food", f64::from(cohort.homewardFood()));
+    let _ = dict.insert(
+        "homeward_food_spoils",
+        f64::from(cohort.homewardFoodSpoils()),
+    );
+    let _ = dict.insert(
+        "homeward_next_load_in",
+        i64::from(cohort.homewardNextLoadIn()),
+    );
+    let _ = dict.insert(
+        "homeward_all_home_in",
+        i64::from(cohort.homewardAllHomeIn()),
+    );
 
     // **THIS BAND'S OUTFITTING WINDOW**, and it is a fact about ONE band rather than about the world
     // — which is the whole shape of the per-band loadout arc. `open`, `kitBudget` and

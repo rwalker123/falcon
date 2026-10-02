@@ -1490,6 +1490,7 @@ mod tests {
                 },
             ],
             build_queue: Vec::new(),
+            homeward: Vec::new(),
             last_yields: vec![
                 SourceYield {
                     keep_hands: crate::fauna::NO_HANDS,
@@ -1643,6 +1644,7 @@ mod tests {
                 },
             ],
             build_queue: Vec::new(),
+            homeward: Vec::new(),
             last_yields: vec![
                 SourceYield {
                     fodder: HAY_FODDER,
@@ -1717,6 +1719,7 @@ mod tests {
                 priority: SourcePriority::default(),
             }],
             build_queue: Vec::new(),
+            homeward: Vec::new(),
             last_yields: Vec::new(),
             last_raid_forfeit: 0.0,
             last_roadwork_demand: 0.0,

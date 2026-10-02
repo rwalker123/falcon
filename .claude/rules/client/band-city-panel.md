@@ -3134,6 +3134,15 @@ the same `_build_role_card`; nothing about the keeping is a parallel surface.
   a THIRD row**, alone: it is neither expeditionary nor keeping — it RAISES what the keeping then
   holds — and a builder pushed up beside Husbandry would read as a third kind of keeper. Its own row
   also costs nothing that pairing it would save, the row height being the card's either way.
+- **HANDS WALKING HOME ARE A SEGMENT AND TWO OR THREE LINES** (#706). A stood-down far party's hands
+  walk home (`homeward_*`, the band's keys): inside `working_age`, netted out of idle, so the bar
+  carries a `Walking home` segment (`WORKFORCE_KEY_HOMEWARD`, `INK_DIM`) or it stops partitioning.
+  Under the key, `HudWorkVocab.homeward_lines`: `3 walking home with 2.40 food — all home in 3 turns`
+  (`homeward_all_home_in`; the food clause only when they carry any), then `First load lands in 1 turn`
+  only when `homeward_next_load_in` is sooner than all-home — its own line, because one long line
+  elides in the left dock. `homeward_spoils_line` adds `0.80 of it will spoil on the way` in `WARN`
+  when `homeward_food_spoils` is non-zero. All absent while `homeward_workers` is 0.
+  `band_panel_preview`'s `band_panel_homeward` asserts the segment, idle, and the drawn lines.
 - **The keeping roles are in the WORKFORCE bar's `Roles` SEGMENT even though their cards are not in
   that block.** The segments partition `working_age`, `effective_idle` already nets these hands out
   of Idle, and a segment that omitted them would stop the key adding up to the head the zone states.
@@ -7497,8 +7506,15 @@ count, so a line added to the block is paid for without a second edit anywhere.
    the rest of the posting's life, and it drops the line.
 4. `Next load home in <N> turns` (`in 1 turn` at one) — **only while `nextLoadHomeIn > 0`.** `0` is
    *"nobody is carrying a load home"*, never *"lands this turn"*.
+5. `−<X> food a turn spoils on the walk home (keeps <N> turns)` (#706) — **only while
+   `spoiledRateHome` clears `has_component`.** The rate line above is already NET of it; this is the
+   loss and its cause (`transitKeepsTurns`), the walk's tile count being on line 2.
 
-Every line is the row's quiet `INK_DIM`, and `_work_row_party_lines_text` returns plain strings.
+Every line is the row's quiet `INK_DIM` **except the spoil line, which wears `WARN`** — the amber of
+the Food line's `Spoiled` row — keyed by its `WORK_ROW_PARTY_SPOILS_LEAD` (`HudWorkVocab.
+is_party_spoils_line`). `_work_row_party_lines_text` still returns plain strings.
+`band_panel_preview`'s `band_panel_work_party_spoils` asserts the line, its ink, and its absence on a
+posting whose walk rots nothing.
 
 > #### ⛔ THE EAT-FIRST RULE'S LINES ARE RETIRED WITH IT
 >
@@ -7543,7 +7559,7 @@ whose whole balance argument is stated in rows. **The parameter's DEFAULT is the
 so every board without a posting pages exactly as it did and the layout probes measure what they
 always measured.
 
-### The wire's eight keys are read in ONE place
+### The wire's party keys are read in ONE place
 
 `SourceForecast.party_readout` is the only reader, and `party_is_posted` the only gate.
 ⛔ **`party_workers == 0` IS the sim's own "there is no party"** and every other key reads 0 with it,

@@ -3778,7 +3778,7 @@ fn party_source_position(target: &LaborTarget, registry: &HerdRegistry) -> Optio
 }
 
 /// ⛔ **WHERE A ROW'S CARGO GOES HOME TO** — the one answer every place a party's cargo lands reads:
-/// the foot of the labor pass, the settle step and every exit that routes through it.
+/// the foot of the labor pass and every stood-down walk home as it arrives.
 ///
 /// A caravan does not know what it carries (`crate::work_party`), so something has to, and it is
 /// this: the **larder** for the two food webs' food, the **material store** for a deposit's material
@@ -3959,6 +3959,10 @@ struct PartyPosting {
     /// **Forecast from the state this turn leaves**, struck at the take site where the source's
     /// post-take state and every pricing term are in hand. `None` for an arm that never got there.
     forecast: Option<crate::work_party::CaravanForecast>,
+    /// **The crew the party held before this turn's restamp** — what a row cut to zero hands stands
+    /// down with. The restamp writes the row's new head count onto the party, and at zero that would
+    /// send the hands still at the source straight back into the pool without walking a step.
+    crew_before: u32,
 }
 
 impl PartyPosting {
@@ -4125,6 +4129,7 @@ fn post_a_party(
     let mut party = standing
         .cloned()
         .unwrap_or_else(|| WorkParty::posted(source_pos, walk_tiles, walk_turns));
+    let crew_before = party.workers;
     party.restamp(source_pos, workers, walk_tiles, walk_turns);
     let open = party.open_turn();
     Some(PartyPosting {
@@ -4134,72 +4139,73 @@ fn post_a_party(
         party,
         closed: false,
         forecast: None,
+        crew_before,
     })
 }
 
-/// ⛔ **A ROW THE PLAYER PUT DOWN TAKES ITS PARTY HOME** — the load and every walker's pack, settled
-/// into the band's stores through [`bring_the_party_home`]'s ledger rule. What the `abandon` command
-/// and the zero-crew drop call with the row `LaborAllocation::drop_source_row` handed back: a
-/// caravan that ends early must not lose what is on the road.
+/// ⛔ **A ROW THE PLAYER PUT DOWN SENDS ITS PARTY WALKING HOME** — what the `abandon` command, the
+/// zero-crew drop and `cancel_order` call with the row `LaborAllocation::drop_source_row` handed
+/// back. Nothing lands now: the party becomes the band's [`LaborAllocation::homeward`] walks
+/// ([`stand_down_party`]), which land on the turns their walks end.
 pub fn bring_the_dropped_party_home(world: &mut World, band: Entity, row: &LaborAssignment) {
     let Some(party) = row.party.clone() else {
         return;
     };
-    let home = CargoHome::of(
-        &row.target,
-        |pos| {
-            world
-                .get_resource::<TileRegistry>()
-                .and_then(|registry| registry.index(pos.x, pos.y))
-                .and_then(|entity| world.get::<Tile>(entity).cloned())
-        },
-        &world
-            .resource::<crate::extraction_config::ExtractionConfigHandle>()
-            .get(),
-        &world
-            .resource::<crate::materials_config::MaterialsConfigHandle>()
-            .get(),
-        &demographics_or_builtin(world.get_resource::<DemographicsConfigHandle>()).keeping,
-    );
-    let mut band_parts = world.query::<(&mut PopulationCohort, &mut LaborAllocation)>();
-    if let Ok((mut cohort, mut allocation)) = band_parts.get_mut(world, band) {
-        let (cohort, allocation) = (&mut *cohort, &mut *allocation);
-        stand_down_party(&mut cohort.stores, allocation, party, &home);
+    if let Some(mut allocation) = world.get_mut::<LaborAllocation>(band) {
+        stand_down_party(&mut allocation, party, &row.target);
     }
 }
 
-/// ⛔ **THE ONE SETTLE STEP FOR A PARTY THAT IS ENDING** — its load and every walker's pack, handed
-/// over through [`WorkParty::hand_over_everything`] and deposited through [`bring_the_party_home`].
+/// ⛔ **THE ONE STAND-DOWN STEP FOR A PARTY THAT IS ENDING** — the posting becomes walks home
+/// ([`WorkParty::walk_home`]) on the band's [`LaborAllocation::homeward`], which outlive the row.
 ///
 /// Every path that ends a posting routes here: an unassign or `abandon`
 /// ([`bring_the_dropped_party_home`]), a row held at zero hands, a row lapsing under its party, a
 /// source that has come back inside `band_work_range`, a herd gone from the registry, a row the
-/// starvation shed drops, and `cancel_order`. A caravan that ends early must not lose what is on
-/// the road, and one settle step is what keeps any of those paths from settling it differently.
-///
-/// **`home` says where the cargo lands** ([`CargoHome::of`], off the row's target) — the larder for
-/// food, the material store for a deposit's material — so the one settle step serves every job.
+/// starvation shed drops, and `cancel_order`. **Nothing is handed over at once**: every porter
+/// finishes its walk, the hands at the source carry the load over the whole walk, and the cargo
+/// rots by its walk when it lands — the same rule a live pack lands by. One step is what keeps any
+/// of those paths from settling a party differently.
 pub(crate) fn stand_down_party(
+    allocation: &mut LaborAllocation,
+    party: WorkParty,
+    target: &LaborTarget,
+) {
+    allocation.homeward.extend(party.walk_home(target));
+}
+
+/// **[`stand_down_party`] for a party the labor pass ends BEFORE its turn opened** — a row the shed
+/// drops, a row that posted nothing (its source back inside the apron, or gone). The turn still
+/// happened to the people on the road, so the party takes this turn's step first
+/// ([`WorkParty::open_turn`]): a pack whose walk ends now lands now (rotting by its walk), and the
+/// rest walk home from where the step leaves them. Without it every walker would lose a turn the
+/// command-window stand-downs do not cost. Returns what rotted, for
+/// [`PopulationCohort::last_food_spoiled`].
+fn stand_down_unopened_party(
     stores: &mut LocalStore,
     allocation: &mut LaborAllocation,
     mut party: WorkParty,
+    target: &LaborTarget,
     home: &CargoHome,
-) {
-    let (everything, classes) = party.hand_over_everything_classed();
-    bring_the_party_home(stores, allocation, everything, &classes, home);
+    keeping: &crate::demographics_config::KeepingConfig,
+) -> f32 {
+    let open = party.open_turn();
+    let spoiled = bring_the_party_home(stores, allocation, &open.packs, home, keeping);
+    stand_down_party(allocation, party, target);
+    spoiled
 }
 
-/// **CARGO A PARTY HANDS OVER OUTSIDE ITS ROW** — the load and the road when a posting ends (an
-/// unassign, a row lapsing under it, a source back inside the apron), landed where its [`CargoHome`]
-/// says and entered on the ledger's **route** arm: food on the food ledger, a deposit's material as a
-/// material crossing at its rating — never onto the food ledger.
+/// ⛔ **CARGO A PARTY BRINGS HOME OUTSIDE A LIVE ROW** — a stood-down party's walk ending, or the
+/// packs a row lapsing this turn landed — landed where its [`CargoHome`] says, rotting by its walk,
+/// and entered on the ledger's **route** arm. Returns the food that rotted on the walk, which the
+/// caller adds to [`PopulationCohort::last_food_spoiled`].
 ///
-/// ⛔ **It must go on the ledger**, because it is not this turn's income: a row that is ending
-/// publishes no telemetry to count it in, and food that reached the larder through neither
+/// ⛔ **It must go on the ledger**, because it is not this turn's income: there is no live row to
+/// publish telemetry that counts it, and food that reached the larder through neither
 /// `food_income` nor a transfer would break the pinned identity
 /// `larder_delta == food_income − food_consumption − raid_forfeit − spoiled + transfer_received −
-/// transfer_sent`. A party carrying goods home is exactly what
-/// [`crate::components::TransferLink::Route`] is for.
+/// transfer_sent`. The whole delivery is booked received, and what rots of it the same turn is the
+/// identity's `spoiled` term — exactly the shape [`land_food_home`] gives a live row's income.
 ///
 /// **It is booked through [`LaborAllocation::book_crossing`] as
 /// [`crate::components::TransferCause::PartyHome`]** — the one way a crossing is booked, so the
@@ -4209,14 +4215,30 @@ pub(crate) fn stand_down_party(
 fn bring_the_party_home(
     stores: &mut LocalStore,
     allocation: &mut LaborAllocation,
-    cargo: f32,
-    classes: &crate::work_party::CargoClasses,
+    packs: &[crate::work_party::LandedPack],
     home: &CargoHome,
-) {
-    if cargo > crate::work_party::NOTHING_CARRIED {
-        home.land(stores, cargo, classes);
-        if let Some(crossing) = home.crossing(cargo) {
-            allocation.book_crossing(crossing);
+    keeping: &crate::demographics_config::KeepingConfig,
+) -> f32 {
+    let cargo: f32 = packs.iter().map(|pack| pack.cargo).sum();
+    if cargo <= crate::work_party::NOTHING_CARRIED {
+        return crate::work_party::NOTHING_CARRIED;
+    }
+    if let Some(crossing) = home.crossing(cargo) {
+        allocation.book_crossing(crossing);
+    }
+    match home {
+        CargoHome::Larder { fallback_class } => land_food_home(
+            stores,
+            &HomeDelivery {
+                total: scalar_from_f32(cargo),
+                packs: packs.to_vec(),
+            },
+            keeping,
+            fallback_class,
+        ),
+        CargoHome::Store { .. } => {
+            home.land(stores, cargo, &crate::work_party::CargoClasses::new());
+            crate::work_party::NOTHING_CARRIED
         }
     }
 }
@@ -5142,6 +5164,26 @@ pub fn advance_labor_allocation(
             grid_width,
             wrap_horizontal,
         );
+        // ⛔ **THE STOOD-DOWN PARTIES TAKE A STEP HOME, AND THOSE WHOSE WALK ENDS LAND** (#706) —
+        // before the shed, so a group arriving this turn is back in the pool the shed reads. Each
+        // lands through the one homecoming step ([`bring_the_party_home`]), rotting by its walk.
+        // A group stood down later in this pass is pushed after this step and so takes its first
+        // step next turn — nothing a posting ends with arrives the turn it ends.
+        let homeward = std::mem::take(&mut allocation.homeward);
+        for mut walk in homeward {
+            if !walk.step() {
+                allocation.homeward.push(walk);
+                continue;
+            }
+            let spoiled = bring_the_party_home(
+                &mut cohort.stores,
+                &mut allocation,
+                &[walk.landed_pack()],
+                &cargo_home_of(&walk.target),
+                food_keeping,
+            );
+            cohort.last_food_spoiled += spoiled;
+        }
         // **EVERY HAND `normalize` SHEDS IS ANNOUNCED, trims and drops alike.** It walks the decided
         // shedding order ([`ShedStep`]) when the band no longer has the people, and it used to do so
         // in total silence — the one place in the labor system that gave up work without saying so,
@@ -5149,9 +5191,9 @@ pub fn advance_labor_allocation(
         // destroyed outright can cost a 25-turn build commitment (the queue entry goes with it on
         // the prune below); a row merely cut is the crew the player set moving on its own. Neither
         // may happen quietly.
-        // **A ROW THE SHED DROPS TAKES ITS PARTY HOME.** `normalize` holds no larder, so the parties
-        // are read off the rows before the walk and settled for every row it ended outright, through
-        // the one settle step ([`stand_down_party`]).
+        // **A ROW THE SHED DROPS SENDS ITS PARTY WALKING HOME.** `normalize` drops the row with its
+        // party, so the parties are read off the rows before the walk and stood down for every row
+        // it ended outright, through the one stand-down step ([`stand_down_party`]).
         let parties_before_shed: Vec<(LaborTarget, WorkParty)> = allocation
             .assignments
             .iter()
@@ -5164,13 +5206,15 @@ pub fn advance_labor_allocation(
                         .iter()
                         .find(|(held, _)| held.same_source(target))
                     {
-                        let (cohort, allocation) = (&mut *cohort, &mut *allocation);
-                        stand_down_party(
+                        let spoiled = stand_down_unopened_party(
                             &mut cohort.stores,
-                            allocation,
+                            &mut allocation,
                             party.clone(),
+                            held,
                             &cargo_home_of(held),
+                            food_keeping,
                         );
+                        cohort.last_food_spoiled += spoiled;
                     }
                 }
             }
@@ -6552,6 +6596,7 @@ pub fn advance_labor_allocation(
                             take_species,
                             keep_hands,
                             realized_horizon,
+                            food_keeping,
                         ));
                     }
                     let spoiled = land_food_home(
@@ -7602,6 +7647,7 @@ pub fn advance_labor_allocation(
                                 *floor,
                                 keep_hands,
                                 realized_horizon,
+                                food_keeping,
                             ));
                         }
                         let spoiled = land_food_home(
@@ -8481,6 +8527,7 @@ pub fn advance_labor_allocation(
                             *floor,
                             keep_hands,
                             realized_horizon,
+                            food_keeping,
                         ));
                     }
                     let spoiled =
@@ -9680,21 +9727,15 @@ pub fn advance_labor_allocation(
                 let delivery = posting.settle_pending(landed_now);
                 let landed = delivery.total.to_f32();
                 if row_lapsed {
-                    let mut classes = crate::work_party::CargoClasses::new();
-                    for pack in &delivery.packs {
-                        for (class, amount) in &pack.classes {
-                            *classes
-                                .entry(class.clone())
-                                .or_insert(crate::work_party::NOTHING_CARRIED) += amount;
-                        }
-                    }
-                    bring_the_party_home(
+                    // The packs that walked in this turn land off the row, rotting by their walk.
+                    let spoiled = bring_the_party_home(
                         &mut cohort.stores,
                         &mut allocation,
-                        landed,
-                        &classes,
+                        &delivery.packs,
                         &home,
+                        food_keeping,
                     );
+                    cohort.last_food_spoiled += spoiled;
                 } else {
                     // A food pack that walked in rots by its walk (#706); a material keeps.
                     match &home {
@@ -9718,10 +9759,14 @@ pub fn advance_labor_allocation(
                     }
                 }
             }
-            // **A row lapsing under its party brings the whole caravan home**, the load and the road
-            // with the workers.
+            // **A row lapsing under its party sends the whole caravan walking home**, the load and
+            // the road with the workers.
             if row_lapsed {
-                stand_down_party(&mut cohort.stores, &mut allocation, posting.party, &home);
+                let target = allocation.assignments[idx].target.clone();
+                // The hands the party held are who is out there — not the head count the row was
+                // restamped to as it ended (a zero-crew row lapses at zero).
+                posting.party.workers = posting.crew_before;
+                stand_down_party(&mut allocation, posting.party, &target);
                 continue;
             }
             // ⛔ **THE ROW'S FORWARD PROJECTIONS ARE WHAT ARRIVES HOME, NOT WHAT IS TAKEN.**
@@ -9741,12 +9786,17 @@ pub fn advance_labor_allocation(
                     );
                 }
                 posting.party.net_rate_home = forecast.rate_home;
+                posting.party.spoiled_rate_home = forecast.spoiled_rate_home;
+                posting.party.transit_keeps_turns = forecast.transit_keeps_turns;
             }
-            // **UNASSIGNED: EVERYONE COMES HOME.** A row held at zero hands has nobody at the
-            // source and nobody to send, so the load and the road are settled into the band and
-            // the party is stood down. The row itself survives as a holding.
+            // **UNASSIGNED: EVERYONE WALKS HOME.** A row held at zero hands has nobody to keep at
+            // the source, so the party is stood down and walks home with the load and the road.
+            // The row itself survives as a holding.
             if allocation.assignments[idx].workers == NO_CREW_ON_THIS_ACTIVITY {
-                stand_down_party(&mut cohort.stores, &mut allocation, posting.party, &home);
+                let target = allocation.assignments[idx].target.clone();
+                // The hands it held are still out there: they walk home, carrying the load.
+                posting.party.workers = posting.crew_before;
+                stand_down_party(&mut allocation, posting.party, &target);
                 allocation.assignments[idx].party = None;
                 continue;
             }
@@ -9754,26 +9804,35 @@ pub fn advance_labor_allocation(
                 assignment.party = Some(posting.party);
             }
         }
-        // ⛔ **A PARTY THIS TURN DID NOT POST COMES HOME, AND THE ROW GOES BACK TO LOCAL.** A row
+        // ⛔ **A PARTY THIS TURN DID NOT POST WALKS HOME, AND THE ROW GOES BACK TO LOCAL.** A row
         // still carrying a party that posted nothing this turn has either come back inside
         // `band_work_range` (the herd drifted in, or the band moved up) or lost its source (the herd
-        // left the registry, so the row lapses below). Either way the posting has ended, and the
-        // load and every walker's pack are settled home through the one settle step — **before** the
+        // left the registry, so the row lapses below). Either way the posting has ended: the party
+        // takes this turn's step and is stood down to walk home ([`stand_down_unopened_party`]) —
+        // **before** the
         // `lapsed` removal, which would otherwise drop the row with its caravan still on the road.
         // It covers a row held at zero hands too, since a zero-crew row whose source reads local
         // posts nothing and so never reached the stand-down above.
-        let unposted: Vec<(CargoHome, WorkParty)> = allocation
+        let unposted: Vec<(LaborTarget, WorkParty)> = allocation
             .assignments
             .iter_mut()
             .enumerate()
             .filter(|(idx, _)| !posted_rows.contains(idx))
             .filter_map(|(_, assignment)| {
-                let home = cargo_home_of(&assignment.target);
-                assignment.party.take().map(|party| (home, party))
+                let target = assignment.target.clone();
+                assignment.party.take().map(|party| (target, party))
             })
             .collect();
-        for (home, party) in unposted {
-            stand_down_party(&mut cohort.stores, &mut allocation, party, &home);
+        for (target, party) in unposted {
+            let spoiled = stand_down_unopened_party(
+                &mut cohort.stores,
+                &mut allocation,
+                party,
+                &target,
+                &cargo_home_of(&target),
+                food_keeping,
+            );
+            cohort.last_food_spoiled += spoiled;
         }
         // **THE REPAIRED TAKE SELECTIONS, written back** — before the `lapsed` removal shuffles the
         // indices they were collected against.

@@ -4846,7 +4846,7 @@ pub fn drop_holding_and_cancel_ring(
     let Some(row) = allocation.drop_source_row(target) else {
         return false;
     };
-    // **The holding's work party comes home with it** — see `drop_source_row`.
+    // **The holding's work party is stood down to walk home** — see `drop_source_row`.
     crate::systems::bring_the_dropped_party_home(world, band, &row);
     cancel_dropped_rings(&mut world.resource_mut::<HerdRegistry>(), entry.as_slice());
     true

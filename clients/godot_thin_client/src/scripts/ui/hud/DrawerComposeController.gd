@@ -4408,6 +4408,11 @@ static func work_party_section_lines(answer: Dictionary, crew_label: String,
                 HudComposeVocab.WORK_PARTY_TILES_ONE),
             _counted(walk_turns, HudComposeVocab.WORK_PARTY_TURNS_FORMAT,
                 HudComposeVocab.WORK_PARTY_TURNS_ONE), walk_turns])
+    # **WHAT THE WALK HOME ROTS** (#706), right under the walk that causes it. `rate_home` is already
+    # net of it; only the loss and its cause are said here.
+    var spoiled := float(answer.get("spoiled_rate_home", 0.0))
+    if SourceForecast.has_component(spoiled):
+        lines.append(_work_party_spoils_line(answer, spoiled, walk_turns, source_kind))
     var on_road := float(answer.get("hunters_on_the_road", 0.0))
     if on_road < HudComposeVocab.WORK_PARTY_ON_ROAD_ROUNDS_TO_ONE:
         lines.append(HudComposeVocab.WORK_PARTY_ON_ROAD_RARELY)
@@ -4426,6 +4431,22 @@ static func work_party_section_lines(answer: Dictionary, crew_label: String,
         lines.append(HudComposeVocab.WORK_PARTY_FIRST_LOAD_FORMAT % _counted(first_load,
             HudComposeVocab.WORK_PARTY_TURNS_FORMAT, HudComposeVocab.WORK_PARTY_TURNS_ONE))
     return lines
+
+## The spoil line, in its two registers (`HudComposeVocab.WORK_PARTY_*SPOILS*`): where nothing the
+## party carries survives the walk the rate home rounds to nothing and the line names the remedy;
+## otherwise it states the loss per turn beside the shelf life and the walk that cause it.
+static func _work_party_spoils_line(answer: Dictionary, spoiled: float, walk_turns: int,
+        source_kind: String) -> String:
+    var keeps := HudWorkVocab.keeps_turns_phrase(float(answer.get("transit_keeps_turns", 0.0)))
+    var walk := _counted(walk_turns, HudComposeVocab.WORK_PARTY_TURNS_FORMAT,
+        HudComposeVocab.WORK_PARTY_TURNS_ONE)
+    if not SourceForecast.has_component(float(answer.get("rate_home", 0.0))):
+        var remedy := HudComposeVocab.WORK_PARTY_SPOILS_REMEDY_HUNT \
+            if source_kind == ForecastQuery.WORK_PARTY_SOURCE_HUNT \
+            else HudComposeVocab.WORK_PARTY_SPOILS_REMEDY_FORAGE
+        return HudComposeVocab.WORK_PARTY_ALL_SPOILS_FORMAT % [keeps, walk, remedy]
+    return HudComposeVocab.WORK_PARTY_SPOILS_FORMAT % [SourceForecast.format_magnitude(spoiled),
+        keeps, walk]
 
 ## The slow-fill line in the section's own web's verb — a hunt catches, a gather gathers, a working is
 ## cut. A forage party must never read as though it hunted, nor a digger as though they gathered.

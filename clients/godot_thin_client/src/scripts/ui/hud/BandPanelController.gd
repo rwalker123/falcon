@@ -1252,6 +1252,9 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
         # at the bench is assigned labor), so without a segment of its own it would vanish from a bar
         # whose segments are supposed to partition the same `working_age` the header counts against.
         [HudWorkVocab.WORKFORCE_KEY_BENCH, _band_labor.bench_workers(band), HudStyle.VOICE_PIGMENT],
+        # …and the hands walking home from a stood-down far party (#706), netted out of idle for the
+        # same reason, in the dim ink of people who are on their way rather than at work.
+        [HudWorkVocab.WORKFORCE_KEY_HOMEWARD, _band_labor.homeward_workers(band), HudStyle.INK_DIM],
         [HudWorkVocab.WORKFORCE_KEY_IDLE, idle, HudStyle.INK_FAINT],
     ]:
         if int(spec[1]) > 0:
@@ -1267,6 +1270,13 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     if not segments.is_empty():
         block.add_child(HudWidgets.build_composition_bar(segments))
         block.add_child(HudWidgets.build_composition_key(segments))
+    # **WHO IS WALKING HOME, WITH WHAT, AND WHEN THEY ARE BACK** (#706) — under the bar whose
+    # `Walking home` segment counts them. The spoil line wears the Food line's `Spoiled` amber.
+    for line in HudWorkVocab.homeward_lines(band):
+        block.add_child(_build_homeward_line(line, HudStyle.INK_DIM))
+    var homeward_spoils := HudWorkVocab.homeward_spoils_line(band)
+    if homeward_spoils != "":
+        block.add_child(_build_homeward_line(homeward_spoils, HudStyle.WARN))
     # The FOUR standing roles as CARDS — a bordered card reads as "a standing role", not as one more
     # worked source in a list (the complaint the card treatment fixes).
     #
@@ -1286,6 +1296,19 @@ func _build_workforce_block(band: Dictionary) -> VBoxContainer:
     scout_row.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, warrior_threat))
     block.add_child(scout_row)
     return block
+
+## One line of the WORKFORCE zone's homeward readout — the party line's quiet treatment (small type,
+## ellipsis + hover), carrying its own text as `HOMEWARD_LINE_META` for the harness.
+func _build_homeward_line(text: String, ink: Color) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    label.add_theme_color_override("font_color", ink)
+    label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    HudWidgets.set_label_tooltip(label, text)
+    label.set_meta(HudWorkVocab.HOMEWARD_LINE_META, text)
+    label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    return label
 
 ## One ROW of the role-card grid — the shared chrome, so the two rows cannot drift apart in spacing
 ## or in how they claim the zone's width.
@@ -5925,7 +5948,8 @@ func _build_work_row_accounts(model: Dictionary) -> MarginContainer:
 
 ## One line of a row's party block, in the quiet ink of the accounts above it. **None of its lines is
 ## a warning**: the home band feeds its party through its ordinary consumption, so a posting has no
-## supply gap to state (`.claude/rules/core_sim/work-party.md` → "RETIRED: an eat-first rule").
+## supply gap to state (`.claude/rules/core_sim/work-party.md` → "RETIRED: an eat-first rule"). The
+## one amber line is the walk's spoilage (#706) — a loss, tinted as the Food line's `Spoiled` row is.
 ##
 ## `OVERRUN_TRIM_ELLIPSIS` and the unconditional hover are the accounts line's treatment, taken for
 ## its reason: a `Label` with autowrap off reports its whole text as its minimum width, and this zone
@@ -5936,7 +5960,10 @@ func _build_work_row_party_line(text: String) -> Label:
     var label := Label.new()
     label.text = text
     label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    label.add_theme_color_override("font_color", HudStyle.INK_DIM)
+    # The spoil line (#706) is the one line of the block that states a LOSS, so it wears the Food
+    # line's `Spoiled` amber; every other line is the quiet ink of the accounts above it.
+    label.add_theme_color_override("font_color",
+        HudStyle.WARN if HudWorkVocab.is_party_spoils_line(text) else HudStyle.INK_DIM)
     label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     HudWidgets.set_label_tooltip(label, text)
     label.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -5955,7 +5982,7 @@ func _work_row_party_lines(model: Dictionary) -> int:
 ## this existed.
 ##
 ## The order is the block's own and is load-bearing to read: who and where, the walk out while it
-## lasts, and when the next load lands.
+## lasts, when the next load lands, and what the walk loses to rot (#706).
 ##
 ## ⛔ **EVERY LINE BUT THE FIRST IS PRESENT ONLY WHEN ITS OWN FIELD SAYS SO.** Each of the two
 ## countdowns reads `0` as *there is nothing to say* (`walkOutRemaining` for the rest of a posting once
@@ -7115,7 +7142,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             marks += " " + HudWorkVocab.KIT_SHORT_MARK
         # **THE WORK PARTY ON THIS ROW** (`docs/plan_civilization_steps.md` §One work party), read
         # ONCE here so the row's block, its height and the board's own reservation all ask the same
-        # answer. `SourceForecast.party_readout` is the only place the wire's nine keys are read and
+        # answer. `SourceForecast.party_readout` is the only place the wire's party keys are read and
         # the only place *"is there a party"* is decided.
         var party := SourceForecast.party_readout(m)
         models.append({

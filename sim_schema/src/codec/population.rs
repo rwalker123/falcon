@@ -439,6 +439,9 @@ fn create_populations<'a>(
                                 kitToe: kit_toe,
                                 // **THIS ROW'S OWN KEEPING HANDS**. Appended last.
                                 keepHands: assignment.keep_hands,
+                                // **WHAT THE WALK HOME LOSES** (#706). Appended last.
+                                spoiledRateHome: assignment.spoiled_rate_home,
+                                transitKeepsTurns: assignment.transit_keeps_turns,
                             },
                         )
                     })
@@ -1132,6 +1135,12 @@ fn create_populations<'a>(
                     foodShortfall: cohort.food_shortfall,
                     // THE FOOD THAT ROTTED THIS TURN — appended last (#706).
                     foodSpoiled: cohort.food_spoiled,
+                    // THE BAND'S STOOD-DOWN PARTIES, WALKING HOME — appended last (#706).
+                    homewardWorkers: cohort.homeward_workers,
+                    homewardFood: cohort.homeward_food,
+                    homewardFoodSpoils: cohort.homeward_food_spoils,
+                    homewardNextLoadIn: cohort.homeward_next_load_in,
+                    homewardAllHomeIn: cohort.homeward_all_home_in,
                 },
             )
         })
@@ -1306,6 +1315,8 @@ fn decode_labor_assignment(
             filled: line.filled(),
         }),
         keep_hands: assignment.keepHands(),
+        spoiled_rate_home: assignment.spoiledRateHome(),
+        transit_keeps_turns: assignment.transitKeepsTurns(),
     })
 }
 
@@ -1651,6 +1662,11 @@ fn decode_population(
         food_need: cohort.foodNeed(),
         food_shortfall: cohort.foodShortfall(),
         food_spoiled: cohort.foodSpoiled(),
+        homeward_workers: cohort.homewardWorkers(),
+        homeward_food: cohort.homewardFood(),
+        homeward_food_spoils: cohort.homewardFoodSpoils(),
+        homeward_next_load_in: cohort.homewardNextLoadIn(),
+        homeward_all_home_in: cohort.homewardAllHomeIn(),
     })
 }
 

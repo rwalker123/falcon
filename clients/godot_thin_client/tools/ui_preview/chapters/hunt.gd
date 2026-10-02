@@ -175,6 +175,14 @@ const SMALL_PARTY_WALK_TURNS := 2
 const SMALL_PARTY_ON_ROAD := 0.6
 const SMALL_PARTY_ON_ROAD_ROUNDED := 1
 const SMALL_PARTY_FIRST_LOAD := 8
+## **THE WALK ROTS THE WHOLE TAKE (`herd_hunt_far_party_spoils`, #706).** The far boar again, but its
+## meat keeps 4 turns and the walk home is 6, so every pack rots before it lands: the reply's
+## `rate_home` is 0 and the whole carried take is `spoiled_rate_home`.
+const SPOIL_ALL_KEEPS_TURNS := 4.0
+const SPOIL_ALL_RATE := 0.08
+## ...and the partial register, PNG-less: 0.05 of a 0.13 carried take rots, the rest lands.
+const SPOIL_SOME_RATE := 0.05
+const SPOIL_SOME_RATE_HOME := 0.08
 ## **THE RETIRED EAT-FIRST RULE'S WORDS** (`.claude/rules/core_sim/work-party.md` → "RETIRED: an
 ## eat-first rule") — each the needle for a line that must not survive ANYWHERE on a far sheet: the
 ## row's `Party ate`, its `Needs … food a turn from home` deficit, the sheet's two eats-everything
@@ -271,6 +279,17 @@ func _far_boar_small_herd() -> Dictionary:
 		"posts_a_party": true, "rate_home": SMALL_PARTY_RATE_HOME,
 		"walk_tiles": SMALL_PARTY_WALK_TILES, "walk_turns": SMALL_PARTY_WALK_TURNS,
 		"hunters_on_the_road": SMALL_PARTY_ON_ROAD, "first_load_turn": SMALL_PARTY_FIRST_LOAD,
+	}
+	return herd
+
+## ...and the same boar whose whole take rots on the walk - see `SPOIL_ALL_*`.
+func _far_boar_spoiling_herd() -> Dictionary:
+	var herd := HerdFx.raid_boar_herd()
+	herd[ForecastFx.WORK_PARTY_FORECAST_KEY] = {
+		"posts_a_party": true, "rate_home": 0.0,
+		"walk_tiles": FAR_PARTY_WALK_TILES, "walk_turns": FAR_PARTY_WALK_TURNS,
+		"hunters_on_the_road": FAR_PARTY_ON_ROAD, "first_load_turn": FAR_PARTY_FIRST_LOAD,
+		"spoiled_rate_home": SPOIL_ALL_RATE, "transit_keeps_turns": SPOIL_ALL_KEEPS_TURNS,
 	}
 	return herd
 
@@ -902,6 +921,36 @@ func run(harness) -> void:
 				== SourceForecast.format_magnitude(SMALL_PARTY_RATE_HOME)
 			and Readout.yields_header(small_sheet)
 				== HudComposeVocab.YIELD_HEADER_ONCE_RUNNING.to_upper())
+
+	# State 3h'' - **THE WALK ROTS EVERY PACK** (#706). Meat that keeps 4 turns on a 6-turn walk home:
+	# the sheet says so, and names the remedy, before the player commits a posting that feeds nobody.
+	var spoil_boar := _far_boar_spoiling_herd()
+	h._show_herd(spoil_boar)
+	h._compose_herd(spoil_boar, FAR_PARTY_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await h._settle()
+	await h._save("herd_hunt_far_party_spoils")
+	var spoil_lines := Readout.work_party_lines(h._hud._drawercompose._compose_sheet)
+	var want_all_spoils := HudComposeVocab.WORK_PARTY_ALL_SPOILS_FORMAT % [
+		HudWorkVocab.keeps_turns_phrase(SPOIL_ALL_KEEPS_TURNS),
+		HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PARTY_WALK_TURNS,
+		HudComposeVocab.WORK_PARTY_SPOILS_REMEDY_HUNT]
+	h._assert_hud("a walk that rots every pack says so, with the remedy, under the walk - want %s, got %s"
+			% [want_all_spoils, str(spoil_lines)],
+		spoil_lines.size() > 1 and spoil_lines[1] == want_all_spoils)
+	# The partial register, PNG-less through the one producer: the loss per turn beside its cause.
+	var some_lines := DrawerComposeController.work_party_section_lines({
+		"posts_a_party": true, "walk_tiles": FAR_PARTY_WALK_TILES, "walk_turns": FAR_PARTY_WALK_TURNS,
+		"hunters_on_the_road": FAR_PARTY_ON_ROAD, "rate_home": SPOIL_SOME_RATE_HOME,
+		"first_load_turn": FAR_PARTY_FIRST_LOAD, "spoiled_rate_home": SPOIL_SOME_RATE,
+		"transit_keeps_turns": SPOIL_ALL_KEEPS_TURNS},
+		HudComposeVocab.HUNT_CREW_LABEL, ForecastQuery.WORK_PARTY_SOURCE_HUNT)
+	var want_some := HudComposeVocab.WORK_PARTY_SPOILS_FORMAT % [
+		SourceForecast.format_magnitude(SPOIL_SOME_RATE),
+		HudWorkVocab.keeps_turns_phrase(SPOIL_ALL_KEEPS_TURNS),
+		HudComposeVocab.WORK_PARTY_TURNS_FORMAT % FAR_PARTY_WALK_TURNS]
+	h._assert_hud("...while a walk that rots only part of the take states the loss a turn - want %s, got %s"
+			% [want_some, str(some_lines)],
+		some_lines.size() > 1 and some_lines[1] == want_some)
 	ForecastFx.install(h._hud)
 	h._hud._compose.reset_hunt_source()
 

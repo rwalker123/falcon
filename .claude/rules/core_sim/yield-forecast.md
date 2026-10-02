@@ -918,8 +918,9 @@ both halves in the same run — the far row kept **and** the near row untouched,
 **The assign-time seed prices a far row by stepping its caravan** — `seed_source_yield` no longer
 declines a Hunt, Forage or Extract row past range, and its Hunt gate no longer reads the retired
 `hunt_reach()` (which made the seed and the turn disagree for every hunt three to five tiles out).
-The seeded `realized` is the caravan's rate home, the same function the turn's published
-`netRateHome` answers through; the seeded `actual` is what lands **next turn**, which is `0` for a
+The seeded `realized` is the caravan's rate home **net of transit rot** (#706 — a food class that
+does not keep through the walk is struck off every landing pack), the same function the turn's
+published `netRateHome` answers through; the seeded `actual` is what lands **next turn**, which is `0` for a
 party still walking out — honest, not absent. A far Extract row seeds its `materials` the same way
 (what lands next turn, nothing while walking out) and writes no food field. See
 `.claude/rules/core_sim/work-party.md` → "One function, stepped".

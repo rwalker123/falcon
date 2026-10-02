@@ -462,6 +462,65 @@ const WORKFORCE_IDLE_FORMAT := "%d idle of %d"
 ## ("4 idle of 16" over a bar totalling 22). The fact still has to be reachable, so it reads here.
 const WORKFORCE_AWAY_FORMAT := " · %d away"
 
+## **HANDS WALKING HOME FROM A STOOD-DOWN FAR PARTY** (#706). A far posting that ends hands nothing
+## over at once: every porter finishes its walk and the hands at the source carry the load home. They
+## are on no row and NOT idle (`HudBandLaborState.effective_idle` nets them out, as the sim does), so
+## the WORKFORCE zone says where they are and when they are back. The band's keys, not a row's — the
+## walk outlives the row that posted it. All `0` = nobody walking home → no line.
+const HOMEWARD_WORKERS_KEY := "homeward_workers"
+const HOMEWARD_FOOD_KEY := "homeward_food"
+const HOMEWARD_FOOD_SPOILS_KEY := "homeward_food_spoils"
+const HOMEWARD_NEXT_LOAD_IN_KEY := "homeward_next_load_in"
+const HOMEWARD_ALL_HOME_IN_KEY := "homeward_all_home_in"
+
+## `4 walking home with 3.20 food — all home in 3 turns`; without the food clause when they carry
+## none. Args: `[workers, (food clause), all-home phrase]`.
+const HOMEWARD_LINE_FORMAT := "%d walking home%s — all home in %s"
+const HOMEWARD_FOOD_CLAUSE_FORMAT := " with %s food"
+## …and, when the soonest load lands before the last hand does, when that load lands — its own line,
+## because the zone is as narrow as the left dock and one long line would elide the fact away.
+const HOMEWARD_FIRST_LOAD_FORMAT := "First load lands in %s"
+const HOMEWARD_TURNS_FORMAT := "%d turns"
+const HOMEWARD_TURNS_ONE := "1 turn"
+## What of the carried food rots before it lands (struck as `Spoiled` on the arrival turn), its own
+## line in the Spoiled row's amber, so the remedy — shorter walks for food that does not keep — is
+## read beside the loss.
+const HOMEWARD_SPOILS_FORMAT := "%s of it will spoil on the way"
+## The stable handle on each homeward line, carrying its own text — the `WORK_ROW_PARTY_META`
+## treatment, so a harness reads what was drawn.
+const HOMEWARD_LINE_META := &"workforce_homeward"
+
+static func _homeward_turns(n: int) -> String:
+    return HOMEWARD_TURNS_ONE if n == WORK_ROW_PARTY_TURNS_SINGULAR else HOMEWARD_TURNS_FORMAT % n
+
+## The WORKFORCE zone's homeward lines in the zone's quiet ink — `[]` while nobody is walking home,
+## else the walk line and, when a load lands before the last hand does, the first-load line. The spoil
+## line is `homeward_spoils_line`'s, apart, because it is the one that wears amber.
+static func homeward_lines(band: Dictionary) -> Array[String]:
+    var workers := int(band.get(HOMEWARD_WORKERS_KEY, 0))
+    if workers <= 0:
+        return []
+    var food := float(band.get(HOMEWARD_FOOD_KEY, 0.0))
+    var food_clause := HOMEWARD_FOOD_CLAUSE_FORMAT % SourceForecast.format_magnitude(food) \
+        if SourceForecast.has_component(food) else ""
+    var all_home := int(band.get(HOMEWARD_ALL_HOME_IN_KEY, 0))
+    var lines: Array[String] = [
+        HOMEWARD_LINE_FORMAT % [workers, food_clause, _homeward_turns(all_home)]]
+    var next_load := int(band.get(HOMEWARD_NEXT_LOAD_IN_KEY, 0))
+    if next_load > 0 and next_load < all_home:
+        lines.append(HOMEWARD_FIRST_LOAD_FORMAT % _homeward_turns(next_load))
+    return lines
+
+## What of the homeward load rots before it lands, or `""` when nobody is walking home or none of it
+## rots.
+static func homeward_spoils_line(band: Dictionary) -> String:
+    if int(band.get(HOMEWARD_WORKERS_KEY, 0)) <= 0:
+        return ""
+    var spoils := float(band.get(HOMEWARD_FOOD_SPOILS_KEY, 0.0))
+    if not SourceForecast.has_component(spoils):
+        return ""
+    return HOMEWARD_SPOILS_FORMAT % SourceForecast.format_magnitude(spoils)
+
 const WORKFORCE_AWAY_TOOLTIP := "Out with a party — no longer part of this band's workforce, and not counted in the bar below."
 
 const WORKFORCE_KEY_FORAGE := "Forage"
@@ -488,6 +547,11 @@ const WORKFORCE_KEY_BUILD := "Build"
 const WORKFORCE_KEY_BENCH := "Bench"
 
 const WORKFORCE_KEY_IDLE := "Idle"
+
+## Hands walking home from a stood-down far party (#706). They are inside `working_age` and netted out
+## of idle, so — like the bench — they need a segment of their own or the bar stops partitioning the
+## head count its header states.
+const WORKFORCE_KEY_HOMEWARD := "Walking home"
 
 ## Standing-role CARDS (the fix for roles reading as one more worked source in a list).
 const ROLE_NAME_SCOUT := "Scout"
@@ -1175,6 +1239,33 @@ const WORK_ROW_PARTY_NEXT_LOAD_FORMAT := "Next load home in %d turns"
 ## …and its singular, for the walk-out line's reason.
 const WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT := "Next load home in 1 turn"
 
+## **WHAT THE WALK HOME LOSES TO ROT** (#706, `spoiledRateHome` / `transitKeepsTurns`) — food whose
+## keeping class's shelf life is shorter than the walk rots before its pack lands. The row's rate is
+## already NET of it; this line says what was lost and why, in the amber the Food line's `Spoiled` row
+## wears, keyed by `WORK_ROW_PARTY_SPOILS_LEAD` so the row's line builder can tint it. Present only
+## when the rate is non-zero. Args: `[magnitude, keeps phrase]`.
+const WORK_ROW_PARTY_SPOILS_LEAD := "−"
+const WORK_ROW_PARTY_SPOILS_FORMAT := WORK_ROW_PARTY_SPOILS_LEAD \
+    + "%s food a turn spoils on the walk home (keeps %s)"
+
+## The shelf life's counted phrase. It is a float on the wire: a whole number prints bare and anything
+## else to `KEEPS_TURNS_DECIMALS`, so `4 turns` and `2.5 turns` both read naturally.
+const KEEPS_TURNS_FORMAT := "%s turns"
+const KEEPS_TURNS_ONE := "1 turn"
+const KEEPS_TURNS_DECIMALS := 1
+
+## A shelf life as its counted phrase, singular at one.
+static func keeps_turns_phrase(keeps: float) -> String:
+    var whole := roundi(keeps)
+    var text := str(whole) if is_equal_approx(keeps, float(whole)) \
+        else String.num(keeps, KEEPS_TURNS_DECIMALS)
+    return KEEPS_TURNS_ONE if text == str(WORK_ROW_PARTY_TURNS_SINGULAR) \
+        else KEEPS_TURNS_FORMAT % text
+
+## Is this party line the spoil line? The one test the row's builder tints by.
+static func is_party_spoils_line(text: String) -> bool:
+    return text.begins_with(WORK_ROW_PARTY_SPOILS_LEAD)
+
 ## The count at which both singular forks are taken. Its own const rather than a bare `1`, and
 ## deliberately NOT a read of `DetailFormat.BUILD_TURNS_SINGULAR`: a vocab leaf reaching for a
 ## `class_name`d module at class load is the cycle `WORK_INSPECTOR_ARRIVALS_STRIP_HEIGHT` already
@@ -1223,6 +1314,11 @@ static func party_block_lines(party: Dictionary, crew_noun: String,
         lines.append(WORK_ROW_PARTY_NEXT_LOAD_ONE_FORMAT)
     elif next_load > 0:
         lines.append(WORK_ROW_PARTY_NEXT_LOAD_FORMAT % next_load)
+    var spoiled := float(party.get(SourceForecast.ASSIGNMENT_SPOILED_RATE_HOME_KEY, 0.0))
+    if SourceForecast.has_component(spoiled):
+        lines.append(WORK_ROW_PARTY_SPOILS_FORMAT % [SourceForecast.format_magnitude(spoiled),
+            keeps_turns_phrase(float(party.get(
+                SourceForecast.ASSIGNMENT_TRANSIT_KEEPS_TURNS_KEY, 0.0)))])
     return lines
 
 ## ⛔ **THE ROW'S GEAR MARK — A MARK OF ITS OWN, NOT A SECOND ⚠.** A row short of GEAR and a row

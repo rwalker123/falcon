@@ -2544,6 +2544,9 @@ func _ready() -> void:
 	# The crew-split marks — one square per worker, tending against taking — on every site row.
 	await _render_work_crew_split_states()
 
+	# Spoilage on the walk home and hands walking home from a stood-down party (#706).
+	await _render_work_party_spoil_states()
+
 	# The band dock's Trade tab (issue #731) — its own file, appended last so no frame above moves.
 	await TRADE_TAB_STATES.new().run(self)
 
@@ -25703,4 +25706,110 @@ func _render_work_crew_split_states() -> void:
 	_set_forage_patches([])
 	_set_world_herds(_herd_fixtures())
 	_push_bands([_band_fixture()])
+	await _settle()
+
+
+# ---- THE WALK HOME ROTS, AND STOOD-DOWN HANDS WALK HOME (#706) ------------------------------------
+## The running posting's walk loses this much food a turn to rot — its meat keeps fewer turns than
+## its 8-tile walk takes — and the row's rate is already net of it.
+const SPOIL_RATE_HOME := 0.35
+const SPOIL_KEEPS_TURNS := 4.0
+## The pelt posting's three hands, stood down: they walk home carrying its load, part of which rots.
+const HOMEWARD_WORKERS := PARTY_PELT_WORKERS
+const HOMEWARD_FOOD := 2.4
+const HOMEWARD_FOOD_SPOILS := 0.8
+const HOMEWARD_NEXT_LOAD_IN := 1
+const HOMEWARD_ALL_HOME_IN := 3
+
+## The party band with its RUNNING posting's walk rotting part of its take, and its pelt posting stood
+## down — those three hands now walk home (`homeward_*`), on no row and out of the idle pool, so the
+## WORKFORCE bar still partitions `working_age` only if it counts them.
+func _work_party_spoil_band_fixture() -> Dictionary:
+	var band := _work_party_band_fixture()
+	var rows: Array = []
+	for row_variant in band["labor_assignments"]:
+		var row: Dictionary = (row_variant as Dictionary).duplicate()
+		if String(row.get("fauna_id", "")) == PARTY_PELT_HERD_ID:
+			continue
+		if String(row.get("fauna_id", "")) == PARTY_FAR_HERD_ID:
+			row[SourceForecast.ASSIGNMENT_SPOILED_RATE_HOME_KEY] = SPOIL_RATE_HOME
+			row[SourceForecast.ASSIGNMENT_TRANSIT_KEEPS_TURNS_KEY] = SPOIL_KEEPS_TURNS
+		rows.append(row)
+	band["labor_assignments"] = rows
+	band["idle_workers"] = 0
+	band[HudWorkVocab.HOMEWARD_WORKERS_KEY] = HOMEWARD_WORKERS
+	band[HudWorkVocab.HOMEWARD_FOOD_KEY] = HOMEWARD_FOOD
+	band[HudWorkVocab.HOMEWARD_FOOD_SPOILS_KEY] = HOMEWARD_FOOD_SPOILS
+	band[HudWorkVocab.HOMEWARD_NEXT_LOAD_IN_KEY] = HOMEWARD_NEXT_LOAD_IN
+	band[HudWorkVocab.HOMEWARD_ALL_HOME_IN_KEY] = HOMEWARD_ALL_HOME_IN
+	return band
+
+## **THE TWO #706 READOUTS ON THE BAND PANEL**: the work row's amber spoil line under its party block
+## (`band_panel_work_party_spoils`), and the WORKFORCE zone's walking-home lines over a bar that counts
+## those hands (`band_panel_homeward`).
+func _render_work_party_spoil_states() -> void:
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_work_party_spoil_band_fixture()])
+	await _pin_canvas(Vector2i(ULTRAWIDE_WIDTH, DOCKROW_CANVAS.y))
+	_panel.set_dock(SIDE_BOTTOM)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_party_spoils")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	var far_row := _work_row_for_herd(PARTY_FAR_HERD_ID)
+	var far := _work_party_lines(far_row)
+	var want_spoil := HudWorkVocab.WORK_ROW_PARTY_SPOILS_FORMAT % [
+		SourceForecast.format_magnitude(SPOIL_RATE_HOME),
+		HudWorkVocab.keeps_turns_phrase(SPOIL_KEEPS_TURNS)]
+	_assert_band_panel("band_panel_work_party_spoils: a far row whose walk rots states the loss last (%s)"
+			% str(far),
+		far.size() == 3 and far[2] == want_spoil)
+	var spoil_ink_ok := false
+	if far_row != null:
+		for control in _collect_meta_controls(far_row, HudWorkVocab.WORK_ROW_PARTY_META, []):
+			if String(control.get_meta(HudWorkVocab.WORK_ROW_PARTY_META)) == want_spoil:
+				spoil_ink_ok = (control as Label).get_theme_color(FONT_COLOR_THEME_KEY) \
+					.is_equal_approx(HudStyle.WARN)
+	_assert_band_panel("…in the Spoiled row's amber", spoil_ink_ok)
+	var near := _work_party_lines(_work_row_for_herd(PARTY_NEAR_HERD_ID))
+	_assert_band_panel("…while a posting whose walk rots nothing grows no spoil line (%s)" % str(near),
+		near.size() == 2 and not HudWorkVocab.is_party_spoils_line(near[near.size() - 1]))
+
+	await _pin_canvas(PREVIEW_SIZE)
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"band")
+	await _settle()
+	await _save("band_panel_homeward")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_people_matches_workforce("band_panel_homeward")
+	var band: Dictionary = _hud._band_labor._panel_band
+	_assert_band_panel("band_panel_homeward: hands walking home are NOT idle (idle %d)"
+			% _hud._band_labor.effective_idle(band),
+		_hud._band_labor.effective_idle(band) == 0)
+	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	var segments := _composition_counts(band_zone, HudWorkVocab.ZONE_HEADER_WORKFORCE)
+	_assert_band_panel("…the bar counts them as their own segment (read %d)"
+			% int(segments.get(HudWorkVocab.WORKFORCE_KEY_HOMEWARD, -1)),
+		int(segments.get(HudWorkVocab.WORKFORCE_KEY_HOMEWARD, -1)) == HOMEWARD_WORKERS)
+	var drawn: Array[String] = []
+	for control in _collect_meta_controls(band_zone, HudWorkVocab.HOMEWARD_LINE_META, []):
+		drawn.append(String(control.get_meta(HudWorkVocab.HOMEWARD_LINE_META)))
+	var want_lines: Array[String] = [
+		HudWorkVocab.HOMEWARD_LINE_FORMAT % [HOMEWARD_WORKERS,
+			HudWorkVocab.HOMEWARD_FOOD_CLAUSE_FORMAT % SourceForecast.format_magnitude(HOMEWARD_FOOD),
+			HudWorkVocab.HOMEWARD_TURNS_FORMAT % HOMEWARD_ALL_HOME_IN],
+		HudWorkVocab.HOMEWARD_FIRST_LOAD_FORMAT % HudWorkVocab.HOMEWARD_TURNS_ONE,
+		HudWorkVocab.HOMEWARD_SPOILS_FORMAT % SourceForecast.format_magnitude(HOMEWARD_FOOD_SPOILS),
+	]
+	_assert_band_panel("…and the WORKFORCE zone says who walks home, with what, and what will spoil — want %s, got %s"
+			% [str(want_lines), str(drawn)], drawn == want_lines)
+
+	# Hand the world and the reference band back.
+	_set_forage_patches([])
+	_set_world_herds(_herd_fixtures())
+	_push_bands([_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
 	await _settle()

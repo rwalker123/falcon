@@ -3567,6 +3567,10 @@ fn seed_source_yield(
                     take_species,
                     keep_hands,
                     labor.yield_average_horizon_turns,
+                    &app.world
+                        .resource::<core_sim::DemographicsConfigHandle>()
+                        .get()
+                        .keeping,
                 );
                 seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, false);
             }
@@ -3713,6 +3717,10 @@ fn seed_source_yield(
                     *floor,
                     keep_hands,
                     labor.yield_average_horizon_turns,
+                    &app.world
+                        .resource::<core_sim::DemographicsConfigHandle>()
+                        .get()
+                        .keeping,
                 );
                 seed_caravan_row(&mut seeded, &forecast, labor.arrivals_horizon_turns, true);
             }
@@ -5283,7 +5291,7 @@ fn handle_assign_labor(
         };
         (applied, allocation.assigned_total(), dropped_row)
     };
-    // **An unassigned far row brings its whole caravan home** — the load and every walker's pack —
+    // **An unassigned far row sends its whole caravan walking home** — the load and every walker's pack —
     // rather than losing what was on the road with the row.
     if let Some(row) = dropped_row.as_ref() {
         core_sim::bring_the_dropped_party_home(&mut app.world, band.entity, row);
@@ -7565,7 +7573,7 @@ fn handle_cancel_order(
         return;
     }
 
-    // **A cleared far row brings its whole caravan home** — the rows are read before the clear,
+    // **A cleared far row sends its whole caravan walking home** — the rows are read before the clear,
     // because `clear_kinds` holds no larder and drops them with their parties still on the road.
     let cleared_rows: Vec<core_sim::LaborAssignment> = {
         let mut entity = app.world.entity_mut(band.entity);

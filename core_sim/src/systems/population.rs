@@ -2110,6 +2110,7 @@ mod food_flow_tests {
             last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
             build_queue: Vec::new(),
+            homeward: Vec::new(),
         };
         assert!(
             band_food_flow(Some(&labor)).is_none(),
@@ -2161,6 +2162,7 @@ mod food_flow_tests {
             last_transfer_crossings: Vec::new(),
             upkeep_fund_mode: crate::intensification::UpkeepFundMode::default(),
             build_queue: Vec::new(),
+            homeward: Vec::new(),
         };
         let flow = band_food_flow(Some(&labor)).expect("projected telemetry is real data");
         assert!(

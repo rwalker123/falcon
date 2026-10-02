@@ -1567,6 +1567,25 @@ table PopulationCohortState {
   // larder ledger identity: larder_delta == foodIncome - foodConsumption - raidForfeit - foodSpoiled
   // + transferReceived - transferSent. 0 on a turn nothing rotted.
   foodSpoiled:float = 0;
+  // --- THE BAND'S STOOD-DOWN WORK PARTIES, STILL WALKING HOME (appended last, #706) -----------
+  // A far posting that ends (unassign, lapse, a herd gone or back in range, a shed row,
+  // cancel_order) hands nothing over at once: every porter finishes its walk, the hands at the
+  // source carry the load home over the whole walk, a party still walking out walks back. These
+  // outlive the row, so they are the band's, not any LaborAssignment's. All 0 = nobody walking home.
+  //
+  // Hands walking home - NOT idle and NOT on any row; `idleWorkers` already excludes them, and
+  // they rejoin the pool the turn they arrive.
+  homewardWorkers:uint = 0;
+  // The food they carry, gross - what lands before the walk's rot.
+  homewardFood:float = 0;
+  // Of `homewardFood`, what will rot before it lands: every class whose shelf life is shorter than
+  // the walk it is carried over. It lands and is struck as `foodSpoiled` on the arrival turn.
+  homewardFoodSpoils:float = 0;
+  // Turns until the soonest homeward load lands; 0 = no load on the way home (the row's
+  // `nextLoadHomeIn`, carried on past the row's end).
+  homewardNextLoadIn:uint = 0;
+  // Turns until the last homeward hand is back; 0 = nobody walking home.
+  homewardAllHomeIn:uint = 0;
 }
 
 // One band's outfitting window. THE TWO SUPPLIES ARE MUTUALLY EXCLUSIVE and `parentBandId` says which
@@ -2221,7 +2240,9 @@ table LaborAssignment {
   //
   // DISTANCE IS PAID IN WALKING. The party works as any hunt or gather does; when the take fills
   // one hunter's pack, that hunter walks it home and walks back. There is no porter share and no
-  // loss in transit.
+  // friction - but FOOD THAT DOES NOT KEEP THROUGH THE WALK ROTS ON THE WAY (#706): a keeping class
+  // whose shelf life is shorter than the walk is lost entirely when its pack lands. `netRateHome` is
+  // net of it; `spoiledRateHome` / `transitKeepsTurns` (below) say what was lost and why.
   //
   // `partyWorkers == 0` MEANS THERE IS NO PARTY - the ordinary local row - and every field below
   // reads 0 with it.
@@ -2246,9 +2267,10 @@ table LaborAssignment {
   // hunter walking back empty does not count), which is the signal to drop the line, not to draw
   // a countdown at zero.
   nextLoadHomeIn:uint = 0;
-  // *** THE PER-TURN RATE ARRIVING AT THE HOME BAND - the number the work row prints. ***
+  // *** THE PER-TURN RATE ARRIVING AT THE HOME BAND AND KEEPING - the number the work row prints. ***
   // The caravan stepped forward over labor_config.yield_average_horizon_turns from this state:
-  // every pack that lands, per turn - the whole take, delayed by the walk. A near row and a far row are comparable
+  // every pack that lands, per turn, NET OF TRANSIT ROT (#706) - the take, delayed by the walk, less
+  // what spoiled on it. A near row and a far row are comparable
   // figures on one board. THE TAKE FLOWS HOME, ALWAYS - to the band that owns this row.
   // IN THE ROW'S CARGO UNITS: food on a hunt or forage row, the material's own units on an extract
   // row (whose far working also posts a party). The row's `kind` says which.
@@ -2278,6 +2300,15 @@ table LaborAssignment {
   // site's bill, which is why it is on the row: the source's `upkeepHands` sums every band keeping
   // the site. The pre-commit seed carries the prospective split. 0 on a row that keeps nothing.
   keepHands:float = 0;
+  // --- WHAT A FAR PARTY'S PACKS LOSE ON THE WALK HOME (appended last, #706) -------------------
+  // The per-turn cargo lost to TRANSIT ROT over the same forecast as `netRateHome` (which is net of
+  // it): a keeping class whose shelf life is shorter than the walk rots entirely when its pack
+  // lands. `netRateHome + spoiledRateHome` is what the porters carry in. 0 on a local row, an
+  // extract row (a material keeps) and any walk every class survives.
+  spoiledRateHome:float = 0;
+  // The SHORTEST shelf life, in turns, among the keeping classes of this row's cargo that rot on
+  // this walk - the number a "keeps N turns, the walk is M" line reads. 0 when nothing rots.
+  transitKeepsTurns:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

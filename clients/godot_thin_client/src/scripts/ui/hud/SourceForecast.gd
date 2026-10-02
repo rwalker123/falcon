@@ -882,7 +882,7 @@ const ASSIGNMENT_KIT_WORKERS_HOLDING_KEY := "kit_workers_holding"
 ## workers` is not a shortfall test.
 const ASSIGNMENT_KIT_TOE_KEY := "kit_toe"
 # **THE WORK PARTY, ON A LABOR ASSIGNMENT** (`docs/plan_civilization_steps.md` §One work party) —
-# the ten keys the decoder writes for a row whose source is past the band's own apron. They ride the
+# the keys the decoder writes for a row whose source is past the band's own apron. They ride the
 # work-row map (`HudBandLaborState.effective_worker_map`) and are read in exactly ONE place,
 # `party_readout` below, which is what decides what a party's absence renders as.
 #
@@ -906,6 +906,11 @@ const ASSIGNMENT_WALK_OUT_REMAINING_KEY := "walk_out_remaining"
 # never "lands this turn" — so it too drops its line.
 const ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY := "next_load_home_in"
 const ASSIGNMENT_NET_RATE_HOME_KEY := "net_rate_home"
+# **WHAT THE WALK HOME LOSES TO ROT** (#706). `net_rate_home` is already NET of it; this is the
+# per-turn cargo lost on the walk, and `transit_keeps_turns` the shortest shelf life (turns) among the
+# classes that rot on it. Both `0` when nothing rots — the zero drops the readout's line.
+const ASSIGNMENT_SPOILED_RATE_HOME_KEY := "spoiled_rate_home"
+const ASSIGNMENT_TRANSIT_KEEPS_TURNS_KEY := "transit_keeps_turns"
 
 ## Every party key in one list, so the work-row map copies them as a SET rather than as eight
 ## hand-listed lines that a ninth field could be forgotten out of. Each is a plain scalar, so
@@ -914,7 +919,8 @@ const ASSIGNMENT_PARTY_KEYS: Array[String] = [
 	ASSIGNMENT_PARTY_X_KEY, ASSIGNMENT_PARTY_Y_KEY, ASSIGNMENT_PARTY_WORKERS_KEY,
 	ASSIGNMENT_HUNTERS_ON_THE_ROAD_KEY, ASSIGNMENT_WALK_TILES_KEY,
 	ASSIGNMENT_WALK_OUT_REMAINING_KEY, ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY,
-	ASSIGNMENT_NET_RATE_HOME_KEY,
+	ASSIGNMENT_NET_RATE_HOME_KEY, ASSIGNMENT_SPOILED_RATE_HOME_KEY,
+	ASSIGNMENT_TRANSIT_KEEPS_TURNS_KEY,
 ]
 
 # **WHAT A WHOLE TRIP LANDS, PER MATERIAL** — on each row of the `HuntTripForecast` reply (the
@@ -5796,6 +5802,9 @@ static func party_readout(row: Dictionary) -> Dictionary:
         ASSIGNMENT_WALK_OUT_REMAINING_KEY: int(row.get(ASSIGNMENT_WALK_OUT_REMAINING_KEY, 0)),
         ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY: int(row.get(ASSIGNMENT_NEXT_LOAD_HOME_IN_KEY, 0)),
         ASSIGNMENT_NET_RATE_HOME_KEY: float(row.get(ASSIGNMENT_NET_RATE_HOME_KEY, 0.0)),
+        ASSIGNMENT_SPOILED_RATE_HOME_KEY: float(row.get(ASSIGNMENT_SPOILED_RATE_HOME_KEY, 0.0)),
+        ASSIGNMENT_TRANSIT_KEEPS_TURNS_KEY:
+            float(row.get(ASSIGNMENT_TRANSIT_KEEPS_TURNS_KEY, 0.0)),
     }
 
 ## Is there a party on this readout? The one test, so no surface spells the gate itself.

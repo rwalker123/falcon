@@ -4716,6 +4716,11 @@
       "grievance": 0.000154,
       "home": 193,
       "home_band_entity": 133,
+      "homeward_all_home_in": 27,
+      "homeward_food": 69.940002,
+      "homeward_food_spoils": 34.919998,
+      "homeward_next_load_in": 196,
+      "homeward_workers": 179,
       "hunt_carry_per_worker_biomass": 26.93,
       "hunt_crews": [
         {
@@ -4949,6 +4954,7 @@
           "priority": "normal",
           "realized_yield": 50.82,
           "species": "populations[0].labor_assignments[0].species",
+          "spoiled_rate_home": 62.150002,
           "sustainable_yield": 16.4,
           "take_species": [
             "flax",
@@ -4956,6 +4962,7 @@
           ],
           "target_x": 117,
           "target_y": 128,
+          "transit_keeps_turns": 97.370003,
           "useful_cutters": 184,
           "walk_out_remaining": 28,
           "walk_tiles": 90,
@@ -5042,6 +5049,7 @@
           "priority": "high",
           "realized_yield": 67.830002,
           "species": "populations[0].labor_assignments[1].species",
+          "spoiled_rate_home": 1.6,
           "sustainable_yield": 35.830002,
           "take_species": [
             "flax",
@@ -5049,6 +5057,7 @@
           ],
           "target_x": 44,
           "target_y": 33,
+          "transit_keeps_turns": 107.940002,
           "useful_cutters": 197,
           "walk_out_remaining": 89,
           "walk_tiles": 27,
@@ -5135,6 +5144,7 @@
           "priority": "low",
           "realized_yield": 40.889999,
           "species": "populations[0].labor_assignments[2].species",
+          "spoiled_rate_home": 30.200001,
           "sustainable_yield": 68.709999,
           "take_species": [
             "flax",
@@ -5142,6 +5152,7 @@
           ],
           "target_x": 167,
           "target_y": 178,
+          "transit_keeps_turns": 24.950001,
           "useful_cutters": 70,
           "walk_out_remaining": 158,
           "walk_tiles": 72,
@@ -5804,6 +5815,11 @@
       "grievance": 0.000053,
       "home": 148,
       "home_band_entity": 32,
+      "homeward_all_home_in": 18,
+      "homeward_food": 111.160004,
+      "homeward_food_spoils": 112.18,
+      "homeward_next_load_in": 187,
+      "homeward_workers": 158,
       "hunt_carry_per_worker_biomass": 111.440002,
       "hunt_crews": [
         {
@@ -6037,6 +6053,7 @@
           "priority": "normal",
           "realized_yield": 31.379999,
           "species": "populations[1].labor_assignments[0].species",
+          "spoiled_rate_home": 57.459999,
           "sustainable_yield": 23.76,
           "take_species": [
             "flax",
@@ -6044,6 +6061,7 @@
           ],
           "target_x": 62,
           "target_y": 51,
+          "transit_keeps_turns": 95.139999,
           "useful_cutters": 91,
           "walk_out_remaining": 171,
           "walk_tiles": 105,
@@ -6130,6 +6148,7 @@
           "priority": "high",
           "realized_yield": 16.93,
           "species": "populations[1].labor_assignments[1].species",
+          "spoiled_rate_home": 9.36,
           "sustainable_yield": 31.49,
           "take_species": [
             "flax",
@@ -6137,6 +6156,7 @@
           ],
           "target_x": 135,
           "target_y": 146,
+          "transit_keeps_turns": 81.07,
           "useful_cutters": 158,
           "walk_out_remaining": 190,
           "walk_tiles": 32,
@@ -6223,6 +6243,7 @@
           "priority": "low",
           "realized_yield": 33.75,
           "species": "populations[1].labor_assignments[2].species",
+          "spoiled_rate_home": 49.360001,
           "sustainable_yield": 65.809998,
           "take_species": [
             "flax",
@@ -6230,6 +6251,7 @@
           ],
           "target_x": 148,
           "target_y": 137,
+          "transit_keeps_turns": 55.080002,
           "useful_cutters": 13,
           "walk_out_remaining": 33,
           "walk_tiles": 147,
@@ -6855,6 +6877,11 @@
       "grievance": 0.00018,
       "home": 95,
       "home_band_entity": 143,
+      "homeward_all_home_in": 125,
+      "homeward_food": 105.389999,
+      "homeward_food_spoils": 94.879997,
+      "homeward_next_load_in": 182,
+      "homeward_workers": 165,
       "hunt_carry_per_worker_biomass": 7.09,
       "hunt_crews": [
         {
@@ -7088,6 +7115,7 @@
           "priority": "normal",
           "realized_yield": 82.589996,
           "species": "populations[2].labor_assignments[0].species",
+          "spoiled_rate_home": 60.459999,
           "sustainable_yield": 14.97,
           "take_species": [
             "flax",
@@ -7095,6 +7123,7 @@
           ],
           "target_x": 175,
           "target_y": 186,
+          "transit_keeps_turns": 14.11,
           "useful_cutters": 110,
           "walk_out_remaining": 94,
           "walk_tiles": 160,
@@ -7181,6 +7210,7 @@
           "priority": "high",
           "realized_yield": 107.459999,
           "species": "populations[2].labor_assignments[1].species",
+          "spoiled_rate_home": 54.16,
           "sustainable_yield": 54.080002,
           "take_species": [
             "flax",
@@ -7188,6 +7218,7 @@
           ],
           "target_x": 198,
           "target_y": 187,
+          "transit_keeps_turns": 35.360001,
           "useful_cutters": 99,
           "walk_out_remaining": 115,
           "walk_tiles": 121,
@@ -7274,6 +7305,7 @@
           "priority": "low",
           "realized_yield": 75.220001,
           "species": "populations[2].labor_assignments[2].species",
+          "spoiled_rate_home": 40.009998,
           "sustainable_yield": 89.739998,
           "take_species": [
             "flax",
@@ -7281,6 +7313,7 @@
           ],
           "target_x": 69,
           "target_y": 80,
+          "transit_keeps_turns": 108.949997,
           "useful_cutters": 200,
           "walk_out_remaining": 172,
           "walk_tiles": 10,
